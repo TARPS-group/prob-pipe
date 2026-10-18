@@ -17,6 +17,7 @@ from ..distributions._empirical import EmpiricalDistribution
 from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import _record_run, make_posterior
 from ._inference_utils import (
+    described,
     extract_chain_columns,
     integer_seed,
     joint_and_given,
@@ -28,22 +29,45 @@ from ._inference_utils import (
 class PyMCNutsMethod(InferenceMethod):
     """PyMC NUTS, registered as ``pymc_nuts`` at priority 82.
 
-    Applies to a ``PyMCModel``.
+    Applies to a ``PyMCModel``. Its ``method_options`` are:
+
+    - ``num_results``: the number of draws of each chain, which is 1000 unless
+      set;
+    - ``num_warmup``: the number of warmup steps of each chain, which is 500
+      unless set;
+    - ``num_chains``: the number of chains, which is 4 unless set;
+    - ``cores``: the number of chains sampled in parallel, which is the smaller
+      of the chain count and the CPU count unless set;
+    - ``progress_bar``: whether PyMC's sampler draws its progress bar. The
+      sampler receives the option as ``progressbar``, which is ``True`` unless
+      set.
 
     Notes
     -----
-    An optimised backend: native PyMC NUTS, tailored to ``PyMCModel``. Tied
-    with ``cmdstan_nuts`` (82), which applies to a disjoint model class, and
-    below ``nutpie_nuts`` (88), whose Rust gradients are faster on a
-    ``PyMCModel`` too when nutpie is installed.
+    The method runs PyMC's own NUTS implementation. It passes
+    ``nuts_sampler="pymc"`` to ``pm.sample``, which otherwise runs nutpie
+    wherever nutpie is installed, and ``nutpie_nuts`` runs nutpie. Tied with
+    ``cmdstan_nuts`` (82), which applies to a disjoint model class, and below
+    ``nutpie_nuts`` (88), whose Rust gradients are faster on a ``PyMCModel``
+    when nutpie is installed.
     """
 
-    _method_options = ("cores", "num_chains", "num_results", "num_warmup", "random_seed")
+    _method_options = (
+        "cores",
+        "num_chains",
+        "num_results",
+        "num_warmup",
+        "progress_bar",
+    )
 
     def __init__(self) -> None:
         from ..families._programs import PyMCModel
 
         self._model_type = PyMCModel
+
+    @property
+    def description(self) -> str:
+        return "NUTS through PyMC, for a PyMC model."
 
     @property
     def name(self) -> str:
@@ -60,13 +84,17 @@ class PyMCNutsMethod(InferenceMethod):
         """Whether the target is a PyMC model, or one at its observed values."""
         dist, _ = joint_and_given(target)
         if not isinstance(dist, self._model_type):
-            return Feasibility(feasible=False, description="Requires PyMCModel")
+            return Feasibility(
+                feasible=False, description=f"the model must be a PyMCModel; got {described(dist)}"
+            )
         return Feasibility(feasible=True)
 
     def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
         """PyMC inference on the model the target carries, at the observed values it binds."""
         self._check_options(kwargs)
-        import pymc as pm
+        from ..families._programs import _import_pymc
+
+        pm = _import_pymc()
 
         dist, observed = joint_and_given(target)
 
@@ -80,7 +108,7 @@ class PyMCNutsMethod(InferenceMethod):
         # warning and falls back to single-process sampling — so multi-core
         # is the default without making serializability a hard requirement.
         cores = kwargs.get("cores", min(num_chains, os.cpu_count() or 1))
-        random_seed = integer_seed(run_seed(kwargs, self.name))
+        random_seed = integer_seed(run_seed(self.name))
 
         model = dist._pymc_model(data=observed)
         # Build the parameter record in canonical field order before sampling
@@ -95,7 +123,9 @@ class PyMCNutsMethod(InferenceMethod):
                 cores=cores,
                 mp_ctx="spawn" if cores > 1 else None,
                 random_seed=random_seed,
+                progressbar=kwargs.get("progress_bar", True),
                 return_inferencedata=True,
+                nuts_sampler="pymc",
             )
 
         # Extract in the trace's natural order; field_order lets
@@ -120,11 +150,24 @@ class PyMCADVIMethod(InferenceMethod):
     """PyMC ADVI, registered as ``pymc_advi``, opt-in-only.
 
     Automatic Differentiation Variational Inference for a ``PyMCModel``;
-    runs only when the caller pins ``method="pymc_advi"``.
+    runs only when the caller pins ``method="pymc_advi"``. Its
+    ``method_options`` are:
+
+    - ``num_iterations``: the number of optimization steps, which is 30000
+      unless set;
+    - ``num_results``: the number of draws of an empirical result, which is
+      1000 unless set;
+    - ``vi_method``: the variational method of PyMC's ``fit``, which is
+      ``"advi"`` unless set;
+    - ``progress_bar``: whether ``fit`` draws its progress bar. ``fit``
+      receives the option as ``progressbar``, which is ``True`` unless set.
+
+    The run draws its key from a workflow-owned random event, and the key seeds
+    both ``fit`` and the draws of an empirical result.
 
     Notes
     -----
-    With ``vi_method="advi"``, the default, the result is the fitted
+    With ``vi_method="advi"``, the result is the fitted
     mean-field family: a ``FactoredDistribution`` with one factor per
     parameter, the Gaussian ADVI fitted to the parameter's unconstrained value
     pushed through the bijector equal to PyMC's transform of it. The family
@@ -139,12 +182,16 @@ class PyMCADVIMethod(InferenceMethod):
     ``pymc_nuts`` fails would silently substitute VI for MCMC.
     """
 
-    _method_options = ("num_iterations", "num_results", "random_seed", "vi_method")
+    _method_options = ("num_iterations", "num_results", "progress_bar", "vi_method")
 
     def __init__(self) -> None:
         from ..families._programs import PyMCModel
 
         self._model_type = PyMCModel
+
+    @property
+    def description(self) -> str:
+        return "Variational inference through PyMC's fit, ADVI by default, for a PyMC model."
 
     @property
     def name(self) -> str:
@@ -161,19 +208,23 @@ class PyMCADVIMethod(InferenceMethod):
         """Whether the target is a PyMC model, or one at its observed values."""
         dist, _ = joint_and_given(target)
         if not isinstance(dist, self._model_type):
-            return Feasibility(feasible=False, description="Requires PyMCModel")
+            return Feasibility(
+                feasible=False, description=f"the model must be a PyMCModel; got {described(dist)}"
+            )
         return Feasibility(feasible=True)
 
     def execute(self, target: Any, /, **kwargs: Any) -> Distribution:
         """PyMC variational inference on the model the target carries, at the observed values it binds."""
         self._check_options(kwargs)
-        import pymc as pm
+        from ..families._programs import _import_pymc
+
+        pm = _import_pymc()
 
         dist, observed = joint_and_given(target)
 
         num_iterations = kwargs.get("num_iterations", 30000)
         num_results = kwargs.get("num_results", 1000)
-        random_seed = integer_seed(run_seed(kwargs, self.name))
+        fit_key, draws_key = jax.random.split(run_seed(self.name))
         vi_method = kwargs.get("vi_method", "advi")
 
         model = dist._pymc_model(data=observed)
@@ -182,14 +233,19 @@ class PyMCADVIMethod(InferenceMethod):
         param_names = dist._conditioned_param_names(model)
         event_spec = OutputSpec(dist._parameter_record_for(model, param_names))
         with model:
-            approx = pm.fit(n=num_iterations, method=vi_method, random_seed=random_seed)
+            approx = pm.fit(
+                n=num_iterations,
+                method=vi_method,
+                random_seed=integer_seed(fit_key),
+                progressbar=kwargs.get("progress_bar", True),
+            )
         name = f"pymc_{vi_method}"
         if vi_method == "advi":
             family = _mean_field_family(approx, model, param_names)
             if family is not None:
                 return _record_run(family, (target,), name, num_iterations=num_iterations)
         with model:
-            trace = approx.sample(num_results)
+            trace = approx.sample(num_results, random_seed=integer_seed(draws_key))
 
         # ADVI's approx.sample yields a single chain of `num_results`
         # draws; extract in natural order and realign by name.
@@ -272,6 +328,9 @@ def _bijector_of(transform: Any, rv: Any, model: Any) -> Any:
     ``None`` stands for no transform, and ``NotImplemented`` for a transform the
     mean-field family does not cover.
     """
+    from ..families._programs import _import_pymc
+
+    _import_pymc()
     from pymc.distributions import transforms
 
     tfb = tfp.bijectors
@@ -315,4 +374,7 @@ def _mean_field_family(approx: Any, model: Any, param_names: list[str]) -> Distr
         else:
             base = Normal(f"{name}_unconstrained", loc, scale)
             factors.append(BijectorTransformedDistribution(name, base, bijector))
-    return FactoredDistribution("posterior", factors)
+    return FactoredDistribution(
+        factors,
+        label="posterior",
+    )

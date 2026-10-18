@@ -12,9 +12,11 @@ from probpipe import (
     MultivariateNormal,
     Normal,
     NumericArraySpec,
+    OutputSpec,
     condition_on,
     convert,
     mean,
+    workflow_run,
 )
 from probpipe.core._dispatch import ResolutionError
 from probpipe.distributions import Distribution
@@ -36,7 +38,7 @@ def simple_model():
 
     x = np.asarray(np.linspace(-1, 1, 20)).astype(np.float32)
     X = jnp.asarray(np.stack([np.ones_like(x), x], axis=1))
-    prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), label="beta")
+    prior = MultivariateNormal("beta", loc=jnp.zeros(2), cov=5.0 * jnp.eye(2))
     return glm_likelihood("y", PoissonFamily(), X=X) * prior
 
 
@@ -73,29 +75,31 @@ class TestInferenceMethodRegistry:
 
     def test_method_override(self, simple_model, data):
         """method= should override auto-selection."""
-        posterior = condition_on.with_options(
-            method="blackjax_rwmh",
-            method_options={"num_results": 50, "num_warmup": 20, "random_seed": 0},
-        )(simple_model, data)
+        with workflow_run(seed=0):
+            posterior = condition_on.using(
+                method="blackjax_rwmh",
+                method_options={"num_results": 50, "num_warmup": 20},
+            )(simple_model, data)
         assert method_of(posterior) == "blackjax_rwmh"
 
     def test_condition_on_default(self, simple_model, data):
         """Default condition_on should work through the registry."""
-        posterior = condition_on.with_options(
-            method_options={"num_results": 50, "num_warmup": 20, "random_seed": 0}
-        )(simple_model, data)
-        assert mean(posterior)["mean(beta)"].shape == (2,)
+        with workflow_run(seed=0):
+            posterior = condition_on.using(method_options={"num_results": 50, "num_warmup": 20})(
+                simple_model, data
+            )
+        assert mean(posterior)["beta"].shape == (2,)
 
     def test_exact_only_refuses_every_inference_method(self, simple_model, data):
         """Every registered method is approximate, so an exact-only call resolves to nothing."""
         with pytest.raises(ResolutionError):
-            condition_on.with_options(exact_only=True)(simple_model, data)
+            condition_on.using(exact_only=True)(simple_model, data)
         with pytest.raises(ResolutionError):
-            condition_on.with_options(method="blackjax_nuts", exact_only=True)(simple_model, data)
+            condition_on.using(method="blackjax_nuts", exact_only=True)(simple_model, data)
 
     def test_nonexistent_method_raises(self, simple_model, data):
         with pytest.raises(ResolutionError, match="nonexistent"):
-            condition_on.with_options(method="nonexistent")(simple_model, data)
+            condition_on.using(method="nonexistent")(simple_model, data)
 
     def test_infeasible_method_raises(self):
         """Requesting a method that can't handle the dist raises ResolutionError."""
@@ -104,10 +108,11 @@ class TestInferenceMethodRegistry:
 
     def test_a_named_method_runs_on_a_bare_law(self):
         """The registry runs a method on a plain law, whose posterior is the law itself."""
-        prior = Normal(loc=0.0, scale=1.0, label="x")
-        posterior = inference_method_registry.execute(
-            prior, method="tfp_nuts", num_results=50, num_warmup=20, random_seed=0
-        )
+        prior = Normal("x", loc=0.0, scale=1.0)
+        with workflow_run(seed=0):
+            posterior = inference_method_registry.execute(
+                prior, method="tfp_nuts", num_results=50, num_warmup=20
+            )
         assert mean(posterior).ndim <= 1
 
     def test_set_priorities_changes_selection(self, simple_model, data):
@@ -127,7 +132,7 @@ class TestInferenceMethodRegistry:
 
 
 class TestBuiltInRanks:
-    """Every built-in inference method is approximate; ranks order them.
+    """Each built-in method declares its exactness, and ranks order methods of one exactness.
 
     Methods whose ``check()`` is identical to a higher-ranked sibling are
     opt-in-only, ``priority=None``: they can never win auto-dispatch and are
@@ -138,6 +143,7 @@ class TestBuiltInRanks:
     """
 
     EXPECTED_PRIORITIES: ClassVar[dict[str, int | None]] = {
+        "empirical_reweighting": 100,
         "nutpie_nuts": 88,
         "blackjax_nuts": 85,
         "cmdstan_nuts": 82,
@@ -153,9 +159,13 @@ class TestBuiltInRanks:
         "tfp_nuts": None,
     }
 
-    def test_every_registered_method_is_approximate(self):
+    #: The built-in methods whose result is the conditional law itself.
+    EXACT_METHODS: ClassVar[frozenset[str]] = frozenset({"empirical_reweighting"})
+
+    def test_each_registered_method_declares_its_exactness(self):
         for name in inference_method_registry.list_methods():
-            assert inference_method_registry.get_method(name).exact is False, name
+            expected = name in self.EXACT_METHODS
+            assert inference_method_registry.get_method(name).exact is expected, name
 
     def test_ranks_match_anchors(self):
         # Asserts on the registered (class-level) rank so the test stays
@@ -185,10 +195,11 @@ class TestDefaultBudget:
     )
     def test_an_mcmc_method_runs_four_chains_by_default(self, simple_model, data, method):
         """A fit that sets no chain count runs four chains, so it has an R-hat."""
-        posterior = condition_on.with_options(
-            method=method,
-            method_options={"num_results": 20, "num_warmup": 20, "random_seed": 0},
-        )(simple_model, data)
+        with workflow_run(seed=0):
+            posterior = condition_on.using(
+                method=method,
+                method_options={"num_results": 20, "num_warmup": 20},
+            )(simple_model, data)
         assert num_chains(posterior) == 4
 
 
@@ -231,7 +242,10 @@ def _make_unnormalized_distribution():
 
     class UnnormalizedDist(_UnnormalizedTarget, Distribution):
         def __init__(self):
-            super().__init__("unnorm", NumericArraySpec((2,)))
+            super().__init__(
+                OutputSpec(unnorm=NumericArraySpec((2,))),
+                label="unnorm",
+            )
 
     return UnnormalizedDist()
 
@@ -244,7 +258,10 @@ def _make_normalized_distribution():
         # Inheriting SupportsLogProb gives the default
         # _unnormalized_log_prob (delegating to _log_prob) for free.
         def __init__(self):
-            super().__init__("norm", NumericArraySpec((2,)))
+            super().__init__(
+                OutputSpec(norm=NumericArraySpec((2,))),
+                label="norm",
+            )
 
     return NormalizedDist()
 
@@ -271,31 +288,33 @@ class TestUnnormalizedLogProbInference:
 
     def test_converting_an_unnormalized_law_runs_nuts(self):
         dist = _make_unnormalized_distribution()
-        posterior = convert.with_options(
-            method_options={"num_results": 200, "num_warmup": 100, "random_seed": 0}
-        )(dist, EmpiricalDistribution)
+        with workflow_run(seed=0):
+            posterior = convert.using(method_options={"num_results": 200, "num_warmup": 100})(
+                dist, EmpiricalDistribution
+            )
         assert isinstance(posterior, EmpiricalDistribution)
         # Standard normal: posterior mean ~0, std ~1 (loose tolerance —
-        # short chain, no thinning).
+        # short chain, no thinning). Observed across four workflow seeds:
+        # max |mean| 0.008-0.053, max |std - 1| 0.007-0.058.
         draws = np.asarray(posterior.atoms).reshape(-1, 2)
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.4)
         np.testing.assert_allclose(draws.std(0), [1.0, 1.0], atol=0.4)
 
     def test_converting_an_unnormalized_law_runs_rwmh(self):
         dist = _make_unnormalized_distribution()
-        posterior = convert.with_options(
-            method="blackjax_rwmh",
-            method_options={
-                "num_results": 2000,
-                "num_warmup": 100,
-                "step_size": 0.5,
-                "random_seed": 0,
-            },
-        )(dist, EmpiricalDistribution)
+        with workflow_run(seed=0):
+            posterior = convert.using(
+                method="blackjax_rwmh",
+                method_options={
+                    "num_results": 2000,
+                    "num_warmup": 100,
+                    "step_size": 0.5,
+                },
+            )(dist, EmpiricalDistribution)
         assert isinstance(posterior, EmpiricalDistribution)
-        # Standard normal target. Observed across seeds 0-7: max |mean|
-        # 0.01-0.14, max |std - 1| 0.04-0.10. A wrong target such as
-        # N(3, 0.25 I) fails both bounds.
+        # Standard normal target. Observed across four workflow seeds: max
+        # |mean| 0.023-0.087, max |std - 1| 0.022-0.038. A wrong target such
+        # as N(3, 0.25 I) fails both bounds.
         draws = np.asarray(posterior.atoms).reshape(-1, 2)
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.3)
         np.testing.assert_allclose(draws.std(0), [1.0, 1.0], atol=0.25)
@@ -310,13 +329,14 @@ class TestUnnormalizedLogProbInference:
         from probpipe import EmpiricalDistribution
 
         dist = _make_normalized_distribution()
-        posterior = inference_method_registry.execute(
-            dist, method="blackjax_nuts", num_results=1000, num_warmup=200, random_seed=0
-        )
+        with workflow_run(seed=0):
+            posterior = inference_method_registry.execute(
+                dist, method="blackjax_nuts", num_results=1000, num_warmup=200
+            )
         assert isinstance(posterior, EmpiricalDistribution)
-        # Standard normal target. Observed across seeds 0-7: max |mean|
-        # 0.02-0.06, max |std - 1| 0.01-0.08. A wrong target such as
-        # N(3, 0.25 I) fails both bounds.
+        # Standard normal target. Observed across four workflow seeds: max
+        # |mean| 0.002-0.056, max |std - 1| 0.014-0.029. A wrong target such
+        # as N(3, 0.25 I) fails both bounds.
         draws = np.asarray(flat_draws(posterior)).reshape(-1, 2)
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.15)
         np.testing.assert_allclose(draws.std(0), [1.0, 1.0], atol=0.2)
@@ -325,18 +345,18 @@ class TestUnnormalizedLogProbInference:
         from probpipe import EmpiricalDistribution
 
         dist = _make_normalized_distribution()
-        posterior = inference_method_registry.execute(
-            dist,
-            method="blackjax_rwmh",
-            num_results=2000,
-            num_warmup=50,
-            step_size=0.5,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            posterior = inference_method_registry.execute(
+                dist,
+                method="blackjax_rwmh",
+                num_results=2000,
+                num_warmup=50,
+                step_size=0.5,
+            )
         assert isinstance(posterior, EmpiricalDistribution)
-        # Standard normal target. Observed across seeds 0-7: max |mean|
-        # 0.01-0.11, max |std - 1| 0.02-0.06. A wrong target such as
-        # N(3, 0.25 I) fails both bounds.
+        # Standard normal target. Observed across four workflow seeds: max
+        # |mean| 0.013-0.064, max |std - 1| 0.015-0.034. A wrong target such
+        # as N(3, 0.25 I) fails both bounds.
         draws = np.asarray(flat_draws(posterior)).reshape(-1, 2)
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.3)
         np.testing.assert_allclose(draws.std(0), [1.0, 1.0], atol=0.2)
@@ -347,7 +367,10 @@ class TestUnnormalizedLogProbInference:
 
         class NoDensityDist(Distribution):
             def __init__(self):
-                super().__init__("no_density", NumericArraySpec((2,)))
+                super().__init__(
+                    OutputSpec(no_density=NumericArraySpec((2,))),
+                    label="no_density",
+                )
 
         dist = NoDensityDist()
         for method in ("tfp_nuts", "blackjax_rwmh"):
@@ -374,7 +397,7 @@ def gaussian_model():
     likelihood + data) pass ``check()`` on this target — so it is the
     canonical case for testing the 85-vs-75 tier ordering.
     """
-    prior = Normal(loc=0.0, scale=1.0, label="mu")
+    prior = Normal("mu", loc=0.0, scale=1.0)
     likelihood = ObservationKernel(
         "y",
         {"mu": prior.event_spec.spec},
@@ -449,7 +472,13 @@ def _logistic_target():
     joint = glm_likelihood("y", BernoulliFamily(), X=X) * MultivariateNormal(
         "beta", jnp.zeros(2), jnp.eye(2)
     )
-    return _unnormalized_conditional(joint, Record("given", {"y": jnp.array([1, 0, 1, 0])}))
+    return _unnormalized_conditional(
+        joint,
+        Record(
+            {"y": jnp.array([1, 0, 1, 0])},
+            label="given",
+        ),
+    )
 
 
 class TestTargets:
@@ -481,9 +510,8 @@ class TestTargets:
         target = _logistic_target()
         info = inference_method_registry.check(target)
         assert (info.feasible, info.method_name) == (True, "blackjax_nuts")
-        posterior = inference_method_registry.execute(
-            target, num_results=30, num_warmup=30, random_seed=0
-        )
+        with workflow_run(seed=0):
+            posterior = inference_method_registry.execute(target, num_results=30, num_warmup=30)
         assert set(posterior.event_spec.components) == {"beta"}
         assert flat_draws(posterior)["beta"].shape == (4 * 30, 2)
 
@@ -505,7 +533,7 @@ class TestTargets:
         from probpipe.operations._condition import condition_on as condition_on_operation
 
         simulator = Normal("theta", 0.0, 1.0) * Normal("y", 0.0, 1.0)
-        target = condition_on_operation.with_options(method="unnormalized")(
+        target = condition_on_operation.using(method="unnormalized")(
             _WithoutDensity(simulator), {"y": 0.3}
         )
         info = inference_method_registry.get_method("blackjax_nuts").check(target)
@@ -514,20 +542,22 @@ class TestTargets:
 
     def test_a_method_records_its_target(self, full_provenance_mode):
         target = _logistic_target()
-        posterior = inference_method_registry.execute(
-            target, num_results=10, num_warmup=10, random_seed=0
-        )
+        with workflow_run(seed=0):
+            posterior = inference_method_registry.execute(target, num_results=10, num_warmup=10)
         assert posterior.provenance.operation == "blackjax_nuts"
         (parent,) = posterior.provenance.parents
         assert parent.parent is target
-        assert target.provenance.metadata == {"stage": "exact", "route": "bayes"}
+        assert target.provenance.metadata == {"stage": "exact", "route": "inference_methods"}
 
 
 class _WithoutDensity(Distribution, SupportsSampling):
     """A record law that only samples, as a simulator does."""
 
     def __init__(self, law) -> None:
-        super().__init__("simulator", law.event_spec)
+        super().__init__(
+            law.event_spec,
+            label="simulator",
+        )
         self._law = law
 
     def _sample(self, key, sample_shape=()):

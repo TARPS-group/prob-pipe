@@ -44,9 +44,19 @@ class TestOneDraw:
     def test_a_measure_draws_a_law(self):
         assert isinstance(sample(Measure("m")), Distribution)
 
-    def test_the_draw_is_labeled_by_the_law(self):
-        assert sample(Gaussian("g")).label == "g"
-        assert sample(Gaussian("g"), sample_shape=(3,)).label == "g"
+    def test_a_draw_lists_a_nested_fixed_path_and_names_no_level_by_it(self):
+        law = Gaussian("g")
+        held = law._with_expression(law._expression.with_fixed(("y/obs",)))
+        draws = sample(held, sample_shape=(3,))
+        assert draws.label == "g ~ g; y/obs"
+        assert draws.level_names == ("sample",)
+        assert draws[0].label == "(g ~ g; y/obs)[sample=0]"
+
+    def test_the_draw_is_labeled_by_its_components_and_the_law(self):
+        assert sample(Gaussian("g")).label == "g ~ g"
+        draws = sample(Gaussian("g"), sample_shape=(3,))
+        assert draws.label == "g ~ g"
+        assert draws[0].label == "(g ~ g)[sample=0]"
 
 
 class TestBatches:
@@ -59,6 +69,10 @@ class TestBatches:
 
     def test_an_integer_sample_shape_is_one_axis(self):
         assert sample(Gaussian("g"), sample_shape=5).batch_shape == (5,)
+
+    @pytest.mark.parametrize("shape", [[4, 3], np.array([4, 3]), (np.int64(4), 3)])
+    def test_any_iterable_of_integers_is_a_sample_shape(self, shape):
+        assert sample(Gaussian("g"), sample_shape=shape).batch_shape == (4, 3)
 
     def test_a_record_law_draws_a_batch_of_records(self):
         draws = sample(Pair("p"), sample_shape=(6,))
@@ -80,7 +94,7 @@ class TestBatches:
         assert isinstance(whole.spec, BatchSpec)
         record = sample.check(Pair("p"), (4,)).result
         assert list(record.components) == list(Pair("p").event_spec.components)
-        assert record.spec == BatchSpec(Pair("p").event_spec.spec, ((4,),), ("sample",))
+        assert record.spec == BatchSpec(Pair("p").event_spec.spec, sample=4)
 
     def test_a_measure_draws_a_batch_of_laws(self):
         draws = sample(Measure("m"), sample_shape=(3,))
@@ -88,35 +102,35 @@ class TestBatches:
         assert draws.batch_shape == (3,)
 
     def test_the_draws_of_a_batch_are_independent(self):
-        values = np.asarray(sample(Gaussian("g"), sample_shape=(64,)).values)
+        values = np.asarray(sample(Gaussian("g"), sample_shape=(64,)).raw)
         assert len(np.unique(values)) == 64
 
     def test_a_seeded_workflow_reproduces_the_batch(self):
         with workflow_run(seed=5):
-            first = np.asarray(sample(Gaussian("g"), sample_shape=(8,)).values)
+            first = np.asarray(sample(Gaussian("g"), sample_shape=(8,)).raw)
         with workflow_run(seed=5):
-            second = np.asarray(sample(Gaussian("g"), sample_shape=(8,)).values)
+            second = np.asarray(sample(Gaussian("g"), sample_shape=(8,)).raw)
         np.testing.assert_array_equal(first, second)
 
 
 class TestRawDraws:
     def test_one_raw_draw_is_the_raw_value(self):
-        draw = sample.with_options(raw=True)(Gaussian("g"))
+        draw = sample.using(raw=True)(Gaussian("g"))
         assert isinstance(draw, jnp.ndarray) and draw.shape == ()
 
     def test_a_raw_batch_is_the_stacked_array_with_the_batch_axes_leading(self):
-        draws = sample.with_options(raw=True)(Vector("v"), sample_shape=(5,))
+        draws = sample.using(raw=True)(Vector("v"), sample_shape=(5,))
         assert isinstance(draws, jnp.ndarray) and draws.shape == (5, 2)
 
     def test_a_raw_draw_of_a_measure_is_the_law_itself(self):
-        assert isinstance(sample.with_options(raw=True)(Measure("m")), Distribution)
+        assert isinstance(sample.using(raw=True)(Measure("m")), Distribution)
 
     def test_a_raw_batch_of_laws_is_an_object_array(self):
-        draws = sample.with_options(raw=True)(Measure("m"), sample_shape=(2,))
+        draws = sample.using(raw=True)(Measure("m"), sample_shape=(2,))
         assert isinstance(draws, np.ndarray) and draws.dtype == object
 
     def test_a_raw_batch_of_a_joint_is_the_mapping_of_its_columns(self):
-        draws = sample.with_options(raw=True)(Gaussian("a") * Gaussian("b"), sample_shape=(3,))
+        draws = sample.using(raw=True)(Gaussian("a") * Gaussian("b"), sample_shape=(3,))
         assert isinstance(draws, dict) and list(draws) == ["a", "b"]
         assert all(jnp.shape(column) == (3,) for column in draws.values())
 
@@ -126,24 +140,30 @@ class TestRequirements:
         with pytest.raises(ApplicabilityError, match=r"\['n'\]"):
             sample(Polymorphic("poly"))
 
-    @pytest.mark.parametrize("shape", [True, (2.5,), "3", (-1,)])
-    def test_a_malformed_sample_shape_raises_applicability_error(self, shape):
-        with pytest.raises(ApplicabilityError):
+    @pytest.mark.parametrize(
+        ("shape", "match"),
+        [
+            (True, "sample_shape must be an int or a sequence of ints, got bool True"),
+            ((2.5,), "sample_shape entry must be a non-negative int, got float 2.5"),
+            ("3", "sample_shape must be an int or a sequence of ints, got str '3'"),
+            ("S", "sample_shape must be an int or a sequence of ints, got str 'S'"),
+            ((-1,), "sample_shape entry must be non-negative, got -1"),
+        ],
+    )
+    def test_a_malformed_sample_shape_raises_applicability_error(self, shape, match):
+        with pytest.raises(ApplicabilityError, match=match):
             sample(Gaussian("g"), sample_shape=shape)
 
     def test_a_law_that_does_not_sample_raises_resolution_error(self):
-        with pytest.raises(ResolutionError, match="does not claim SupportsSampling"):
+        with pytest.raises(ResolutionError, match="does not implement SupportsSampling"):
             sample(Bare("b"))
 
     def test_the_operation_takes_no_key(self):
-        assert list(inspect.signature(sample).parameters) == ["d", "sample_shape"]
+        assert list(inspect.signature(sample).parameters) == ["d", "sample_shape", "given"]
 
     def test_a_kernel_is_refused_without_its_given(self):
         with pytest.raises(ApplicabilityError, match="ConditionalDistributionSpec"):
             sample(Kernel())
 
-    @pytest.mark.pending(
-        reason="the fused conditional path adds given= to the operation", raises=TypeError
-    )
     def test_the_fused_path_draws_from_the_kernel_at_its_given(self):
         assert isinstance(sample(Kernel(), given={"mu": 1.0}), NumericArray)

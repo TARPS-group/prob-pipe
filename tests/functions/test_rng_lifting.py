@@ -18,6 +18,7 @@ from probpipe import (
     NumericDistribution,
     NumericRecord,
     NumericRecordBatch,
+    OutputSpec,
     SupportsSampling,
     function,
     workflow_run,
@@ -29,7 +30,7 @@ from probpipe.functions import _context, _plan
 class _RecordingNormal(Normal):
     def __init__(self, sample_calls, *, label):
         self.sample_calls = sample_calls
-        super().__init__(loc=0.0, scale=1.0, label=label)
+        super().__init__(label, loc=0.0, scale=1.0, label=label)
 
     def _sample(self, key, sample_shape=()):
         words = tuple(int(word) for word in jax.random.key_data(key))
@@ -40,7 +41,10 @@ class _RecordingNormal(Normal):
 class _GoldenBitsDistribution(NumericDistribution, SupportsSampling):
     def __init__(self, sample_calls):
         self.sample_calls = sample_calls
-        super().__init__("bits", NumericArraySpec((), "float32", real))
+        super().__init__(
+            OutputSpec(bits=NumericArraySpec((), "float32", real)),
+            label="bits",
+        )
 
     def _sample(self, key, sample_shape=()):
         words = tuple(int(word) for word in jax.random.key_data(key))
@@ -57,7 +61,11 @@ class TestSequentialLiftingWorkflowRun:
         sample_calls = []
         dist = _GoldenBitsDistribution(sample_calls)
 
-        @function(n_broadcast_samples=5, dispatch="sequential")
+        @function(
+            n_broadcast_samples=5,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         def identity(value):
             return value
 
@@ -71,7 +79,11 @@ class TestSequentialLiftingWorkflowRun:
         )
 
     def test_function_builds_one_stochastic_plan_for_a_lifted_call(self):
-        @function(n_broadcast_samples=8, dispatch="sequential")
+        @function(
+            n_broadcast_samples=8,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         def identity(x):
             return x
 
@@ -82,15 +94,15 @@ class TestSequentialLiftingWorkflowRun:
             ) as build_plan,
             workflow_run(seed=7),
         ):
-            result = identity(Normal(loc=0.0, scale=1.0, label="x"))
+            result = identity(Normal("x", loc=0.0, scale=1.0))
 
         assert result.num_atoms == 8
         build_plan.assert_called_once()
 
     def test_invalid_sample_count_fails_before_probe_or_event_commit(self):
         workflow = Function(
+            lambda x: x,
             label="function",
-            fn=lambda x: x,
             n_broadcast_samples=8,
             dispatch="auto",
         )
@@ -101,18 +113,28 @@ class TestSequentialLiftingWorkflowRun:
             workflow_run(seed=7),
             pytest.raises(ValueError, match="n_broadcast_samples must be a positive integer"),
         ):
-            workflow.with_options(n_broadcast_samples=0)(Normal(loc=0.0, scale=1.0, label="x"))
+            workflow.using(n_broadcast_samples=0)(Normal("x", loc=0.0, scale=1.0))
 
         resolve_dispatch.assert_not_called()
         commit_invocation.assert_not_called()
 
     def test_nested_sources_claim_raw_keys_by_row_major_logical_unit(self):
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", offset=float(index)) for index in range(3)],
+            [
+                NumericRecord(
+                    {"offset": float(index)},
+                    label="row",
+                )
+                for index in range(3)
+            ],
             level_name="draw",
         )
 
-        @function(n_broadcast_samples=6, dispatch="sequential")
+        @function(
+            n_broadcast_samples=6,
+            dispatch="sequential",
+            output_spec=OutputSpec(combine=None),
+        )
         def combine(row, first, second):
             return row["offset"] + first + second
 
@@ -172,11 +194,15 @@ class TestSequentialLiftingWorkflowRun:
         assert [words for words, _shape in second_calls] == second_key_words
 
     def test_seeded_run_reproduces_distinct_lifted_occurrences(self):
-        @function(n_broadcast_samples=16, dispatch="sequential")
+        @function(
+            n_broadcast_samples=16,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         def identity(x):
             return x
 
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
 
         def run():
             with workflow_run(seed=7):
@@ -190,11 +216,15 @@ class TestSequentialLiftingWorkflowRun:
         assert not jnp.array_equal(first_run[0].atoms, first_run[1].atoms)
 
     def test_bare_lifted_calls_receive_independent_ephemeral_roots(self):
-        @function(n_broadcast_samples=16, dispatch="sequential")
+        @function(
+            n_broadcast_samples=16,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         def identity(x):
             return x
 
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
         with patch(
             "probpipe.functions._context._os_urandom",
             side_effect=[bytes(8), bytes.fromhex("0000000000000001")],
@@ -206,16 +236,20 @@ class TestSequentialLiftingWorkflowRun:
         assert urandom.call_count == 2
 
     def test_non_stochastic_siblings_do_not_shift_later_lifting(self):
-        @function(n_broadcast_samples=16, dispatch="sequential")
+        @function(
+            n_broadcast_samples=16,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         def identity(x):
             return x
 
-        @function(dispatch="sequential")
+        @function(dispatch="sequential", output_spec=OutputSpec(deterministic=None))
         def deterministic(x):
             return x + 1
 
-        normal = Normal(loc=0.0, scale=1.0, label="x")
-        empirical = EmpiricalDistribution("x", jnp.asarray([1.0, 2.0, 3.0]))
+        normal = Normal("x", loc=0.0, scale=1.0)
+        empirical = EmpiricalDistribution(jnp.asarray([1.0, 2.0, 3.0]), component="x")
 
         def baseline():
             with workflow_run(seed=7):
@@ -226,7 +260,7 @@ class TestSequentialLiftingWorkflowRun:
                 first = identity(normal)
                 deterministic(1.0)
                 identity(empirical)
-                with pytest.raises(TypeError, match="Missing required input"):
+                with pytest.raises(TypeError, match=r"identity\(\) missing required argument 'x'"):
                     identity()
                 second = identity(normal)
                 return first, second
@@ -239,11 +273,15 @@ class TestSequentialLiftingWorkflowRun:
 
 
 def test_auto_probe_detects_nested_randomness_caught_by_user_code():
-    @function(n_broadcast_samples=5, dispatch="sequential")
+    @function(
+        n_broadcast_samples=5,
+        dispatch="sequential",
+        output_spec=OutputSpec(inner_identity=None),
+    )
     def inner_identity(value):
         return value
 
-    nested_dist = Normal(loc=0.0, scale=1.0, label="nested")
+    nested_dist = Normal("nested", loc=0.0, scale=1.0)
 
     def call_nested_and_catch(value):
         with suppress(Exception):
@@ -251,23 +289,29 @@ def test_auto_probe_detects_nested_randomness_caught_by_user_code():
         return value
 
     auto = Function(
+        call_nested_and_catch,
         label="call_nested_and_catch",
-        fn=call_nested_and_catch,
         n_broadcast_samples=5,
         dispatch="auto",
+        output_spec=OutputSpec(call_nested_and_catch=None),
     )
     sequential = Function(
+        call_nested_and_catch,
         label="call_nested_and_catch",
-        fn=call_nested_and_catch,
         n_broadcast_samples=5,
         dispatch="sequential",
+        output_spec=OutputSpec(call_nested_and_catch=None),
     )
 
-    @function(n_broadcast_samples=5, dispatch="sequential")
+    @function(
+        n_broadcast_samples=5,
+        dispatch="sequential",
+        output_spec=OutputSpec(following_identity=None),
+    )
     def following_identity(value):
         return value
 
-    outer_dist = Normal(loc=0.0, scale=1.0, label="outer")
+    outer_dist = Normal("outer", loc=0.0, scale=1.0)
 
     def following_samples(workflow):
         with workflow_run(seed=7):

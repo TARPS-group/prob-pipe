@@ -31,7 +31,10 @@ def _square(z):
 
 
 def _mixed() -> Record:
-    return Record("school", {"effect": jnp.arange(3.0), "label": "A", "model": _square})
+    return Record(
+        {"effect": jnp.arange(3.0), "label": "A", "model": _square},
+        label="school",
+    )
 
 
 class TestARecordFieldIsAViewOfItsKind:
@@ -42,23 +45,26 @@ class TestARecordFieldIsAViewOfItsKind:
 
         assert isinstance(view, NumericArray) and view.label == "effect"
         assert view.spec == record.spec["effect"]
-        assert view.raw() is record.raw("effect")
+        assert view.raw is record["effect"].raw
 
     def test_an_opaque_field_is_an_opaque_under_its_key(self):
         view = _mixed()["label"]
 
         assert isinstance(view, Opaque) and view.label == "label"
-        assert view.raw() == "A"
+        assert view.raw == "A"
 
     def test_a_callable_field_is_a_function_under_its_key(self):
         view = _mixed()["model"]
 
         assert isinstance(view, Function) and view.label == "model"
-        assert view.raw() is _square
+        assert view.raw is _square
 
     def test_a_stored_law_is_a_copy_under_its_key(self):
-        law = Normal("prior", 0.0, 1.0)
-        record = Record("r", theta=law)
+        law = Normal("theta", 0.0, 1.0, label="prior")
+        record = Record(
+            {"theta": law},
+            label="r",
+        )
 
         view = record["theta"]
 
@@ -66,7 +72,10 @@ class TestARecordFieldIsAViewOfItsKind:
         assert law.label == "prior"
 
     def test_a_nested_field_is_named_by_its_key(self):
-        record = Record("r", {"g/x": jnp.zeros(2), "y": 1.0})
+        record = Record(
+            {"g/x": jnp.zeros(2), "y": 1.0},
+            label="r",
+        )
 
         assert record["g/x"].label == "g/x"
         assert record.at_path("g", "x").label == "g/x"
@@ -89,7 +98,10 @@ class TestAViewRecordsItsContainer:
         assert view.provenance.metadata == {"path": "effect"}
 
     def test_a_stored_term_is_the_second_parent(self):
-        record = Record("r", theta=Normal("prior", 0.0, 1.0))
+        record = Record(
+            {"theta": Normal("theta", 0.0, 1.0, label="prior")},
+            label="r",
+        )
 
         parents = record["theta"].provenance.parents
 
@@ -119,7 +131,12 @@ class TestAFieldInsideATraceIsItsLeaf:
             seen.append(record["x"])
             return record["x"] * 2
 
-        out = double(Record("r", x=jnp.arange(3.0)))
+        out = double(
+            Record(
+                {"x": jnp.arange(3.0)},
+                label="r",
+            )
+        )
 
         assert isinstance(seen[0], jax.core.Tracer)
         np.testing.assert_array_equal(out, [0.0, 2.0, 4.0])
@@ -129,7 +146,10 @@ class TestARecordOfViewsIsTheRecord:
     def test_a_rebuilt_record_is_equal_hashes_alike_and_fingerprints_alike(self):
         record = _mixed()
 
-        rebuilt = Record(record.label, dict(record))
+        rebuilt = Record(
+            dict(record),
+            label=record.label,
+        )
 
         assert rebuilt == record
         assert hash(rebuilt) == hash(record)
@@ -140,10 +160,10 @@ class TestABatchColumnIsTheBatchOfItsKind:
     @pytest.fixture
     def batch(self) -> RecordBatch:
         return RecordBatch(
-            "draws",
             {"x": jnp.arange(6.0).reshape(3, 2), "tag": np.array(["a", "b", "c"], dtype=object)},
             "draw",
             element_spec=RecordSpec(x=NumericArraySpec((2,)), tag=OpaqueSpec(type=str)),
+            label="draws",
         )
 
     def test_an_array_column_is_a_numeric_array_batch_on_the_batch_levels(self, batch):
@@ -152,17 +172,20 @@ class TestABatchColumnIsTheBatchOfItsKind:
         assert isinstance(column, NumericArrayBatch)
         assert column.label == "x" and column.level_names == ("draw",)
         assert column.element_spec == NumericArraySpec((2,))
-        assert column.raw() is batch._raw_column("x")
+        assert column.raw is batch._raw_column("x")
 
     def test_an_opaque_column_is_an_opaque_batch(self, batch):
         column = batch["tag"]
 
         assert isinstance(column, OpaqueBatch)
-        assert [element.raw() for element in column] == ["a", "b", "c"]
+        assert [element.raw for element in column] == ["a", "b", "c"]
 
     def test_a_traced_column_is_the_traced_array(self):
         batch = NumericRecordBatch(
-            "draws", {"x": jnp.arange(3.0)}, "draw", element_spec=RecordSpec(x=())
+            {"x": jnp.arange(3.0)},
+            "draw",
+            element_spec=RecordSpec(x=()),
+            label="draws",
         )
 
         out = jax.jit(lambda b: b["x"] * 2)(batch)
@@ -174,6 +197,6 @@ class TestAMomentReadsTheSameWay:
     def test_a_record_mean_gives_views_of_its_fields(self):
         moment = mean(Normal("a", 0.0, 1.0) * Normal("b", 2.0, 1.0))
 
-        field = moment["mean(b)"]
-        assert isinstance(field, NumericArray) and field.label == "mean(b)"
+        field = moment["b"]
+        assert isinstance(field, NumericArray) and field.label == "b"
         assert float(field) == pytest.approx(2.0)

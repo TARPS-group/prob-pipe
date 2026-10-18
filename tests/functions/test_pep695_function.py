@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from typing import Generic, TypeVar
 
+from probpipe import Function
 from probpipe.functions import function
-from probpipe.values._function_base import Function
 
 _T = TypeVar("_T")
 

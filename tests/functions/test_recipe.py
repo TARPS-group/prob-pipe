@@ -7,6 +7,7 @@ import inspect
 import json
 import sys
 from pathlib import Path
+from typing import TypeAliasType
 from unittest.mock import patch
 
 import jax.numpy as jnp
@@ -19,18 +20,31 @@ from probpipe import (
     Function,
     InputSpec,
     Normal,
+    NumericArray,
+    NumericArrayBatch,
+    NumericArraySpec,
     NumericRecord,
     NumericRecordBatch,
+    OpaqueSpec,
+    OutputSpec,
+    Poisson,
     Provenance,
     ProvenanceMode,
+    RecordSpec,
     ReplayCompatibilityError,
+    mean,
+    quantile,
     replay_run,
     sample,
     workflow_run,
 )
 from probpipe.functions import _broker, _callable, _recipe, _replay
 from probpipe.functions._managed import ManagedEffectClaim, sweep_unit_segment
-from tests.functions import _replay_fixtures
+from tests.functions import (
+    _alias_replay_fixtures,
+    _postponed_alias_replay_fixtures,
+    _replay_fixtures,
+)
 from tests.functions._replay_fixtures import (
     replayable_affine,
     replayable_canonical_defaults,
@@ -43,9 +57,9 @@ from tests.functions._replay_fixtures import (
 )
 
 _CALLABLE_ANCHOR_GOLDENS = {
-    "cpython-3.12": "52d15d19467f4500f1bdc354798e5dbd99e07b9425077a71b7af71b210756895",
-    "cpython-3.13": "d1a2b6bf380f4b96b19f3557b35ea91f88a811e2ea9a2c902e447f84e11768a8",
-    "cpython-3.14": "4acd2f2a0428a7c5422c41db52cb378446b589c8896876aa55d04cb57b221dda",
+    "cpython-3.12": "18ae73e6204b142822c6d7a94e3fc8f021d6bbb87da94743cb3ec96309ceef57",
+    "cpython-3.13": "e80ece2774f2124fb06f1f9e942bd5a34d1383e69132bed87e2a9cd207a0b31a",
+    "cpython-3.14": "a1e101d3a658683213682af93960988bd4cf536fcb6427799cbd269d36142897",
 }
 
 
@@ -72,10 +86,10 @@ def _add(row, noise):
 
 
 def _draw_value(value):
-    return sample(Normal(loc=value, scale=1.0, label="draw"))
+    return sample(Normal("draw", loc=value, scale=1.0))
 
 
-_INNER_DRAW = Function(label="_draw_value", fn=_draw_value, dispatch="sequential")
+_INNER_DRAW = Function(_draw_value, label="_draw_value", dispatch="sequential")
 
 
 def _nested_automatic(value):
@@ -94,7 +108,13 @@ def _replay_controls(result):
 
 def _record_batch():
     return NumericRecordBatch.stack(
-        [NumericRecord("row", x=float(value)) for value in range(2)],
+        [
+            NumericRecord(
+                {"x": float(value)},
+                label="row",
+            )
+            for value in range(2)
+        ],
         level_name="draw",
     )
 
@@ -138,7 +158,9 @@ class TestWorkflowRecipeRecording:
         ],
     )
     def test_structural_identity_json_rejects_malformed_byte_markers(self, marker):
-        with pytest.raises(ReplayCompatibilityError, match="structural value"):
+        with pytest.raises(
+            ReplayCompatibilityError, match=r"test\.identity contains invalid entry"
+        ):
             _replay._structural_tuple(
                 ["source", marker],
                 field_name="test.identity",
@@ -146,13 +168,14 @@ class TestWorkflowRecipeRecording:
 
     def test_seeded_lifting_records_root_plan_and_one_batched_event(self):
         workflow = Function(
+            _identity,
             label="_identity",
-            fn=_identity,
             dispatch="sequential",
             n_broadcast_samples=11,
+            output_spec=OutputSpec(_identity=None),
         )
         with workflow_run(seed=7):
-            result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         recipe = _randomness(result)
         assert recipe["schema"] == "probpipe.rng_recipe/v1"
@@ -182,7 +205,12 @@ class TestWorkflowRecipeRecording:
         ]
 
     def test_anonymous_and_ephemeral_roots_are_recorded_only_after_success(self):
-        workflow = Function(label="_identity", fn=_identity, n_broadcast_samples=5)
+        workflow = Function(
+            _identity,
+            label="_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(_identity=None),
+        )
         entropy = bytes.fromhex("0123456789abcdef")
 
         with patch(
@@ -190,8 +218,8 @@ class TestWorkflowRecipeRecording:
             return_value=entropy,
         ) as urandom:
             with workflow_run():
-                anonymous = workflow(value=Normal(loc=0.0, scale=1.0, label="x"))
-            ephemeral = workflow(value=Normal(loc=0.0, scale=1.0, label="x"))
+                anonymous = workflow(value=Normal("x", loc=0.0, scale=1.0))
+            ephemeral = workflow(value=Normal("x", loc=0.0, scale=1.0))
 
         assert _randomness(anonymous)["root_words"] == [0x01234567, 0x89ABCDEF]
         assert _randomness(ephemeral)["root_words"] == [0x01234567, 0x89ABCDEF]
@@ -202,16 +230,25 @@ class TestWorkflowRecipeRecording:
         assert urandom.call_count == 2
 
     def test_deterministic_and_exact_calls_have_no_recipe(self):
-        deterministic = Function(label="_identity", fn=_identity)(value=3.0)
-        exact_workflow = Function(label="_identity", fn=_identity, n_broadcast_samples=8)
-        exact = exact_workflow(value=EmpiricalDistribution("exact", jnp.asarray([1.0, 2.0])))
+        deterministic = Function(
+            _identity, label="_identity", output_spec=OutputSpec(_identity=None)
+        )(value=3.0)
+        exact_workflow = Function(
+            _identity,
+            label="_identity",
+            n_broadcast_samples=8,
+            output_spec=OutputSpec(_identity=None),
+        )
+        exact = exact_workflow(
+            value=EmpiricalDistribution(jnp.asarray([1.0, 2.0]), component="exact")
+        )
 
         assert deterministic.provenance.controls == {}
         assert exact.provenance.controls == {}
 
     def test_direct_automatic_sample_recipe_remains_standalone(self):
         with workflow_run(seed=4):
-            result = sample(Normal(loc=0.0, scale=1.0, label="x"))
+            result = sample(Normal("x", loc=0.0, scale=1.0))
 
         replay = _replay_controls(result)
         assert replay["plan"]["canonical_fields"]["kind"] == "direct_operation"
@@ -219,11 +256,16 @@ class TestWorkflowRecipeRecording:
         assert replay["standalone"]["eligibility"] == "supported"
 
     def test_mixed_plan_records_only_the_sampled_root_event(self):
-        workflow = Function(label="_difference", fn=_difference, n_broadcast_samples=5)
+        workflow = Function(
+            _difference,
+            label="_difference",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(_difference=None),
+        )
         with workflow_run(seed=9):
             result = workflow(
-                left=EmpiricalDistribution("left", jnp.asarray([1.0, 2.0])),
-                right=Normal(loc=0.0, scale=1.0, label="right"),
+                left=EmpiricalDistribution(jnp.asarray([1.0, 2.0]), component="left"),
+                right=Normal("right", loc=0.0, scale=1.0),
             )
 
         recipe = _randomness(result)
@@ -234,11 +276,17 @@ class TestWorkflowRecipeRecording:
         ] == ["exact", "sampled"]
 
     def test_nested_sweep_recipe_contains_every_canonical_unit(self):
-        workflow = Function(label="_add", fn=_add, n_broadcast_samples=5, dispatch="sequential")
+        workflow = Function(
+            _add,
+            label="_add",
+            n_broadcast_samples=5,
+            dispatch="sequential",
+            output_spec=OutputSpec(_add=None),
+        )
         with workflow_run(seed=12):
             result = workflow(
                 row=_record_batch(),
-                noise=Normal(loc=0.0, scale=1.0, label="noise"),
+                noise=Normal("noise", loc=0.0, scale=1.0),
             )
 
         recipe = _randomness(result)
@@ -281,7 +329,10 @@ class TestWorkflowRecipeRecording:
             requested_dispatch="thread",
             requested_workflow_kind="off",
             callable_anchor=_callable.capture_function_anchor(
-                Function(label="_identity", fn=_identity)
+                Function(
+                    _identity,
+                    label="_identity",
+                )
             ),
         )
 
@@ -336,7 +387,7 @@ class TestWorkflowRecipeRecording:
             _recipe.provenance_recipe_fields(None)
 
     def test_nested_automatic_function_is_marked_non_standalone(self):
-        workflow = Function(label="_nested_automatic", fn=_nested_automatic, dispatch="thread")
+        workflow = Function(_nested_automatic, label="_nested_automatic", dispatch="thread")
         with workflow_run(seed=21):
             result = workflow(value=1.0)
 
@@ -349,13 +400,14 @@ class TestWorkflowRecipeRecording:
 
     def test_parent_recipe_keeps_only_its_own_lifting_event(self):
         workflow = Function(
+            _nested_automatic,
             label="_nested_automatic",
-            fn=_nested_automatic,
             dispatch="sequential",
             n_broadcast_samples=5,
+            output_spec=OutputSpec(_nested_automatic=None),
         )
         with workflow_run(seed=21):
-            result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         replay = _replay_controls(result)
         randomness = _randomness(result)
@@ -367,10 +419,14 @@ class TestWorkflowRecipeRecording:
 
     def test_recipe_roundtrip_contains_no_operational_ownership_state(self):
         workflow = Function(
-            label="_identity", fn=_identity, dispatch="thread", n_broadcast_samples=5
+            _identity,
+            label="_identity",
+            dispatch="thread",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(_identity=None),
         )
         with workflow_run(seed=5):
-            result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         payload = result.provenance.to_dict()
         restored = Provenance.from_dict(json.loads(json.dumps(payload)))
@@ -389,10 +445,15 @@ class TestWorkflowRecipeRecording:
 
     def test_provenance_off_persists_no_recipe(self):
         probpipe.provenance_config.mode = ProvenanceMode.OFF
-        workflow = Function(label="_identity", fn=_identity, n_broadcast_samples=5)
+        workflow = Function(
+            _identity,
+            label="_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(_identity=None),
+        )
 
         with workflow_run(seed=7):
-            result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         assert result.provenance is None
 
@@ -411,14 +472,15 @@ class TestWorkflowRecipeRecording:
     ):
         probpipe.provenance_config.mode = initial_mode
         workflow = Function(
+            implementation,
             label="implementation",
-            fn=implementation,
             dispatch="sequential",
             n_broadcast_samples=5,
+            output_spec=OutputSpec(implementation=None),
         )
 
         with workflow_run(seed=7):
-            result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         assert (result.provenance is not None) is expect_provenance
         if result.provenance is not None:
@@ -426,38 +488,200 @@ class TestWorkflowRecipeRecording:
 
     def test_nested_workflow_inherits_outer_provenance_mode(self):
         probpipe.provenance_config.mode = ProvenanceMode.FULL
-        workflow = Function(label="_identity", fn=_identity, n_broadcast_samples=5)
+        workflow = Function(
+            _identity,
+            label="_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(_identity=None),
+        )
 
         with workflow_run(seed=7):
             probpipe.provenance_config.mode = ProvenanceMode.OFF
             with workflow_run(seed=8):
-                result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+                result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         assert result.provenance is not None
         assert result.provenance.controls["replay"]["callable"]["supported"] is True
 
     def test_full_and_lightweight_modes_record_equivalent_controls(self):
         workflow = Function(
-            label="_identity", fn=_identity, dispatch="sequential", n_broadcast_samples=8
+            _identity,
+            label="_identity",
+            dispatch="sequential",
+            n_broadcast_samples=8,
+            output_spec=OutputSpec(_identity=None),
         )
 
         def controls_for(mode):
             probpipe.provenance_config.mode = mode
             with workflow_run(seed=7):
-                result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+                result = workflow(value=Normal("value", loc=0.0, scale=1.0))
             return result.provenance.controls
 
         assert controls_for(ProvenanceMode.FULL) == controls_for(ProvenanceMode.LIGHTWEIGHT)
 
 
 class TestWorkflowCallableAnchor:
+    @pytest.mark.parametrize(
+        "declaration",
+        [None, OutputSpec(value=NumericArraySpec(())), NumericArraySpec(())],
+        ids=["undeclared", "explicit-component", "default-component"],
+    )
+    def test_an_output_label_changes_no_anchor(self, declaration):
+        """Changing output aliases and component names leaves the callable anchor unchanged."""
+        first = Function(
+            replayable_identity,
+            output_label="first",
+            output_spec=declaration
+            if isinstance(declaration, OutputSpec) or declaration is None
+            else OutputSpec.default(declaration, component="first"),
+            label="identity",
+        )
+        second = Function(
+            replayable_identity,
+            output_label="second",
+            output_spec=declaration
+            if isinstance(declaration, OutputSpec) or declaration is None
+            else OutputSpec.default(declaration, component="second"),
+            label="identity",
+        )
+        anchor = _callable.capture_function_anchor(first)
+        other = _callable.capture_function_anchor(second)
+        assert anchor.supported and other.supported
+        assert anchor.controls() == other.controls()
+        assert (
+            anchor.controls()
+            == _callable.capture_function_anchor(first.with_label("display")).controls()
+        )
+
+    @pytest.mark.parametrize("change", ["shape", "kind", "packaging", "declaration"])
+    def test_output_contract_participates_in_callable_anchor(self, change):
+        declaration = OutputSpec(bundle=RecordSpec(field=()))
+        baseline = Function(
+            replayable_identity,
+            output_label="result",
+            output_spec=declaration,
+            label="identity",
+        )
+        declarations = {
+            "shape": OutputSpec(bundle=RecordSpec(field=(2,))),
+            "kind": OutputSpec(bundle=OpaqueSpec()),
+            "packaging": OutputSpec(RecordSpec(field=())),
+            "declaration": None,
+        }
+        changed = Function(
+            replayable_identity,
+            output_label="result",
+            output_spec=declarations[change],
+            label="identity",
+        )
+        anchor = _callable.capture_function_anchor(baseline)
+        other = _callable.capture_function_anchor(changed)
+        assert anchor.supported and other.supported
+        assert anchor.sha256 != other.sha256
+        assert (
+            anchor.controls()
+            == _callable.capture_function_anchor(baseline.with_label("display")).controls()
+        )
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "annotated_rows",
+            "annotated_maybe",
+            "annotated_array",
+            "annotated_tree",
+            "annotated_extension_rows",
+            "annotated_metadata",
+        ],
+    )
+    def test_a_type_alias_annotation_has_a_stable_anchor(self, name):
+        workflow = Function(getattr(_alias_replay_fixtures, name), label=name)
+
+        anchor = _callable.capture_function_anchor(workflow)
+
+        assert anchor.supported
+        assert anchor.controls() == _callable.capture_function_anchor(workflow).controls()
+
+    def test_a_type_alias_anchor_follows_the_alias_value(self, monkeypatch):
+        workflow = Function(_alias_replay_fixtures.annotated_rows, label="rows")
+        annotations = _alias_replay_fixtures.annotated_rows.__annotations__
+
+        def anchor_with(alias):
+            monkeypatch.setitem(annotations, "x", alias)
+            return _callable.capture_function_anchor(workflow)
+
+        batch = anchor_with(TypeAliasType("Rows", NumericArrayBatch))
+        same = anchor_with(TypeAliasType("Rows", NumericArrayBatch))
+        array = anchor_with(TypeAliasType("Rows", NumericArray))
+
+        assert batch.supported and same.supported and array.supported
+        assert batch.sha256 == same.sha256
+        assert batch.sha256 != array.sha256
+
+    def test_a_type_alias_whose_value_names_an_undefined_name_is_unsupported(self):
+        workflow = Function(_alias_replay_fixtures.annotated_undefined, label="undefined")
+
+        anchor = _callable.capture_function_anchor(workflow)
+
+        assert not anchor.supported
+        assert anchor.form == "unsupported_definition_state"
+
+    @pytest.mark.parametrize("name", ["shift", "optional", "generic", "metadata", "returned"])
+    @pytest.mark.parametrize("change", ["same", "value", "name"])
+    def test_a_postponed_alias_anchor_follows_its_definition(self, monkeypatch, name, change):
+        fixtures = _postponed_alias_replay_fixtures
+        body = getattr(fixtures, name)
+        workflow = Function(body, label=name)
+        original = _callable.capture_function_anchor(workflow)
+        assert original.supported
+        assert (
+            original.controls()
+            == _callable.capture_function_anchor(Function(body, label=name)).controls()
+        )
+
+        alias = fixtures.values_alias(
+            "OtherValues" if change == "name" else "Values",
+            NumericArray if change == "value" else fixtures.Values.__value__,
+        )
+        monkeypatch.setattr(fixtures, "Values", alias)
+        changed = _callable.capture_function_anchor(Function(body, label=name))
+
+        assert changed.supported
+        assert (original.sha256 == changed.sha256) is (change == "same")
+        assert original.controls() == _callable.capture_function_anchor(workflow).controls()
+
+    def test_replay_refuses_a_changed_postponed_alias(self, monkeypatch):
+        fixtures = _postponed_alias_replay_fixtures
+        workflow = Function(fixtures.shift, dispatch="sequential", n_broadcast_samples=5)
+        value = NumericArray(jnp.asarray(1.0), label="x")
+        noise = Normal("noise", loc=0.0, scale=1.0)
+        with workflow_run(seed=0):
+            first = workflow(value, noise)
+        with replay_run(first.provenance):
+            same = workflow(value, noise)
+        np.testing.assert_array_equal(np.asarray(first.atoms), np.asarray(same.atoms))
+
+        monkeypatch.setattr(fixtures, "Values", fixtures.values_alias("Values", NumericArray))
+        changed = Function(fixtures.shift, dispatch="sequential", n_broadcast_samples=5)
+        with (
+            pytest.raises(
+                ReplayCompatibilityError, match="has changed since the call was recorded"
+            ),
+            replay_run(first.provenance),
+        ):
+            changed(value, noise)
+
     def test_callable_canonical_json_rejects_non_finite_values(self):
         with pytest.raises(ValueError, match="Out of range float values"):
             _callable._canonical_json({"value": float("nan")})
 
     def test_provenance_off_skips_callable_anchor_capture(self):
         probpipe.provenance_config.mode = ProvenanceMode.OFF
-        workflow = Function(label="replayable_identity", fn=replayable_identity)
+        workflow = Function(
+            replayable_identity,
+            label="replayable_identity",
+        )
 
         with patch.object(
             _callable,
@@ -471,10 +695,13 @@ class TestWorkflowCallableAnchor:
 
     def test_replay_still_captures_anchor_when_provenance_is_off(self):
         workflow = Function(
-            label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
+            replayable_identity,
+            label="replayable_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=17):
-            original = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            original = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         probpipe.provenance_config.mode = ProvenanceMode.OFF
         with (
@@ -485,7 +712,7 @@ class TestWorkflowCallableAnchor:
             ) as capture,
             replay_run(original.provenance),
         ):
-            replayed = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         assert jnp.array_equal(np.asarray(replayed.atoms), np.asarray(original.atoms))
         assert replayed.provenance is None
@@ -503,7 +730,10 @@ class TestWorkflowCallableAnchor:
         self,
         factory,
     ):
-        workflow = Function(label="function", fn=factory())
+        workflow = Function(
+            factory(),
+            label="function",
+        )
 
         with patch.object(
             _callable,
@@ -516,7 +746,10 @@ class TestWorkflowCallableAnchor:
         source_artifact.assert_not_called()
 
     def test_supported_callable_still_records_source_artifact(self):
-        workflow = Function(label="replayable_identity", fn=replayable_identity)
+        workflow = Function(
+            replayable_identity,
+            label="replayable_identity",
+        )
 
         with patch.object(
             _callable,
@@ -530,7 +763,10 @@ class TestWorkflowCallableAnchor:
         source_artifact.assert_called_once_with(replayable_identity)
 
     def test_unchanged_source_artifacts_are_read_once_across_function_calls(self):
-        workflow = Function(label="replayable_identity", fn=replayable_identity)
+        workflow = Function(
+            replayable_identity,
+            label="replayable_identity",
+        )
         expected_paths = {
             Path(inspect.getsourcefile(replayable_identity)).absolute(),
             Path(probpipe.operations._sample.__file__).absolute(),
@@ -548,7 +784,7 @@ class TestWorkflowCallableAnchor:
             for _ in range(5):
                 workflow(value=1.0)
             for _ in range(3):
-                sample(Normal(loc=0.0, scale=1.0, label="value"))
+                sample(Normal("value", loc=0.0, scale=1.0))
 
         assert reads == dict.fromkeys(expected_paths, 1)
 
@@ -578,12 +814,15 @@ class TestWorkflowCallableAnchor:
         assert reads == 2
 
     def test_unsupported_definition_state_does_not_read_source_artifact(self):
-        workflow = Function(label="replayable_identity", fn=replayable_identity)
+        workflow = Function(
+            replayable_identity,
+            label="replayable_identity",
+        )
 
         with (
             patch.object(
                 _callable,
-                "_signature_and_templates",
+                "_signature_and_declarations",
                 side_effect=_callable._UnsupportedDefinition("unsupported"),
             ),
             patch.object(
@@ -599,15 +838,28 @@ class TestWorkflowCallableAnchor:
         source_artifact.assert_not_called()
 
     def test_module_level_definition_has_hard_coded_golden_digest(self):
-        workflow = Function(label="replayable_affine", fn=replayable_affine, n_broadcast_samples=5)
+        workflow = Function(
+            replayable_affine,
+            label="replayable_affine",
+            n_broadcast_samples=5,
+        )
 
+        declared = Function(
+            replayable_affine,
+            output_spec=OutputSpec(value=None),
+            n_broadcast_samples=5,
+        )
         with workflow_run(seed=19):
-            result = workflow(
-                value=Normal(loc=0.0, scale=1.0, label="value"),
+            result = declared(
+                value=Normal("value", loc=0.0, scale=1.0),
                 offset=1.25,
             )
 
-        callable_anchor = _replay_controls(result)["callable"]
+        assert (
+            _replay_controls(result)["callable"]
+            == _callable.capture_function_anchor(declared).controls()
+        )
+        callable_anchor = _callable.capture_function_anchor(workflow).controls()
         python_replay_abi = (
             f"{sys.implementation.name}-{sys.version_info.major}.{sys.version_info.minor}"
         )
@@ -620,7 +872,7 @@ class TestWorkflowCallableAnchor:
             "qualname": "replayable_affine",
             "definition_abi": "probpipe.callable_definition/v1",
             "sha256": _CALLABLE_ANCHOR_GOLDENS[python_replay_abi],
-            "signature_and_templates": {
+            "signature_and_declarations": {
                 "parameters": [
                     {
                         "name": "value",
@@ -646,19 +898,25 @@ class TestWorkflowCallableAnchor:
         assert source["source_location"].endswith("tests/functions/_replay_fixtures.py")
         assert len(source["source_artifact_digest"]) == 64
 
-    def test_function_templates_participate_in_definition_digest(self):
-        plain = Function(label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5)
-        declared = Function(
+    def test_function_declarations_participate_in_definition_digest(self):
+        plain = Function(
+            replayable_identity,
             label="replayable_identity",
-            fn=replayable_identity,
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(replayable_identity=None),
+        )
+        declared = Function(
+            replayable_identity,
+            label="replayable_identity",
             n_broadcast_samples=5,
             input_spec=InputSpec(probpipe.RecordSpec(value=()).children),
+            output_spec=OutputSpec(replayable_identity=None),
         )
 
         with workflow_run(seed=4):
-            plain_result = plain(value=Normal(loc=0.0, scale=1.0, label="value"))
+            plain_result = plain(value=Normal("value", loc=0.0, scale=1.0))
         with workflow_run(seed=4):
-            declared_result = declared(value=Normal(loc=0.0, scale=1.0, label="value"))
+            declared_result = declared(value=Normal("value", loc=0.0, scale=1.0))
 
         assert (
             _replay_controls(plain_result)["callable"]["sha256"]
@@ -676,7 +934,10 @@ class TestWorkflowCallableAnchor:
         invalid_signature,
     ):
         workflow = Function(
-            label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
+            replayable_identity,
+            label="replayable_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(replayable_identity=None),
         )
         monkeypatch.setattr(
             replayable_identity,
@@ -686,7 +947,7 @@ class TestWorkflowCallableAnchor:
         )
 
         with workflow_run(seed=6):
-            result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         callable_anchor = _replay_controls(result)["callable"]
         assert callable_anchor["supported"] is False
@@ -694,7 +955,10 @@ class TestWorkflowCallableAnchor:
         assert "sha256" not in callable_anchor
 
     def test_runtime_global_values_are_outside_the_definition_anchor(self, monkeypatch):
-        workflow = Function(label="replayable_optional_nested", fn=replayable_optional_nested)
+        workflow = Function(
+            replayable_optional_nested,
+            label="replayable_optional_nested",
+        )
         original = _callable.capture_function_anchor(workflow)
 
         monkeypatch.setattr(
@@ -707,10 +971,15 @@ class TestWorkflowCallableAnchor:
         assert changed.controls() == original.controls()
 
     def test_unsupported_lambda_executes_but_records_no_weak_digest(self):
-        workflow = Function(label="function", fn=lambda value: value, n_broadcast_samples=5)
+        workflow = Function(
+            lambda value: value,
+            label="function",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(function=None),
+        )
 
         with workflow_run(seed=6):
-            result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         callable_anchor = _replay_controls(result)["callable"]
         assert callable_anchor["supported"] is False
@@ -719,11 +988,14 @@ class TestWorkflowCallableAnchor:
 
     def test_cyclic_definition_state_executes_but_records_no_weak_digest(self):
         workflow = Function(
-            label="replayable_cyclic_default", fn=replayable_cyclic_default, n_broadcast_samples=5
+            replayable_cyclic_default,
+            label="replayable_cyclic_default",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(replayable_cyclic_default=None),
         )
 
         with workflow_run(seed=6):
-            result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         callable_anchor = _replay_controls(result)["callable"]
         assert callable_anchor["supported"] is False
@@ -732,7 +1004,10 @@ class TestWorkflowCallableAnchor:
 
     def test_plain_numeric_array_default_remains_strongly_encoded(self):
         anchor = _callable.capture_function_anchor(
-            Function(label="replayable_numeric_array_default", fn=replayable_numeric_array_default)
+            Function(
+                replayable_numeric_array_default,
+                label="replayable_numeric_array_default",
+            )
         )
 
         assert anchor.controls()["supported"] is True
@@ -740,14 +1015,17 @@ class TestWorkflowCallableAnchor:
 
     def test_supported_structured_defaults_have_canonical_inspectable_controls(self):
         anchor = _callable.capture_function_anchor(
-            Function(label="replayable_canonical_defaults", fn=replayable_canonical_defaults)
+            Function(
+                replayable_canonical_defaults,
+                label="replayable_canonical_defaults",
+            )
         )
 
         controls = anchor.controls()
         assert controls["supported"] is True
         defaults = {
             parameter["name"]: parameter["default"]
-            for parameter in controls["signature_and_templates"]["parameters"]
+            for parameter in controls["signature_and_declarations"]["parameters"]
         }
         assert defaults["ellipsis_value"] == {"tag": "ellipsis"}
         assert defaults["complex_value"] == {
@@ -866,7 +1144,10 @@ class TestWorkflowCallableAnchor:
     )
     def test_nonportable_numpy_defaults_are_closed_unsupported(self, callable_fixture):
         anchor = _callable.capture_function_anchor(
-            Function(label="callable_fixture", fn=callable_fixture)
+            Function(
+                callable_fixture,
+                label="callable_fixture",
+            )
         )
 
         assert anchor.controls()["supported"] is False
@@ -886,7 +1167,12 @@ class TestWorkflowCallableAnchor:
         ],
     )
     def test_other_unsupported_forms_have_no_digest(self, factory, form):
-        anchor = _callable.capture_function_anchor(Function(label="function", fn=factory()))
+        anchor = _callable.capture_function_anchor(
+            Function(
+                factory(),
+                label="function",
+            )
+        )
 
         assert anchor.controls()["supported"] is False
         assert anchor.controls()["form"] == form
@@ -896,7 +1182,7 @@ class TestWorkflowCallableAnchor:
         workflow = Function._from_implementation(
             _PrivateImplementation(),
             signature=inspect.Signature(),
-            name="private",
+            label="private",
         )
 
         anchor = _callable.capture_function_anchor(workflow)
@@ -933,3 +1219,20 @@ def _closure():
         return value + captured
 
     return closure
+
+
+class TestTheMonteCarloDrawsACallRecords:
+    def test_a_monte_carlo_route_records_its_draws_by_the_part_it_drew(self):
+        law = Normal("mu", 0.0, 2.0) * Poisson("count", 4.0)
+        with workflow_run(seed=0):
+            median = quantile(law, 0.5)
+
+        assert _recipe.monte_carlo_draws(median.provenance) == {
+            ("count",): quantile.options["n_broadcast_samples"]
+        }
+
+    def test_an_exact_route_records_no_draws(self):
+        assert _recipe.monte_carlo_draws(mean(Normal("mu", 0.0, 1.0)).provenance) == {}
+
+    def test_no_provenance_records_no_draws(self):
+        assert _recipe.monte_carlo_draws(None) == {}

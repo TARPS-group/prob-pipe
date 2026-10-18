@@ -1,4 +1,4 @@
-"""The program-defined families: laws that a backend program or a user's density defines (VII.9).
+"""The program-defined families: laws that a backend program defines (VII.9).
 
 A program-defined model exposes the law its program defines, in the kind that
 law has, and its variable names determine its output components.
@@ -9,9 +9,7 @@ Provides:
     construction that binds every data variable returns the posterior itself;
   - ``PyMCModel`` – the joint law a PyMC model-building function defines over
     its free variables, the parameters and the observed variables alike, and a
-    kernel over the arguments no observed variable receives;
-  - ``UnnormalizedDistribution`` – the law of a user-supplied unnormalized
-    log-density over a declared event.
+    kernel over the arguments no observed variable receives.
 
 Each claims its density as its program supplies it, and ``condition_on``
 normalizes a law that claims only an unnormalized one through the
@@ -21,6 +19,7 @@ inference-method registry.
 from __future__ import annotations
 
 import functools
+import importlib.metadata
 import inspect
 import json
 import re
@@ -28,13 +27,14 @@ import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 from typing import Any, ClassVar, NamedTuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .._messages import count, unknown_names
 from ..core._immutable import transient_memo
 from ..core._record_spec import NumericRecordSpec, RecordSpec
 from ..core._repr import format_names, format_value
@@ -63,9 +63,9 @@ from ..distributions._capabilities import (
     _capability_subclass,
 )
 from ..distributions._conditional import ConditionalDistribution
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import Distribution, _constructor_label, _given_label
 
-__all__ = ["PyMCModel", "StanModel", "UnnormalizedDistribution"]
+__all__ = ["PyMCModel", "StanModel"]
 
 
 #: Make arguments for a Stan model library: TBB without its malloc proxy.
@@ -75,6 +75,22 @@ _BRIDGESTAN_MAKE_ARGS: tuple[str, ...] = ("TBB_LIBRARIES=tbb",)
 def _given_values(owner: str, given: Any, kwargs: Mapping[str, Any], slots: Any) -> dict[str, Any]:
     """The values *given* and *kwargs* bind, by slot name.
 
+    Parameters
+    ----------
+    owner : str
+        The kernel's label, which the error message names.
+    given : Record or Mapping[str, Any]
+        Values of some given slots, by slot name; a record contributes its top-level fields.
+    kwargs : Mapping[str, Any]
+        Further values by slot name, which take precedence over those of *given*.
+    slots : Iterable of str
+        The names of the kernel's given slots, such as its ``given_spec``.
+
+    Returns
+    -------
+    dict[str, Any]
+        Each value as received, by slot name.
+
     Raises
     ------
     KeyError
@@ -83,56 +99,8 @@ def _given_values(owner: str, given: Any, kwargs: Mapping[str, Any], slots: Any)
     values = {**dict(given.children if isinstance(given, Record) else given), **kwargs}
     unknown = sorted(set(values) - set(slots))
     if unknown:
-        raise KeyError(f"{unknown} are not given slots of {owner!r}")
+        raise KeyError(f"cannot condition {owner!r}: {unknown_names('given slot', unknown, slots)}")
     return values
-
-
-# ---------------------------------------------------------------------------
-# UnnormalizedDistribution
-# ---------------------------------------------------------------------------
-
-
-class UnnormalizedDistribution(Distribution, SupportsUnnormalizedLogProb):
-    """The law of a user-supplied unnormalized log-density over a declared event.
-
-    It claims ``SupportsUnnormalizedLogProb`` alone, so it is unnormalized, and
-    ``sample``, ``convert``, and ``condition_on`` normalize it through the
-    inference-method registry.
-
-    Parameters
-    ----------
-    label : str
-        The law's label.
-    log_density : callable
-        ``log_density(value)``, the log-density of a draw of the event up to an
-        additive constant.
-    event_spec : OutputSpec
-        The declaration of one draw.
-
-    Raises
-    ------
-    TypeError
-        If *log_density* is not callable, or as ``Distribution`` raises.
-    """
-
-    def __init__(
-        self, label: str, log_density: Callable[[Any], Array], event_spec: OutputSpec
-    ) -> None:
-        if not callable(log_density):
-            raise TypeError(
-                f"UnnormalizedDistribution needs a callable log_density; got "
-                f"{type(log_density).__name__}"
-            )
-        super().__init__(label, event_spec)
-        self._log_density = log_density
-
-    def _unnormalized_log_prob(self, value: Any) -> Array:
-        """The user's log-density at *value*, known up to an additive constant."""
-        return jnp.asarray(self._log_density(value))
-
-    def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The log-density, by its name."""
-        return [("log_density", format_value(self._log_density))]
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +154,21 @@ def _pack_block_params(
 ) -> Array:
     """BridgeStan's flat parameter vector from one array per block.
 
+    Parameters
+    ----------
+    owner : str
+        The label of the calling law, which the error messages name.
+    blocks : tuple of _StanBlock
+        The parameter blocks, in BridgeStan's order.
+    values : Mapping[str, Any]
+        One array per block, by block name, each of its block's shape.
+
+    Returns
+    -------
+    Array
+        A vector that concatenates the blocks in order, with each block's entries in
+        BridgeStan's order.
+
     Raises
     ------
     TypeError
@@ -198,15 +181,16 @@ def _pack_block_params(
     if missing or extra:
         detail = [f"missing {missing}"] * bool(missing) + [f"unexpected {extra}"] * bool(extra)
         raise TypeError(
-            f"{owner}: the keyword form expects the Stan parameter blocks "
-            f"{tuple(expected)}: {'; '.join(detail)}."
+            f"{owner!r} expects values for the Stan parameters {tuple(expected)} "
+            f"({', '.join(detail)})"
         )
     out: list[Array] = []
     for b in blocks:
         arr = jnp.asarray(values[b.name])
         if tuple(arr.shape) != b.shape:
             raise TypeError(
-                f"{owner}: parameter {b.name!r} expects shape {b.shape}, got {tuple(arr.shape)}."
+                f"parameter {b.name!r} of {owner!r} must have shape {b.shape}, got "
+                f"{tuple(arr.shape)}"
             )
         out.append(jnp.reshape(arr, (1,)) if b.shape == () else arr[b.gather])
     return jnp.concatenate(out) if out else jnp.zeros((0,))
@@ -251,6 +235,17 @@ _MATRIX_TYPES = frozenset(
 
 def _stan_blocks(source: str) -> dict[str, str]:
     """The bodies of a Stan program's top-level blocks, keyed by block name.
+
+    Parameters
+    ----------
+    source : str
+        The text of a Stan program.
+
+    Returns
+    -------
+    dict[str, str]
+        The text inside each block's braces with its comments replaced by spaces, keyed by
+        the block's name with single spaces, such as ``"transformed data"``.
 
     Raises
     ------
@@ -402,6 +397,16 @@ class _StanVariable:
 def _declared_variables(block: str) -> list[_StanVariable]:
     """Each variable a data or parameters block declares, in order.
 
+    Parameters
+    ----------
+    block : str
+        The body of a data or parameters block, as :func:`_stan_blocks` returns it.
+
+    Returns
+    -------
+    list of _StanVariable
+        One entry per declaration statement.
+
     Raises
     ------
     ValueError
@@ -424,7 +429,9 @@ def _declared_variables(block: str) -> list[_StanVariable]:
         elif kind in _MATRIX_TYPES:
             shape = sizes * 2 if len(sizes) == 1 else sizes
         else:
-            raise ValueError(f"the Stan type {kind!r} of {match['name']!r} is not read")
+            raise ValueError(
+                f"StanModel does not support the Stan type {kind!r} (variable {match['name']!r})"
+            )
         axes = (*_sizes(match["array"]), *_sizes(match["old"]), *shape)
         variables.append(_StanVariable(match["name"], axes, kind, bounds))
     return variables
@@ -444,27 +451,60 @@ def _dimension(expression: str, name: str, axis: int, data: Mapping[str, Any]) -
     return f"{name}_{axis}"
 
 
-def _stanc() -> Path:
-    """The path of BridgeStan's stanc compiler.
+def _stanc(*, fetch: bool = True) -> Path:
+    """The location of BridgeStan's stanc compiler, fetched on first use when *fetch* is true.
+
+    BridgeStan keeps its source tree in the directory ``$BRIDGESTAN`` names, or
+    else under ``~/.bridgestan``, and its Makefile fetches the stanc3 binary into
+    the tree's ``bin/``.
+
+    Parameters
+    ----------
+    fetch : bool
+        Whether to download a missing source tree and fetch a missing compiler
+        with the Makefile's target, as BridgeStan does before it first compiles
+        a model. With ``False``, the compiler is only located.
+
+    Returns
+    -------
+    Path
+        The stanc executable in the source tree's ``bin/``.
 
     Raises
     ------
     ImportError
-        If ``bridgestan`` is not installed, or its stanc compiler is absent.
+        If ``bridgestan`` is not installed, or its stanc compiler is absent and
+        *fetch* is false or the fetch fails. The message gives the command that
+        fetches the compiler.
     """
     try:
-        from bridgestan.compile import get_bridgestan_path
+        from bridgestan.compile import IS_WINDOWS, MAKE, get_bridgestan_path
     except ImportError as e:
         raise ImportError(
             "StanModel reads its program's declarations with stanc, which bridgestan provides. "
             "Install it with: pip install bridgestan"
         ) from e
-    root = get_bridgestan_path(download=False)
-    stanc = Path(root) / "bin" / "stanc" if root else None
-    if stanc is None or not stanc.exists():
+    root = get_bridgestan_path(download=fetch)
+    if not root:
         raise ImportError(
-            "BridgeStan's stanc compiler is not installed; BridgeStan downloads it when it "
-            "first compiles a model, as bridgestan.compile_model does"
+            "BridgeStan's source tree is not installed; StanModel downloads it to "
+            "~/.bridgestan on first use, or set $BRIDGESTAN to an existing tree"
+        )
+    target = "bin/stanc.exe" if IS_WINDOWS else "bin/stanc"
+    stanc = Path(root) / target
+    command = f"{MAKE} -C {root} {target}"
+    if not stanc.exists() and fetch:
+        completed = subprocess.run(
+            [MAKE, target], cwd=root, capture_output=True, text=True, check=False
+        )
+        if completed.returncode != 0:
+            message = (completed.stderr or completed.stdout).strip()
+            raise ImportError(
+                f"BridgeStan could not fetch its stanc compiler with `{command}`: {message}"
+            )
+    if not stanc.exists():
+        raise ImportError(
+            f"BridgeStan's stanc compiler is not installed; fetch it with `{command}`"
         )
     return stanc
 
@@ -472,6 +512,21 @@ def _stanc() -> Path:
 @functools.lru_cache(maxsize=128)
 def _stanc_info_of(stan_file: str, modified: int, size: int) -> Mapping[str, Any]:
     """``stanc --info`` of *stan_file*, cached while the file is unchanged.
+
+    Parameters
+    ----------
+    stan_file : str
+        The ``.stan`` file that stanc reads.
+    modified : int
+        The file's modification time in nanoseconds, which is part of the cache key.
+    size : int
+        The file's size in bytes, which is part of the cache key.
+
+    Returns
+    -------
+    Mapping[str, Any]
+        The parsed JSON report, whose ``"inputs"`` and ``"parameters"`` entries give each
+        variable's element type and number of dimensions.
 
     Raises
     ------
@@ -506,6 +561,23 @@ def _checked_against_stanc(
 ) -> tuple[tuple[_StanVariable, Any], ...]:
     """Each variable of *block* with the dtype of the type stanc reports for it.
 
+    Parameters
+    ----------
+    variables : Sequence[_StanVariable]
+        The variables read from the block's text, in declaration order.
+    reported : Mapping[str, Any]
+        The block's entry in stanc's report, which gives each variable's element type and
+        number of dimensions by variable name.
+    block : str
+        The block's name, ``"data"`` or ``"parameters"``, for the error messages.
+    stan_file : str
+        The program's file, for the error messages.
+
+    Returns
+    -------
+    tuple of (_StanVariable, np.dtype)
+        Each variable paired with the dtype of its element type, in declaration order.
+
     Raises
     ------
     ValueError
@@ -515,15 +587,17 @@ def _checked_against_stanc(
     names = [variable.name for variable in variables]
     if names != list(reported):
         raise ValueError(
-            f"the {block} block of {stan_file} reads as {names}, and stanc reports {list(reported)}"
+            f"StanModel read the {block} block of {stan_file} as declaring {names}, but stanc "
+            f"reports {list(reported)}; StanModel does not support this declaration syntax"
         )
     checked = []
     for variable in variables:
         entry = reported[variable.name]
         if len(variable.sizes) != entry["dimensions"]:
             raise ValueError(
-                f"{variable.name!r} in {stan_file} reads as {len(variable.sizes)} axes, and "
-                f"stanc reports {entry['dimensions']}"
+                f"StanModel read {variable.name!r} in {stan_file} as having "
+                f"{count(len(variable.sizes), 'axis', 'axes')}, but stanc reports "
+                f"{entry['dimensions']}; StanModel does not support this declaration syntax"
             )
         checked.append((variable, _STAN_DTYPES[entry["type"]]()))
     return tuple(checked)
@@ -546,10 +620,22 @@ class _StanProgram:
     def read(cls, stan_file: str) -> _StanProgram:
         """The program in *stan_file*.
 
+        Parameters
+        ----------
+        stan_file : str
+            The ``.stan`` file to read.
+
+        Returns
+        -------
+        _StanProgram
+            The program with its data-block variables and parameters, each checked against
+            stanc's report and paired with its dtype.
+
         Raises
         ------
         ImportError
-            If BridgeStan's stanc compiler is not installed.
+            If ``bridgestan`` is not installed, or its stanc compiler is absent
+            and cannot be fetched.
         ValueError
             If stanc rejects the program, the program declares no parameters,
             or a declaration cannot be read.
@@ -649,8 +735,14 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
     #: The BridgeStan model, built on first use, is not state.
     _transient_state = ("_memo",)
 
+    #: ``StanModel`` builds the posterior, so the repr reads as its call.
+    _repr_component: ClassVar[str | None] = None
+
     def __init__(self, label: str, program: _StanProgram, data: Mapping[str, Any]) -> None:
-        super().__init__(label, OutputSpec(program.parameter_record(data)))
+        super().__init__(
+            OutputSpec(program.parameter_record(data)),
+            label=_constructor_label(self, label, "StanModel"),
+        )
         self._program = program
         self._data = dict(data)
 
@@ -666,6 +758,11 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
 
     def _bridgestan_model(self) -> Any:
         """The BridgeStan model of the program at its data, built once.
+
+        Returns
+        -------
+        bridgestan.StanModel
+            The model, which the law's transient memo keeps for later calls.
 
         Raises
         ------
@@ -697,13 +794,13 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
 
     def _pack_value(self, **field_kwargs: Any) -> Array:
         """The keyword form: one array per parameter block, as BridgeStan's flat vector."""
-        return _pack_block_params(type(self).__name__, self._blocks(), field_kwargs)
+        return _pack_block_params(self.label, self._blocks(), field_kwargs)
 
     def _flat(self, value: Any) -> np.ndarray:
         """*value*, a record of the parameter blocks or BridgeStan's flat vector, as the vector."""
         if isinstance(value, (Record, Mapping)):
             fields = value.children if isinstance(value, Record) else value
-            value = _pack_block_params(type(self).__name__, self._blocks(), dict(fields))
+            value = _pack_block_params(self.label, self._blocks(), dict(fields))
         return _to_f64(value)
 
     def _unnormalized_log_prob(self, value: Any) -> Array:
@@ -715,6 +812,10 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
     def as_unconstrained_distribution(self) -> _UnconstrainedStanView:
         """The posterior in the unconstrained parameterization, whose density has the Jacobian."""
         return _UnconstrainedStanView(self)
+
+    def _repr_class_name(self) -> str:
+        """``StanModel``, the constructor that builds the posterior."""
+        return "StanModel"
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The Stan file and the data-block entries bound."""
@@ -737,19 +838,19 @@ class _UnconstrainedStanView(Distribution, SupportsUnnormalizedLogProb):
         self._posterior = posterior
         self._blocks = _param_blocks(posterior._bridgestan_model().param_unc_names())
         super().__init__(
-            f"{posterior.label}_unconstrained",
             OutputSpec(NumericRecordSpec({b.name: b.shape for b in self._blocks})),
+            label=f"{posterior.label}_unconstrained",
         )
 
     def _pack_value(self, **field_kwargs: Any) -> Array:
         """The keyword form: one array per unconstrained block, as BridgeStan's flat vector."""
-        return _pack_block_params(type(self).__name__, self._blocks, field_kwargs)
+        return _pack_block_params(self.label, self._blocks, field_kwargs)
 
     def _unnormalized_log_prob(self, value: Any) -> Array:
         """BridgeStan's log density at the unconstrained *value*, with the Jacobian."""
         if isinstance(value, (Record, Mapping)):
             fields = value.children if isinstance(value, Record) else value
-            value = _pack_block_params(type(self).__name__, self._blocks, dict(fields))
+            value = _pack_block_params(self.label, self._blocks, dict(fields))
         return jnp.asarray(self._posterior._bridgestan_model().log_density(_to_f64(value)))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
@@ -760,15 +861,25 @@ class _UnconstrainedStanView(Distribution, SupportsUnnormalizedLogProb):
 class _StanModelMeta(type(ConditionalDistribution)):
     """The metaclass of ``StanModel``: binding every data-block variable returns the posterior."""
 
-    def __call__(cls, name: str, stan_file: str, *, data: Mapping[str, Any] | None = None) -> Any:
+    def __call__(
+        cls,
+        stan_file: str,
+        *,
+        data: Mapping[str, Any] | None = None,
+        label: str | None = None,
+    ) -> Any:
+        label = _given_label(label, "StanModel")
         program = _StanProgram.read(stan_file)
         bound = dict(data or {})
         unknown = sorted(set(bound) - set(program.data_entries))
         if unknown:
-            raise KeyError(f"{unknown} are not data-block variables of {stan_file}")
+            raise KeyError(
+                f"cannot bind data for {stan_file}: "
+                f"{unknown_names('data variable', unknown, program.data_entries)}"
+            )
         if set(program.data_entries) <= set(bound):
-            return _StanPosterior(name, program, bound)
-        return super().__call__(name, stan_file, data=data)
+            return _StanPosterior(label, program, bound)
+        return super().__call__(stan_file, data=data, label=label)
 
 
 class StanModel(
@@ -787,23 +898,25 @@ class StanModel(
     and ``condition_on`` normalizes it with a method such as Stan's NUTS. The
     declarations are read at construction from ``stanc --info`` and the
     program's text, and BridgeStan compiles the program when a density is
-    first evaluated.
+    first evaluated. The first construction on a machine downloads BridgeStan's
+    source tree and its stanc compiler, as BridgeStan's first compile does.
 
     Parameters
     ----------
-    label : str
-        The kernel's label.
     stan_file : str
-        Path to a ``.stan`` file.
+        The location of the ``.stan`` file that holds the program.
     data : Mapping[str, Any], optional
         Values of some data-block variables, bound at construction. A
         construction that binds every data variable returns the posterior, a
         ``Distribution``.
+    label : str, optional
+        The label of the kernel or of the posterior, ``StanModel`` by default.
 
     Raises
     ------
     ImportError
-        If BridgeStan's stanc compiler is not installed.
+        If ``bridgestan`` is not installed, or its stanc compiler is absent
+        and cannot be fetched.
     KeyError
         If *data* names a variable the data block does not declare.
     ValueError
@@ -811,17 +924,26 @@ class StanModel(
         declaration cannot be read.
     """
 
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
+
     #: The program reads its observed variables' shapes from the data it
     #: receives, so ``condition_on`` leaves their givens to the program.
     _shapes_from_data: ClassVar[bool] = True
 
     def __init__(
-        self, label: str, stan_file: str, *, data: Mapping[str, Any] | None = None
+        self,
+        stan_file: str,
+        *,
+        data: Mapping[str, Any] | None = None,
+        label: str | None = None,
     ) -> None:
         program = _StanProgram.read(stan_file)
         bound = dict(data or {})
         super().__init__(
-            label, program.given_spec(bound), OutputSpec(program.parameter_record(bound))
+            program.given_spec(bound),
+            OutputSpec(program.parameter_record(bound)),
+            label=_constructor_label(self, label, "StanModel"),
         )
         object.__setattr__(self, "_program", program)
         object.__setattr__(self, "_data", bound)
@@ -833,7 +955,7 @@ class StanModel(
 
     @property
     def data(self) -> Mapping[str, Any]:
-        """The data-block variables bound at construction or by currying."""
+        """The data-block variables bound at construction or by ``condition_on``."""
         return MappingProxyType(self._data)
 
     def _condition_on(
@@ -841,18 +963,44 @@ class StanModel(
     ) -> Distribution | ConditionalDistribution:
         """The posterior at a value of every data-block variable, or the kernel over the rest.
 
+        Parameters
+        ----------
+        given : Record or Mapping[str, Any]
+            Values of some unbound data-block variables, by variable name.
+        **kwargs : Any
+            Further values by variable name, which take precedence over those of *given*.
+
+        Returns
+        -------
+        Distribution or ConditionalDistribution
+            The posterior when the values bind every data-block variable, and otherwise a
+            ``StanModel`` with the values added to its bound data.
+
         Raises
         ------
         KeyError
             If a name is not an unbound data-block variable.
         """
         values = _given_values(self.label, given, kwargs, self.given_spec)
-        return StanModel(self.label, self.stan_file, data={**self._data, **values})
+        return StanModel(self.stan_file, data={**self._data, **values}, label=self.label)
 
     def _conditional_unnormalized_log_prob(
         self, given: Record | Mapping[str, Any], value: Any
     ) -> Array:
         """The unnormalized posterior density at *value*, the data bound to *given*.
+
+        Parameters
+        ----------
+        given : Record or Mapping[str, Any]
+            A value of every unbound data-block variable, by variable name.
+        value : Any
+            A record of the parameter blocks, or BridgeStan's flat parameter vector.
+
+        Returns
+        -------
+        Array
+            The scalar log-density in the constrained parameterization, without the
+            Jacobian.
 
         Raises
         ------
@@ -861,7 +1009,9 @@ class StanModel(
         """
         law = self._condition_on(given)
         if isinstance(law, ConditionalDistribution):
-            raise KeyError(f"{self.label!r} needs a value for every data-block variable")
+            raise KeyError(
+                f"{self.label!r} is missing values for the data variables {list(law.given_spec)}"
+            )
         return law._unnormalized_log_prob(value)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
@@ -872,6 +1022,53 @@ class StanModel(
 # ---------------------------------------------------------------------------
 # PyMC programs
 # ---------------------------------------------------------------------------
+
+#: The oldest PyMC release ProbPipe works with, which is the floor of the
+#: ``pymc`` extra in ``pyproject.toml``. PyMC 6 is the first release that works
+#: with ArviZ 1.x, which ProbPipe requires.
+_PYMC_FLOOR = (6, 2)
+
+
+def _release(version: str) -> tuple[int, ...]:
+    """The first three numbers of the release *version*, such as ``(5, 28, 5)`` for ``"5.28.5"``."""
+    return tuple(int(number) for number in re.findall(r"\d+", version.split("+")[0])[:3])
+
+
+def _import_pymc() -> ModuleType:
+    """PyMC, imported after checking that its installed release is one ProbPipe works with.
+
+    Google Colab preinstalls PyMC 5, which an install of ``probpipe-core``
+    without the ``pymc`` extra leaves in place while it upgrades ArviZ to 1.x,
+    so PyMC 5 then fails on import with an error about ArviZ. The check names
+    the upgrade that fixes it.
+
+    Returns
+    -------
+    ModuleType
+        The ``pymc`` module.
+
+    Raises
+    ------
+    ImportError
+        If PyMC is not installed, or if its release is older than
+        :data:`_PYMC_FLOOR`.
+    """
+    try:
+        installed = importlib.metadata.version("pymc")
+    except importlib.metadata.PackageNotFoundError:
+        raise ImportError(
+            'PyMC is not installed. Install the pymc extra: pip install "probpipe-core[pymc]"'
+        ) from None
+    if _release(installed) < _PYMC_FLOOR:
+        floor = ".".join(str(number) for number in _PYMC_FLOOR)
+        raise ImportError(
+            f"ProbPipe needs PyMC {floor} or later, which works with ArviZ 1.x, but PyMC "
+            f'{installed} is installed. Upgrade it with pip install -U "pymc>={floor}", then '
+            f"restart the Python session"
+        )
+    import pymc
+
+    return pymc
 
 
 def _to_numpy(value: Any) -> Any:
@@ -910,6 +1107,7 @@ def _pymc_support(model: Any, rv: Any) -> Constraint | None:
     support ProbPipe declares, a bound that is not a constant, and a discrete
     variable leave the support undeclared.
     """
+    _import_pymc()
     from pymc.distributions import transforms
     from pymc.logprob import transforms as logprob
 
@@ -932,6 +1130,48 @@ def _pymc_support(model: Any, rv: Any) -> Constraint | None:
     return None
 
 
+def _pymc_dimension_names(shapes: Mapping[str, tuple[Any, ...]]) -> dict[str, tuple[str, ...]]:
+    """A dimension name for each axis of each free variable, every one a distinct identifier.
+
+    Axis *i* of variable *name* is named ``f"{name}_{i}"``, with each character
+    that cannot appear in a Python identifier replaced by ``_`` and a leading
+    ``_`` added when the name would start with a digit, so a nested model's
+    ``"sub::beta"`` gives ``sub__beta_0``. A name that an earlier axis already
+    has takes the first of the suffixes ``_2``, ``_3``, ... that is free, so two
+    variables whose names differ only in such characters keep separate
+    dimensions. The variables are taken in model order, so every build of one
+    model names its axes alike, and a name that is already an identifier is
+    unchanged.
+
+    Parameters
+    ----------
+    shapes : Mapping of str to tuple
+        Each free variable's static shape, in model order.
+
+    Returns
+    -------
+    dict of str to tuple of str
+        One dimension name per axis of each variable.
+    """
+    taken: set[str] = set()
+    names: dict[str, tuple[str, ...]] = {}
+    for name, shape in shapes.items():
+        axes = []
+        for axis in range(len(shape)):
+            base = re.sub(r"\W", "_", f"{name}_{axis}")
+            if not base.isidentifier():
+                base = f"_{base}"
+            if not base.isidentifier():
+                base = "_" + re.sub(r"[^0-9A-Za-z_]", "_", base)
+            candidate, suffix = base, 2
+            while candidate in taken:
+                candidate, suffix = f"{base}_{suffix}", suffix + 1
+            taken.add(candidate)
+            axes.append(candidate)
+        names[name] = tuple(axes)
+    return names
+
+
 class _PyMCProgram:
     """A PyMC model-building function with some arguments bound, and the variables its build has.
 
@@ -939,6 +1179,13 @@ class _PyMCProgram:
     default is ``None`` and for which that build has a free variable of the
     same name is an observed variable, since passing ``None`` as its
     ``observed`` value leaves it free; every other argument is a given slot.
+
+    Parameters
+    ----------
+    model_fn : callable
+        The model-building function, which returns a ``pymc.Model``.
+    bound : Mapping[str, Any], optional
+        Values of some arguments of *model_fn*, by argument name, which every build passes.
 
     Raises
     ------
@@ -958,15 +1205,16 @@ class _PyMCProgram:
             model = self.build()
         except TypeError as error:
             raise TypeError(
-                f"PyMCModel builds {getattr(model_fn, '__name__', model_fn)!r} with its "
-                f"arguments' defaults to read its variables; give each argument a default: "
-                f"{error}"
+                f"PyMCModel could not build {getattr(model_fn, '__name__', model_fn)!r} from its "
+                f"default arguments ({error}); give every argument a default, such as None for "
+                f"observed data"
             ) from error
         free = {rv.name: rv for rv in model.free_RVs}
         self.observed = tuple(p.name for p in arguments if p.default is None and p.name in free)
         self.given = tuple(p.name for p in arguments if p.name not in self.observed)
         self.parameters = tuple(name for name in free if name not in self.observed)
         self.shapes = {name: tuple(rv.type.shape) for name, rv in free.items()}
+        self.dimension_names = _pymc_dimension_names(self.shapes)
         self.dtypes = {name: np.dtype(rv.dtype) for name, rv in free.items()}
         self.supports = {name: _pymc_support(model, rv) for name, rv in free.items()}
         self.normalized = not model.potentials and not any(
@@ -987,13 +1235,15 @@ class _PyMCProgram:
 
         Each variable carries its dtype and the support its transform states.
         Under *symbolic* every dimension is symbolic, for a kernel whose shapes
-        its given values may set.
+        its given values may set. A symbolic dimension takes its name from
+        ``dimension_names``, so it is a Python identifier whatever the
+        variable's name.
         """
         return RecordSpec(
             {
                 name: NumericArraySpec(
                     tuple(
-                        f"{name}_{axis}" if symbolic or size is None else int(size)
+                        self.dimension_names[name][axis] if symbolic or size is None else int(size)
                         for axis, size in enumerate(shape)
                     ),
                     _backend_dtype(self.dtypes[name]),
@@ -1005,6 +1255,7 @@ class _PyMCProgram:
 
     def log_density(self) -> Callable[..., Any]:
         """The compiled joint log-density of the free variables, in their constrained space."""
+        _import_pymc()
         import pytensor
         import pytensor.tensor as pt
         from pymc.logprob.basic import conditional_logp
@@ -1046,7 +1297,7 @@ def _pymc_sample(self: PyMCModel, key: Any, sample_shape: tuple[int, ...] = ()) 
     One draw for ``sample_shape=()``; otherwise each field carries the sample
     axes before its shape. The key seeds PyMC's sampler.
     """
-    import pymc as pm
+    pm = _import_pymc()
 
     n = int(np.prod(sample_shape)) if sample_shape else 1
     seed = int(jax.random.randint(key, (), 0, 2**31 - 1))
@@ -1057,17 +1308,22 @@ def _pymc_sample(self: PyMCModel, key: Any, sample_shape: tuple[int, ...] = ()) 
         fields[name] = (
             values[0] if not sample_shape else values.reshape(*sample_shape, *values.shape[1:])
         )
-    return Record(self.label, fields)
+    return Record(
+        fields,
+        label=self.label,
+    )
 
 
 class _PyMCModelMeta(type(Distribution)):
     """The metaclass of ``PyMCModel``: a function with a given slot defines a kernel."""
 
-    def __call__(cls, name: str, model_fn: Callable[..., Any]) -> Any:
+    def __call__(cls, model_fn: Callable[..., Any], *, label: str | None = None) -> Any:
+        _import_pymc()
+        label = _given_label(label, "PyMCModel")
         program = model_fn if isinstance(model_fn, _PyMCProgram) else _PyMCProgram(model_fn)
         if program.given:
-            return _PyMCKernel(name, program)
-        return super().__call__(name, program)
+            return _PyMCKernel(label, program)
+        return super().__call__(program, label=label)
 
 
 class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
@@ -1077,8 +1333,8 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
     argument that the function passes as an observed variable's ``observed``
     value is an event field, and an observed variable's shape is the one the
     build without its data gives. Any other argument is a given slot, so a
-    model with covariates constructs the kernel over them, whose curried law is
-    a ``PyMCModel``. It claims sampling, which draws from the prior predictive,
+    model with covariates constructs the kernel over them, whose law at given
+    covariates is a ``PyMCModel``. It claims sampling, which draws from the prior predictive,
     and a normalized density. A model with a potential or an improper prior
     claims the unnormalized density alone, since its prior predictive does not
     draw from its law. Conditioning on observed values is Bayes' rule, which the
@@ -1086,16 +1342,16 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
 
     Parameters
     ----------
-    label : str
-        The law's label.
     model_fn : callable
         A function returning a ``pymc.Model``, whose observed variables take
         their ``observed`` values from arguments that default to ``None``.
+    label : str, optional
+        The label of the law or of the kernel, ``PyMCModel`` by default.
 
     Raises
     ------
     ImportError
-        If ``pymc`` is not installed.
+        If PyMC is not installed, or if its release is older than 6.2.
     TypeError
         If *model_fn* cannot be built with its arguments' defaults.
     """
@@ -1103,6 +1359,9 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
     #: The program reads its observed variables' shapes from the data it
     #: receives, so ``condition_on`` leaves their givens to the program.
     _shapes_from_data: ClassVar[bool] = True
+
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
 
     _capability_table: ClassVar = {
         SupportsLogProb: {"_log_prob": _pymc_density},
@@ -1112,7 +1371,7 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
     #: The compiled density, built on first use, is not state.
     _transient_state = ("_memo",)
 
-    def __new__(cls, label: str, model_fn: Callable[..., Any]) -> Any:
+    def __new__(cls, model_fn: Callable[..., Any], *, label: str | None = None) -> Any:
         program = model_fn if isinstance(model_fn, _PyMCProgram) else _PyMCProgram(model_fn)
         claimed = (
             (SupportsLogProb, SupportsSampling)
@@ -1121,15 +1380,12 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
         )
         return object.__new__(_capability_subclass(PyMCModel, claimed))
 
-    def __init__(self, label: str, model_fn: Callable[..., Any]) -> None:
-        try:
-            import pymc  # noqa: F401
-        except ImportError as e:
-            raise ImportError(
-                "pymc is required for PyMCModel. Install it with: pip install pymc"
-            ) from e
+    def __init__(self, model_fn: Callable[..., Any], *, label: str | None = None) -> None:
         program = model_fn if isinstance(model_fn, _PyMCProgram) else _PyMCProgram(model_fn)
-        super().__init__(label, OutputSpec(program.event_record(symbolic=False)))
+        super().__init__(
+            OutputSpec(program.event_record(symbolic=False)),
+            label=_constructor_label(self, label, "PyMCModel"),
+        )
         self._program = program
 
     # -- the program ------------------------------------------------------------
@@ -1179,7 +1435,7 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
         fixed = {name: _to_numpy(values[name]) for name in self._param_names if name in values}
         if not fixed:
             return model
-        import pymc as pm
+        pm = _import_pymc()
 
         return pm.observe(model, fixed)
 
@@ -1188,6 +1444,18 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
 
         They are the parameters the data leave free and any observed variable
         the data left free.
+
+        Parameters
+        ----------
+        model : pymc.Model
+            A build of the model function at observed values, as :meth:`_pymc_model` returns
+            it.
+
+        Returns
+        -------
+        tuple of str
+            The free parameters in the order of ``_param_names``, then the free observed
+            variables in the order of ``_observed_names``.
 
         Raises
         ------
@@ -1201,11 +1469,11 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
         missing = [n for n in self._param_names if n not in free and n not in fixed]
         extra = free - set(self._param_names) - set(self._observed_names)
         if missing or extra:
+            names, change = (sorted(missing), "disappear") if missing else (sorted(extra), "appear")
             raise ValueError(
-                f"PyMC random variable(s) {sorted(missing) or sorted(extra)} differ between "
-                f"the build without data and this build. ProbPipe does not support models "
-                f"whose set of free random variables changes with the data (dynamic random "
-                f"variables); only per-variable shapes may depend on data size."
+                f"PyMC random variables {names} {change} when the model is built with this "
+                f"data, but the free random variables must not change with the data (only "
+                f"their shapes may)"
             )
         return tuple(n for n in self._param_names if n in free) + tuple(
             n for n in self._observed_names if n in free
@@ -1215,6 +1483,18 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
         """The record of *names*, shaped as a build *model* shapes them.
 
         Each variable carries its dtype and the support its transform states.
+
+        Parameters
+        ----------
+        model : pymc.Model
+            A build of the model function, whose free variables give the shapes.
+        names : Sequence[str]
+            Names of free variables of *model*, in the record's field order.
+
+        Returns
+        -------
+        NumericRecordSpec
+            One field per name, at the variable's concrete shape in *model*.
 
         Raises
         ------
@@ -1280,6 +1560,9 @@ class _PyMCKernel(ConditionalDistribution):
     #: receives, so ``condition_on`` leaves their givens to the program.
     _shapes_from_data: ClassVar[bool] = True
 
+    #: ``PyMCModel`` builds the kernel, so the repr reads as its call.
+    _repr_component: ClassVar[str | None] = None
+
     _capability_table: ClassVar = {
         SupportsConditionalLogProb: {"_conditional_log_prob": _pymc_kernel_log_prob},
         SupportsConditionalUnnormalizedLogProb: {
@@ -1298,9 +1581,9 @@ class _PyMCKernel(ConditionalDistribution):
 
     def __init__(self, label: str, program: _PyMCProgram) -> None:
         super().__init__(
-            label,
             {slot: OpaqueSpec() for slot in program.given},
             OutputSpec(program.event_record(symbolic=True)),
+            label=_constructor_label(self, label, "PyMCModel"),
         )
         object.__setattr__(self, "_program", program)
 
@@ -1309,13 +1592,30 @@ class _PyMCKernel(ConditionalDistribution):
     ) -> Distribution | ConditionalDistribution:
         """The model at a value of every given slot, or the kernel over the slots left.
 
+        Parameters
+        ----------
+        given : Record or Mapping[str, Any]
+            Values of some given slots, by slot name.
+        **kwargs : Any
+            Further values by slot name, which take precedence over those of *given*.
+
+        Returns
+        -------
+        Distribution or ConditionalDistribution
+            The ``PyMCModel`` of the program with the values bound, or a ``_PyMCKernel``
+            over the given slots left.
+
         Raises
         ------
         KeyError
             If a name is not a given slot.
         """
         values = _given_values(self.label, given, kwargs, self.given_spec)
-        return PyMCModel(self.label, self._program.bind(values))
+        return PyMCModel(self._program.bind(values), label=self.label)
+
+    def _repr_class_name(self) -> str:
+        """``PyMCModel``, the constructor that builds the kernel."""
+        return "PyMCModel"
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The model function, by its name, and its free variables."""

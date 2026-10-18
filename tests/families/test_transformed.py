@@ -17,6 +17,7 @@ from probpipe import (
     Normal,
     NumericArrayBatch,
     NumericDistribution,
+    OutputSpec,
     ResolutionError,
     bijector_for,
     greater_than,
@@ -48,7 +49,10 @@ class _Exp(Function):
     """The exponential map as a bijector that claims its inverse and its log-Jacobian."""
 
     def __init__(self) -> None:
-        super().__init__("exp", jnp.exp)
+        super().__init__(
+            jnp.exp,
+            label="exp",
+        )
 
     def _inverse(self, y):
         """The preimage ``log(y)`` of *y*."""
@@ -108,12 +112,19 @@ class TestTheLinearPushforward:
 
 class TestTheBijectorTransform:
     def test_a_map_without_an_inverse_raises(self, standard):
-        with pytest.raises(ResolutionError, match="SupportsInverse"):
-            BijectorTransformedDistribution("y", standard, Function("exp", jnp.exp))
+        with pytest.raises(ResolutionError, match="'exp' does not implement SupportsInverse"):
+            BijectorTransformedDistribution(
+                "y",
+                standard,
+                Function(
+                    jnp.exp,
+                    label="exp",
+                ),
+            )
 
     def test_a_base_drawing_records_raises(self, standard):
         joint = standard * Normal("z", 0.0, 1.0)
-        with pytest.raises(TypeError, match="draws are arrays"):
+        with pytest.raises(TypeError, match="needs a base that draws numeric arrays, but"):
             BijectorTransformedDistribution("y", joint, tfb.Exp())
 
     def test_the_change_of_variables_bijector_claims_its_inverse_and_log_jacobian(self):
@@ -135,19 +146,19 @@ class TestTheBijectorTransform:
 
     def test_the_log_density_matches_the_backend_transform(self, standard):
         transformed = BijectorTransformedDistribution("td", standard, tfb.Exp())
-        reference = tfd.TransformedDistribution(distribution=standard.raw(), bijector=tfb.Exp())
+        reference = tfd.TransformedDistribution(distribution=standard.raw, bijector=tfb.Exp())
         ys = jnp.array([0.1, 1.0, 5.0])
         np.testing.assert_allclose(
             transformed._log_prob(ys), reference.log_prob(ys), rtol=1e-5, atol=1e-6
         )
 
-    def test_the_label_names_the_event_and_the_base_is_its_parent(self, standard):
+    def test_the_component_names_the_event_and_the_base_is_its_parent(self, standard):
         transformed = BijectorTransformedDistribution("log_normal", standard, tfb.Exp())
-        assert transformed.label == "log_normal"
+        assert transformed.label == "BijectorTransformedDistribution"
         assert list(transformed.event_spec.components) == ["log_normal"]
         assert transformed.base is standard
         assert transformed.provenance.operation == "transform"
-        assert transformed.provenance.parents[0].label == "x"
+        assert transformed.provenance.parents[0].label == "Normal"
 
     def test_the_repr_names_the_class_the_base_and_the_bijector(self, standard):
         r = repr(BijectorTransformedDistribution("td", standard, tfb.Exp()))
@@ -224,7 +235,7 @@ class TestSampling:
     def test_an_empirical_base(self, key):
         atoms = jax.random.normal(key, (50, 2))
         transformed = BijectorTransformedDistribution(
-            "td", EmpiricalDistribution("x", atoms), tfb.Exp()
+            "td", EmpiricalDistribution(atoms, component="x"), tfb.Exp()
         )
         draws = jnp.asarray(transformed._sample(key, (10,)))
         assert draws.shape == (10, 2)
@@ -247,7 +258,11 @@ class TestSampling:
             np.asarray(base._sample(key, (100,))),
             atol=1e-6,
         )
-        xs = NumericArrayBatch("x", jnp.array([-1.0, 0.0, 1.0, 2.5]), "point")
+        xs = NumericArrayBatch(
+            jnp.array([-1.0, 0.0, 1.0, 2.5]),
+            "point",
+            label="x",
+        )
         np.testing.assert_allclose(
             np.asarray(log_prob(transformed, xs)), np.asarray(log_prob(base, xs)), atol=1e-5
         )
@@ -280,10 +295,11 @@ class TestReplay:
 
     def test_a_lift_replays_identically(self):
         difference = Function(
+            replayable_difference,
             label="replayable_difference",
-            fn=replayable_difference,
             n_broadcast_samples=8,
             dispatch="sequential",
+            output_spec=OutputSpec(replayable_difference=None),
         )
 
         def operands():
@@ -298,7 +314,7 @@ class TestReplay:
         with replay_run(original.provenance):
             replayed = difference(**operands())
         np.testing.assert_array_equal(
-            np.asarray(replayed.atoms.values), np.asarray(original.atoms.values)
+            np.asarray(replayed.atoms.raw), np.asarray(original.atoms.raw)
         )
 
 
@@ -309,7 +325,7 @@ class TestTheCapabilities:
         )
 
     def test_a_base_without_a_density_gives_none(self):
-        empirical = EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
+        empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="x")
         transformed = BijectorTransformedDistribution("td", empirical, tfb.Exp())
         assert isinstance(transformed, SupportsSampling)
         assert not isinstance(transformed, SupportsLogProb)
@@ -322,7 +338,7 @@ class TestTheCapabilities:
     def test_the_mean_of_a_nonlinear_map_is_estimated(self, key):
         atoms = jax.random.normal(key, (50, 2))
         transformed = BijectorTransformedDistribution(
-            "td", EmpiricalDistribution("x", atoms), tfb.Exp()
+            "td", EmpiricalDistribution(atoms, component="x"), tfb.Exp()
         )
         assert jnp.all(jnp.isfinite(mean(transformed)))
 

@@ -123,8 +123,9 @@ class Design(RecordBatch):
         """A view of a design is a plain batch, not a design.
 
         The marginals are a statement about the whole design; a view over one
-        field holds none of them, so it takes the class that makes no such claim.
-        It keeps the ``design`` level, which is what the sweep layer zips on.
+        field holds none of them, so it takes the class that makes no such claim,
+        which is a ``NumericRecordBatch`` when the view's fields are numeric. It
+        keeps the ``design`` level, which is what the sweep layer zips on.
         """
         return RecordBatch
 
@@ -200,11 +201,11 @@ class FullFactorialDesign(Design):
 
         RecordBatch.__init__(
             self,
-            f"FullFactorialDesign({','.join(names)})",
             fields,
             DESIGN_LEVEL,
             element_spec=RecordSpec(template_spec),
             axes_per_level=(1,),
+            label=f"FullFactorialDesign({','.join(names)})",
         )
-        # The name is derived from the marginals, not user-typed.
+        # The label is derived from the marginals, not user-typed.
         object.__setattr__(self, "_marginals", dict(marginals))

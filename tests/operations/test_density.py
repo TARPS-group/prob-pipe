@@ -48,13 +48,13 @@ class TestLogProb:
     def test_log_prob_returns_the_normalized_log_density(self):
         score = log_prob(Gaussian("g", 1.0, 2.0), 0.5)
         assert isinstance(score, NumericArray)
-        assert score.label == "g"
+        assert score.label == "log g(g)"
         np.testing.assert_allclose(
             float(jnp.asarray(score)), jax.scipy.stats.norm.logpdf(0.5, 1.0, 2.0), rtol=1e-6
         )
 
     def test_log_prob_requires_the_normalized_capability(self):
-        with pytest.raises(ResolutionError, match="does not claim SupportsLogProb"):
+        with pytest.raises(ResolutionError, match="does not implement SupportsLogProb"):
             log_prob(Unnormalized("u"), 0.0)
 
     def test_unnormalized_log_prob_needs_only_the_unnormalized_capability(self):
@@ -83,7 +83,13 @@ class TestTheScoredValue:
             log_prob(Gaussian("g"), jnp.zeros(3))
 
     def test_a_one_field_record_event_takes_a_record(self):
-        score = log_prob(OneField("o"), Record("v", {"x": jnp.float32(0.0)}))
+        score = log_prob(
+            OneField("o"),
+            Record(
+                {"x": jnp.float32(0.0)},
+                label="v",
+            ),
+        )
         assert float(jnp.asarray(score)) == pytest.approx(float(jax.scipy.stats.norm.logpdf(0.0)))
 
     def test_a_one_field_record_event_refuses_a_bare_array(self):
@@ -100,18 +106,18 @@ class TestTheScoredValue:
 
     def test_a_batch_of_values_is_scored_at_its_levels(self):
         values = NumericArrayBatch(
-            "values",
             jnp.linspace(-1.0, 1.0, 6).reshape(2, 3),
             ("rows", "cols"),
             element_spec=NumericArraySpec(()),
             axes_per_level=(1, 1),
+            label="values",
         )
         scores = log_prob(Gaussian("g"), values)
         assert isinstance(scores, NumericArrayBatch)
         assert scores.level_names == ("rows", "cols")
         assert scores.batch_shape == (2, 3)
         np.testing.assert_allclose(
-            np.asarray(scores.values),
+            np.asarray(scores.raw),
             jax.scipy.stats.norm.logpdf(np.linspace(-1.0, 1.0, 6).reshape(2, 3)),
             rtol=1e-6,
         )
@@ -120,8 +126,22 @@ class TestTheScoredValue:
     @pytest.mark.parametrize(
         ("law", "values"),
         [
-            (CountedVector("v"), NumericArrayBatch("points", jnp.zeros((4, 2)), "point")),
-            (OneField("o"), NumericRecordBatch("points", {"y": jnp.zeros(4)}, "point")),
+            (
+                CountedVector("v"),
+                NumericArrayBatch(
+                    jnp.zeros((4, 2)),
+                    "point",
+                    label="points",
+                ),
+            ),
+            (
+                OneField("o"),
+                NumericRecordBatch(
+                    {"y": jnp.zeros(4)},
+                    "point",
+                    label="points",
+                ),
+            ),
         ],
         ids=["arrays", "records"],
     )
@@ -129,14 +149,16 @@ class TestTheScoredValue:
         self, law, values, dispatch
     ):
         with pytest.raises(ApplicabilityError, match="does not conform"):
-            log_prob.with_options(dispatch=dispatch)(law, values)
+            log_prob.using(dispatch=dispatch)(law, values)
 
 
 class TestABatchOfArraysIsScoredInOneMappedCall:
     @staticmethod
     def _points(n: int) -> NumericArrayBatch:
         return NumericArrayBatch(
-            "points", jax.random.normal(jax.random.PRNGKey(n), (n, 3)), "point"
+            jax.random.normal(jax.random.PRNGKey(n), (n, 3)),
+            "point",
+            label="points",
         )
 
     @pytest.mark.parametrize("score", [log_prob, unnormalized_log_prob])
@@ -151,8 +173,8 @@ class TestABatchOfArraysIsScoredInOneMappedCall:
         assert all(jnp.shape(jnp.asarray(value)) == (3,) for value in law.calls)
         assert (scores.level_names, scores.batch_shape) == (("point",), (1000,))
         np.testing.assert_allclose(
-            np.asarray(scores.values),
-            np.sum(jax.scipy.stats.norm.logpdf(np.asarray(points.values)), axis=-1),
+            np.asarray(scores.raw),
+            np.sum(jax.scipy.stats.norm.logpdf(np.asarray(points.raw)), axis=-1),
             rtol=1e-6,
         )
 
@@ -165,26 +187,24 @@ class TestABatchOfArraysIsScoredInOneMappedCall:
         law.calls.clear()
         scores = score(law, self._points(5))
         assert len(law.calls) == thousand < 5
-        assert bool(jnp.all(jnp.asarray(scores.values) >= 0))
+        assert bool(jnp.all(jnp.asarray(scores.raw) >= 0))
 
     @pytest.mark.parametrize("score", [log_prob, unnormalized_log_prob])
     def test_the_mapped_scores_equal_the_sequential_ones_at_every_level(self, score):
         points = NumericArrayBatch(
-            "grid",
             jax.random.normal(jax.random.PRNGKey(1), (2, 4, 3)),
             ("rows", "cols"),
             element_spec=NumericArraySpec((3,)),
             axes_per_level=(1, 1),
+            label="grid",
         )
         mapped_law, sequential_law = CountedVector("v"), CountedVector("v")
         mapped = score(mapped_law, points)
-        sequential = score.with_options(dispatch="sequential")(sequential_law, points)
+        sequential = score.using(dispatch="sequential")(sequential_law, points)
         assert len(sequential_law.calls) == 8 > len(mapped_law.calls)
         assert mapped.level_names == sequential.level_names == ("rows", "cols")
         assert mapped.batch_shape == sequential.batch_shape == (2, 4)
-        np.testing.assert_allclose(
-            np.asarray(mapped.values), np.asarray(sequential.values), rtol=1e-6
-        )
+        np.testing.assert_allclose(np.asarray(mapped.raw), np.asarray(sequential.raw), rtol=1e-6)
 
 
 class TestLiftedScores:
@@ -192,15 +212,24 @@ class TestLiftedScores:
         report = log_prob.check(Gaussian("g"), Gaussian("v"))
         assert (report.feasible, report.route, report.exact) == (True, "exact", True)
         assert report.lifted == ("value",)
-        assert report.result == OutputSpec(log_prob=NumericArraySpec(()))
-        assert isinstance(log_prob(Gaussian("g"), Gaussian("v")), Distribution)
+        assert report.result == OutputSpec(**{"log_prob": NumericArraySpec(())})
+        lifted = log_prob(Gaussian("g"), Gaussian("v"))
+        assert isinstance(lifted, Distribution)
+        # The law of the score at draws of the value is the operation at a draw,
+        # and its component is the operation's name, never a derived label.
+        assert (lifted.label, lifted.notation) == ("log_prob", "log_prob(g(g), v ~ v)")
+        assert list(lifted.event_spec.components) == ["log_prob"]
 
     def test_a_law_whose_draws_do_not_conform_raises_applicability_error(self):
         with pytest.raises(ApplicabilityError, match="does not conform"):
             log_prob.check(Gaussian("g"), OneField("v"))
 
     def test_a_swept_batch_of_laws_and_a_law_at_the_value_lift_together(self):
-        laws = DistributionBatch("laws", [Gaussian("g", 1.0), Gaussian("g", 2.0)], "laws")
+        laws = DistributionBatch(
+            [Gaussian("g", 1.0), Gaussian("g", 2.0)],
+            "laws",
+            label="laws",
+        )
         report = log_prob.check(laws, Gaussian("v"))
         assert report.feasible is True
         assert report.lifted == ("d", "value")
@@ -218,14 +247,14 @@ class TestLiftedScores:
 class TestDerivedDensities:
     def test_prob_is_derived_from_log_prob(self):
         assert prob.is_derived
-        assert prob.identity == "jnp.exp(log_prob.with_options(raw=True)(d, value))"
+        assert prob.identity == "jnp.exp(log_prob.using(raw=True)(d, value))"
         (route,) = prob.routes
         assert (route.name, route.source) == ("identity", RouteSource.FALLBACK)
 
     def test_prob_is_the_exponential_of_log_prob(self):
         law = Gaussian("g", 0.0, 1.5)
         density = prob(law, 0.7)
-        assert density.label == "g"
+        assert density.label == "g(g)"
         assert density.spec.support is non_negative
         assert float(jnp.asarray(density)) == pytest.approx(
             float(np.exp(jax.scipy.stats.norm.logpdf(0.7, 0.0, 1.5))), rel=1e-6
@@ -244,19 +273,37 @@ class TestDerivedDensities:
     def test_the_identity_is_infeasible_where_log_prob_has_no_route(self):
         report = prob.check(Bare("b"), 0.0)
         assert report.feasible is False
-        assert "does not claim SupportsLogProb" in report.description
-        with pytest.raises(ResolutionError, match="does not claim SupportsLogProb"):
+        assert "does not implement SupportsLogProb" in report.description
+        with pytest.raises(ResolutionError, match="does not implement SupportsLogProb"):
             prob(Bare("b"), 0.0)
 
     def test_the_unnormalized_identity_is_infeasible_where_its_constituent_has_no_route(self):
         report = unnormalized_prob.check(Bare("b"), 0.0)
         assert report.feasible is False
-        assert "does not claim SupportsUnnormalizedLogProb" in report.description
+        assert "does not implement SupportsUnnormalizedLogProb" in report.description
 
     def test_the_identity_takes_the_exactness_of_the_route_log_prob_selects(self):
         report = prob.check(Gaussian("g"), 0.5)
         assert (report.feasible, report.route, report.exact) == (True, "identity", True)
         assert {info.method_name: info for info in report.routes}["identity"].exact is True
+
+    def test_exact_only_admits_prob_where_log_prob_is_exact(self):
+        law = Gaussian("g", 0.0, 2.0)
+        exact = prob.using(exact_only=True)(law, 0.0)
+        assert float(jnp.asarray(exact)) == float(jnp.asarray(prob(law, 0.0)))
+        assert (exact.provenance.metadata["route"], exact.provenance.metadata["exact"]) == (
+            "identity",
+            True,
+        )
+
+    def test_exact_only_admits_unnormalized_prob_where_its_constituent_is_exact(self):
+        law = Unnormalized("u")
+        exact = unnormalized_prob.using(exact_only=True)(law, 0.0)
+        assert float(jnp.asarray(exact)) == float(jnp.asarray(unnormalized_prob(law, 0.0)))
+        assert (exact.provenance.metadata["route"], exact.provenance.metadata["exact"]) == (
+            "identity",
+            True,
+        )
 
     def test_the_identity_route_states_its_constituent_as_its_condition(self):
         (route,) = prob.summary().routes
@@ -277,8 +324,8 @@ class TestRandomLogDensities:
         assert random_unnormalized_log_prob.check(RandomDensity("m")).result is None
 
     def test_neither_takes_a_value(self):
-        assert list(inspect.signature(random_log_prob).parameters) == ["M"]
-        assert list(inspect.signature(random_unnormalized_log_prob).parameters) == ["M"]
+        assert list(inspect.signature(random_log_prob).parameters) == ["M", "given"]
+        assert list(inspect.signature(random_unnormalized_log_prob).parameters) == ["M", "given"]
 
     def test_a_law_without_a_random_density_raises_resolution_error(self):
         with pytest.raises(ResolutionError, match="SupportsRandomLogProb"):

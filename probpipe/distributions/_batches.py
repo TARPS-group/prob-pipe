@@ -13,9 +13,11 @@ from typing import cast
 
 import numpy as np
 
+from ..core._expression import Signature
 from ..core._kinds import register_kind
-from ..core._object_batch import _as_object_array, _ObjectBatch
-from ..core._specs import InputSpec, OutputSpec
+from ..core._object_batch import _ObjectBatch
+from ..core._shapes import AxisCountsLike, NamesLike
+from ..core._specs import InputSpec, OutputSpec, TermSpec
 from ..core.provenance import Provenance
 from ._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ._conversion import _event_difference
@@ -27,6 +29,20 @@ __all__ = ["ConditionalDistributionBatch", "DistributionBatch"]
 def _first_element_spec(store: np.ndarray, kind: type, owner: str) -> object:
     """The spec of the first element of *store*, which the others must satisfy.
 
+    Parameters
+    ----------
+    store : numpy.ndarray
+        The batch's elements, as an object array of any shape.
+    kind : type
+        The class each element must be an instance of, such as ``Distribution``.
+    owner : str
+        The batch as an error message names it, such as ``"a DistributionBatch"``.
+
+    Returns
+    -------
+    object
+        The ``spec`` of the element at position ``(0, ..., 0)``.
+
     Raises
     ------
     ValueError
@@ -36,14 +52,14 @@ def _first_element_spec(store: np.ndarray, kind: type, owner: str) -> object:
     """
     if store.size == 0:
         raise ValueError(
-            f"{owner} of no elements has no declaration to read; pass element_spec explicitly"
+            f"cannot infer element_spec from {owner} with no elements; pass element_spec explicitly"
         )
     first = store.flat[0]
     if not isinstance(first, kind):
         position = (0,) * store.ndim
         raise TypeError(
-            f"{owner} holds {kind.__name__} elements, got {type(first).__name__} at position "
-            f"{position}"
+            f"{owner} must hold {kind.__name__} elements; got {type(first).__name__} at "
+            f"position {position}"
         )
     return first.spec
 
@@ -56,25 +72,28 @@ class DistributionBatch(_ObjectBatch[Distribution]):
     record of many fields. It is the batch form of ``DistributionSpec``-valued
     terms, and what a sweep of a kernel over a batch of given values produces.
     The batch stores its elements, and ``batch[i]`` is a view of the stored law:
-    a copy under the name derived from the position, such as ``"laws[law=1]"``,
+    a copy under the label derived from the position, such as ``"laws[law=1]"``,
     sharing the stored law's representation, whose provenance records the batch
     and the stored law. A lift groups an element with its stored law, so every
     access of one element draws together.
 
     Parameters
     ----------
-    label : str
-        The batch's name.
     elements : numpy.ndarray or iterable of Distribution
         The laws, as an object array of any shape or a flat iterable.
-    level_names : str or iterable of str
+    level_names : str or sequence of str
         One name per level, outermost first.
+    label : str, optional
+        The batch's label. Defaults to a list of its first eight laws in
+        row-major order over every batch axis, each in its notation, followed
+        by ``…`` when more remain, as ``[prior0(tau), prior1(tau)]``. A batch
+        of several axes reads as one flat list, and its repr gives the levels.
     element_spec : DistributionSpec, optional
         What every element satisfies. Defaults to the first element's spec, so
         the elements share its event declaration.
-    axes_per_level : iterable of int, optional
-        How many axes each level holds, outermost first. Defaults to one axis
-        per level.
+    axes_per_level : int or sequence of int, optional
+        How many axes each level holds, outermost first (a single int is one level's
+        count). Defaults to one axis per level.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -82,10 +101,18 @@ class DistributionBatch(_ObjectBatch[Distribution]):
     ------
     TypeError
         If *element_spec* is not a ``DistributionSpec``, or an element is not a
-        ``Distribution`` whose declaration unifies with it, naming the position.
+        ``Distribution`` whose declaration unifies with it, naming the position;
+        or *label* is omitted and there are no elements.
     ValueError
         If *elements* is empty and *element_spec* is omitted, or the axes and
         level names disagree as for every batch.
+    TypeError
+        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
+        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
+        mapping are refused for both.
+    ValueError
+        If an *axes_per_level* count is less than 1, or a level name is empty or
+        contains ``/``.
     """
 
     __slots__ = ()
@@ -94,35 +121,61 @@ class DistributionBatch(_ObjectBatch[Distribution]):
 
     def __init__(
         self,
-        label: str,
         elements: np.ndarray | Iterable[Distribution],
         /,
-        level_names: str | Iterable[str],
+        level_names: NamesLike,
         *,
+        label: str | None = None,
         element_spec: DistributionSpec | None = None,
-        axes_per_level: Iterable[int] | None = None,
+        axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
-        elements = _as_object_array(elements, kind=type(self).__name__)
-        if element_spec is None:
-            element_spec = cast(
-                DistributionSpec,
-                _first_element_spec(elements, Distribution, "a DistributionBatch"),
-            )
-        elif not isinstance(element_spec, DistributionSpec):
-            raise TypeError(
-                f"DistributionBatch.element_spec must be a DistributionSpec, "
-                f"got {type(element_spec).__name__}"
-            )
-        _check_declarations(elements, element_spec, self._element_rule)
         super().__init__(
-            label,
             elements,
             level_names,
+            label=label,
             element_spec=element_spec,
             axes_per_level=axes_per_level,
             provenance=provenance,
         )
+
+    def _resolved_element_spec(
+        self, store: np.ndarray, element_spec: TermSpec | None
+    ) -> DistributionSpec:
+        """*element_spec*, which every law of *store* must match, or the first law's spec.
+
+        Parameters
+        ----------
+        store : numpy.ndarray
+            The laws, as an object array of any shape.
+        element_spec : TermSpec or None
+            The spec the caller supplied, or ``None``.
+
+        Returns
+        -------
+        DistributionSpec
+            The element spec.
+
+        Raises
+        ------
+        TypeError
+            If *element_spec* is not a ``DistributionSpec``, the first element is
+            not a ``Distribution``, or a law's declaration departs from the spec.
+        ValueError
+            If *element_spec* is omitted and *store* holds no law.
+        """
+        if element_spec is None:
+            element_spec = cast(
+                DistributionSpec,
+                _first_element_spec(store, Distribution, "a DistributionBatch"),
+            )
+        elif not isinstance(element_spec, DistributionSpec):
+            raise TypeError(
+                f"DistributionBatch.element_spec must be a DistributionSpec; "
+                f"got {type(element_spec).__name__}"
+            )
+        _check_declarations(store, element_spec)
+        return element_spec
 
     @property
     def element_spec(self) -> DistributionSpec:
@@ -134,25 +187,55 @@ class DistributionBatch(_ObjectBatch[Distribution]):
         """The event declaration the elements share, a view on ``spec``."""
         return self.element_spec.event_spec
 
-    def _element_at(self, index: tuple[int, ...], *, name: str) -> Distribution:
+    def _own_signature(self) -> Signature:
+        """The signature the elements share, which a value computed from the batch shows.
+
+        A batch of laws reads as one law under the batch's label, so a draw of
+        it is labeled ``effect ~ schools`` and a score ``log schools(effect)``.
+        """
+        return Signature(tuple(self.event_spec.components))
+
+    def __str__(self) -> str:
+        """The batch's notation and its levels, as ``schools(effect) over school``.
+
+        The notation is that of one law under the batch's label, and a batch
+        that a function lifted over laws gives reads as the call, as
+        ``effect_of(mu ~ prior, tau) over tau``.
+        """
+        return _batch_notation(self)
+
+    def _element_at(self, index: tuple[int, ...], *, label: str) -> Distribution:
         """The stored law at *index*, as a view that records the stored law as its source.
 
-        The view is the stored law under the derived *name*, as every object
+        The view is the stored law under the derived *label*, as every object
         batch presents an element. Its source is the root the lift's capture
         follows, so two accesses of one element, and an element and its stored
         law, draw together (V.5).
         """
-        view = super()._element_at(index, name=name)
+        view = super()._element_at(index, label=label)
         object.__setattr__(view, _ELEMENT_SOURCE, self._store[index])
         return view
 
 
-def _check_declarations(store: np.ndarray, element_spec: DistributionSpec, rule: str) -> None:
+def _batch_notation(batch: DistributionBatch | ConditionalDistributionBatch) -> str:
+    """The notation of *batch*'s elements under its label, then ``over`` and its levels."""
+    notation = batch._expression.render_notation(batch._own_signature(), warn=True)
+    return f"{notation} over {', '.join(batch.level_names)}"
+
+
+def _check_declarations(store: np.ndarray, element_spec: DistributionSpec) -> None:
     """Raise ``TypeError`` for the first law of *store* whose declaration departs from *element_spec*.
 
     The message names the position and how the law's declaration departs, such
     as the components each declares. An element that is not a law, or a
     departure this reading does not name, is left to the batch's own check.
+
+    Parameters
+    ----------
+    store : numpy.ndarray
+        The batch's elements, as an object array of any shape.
+    element_spec : DistributionSpec
+        The spec every element must satisfy.
 
     Raises
     ------
@@ -168,8 +251,8 @@ def _check_declarations(store: np.ndarray, element_spec: DistributionSpec, rule:
         )
         if difference is not None:
             raise TypeError(
-                f"every element of a DistributionBatch must {rule}, and the law at {position} "
-                f"departs from it: {difference}"
+                f"element {position} of the DistributionBatch does not match the batch's "
+                f"declaration: {difference}"
             )
 
 
@@ -184,21 +267,25 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
     The elements share one given declaration and one event declaration. It is
     the batch form of ``ConditionalDistributionSpec``-valued terms. As for
     :class:`DistributionBatch`, ``batch[i]`` is a view of the stored kernel under
-    the name derived from the position, with provenance recording the batch and
+    the label derived from the position, with provenance recording the batch and
     the stored kernel.
 
     Parameters
     ----------
-    label : str
-        The batch's name.
     elements : numpy.ndarray or iterable of ConditionalDistribution
         The kernels, as an object array of any shape or a flat iterable.
-    level_names : str or iterable of str
+    level_names : str or sequence of str
         One name per level, outermost first.
+    label : str, optional
+        The batch's label. Defaults to a list of its first eight kernels in
+        row-major order over every batch axis, each in its notation, followed
+        by ``…`` when more remain. A batch of several axes reads as one flat
+        list, and its repr gives the levels.
     element_spec : ConditionalDistributionSpec, optional
         What every element satisfies. Defaults to the first element's spec.
-    axes_per_level : iterable of int, optional
-        How many axes each level holds, outermost first.
+    axes_per_level : int or sequence of int, optional
+        How many axes each level holds, outermost first (a single int is one level's
+        count).
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -206,10 +293,18 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
     ------
     TypeError
         If *element_spec* is not a ``ConditionalDistributionSpec``, or an element
-        does not satisfy it, naming the position.
+        does not satisfy it, naming the position; or *label* is omitted and there
+        are no elements.
     ValueError
         If *elements* is empty and *element_spec* is omitted, or the axes and
         level names disagree as for every batch.
+    TypeError
+        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
+        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
+        mapping are refused for both.
+    ValueError
+        If an *axes_per_level* count is less than 1, or a level name is empty or
+        contains ``/``.
     """
 
     __slots__ = ()
@@ -218,36 +313,62 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
 
     def __init__(
         self,
-        label: str,
         elements: np.ndarray | Iterable[ConditionalDistribution],
         /,
-        level_names: str | Iterable[str],
+        level_names: NamesLike,
         *,
+        label: str | None = None,
         element_spec: ConditionalDistributionSpec | None = None,
-        axes_per_level: Iterable[int] | None = None,
+        axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
-        if element_spec is None:
-            elements = _as_object_array(elements, kind=type(self).__name__)
-            element_spec = cast(
-                ConditionalDistributionSpec,
-                _first_element_spec(
-                    elements, ConditionalDistribution, "a ConditionalDistributionBatch"
-                ),
-            )
-        elif not isinstance(element_spec, ConditionalDistributionSpec):
-            raise TypeError(
-                f"ConditionalDistributionBatch.element_spec must be a "
-                f"ConditionalDistributionSpec, got {type(element_spec).__name__}"
-            )
         super().__init__(
-            label,
             elements,
             level_names,
+            label=label,
             element_spec=element_spec,
             axes_per_level=axes_per_level,
             provenance=provenance,
         )
+
+    def _resolved_element_spec(
+        self, store: np.ndarray, element_spec: TermSpec | None
+    ) -> ConditionalDistributionSpec:
+        """*element_spec*, which must be a ``ConditionalDistributionSpec``, or the first kernel's spec.
+
+        Parameters
+        ----------
+        store : numpy.ndarray
+            The kernels, as an object array of any shape.
+        element_spec : TermSpec or None
+            The spec the caller supplied, or ``None``.
+
+        Returns
+        -------
+        ConditionalDistributionSpec
+            The element spec.
+
+        Raises
+        ------
+        TypeError
+            If *element_spec* is not a ``ConditionalDistributionSpec``, or the
+            first element is not a ``ConditionalDistribution``.
+        ValueError
+            If *element_spec* is omitted and *store* holds no kernel.
+        """
+        if element_spec is None:
+            return cast(
+                ConditionalDistributionSpec,
+                _first_element_spec(
+                    store, ConditionalDistribution, "a ConditionalDistributionBatch"
+                ),
+            )
+        if not isinstance(element_spec, ConditionalDistributionSpec):
+            raise TypeError(
+                f"ConditionalDistributionBatch.element_spec must be a "
+                f"ConditionalDistributionSpec; got {type(element_spec).__name__}"
+            )
+        return element_spec
 
     @property
     def element_spec(self) -> ConditionalDistributionSpec:
@@ -263,6 +384,14 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
     def event_spec(self) -> OutputSpec:
         """The event declaration the elements share, a view on ``spec``."""
         return self.element_spec.event_spec
+
+    def _own_signature(self) -> Signature:
+        """The signature the elements share: their event components, then their given slots."""
+        return Signature(tuple(self.event_spec.components), tuple(self.given_spec))
+
+    def __str__(self) -> str:
+        """The batch's notation and its levels, as ``glm(y | beta) over dataset``."""
+        return _batch_notation(self)
 
 
 register_kind(DistributionSpec, term_class=Distribution, batch_class=DistributionBatch)

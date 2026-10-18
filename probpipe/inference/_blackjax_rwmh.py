@@ -52,6 +52,7 @@ from ._inference_utils import (
     flat_density,
     get_init_state,
     is_jax_traceable,
+    no_density_reason,
     observed_parts,
     parallel_chain_map,
     run_chain_scan,
@@ -582,7 +583,6 @@ def rwmh(
     n_windows: int = 4,
     proposal_cov: ArrayLike | None = None,
     init: ArrayLike | None = None,
-    random_seed: int | None = None,
 ) -> EmpiricalDistribution:
     """Gradient-free random-walk Metropolis-Hastings (BlackJAX-backed).
 
@@ -594,23 +594,32 @@ def rwmh(
     * an eager Python-loop fallback otherwise (BridgeStan / scipy /
       external-simulator likelihoods).
 
+    The run's key is drawn from a workflow-owned random event, so
+    ``workflow_run(seed=...)`` reproduces the chains, and an unscoped call runs
+    fresh ones.
+
     Parameters
     ----------
-    dist
+    dist : SupportsUnnormalizedLogProb
         Distribution providing ``_unnormalized_log_prob``. RWMH uses
         only the unnormalized density because the missing log
         normalizer cancels out of every accept/reject step.
-    data
+    data : array-like or None
         Observed data forwarded to ``log_prob_fn`` when supplied.
-    log_prob_fn
+    log_prob_fn : callable or None
         ``log_prob_fn(params, data) -> float`` combined with
         ``dist._unnormalized_log_prob(params)`` to form the target.
-    num_results, num_warmup, num_chains
-        MCMC tuning parameters.
-    step_size
+    num_results : int
+        Number of draws each chain keeps.
+    num_warmup : int
+        Number of warmup steps each chain runs before the draws it keeps,
+        on which ``adapt`` fits the proposal.
+    num_chains : int
+        Number of chains, which all start at the initial state.
+    step_size : float
         Diagonal proposal scale used when ``proposal_cov=None`` and
         either ``adapt=False`` or ``num_warmup == 0``.
-    adapt
+    adapt : bool
         When ``True`` (default), runs a window-style adaptive warmup:
         geometrically growing windows that each sample with the current
         proposal Cholesky and accumulate Welford statistics on
@@ -620,28 +629,24 @@ def rwmh(
         Roberts-Gelman-Gilks scaling to the last refit covariance
         ``Sigma``. When ``False``, skips adaptation and uses
         ``sigma = step_size * I`` throughout.
-    n_windows
+    n_windows : int
         Maximum number of geometric warmup windows when ``adapt=True``.
         Windows are added only while each holds at least 25 steps, so a
         warmup shorter than 74 steps runs as a single window: a fixed
         RGG-scaled identity proposal throughout, refit once at the end.
         Default ``4``; ``n_windows <= 1`` always gives the single window.
         Ignored when ``adapt=False``.
-    proposal_cov
+    proposal_cov : array-like or None
         Explicit ``(d, d)`` proposal Cholesky factor, where ``d`` is the
         dimension of the chain's state, whose coordinates are unconstrained
         for a leaf on a constrained support. Overrides both the adaptive fit and
         ``step_size``. Useful when the user has a precomputed covariance
         estimate from elsewhere. A wrong-shape matrix raises
         ``ValueError``.
-    init
+    init : array-like or None
         Initial chain state. Resolved by
         :func:`~probpipe.inference._inference_utils.get_init_state`
         when ``None``.
-    random_seed
-        Seed for chain initialisation, warmup, and sampling RNG. Omitted,
-        the run's seed is a workflow-owned random event, which
-        ``workflow_run`` fixes.
 
     Returns
     -------
@@ -681,22 +686,90 @@ def rwmh(
     giving later windows more steps.
     """
     if not isinstance(dist, SupportsUnnormalizedLogProb):
-        raise TypeError(
-            f"{type(dist).__name__} does not support log_prob "
-            "(does not implement SupportsUnnormalizedLogProb)"
-        )
+        raise TypeError(f"cannot run rwmh: {no_density_reason(dist)}")
+    return _rwmh(
+        dist,
+        data,
+        log_prob_fn=log_prob_fn,
+        num_results=num_results,
+        num_warmup=num_warmup,
+        num_chains=num_chains,
+        step_size=step_size,
+        adapt=adapt,
+        n_windows=n_windows,
+        proposal_cov=proposal_cov,
+        init=init,
+        random_seed=run_seed("blackjax_rwmh"),
+    )
 
+
+def _rwmh(
+    dist: SupportsUnnormalizedLogProb,
+    data: ArrayLike | None,
+    *,
+    log_prob_fn: Any | None,
+    num_results: int,
+    num_warmup: int,
+    num_chains: int,
+    step_size: float,
+    adapt: bool,
+    n_windows: int,
+    proposal_cov: ArrayLike | None,
+    init: ArrayLike | None,
+    random_seed: Array,
+) -> EmpiricalDistribution:
+    """The random-walk chains of :func:`rwmh` on *dist*, drawn from the run's key.
+
+    It returns, raises, and warns as :func:`rwmh` does, apart from the check
+    of *dist*'s density, which its callers make.
+
+    Parameters
+    ----------
+    dist : SupportsUnnormalizedLogProb
+        The target, as :func:`rwmh` takes it.
+    data : array-like or None
+        The observed data that *log_prob_fn* receives.
+    log_prob_fn : callable or None
+        The log-likelihood of *data*, as :func:`rwmh` takes it.
+    num_results : int
+        The number of draws each chain keeps.
+    num_warmup : int
+        The number of warmup steps each chain runs.
+    num_chains : int
+        The number of chains.
+    step_size : float
+        The diagonal proposal scale when the proposal is neither given nor
+        adapted.
+    adapt : bool
+        Whether the warmup fits the proposal covariance.
+    n_windows : int
+        The largest number of warmup windows that the adaptation uses.
+    proposal_cov : array-like or None
+        A proposal Cholesky factor, which replaces the adaptation and
+        *step_size*.
+    init : array-like or None
+        The initial state, which
+        :func:`~probpipe.inference._inference_utils.get_init_state` draws
+        from the run's key when it is ``None``.
+    random_seed : Array
+        The run's key, from which the initial state, the warmup, and the
+        chains draw.
+
+    Returns
+    -------
+    EmpiricalDistribution
+        The chains, as :func:`rwmh` returns them.
+    """
     # Adaptation needs warmup samples to fit the proposal covariance.
     # With ``num_warmup == 0`` there is nothing to adapt on, so the
     # proposal silently falls back to ``step_size * I`` — warn rather
     # than degrade quietly, since the caller asked for adaptation.
     if adapt and num_warmup == 0 and proposal_cov is None:
         warnings.warn(
-            "rwmh(adapt=True) with num_warmup=0 cannot fit a proposal "
-            "covariance; falling back to sigma = step_size * I. Pass "
-            "num_warmup > 0 to adapt, or adapt=False to silence this "
-            "warning.",
-            stacklevel=2,
+            "rwmh cannot adapt the proposal covariance with num_warmup=0, so it uses "
+            "step_size * I. Pass num_warmup > 0 to adapt, or adapt=False to silence "
+            "this warning.",
+            stacklevel=3,
         )
 
     if log_prob_fn is not None and data is not None:
@@ -706,7 +779,6 @@ def rwmh(
     else:
         target_log_prob = flat_density(dist)
 
-    random_seed = run_seed({"random_seed": random_seed}, "blackjax_rwmh")
     init_state = get_init_state(dist, init, random_seed=random_seed)
     if log_prob_fn is None or data is None:
         target_log_prob, init_state, constrain = unconstrained_chain(
@@ -725,7 +797,7 @@ def rwmh(
             raise ValueError(
                 f"proposal_cov must be a square ({d}, {d}) matrix matching the "
                 f"{d}-dimensional target; got shape "
-                f"{tuple(proposal_sigma_override.shape)}."
+                f"{tuple(proposal_sigma_override.shape)}"
             )
 
     chains, warmups, sample_stats, accept_rate = _run_blackjax_rwmh(
@@ -789,9 +861,12 @@ class BlackJAXRWMHMethod(InferenceMethod):
         "num_results",
         "num_warmup",
         "proposal_cov",
-        "random_seed",
         "step_size",
     )
+
+    @property
+    def description(self) -> str:
+        return "Gradient-free random-walk Metropolis-Hastings through BlackJAX."
 
     @property
     def name(self) -> str:
@@ -808,14 +883,11 @@ class BlackJAXRWMHMethod(InferenceMethod):
         """Whether the target's parameters have an unnormalized density, from data not in a dict."""
         dist, observed = observed_parts(target)
         if not isinstance(dist, SupportsUnnormalizedLogProb):
-            return Feasibility(
-                feasible=False,
-                description="Requires SupportsUnnormalizedLogProb",
-            )
+            return Feasibility(feasible=False, description=no_density_reason(dist))
         if observed is not None and isinstance(observed, dict):
             return Feasibility(
                 feasible=False,
-                description="Does not support dict-based conditioning",
+                description="observed data given as a dict is not supported",
             )
         return Feasibility(feasible=True)
 
@@ -823,14 +895,10 @@ class BlackJAXRWMHMethod(InferenceMethod):
         """Random-walk chains on the target's parameters, scored by its prior and likelihood."""
         self._check_options(kwargs)
         dist, observed = observed_parts(target)
-        random_seed = run_seed(kwargs, self.name)
-        init = kwargs.get("init")
-        if init is None:
-            init = get_init_state(dist, None, random_seed=random_seed)
-
-        return rwmh(
+        return _rwmh(
             dist,
             observed,
+            log_prob_fn=None,
             num_results=kwargs.get("num_results", 1000),
             num_warmup=kwargs.get("num_warmup", 500),
             num_chains=kwargs.get("num_chains", 4),
@@ -838,6 +906,6 @@ class BlackJAXRWMHMethod(InferenceMethod):
             adapt=kwargs.get("adapt", True),
             n_windows=kwargs.get("n_windows", 4),
             proposal_cov=kwargs.get("proposal_cov"),
-            init=init,
-            random_seed=random_seed,
+            init=kwargs.get("init"),
+            random_seed=run_seed(self.name),
         )

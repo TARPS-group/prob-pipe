@@ -42,7 +42,13 @@ def _numeric_record_batch(
     field: str, values: range, *, level_name: str = "draw"
 ) -> NumericRecordBatch:
     return NumericRecordBatch.stack(
-        [NumericRecord("nr", **{field: float(value)}) for value in values],
+        [
+            NumericRecord(
+                {**{field: float(value)}},
+                label="nr",
+            )
+            for value in values
+        ],
         level_name=level_name,
     )
 
@@ -82,7 +88,7 @@ class TestBroadcastRegime:
         assert plan.n_sweep == 1
 
     def test_distribution_value_selects_distribution_regime(self):
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
 
         plan = _plan({"x": dist})
 
@@ -113,7 +119,7 @@ class TestBroadcastRegime:
     def test_array_and_distribution_values_select_nested_regime(self):
         values = {
             "p": _numeric_record_batch("x", range(4)),
-            "noise": Normal(loc=0.0, scale=1.0, label="noise"),
+            "noise": Normal("noise", loc=0.0, scale=1.0),
         }
 
         plan = _plan(values)
@@ -125,7 +131,7 @@ class TestBroadcastRegime:
 
 class TestHintClassification:
     def test_distribution_hints_skip_scalar_distribution_broadcast(self):
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
 
         concrete = _plan({"x": dist}, {"x": Distribution})
         protocol = _plan({"x": dist}, {"x": SupportsSampling})
@@ -135,7 +141,11 @@ class TestHintClassification:
 
     def test_array_hints_skip_array_sweep(self):
         ra = _numeric_record_batch("x", range(4))
-        laws = DistributionBatch("d", [Normal("x", 0.0, 1.0), Normal("x", 1.0, 1.0)], "law")
+        laws = DistributionBatch(
+            [Normal("x", 0.0, 1.0), Normal("x", 1.0, 1.0)],
+            "law",
+            label="d",
+        )
 
         record_plan = _plan({"p": ra}, {"p": NumericRecordBatch})
         dist_plan = _plan({"d": laws}, {"d": DistributionBatch})
@@ -149,7 +159,14 @@ class TestHintClassification:
 class TestArrayGrouping:
     def test_sibling_views_zip_into_one_group(self):
         ra = NumericRecordBatch.stack(
-            [NumericRecord("nr", x=float(i), y=float(2 * i)) for i in range(4)], level_name="draw"
+            [
+                NumericRecord(
+                    {"x": float(i), "y": float(2 * i)},
+                    label="nr",
+                )
+                for i in range(4)
+            ],
+            level_name="draw",
         )
 
         views = ra.select_all()
@@ -197,20 +214,26 @@ class TestArrayGrouping:
         assert plan.sweep_batch_shape == (3, 2)
         assert plan.n_sweep == 6
 
-    def test_one_level_name_at_two_sizes_is_refused(self):
-        """Two batches naming the same level claim to range over the same thing,
-        so disagreeing about its size is a mistake rather than a product."""
+    def test_two_views_at_incompatible_sizes_of_one_level_are_refused(self):
+        """Sizes that broadcast within a level combine, and sizes that do not
+        broadcast are refused."""
         ra_a = _numeric_record_batch("a", range(3))
         ra_b = _numeric_record_batch("b", range(2))
 
-        with pytest.raises(ApplicabilityError, match="batched differently"):
+        with pytest.raises(
+            ApplicabilityError, match=r"has shapes \(3,\) for 'a' and \(2,\) for 'b'"
+        ):
             _plan({"a": ra_a.select("a")["a"], "b": ra_b.select("b")["b"]})
 
     def test_a_distribution_batch_sweeps_on_its_own_levels(self):
         store = np.empty(6, dtype=object)
         for position in range(6):
             store[position] = Normal("x", float(position), 1.0)
-        laws = DistributionBatch("d", store.reshape(2, 3), ("row", "col"))
+        laws = DistributionBatch(
+            store.reshape(2, 3),
+            ("row", "col"),
+            label="d",
+        )
 
         plan = _plan({"d": laws})
 
@@ -264,8 +287,8 @@ class TestStochasticPlanStructure:
     def test_sampled_singleton_plan_is_frozen_and_tuple_only(self):
         plan = _stochastic_plan(
             {
-                "a": Normal(loc=0.0, scale=1.0, label="a"),
-                "b": Normal(loc=1.0, scale=1.0, label="b"),
+                "a": Normal("a", loc=0.0, scale=1.0),
+                "b": Normal("b", loc=1.0, scale=1.0),
             },
             n_broadcast_samples=12,
         )
@@ -324,7 +347,7 @@ class TestStochasticPlanStructure:
         values = {
             "left": _numeric_record_batch("x", range(2), level_name="left"),
             "right": _numeric_record_batch("y", range(3), level_name="right"),
-            "noise": Normal(loc=0.0, scale=1.0, label="noise"),
+            "noise": Normal("noise", loc=0.0, scale=1.0),
         }
 
         plan = _stochastic_plan(values, n_broadcast_samples=7)
@@ -349,12 +372,18 @@ class TestStochasticPlanStructure:
 class TestStochasticSourceGrouping:
     def test_batch_alignment_does_not_merge_stochastic_source_identity(self):
         batch = NumericRecordBatch.stack(
-            [NumericRecord("row", x=float(i), y=float(2 * i)) for i in range(3)],
+            [
+                NumericRecord(
+                    {"x": float(i), "y": float(2 * i)},
+                    label="row",
+                )
+                for i in range(3)
+            ],
             level_name="draw",
         )
         views = batch.select_all()
-        first = Normal(loc=0.0, scale=1.0, label="same")
-        second = Normal(loc=0.0, scale=1.0, label="same")
+        first = Normal("same", loc=0.0, scale=1.0)
+        second = Normal("same", loc=0.0, scale=1.0)
         values = {
             "x": views["x"],
             "y": views["y"],
@@ -375,12 +404,12 @@ class TestStochasticSourceGrouping:
         assert len(stochastic_plan.random_events) == 6
 
     def test_record_views_share_their_known_parent_group(self):
-        joint = Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=1.0, scale=1.0, label="y")
+        joint = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=1.0, scale=1.0)
 
         plan = _stochastic_plan(
             {
                 "x": joint["x"],
-                "independent": Normal(loc=2.0, scale=1.0, label="independent"),
+                "independent": Normal("independent", loc=2.0, scale=1.0),
                 "y": joint["y"],
             }
         )
@@ -404,7 +433,7 @@ class TestStochasticSourceGrouping:
         )
 
     def test_direct_aliases_share_one_root_group(self):
-        shared = Normal(loc=0.0, scale=1.0, label="shared")
+        shared = Normal("shared", loc=0.0, scale=1.0)
 
         plan = _stochastic_plan({"first": shared, "second": shared})
 
@@ -416,8 +445,8 @@ class TestStochasticSourceGrouping:
         )
 
     def test_equal_but_distinct_direct_objects_remain_independent(self):
-        first = Normal(loc=0.0, scale=1.0, label="same")
-        second = Normal(loc=0.0, scale=1.0, label="same")
+        first = Normal("same", loc=0.0, scale=1.0)
+        second = Normal("same", loc=0.0, scale=1.0)
 
         plan = _stochastic_plan({"first": first, "second": second})
 
@@ -430,9 +459,9 @@ class TestStochasticSourceGrouping:
 
     def test_root_sibling_and_transitive_views_share_canonical_paths(self):
         joint = (
-            Normal(loc=0.0, scale=1.0, label="left") * Normal(loc=1.0, scale=1.0, label="right")
+            Normal("left", loc=0.0, scale=1.0) * Normal("right", loc=1.0, scale=1.0)
         ).with_path_names({"left": "nested/left", "right": "nested/right"}) * Normal(
-            loc=2.0, scale=1.0, label="top"
+            "top", loc=2.0, scale=1.0
         )
 
         plan = _stochastic_plan(
@@ -454,8 +483,8 @@ class TestStochasticSourceGrouping:
         assert plan.runtime_bindings[0].root is joint
 
     def test_runtime_bindings_do_not_participate_in_canonical_plan_equality(self):
-        first = _stochastic_plan({"x": Normal(loc=0.0, scale=1.0, label="first")})
-        second = _stochastic_plan({"x": Normal(loc=9.0, scale=3.0, label="second")})
+        first = _stochastic_plan({"x": Normal("first", loc=0.0, scale=1.0)})
+        second = _stochastic_plan({"x": Normal("second", loc=9.0, scale=3.0)})
 
         assert first == second
         assert first.runtime_bindings[0].root is not second.runtime_bindings[0].root
@@ -464,8 +493,8 @@ class TestStochasticSourceGrouping:
 class TestStochasticEvaluationPlanning:
     def test_wholly_exact_empiricals_record_cartesian_order_and_no_events(self):
         values = {
-            "a": EmpiricalDistribution("a", jnp.asarray([1.0, 2.0])),
-            "b": EmpiricalDistribution("b", jnp.asarray([10.0, 20.0, 30.0])),
+            "a": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), component="a"),
+            "b": EmpiricalDistribution(jnp.asarray([10.0, 20.0, 30.0]), component="b"),
         }
 
         plan = _stochastic_plan(values, n_broadcast_samples=10)
@@ -492,9 +521,9 @@ class TestStochasticEvaluationPlanning:
 
     def test_mixed_plan_preserves_stable_greedy_order_and_actual_sample_shape(self):
         values = {
-            "large_first": EmpiricalDistribution("large_first", jnp.arange(5.0)),
-            "small_second": EmpiricalDistribution("small_second", jnp.arange(2.0)),
-            "sampled": Normal(loc=0.0, scale=1.0, label="sampled"),
+            "large_first": EmpiricalDistribution(jnp.arange(5.0), component="large_first"),
+            "small_second": EmpiricalDistribution(jnp.arange(2.0), component="small_second"),
+            "sampled": Normal("sampled", loc=0.0, scale=1.0),
         }
 
         plan = _stochastic_plan(values, n_broadcast_samples=23)
@@ -516,7 +545,7 @@ class TestStochasticEvaluationPlanning:
 
     def test_over_budget_empirical_is_sampled(self):
         plan = _stochastic_plan(
-            {"x": EmpiricalDistribution("x", jnp.arange(20.0))},
+            {"x": EmpiricalDistribution(jnp.arange(20.0), component="x")},
             n_broadcast_samples=5,
         )
 
@@ -529,9 +558,9 @@ class TestStochasticEvaluationPlanning:
     def test_equal_size_empiricals_keep_first_consumer_order_at_greedy_cutoff(self):
         plan = _stochastic_plan(
             {
-                "first": EmpiricalDistribution("first", jnp.arange(3.0)),
-                "second": EmpiricalDistribution("second", jnp.arange(3.0)),
-                "third": EmpiricalDistribution("third", jnp.arange(3.0)),
+                "first": EmpiricalDistribution(jnp.arange(3.0), component="first"),
+                "second": EmpiricalDistribution(jnp.arange(3.0), component="second"),
+                "third": EmpiricalDistribution(jnp.arange(3.0), component="third"),
             },
             n_broadcast_samples=10,
         )
@@ -549,8 +578,8 @@ class TestStochasticEvaluationPlanning:
     def test_event_count_is_sampled_sources_times_units_not_draw_count(self):
         values = {
             "rows": _numeric_record_batch("x", range(3)),
-            "a": Normal(loc=0.0, scale=1.0, label="a"),
-            "b": Normal(loc=1.0, scale=1.0, label="b"),
+            "a": Normal("a", loc=0.0, scale=1.0),
+            "b": Normal("b", loc=1.0, scale=1.0),
         }
 
         small = _stochastic_plan(values, n_broadcast_samples=5)
@@ -577,7 +606,7 @@ class TestStochasticEvaluationPlanning:
         error,
         message,
     ):
-        values = {"x": Normal(loc=0.0, scale=1.0, label="x")}
+        values = {"x": Normal("x", loc=0.0, scale=1.0)}
 
         with pytest.raises(error, match=message):
             _stochastic_plan(values, n_broadcast_samples=n_broadcast_samples)
@@ -585,7 +614,7 @@ class TestStochasticEvaluationPlanning:
 
 class TestStochasticPlanPurity:
     def test_planner_does_not_read_entropy_claim_keys_or_mutate_inputs(self):
-        source = Normal(loc=0.0, scale=1.0, label="x")
+        source = Normal("x", loc=0.0, scale=1.0)
         values = {"x": source}
 
         with (
@@ -607,10 +636,10 @@ def _batch(level: str = "draw", n: int = 3, **fields) -> Any:
 
     fields = fields or {"x": jnp.arange(float(n))}
     return NumericRecordBatch(
-        "batch",
         dict(fields),
         (level,),
         element_spec=RecordSpec({name: value.shape[1:] for name, value in fields.items()}),
+        label="batch",
     )
 
 
@@ -644,12 +673,12 @@ class TestBatchGrouping:
         assert plan.sweep_batch_shape == (3, 2)
         assert plan.n_sweep == 6
 
-    def test_one_level_name_at_two_sizes_is_refused(self):
-        """Two batches naming the same level claim to range over the same thing,
-        so disagreeing about its size is a mistake rather than a product."""
+    def test_one_level_name_at_incompatible_sizes_is_refused(self):
+        """Sizes that broadcast within a level combine, and sizes that do not
+        broadcast are refused."""
         import pytest
 
-        with pytest.raises(ApplicabilityError, match="batched differently"):
+        with pytest.raises(ApplicabilityError, match="level 'draw' has shapes"):
             _plan({"a": _batch("draw", 3), "b": _batch("draw", 2)})
 
 
@@ -682,39 +711,42 @@ class TestPartialLevelOverlap:
         from probpipe.core._specs import RecordSpec
 
         two = NumericRecordBatch(
-            "batch",
             {"x": jnp.arange(6.0).reshape(2, 3)},
             ("chain", "draw"),
             element_spec=RecordSpec(x=()),
             axes_per_level=(1, 1),
+            label="batch",
         )
         one = _batch("draw", 3)
 
-        with pytest.raises(ApplicabilityError, match="share the level 'draw'"):
+        with pytest.raises(
+            ApplicabilityError, match="Rename 'draw' on one of them with with_level_names"
+        ):
             _plan({"a": two, "b": one})
 
-    def test_the_same_levels_at_different_geometries_are_refused(self):
-        """The flat shape can agree while the partition does not; zipping would
-        hand the output whichever partition arrived first."""
+    def test_partitions_with_incompatible_level_shapes_are_refused(self):
+        """Two partitions of one flat shape combine when each level's shapes
+        broadcast, and here level 'a' has the incompatible shapes (2,) and (2, 3)."""
         from probpipe.core._specs import RecordSpec
 
         ga = NumericRecordBatch(
-            "batch",
             {"x": jnp.zeros((2, 3, 4))},
             ("a", "b"),
             element_spec=RecordSpec(x=()),
             axes_per_level=(1, 2),
+            label="batch",
         )
         gb = NumericRecordBatch(
-            "batch",
             {"y": jnp.zeros((2, 3, 4))},
             ("a", "b"),
             element_spec=RecordSpec(y=()),
             axes_per_level=(2, 1),
+            label="batch",
         )
 
         with pytest.raises(
-            ApplicabilityError, match=r"same levels \('a', 'b'\) but are batched differently"
+            ApplicabilityError,
+            match=r"^level 'a' has shapes \(2,\) for 'a' and \(2, 3\) for 'b', which do not broadcast$",
         ):
             _plan({"a": ga, "b": gb})
 

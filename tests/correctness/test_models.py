@@ -11,8 +11,8 @@ moments bounded by four standard errors.
 - ``PyMCModel``: the prior predictive, covariates as given slots, the
   normalized density against PyMC's ``logp``, and the unnormalized density
   and the posterior of a model with a potential;
-- ``UnnormalizedDistribution``: sampling, conversion, and conditioning through
-  a method of the inference-method registry;
+- a law of an unnormalized density from ``distribution``: sampling, conversion,
+  and conditioning through a method of the inference-method registry;
 - factored joints: ancestral sampling moments, summed log-densities, and the
   moments and marginals the factor graph admits;
 - ``StanModel`` and the learned kernels, where the local toolchain allows.
@@ -36,10 +36,15 @@ from probpipe import (
     NumericArraySpec,
     OutputSpec,
     RecordSpec,
+    distribution,
     workflow_run,
 )
 from probpipe.core._dispatch import ResolutionError
-from probpipe.distributions import ConditionalDistribution, FactoredConditionalDistribution
+from probpipe.distributions import (
+    ConditionalDistribution,
+    Distribution,
+    FactoredConditionalDistribution,
+)
 from probpipe.distributions._capabilities import (
     SupportsLogProb,
     SupportsMean,
@@ -51,7 +56,6 @@ from probpipe.families import (
     GaussianFamily,
     PoissonFamily,
     PyMCModel,
-    UnnormalizedDistribution,
     glm_likelihood,
 )
 from tests._ops import (
@@ -134,9 +138,7 @@ class TestGLM:
         expected = density(np.asarray(_X, np.float64) @ _BETA, response) + (
             scipy.stats.multivariate_normal.logpdf(_BETA, np.zeros(2), 2.0 * np.eye(2))
         )
-        assert float(log_prob.with_options(raw=True)(joint, value)) == pytest.approx(
-            expected, rel=1e-5
-        )
+        assert float(log_prob.using(raw=True)(joint, value)) == pytest.approx(expected, rel=1e-5)
 
     def test_the_prior_predictive_has_the_gaussian_moments(self):
         """``y = X beta + e`` has mean zero and variance ``v ||x_i||² + s²`` per observation."""
@@ -157,8 +159,9 @@ class TestGLM:
         """
         case = canonical.case("gaussian_linear")
         report = condition_on.check(case.model, case.data)
-        assert (report.route, report.method) == ("bayes", "blackjax_nuts")
-        posterior = condition_on.with_options(method_options=FIT)(case.model, case.data)
+        assert (report.route, report.method) == ("inference_methods", "blackjax_nuts")
+        with workflow_run(seed=0):
+            posterior = condition_on.using(method_options=FIT)(case.model, case.data)
         assert_matches(posterior, case.reference, label="the default route on gaussian_linear")
 
     def test_a_design_left_unbound_is_a_given_slot_of_the_joint(self):
@@ -172,7 +175,7 @@ class TestGLM:
     def test_binding_the_design_and_the_response_gives_the_closed_form_posterior(self):
         """One call binds the design as a given slot and conditions on the response.
 
-        The design is curried first and the response conditioned by Bayes'
+        The design is bound first and the response conditioned by Bayes'
         rule, so the result is the Gaussian closed form; the fit takes a few
         seconds.
         """
@@ -180,9 +183,10 @@ class TestGLM:
         X = jnp.asarray(case.stan_data["X"], jnp.float32)
         prior = MultivariateNormal("beta", jnp.zeros(X.shape[1]), cov=4.0 * jnp.eye(X.shape[1]))
         joint = glm_likelihood("y", GaussianFamily(), dispersion=1.0) * prior
-        posterior = condition_on.with_options(method="blackjax_nuts", method_options=FIT)(
-            joint, {"X": X, **case.data}
-        )
+        with workflow_run(seed=0):
+            posterior = condition_on.using(method="blackjax_nuts", method_options=FIT)(
+                joint, {"X": X, **case.data}
+            )
         assert_matches(posterior, case.reference, label="binding X and y together")
 
 
@@ -234,9 +238,9 @@ class TestPyMCModel:
         """``mu ~ N(0, 10)``, ``sigma ~ HalfNormal(1)``, and ``y ~ N(mu, sigma)`` give known moments.
 
         The mean and variance of ``sigma`` are ``sqrt(2/pi)`` and ``1 - 2/pi``,
-        and ``y`` has mean zero and variance ``100 + E[sigma²] = 101``.
+        and ``y`` has mean zero and variance ``100 + 𝔼[sigma²] = 101``.
         """
-        model = PyMCModel("normal", _normal_model)
+        model = PyMCModel(_normal_model, label="normal")
         with workflow_run(seed=12):
             draws = _raw_record(sample(model, sample_shape=(DRAWS,)))
         _within_mcse(np.mean(draws["mu"]), 0.0, 10.0)
@@ -247,17 +251,17 @@ class TestPyMCModel:
 
     def test_the_density_is_pymcs_logp(self):
         """The normalized joint density is PyMC's ``logp`` without the transform's Jacobian."""
-        model = PyMCModel("normal", _normal_model)
+        model = PyMCModel(_normal_model, label="normal")
         expected = _normal_model().compile_logp(jacobian=False)(
             {"mu": 0.3, "sigma_log__": np.log(1.2), "y": 0.5}
         )
         value = {"mu": 0.3, "sigma": 1.2, "y": 0.5}
-        assert float(log_prob.with_options(raw=True)(model, value)) == pytest.approx(
+        assert float(log_prob.using(raw=True)(model, value)) == pytest.approx(
             float(expected), rel=1e-5
         )
 
     def test_a_covariate_is_a_given_slot_and_binding_it_returns_the_joint(self):
-        kernel = PyMCModel("regression", _regression)
+        kernel = PyMCModel(_regression, label="regression")
         assert isinstance(kernel, ConditionalDistribution)
         assert list(kernel.given_spec) == ["x"]
         law = condition_on(kernel, {"x": np.linspace(-1, 1, 6)})
@@ -267,7 +271,7 @@ class TestPyMCModel:
     def test_binding_the_covariate_and_the_response_gives_the_closed_form_posterior(self):
         """``beta ~ N(0, 1)`` and ``y ~ N(beta x, 1)`` give ``beta | y ~ N(xᵀy / (1 + xᵀx), 1 / (1 + xᵀx))``.
 
-        The covariate is curried and the response conditioned in one call; the
+        The covariate is bound and the response conditioned in one call; the
         fit runs nutpie, or PyMC's NUTS without it, for a few seconds.
         """
         x = np.linspace(-1.0, 1.0, 6)
@@ -277,25 +281,26 @@ class TestPyMCModel:
             if "nutpie_nuts" in inference_method_registry.list_methods()
             else "pymc_nuts"
         )
-        posterior = condition_on.with_options(
-            method=method, method_options=PROFILES[method].method_options
-        )(PyMCModel("regression", _regression), {"x": x, "y": y})
+        with workflow_run(seed=0):
+            posterior = condition_on.using(
+                method=method, method_options=PROFILES[method].method_options
+            )(PyMCModel(_regression, label="regression"), {"x": x, "y": y})
         precision = 1.0 + x @ x
         reference = exact_reference(np.array([x @ y / precision]), np.array([1.0 / precision]))
         assert_matches(posterior, reference, label=f"{method} on the PyMC regression")
 
     def test_a_model_with_a_potential_claims_only_the_unnormalized_density(self):
-        model = PyMCModel("penalized", _with_potential)
+        model = PyMCModel(_with_potential, label="penalized")
         assert isinstance(model, SupportsUnnormalizedLogProb)
         assert not isinstance(model, SupportsLogProb)
         with pytest.raises(ResolutionError):
             log_prob(model, {"mu": 0.4, "y": _POTENTIAL_DATA})
 
     def test_the_unnormalized_density_of_a_model_with_a_potential_is_pymcs_logp(self):
-        model = PyMCModel("penalized", _with_potential)
+        model = PyMCModel(_with_potential, label="penalized")
         expected = _with_potential().compile_logp(jacobian=False)({"mu": 0.4, "y": _POTENTIAL_DATA})
         value = {"mu": 0.4, "y": _POTENTIAL_DATA}
-        assert float(unnormalized_log_prob.with_options(raw=True)(model, value)) == pytest.approx(
+        assert float(unnormalized_log_prob.using(raw=True)(model, value)) == pytest.approx(
             float(expected), rel=1e-5
         )
 
@@ -310,9 +315,10 @@ class TestPyMCModel:
             if "nutpie_nuts" in inference_method_registry.list_methods()
             else "pymc_nuts"
         )
-        posterior = condition_on.with_options(
-            method=method, method_options=PROFILES[method].method_options
-        )(PyMCModel("penalized", _with_potential), {"y": _POTENTIAL_DATA})
+        with workflow_run(seed=0):
+            posterior = condition_on.using(
+                method=method, method_options=PROFILES[method].method_options
+            )(PyMCModel(_with_potential, label="penalized"), {"y": _POTENTIAL_DATA})
         precision = 3.0 + _POTENTIAL_DATA.shape[0]
         reference = exact_reference(
             np.array([_POTENTIAL_DATA.sum() / precision]), np.array([1.0 / precision]), path="mu"
@@ -330,12 +336,12 @@ class TestPyMCModel:
         """
         case = canonical.case(case_name)
         with workflow_run(seed=13):
-            draw = sample.with_options(raw=True)(case.model)
+            draw = sample.using(raw=True)(case.model)
         pymc = case.pymc_model()
         dtypes = {rv.name: rv.dtype for rv in pymc._pymc_model().free_RVs}
         cast = {name: np.asarray(value).astype(dtypes[name]) for name, value in draw.items()}
-        expected = float(log_prob.with_options(raw=True)(case.model, draw))
-        assert float(log_prob.with_options(raw=True)(pymc, cast)) == pytest.approx(
+        expected = float(log_prob.using(raw=True)(case.model, draw))
+        assert float(log_prob.using(raw=True)(pymc, cast)) == pytest.approx(
             expected, rel=1e-4, abs=1e-3
         )
 
@@ -349,9 +355,7 @@ class TestPyMCModel:
             scipy.stats.beta.logpdf(0.3, 1, 1)
             + scipy.stats.bernoulli.logpmf(np.asarray(value["y"]), 0.3).sum()
         )
-        assert float(log_prob.with_options(raw=True)(pymc, value)) == pytest.approx(
-            expected, rel=1e-5
-        )
+        assert float(log_prob.using(raw=True)(pymc, value)) == pytest.approx(expected, rel=1e-5)
 
     def test_a_count_at_a_value_that_is_not_an_integer_has_density_zero(self):
         case = canonical.case("beta_bernoulli")
@@ -359,11 +363,11 @@ class TestPyMCModel:
         y = np.array(case.data["y"], np.float32)
         y[0] = 0.5
         value = {"theta": np.float32(0.3), "y": y}
-        assert float(log_prob.with_options(raw=True)(pymc, value)) == -np.inf
+        assert float(log_prob.using(raw=True)(pymc, value)) == -np.inf
 
 
 # ---------------------------------------------------------------------------
-# UnnormalizedDistribution
+# A law of an unnormalized density
 # ---------------------------------------------------------------------------
 
 #: The precision and the location of the Gaussian whose density the law knows up to a constant.
@@ -376,9 +380,11 @@ def _gaussian_density(theta):
     return -0.5 * centred @ jnp.asarray(_PRECISION, jnp.float32) @ centred + 3.0
 
 
-def _unnormalized() -> UnnormalizedDistribution:
-    return UnnormalizedDistribution(
-        "theta", _gaussian_density, OutputSpec(theta=NumericArraySpec((2,), jnp.float32))
+def _unnormalized() -> Distribution:
+    return distribution(
+        unnormalized_log_prob=_gaussian_density,
+        event_spec=OutputSpec(theta=NumericArraySpec((2,), jnp.float32)),
+        label="theta",
     )
 
 
@@ -387,7 +393,7 @@ def _gaussian_reference():
     return exact_reference(_LOCATION, np.diag(cov), path="theta")
 
 
-class TestUnnormalizedDistribution:
+class TestUnnormalizedDensity:
     def test_sampling_selects_a_method_that_normalizes_the_law(self):
         report = sample.check(_unnormalized(), sample_shape=(10,))
         assert (report.feasible, report.route, report.method) == (
@@ -399,37 +405,40 @@ class TestUnnormalizedDistribution:
     def test_sampling_through_a_method_draws_atoms_of_the_normalized_law(self):
         """``sample`` normalizes with the method and resamples its result, so every draw is an atom.
 
-        The same controls run the same chain, so the draws of ``sample`` are
-        draws of the atoms ``convert`` returns.
+        The same controls in a scope of the same seed run the same chain, so the
+        draws of ``sample`` are draws of the atoms ``convert`` returns.
         """
         law = _unnormalized()
         with workflow_run(seed=14):
-            draws = sample.with_options(method="blackjax_nuts", method_options=FIT)(
+            draws = sample.using(method="blackjax_nuts", method_options=FIT)(
                 law, sample_shape=(50,)
             )
         assert draws.batch_shape == (50,)
         assert draws.element_spec == law.event_spec.spec
-        normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
-            law, EmpiricalDistribution
-        )
+        with workflow_run(seed=14):
+            normalized = convert.using(method="blackjax_nuts", method_options=FIT)(
+                law, EmpiricalDistribution
+            )
         # One row per atom, across the levels chain and draw.
-        atoms = np.reshape(np.asarray(normalized.atoms.values), (normalized.num_atoms, -1))
-        for draw in np.asarray(draws.values):
+        atoms = np.reshape(np.asarray(normalized.atoms.raw), (normalized.num_atoms, -1))
+        for draw in np.asarray(draws.raw):
             assert np.any(np.all(np.isclose(atoms, draw), axis=1))
 
     def test_conversion_through_a_method_keeps_the_declaration(self):
         law = _unnormalized()
-        normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
-            law, EmpiricalDistribution
-        )
+        with workflow_run(seed=0):
+            normalized = convert.using(method="blackjax_nuts", method_options=FIT)(
+                law, EmpiricalDistribution
+            )
         assert isinstance(normalized, EmpiricalDistribution)
         assert normalized.event_spec == law.event_spec
 
     def test_the_converted_law_has_the_moments_of_the_normalized_density(self):
-        """The empirical law of the chains has the Gaussian's moments to four MCSE."""
-        normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
-            _unnormalized(), EmpiricalDistribution
-        )
+        """The empirical law of the chains has the Gaussian's moments within the harness's band."""
+        with workflow_run(seed=0):
+            normalized = convert.using(method="blackjax_nuts", method_options=FIT)(
+                _unnormalized(), EmpiricalDistribution
+            )
         assert_matches(normalized, _gaussian_reference(), label="the converted law")
 
     def test_conditioning_an_unnormalized_joint_gives_the_closed_form(self):
@@ -439,10 +448,15 @@ class TestUnnormalizedDistribution:
             mu, y = jnp.asarray(value["mu"]), jnp.asarray(value["y"])
             return -0.5 * mu**2 - 0.5 * (y - mu) ** 2 + 7.0
 
-        joint = UnnormalizedDistribution("joint", density, OutputSpec(RecordSpec(mu=REAL, y=REAL)))
-        posterior = condition_on.with_options(method="blackjax_nuts", method_options=FIT)(
-            joint, {"y": 1.4}
+        joint = distribution(
+            unnormalized_log_prob=density,
+            event_spec=OutputSpec(RecordSpec(mu=REAL, y=REAL)),
+            label="joint",
         )
+        with workflow_run(seed=0):
+            posterior = condition_on.using(method="blackjax_nuts", method_options=FIT)(
+                joint, {"y": 1.4}
+            )
         reference = exact_reference(np.array(0.7), np.array(0.5), path="mu")
         assert_matches(posterior, reference, label="the unnormalized joint conditioned on y")
 
@@ -453,7 +467,7 @@ class TestUnnormalizedDistribution:
 
 
 def _chain():
-    """``x ~ N(1, 2)`` and ``y | x ~ N(2x + 1, 0.5)``: ``E[y] = 3``, ``Var y = 16.25``, ``Cov = 8``."""
+    """``x ~ N(1, 2)`` and ``y | x ~ N(2x + 1, 0.5)``: ``𝔼[y] = 3``, ``Var y = 16.25``, ``Cov = 8``."""
     x = Normal("x", 1.0, 2.0)
     y = ObservationKernel("y", {"x": x.event_spec.spec}, REAL, lambda x: tfd.Normal(2 * x + 1, 0.5))
     return y * x
@@ -472,33 +486,43 @@ class TestFactoredJoints:
     def test_the_log_density_is_the_sum_of_the_factor_log_densities(self):
         expected = scipy.stats.norm.logpdf(0.3, 1.0, 2.0) + scipy.stats.norm.logpdf(1.2, 1.6, 0.5)
         value = {"x": 0.3, "y": 1.2}
-        assert float(log_prob.with_options(raw=True)(_chain(), value)) == pytest.approx(
-            expected, rel=1e-6
-        )
+        assert float(log_prob.using(raw=True)(_chain(), value)) == pytest.approx(expected, rel=1e-6)
 
     def test_the_edge_free_joint_has_each_factors_moments(self):
         joint = Normal("a", 1.0, 2.0) * Gamma("b", 3.0, 2.0)
-        means = mean.with_options(raw=True)(joint)
-        variances = variance.with_options(raw=True)(joint)
-        assert float(means["mean(a)"]) == pytest.approx(1.0)
-        assert float(means["mean(b)"]) == pytest.approx(1.5)
-        assert float(variances["variance(a)"]) == pytest.approx(4.0)
-        assert float(variances["variance(b)"]) == pytest.approx(0.75)
+        means = mean.using(raw=True)(joint)
+        variances = variance.using(raw=True)(joint)
+        assert float(means["a"]) == pytest.approx(1.0)
+        assert float(means["b"]) == pytest.approx(1.5)
+        assert float(variances["a"]) == pytest.approx(4.0)
+        assert float(variances["b"]) == pytest.approx(0.75)
 
     def test_a_dependent_joint_claims_no_moment_and_its_mean_is_estimated(self):
         """The mean of ``p(y | x) p(x)`` falls back to Monte Carlo, within four standard errors."""
         joint = _chain()
         assert not isinstance(joint, SupportsMean)
         with workflow_run(seed=16):
-            means = mean.with_options(method="monte_carlo", n_broadcast_samples=DRAWS, raw=True)(
-                joint
-            )
-        _within_mcse([means["mean(x)"], means["mean(y)"]], [1.0, 3.0], [2.0, np.sqrt(16.25)])
+            means = mean.using(method="monte_carlo", n_broadcast_samples=DRAWS, raw=True)(joint)
+        _within_mcse([means["x"], means["y"]], [1.0, 3.0], [2.0, np.sqrt(16.25)])
+
+    def test_the_mean_of_a_dependent_joint_is_exact_at_its_root_factor(self):
+        """``by_component`` gives ``E[x] = 1`` and ``Var x = 4`` exactly, and estimates ``y``."""
+        joint = _chain()
+        assert mean.check(joint).route == "by_component"
+        with workflow_run(seed=17):
+            means = mean.using(n_broadcast_samples=DRAWS, raw=True)(joint)
+            variances = variance.using(n_broadcast_samples=DRAWS, raw=True)(joint)
+        assert float(means["x"]) == pytest.approx(1.0, abs=1e-6)
+        assert float(variances["x"]) == pytest.approx(4.0, abs=1e-5)
+        _within_mcse(means["y"], 3.0, np.sqrt(16.25))
+        # Observed across seeds 17 to 20: errors of the estimated variance up to
+        # 0.48, against a standard error of about 0.36.
+        np.testing.assert_allclose(float(variances["y"]), 16.25, atol=1.45, rtol=0)
 
     def test_the_marginal_of_the_root_factor_is_the_factor(self):
         marginal_x = marginal(_chain(), "x")
-        assert float(mean.with_options(raw=True)(marginal_x)) == pytest.approx(1.0)
-        assert float(variance.with_options(raw=True)(marginal_x)) == pytest.approx(4.0)
+        assert float(mean.using(raw=True)(marginal_x)) == pytest.approx(1.0)
+        assert float(variance.using(raw=True)(marginal_x)) == pytest.approx(4.0)
 
     @pytest.mark.pending(
         reason="marginal's Monte Carlo route returns the empirical marginal",
@@ -507,7 +531,7 @@ class TestFactoredJoints:
     def test_the_marginal_of_a_dependent_factor_is_estimated_from_draws(self):
         with workflow_run(seed=17):
             marginal_y = marginal(_chain(), "y")
-        assert float(mean.with_options(raw=True)(marginal_y)) == pytest.approx(3.0, abs=0.5)
+        assert float(mean.using(raw=True)(marginal_y)) == pytest.approx(3.0, abs=0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -521,9 +545,10 @@ class TestStanModel:
         """The Beta-Bernoulli program's posterior is ``Beta(3, 12)``, through the method condition_on selects."""
         case = canonical.case("beta_bernoulli")
         kernel = case.stan_model(tmp_path)
-        posterior = condition_on.with_options(
-            method_options=PROFILES["cmdstan_nuts"].method_options
-        )(kernel, dict(case.stan_data))
+        with workflow_run(seed=0):
+            posterior = condition_on.using(method_options=PROFILES["cmdstan_nuts"].method_options)(
+                kernel, dict(case.stan_data)
+            )
         assert_matches(posterior, case.reference, label="the Stan program of beta_bernoulli")
 
 
@@ -559,15 +584,17 @@ class TestLearnedKernels:
         The prior is the factored joint of two standard normals, so the law
         exposes the record ``{a, b}``. The law is a biased stand-in, held to the
         harness's biased contract: means within a quarter of a posterior
-        deviation beyond four MCSE. Training the network takes tens of seconds.
+        deviation beyond the harness's MCSE band. Training the network takes tens
+        of seconds.
         """
         _bayesflow()
         from probpipe.inference import learn_amortized_posterior
 
         prior = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
-        kernel = learn_amortized_posterior(
-            prior, _shift_simulator(prior), num_simulations=3000, epochs=8, random_seed=0
-        )
+        with workflow_run(seed=0):
+            kernel = learn_amortized_posterior(
+                prior, _shift_simulator(prior), num_simulations=3000, epochs=8
+            )
         observation = jnp.array([0.6, -0.4])
         law = condition_on(kernel, {"observation": observation})
         reference = _shift_reference(observation)
@@ -588,13 +615,13 @@ class TestLearnedKernels:
         _bayesflow()
         from probpipe.inference import learn_amortized_posterior
 
-        kernel = learn_amortized_posterior(
-            _shift_prior(),
-            _shift_simulator(_shift_prior()),
-            num_simulations=500,
-            epochs=1,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            kernel = learn_amortized_posterior(
+                _shift_prior(),
+                _shift_simulator(_shift_prior()),
+                num_simulations=500,
+                epochs=1,
+            )
         law = condition_on(kernel, {"observation": jnp.array([0.6, -0.4])})
         assert law.event_spec == _shift_prior().event_spec
 
@@ -607,16 +634,17 @@ class TestLearnedKernels:
         _bayesflow()
         from probpipe.inference import learn_amortized_likelihood
 
-        likelihood = learn_amortized_likelihood(
-            _shift_prior(),
-            _shift_simulator(_shift_prior()),
-            num_simulations=3000,
-            epochs=15,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            likelihood = learn_amortized_likelihood(
+                _shift_prior(),
+                _shift_simulator(_shift_prior()),
+                num_simulations=3000,
+                epochs=15,
+            )
         observation = jnp.array([[0.6, -0.4]])
         joint = likelihood * _shift_prior()
-        posterior = condition_on.with_options(method="blackjax_nuts", method_options=FIT)(
-            joint, {"observation": observation}
-        )
+        with workflow_run(seed=0):
+            posterior = condition_on.using(method="blackjax_nuts", method_options=FIT)(
+                joint, {"observation": observation}
+            )
         assert_matches(posterior, _shift_reference(observation[0]), consistent=False)

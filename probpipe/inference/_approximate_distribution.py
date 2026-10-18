@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from xarray import DataTree
 
-    from ..core._spec_base import TermSpec
 
 import jax.numpy as jnp
 import numpy as np
@@ -17,6 +16,8 @@ from .._weights import Weights
 from ..core._numeric_array_batch import NumericArrayBatch
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._opaque import OpaqueSpec
+from ..core._repr import format_components
+from ..core._spec_base import TermSpec
 from ..core._specs import (
     NumericArraySpec,
     NumericRecordSpec,
@@ -42,7 +43,27 @@ _FLAT_DRAWS = "params"
 _DRAW_GROUPS = ("posterior", "warmup")
 
 
-def _spec_size(spec: NumericArraySpec | RecordSpec) -> int:
+def _non_numeric(path: str, spec: Any) -> str:
+    """The message for the parameter *path*, whose *spec* a numeric draw cannot fill."""
+    return (
+        f"cannot store the posterior draws of {path!r}: every parameter must be a numeric "
+        f"array, but its spec is {type(spec).__name__}"
+    )
+
+
+def _first_non_numeric(record: RecordSpec) -> tuple[str, Any]:
+    """The path and spec of the first leaf of *record* that is not a numeric array."""
+    return next(
+        (path, spec) for path, spec in record.items() if not isinstance(spec, NumericArraySpec)
+    )
+
+
+def _width_mismatch(width: int, needed: int, names: Any) -> str:
+    """The message for draws of *width* values where the parameters *names* need *needed*."""
+    return f"each draw has {width} values, but the parameters {list(names)} need {needed}"
+
+
+def _spec_size(spec: NumericArraySpec | RecordSpec, path: str) -> int:
     """Number of scalar elements one field contributes to a flat vector.
 
     Given the spec of a single field of a :class:`RecordSpec`, return how
@@ -54,8 +75,15 @@ def _spec_size(spec: NumericArraySpec | RecordSpec) -> int:
 
     Parameters
     ----------
-    spec
+    spec : NumericArraySpec or RecordSpec
         One field's spec, as returned by :meth:`RecordSpec.__getitem__`.
+    path : str
+        The field's name, which a message names.
+
+    Returns
+    -------
+    int
+        The width of the field's column block.
 
     Raises
     ------
@@ -68,16 +96,11 @@ def _spec_size(spec: NumericArraySpec | RecordSpec) -> int:
     if isinstance(spec, NumericRecordSpec):
         return spec.vector_size
     if isinstance(spec, RecordSpec):
-        raise TypeError(
-            f"nested {type(spec).__name__} contains non-numeric leaves; "
-            f"a flat size requires a NumericRecordSpec."
-        )
+        leaf, leaf_spec = _first_non_numeric(spec)
+        raise TypeError(_non_numeric(f"{path}{_PATH_SEP}{leaf}", leaf_spec))
     if isinstance(spec, NumericArraySpec):
         return prod(spec.shape) if spec.shape else 1
-    raise TypeError(
-        f"template field ({type(spec).__name__}) has no flat size; only numeric "
-        f"(NumericArraySpec) fields and nested NumericRecordSpec fields do."
-    )
+    raise TypeError(_non_numeric(path, spec))
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +120,21 @@ def _column_permutation(
     lays the columns out in template-field order, so the columns of each field
     are read by name rather than by position.
 
+    Parameters
+    ----------
+    record : RecordSpec
+        The target's record, whose fields' flat sizes give the width of each
+        column block.
+    field_order : list of str
+        The order of the flat chain's column blocks, which permutes
+        ``record.fields``.
+
+    Returns
+    -------
+    list of int
+        The permutation ``perm``, which holds the source column of each column of
+        the result.
+
     Raises
     ------
     ValueError
@@ -105,18 +143,15 @@ def _column_permutation(
     """
     if sorted(field_order) != sorted(record.fields):
         raise ValueError(
-            f"field_order {list(field_order)} is not a permutation of "
-            f"template fields {list(record.fields)}."
+            f"field_order {list(field_order)} is not a permutation of the fields "
+            f"{list(record.fields)}"
         )
     sizes: dict[str, int] = {}
     for field_name in record.fields:
         spec = record.children[field_name]
         if isinstance(spec, OpaqueSpec):
-            raise ValueError(
-                f"An inference result requires a numeric template; field {field_name!r} has "
-                f"an opaque spec. Opaque leaves don't have a flat size."
-            )
-        sizes[field_name] = _spec_size(spec)
+            raise ValueError(_non_numeric(field_name, spec))
+        sizes[field_name] = _spec_size(spec, field_name)
     bounds: dict[str, tuple[int, int]] = {}
     offset = 0
     for field_name in field_order:
@@ -134,11 +169,26 @@ def _column_permutation(
 # ---------------------------------------------------------------------------
 
 
-def _array_atoms(name: str, stacked: Array, term: NumericArraySpec) -> NumericArrayBatch:
+def _array_atoms(label: str, stacked: Array, term: NumericArraySpec) -> NumericArrayBatch:
     """The draws *stacked* ``(chains, draws, *flat)`` as atoms of the array term *term*.
 
     Each draw takes the shape the term declares, so a scalar term's draws are
     scalars, and the dtype the term declares.
+
+    Parameters
+    ----------
+    label : str
+        The batch's label.
+    stacked : Array
+        The draws of every chain, stacked along the leading axis.
+    term : NumericArraySpec
+        The target's array term; a term of symbolic shape takes the draws'
+        trailing shape.
+
+    Returns
+    -------
+    NumericArrayBatch
+        The atoms on the levels ``chain`` and ``draw``, which take one axis each.
 
     Raises
     ------
@@ -150,8 +200,8 @@ def _array_atoms(name: str, stacked: Array, term: NumericArraySpec) -> NumericAr
         width = prod(stacked.shape[2:])
         if width != prod(term.shape):
             raise ValueError(
-                f"chain last dim ({width}) doesn't match the target's size {prod(term.shape)} "
-                f"for its shape {term.shape}."
+                f"each draw has {width} values, but {label!r} of shape {term.shape} needs "
+                f"{prod(term.shape)}"
             )
         values = jnp.reshape(stacked, (chains, draws, *term.shape))
     else:
@@ -159,14 +209,35 @@ def _array_atoms(name: str, stacked: Array, term: NumericArraySpec) -> NumericAr
         term = NumericArraySpec(tuple(stacked.shape[2:]), term.dtype, term.support)
     if term.dtype is not None:
         values = values.astype(term.dtype)
-    return NumericArrayBatch(name, values, _CHAIN_LEVELS, element_spec=term, axes_per_level=(1, 1))
+    return NumericArrayBatch(
+        values,
+        _CHAIN_LEVELS,
+        element_spec=term,
+        axes_per_level=(1, 1),
+        label=label,
+    )
 
 
-def _record_atoms(name: str, stacked: Array, record: RecordSpec) -> NumericRecordBatch:
+def _record_atoms(label: str, stacked: Array, record: RecordSpec) -> NumericRecordBatch:
     """The draws *stacked* ``(chains, draws, d)`` as atoms of *record*, in its flat layout.
 
     The columns follow the record's canonical leaf order, nested groups
     included, and each leaf takes the shape and dtype the record declares.
+
+    Parameters
+    ----------
+    label : str
+        The batch's label.
+    stacked : Array
+        The draws of every chain, stacked along the leading axis.
+    record : RecordSpec
+        The target's record declaration.
+
+    Returns
+    -------
+    NumericRecordBatch
+        The atoms on the levels ``chain`` and ``draw``, with one column per leaf
+        path.
 
     Raises
     ------
@@ -178,22 +249,13 @@ def _record_atoms(name: str, stacked: Array, record: RecordSpec) -> NumericRecor
     """
     for path, spec in record.items():
         if isinstance(spec, OpaqueSpec):
-            raise ValueError(
-                f"An inference result requires a numeric template; field {path!r} has an "
-                f"opaque spec. Opaque leaves don't have a flat size."
-            )
+            raise ValueError(_non_numeric(path, spec))
     if not isinstance(record, NumericRecordSpec):
-        raise TypeError(
-            f"An inference result requires a numeric target; {record!r} has a leaf "
-            f"without a flat size."
-        )
+        raise TypeError(_non_numeric(*_first_non_numeric(record)))
     chains, draws = stacked.shape[:2]
     flat = jnp.reshape(stacked, (chains, draws, -1))
     if flat.shape[-1] != record.vector_size:
-        raise ValueError(
-            f"chain last dim ({flat.shape[-1]}) doesn't match the target's flat size "
-            f"({record.vector_size}); target fields={record.fields}."
-        )
+        raise ValueError(_width_mismatch(flat.shape[-1], record.vector_size, record.fields))
     columns, offset = {}, 0
     for path, spec in record.items():
         width = prod(spec.shape)
@@ -201,11 +263,15 @@ def _record_atoms(name: str, stacked: Array, record: RecordSpec) -> NumericRecor
         columns[path] = column if spec.dtype is None else column.astype(spec.dtype)
         offset += width
     return NumericRecordBatch(
-        name, columns, _CHAIN_LEVELS, element_spec=record, axes_per_level=(1, 1)
+        columns,
+        _CHAIN_LEVELS,
+        element_spec=record,
+        axes_per_level=(1, 1),
+        label=label,
     )
 
 
-def _chain_atoms(name: str, stacked: Array, declaration: OutputSpec | None) -> Any:
+def _chain_atoms(label: str, stacked: Array, declaration: OutputSpec | None) -> Any:
     """The draws *stacked* ``(chains, draws, *flat)`` as atoms of the target's event term.
 
     Without a target, each draw is one array.
@@ -213,16 +279,18 @@ def _chain_atoms(name: str, stacked: Array, declaration: OutputSpec | None) -> A
     if declaration is None:
         element = NumericArraySpec(tuple(stacked.shape[2:]), stacked.dtype)
         return NumericArrayBatch(
-            name, stacked, _CHAIN_LEVELS, element_spec=element, axes_per_level=(1, 1)
+            stacked,
+            _CHAIN_LEVELS,
+            element_spec=element,
+            axes_per_level=(1, 1),
+            label=label,
         )
     term = declaration.spec
     if isinstance(term, RecordSpec):
-        return _record_atoms(name, stacked, term)
+        return _record_atoms(label, stacked, term)
     if not isinstance(term, NumericArraySpec):
-        raise TypeError(
-            f"An inference result requires a numeric target; {name!r} declares {term!r}"
-        )
-    return _array_atoms(name, stacked, term)
+        raise TypeError(_non_numeric(label, term))
+    return _array_atoms(label, stacked, term)
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +313,16 @@ def _chain_columns(law: EmpiricalDistribution) -> dict[str, Array]:
 
     A whole-term result has one entry, under its component.
 
+    Parameters
+    ----------
+    law : EmpiricalDistribution
+        The inference result.
+
+    Returns
+    -------
+    dict of str to Array
+        One entry per leaf path, in the order the law stores its columns.
+
     Raises
     ------
     ValueError
@@ -252,8 +330,9 @@ def _chain_columns(law: EmpiricalDistribution) -> dict[str, Array]:
     """
     if not _has_chains(law):
         raise ValueError(
-            f"{law.label!r} holds atoms on the levels {list(law.atoms.level_names)}, while an "
-            f"inference result's atoms lie on {list(_CHAIN_LEVELS)}"
+            f"{law.notation} has no chains: its draws are indexed by "
+            f"{list(law.atoms.level_names)}, but chain diagnostics need the levels "
+            f"{list(_CHAIN_LEVELS)} of a posterior from an MCMC method"
         )
     chains, draws = law.atoms.batch_shape
     rows = law._rows
@@ -272,6 +351,17 @@ def _flat_chains(law: EmpiricalDistribution) -> Array:
     The columns follow the leaf order of the result's components, nested groups
     included, as the method's chains did.
 
+    Parameters
+    ----------
+    law : EmpiricalDistribution
+        The inference result.
+
+    Returns
+    -------
+    Array
+        The columns of :func:`_chain_columns`, each flattened after the chain and
+        draw axes and concatenated along the last axis.
+
     Raises
     ------
     ValueError
@@ -289,6 +379,17 @@ def _flat_chains(law: EmpiricalDistribution) -> Array:
 # ---------------------------------------------------------------------------
 
 
+#: The component of a posterior whose target declares no event, or a bare type.
+_UNDECLARED = "posterior"
+
+
+def _posterior_declaration(event_spec: OutputSpec | TermSpec) -> OutputSpec:
+    """The target's declaration *event_spec*, a bare type other than a record under ``posterior``."""
+    if isinstance(event_spec, TermSpec) and not isinstance(event_spec, RecordSpec):
+        event_spec = OutputSpec(**{_UNDECLARED: event_spec})
+    return _complete_event_spec(event_spec)
+
+
 def make_posterior(
     chains: list[Array],
     parents: tuple[Distribution, ...],
@@ -304,7 +405,8 @@ def make_posterior(
     """The empirical law of an inference run's draws, with its record of the run.
 
     The result is an :class:`~probpipe.EmpiricalDistribution` labeled *label*,
-    whose atoms are the draws on the levels ``chain`` and ``draw``. Its event declaration is the target's: a whole-term target stays
+    whose atoms are the draws on the levels ``chain`` and ``draw``, labeled by
+    the law's components, as ``beta`` or ``(K, r, phi)``. Its event declaration is the target's: a whole-term target stays
     whole, and a record target keeps its fields' supports, scalar shapes, and
     nested groups. Its provenance names the method and the target. Its
     annotations are a ``DataTree`` whose root attribute ``method`` is *method*,
@@ -330,7 +432,8 @@ def make_posterior(
     event_spec : OutputSpec, TermSpec, or None
         The target's declaration, usually the prior's ``event_spec``, which the
         result declares as its event. A bare ``RecordSpec`` exposes its fields,
-        and any other term is a whole term. ``None`` makes each draw one array.
+        and any other term is a whole term under the component ``posterior``.
+        ``None`` makes each draw one array under that component.
     field_order : list of str or None
         The field each contiguous column block of *chains* belongs to, in the
         order the blocks appear, for a backend whose columns follow another
@@ -340,15 +443,15 @@ def make_posterior(
         Per-draw importance weights across all chains in chain order, as SMC-ABC
         returns them.
     label : str
-        The result's label, which is also the component of a whole-term event
-        that *event_spec* leaves unnamed.
+        The result's label.
     **meta
         Further metadata recorded in the provenance.
 
     Returns
     -------
     EmpiricalDistribution
-        The posterior, with its atoms on the levels ``chain`` and ``draw``.
+        The posterior, with its atoms on the levels ``chain`` and ``draw``,
+        labeled by its components.
 
     Raises
     ------
@@ -360,8 +463,8 @@ def make_posterior(
         If the target has a leaf without a flat size.
     """
     if not chains:
-        raise ValueError("an inference result needs at least one chain")
-    declaration = None if event_spec is None else _complete_event_spec(event_spec, label)
+        raise ValueError("chains must hold at least one chain; got none")
+    declaration = None if event_spec is None else _posterior_declaration(event_spec)
     flat_chains = [jnp.asarray(chain) for chain in chains]
 
     # When the chain columns follow another field order than the target's, as for
@@ -369,27 +472,25 @@ def make_posterior(
     # order, so each column is read by name.
     if field_order is not None:
         if declaration is None:
-            raise ValueError(
-                "field_order requires an event_spec; it names the target's components."
-            )
+            raise ValueError("field_order requires an event_spec, whose components it orders")
         record = _components_record(declaration)
         perm = _column_permutation(record, field_order)
         # The width is checked before the gather, which would otherwise drop
         # extra columns or clamp out-of-bounds indices.
         for chain in flat_chains:
             if chain.shape[-1] != len(perm):
-                raise ValueError(
-                    f"chain last dim ({chain.shape[-1]}) doesn't match "
-                    f"the template total flat size ({len(perm)})."
-                )
+                raise ValueError(_width_mismatch(chain.shape[-1], len(perm), record.fields))
         if len(record.fields) > 1:
             flat_chains = [chain[..., perm] for chain in flat_chains]
 
     lengths = sorted({int(chain.shape[0]) for chain in flat_chains})
     if len(lengths) > 1:
-        raise ValueError(f"the chains of an inference result have equal lengths, got {lengths}")
-    atoms = _chain_atoms(label, jnp.stack(flat_chains), declaration)
-    result = EmpiricalDistribution(label, atoms, weights, event_spec=declaration)
+        raise ValueError(f"all chains must have the same length; got lengths {lengths}")
+    components = (_UNDECLARED,) if declaration is None else declaration.components
+    atoms = _chain_atoms(format_components(components), jnp.stack(flat_chains), declaration)
+    if declaration is None:
+        declaration = OutputSpec(**{_UNDECLARED: atoms.element_spec})
+    result = EmpiricalDistribution(atoms, weights, label=label, event_spec=declaration)
     if annotations is not None:
         annotations = _named_draw_groups(annotations, result)
     return _record_run(result, parents, method, annotations=annotations, **meta)

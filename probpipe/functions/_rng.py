@@ -53,9 +53,9 @@ class RandomEventIdentity:
 def seed_to_root_words(seed: int) -> tuple[int, int]:
     """Encode one public workflow seed as canonical big-endian words."""
     if isinstance(seed, bool) or not isinstance(seed, int):
-        raise TypeError("workflow seed must be an unsigned 64-bit integer")
+        raise TypeError(f"workflow_run seed must be an integer in [0, 2**64 - 1]; got {seed!r}")
     if not 0 <= seed <= _MAX_U64:
-        raise ValueError("workflow seed must be in the range [0, 2**64 - 1]")
+        raise ValueError(f"workflow_run seed must be in [0, 2**64 - 1]; got {seed!r}")
     return seed >> 32, seed & _WORD_MASK
 
 
@@ -127,9 +127,9 @@ def _certify_jax_key_adapter(
     key: PRNGKey,
     expected_words: tuple[int, int],
 ) -> None:
-    """Certify JAX's typed-key contract and raw-word round trip."""
+    """Certify that ``key`` is a typed Threefry2x32 key whose raw data is ``expected_words``."""
     if not jnp.issubdtype(key.dtype, jax.dtypes.prng_key) or (
-        key.dtype != jax.random.key_dtype("threefry2x32")
+        jax.random.key_impl(key) != "threefry2x32"
     ):
         raise RuntimeError("installed JAX key adapter does not support Threefry2x32 words")
     round_trip = jax.random.key_data(key)

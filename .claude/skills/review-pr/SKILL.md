@@ -146,7 +146,7 @@ documentation:
 - Could any changes break backward compatibility for existing users?
 - Are there performance concerns (unnecessary copies, unvectorized loops over
   large arrays, repeated recompilation)?
-- Are error messages clear and actionable when protocol checks fail?
+- Do new and changed error and warning messages follow `STYLE_GUIDE.md` §9.3?
 
 ### 2.7 Code quality
 

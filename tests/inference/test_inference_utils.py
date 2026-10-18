@@ -21,6 +21,7 @@ from probpipe import (
     NumericRecord,
     NumericRecordSpec,
     OpaqueSpec,
+    OutputSpec,
     condition_on,
     conditional_distribution,
     inference_method_registry,
@@ -62,7 +63,7 @@ def _gaussian_mean(prior, n, scale=1.0):
 @pytest.fixture
 def small_model():
     """The unnormalized conditional of a joint with a 2-field factored prior."""
-    prior = Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=2.0, scale=0.5, label="b")
+    prior = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=2.0, scale=0.5)
     likelihood = ObservationKernel(
         "y",
         dict(prior.event_spec.components),
@@ -80,7 +81,7 @@ class TestBuildTargetLogProbFlat:
         target_flat, flat_init, event_spec = build_target_log_prob_flat(small_model, None)
         # Round-trip: unflatten the flat init back to a Record and confirm
         # the two callables agree.
-        record_init = NumericRecord.from_vector("nr", event_spec.spec, flat_init)
+        record_init = NumericRecord.from_vector(event_spec.spec, flat_init, label="nr")
         np.testing.assert_allclose(
             float(target_flat(flat_init)),
             float(target_record(record_init)),
@@ -134,7 +135,10 @@ class _FlatTarget(Distribution):
     """A law over a flat array that has no flat-vector view of its own."""
 
     def __init__(self):
-        super().__init__("target", NumericArraySpec((2,)))
+        super().__init__(
+            OutputSpec(target=NumericArraySpec((2,))),
+            label="target",
+        )
 
     def _log_prob(self, value):
         return -0.5 * jnp.sum(jnp.asarray(value) ** 2)
@@ -153,9 +157,10 @@ class TestExtractEventSpec:
     @pytest.mark.parametrize("method", ["blackjax_nuts", "blackjax_rwmh", "tfp_nuts"])
     def test_the_methods_agree_on_a_bare_target(self, method):
         """Each names the posterior and draws it as build_target_log_prob_flat does."""
-        posterior = inference_method_registry.execute(
-            _FlatTarget(), method=method, num_results=20, num_warmup=20, num_chains=1, random_seed=0
-        )
+        with workflow_run(seed=0):
+            posterior = inference_method_registry.execute(
+                _FlatTarget(), method=method, num_results=20, num_warmup=20, num_chains=1
+            )
         assert list(posterior.event_spec.components) == ["posterior"]
         assert isinstance(flat_draws(posterior), jax.Array)
 
@@ -276,7 +281,10 @@ class TestModelFactors:
 
     @pytest.fixture
     def gaussian_target(self):
-        prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, label="mu")])
+        prior = FactoredDistribution(
+            [Normal("mu", loc=0.0, scale=1.0)],
+            label="prior",
+        )
         return observed_target(
             _gaussian_mean(prior, 3, scale=2.0), {"y": jnp.array([1.0, -1.0, 0.5])}
         )
@@ -288,7 +296,7 @@ class TestModelFactors:
         np.testing.assert_allclose(factors.observed, [1.0, -1.0, 0.5])
 
     def test_a_target_that_is_no_conditioned_joint_has_no_factors(self):
-        assert model_factors(Normal(loc=0.0, scale=1.0, label="x")) is None
+        assert model_factors(Normal("x", loc=0.0, scale=1.0)) is None
 
     def test_returns_scalar_log_likelihood(self, gaussian_target):
         llf = likelihood_flat(model_factors(gaussian_target))
@@ -310,9 +318,9 @@ Y = jnp.array([1.0, 2.0, 0.5, 1.5, 2.5])
 def _shifted(**given_spec):
     """``y_i ~ N(mu + shift, 2^2)`` over five observations, with ``shift`` optional at 0."""
     return conditional_distribution(
-        "lik",
         lambda mu, shift=0.0: Normal("y", (mu + shift) * jnp.ones(5), 2.0),
         given_spec={"mu": NumericArraySpec(()), **given_spec},
+        label="lik",
     )
 
 
@@ -332,8 +340,18 @@ class TestModelFactorsWithOptionalSlots:
         given = parameter_given(factors, {"mu": jnp.asarray(1.0), "shift": jnp.asarray(0.5)})
         assert set(given) == {"mu", "shift"}
 
+    @pytest.mark.parametrize("labeled", [False, True], ids=["unlabeled", "labeled"])
+    def test_a_prior_of_several_factors_is_labeled_as_the_model_is(self, labeled):
+        from probpipe.distributions._factored import _is_named
+
+        model = _shifted() * Normal("mu", 0.0, 1.0) * Normal("shift", 0.0, 1.0)
+        model = model.with_label("model") if labeled else model
+        factors = model_factors(observed_target(model, {"y": Y}))
+        assert isinstance(factors.prior, FactoredDistribution)
+        assert _is_named(factors.prior) is labeled
+
     def test_a_prior_kernel_at_its_defaults_is_the_prior(self):
-        hyper = conditional_distribution("mu", lambda loc=0.0: Normal("mu", loc, 1.0))
+        hyper = conditional_distribution(lambda loc=0.0: Normal("mu", loc, 1.0), label="mu")
         factors = model_factors(observed_target(_shifted() * hyper, {"y": Y}))
         assert isinstance(factors.prior, Normal)
 
@@ -351,7 +369,7 @@ class TestModelFactorsWithOptionalSlots:
         )
         budget = {"num_results": 2000, "num_warmup": 200, "num_chains": 2}
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method="blackjax_elliptical_slice", method_options=budget
             )(_shifted() * prior, {"y": Y})
         draws = flat_draws(posterior)
@@ -372,7 +390,10 @@ class _EventShapeOnlyDist(Distribution):
     """
 
     def __init__(self):
-        super().__init__("event_shape_only", NumericArraySpec((3,)))
+        super().__init__(
+            OutputSpec(event_shape_only=NumericArraySpec((3,))),
+            label="event_shape_only",
+        )
 
     def _unnormalized_log_prob(self, value):
         return -0.5 * jnp.sum(jnp.asarray(value) ** 2)
@@ -384,7 +405,10 @@ class _NoInitHeuristicDist(Distribution):
     """
 
     def __init__(self):
-        super().__init__("no_init_heuristic", OpaqueSpec())
+        super().__init__(
+            OutputSpec(no_init_heuristic=OpaqueSpec()),
+            label="no_init_heuristic",
+        )
 
     def _unnormalized_log_prob(self, value):
         return jnp.asarray(0.0)
@@ -394,7 +418,10 @@ class _MappingDrawDist(Distribution):
     """A law over the record ``(a, b)`` whose draw is a mapping keyed ``b`` first."""
 
     def __init__(self):
-        super().__init__("mapping_draw", NumericRecordSpec(a=(), b=(2,)))
+        super().__init__(
+            NumericRecordSpec(a=(), b=(2,)),
+            label="mapping_draw",
+        )
 
     def _sample(self, key, sample_shape=()):
         return {"b": jnp.array([3.0, 4.0]), "a": jnp.asarray(1.0)}
@@ -408,7 +435,7 @@ class TestGetInitState:
 
     def test_explicit_init_passthrough(self):
         # Branch 1: explicit init returned verbatim (cast to prior dtype).
-        prior = Normal(loc=0.0, scale=1.0, label="x")
+        prior = Normal("x", loc=0.0, scale=1.0)
         out = get_init_state(prior, init=jnp.array([3.0, 4.0]))
         np.testing.assert_array_equal(np.asarray(out), np.array([3.0, 4.0]))
         # Cast to the prior dtype: a default-float Normal yields a float
@@ -417,14 +444,14 @@ class TestGetInitState:
 
     def test_explicit_init_casts_dtype(self):
         # An integer-valued init is cast to the prior's float dtype.
-        prior = Normal(loc=0.0, scale=1.0, label="x")
+        prior = Normal("x", loc=0.0, scale=1.0)
         out = get_init_state(prior, init=np.array([1, 2], dtype=np.int32))
         assert jnp.issubdtype(out.dtype, jnp.floating)
         np.testing.assert_allclose(np.asarray(out), np.array([1.0, 2.0]))
 
     def test_prior_sample_path(self):
         # Branch 2: prior implements SupportsSampling -> draw a sample.
-        prior = Normal(loc=0.0, scale=1.0, label="x")
+        prior = Normal("x", loc=0.0, scale=1.0)
         assert isinstance(prior, SupportsSampling)
         out = get_init_state(prior, init=None, random_seed=0)
         assert out.shape == (1,)  # scalar Normal -> length-1 vector
@@ -461,7 +488,7 @@ class TestGetInitState:
 
     def test_raises_without_sampling_or_event_shape(self):
         # Branch 4: neither heuristic applies -> ValueError.
-        with pytest.raises(ValueError, match="Cannot determine initial state"):
+        with pytest.raises(ValueError, match="cannot choose an initial state"):
             get_init_state(_NoInitHeuristicDist(), init=None)
 
     def test_data_not_consulted_so_seed_determines_init(self):
@@ -490,14 +517,14 @@ def _first_draws(method, seed, **options):
     model = _gaussian_mean(Normal("mu", 0.0, 1.0), 4)
     data = jnp.array([0.3, -0.2, 0.5, 0.1])
     with workflow_run(seed=seed):
-        posterior = condition_on.with_options(
+        posterior = condition_on.using(
             method=method, method_options={"num_results": 8, "num_warmup": 4, **options}
         )(model, {"y": data})
     return np.asarray(flat_chains(posterior)[0])
 
 
 class TestRunSeed:
-    """A run is seeded by the workflow scope unless its options set ``random_seed``."""
+    """A run is seeded by the workflow scope, and no method reads a seed option."""
 
     @pytest.mark.parametrize("method", _SEEDED_METHODS)
     def test_a_seeded_scope_reproduces_the_run(self, method):
@@ -508,10 +535,27 @@ class TestRunSeed:
         assert not np.array_equal(_first_draws(method, 0), _first_draws(method, 1))
 
     @pytest.mark.parametrize("method", _SEEDED_METHODS)
-    def test_an_explicit_random_seed_wins_over_the_scope(self, method):
-        np.testing.assert_array_equal(
-            _first_draws(method, 0, random_seed=3), _first_draws(method, 1, random_seed=3)
+    def test_a_random_seed_option_is_refused(self, method):
+        with pytest.raises(TypeError, match="unknown method option 'random_seed'"):
+            _first_draws(method, 0, random_seed=3)
+
+    def test_no_registered_method_reads_a_seed_option(self):
+        reads = {
+            name: inference_method_registry.get_method(name)._method_options
+            for name in inference_method_registry.list_methods()
+        }
+        assert {
+            name for name, options in reads.items() if "random_seed" in (options or ())
+        } == set()
+
+    def test_two_unscoped_runs_differ(self):
+        model = _gaussian_mean(Normal("mu", 0.0, 1.0), 4)
+        data = {"y": jnp.array([0.3, -0.2, 0.5, 0.1])}
+        run = condition_on.using(
+            method="blackjax_rwmh", method_options={"num_results": 8, "num_warmup": 4}
         )
+        first, second = (np.asarray(flat_chains(run(model, data))[0]) for _ in range(2))
+        assert not np.array_equal(first, second)
 
 
 # ---------------------------------------------------------------------------
@@ -649,7 +693,7 @@ class TestPosteriorVarOrder:
         """A kept name absent from the trace raises a clear ValueError here,
         not a cryptic 'not a permutation' error later in make_posterior."""
         trace = _StubTrace(["mu"])
-        with pytest.raises(ValueError, match="missing expected variable"):
+        with pytest.raises(ValueError, match="trace is missing the parameters"):
             posterior_var_order(trace, ["mu", "sigma"])
 
     def test_error_message_names_the_missing_vars(self):

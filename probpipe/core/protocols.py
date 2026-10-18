@@ -16,7 +16,6 @@ from typing import (
 )
 
 if TYPE_CHECKING:
-    from ..distributions._distribution import Distribution
     from ._spec_base import TermSpec
 
 
@@ -31,16 +30,14 @@ class _DistributionArrayBackend(Protocol):
 
     A backend owns the batched parameters of the laws and computes their
     capabilities vectorized, through the backend's native batch axis, without
-    one ``Distribution`` per position. It carries no ``name`` or
+    one ``Distribution`` per position. It carries no ``label`` or
     ``provenance``, and it is the contract between a class's
     :meth:`SupportsArrayBackend._make_array_backend` and the code that stores
     the laws. Backends are private to the library.
 
-    Every backend exposes ``batch_shape``, ``event_shape``, ``cell_spec``,
-    ``cell``, and whichever of ``_sample``, ``_log_prob``, ``_mean``,
-    ``_variance``, and ``_cov`` the class's laws support. ``cell(index)`` builds
-    the law at ``index``, a ``Distribution`` of the class at that position's
-    parameters.
+    Every backend exposes ``batch_shape``, ``event_shape``, ``cell_spec``, and
+    whichever of ``_sample``, ``_log_prob``, ``_mean``, ``_variance``, and
+    ``_cov`` the class's laws support.
     """
 
     @property
@@ -52,10 +49,6 @@ class _DistributionArrayBackend(Protocol):
     @property
     def cell_spec(self) -> TermSpec:
         """The term every cell draws, which an empty batch reports too."""
-        ...
-
-    def cell(self, index: int | tuple[int, ...]) -> Distribution:
-        """Fabricate a scalar ``Distribution`` for the cell at ``index``."""
         ...
 
 
@@ -85,12 +78,12 @@ class SupportsArrayBackend(Protocol):
             def _make_array_backend(
                 cls,
                 *,
-                name: str,
+                component: str,
                 batch_shape: tuple[int, ...],
                 **batched_params,
             ) -> _DistributionArrayBackend:
                 return _MyArrayBackend(
-                    cls=cls, name=name, batch_shape=batch_shape,
+                    cls=cls, component=component, batch_shape=batch_shape,
                     **batched_params,
                 )
     """
@@ -99,7 +92,7 @@ class SupportsArrayBackend(Protocol):
     def _make_array_backend(
         cls,
         *,
-        name: str,
+        component: str,
         batch_shape: tuple[int, ...],
         **batched_params: Any,
     ) -> _DistributionArrayBackend:
@@ -107,9 +100,8 @@ class SupportsArrayBackend(Protocol):
 
         Parameters
         ----------
-        name : str
-            Base name; per-cell distributions auto-suffix as
-            ``f"{name}_{i}"``.
+        component : str
+            The component of the event of each law the backend stores.
         batch_shape : tuple of int
             The leading shape of the batched parameters. The backend
             stores parameters with this shape prepended to each

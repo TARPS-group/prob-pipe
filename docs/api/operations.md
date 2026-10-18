@@ -30,11 +30,20 @@ The `convert` operation is on [Conversion](conversion.md), the inference methods
 
 ::: probpipe.variance
 
+::: probpipe.standard_deviation
+
 ::: probpipe.cov
 
 ::: probpipe.quantile
 
 ::: probpipe.expectation
+
+## Summary tables
+
+`summarize` collects several of the moments above for one law in one record, which displays as a table.
+It is a function over the operations, so it has no routes of its own.
+
+::: probpipe.summarize
 
 ## Conditioning
 
@@ -52,7 +61,7 @@ The `convert` operation is on [Conversion](conversion.md), the inference methods
 
 ## Maps
 
-::: probpipe.evaluate
+::: probpipe.pushforward
 
 ::: probpipe.inverse
 

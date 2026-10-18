@@ -36,6 +36,7 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from ..core._dispatch import Feasibility
+from ..core._repr import public_class_name
 
 if TYPE_CHECKING:
     from ..core.record import Record
@@ -184,7 +185,7 @@ class SupportsQuantile(Protocol):
 
 @runtime_checkable
 class SupportsExpectation(Protocol):
-    """A distribution with the exact expectation ``E[f(X)]`` of an arbitrary ``f``.
+    """A distribution with the exact expectation ``𝔼[f(X)]`` of an arbitrary ``f``.
 
     ``_expectation(f)`` integrates any function exactly, which in practice
     means finite support. Its argument is an opaque callable that no guard can
@@ -244,8 +245,10 @@ class SupportsMarginals(Protocol):
     ``path``, an event path of this law, with no reference back to it. A path
     that names an interior node selects the group of fields under it, and a
     tuple of paths selects several nodes, returned as an exposed record of
-    them. Support may depend on the path, so a class whose marginal is exact
-    only at some paths defines the guard ``_marginal_guard(path)``.
+    them. The marginal is labeled as the ``marginal`` operation labels it, so
+    a law without factors gives its marginals its own label. Support may
+    depend on the path, so a class whose marginal is exact only at some paths
+    defines the guard ``_marginal_guard(path)``.
 
     A class may define the companion ``_marginal_capabilities(path)``, which
     returns the capabilities its exact marginal at ``path`` claims, read from
@@ -352,7 +355,7 @@ class SupportsConditionalQuantile(Protocol):
 
 @runtime_checkable
 class SupportsConditionalExpectation(Protocol):
-    """A kernel with the exact expectation ``E[f(Y)]`` for ``Y ~ K(given, ·)``."""
+    """A kernel with the exact expectation ``𝔼[f(Y)]`` for ``Y ~ K(given, ·)``."""
 
     def _conditional_expectation(
         self, given: Record | Mapping[str, Any], f: Callable[[Any], Array]
@@ -484,16 +487,20 @@ def _capability_guard(term: Any, method: str, *arguments: Any, **keywords: Any) 
         The object claiming the capability.
     method : str
         The capability's method name, such as ``"_marginal"``.
-    *arguments, **keywords
-        The call's arguments other than raw values, such as a marginal's path.
+    *arguments : Any
+        The call's positional arguments other than raw values, such as a marginal's
+        path, which the guard receives in order.
+    **keywords : Any
+        The call's keyword arguments other than raw values, which the guard receives
+        by name.
 
     Returns
     -------
     Feasibility
         The report of ``term._<method>_guard(*arguments, **keywords)``. A
         ``Feasibility`` is returned as the guard gave it, and a ``bool`` or
-        ``None`` becomes a report whose reason names the guard, its arguments,
-        and its condition. Without a guard the report is feasible, since the
+        ``None`` becomes a report whose reason names the capability, its
+        arguments, *term*'s class, and the guard's condition. Without a guard the report is feasible, since the
         capability is total on its declared domain, unless *method* is a
         protocol default that calls another capability, whose guard then applies.
 
@@ -521,13 +528,21 @@ def _capability_guard(term: Any, method: str, *arguments: Any, **keywords: Any) 
         [reprlib.repr(argument) for argument in arguments]
         + [f"{name}={reprlib.repr(value)}" for name, value in keywords.items()]
     )
-    call = f"{type(term).__name__}.{method}{_GUARD_SUFFIX}({rendered})"
-    condition = _guard_condition(guard)
-    suffix = f": {condition}" if condition else ""
+    requested = f"{method.lstrip('_')}({rendered})"
+    subject = public_class_name(type(term))
+    condition = _requirement(guard)
+    suffix = f"; it requires: {condition}" if condition else ""
     if report is False:
-        return Feasibility(False, f"{call} rejected{suffix}")
+        return Feasibility(False, f"{requested} is not available for {subject}{suffix}")
     if report is None:
-        return Feasibility(None, pending=(f"{call} needs values not yet known{suffix}",))
+        return Feasibility(
+            None,
+            pending=(
+                f"whether {requested} is available for {subject} depends on values not yet "
+                f"known{suffix}",
+            ),
+        )
+    call = f"{type(term).__name__}.{method}{_GUARD_SUFFIX}({rendered})"
     raise TypeError(f"{call} returned {report!r}; a guard returns a bool, None, or a Feasibility")
 
 
@@ -537,6 +552,19 @@ def _guard_condition(guard: Callable[..., Any]) -> str:
     if not doc:
         return ""
     return " ".join(doc.split("\n\n", 1)[0].split())
+
+
+def _requirement(check: Callable[..., Any]) -> str:
+    """The condition *check* states, as a message quotes it, or ``""``.
+
+    It is :func:`_guard_condition` with its first letter in lowercase, unless
+    the condition starts with an identifier, and without a final period.
+    """
+    condition = _guard_condition(check).rstrip(".")
+    word = condition.split(" ", 1)[0]
+    if word[:1].isupper() and word[1:] == word[1:].lower():
+        condition = condition[0].lower() + condition[1:]
+    return condition
 
 
 def _conjunction(reports: Iterable[Feasibility]) -> Feasibility:
@@ -579,6 +607,12 @@ def _check_guards(cls: type) -> None:
     The metaclasses of ``Distribution`` and ``ConditionalDistribution`` run this
     check on each class they create, so a misspelled guard raises rather than
     going unread. A guard set to ``None`` removes an inherited one.
+
+    Parameters
+    ----------
+    cls : type
+        The class just created, whose own namespace ``vars(cls)`` holds the guards
+        to check.
 
     Raises
     ------
@@ -624,6 +658,15 @@ def _capability_subclass(base: type, protocols: Iterable[type]) -> type:
     methods realizing it, keyed by method name. The subclass is created once per
     base and set of protocols, keeps the base's name, and pickles and copies by
     reference to the base and the set, so it round-trips in a fresh process.
+
+    Parameters
+    ----------
+    base : type
+        The class to subclass, whose instances differ in the capabilities they
+        claim.
+    protocols : iterable of type
+        The capability protocols to claim, which are keys of the base's
+        ``_capability_table``.
 
     Returns
     -------

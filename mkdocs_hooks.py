@@ -18,15 +18,29 @@ Docstrings also cite sections of the design reference by id, as "(II.4)" and
 heading of ``design/*.md`` names to that heading on GitHub, and an id that no
 heading names stays text. A citation inside a link, a code span, or a code
 block stays text too.
+
+A notebook links to another page by its file, as ``02_forecasting.ipynb`` or
+``../get_started/installation.md``, so the link works on GitHub and in Colab.
+MkDocs rewrites such links in a Markdown page, and mkdocs-jupyter leaves them
+in a notebook's HTML, so the hook rewrites each one to the page's URL on the
+site. A link to a file that the site does not build logs a warning, which fails
+``mkdocs build --strict``.
 """
 
 from __future__ import annotations
 
 import functools
+import logging
+import posixpath
 import re
 from collections.abc import Mapping
 from html import escape
 from pathlib import Path
+from typing import Any
+
+from mkdocs.utils import get_relative_url
+
+log = logging.getLogger("mkdocs.hooks.probpipe")
 
 #: The design reference, beside this file at the repository root.
 DESIGN = Path(__file__).resolve().parent / "design"
@@ -45,6 +59,11 @@ _CITATION = re.compile(r"(?<![\w.])([IVX]+\.\d+)(?![\w]|\.\d)")
 _MARKUP = re.compile(r"<!--.*?-->|<(?:[^>\"']|\"[^\"]*\"|'[^']*')*>", re.S)
 _TAG = re.compile(r"<(/?)([A-Za-z][\w-]*)")
 _INLINE_MARKS = re.compile(r"[`*]")
+
+#: A relative link to a page's source file, with an optional anchor.
+_PAGE_LINK = re.compile(
+    r'href="(?P<target>(?![a-z][a-z0-9+.-]*:|/|#)[^"#?]+\.(?:ipynb|md))(?P<anchor>#[^"]*)?"'
+)
 
 #: The elements whose text keeps its citations as text.
 _TEXT_ONLY_ELEMENTS = frozenset({"a", "code", "pre", "script", "style", "textarea"})
@@ -117,11 +136,36 @@ def link_design_citations(content: str, sections: Mapping[str, tuple[str, str]])
     return "".join(pieces)
 
 
+def link_notebook_pages(content: str, source: str, page_url: str, urls: Mapping[str, str]) -> str:
+    """The HTML *content* of the page built from *source*, with each link to a page's file rewritten.
+
+    A relative link to a ``.ipynb`` or ``.md`` file resolves against the
+    directory of *source*, and *urls* maps each built file, by its path under
+    ``docs/``, to its page's URL. The link becomes that URL relative to
+    *page_url*, with its anchor kept. A link to a file that *urls* does not
+    hold stays as written and logs a warning.
+    """
+
+    def rewrite(match: re.Match[str]) -> str:
+        target = posixpath.normpath(posixpath.join(posixpath.dirname(source), match["target"]))
+        url = urls.get(target)
+        if url is None:
+            log.warning("%s links to %s, which the site does not build", source, match["target"])
+            return match.group(0)
+        return f'href="{get_relative_url(url, page_url)}{match["anchor"] or ""}"'
+
+    return _PAGE_LINK.sub(rewrite, content)
+
+
 @functools.cache
 def _sections() -> dict[str, tuple[str, str]]:
     return design_sections(DESIGN)
 
 
-def on_page_content(html: str, **_: object) -> str:
-    """MkDocs hook: plain code spans for Sphinx roles, and links for design citations."""
-    return link_design_citations(_SPHINX_ROLE_RE.sub(_replace, html), _sections())
+def on_page_content(html: str, page: Any, files: Any, **_: object) -> str:
+    """MkDocs hook: plain code spans for Sphinx roles, links for design citations, and page links of notebooks."""
+    html = link_design_citations(_SPHINX_ROLE_RE.sub(_replace, html), _sections())
+    if page.file.src_uri.endswith(".ipynb"):
+        urls = {file.src_uri: file.url for file in files.documentation_pages()}
+        html = link_notebook_pages(html, page.file.src_uri, page.url, urls)
+    return html

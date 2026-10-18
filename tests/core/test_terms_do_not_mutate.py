@@ -60,7 +60,11 @@ class _ShiftKernel(ConditionalDistribution, SupportsConditionalSampling):
 
     def __init__(self):
         spec = NumericArraySpec(())
-        super().__init__("x", {"z": spec}, OutputSpec(x=spec))
+        super().__init__(
+            {"z": spec},
+            OutputSpec(x=spec),
+            label="x",
+        )
 
     def _condition_on(self, given, /, **options):
         return Normal("x", given["z"], 0.5)
@@ -83,7 +87,7 @@ def _pymc_memo_case():
     pytest.importorskip("pymc")
     from probpipe import PyMCModel
 
-    term = PyMCModel("m", _normal_pymc_model)
+    term = PyMCModel(_normal_pymc_model, label="m")
     return term, lambda t: t._log_prob({"mu": 0.0, "y": 0.0})
 
 
@@ -130,7 +134,7 @@ class TestAQueryLeavesTheTermUnchanged:
 
 class TestAnOperationDoesNotMutateItsResultAfterBuildingIt:
     def test_conditioning_a_dependent_joint(self):
-        joint = _ShiftKernel() * Normal(loc=0.0, scale=1.0, label="z")
+        joint = _ShiftKernel() * Normal("z", loc=0.0, scale=1.0)
         conditioned = condition_on(joint, {"z": jnp.asarray(2.0)})
         # The result is complete when it is returned, and conditioning again
         # builds another result rather than editing this one.

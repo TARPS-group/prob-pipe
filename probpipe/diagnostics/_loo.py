@@ -35,6 +35,8 @@ import arviz as az
 import numpy as np
 import xarray as xr
 
+from ..core._numeric_array import NumericArray
+from ..core._numeric_array_batch import NumericArrayBatch
 from ..distributions._distribution import Distribution
 from ._datatree import _add_group
 from ._utils import _json_dumps_safe, _record_get, _safe_float
@@ -66,6 +68,9 @@ def _as_numpy(obj: Any) -> np.ndarray | None:
     """Best-effort conversion to NumPy array."""
     if obj is None:
         return None
+
+    if isinstance(obj, NumericArray | NumericArrayBatch):
+        return np.asarray(obj.raw)
 
     if isinstance(obj, xr.DataArray):
         try:
@@ -181,11 +186,7 @@ def _log_likelihood_to_dataset(
         dims = ["chain", "draw", "obs"]
 
     elif arr.ndim == 1:
-        raise ValueError(
-            "1-D log_likelihood looks like one total log likelihood per draw. "
-            "add_loo needs pointwise log likelihood values with shape "
-            "(draw, obs) or (chain, draw, obs)."
-        )
+        raise ValueError(_ONE_DIMENSIONAL)
 
     elif arr.ndim == 2:
         # Assume (draw, obs), add singleton chain dimension.
@@ -203,6 +204,22 @@ def _log_likelihood_to_dataset(
     return xr.Dataset({var_name: xr.DataArray(arr, dims=dims)})
 
 
+_ONE_DIMENSIONAL = (
+    "log_likelihood must hold pointwise log likelihoods of shape (draw, obs) or "
+    "(chain, draw, obs); got a 1-D array"
+)
+
+
+def _no_log_likelihood(posterior: Any) -> str:
+    """The message for a posterior that records no pointwise log likelihoods."""
+    label = getattr(posterior, "label", None)
+    name = f"{label!r}" if isinstance(label, str) else "the posterior"
+    return (
+        f"add_loo needs pointwise log likelihoods of shape (chain, draw, obs), but {name} "
+        f"has none. Pass model= and data= to compute them, or pass log_likelihood= directly."
+    )
+
+
 def _raise_for_1d_log_likelihood(log_likelihood: xr.Dataset | xr.DataArray) -> None:
     """Reject non-pointwise 1-D log-likelihood inputs."""
     if isinstance(log_likelihood, xr.DataArray):
@@ -211,11 +228,7 @@ def _raise_for_1d_log_likelihood(log_likelihood: xr.Dataset | xr.DataArray) -> N
         arrays = list(log_likelihood.data_vars.values())
 
     if any(da.ndim == 1 for da in arrays):
-        raise ValueError(
-            "1-D log_likelihood looks like one total log likelihood per draw. "
-            "add_loo needs pointwise log likelihood values with shape "
-            "(draw, obs) or (chain, draw, obs)."
-        )
+        raise ValueError(_ONE_DIMENSIONAL)
 
 
 # ---------------------------------------------------------------------
@@ -318,10 +331,15 @@ def add_loo(
         advanced override; the normal user-facing workflow is
         ``add_loo(posterior)``.
 
-    model, data : optional
-        Inputs used to compute pointwise log likelihoods when
-        ``_annotations/arviz/log_likelihood`` is missing. This keeps LOO owned by
-        ``add_loo`` instead of requiring a separate public precomputation step.
+    model : Distribution, optional
+        The factored joint the posterior was conditioned from, such as
+        ``likelihood * prior``. When ``_annotations/arviz/log_likelihood`` is
+        missing, ``add_loo`` computes the pointwise log likelihoods from *model*
+        and *data*, and needs no separate precomputation step.
+
+    data : Record or Mapping, optional
+        The observed values the posterior was conditioned on, keyed by field,
+        at which *model* scores each observation.
 
     var_name : str
         Variable name to use when converting raw log-likelihood arrays into an
@@ -349,6 +367,17 @@ def add_loo(
     Returns
     -------
     None
+
+    Raises
+    ------
+    ValueError
+        If *log_likelihood* holds a one-dimensional array, or if the
+        annotations hold no pointwise log likelihood and *model* and *data*
+        are not both given.
+    TypeError
+        If *model* at *data* has no likelihood factor that scores each
+        observation, or if *reff* is ``None`` and the annotations hold no
+        ArviZ ``posterior`` group to estimate it from.
     """
     if not force and _has_group(getattr(posterior, "_annotations", None), "diagnostics/runs/loo"):
         return None
@@ -369,15 +398,7 @@ def add_loo(
             arviz_tree = _get_arviz_tree(posterior)
 
         if arviz_tree is None:
-            raise ValueError(
-                "No ArviZ-compatible DataTree data or pointwise "
-                "log_likelihood found. add_loo needs pointwise log "
-                "likelihoods with shape (chain, draw, obs). Either use an "
-                "inference backend/model path that records pointwise log "
-                "likelihoods, pass log_likelihood=... as an advanced override, "
-                "or pass model=... and data=... with a joint whose likelihood "
-                "factor scores each observation."
-            )
+            raise ValueError(_no_log_likelihood(posterior))
 
     if not _has_group(arviz_tree, "log_likelihood"):
         if model is not None and data is not None:
@@ -385,15 +406,7 @@ def add_loo(
             arviz_tree = _get_arviz_tree(posterior)
 
         if arviz_tree is None or not _has_group(arviz_tree, "log_likelihood"):
-            raise ValueError(
-                "No pointwise log_likelihood group found under "
-                "posterior._annotations['arviz']. add_loo needs pointwise log "
-                "likelihoods with shape (chain, draw, obs). Either use an "
-                "inference backend/model path that records pointwise log "
-                "likelihoods, pass log_likelihood=... as an advanced override, "
-                "or pass model=... and data=... with a joint whose likelihood "
-                "factor scores each observation."
-            )
+            raise ValueError(_no_log_likelihood(posterior))
 
     # ------------------------------------------------------------------
     # Run ArviZ LOO
@@ -435,7 +448,7 @@ def add_loo(
     good_k = _safe_float(_record_get(loo_result, "good_k", np.nan))
 
     pareto_k = _record_get(loo_result, "pareto_k", None)
-    loo_i = _record_get(loo_result, "loo_i", None)
+    loo_i = _record_get(loo_result, "loo_i", _record_get(loo_result, "elpd_i", None))
 
     pk_summary = _pareto_k_summary(
         pareto_k,
@@ -575,14 +588,20 @@ def _add_log_likelihood(
         model_factors,
         observed_target,
         parameter_given,
+        unfactored_model_reason,
     )
-    from ..inference._minibatch import _data_size, _reads_observations
+    from ..inference._minibatch import _data_size, _reads_observations, _subset_scoring_reason
 
-    factors = model_factors(observed_target(model, data))
-    if factors is None or not _reads_observations(factors.likelihood):
+    target = observed_target(model, data)
+    factors = model_factors(target)
+    if factors is None:
         raise TypeError(
-            "add_loo computes pointwise log likelihoods for a factored joint at observed "
-            "fields whose likelihood scores each observation, such as glm_likelihood's kernel"
+            f"add_loo cannot compute pointwise log likelihoods: {unfactored_model_reason(target)}"
+        )
+    if not _reads_observations(factors.likelihood):
+        raise TypeError(
+            "add_loo cannot compute pointwise log likelihoods: "
+            f"{_subset_scoring_reason(factors.likelihood)}"
         )
     likelihood, observed = factors.likelihood, factors.observed
     unflatten = flat_unflatten(factors.prior)

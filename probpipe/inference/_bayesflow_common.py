@@ -13,9 +13,11 @@ not pull keras.
 
 from __future__ import annotations
 
+import functools
 import os
 import random
-from collections.abc import Mapping
+import sys
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Literal
@@ -24,12 +26,14 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .._messages import unknown_names
 from ..core._specs import _components_record
 from ..core.record import Record
 from ..custom_types import Array, PRNGKey
 from ..distributions._capabilities import SupportsConditionalSampling
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution, NumericDistribution
+from ._inference_utils import refuse_seed_keywords
 
 if TYPE_CHECKING:
     from ..values import Function
@@ -110,29 +114,63 @@ def _validate_learn_inputs(
     caller: str,
     sim_backend: SimBackend,
     counts: tuple[tuple[str, Any], ...],
+    fit_kwargs: Mapping[str, Any],
 ) -> Any:
     """Shared train-time validation for the amortized learners; returns the
-    record the prior's components form. Raises before any simulation runs."""
+    record the prior's components form. Raises before any simulation runs.
+
+    Parameters
+    ----------
+    prior : Distribution
+        The learner's prior, which must declare a numeric event.
+    simulator : ConditionalDistribution
+        The learner's simulator, a kernel from the prior's fields to one
+        observation, which must sample.
+    caller : str
+        The name of the public learner, which the error messages name.
+    sim_backend : {"jax", "sequential"}
+        The learner's simulation backend.
+    counts : tuple of (str, Any)
+        Each count argument's name and value, which must be a positive integer.
+    fit_kwargs : Mapping[str, Any]
+        The keywords the learner passes to ``approximator.fit``, which name no
+        seed, since the training's seed is drawn from a workflow-owned random
+        event.
+
+    Returns
+    -------
+    Any
+        The record that the components of the prior's event form.
+
+    Raises
+    ------
+    ValueError
+        If *sim_backend* is unknown or a count is less than one.
+    TypeError
+        If a count is not an integer, *fit_kwargs* holds ``random_seed`` or
+        ``seed``, *simulator* is not a kernel that samples, or *prior* is not
+        a numeric distribution.
+    """
+    refuse_seed_keywords(caller, fit_kwargs)
     if sim_backend not in ("jax", "sequential"):
-        raise ValueError(f"Unknown sim_backend: {sim_backend!r}. Supported: 'jax', 'sequential'.")
+        raise ValueError(unknown_names("sim_backend", [sim_backend], ["jax", "sequential"]))
     for _name, _val in counts:
         if not isinstance(_val, (int, np.integer)):
-            raise TypeError(f"{_name} must be an integer, got {type(_val).__name__}.")
+            raise TypeError(f"{_name} must be an integer; got {type(_val).__name__}")
         if _val < 1:
-            raise ValueError(f"{_name} must be a positive integer, got {_val}.")
+            raise ValueError(f"{_name} must be a positive integer; got {_val}")
     if not (
         isinstance(simulator, ConditionalDistribution)
         and isinstance(simulator, SupportsConditionalSampling)
     ):
         raise TypeError(
-            "simulator must be a ConditionalDistribution that samples, the kernel of one "
-            f"observation given the prior's fields, got {type(simulator).__name__}"
+            "simulator must be a ConditionalDistribution that can be sampled, giving one "
+            f"observation at the prior's parameters; got {type(simulator).__name__}"
         )
     if not isinstance(prior, NumericDistribution):
         raise TypeError(
-            f"{caller} requires a numeric prior with named parameter fields -- "
-            "typically a factored joint of named distributions -- "
-            f"but got {type(prior).__name__}, which declares no numeric event."
+            f"{caller} requires a numeric prior over named parameters, such as a product of "
+            f"named distributions; got {type(prior).__name__}, whose draws are not numeric"
         )
     return _components_record(prior.event_spec)
 
@@ -155,6 +193,26 @@ def _isolated_keras_seeding(random_seed: int):
         np.random.set_state(np_state)
 
 
+@contextmanager
+def _without_progress_bar() -> Iterator[None]:
+    """Turn off the progress bar of BayesFlow's sampler for the block.
+
+    BayesFlow's sampler draws a ``tqdm`` bar on every call and has no setting
+    that turns it off, so each draw of an amortized posterior would print one.
+    A BayesFlow whose sampler module has another layout keeps its bar.
+    """
+    samplers = sys.modules.get("bayesflow.approximators.helpers.samplers")
+    bar = getattr(samplers, "tqdm", None)
+    if bar is None:
+        yield
+        return
+    samplers.tqdm = functools.partial(bar, disable=True)
+    try:
+        yield
+    finally:
+        samplers.tqdm = bar
+
+
 def _simulator_given(simulator: ConditionalDistribution, params: Any) -> Any:
     """The simulator's given values at *params*, the record of one prior draw.
 
@@ -165,7 +223,10 @@ def _simulator_given(simulator: ConditionalDistribution, params: Any) -> Any:
     slots = tuple(simulator.given_spec)
     if set(slots) == set(params.fields):
         return params
-    return Record("given", {slot: params[slot] for slot in slots})
+    return Record(
+        {slot: params[slot] for slot in slots},
+        label="given",
+    )
 
 
 def _leaf_draws(draws: Any, leaf: str) -> Any:
@@ -175,7 +236,7 @@ def _leaf_draws(draws: Any, leaf: str) -> Any:
     an array-drawing law's are the stacked array of its one leaf.
     """
     if isinstance(draws, Record):
-        return draws.raw(leaf)
+        return draws._raw_at(leaf)
     if isinstance(draws, Mapping):
         node = draws
         for part in leaf.split("/"):

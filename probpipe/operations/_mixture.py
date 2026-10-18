@@ -12,8 +12,8 @@ from typing import Any
 from ..core._specs import OutputSpec
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ..distributions._distribution import Distribution, DistributionSpec
-from ._evaluate import evaluate
 from ._operation import operation
+from ._pushforward import pushforward
 
 __all__ = ["mixture"]
 
@@ -25,7 +25,7 @@ def _mixture_result(K: ConditionalDistributionSpec, mixing: DistributionSpec) ->
 
 def _kernel_output_projection(K: ConditionalDistribution) -> Any:
     """The map from a joint draw to *K*'s produced components, reconstructed by ``K.event_spec``."""
-    raise NotImplementedError("mixture.kernel_output_projection")
+    raise NotImplementedError("mixture is not implemented yet")
 
 
 @operation(result=_mixture_result)
@@ -34,6 +34,13 @@ def mixture(K: ConditionalDistribution, mixing: Distribution):
 
     The mixing distribution's produced slots meet the kernel's given slots by
     name.
+
+    Parameters
+    ----------
+    K : ConditionalDistribution
+        The kernel ``K(s, ·)``, which draws ``T`` given ``S = s``.
+    mixing : Distribution
+        The law ``μ`` of ``S``.
 
     Returns
     -------
@@ -46,4 +53,4 @@ def mixture(K: ConditionalDistribution, mixing: Distribution):
     ResolutionError
         If neither the identity nor a direct route applies.
     """
-    return evaluate(_kernel_output_projection(K), K * mixing)
+    return pushforward(K * mixing, _kernel_output_projection(K))

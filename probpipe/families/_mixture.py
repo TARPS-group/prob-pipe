@@ -16,8 +16,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .. import _messages
+from ..core._expression import Applied
+from ..core._object_batch import _collection_expression
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_value, sequence_repr
+from ..core._repr import _MAX_SHOWN_ENTRIES, format_value, sequence_repr
 from ..core._spec_base import NumericArraySpec, TermSpec
 from ..core._specs import OutputSpec
 from ..core.constraints import _known_equal
@@ -31,8 +34,12 @@ from ..distributions._capabilities import (
     _capability_subclass,
     _conjunction,
 )
-from ..distributions._conversion import _event_difference
-from ..distributions._distribution import Distribution
+from ..distributions._conversion import _event_difference, _term_difference
+from ..distributions._distribution import (
+    Distribution,
+    _constructor_label,
+    _record_default_expression,
+)
 from ..distributions._factored import _raw_record
 from ..linalg import DenseLinOp, LinOp
 from ..operations import _moments
@@ -274,32 +281,105 @@ def _claims(components: Sequence[Distribution]) -> tuple[type, ...]:
 def _components(components: Sequence[Distribution]) -> tuple[Distribution, ...]:
     """*components* as a tuple, checked to be at least one law sharing one event declaration.
 
+    Parameters
+    ----------
+    components : Sequence[Distribution]
+        The component laws in mixture order, as the constructor received them.
+
+    Returns
+    -------
+    tuple of Distribution
+        The components in the order of *components*.
+
     Raises
     ------
     TypeError
-        If a component is not a ``Distribution``.
+        If *components* is a string, or a component is not a ``Distribution``.
     ValueError
         If there is no component, or two components declare different events.
     """
+    if isinstance(components, str):
+        raise TypeError(
+            _messages.label_given_first(
+                "MixtureDistribution", "components", components, then=("weights",)
+            )
+        )
     laws = tuple(components)
     if not laws:
-        raise ValueError("a mixture has at least one component")
+        raise ValueError("MixtureDistribution needs at least one component")
     for index, law in enumerate(laws):
         if not isinstance(law, Distribution):
             raise TypeError(
-                f"a mixture's components are distributions, and component {index} is a "
-                f"{type(law).__name__}"
+                f"MixtureDistribution components must be distributions, but component {index} "
+                f"is {type(law).__name__}"
             )
-    declaration = laws[0].event_spec
+    first = laws[0]
     for index, law in enumerate(laws[1:], start=1):
-        sides = (f"component 0 ({laws[0].label!r})", f"component {index} ({law.label!r})")
-        difference = _event_difference(declaration, law.event_spec, sides, dtypes=False)
-        if difference is not None:
-            raise ValueError(
-                f"a mixture's components share one event declaration, and {difference}; "
-                f"rename the components with with_path_names to agree"
-            )
+        sides = (f"component 0 ({first.label!r})", f"component {index} ({law.label!r})")
+        if _event_difference(first.event_spec, law.event_spec, sides, dtypes=False) is not None:
+            raise ValueError(_component_mismatch(first, law, index))
     return laws
+
+
+def _component_mismatch(first: Distribution, other: Distribution, index: int) -> str:
+    """The message for component *index*, *other*, drawing a different event than component 0."""
+    head = "MixtureDistribution components must draw the same event"
+    expected, actual = first.event_spec, other.event_spec
+    if expected.exposes_record != actual.exposes_record:
+        return (
+            f"{head}: component 0 ({first.label!r}) draws {_drawn(expected)} but "
+            f"component {index} ({other.label!r}) draws {_drawn(actual)}"
+        )
+    if tuple(expected.components) != tuple(actual.components):
+        return (
+            f"{head}: component 0 ({first.label!r}) has components "
+            f"{list(expected.components)} but component {index} ({other.label!r}) has "
+            f"{list(actual.components)}. Rename them with with_path_names() so they match."
+        )
+    for name, spec in expected.components.items():
+        mismatch = _first_mismatch(spec, actual.components[name], name)
+        if mismatch is not None:
+            path, left, right = mismatch
+            return (
+                f"{head}: {path!r} is {_term(left)} in component 0 but {_term(right)} in "
+                f"component {index}"
+            )
+    return head  # pragma: no cover - _event_difference found a difference above
+
+
+def _drawn(declaration: OutputSpec) -> str:
+    """What a law with *declaration* draws, in a mixture's mismatch message."""
+    if declaration.exposes_record:
+        return f"a record with fields {list(declaration.components)}"
+    (name,) = declaration.components
+    return f"a single value {name!r}"
+
+
+def _first_mismatch(
+    left: TermSpec | None, right: TermSpec | None, path: str
+) -> tuple[str, TermSpec | None, TermSpec | None] | None:
+    """The first path at which the terms *left* and *right* differ, with the two terms there."""
+    if _term_difference(left, right, path, dtypes=False) is None:
+        return None
+    if (
+        isinstance(left, RecordSpec)
+        and isinstance(right, RecordSpec)
+        and tuple(left.children) == tuple(right.children)
+    ):
+        for name, child in left.children.items():
+            found = _first_mismatch(child, right.children[name], f"{path}/{name}")
+            if found is not None:
+                return found
+    return path, left, right
+
+
+def _term(spec: TermSpec | None) -> str:
+    """The term *spec* in plain words, for a mixture's mismatch message."""
+    if isinstance(spec, NumericArraySpec):
+        return f"an array of shape {spec.shape}"
+    if isinstance(spec, RecordSpec):
+        return f"a record with fields {list(spec.children)}"
+    return f"a {type(spec).__name__}" if spec is not None else "undeclared"
 
 
 def _joined(specs: Sequence[TermSpec]) -> TermSpec:
@@ -333,6 +413,18 @@ def _weights(weights: ArrayLike, count: int) -> Array:
 
     A traced array is not checked, since its values are unknown while tracing.
 
+    Parameters
+    ----------
+    weights : ArrayLike
+        The mixture weights, as the constructor received them.
+    count : int
+        The number of components, which fixes the shape ``(count,)``.
+
+    Returns
+    -------
+    Array
+        The weights, promoted to a floating dtype of at least single precision.
+
     Raises
     ------
     ValueError
@@ -343,20 +435,23 @@ def _weights(weights: ArrayLike, count: int) -> Array:
     array = array.astype(jnp.result_type(array.dtype, jnp.float32))
     if array.shape != (count,):
         raise ValueError(
-            f"a mixture of {count} components takes {count} weights, got weights of shape "
-            f"{array.shape}"
+            f"MixtureDistribution has {_messages.count(count, 'component')} but got weights of "
+            f"shape {array.shape}; pass one weight per component"
         )
     if isinstance(array, jax.core.Tracer):
         return array
     if bool(jnp.any(array < 0)):
-        raise ValueError(f"a mixture's weights are nonnegative, got {array}")
+        raise ValueError(f"mixture weights must be nonnegative, got {array}")
     if not bool(jnp.isclose(jnp.sum(array), 1.0, atol=1e-5)):
-        raise ValueError(f"a mixture's weights sum to one, got {array} summing to {jnp.sum(array)}")
+        raise ValueError(
+            f"mixture weights must sum to 1, got {array} (sum {float(jnp.sum(array)):.6g})"
+        )
     return array
 
 
-#: How many components a mixture's repr shows before it gives their count instead.
-_SHOWN_COMPONENTS = 4
+#: How many components a mixture's repr shows before it gives their count instead,
+#: which is as many as the weights whose entries it shows.
+_SHOWN_COMPONENTS = _MAX_SHOWN_ENTRIES
 
 
 class MixtureDistribution(Distribution):
@@ -376,17 +471,20 @@ class MixtureDistribution(Distribution):
 
     Parameters
     ----------
-    label : str
-        The mixture's label.
     components : Sequence[Distribution]
         The component laws, at least one, sharing one event declaration.
     weights : Array
         One nonnegative weight per component, summing to one.
+    label : str, optional
+        The mixture's label, ``mixture`` by default. The default's notation
+        lists the components, up to eight of them, as
+        ``mixture([a(x), b(x)])``.
 
     Raises
     ------
     TypeError
-        If a component is not a ``Distribution``.
+        If *components* is a string, a component is not a ``Distribution``, or
+        *label* is not a non-empty string.
     ValueError
         If there is no component, two components declare different events, or
         the weights are not one nonnegative weight per component summing to one.
@@ -394,24 +492,40 @@ class MixtureDistribution(Distribution):
 
     _capability_table: ClassVar = _MIXTURE_CAPABILITIES
 
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
+
     _components: tuple[Distribution, ...]
     _weights: Array
 
     def __new__(
-        cls, label: str, components: Sequence[Distribution], weights: ArrayLike
+        cls, components: Sequence[Distribution], weights: ArrayLike, *, label: str | None = None
     ) -> MixtureDistribution:
         base = vars(cls).get("_capability_base", cls)
         laws = _components(components)
         return object.__new__(_capability_subclass(base, _claims(laws)))
 
-    def __init__(self, label: str, components: Sequence[Distribution], weights: ArrayLike) -> None:
+    def __init__(
+        self, components: Sequence[Distribution], weights: ArrayLike, *, label: str | None = None
+    ) -> None:
         laws = _components(components)
+        store = np.empty(len(laws), dtype=object)
+        for index, law in enumerate(laws):
+            store[index] = law
+        expression = Applied("mixture", (_collection_expression(store),))
+        rendering = expression.label_rendering()
         object.__setattr__(self, "_components", laws)
         object.__setattr__(self, "_weights", _weights(weights, len(laws)))
-        super().__init__(label, _declaration(laws))
+        super().__init__(
+            _declaration(laws),
+            label=_constructor_label(self, label, rendering[0]),
+        )
+        if label is None:
+            self._store_expression(expression, rendering)
+            _record_default_expression(self)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The components, by their count when there are more than four, and the weights."""
+        """The components, by their count when there are more than eight, and the weights."""
         components = self._components
         shown = (
             sequence_repr(repr(law) for law in components)

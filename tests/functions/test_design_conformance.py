@@ -65,20 +65,13 @@ _MODULES = (
 )
 
 #: Names the code blocks define as worked examples rather than as declarations.
-_EXAMPLES = frozenset({"predict", "predict_impl", "rate"})
+_EXAMPLES = frozenset({"growth", "predict", "predict_impl", "rate"})
 
 #: Declarations the implementation does not match yet, with the change each awaits.
-_PENDING = {
-    "Function": "construction takes the declared keywords, with the controls set apart from them",
-}
+_PENDING: dict[str, str] = {}
 
 #: Public names of the engine that the prose declares rather than a code block.
 _PROSE_DECLARED = frozenset({"function", "workflow_run", "replay_run", "evaluation_rule_registry"})
-
-#: Public names outside the reference until their placement is settled (package structure).
-_EXPERIMENTAL = frozenset(
-    {"Module", "AbstractModule", "workflow_method", "abstract_workflow_method"}
-)
 
 
 def _tool():
@@ -138,7 +131,7 @@ class TestExportsAreDeclared:
         tool = _tool()
         declared = {_declared_name(d) for d in tool.declarations(_SECTIONS)} - _EXAMPLES
         exported = set(functions.__all__) | set(values.__all__)
-        undeclared = exported - declared - _PROSE_DECLARED - _EXPERIMENTAL
+        undeclared = exported - declared - _PROSE_DECLARED
         assert not undeclared, sorted(undeclared)
 
     def test_the_errors_of_the_stack_are_exported_where_the_package_structure_places_them(self):

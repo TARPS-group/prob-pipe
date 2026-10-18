@@ -100,17 +100,35 @@ def read_indexed(
     *,
     dim: str,
 ) -> dict[str, float | NotComputed]:
-    """Read a one-dimensional indexed variable from a dataset.
+    """Read a one-dimensional variable of a dataset as a dict keyed by its labels.
 
-    Example
+    Each element is keyed by the string form of its coordinate value along
+    *dim*, or of its position when *dim* has no coordinate. Its value is read
+    with :func:`read_scalar`.
+
+    Parameters
+    ----------
+    ds : xarray.Dataset or None
+        The dataset that holds the variable.
+    field : str
+        The name of the variable.
+    dim : str
+        The dimension that indexes the variable.
+
+    Returns
     -------
-    For a variable like::
+    dict of str to float or NotComputed
+        One entry per element, in the order of *dim*. The dict is empty when
+        *ds* is ``None``, when *ds* has no variable *field*, and when *dim* is
+        not a dimension of that variable.
 
-        p_value(test_fn=["var_mean_ratio", "zero_fraction"])
-
-    this returns::
-
-        {"var_mean_ratio": 0.43, "zero_fraction": 0.81}
+    Examples
+    --------
+    A variable ``p_value`` over the coordinate
+    ``test_fn = ["var_mean_ratio", "zero_fraction"]`` reads as
+    ``{"var_mean_ratio": 0.43, "zero_fraction": 0.81}``. A variable
+    ``pareto_k`` over the integer coordinate ``obs = [0, 1]`` reads as
+    ``{"0": 0.12, "1": 0.31}``.
     """
     if ds is None:
         return {}
@@ -123,9 +141,11 @@ def read_indexed(
     if dim not in da.dims:
         return {}
 
-    coords = [str(x) for x in da.coords[dim].values]
+    labels = [str(x) for x in da[dim].values]
 
-    return {coord: read_scalar(da.sel({dim: coord}), label=coord) for coord in coords}
+    # Selecting by a string label fails on a coordinate of another dtype, such as
+    # the integer observation index of a LOO run, so each element is read by position.
+    return {label: read_scalar(da.isel({dim: i}), label=label) for i, label in enumerate(labels)}
 
 
 def read_json_attr(attrs: dict[str, Any], key: str, default: Any = None) -> Any:
@@ -251,10 +271,14 @@ class DiagnosticRunView(DatasetView):
 
     @property
     def result(self) -> dict[str, Any]:
-        """Dataset variables as a plain Python dict.
+        """The run's variables as a plain Python dict keyed by variable name.
 
-        Scalar variables become scalar values. One-dimensional variables become
-        dictionaries keyed by their coordinate values.
+        A scalar variable becomes its value, as :func:`read_scalar` reads it. A
+        one-dimensional variable becomes the dict that :func:`read_indexed`
+        reads, such as ``{"0": 0.12, "1": 0.31}`` for the pointwise
+        ``pareto_k`` of a LOO run. A variable of two or more dimensions becomes
+        :class:`NotComputed`. The dict is empty when the run's node holds no
+        dataset.
         """
         ds = self.dataset()
         if ds is None:
@@ -270,11 +294,7 @@ class DiagnosticRunView(DatasetView):
                 continue
 
             if len(da.dims) == 1:
-                dim = da.dims[0]
-                coords = [str(x) for x in da.coords[dim].values]
-                out[var] = {
-                    coord: read_scalar(da.sel({dim: coord}), label=coord) for coord in coords
-                }
+                out[var] = read_indexed(ds, var, dim=da.dims[0])
                 continue
 
             # Keep non-scalar/multi-dimensional values out of scalar result.

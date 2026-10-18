@@ -33,8 +33,8 @@ _PATH_SEP = "/"
 def _check_no_path_sep(name: str) -> None:
     if _PATH_SEP in name:
         raise ValueError(
-            f"Field name {name!r} must not contain {_PATH_SEP!r} "
-            f"(reserved as the nested-path separator)."
+            f"field name {name!r} must not contain {_PATH_SEP!r}, which separates the names "
+            f"in a path"
         )
 
 
@@ -47,6 +47,16 @@ def _unflatten_paths(source: Mapping[str, Any]) -> dict[str, Any]:
     distinct leading segment (recursively), which is the canonical field order.
     Nesting is a plain nested ``dict``; a constructor materialises any mapping
     value into a child collection (a mapping is never a leaf).
+
+    Parameters
+    ----------
+    source : Mapping of str to Any
+        A flat or nested mapping, whose keys may be paths.
+
+    Returns
+    -------
+    dict of str to Any
+        A nested ``dict`` whose leaves are the values of *source*.
 
     Raises
     ------
@@ -143,15 +153,31 @@ def _is_vacant(node: _Moving) -> bool:
     return all(_is_vacant(child) for child in node.children.values())
 
 
-def _collision(path: tuple[str, ...], name: str, *, prefix_clash: bool) -> ValueError:
-    message = f"with_path_names() target {_PATH_SEP.join(path)!r} collides with an existing node"
-    if prefix_clash:
-        message += f"; the name {name!r} would be used both as a field and as a path prefix"
-    return ValueError(message)
+def _collision(source: tuple[str, ...] | None, target: tuple[str, ...]) -> ValueError:
+    """The error for a move of the node at *source* onto *target*, a path another node holds."""
+    if source is None:
+        return ValueError(
+            f"with_path_names(): the path {_PATH_SEP.join(target)!r} is already taken"
+        )
+    return ValueError(
+        f"cannot move {_PATH_SEP.join(source)!r} to {_PATH_SEP.join(target)!r}: that path is "
+        f"already taken"
+    )
 
 
 def _place(group: dict[str, _Moving], name: str, node: _Moving, path: tuple[str, ...]) -> None:
     """Put *node* under *name* at the end of *group*, where a vacant node gives way.
+
+    Parameters
+    ----------
+    group : dict of str to _Moving
+        The children of the parent node, which this call updates in place.
+    name : str
+        The name *node* takes among the children.
+    node : _Moving
+        The node to place.
+    path : tuple of str
+        The path *node* takes, which the error message names.
 
     Raises
     ------
@@ -165,9 +191,9 @@ def _place(group: dict[str, _Moving], name: str, node: _Moving, path: tuple[str,
         elif _is_vacant(node):
             return
         else:
-            raise _collision(
-                path, name, prefix_clash=(held.children is None) != (node.children is None)
-            )
+            # The node that moved is the one whose path is not its origin.
+            mover = node if node.origin != path else held
+            raise _collision(mover.origin, path)
     group[name] = node
 
 
@@ -224,6 +250,14 @@ def _moved_tree(
     of *moves*, and a missing parent is created the same way. A group that the
     moves leave without a field is removed.
 
+    Parameters
+    ----------
+    tree : Mapping of str to Any
+        The tree to rebuild, whose interior nodes are dicts.
+    moves : Mapping of str to str
+        The target of each moved node, keyed by its source, in the order the moves
+        apply.
+
     Returns
     -------
     tuple of dict and dict
@@ -251,12 +285,16 @@ def _moved_tree(
         if source in in_place:
             continue
         group = root
-        for segment in target[:-1]:
+        for depth, segment in enumerate(target[:-1], start=1):
             parent = group.get(segment)
             if parent is None:
                 parent = group[segment] = _Moving(None, children={})
             elif parent.children is None:
-                raise _collision(target, segment, prefix_clash=True)
+                field = _PATH_SEP.join(target[:depth])
+                raise ValueError(
+                    f"cannot move {_PATH_SEP.join(source)!r} to {_PATH_SEP.join(target)!r}: "
+                    f"{field!r} is a field, not a group"
+                )
             group = parent.children
         _place(group, target[-1], detached[source], target)
     origins: dict[str, str] = {}
@@ -320,11 +358,7 @@ class NamedTree[L]:
         # ``__new__`` (calling ``object.__new__`` directly) or inherit this
         # pass-through, so the guard only trips a literal ``NamedTree(...)``.
         if cls is NamedTree:
-            raise TypeError(
-                "NamedTree is an abstract substrate and cannot be instantiated "
-                "directly; construct a concrete family such as Record or "
-                "RecordSpec."
-            )
+            raise TypeError("NamedTree is an abstract base class; use Record or RecordSpec instead")
         return super().__new__(cls)
 
     @classmethod
@@ -363,8 +397,8 @@ class NamedTree[L]:
         hook. *node_name* is the field key the node sits under for a nested
         node and ``None`` for the root. The default constructs through
         :meth:`_rebuild_class` and ignores *node_name*; a family whose
-        constructor requires a name (the value types) overrides this to
-        supply it — a nested node is named by its field key, and the root
+        constructor requires a label (the value types) overrides this to
+        supply it — a nested node is labeled by its field key, and the root
         follows the transform's identity rule.
         """
         return self._rebuild_class()(leaves)
@@ -400,7 +434,7 @@ class NamedTree[L]:
         ----------
         path : str
             The field path the value is being stored at (for the error).
-        value
+        value : Any
             The candidate leaf value.
 
         Raises
@@ -502,6 +536,16 @@ class NamedTree[L]:
         operators (``[]`` / ``in`` / iteration) range only over fields. A field
         object is the leaf as the family presents it (:meth:`_present`).
 
+        Parameters
+        ----------
+        *path : str or tuple of str
+            The path, in any of the three equivalent forms.
+
+        Returns
+        -------
+        L or Self
+            The field object for a key, and the subtree for a partial path.
+
         Raises
         ------
         KeyError
@@ -517,6 +561,16 @@ class NamedTree[L]:
     def _node_at(self, *path: Any) -> L | Self:
         """The stored node at *path*: the leaf as stored, or the subtree.
 
+        Parameters
+        ----------
+        *path : str or tuple of str
+            The path, in any form :meth:`at_path` accepts.
+
+        Returns
+        -------
+        L or Self
+            The leaf before :meth:`_present` sees it, or the subtree.
+
         Raises
         ------
         KeyError
@@ -530,8 +584,8 @@ class NamedTree[L]:
         for i, name in enumerate(segments):
             if i > 0 and not isinstance(node, node_type):
                 raise KeyError(
-                    f"path {_PATH_SEP.join(segments)!r} descends through non-tree "
-                    f"leaf {type(node).__name__} at {_PATH_SEP.join(segments[:i])!r}"
+                    f"{_PATH_SEP.join(segments[:i])!r} is a field, not a group, so path "
+                    f"{_PATH_SEP.join(segments)!r} does not exist"
                 )
             field_map = node._tree
             if name not in field_map:
@@ -634,6 +688,16 @@ class NamedTree[L]:
         same-class collection, so whatever normalisation that constructor applies
         to its leaves is re-applied here.
 
+        Parameters
+        ----------
+        values : iterable
+            The new leaf objects.
+
+        Returns
+        -------
+        Any
+            The rebuilt root, which :meth:`_rebuild_node` constructs.
+
         Raises
         ------
         ValueError
@@ -655,8 +719,9 @@ class NamedTree[L]:
                         raise ValueError("_rebuild_from_leaves got fewer values than leaves")
                     if isinstance(nxt, node_type):
                         raise ValueError(
-                            f"cannot place a {node_type.__name__} at field {path!r}: "
-                            f"that would introduce nesting and change the structure"
+                            f"the mapped function returned a {node_type.__name__} for field "
+                            f"{path!r}, but it must return a single value, not a nested "
+                            f"{node_type.__name__}"
                         )
                     new_children[name] = nxt
             return node._rebuild_node(
@@ -689,6 +754,20 @@ class NamedTree[L]:
         field. Each output is placed back through the subclass's own construction,
         so whatever normalisation that constructor applies to a leaf applies here
         too (see the concrete class's docstring).
+
+        Parameters
+        ----------
+        f : callable
+            The function applied to each field object.
+        *args : Any
+            Further positional arguments of *f*.
+        **kwargs : Any
+            Further keyword arguments of *f*.
+
+        Returns
+        -------
+        Self
+            The collection of the outputs of *f*.
 
         Raises
         ------
@@ -730,7 +809,7 @@ class NamedTree[L]:
 
         kept = {key: leaf for key, leaf in self._walk_leaves() if not is_dropped(key)}
         if not kept:
-            raise ValueError("Cannot remove all fields from a collection")
+            raise ValueError("without() cannot remove all fields")
         return kept
 
     def without(self, *paths: str) -> Self:
@@ -748,7 +827,9 @@ class NamedTree[L]:
         right = dict(other._walk_leaves())
         overlap = set(left) & set(right)
         if overlap:
-            raise ValueError(f"Overlapping field keys: {sorted(overlap)}")
+            names = sorted(overlap)
+            shared = f"field {names[0]!r}" if len(names) == 1 else f"fields {names}"
+            raise ValueError(f"cannot merge: both have the {shared}")
         return {**left, **right}
 
     def merge(self, other: Any) -> Self:
@@ -768,7 +849,7 @@ class NamedTree[L]:
         """Normalise ``replace``'s positional-mapping XOR keyword inputs to one dict."""
         if _updates is not None:
             if updates:
-                raise ValueError("Cannot pass both positional mapping and keyword arguments")
+                raise ValueError("pass replace() updates as a mapping or as keywords, not both")
             return dict(_updates)
         return dict(updates)
 
@@ -778,6 +859,17 @@ class NamedTree[L]:
         Each old leaf (or whole subtree) at a path is dropped and *new_value* put
         where the first of those leaves was, so a replaced subtree keeps its
         position (canonical order is part of the collection's identity).
+
+        Parameters
+        ----------
+        resolved : Mapping of str to Any
+            The *new_value* for each path, as :meth:`_resolve_replace_updates`
+            returns them.
+
+        Returns
+        -------
+        dict of str to Any
+            The leaf map, keyed by field key in canonical order.
 
         Raises
         ------
@@ -837,6 +929,19 @@ class NamedTree[L]:
         Each key is the exact path of a node, and each target is the node's new
         exact path.
 
+        Parameters
+        ----------
+        mapping : Mapping of str to str or None
+            The renames :meth:`with_path_names` takes positionally.
+        kwargs : Mapping of str to str
+            The renames :meth:`with_path_names` takes as keywords.
+
+        Returns
+        -------
+        dict of str to str
+            The target of each node, keyed by its ``/``-joined path, in the order
+            given.
+
         Raises
         ------
         KeyError
@@ -862,32 +967,45 @@ class NamedTree[L]:
                     self._node_at(segments)
                 except KeyError:
                     raise KeyError(
-                        f"with_path_names(): {resolved!r} is not the path of a node; the paths "
+                        f"with_path_names(): {resolved!r} is not a path in this tree; the paths "
                         f"are {list(self._node_paths())}"
                     ) from None
                 if resolved in pairs:
-                    raise ValueError(f"node {resolved!r} is renamed more than once")
+                    raise ValueError(f"with_path_names(): {resolved!r} is renamed more than once")
                 pairs[resolved] = new
         if not pairs:
             raise ValueError("with_path_names() requires at least one rename")
         for resolved, new in pairs.items():
             if new.startswith(resolved + _PATH_SEP):
-                raise ValueError(f"{resolved!r} cannot move into its own subtree, to {new!r}")
-        targets = list(pairs.values())
-        for index, target in enumerate(targets):
-            for other in targets[index + 1 :]:
+                raise ValueError(f"cannot move {resolved!r} to {new!r}, which is inside it")
+        moves = list(pairs.items())
+        for index, (source, target) in enumerate(moves):
+            for other_source, other in moves[index + 1 :]:
                 if target == other:
-                    raise ValueError(f"two nodes move to {target!r}, so they collide")
+                    raise ValueError(f"{source!r} and {other_source!r} both move to {target!r}")
                 if other.startswith(target + _PATH_SEP) or target.startswith(other + _PATH_SEP):
-                    raise ValueError(f"the targets {target!r} and {other!r} overlap")
+                    outer, inner = (target, other) if len(target) < len(other) else (other, target)
+                    raise ValueError(
+                        f"the targets {target!r} and {other!r} overlap: {inner!r} would be "
+                        f"inside {outer!r}"
+                    )
         return pairs
 
     def _renamed_tree(self, renames: Mapping[str, str]) -> tuple[dict[str, Any], dict[str, str]]:
         """This tree as a nested dict with *renames* applied, and each node's original path.
 
-        *renames* is the output of :meth:`_resolve_path_renames`. The second
-        result maps the new path of each node that the tree held to its
-        original path; a group that a move creates has none.
+        Parameters
+        ----------
+        renames : Mapping of str to str
+            The output of :meth:`_resolve_path_renames`.
+
+        Returns
+        -------
+        tree : dict of str to Any
+            The renamed tree.
+        origins : dict of str to str
+            The original path of each node that the tree held, keyed by its new
+            path; a group that a move creates has none.
 
         Raises
         ------
@@ -898,6 +1016,16 @@ class NamedTree[L]:
 
     def _moved_leaf_paths(self, renames: Mapping[str, str]) -> dict[str, str]:
         """The new key of each field under *renames*, keyed by its key in canonical order.
+
+        Parameters
+        ----------
+        renames : Mapping of str to str
+            The output of :meth:`_resolve_path_renames`.
+
+        Returns
+        -------
+        dict of str to str
+            One entry per field of this tree.
 
         Raises
         ------
@@ -912,7 +1040,7 @@ class NamedTree[L]:
         """Return a same-family tree with the given nodes renamed or moved, ``old -> new``.
 
         Acts on the nodes *within* the tree, leaves or whole subtrees; the object
-        itself is renamed by ``with_label`` on the tracked value types. Each key is
+        itself is relabeled by ``with_label`` on the tracked value types. Each key is
         the exact path of a node, so a keyword addresses a top-level node and the
         positional mapping any node. Each target is the node's new exact path,
         so a bare name is a top-level path::
@@ -931,6 +1059,18 @@ class NamedTree[L]:
         given, and a missing parent is created and appended the same way. A group
         that the moves leave without a field is removed. The leaf objects are
         unchanged, and the mapping interface stays keyed by full path.
+
+        Parameters
+        ----------
+        mapping : Mapping of str to str, optional
+            The new path of each node, keyed by the node's path.
+        **kwargs : str
+            The new path of each top-level node, keyed by the node's name.
+
+        Returns
+        -------
+        Self
+            A tree of the same family over the same leaf objects.
 
         Raises
         ------

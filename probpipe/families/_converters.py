@@ -6,8 +6,9 @@ carries the source's event declaration:
 - ``tfp`` (exact) brings a TFP backend distribution into ProbPipe as its law:
   the family whose parameters it holds, or the bare backend adapter for a
   backend distribution the catalog has no family for;
-- ``scipy`` (exact) brings a SciPy frozen distribution into ProbPipe as the
-  family whose parameters it holds;
+- ``scipy`` (exact) brings a SciPy frozen distribution into ProbPipe as its
+  family, transformed by an affine bijector when the family does not hold its
+  location or scale;
 - ``moment_match`` (approximate) fits a parametric family to a law by matching
   its moments, or, for a family fit to draws, the statistics of the law's draws;
 - ``empirical`` (approximate) represents a law by the empirical law of its draws;
@@ -30,12 +31,21 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
+import tensorflow_probability.substrates.jax.bijectors as tfb
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._dtype import _default_float_dtype
+from .._messages import unknown_names
 from ..core._spec_base import NumericArraySpec, NumericSpec
 from ..core._specs import OutputSpec
-from ..core.constraints import Constraint, _supports_compatible
+from ..core.constraints import (
+    Constraint,
+    _supports_compatible,
+    greater_than,
+    interval,
+    positive,
+    unit_interval,
+)
 from ..distributions._capabilities import (
     _LAW_CAPABILITIES,
     SupportsCovariance,
@@ -45,7 +55,12 @@ from ..distributions._capabilities import (
     SupportsVariance,
 )
 from ..distributions._conversion import ConversionInfo, Converter, converter_registry
-from ..distributions._distribution import Distribution, DistributionSpec
+from ..distributions._distribution import (
+    Distribution,
+    DistributionSpec,
+    _labeled_by_default,
+    _whole_term_event,
+)
 from ..distributions._empirical import EmpiricalDistribution, _batch_form
 from ..functions import _broker
 from ..functions._result import SAMPLE_LEVEL
@@ -71,6 +86,7 @@ from ._continuous import (
 from ._discrete import Bernoulli, Binomial, Categorical, NegativeBinomial, Poisson
 from ._multivariate import Dirichlet, Multinomial, MultivariateNormal, VonMisesFisher, Wishart
 from ._resampling import KDEDistribution
+from ._transformed import BijectorTransformedDistribution
 
 try:
     import scipy.stats as _stats
@@ -105,6 +121,15 @@ _BACKEND_SOURCES: tuple[type, ...] = (tfd.Distribution, *((_rv_frozen,) if _HAS_
 def _refuse_unread(converter: str, options: dict[str, Any], reads: tuple[str, ...]) -> None:
     """Raise ``TypeError`` for an option the converter *converter* does not read.
 
+    Parameters
+    ----------
+    converter : str
+        The converter's name, for the error message.
+    options : dict[str, Any]
+        The converter options the registry passed, by name.
+    reads : tuple of str
+        The names of the options the converter reads.
+
     Raises
     ------
     TypeError
@@ -113,16 +138,23 @@ def _refuse_unread(converter: str, options: dict[str, Any], reads: tuple[str, ..
     """
     unread = sorted(set(options).difference(reads))
     if unread:
-        raise TypeError(
-            f"the converter {converter!r} reads the options {list(reads)}, and {unread} are not "
-            f"among them"
-        )
+        raise TypeError(f"{unknown_names('option', unread, reads)} (converter {converter!r})")
 
 
 def _sample_count(options: dict[str, Any]) -> int:
     """The ``num_samples`` option as a positive integer, or the default sample count without it.
 
     The default is the one :func:`~probpipe.set_default_n_broadcast_samples` sets.
+
+    Parameters
+    ----------
+    options : dict[str, Any]
+        The converter options by name, of which only ``num_samples`` is read.
+
+    Returns
+    -------
+    int
+        The number of draws a sampling conversion takes.
 
     Raises
     ------
@@ -133,18 +165,30 @@ def _sample_count(options: dict[str, Any]) -> int:
     """
     value = options.get("num_samples", Function.DEFAULT_N_BROADCAST_SAMPLES)
     if isinstance(value, bool):
-        raise TypeError(f"num_samples must be an integer; got {value!r}")
+        raise TypeError(f"num_samples must be an integer, got {value!r}")
     try:
         count = operator.index(value)
     except TypeError:
-        raise TypeError(f"num_samples must be an integer; got {value!r}") from None
+        raise TypeError(f"num_samples must be an integer, got {value!r}") from None
     if count <= 0:
-        raise ValueError(f"num_samples must be positive; got {value!r}")
+        raise ValueError(f"num_samples must be positive, got {value!r}")
     return count
 
 
 def _declared(source: Any, options: dict[str, Any]) -> OutputSpec | None:
     """The ``event_spec`` option, the declaration of a backend source.
+
+    Parameters
+    ----------
+    source : Any
+        The conversion's source, which is a ProbPipe law or a backend distribution.
+    options : dict[str, Any]
+        The converter options by name, of which only ``event_spec`` is read.
+
+    Returns
+    -------
+    OutputSpec or None
+        The declaration of the backend source's event, or None when the option is absent.
 
     Raises
     ------
@@ -157,8 +201,9 @@ def _declared(source: Any, options: dict[str, Any]) -> OutputSpec | None:
         return None
     if isinstance(source, Distribution):
         raise TypeError(
-            f"event_spec declares a backend distribution's event, and {source.label!r} is a "
-            f"ProbPipe law that carries its own declaration"
+            f"the event_spec option applies only to TFP and SciPy distributions, but "
+            f"{source.label!r} is a ProbPipe distribution with its own event_spec; remove the "
+            f"event_spec option"
         )
     if not isinstance(declared, OutputSpec):
         raise TypeError(f"event_spec must be an OutputSpec, got {type(declared).__name__}")
@@ -179,11 +224,17 @@ def _class_claims(cls: type) -> tuple[type, ...]:
 # Backend distributions entering ProbPipe
 # ---------------------------------------------------------------------------
 
+
+def _tfp_rate(source: tfd.Distribution) -> Any:
+    """The rate of a TFP ``Gamma`` or ``Poisson``, which holds a rate or its logarithm."""
+    return source.rate if source.rate is not None else jnp.exp(source.log_rate)
+
+
 #: The family a TFP backend distribution enters as, with the family's arguments it holds.
 _TFP_FAMILIES: dict[type, tuple[type[TFPDistribution], Callable[[Any], dict[str, Any]]]] = {
     tfd.Normal: (Normal, lambda d: {"loc": d.loc, "scale": d.scale}),
     tfd.Beta: (Beta, lambda d: {"alpha": d.concentration1, "beta": d.concentration0}),
-    tfd.Gamma: (Gamma, lambda d: {"concentration": d.concentration, "rate": d.rate}),
+    tfd.Gamma: (Gamma, lambda d: {"concentration": d.concentration, "rate": _tfp_rate(d)}),
     tfd.InverseGamma: (
         InverseGamma,
         lambda d: {"concentration": d.concentration, "scale": d.scale},
@@ -198,7 +249,7 @@ _TFP_FAMILIES: dict[type, tuple[type[TFPDistribution], Callable[[Any], dict[str,
     tfd.HalfCauchy: (HalfCauchy, lambda d: {"loc": d.loc, "scale": d.scale}),
     tfd.Pareto: (Pareto, lambda d: {"concentration": d.concentration, "scale": d.scale}),
     tfd.Bernoulli: (Bernoulli, lambda d: {"probs": d.probs_parameter()}),
-    tfd.Poisson: (Poisson, lambda d: {"rate": d.rate}),
+    tfd.Poisson: (Poisson, lambda d: {"rate": _tfp_rate(d)}),
     tfd.Categorical: (Categorical, lambda d: {"probs": d.probs_parameter()}),
     tfd.Dirichlet: (Dirichlet, lambda d: {"concentration": d.concentration}),
     tfd.MultivariateNormalTriL: (
@@ -218,14 +269,23 @@ def _tfp_law(source: tfd.Distribution, declared: OutputSpec | None) -> TFPDistri
     A backend distribution with a family enters as that family at its
     parameters, and any other enters through the bare backend adapter. The law
     is labeled by the backend's name, and *declared*, when given, names its
-    component.
+    component, which is otherwise the backend's name.
     """
     name = source.name or type(source).__name__
+    component = _backend_component(name, declared)
     entry = _TFP_FAMILIES.get(type(source))
     if entry is None:
-        return TFPDistribution(name, source, event_spec=declared)
+        return TFPDistribution(component, source, label=name, event_spec=declared)
     family, arguments = entry
-    return family(label=name, **arguments(source), event_spec=declared)
+    return family(component, **arguments(source), label=name, event_spec=declared)
+
+
+def _backend_component(name: str, declared: OutputSpec | None) -> str:
+    """The component of a backend distribution's law: the one *declared* names, or *name*."""
+    if declared is None or declared.exposes_record:
+        return name
+    (component,) = declared.components
+    return component
 
 
 def _scipy_arguments(source: Any) -> tuple[tuple[Any, ...], float, float]:
@@ -234,58 +294,116 @@ def _scipy_arguments(source: Any) -> tuple[tuple[Any, ...], float, float]:
     return shapes, float(loc), float(scale)
 
 
+@dataclass(frozen=True)
+class _ScipyFamily:
+    """The family a SciPy distribution enters as, and which of SciPy's location and scale it holds.
+
+    ``arguments`` maps SciPy's shape arguments, location, and scale to the
+    family's arguments. A location or scale the family does not hold is applied
+    by an affine bijector, so a shifted or scaled distribution enters as the
+    family transformed by it.
+    """
+
+    family: type[TFPDistribution]
+    arguments: Callable[[tuple[Any, ...], float, float], dict[str, Any]]
+    holds_loc: bool = True
+    holds_scale: bool = True
+
+
 #: The family a SciPy frozen distribution enters as, by its distribution's class.
-_SCIPY_FAMILIES: dict[type, tuple[type[TFPDistribution], Callable[[Any], dict[str, Any]]]] = {}
+_SCIPY_FAMILIES: dict[type, _ScipyFamily] = {}
 if _HAS_SCIPY:
     _SCIPY_FAMILIES = {
-        type(_stats.norm): (
-            Normal,
-            lambda d: (lambda s, loc, scale: {"loc": loc, "scale": scale})(*_scipy_arguments(d)),
-        ),
-        type(_stats.beta): (
+        type(_stats.norm): _ScipyFamily(Normal, lambda s, loc, scale: {"loc": loc, "scale": scale}),
+        type(_stats.beta): _ScipyFamily(
             Beta,
-            lambda d: (lambda s, loc, scale: {"alpha": s[0], "beta": s[1]})(*_scipy_arguments(d)),
+            lambda s, loc, scale: {"alpha": s[0], "beta": s[1]},
+            holds_loc=False,
+            holds_scale=False,
         ),
-        type(_stats.gamma): (
+        type(_stats.gamma): _ScipyFamily(
             Gamma,
-            lambda d: (lambda s, loc, scale: {"concentration": s[0], "rate": 1.0 / scale})(
-                *_scipy_arguments(d)
-            ),
+            lambda s, loc, scale: {"concentration": s[0], "rate": 1.0 / scale},
+            holds_loc=False,
         ),
-        type(_stats.expon): (
-            Exponential,
-            lambda d: (lambda s, loc, scale: {"rate": 1.0 / scale})(*_scipy_arguments(d)),
+        type(_stats.expon): _ScipyFamily(
+            Exponential, lambda s, loc, scale: {"rate": 1.0 / scale}, holds_loc=False
         ),
-        type(_stats.lognorm): (
+        type(_stats.lognorm): _ScipyFamily(
             LogNormal,
-            lambda d: (lambda s, loc, scale: {"loc": jnp.log(scale), "scale": s[0]})(
-                *_scipy_arguments(d)
-            ),
+            lambda s, loc, scale: {"loc": jnp.log(scale), "scale": s[0]},
+            holds_loc=False,
         ),
-        type(_stats.uniform): (
-            Uniform,
-            lambda d: (lambda s, loc, scale: {"low": loc, "high": loc + scale})(
-                *_scipy_arguments(d)
-            ),
+        type(_stats.uniform): _ScipyFamily(
+            Uniform, lambda s, loc, scale: {"low": loc, "high": loc + scale}
         ),
-        type(_stats.cauchy): (
-            Cauchy,
-            lambda d: (lambda s, loc, scale: {"loc": loc, "scale": scale})(*_scipy_arguments(d)),
+        type(_stats.cauchy): _ScipyFamily(
+            Cauchy, lambda s, loc, scale: {"loc": loc, "scale": scale}
         ),
-        type(_stats.laplace): (
-            Laplace,
-            lambda d: (lambda s, loc, scale: {"loc": loc, "scale": scale})(*_scipy_arguments(d)),
+        type(_stats.laplace): _ScipyFamily(
+            Laplace, lambda s, loc, scale: {"loc": loc, "scale": scale}
         ),
     }
 
 
-def _scipy_law(source: Any, declared: OutputSpec | None) -> TFPDistribution | None:
-    """The family the SciPy frozen distribution *source* enters as, or ``None`` when it has none."""
+def _affine_support(support: Constraint | None, shift: float, scale: float) -> Constraint | None:
+    """The image of *support* under ``x ↦ shift + scale·x`` for ``scale > 0``, or ``None``.
+
+    The image is known for the positive half-line and the unit interval, which
+    are the supports of the families that take a SciPy location or scale
+    through a bijector.
+    """
+    if scale <= 0.0:
+        return None
+    if support == positive:
+        return greater_than(shift)
+    if support == unit_interval:
+        return interval(shift, shift + scale)
+    return None
+
+
+def _affine_bijector(shift: float, scale: float, dtype: np.dtype) -> tfb.Bijector:
+    """The backend bijector ``x ↦ shift + scale·x``, in *dtype*, omitting an identity part."""
+    parts = [
+        *([tfb.Shift(jnp.asarray(shift, dtype=dtype))] if shift != 0.0 else []),
+        *([tfb.Scale(jnp.asarray(scale, dtype=dtype))] if scale != 1.0 else []),
+    ]
+    return parts[0] if len(parts) == 1 else tfb.Chain(parts)
+
+
+def _scipy_law(source: Any, declared: OutputSpec | None) -> Distribution | None:
+    """The law the SciPy frozen distribution *source* enters as, or ``None`` when it has no family.
+
+    A distribution whose location and scale the family holds enters as the
+    family. Otherwise it enters as a ``BijectorTransformedDistribution`` of the
+    family under the affine map of the location and scale the family does not
+    hold, and declares the image of the family's support under that map, such
+    as ``greater_than(loc)`` for a shifted gamma.
+    """
     entry = _SCIPY_FAMILIES.get(type(source.dist))
     if entry is None:
         return None
-    family, arguments = entry
-    return family(label=source.dist.name, **arguments(source), event_spec=declared)
+    shapes, loc, scale = _scipy_arguments(source)
+    name = source.dist.name
+    component = _backend_component(name, declared)
+    arguments = entry.arguments(shapes, loc, scale)
+    shift = 0.0 if entry.holds_loc else loc
+    stretch = 1.0 if entry.holds_scale else scale
+    if shift == 0.0 and stretch == 1.0:
+        return entry.family(component, **arguments, label=name, event_spec=declared)
+    base = entry.family(f"{component}_base", **arguments, label=name)
+    law = BijectorTransformedDistribution(
+        component, base, _affine_bijector(shift, stretch, base.event_spec.spec.dtype), label=name
+    )
+    drawn = law.event_spec.spec
+    support = _affine_support(_fixed_support(entry.family), shift, stretch) or drawn.support
+    event = _whole_term_event(
+        component,
+        NumericArraySpec(drawn.shape, drawn.dtype, support),
+        declared,
+        "BijectorTransformedDistribution",
+    )
+    return law._with_declaration(event, "with_support", {"support": support})
 
 
 def _entering_law(source: Any, declared: OutputSpec | None) -> Distribution | None:
@@ -302,8 +420,13 @@ def _entering_law(source: Any, declared: OutputSpec | None) -> Distribution | No
 
 
 def _scipy_declaration(source: Any, declared: OutputSpec | None) -> OutputSpec:
-    """The declaration of one draw of a SciPy frozen distribution: a scalar under its name."""
-    spec = NumericArraySpec((), jnp.float32)
+    """The declaration of one draw of a SciPy frozen distribution: a scalar under its name.
+
+    Its dtype is the one JAX gives SciPy's draws: the default integer dtype for
+    a discrete distribution, and the default floating dtype otherwise.
+    """
+    drawn = np.int64 if isinstance(source.dist, _stats.rv_discrete) else np.float64
+    spec = NumericArraySpec((), jax.dtypes.canonicalize_dtype(drawn))
     if declared is not None:
         return declared.with_spec(spec)
     return OutputSpec(**{source.dist.name: spec})
@@ -357,19 +480,23 @@ class _BackendConverter(Converter):
     def _law(self, source: Any, declared: OutputSpec | None) -> Distribution | None:
         raise NotImplementedError
 
+    def _source_name(self, source: Any) -> str:
+        """*source* as the error messages name it, such as ``"TFP's Normal"``."""
+        raise NotImplementedError
+
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
         """The law *source* enters ProbPipe as, when it is a *target_type*, read from its parameters."""
         law = self._law(source, _declared(source, options))
         if law is None:
             return ConversionInfo(
-                False, description=f"the catalog has no family for {type(source).__name__}"
+                False, description=f"no ProbPipe family corresponds to {self._source_name(source)}"
             )
         if not isinstance(law, target_type):
             return ConversionInfo(
                 False,
                 description=(
-                    f"a {type(source).__name__} enters ProbPipe as a {type(law).__name__}, which "
-                    f"is not a {getattr(target_type, '__name__', target_type)}"
+                    f"the ProbPipe family for {self._source_name(source)} is {type(law).__name__}, "
+                    f"not {getattr(target_type, '__name__', target_type)}"
                 ),
             )
         return ConversionInfo(
@@ -386,12 +513,16 @@ class _BackendConverter(Converter):
         _refuse_unread(self.name, options, self._reads)
         law = self._law(source, _declared(source, options))
         if law is None:
-            raise TypeError(f"the catalog has no family for {type(source).__name__}")
+            raise TypeError(f"no ProbPipe family corresponds to {self._source_name(source)}")
         return law
 
 
 class _TFPConverter(_BackendConverter):
     """A TFP backend distribution enters ProbPipe as its family, or through the bare adapter."""
+
+    @property
+    def description(self) -> str:
+        return "A TFP distribution as its ProbPipe family, or as a TFPDistribution."
 
     @property
     def name(self) -> str:
@@ -404,20 +535,34 @@ class _TFPConverter(_BackendConverter):
     def _law(self, source: Any, declared: OutputSpec | None) -> Distribution:
         return _tfp_law(source, declared)
 
+    def _source_name(self, source: Any) -> str:
+        return f"TFP's {type(source).__name__}"
+
 
 class _ScipyConverter(_BackendConverter):
-    """A SciPy frozen distribution enters ProbPipe as the family whose parameters it holds."""
+    """A SciPy frozen distribution enters ProbPipe as its family, exactly.
+
+    A location or scale the family does not hold, such as a gamma's location,
+    enters through a ``BijectorTransformedDistribution`` of the family.
+    """
+
+    @property
+    def description(self) -> str:
+        return "A SciPy frozen distribution as the ProbPipe family whose parameters it holds."
 
     @property
     def name(self) -> str:
         return "scipy"
 
     def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]:
-        families = tuple(dict.fromkeys(family for family, _ in _SCIPY_FAMILIES.values()))
-        return ((_rv_frozen,), families)
+        families = tuple(dict.fromkeys(entry.family for entry in _SCIPY_FAMILIES.values()))
+        return ((_rv_frozen,), (*families, BijectorTransformedDistribution))
 
     def _law(self, source: Any, declared: OutputSpec | None) -> Distribution | None:
         return _scipy_law(source, declared)
+
+    def _source_name(self, source: Any) -> str:
+        return f"SciPy's {source.dist.name}"
 
 
 # ---------------------------------------------------------------------------
@@ -693,19 +838,24 @@ def _array_event(declaration: OutputSpec, label: str, family: type, rank: int | 
     A family draws one array, as a whole term, of the rank its event has.
     """
     spec = declaration.spec
-    if declaration.exposes_record or not isinstance(spec, NumericArraySpec):
+    if declaration.exposes_record:
+        fields = list(declaration.components)
         return (
-            f"{family.__name__} draws one array, and {label!r} declares "
-            f"{'an exposed record' if declaration.exposes_record else type(spec).__name__}; "
-            f"convert a field's law d[path] instead"
+            f"{family.__name__} draws a single array, but {label!r} draws a record with fields "
+            f"{fields}; convert one field instead, such as d[{fields[0]!r}]"
+        )
+    if not isinstance(spec, NumericArraySpec):
+        return (
+            f"{family.__name__} draws a single array, but {label!r} draws "
+            f"{type(spec).__name__} values"
         )
     if spec.free_dims:
         return f"{label!r} has unbound dimensions {sorted(spec.free_dims)}"
     shape = spec.shape
     if rank == 2 and (len(shape) != 2 or shape[0] != shape[1]):
-        return f"{family.__name__} draws a square matrix, and {label!r} draws shape {shape}"
+        return f"{family.__name__} draws a square matrix, but {label!r} draws shape {shape}"
     if rank is not None and rank != 2 and len(shape) != rank:
-        return f"{family.__name__} draws an array of rank {rank}, and {label!r} draws shape {shape}"
+        return f"{family.__name__} draws an array of rank {rank}, but {label!r} draws shape {shape}"
     return None
 
 
@@ -731,12 +881,28 @@ def _same_support(first: Constraint, second: Constraint) -> bool:
     return _supports_compatible(first, second) and _supports_compatible(second, first)
 
 
-def _check_support(result: Distribution, law: Distribution) -> None:
+def _support_mismatch(fit: str, fit_support: Constraint, name: str, declared: Constraint) -> str:
+    """The reason a fit on *fit_support* cannot keep the support *declared* by the law *name*."""
+    return (
+        f"{fit} is supported on {fit_support}, but {name!r} declares the support {declared}. "
+        f"Set the converter option check_support=False to fit it anyway"
+    )
+
+
+def _check_support(result: Distribution, law: Distribution | None) -> None:
     """Refuse a fit whose support is not the law's.
 
     A law whose support is undeclared has nothing to compare, unless it is an
     empirical law, whose atoms are what it is supported on and must each lie in
     the fit's support.
+
+    Parameters
+    ----------
+    result : Distribution
+        The law the fit built, whose support is checked.
+    law : Distribution or None
+        The law the family was fit to, or None for a SciPy frozen distribution without a
+        family, which has no support to compare.
 
     Raises
     ------
@@ -750,19 +916,19 @@ def _check_support(result: Distribution, law: Distribution) -> None:
     source = getattr(law, "support", None)
     if source is not None:
         if not _same_support(source, target):
+            fit = f"the fitted {type(result).__name__}"
             raise ValueError(
-                f"Cannot convert {type(law).__name__} {law.label!r} (support={source}) to "
-                f"{type(result).__name__} (support={target}). Pass check_support=False to "
-                f"override."
+                f"cannot convert {law.label!r} to {type(result).__name__}: "
+                f"{_support_mismatch(fit, target, law.label, source)}"
             )
         return
     if isinstance(law, EmpiricalDistribution) and not bool(
         jnp.all(target.check(jnp.asarray(law._rows)))
     ):
         raise ValueError(
-            f"Cannot convert {type(law).__name__} {law.label!r} to {type(result).__name__} "
-            f"(support={target}): its atoms lie outside that support. Pass check_support=False "
-            f"to override."
+            f"cannot convert {law.label!r} to {type(result).__name__}: the fitted "
+            f"{type(result).__name__} is supported on {target}, but atoms of {law.label!r} lie "
+            f"outside it. Set the converter option check_support=False to fit it anyway"
         )
 
 
@@ -787,7 +953,7 @@ class _MomentFit:
 
     law: Distribution | None
     declaration: OutputSpec
-    label: str
+    label: str | None
     parameters: Callable[[_Statistics, dict[str, Any]], dict[str, Any]]
     samples: bool
 
@@ -798,15 +964,20 @@ class _MomentMatching(Converter):
     The family is the requested target, and the fit reads the statistics the
     family's parameters need: a moment the law claims in closed form, and any
     other statistic from one shared batch of ``num_samples`` draws. The fit
-    keeps the law's label and component, and a family whose draws do not cast
-    to the law's dtype is infeasible, as a ``Normal`` fit to a ``Bernoulli``
-    law is. Unless ``check_support=False``, the fit keeps the law's support:
+    keeps the law's component, and its label unless the label is the law's
+    default, so a ``Normal`` fit to ``Laplace("g", 0.0, 1.0)`` reads
+    ``Normal(g)``. A family whose draws do not cast to the law's dtype is
+    infeasible, as a ``Normal`` fit to a ``Bernoulli`` law is. Unless ``check_support=False``, the fit keeps the law's support:
     a family whose support is fixed and differs from the law's is infeasible,
     and a fit whose support depends on its parameters and differs is refused.
     The counted families need the option ``total_count``.
     """
 
     _reads = ("num_samples", "total_count", "check_support", "event_spec")
+
+    @property
+    def description(self) -> str:
+        return "A parametric family fit to a law by its moments or its draws' statistics."
 
     @property
     def name(self) -> str:
@@ -826,6 +997,23 @@ class _MomentMatching(Converter):
     def _fit(self, source: Any, target_type: type, options: dict[str, Any]) -> _MomentFit | str:
         """The plan of the fit of *target_type* to *source*, or the reason it is infeasible.
 
+        Parameters
+        ----------
+        source : Any
+            The law to fit, or a TFP or SciPy backend distribution, which is read as the law
+            it enters ProbPipe as.
+        target_type : type
+            The requested family, feasible when ``_FITS`` lists it.
+        options : dict[str, Any]
+            The converter options by name; the plan reads each option in ``_reads`` except
+            ``check_support``.
+
+        Returns
+        -------
+        _MomentFit or str
+            The plan, which records whether the fit draws, or the reason the fit is
+            infeasible.
+
         Raises
         ------
         ValueError
@@ -837,18 +1025,18 @@ class _MomentMatching(Converter):
         fit = _FITS.get(target_type)
         if fit is None:
             return (
-                f"moment matching fits the parametric family the target names, and "
-                f"{getattr(target_type, '__name__', target_type)} names none"
+                f"{getattr(target_type, '__name__', target_type)} is not a parametric family "
+                f"that moment matching can fit"
             )
         declared = _declared(source, options)
         law = _entering_law(source, declared)
         if law is None:
-            declaration, label = _scipy_declaration(source, declared), source.dist.name
+            declaration, name = _scipy_declaration(source, declared), source.dist.name
         else:
-            declaration, label = law.event_spec, law.label
+            declaration, name = law.event_spec, law.label
         needs, parameters, rank = fit
-        reason = _array_event(declaration, label, target_type, rank) or _cast_event(
-            declaration, label, target_type
+        reason = _array_event(declaration, name, target_type, rank) or _cast_event(
+            declaration, name, target_type
         )
         if reason is not None:
             return reason
@@ -857,9 +1045,11 @@ class _MomentMatching(Converter):
         samples = _samples(law, needs)
         if samples:
             if law is not None and not isinstance(law, SupportsSampling):
-                return f"{label!r} has no closed-form moments for the fit and does not sample"
+                return (
+                    f"{name!r} has no closed-form moments for the fit and does not support sampling"
+                )
             _sample_count(options)
-        return _MomentFit(law, declaration, label, parameters, samples)
+        return _MomentFit(law, declaration, _kept_label(source, law), parameters, samples)
 
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
         """Promise the family *target_type* over the source's declaration, without fitting it.
@@ -870,6 +1060,23 @@ class _MomentMatching(Converter):
         a family whose support is fixed and differs from the support the source
         declares, unless ``check_support=False``. A support that depends on the
         family's parameters is left to the fit.
+
+        Parameters
+        ----------
+        source : Any
+            The law to fit, or a TFP or SciPy backend distribution, which is read as the law
+            it enters ProbPipe as.
+        target_type : type
+            The requested family, feasible when ``_FITS`` lists it.
+        **options : Any
+            The converter options by name. The check reads those that ``_reads`` names and
+            ignores any other, which :meth:`execute` refuses.
+
+        Returns
+        -------
+        ConversionInfo
+            A feasible promise with the family's capabilities, which says whether the fit
+            draws, or an infeasible report with the reason.
 
         Raises
         ------
@@ -889,10 +1096,8 @@ class _MomentMatching(Converter):
         ):
             return ConversionInfo(
                 False,
-                description=(
-                    f"{target_type.__name__} is supported on {fixed}, and {planned.label!r} "
-                    f"declares the support {declared}; pass check_support=False to the "
-                    f"converter registry to fit it anyway"
+                description=_support_mismatch(
+                    target_type.__name__, fixed, _label(source, planned.law, declaration), declared
                 ),
             )
         promised = declaration._with_spec(
@@ -911,6 +1116,22 @@ class _MomentMatching(Converter):
     def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
         """The fit of the family *target_type* to the source, over its declaration.
 
+        Parameters
+        ----------
+        source : Any
+            The law to fit, or a TFP or SciPy backend distribution, which is read as the law
+            it enters ProbPipe as.
+        target_type : type
+            The requested family, feasible when ``_FITS`` lists it.
+        **options : Any
+            The converter options by name, each one that ``_reads`` names.
+
+        Returns
+        -------
+        Distribution
+            The fitted instance of *target_type*, which keeps the source's
+            component, and its label unless the label is the source's default.
+
         Raises
         ------
         TypeError
@@ -926,9 +1147,9 @@ class _MomentMatching(Converter):
         draws = _draws(source, law, _sample_count(options)) if planned.samples else None
         (component,) = planned.declaration.components
         result = target_type(
-            label=planned.label,
+            component,
             **planned.parameters(_Statistics(law, draws), options),
-            event_spec=OutputSpec(**{component: None}),
+            label=planned.label,
         )
         if options.get("check_support", True):
             _check_support(result, law)
@@ -953,13 +1174,25 @@ def _sampled_source(
     if law is None:
         return None, _scipy_declaration(source, declared)
     if not isinstance(law, SupportsSampling):
-        return f"{law.label!r} does not sample"
+        return f"{law.label!r} does not support sampling"
     return law, law.event_spec
 
 
 def _label(source: Any, law: Distribution | None, declaration: OutputSpec) -> str:
-    """The label of a sampled representation: the law's, or a SciPy distribution's name."""
+    """The name of a sampled source, which its atoms and messages read: the law's label, or a SciPy distribution's name."""
     return law.label if law is not None else source.dist.name
+
+
+def _kept_label(source: Any, law: Distribution | None) -> str | None:
+    """The label a converted law keeps: the source's, or ``None`` for a source under its default label.
+
+    ``None`` gives the converted law its constructor's default, which names the
+    target, since the source's default names only the source's class. A SciPy
+    distribution without a family keeps its name.
+    """
+    if law is None:
+        return source.dist.name
+    return None if _labeled_by_default(law) else law.label
 
 
 class _EmpiricalDraws(Converter):
@@ -971,6 +1204,10 @@ class _EmpiricalDraws(Converter):
     """
 
     _reads = ("num_samples", "event_spec")
+
+    @property
+    def description(self) -> str:
+        return "The empirical law of num_samples draws of a law."
 
     @property
     def name(self) -> str:
@@ -989,6 +1226,23 @@ class _EmpiricalDraws(Converter):
 
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
         """Promise the empirical law of the source's draws, over its declaration.
+
+        Parameters
+        ----------
+        source : Any
+            The law to draw from, or a TFP or SciPy backend distribution.
+        target_type : type
+            The requested target; the promise is the same for each target.
+        **options : Any
+            The converter options by name, of which the check reads ``num_samples`` and
+            ``event_spec``.
+
+        Returns
+        -------
+        ConversionInfo
+            A feasible promise of an ``EmpiricalDistribution``, which claims the moment
+            capabilities for a numeric event, or an infeasible report when the source does
+            not sample.
 
         Raises
         ------
@@ -1015,6 +1269,22 @@ class _EmpiricalDraws(Converter):
     def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
         """The empirical law of ``num_samples`` draws, keeping the source's declaration.
 
+        Parameters
+        ----------
+        source : Any
+            The law to draw from, or a TFP or SciPy backend distribution.
+        target_type : type
+            The requested target; the result is an ``EmpiricalDistribution`` for each target.
+        **options : Any
+            The converter options by name, each one that ``_reads`` names.
+
+        Returns
+        -------
+        Distribution
+            An ``EmpiricalDistribution`` with the source's label unless the label is
+            the source's default, whose equally weighted atoms
+            are the draws.
+
         Raises
         ------
         TypeError
@@ -1029,10 +1299,10 @@ class _EmpiricalDraws(Converter):
         law, declaration = sampled
         name = _label(source, law, declaration)
         atoms = _batch_form(name, _draws(source, law, count), SAMPLE_LEVEL, declaration.spec)
-        return EmpiricalDistribution(name, atoms, event_spec=declaration)
+        return EmpiricalDistribution(atoms, label=_kept_label(source, law), event_spec=declaration)
 
 
-def _smoothed_atoms(name: str, values: Any, spec: Any) -> Any:
+def _smoothed_atoms(label: str, values: Any, spec: Any) -> Any:
     """*values*, raw values of *spec* along one axis, as a KDE takes its atoms.
 
     An array event's values are an array, and a record event's are a batch of
@@ -1040,7 +1310,7 @@ def _smoothed_atoms(name: str, values: Any, spec: Any) -> Any:
     """
     if isinstance(spec, NumericArraySpec):
         return jnp.asarray(values)
-    return _batch_form(name, values, SAMPLE_LEVEL, spec)
+    return _batch_form(label, values, SAMPLE_LEVEL, spec)
 
 
 class _KDESmoothing(Converter):
@@ -1052,6 +1322,10 @@ class _KDESmoothing(Converter):
     """
 
     _reads = ("bandwidth", "num_samples", "event_spec")
+
+    @property
+    def description(self) -> str:
+        return "A kernel density estimate from an empirical law's atoms or a law's draws."
 
     @property
     def name(self) -> str:
@@ -1075,8 +1349,8 @@ class _KDESmoothing(Converter):
         law, declaration = (source, source.event_spec) if isinstance(sampled, str) else sampled
         if not isinstance(declaration.spec, NumericSpec):
             return (
-                f"a KDE smooths numeric atoms, and {_label(source, law, declaration)!r} declares "
-                f"{type(declaration.spec).__name__}"
+                f"a KDE needs numeric draws, but {_label(source, law, declaration)!r} draws "
+                f"{type(declaration.spec).__name__} values"
             )
         samples = not isinstance(law, EmpiricalDistribution)
         if samples:
@@ -1085,6 +1359,24 @@ class _KDESmoothing(Converter):
 
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
         """Promise the kernel density estimate of the source, over its declaration.
+
+        Parameters
+        ----------
+        source : Any
+            The law to smooth, or a TFP or SciPy backend distribution. An empirical law
+            contributes its atoms, and any other source its draws.
+        target_type : type
+            The requested target; the promise is a ``KDEDistribution`` for each target.
+        **options : Any
+            The converter options by name, of which the check reads ``num_samples`` and
+            ``event_spec``.
+
+        Returns
+        -------
+        ConversionInfo
+            A feasible promise of a ``KDEDistribution``, which says whether the estimate
+            draws, or an infeasible report when the event is not numeric or the source does
+            not sample.
 
         Raises
         ------
@@ -1109,6 +1401,23 @@ class _KDESmoothing(Converter):
     def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
         """The kernel density estimate, keeping the source's declaration.
 
+        Parameters
+        ----------
+        source : Any
+            The law to smooth, or a TFP or SciPy backend distribution. An empirical law
+            contributes its atoms, and any other source its draws.
+        target_type : type
+            The requested target; the result is a ``KDEDistribution`` for each target.
+        **options : Any
+            The converter options by name, each one that ``_reads`` names.
+
+        Returns
+        -------
+        Distribution
+            A ``KDEDistribution`` with the source's label unless the label is the
+            source's default, centered at the empirical law's
+            weighted atoms or at the equally weighted draws.
+
         Raises
         ------
         TypeError
@@ -1121,18 +1430,19 @@ class _KDESmoothing(Converter):
             raise TypeError(planned)
         law, declaration, samples = planned
         name = _label(source, law, declaration)
+        label = _kept_label(source, law)
         bandwidth = options.get("bandwidth")
         if not samples:
             return KDEDistribution(
-                name,
                 _smoothed_atoms(name, law._rows, declaration.spec),
                 bandwidth,
                 law.weights,
+                label=label,
                 event_spec=declaration,
             )
         draws = _draws(source, law, _sample_count(options))
         atoms = _smoothed_atoms(name, draws, declaration.spec)
-        return KDEDistribution(name, atoms, bandwidth, event_spec=declaration)
+        return KDEDistribution(atoms, bandwidth, label=label, event_spec=declaration)
 
 
 converter_registry.register(_TFPConverter())

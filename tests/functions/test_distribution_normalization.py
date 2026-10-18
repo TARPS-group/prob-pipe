@@ -16,11 +16,13 @@ from probpipe import (
     Distribution,
     DistributionBatch,
     EmpiricalDistribution,
+    Function,
     KDEDistribution,
     Normal,
     NumericArrayBatch,
     NumericDistribution,
     OpaqueSpec,
+    OutputSpec,
     ResolutionError,
     converter_registry,
     log_prob,
@@ -33,7 +35,6 @@ from probpipe.functions._normalization import (
     normalize_distribution_values,
 )
 from probpipe.values._binding import make_signature_info_from_signature
-from probpipe.values._function_base import Function
 
 
 @pytest.fixture
@@ -44,8 +45,8 @@ def normal_external():
 @pytest.fixture
 def empirical_dist():
     return EmpiricalDistribution(
-        "x",
         jnp.asarray([[0.0], [1.0], [2.0]]),
+        component="x",
     )
 
 
@@ -79,11 +80,11 @@ class TestNormalizeDistributionValues:
         class UnsupportedDistribution(Distribution):
             pass
 
-        source = Normal(loc=0.0, scale=1.0, label="source")
+        source = Normal("source", loc=0.0, scale=1.0)
 
         with pytest.raises(
             ResolutionError,
-            match=r"'dist' converts to UnsupportedDistribution: No method registered for "
+            match=r"cannot convert parameter 'dist' to UnsupportedDistribution: no method is registered for "
             r"\(Normal, UnsupportedDistribution\)",
         ):
             normalize_distribution_values(
@@ -109,7 +110,9 @@ class TestNormalizeDistributionValues:
         failure = ResolutionError("no converter applies")
         with (
             patch.object(converter_registry, "convert", side_effect=failure),
-            pytest.raises(ResolutionError, match="'dist' converts to SupportsLogProb"),
+            pytest.raises(
+                ResolutionError, match="cannot convert parameter 'dist' to SupportsLogProb"
+            ),
         ):
             normalize_distribution_values(
                 values={"dist": empirical_dist},
@@ -154,7 +157,11 @@ class TestNormalizeDistributionValues:
         assert exc_info.value is error
 
     def test_a_batch_of_one_law_remains_a_batch(self):
-        batch = DistributionBatch("one_cell", [Normal("x", 3.0, 1.0)], "cell")
+        batch = DistributionBatch(
+            [Normal("x", 3.0, 1.0)],
+            "cell",
+            label="one_cell",
+        )
 
         normalized = normalize_distribution_values(
             values={"dist": batch},
@@ -184,7 +191,7 @@ class TestHintedDistributionConversion:
         normal_external,
     ):
         mean_of_normal, seen = mean_recorder
-        wf = Function(label="mean_of_normal", fn=mean_of_normal, dispatch="sequential")
+        wf = Function(mean_of_normal, label="mean_of_normal", dispatch="sequential")
 
         result = wf(dist=normal_external)
 
@@ -198,7 +205,7 @@ class TestHintedDistributionConversion:
             seen.append(dist)
             return log_prob(dist, jnp.asarray([0.0]))
 
-        wf = Function(label="log_prob_at_zero", fn=log_prob_at_zero, dispatch="sequential")
+        wf = Function(log_prob_at_zero, label="log_prob_at_zero", dispatch="sequential")
 
         result = wf(dist=empirical_dist)
 
@@ -211,8 +218,12 @@ class TestHintedDistributionConversion:
 class TestDistributionBatchHandling:
     def test_a_batch_of_one_law_is_swept(self, mean_recorder):
         mean_of_normal, seen = mean_recorder
-        batch = DistributionBatch("one_cell", [Normal("x", 3.0, 1.0)], "cell")
-        wf = Function(label="mean_of_normal", fn=mean_of_normal, dispatch="sequential")
+        batch = DistributionBatch(
+            [Normal("x", 3.0, 1.0)],
+            "cell",
+            label="one_cell",
+        )
+        wf = Function(mean_of_normal, label="mean_of_normal", dispatch="sequential")
 
         result = wf(dist=batch)
 
@@ -220,7 +231,7 @@ class TestDistributionBatchHandling:
 
         assert isinstance(result, NumericArrayBatch)
         assert result.batch_shape == (1,)
-        np.testing.assert_allclose(result.values, jnp.asarray([3.0]))
+        np.testing.assert_allclose(result.raw, jnp.asarray([3.0]))
 
 
 class TestUnhintedExternalDistribution:
@@ -233,10 +244,11 @@ class TestUnhintedExternalDistribution:
             return value * 2.0
 
         wf = Function(
+            double,
             label="double",
-            fn=double,
             n_broadcast_samples=8,
             dispatch="sequential",
+            output_spec=OutputSpec(double=None),
         )
         external = tfd.Normal(loc=1.0, scale=0.1)
 
@@ -271,10 +283,11 @@ def test_non_distribution_capability_protocol_does_not_disable_lifting():
         return x
 
     wrapped = Function(
+        consume,
         label="consume",
-        fn=consume,
         n_broadcast_samples=8,
         dispatch="sequential",
+        output_spec=OutputSpec(consume=None),
     )
 
     with workflow_run(seed=12):
@@ -298,7 +311,7 @@ def _law_claiming(capability: type) -> Distribution:
         (Distribution, capability),
         exec_body=lambda namespace: namespace.update(_condition_on=_unreachable),
     )
-    return law_type("law", OpaqueSpec())
+    return law_type(OutputSpec(law=OpaqueSpec()), label="law")
 
 
 @pytest.mark.parametrize("capability", DISTRIBUTION_HINT_PROTOCOLS, ids=lambda c: c.__name__)
@@ -311,7 +324,7 @@ def test_capability_annotation_passes_the_law_through(capability):
 
     consume.__annotations__ = {"law": capability}
     law = _law_claiming(capability)
-    wrapped = Function(label="consume", fn=consume, n_broadcast_samples=8, dispatch="sequential")
+    wrapped = Function(consume, label="consume", n_broadcast_samples=8, dispatch="sequential")
 
     wrapped(law)
 

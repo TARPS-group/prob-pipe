@@ -135,23 +135,10 @@ def test_legacy_process_global_key_symbols_are_absent():
 
 
 def test_broker_owned_modules_have_no_direct_prng_key_fallbacks():
-    core_paths = tuple(
-        path for path in _python_sources(_PACKAGE_ROOT / "core") if path.name != "transition.py"
-    )
-    # ``transition.with_resampling(seed=...)`` retains its caller-controlled
-    # public seed contract; it is not an omitted-key fallback.
-    broker_owned_paths = core_paths + tuple(
+    broker_owned_paths = tuple(
         path
-        for package in ("converters", "validation", "diagnostics")
+        for package in ("core", "converters", "validation", "diagnostics")
         for path in _python_sources(_PACKAGE_ROOT / package)
     )
 
     assert _direct_jax_key_constructor_calls(broker_owned_paths) == []
-
-
-def test_caller_owned_and_provider_local_seed_paths_remain():
-    inference_source = "\n".join(
-        path.read_text() for path in _python_sources(_PACKAGE_ROOT / "inference")
-    )
-
-    assert "jax.random.PRNGKey(random_seed)" in inference_source

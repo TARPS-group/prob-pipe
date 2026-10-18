@@ -9,6 +9,7 @@ from probpipe import (
     Normal,
     NumericArraySpec,
     NumericDistribution,
+    OutputSpec,
     ResolutionError,
     convert,
     log_prob,
@@ -25,7 +26,7 @@ from probpipe.families._converters import _check_support
 
 @pytest.fixture
 def scalar_normal():
-    return Normal(loc=0.0, scale=1.0, label="x")
+    return Normal("x", loc=0.0, scale=1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -52,8 +53,11 @@ class TestDistributionBase:
         class StubDist(Distribution):
             pass
 
-        d = StubDist("stub", NumericArraySpec(()))
-        with pytest.raises(ResolutionError, match="does not claim SupportsLogProb"):
+        d = StubDist(
+            OutputSpec(stub=NumericArraySpec(())),
+            label="stub",
+        )
+        with pytest.raises(ResolutionError, match="does not implement SupportsLogProb"):
             log_prob(d, jnp.array(0.0))
 
     def test_unnormalized_log_prob_delegates_to_log_prob(self, scalar_normal):
@@ -66,14 +70,14 @@ class TestDistributionBase:
         )
 
     def test_repr_with_name(self):
-        """Distribution.__repr__ includes the name when set."""
-        n = Normal(loc=0.0, scale=1.0, label="my_normal")
+        """Distribution.__repr__ includes the label when set."""
+        n = Normal("my_normal", loc=0.0, scale=1.0)
         r = repr(n)
         assert "my_normal" in r
 
     def test_repr_includes_class_and_name(self):
         """Distribution.__repr__ includes both the class name and the name."""
-        n = Normal(loc=0.0, scale=1.0, label="x")
+        n = Normal("x", loc=0.0, scale=1.0)
         r = repr(n)
         assert "Normal" in r
         assert "x" in r
@@ -81,7 +85,7 @@ class TestDistributionBase:
     def test_convert_on_base_class(self, scalar_normal):
         """from_distribution is accessible on Distribution base."""
         # convert returns a Normal source unchanged
-        result = convert.with_options(method_options={"num_samples": 100})(scalar_normal, Normal)
+        result = convert.using(method_options={"num_samples": 100})(scalar_normal, Normal)
         assert isinstance(result, Normal)
 
 
@@ -119,7 +123,10 @@ class _Declared(NumericDistribution):
     """A numeric law that only declares its event, for the declaration's views."""
 
     def __init__(self, label, spec):
-        super().__init__(label, spec)
+        super().__init__(
+            spec,
+            label=label,
+        )
 
 
 def _leaf(shape=(), dtype="float32", support=real):
@@ -160,8 +167,11 @@ class TestCanonicalConvenience:
         """A moment-matched fit's support must contain the source's."""
         from probpipe import Gamma
 
-        target = Gamma(concentration=1.0, rate=1.0, label="gamma_target")
-        with pytest.raises(ValueError, match=r"Normal 'x' \(support=real\)"):
+        target = Gamma("gamma_target", concentration=1.0, rate=1.0)
+        with pytest.raises(
+            ValueError,
+            match=r"the fitted Gamma is supported on positive, but 'Normal' declares the support real",
+        ):
             _check_support(target, scalar_normal)
 
     def test_the_support_check_skips_a_source_without_a_support(self, scalar_normal):
@@ -189,19 +199,19 @@ class TestIntegerDtypeReporting:
     def test_bernoulli_dtype_is_int32(self):
         from probpipe import Bernoulli
 
-        assert Bernoulli(probs=0.5, label="x").dtype == jnp.int32
+        assert Bernoulli("x", probs=0.5).dtype == jnp.int32
 
     def test_categorical_dtype_is_int32(self):
         from probpipe import Categorical
 
-        assert Categorical(probs=jnp.array([0.5, 0.5]), label="x").dtype == jnp.int32
+        assert Categorical("x", probs=jnp.array([0.5, 0.5])).dtype == jnp.int32
 
     def test_normal_dtype_is_float(self):
         """Normal continues to report float (no regression on the
         always-float family)."""
         from probpipe import Normal
 
-        assert jnp.issubdtype(Normal(loc=0.0, scale=1.0, label="x").dtype, jnp.floating)
+        assert jnp.issubdtype(Normal("x", loc=0.0, scale=1.0).dtype, jnp.floating)
 
     def test_poisson_dtype_is_float(self):
         """``Poisson`` uses ``float32`` because TFP's ``tfd.Poisson``
@@ -211,4 +221,4 @@ class TestIntegerDtypeReporting:
         """
         from probpipe import Poisson
 
-        assert Poisson(rate=2.0, label="x").dtype == jnp.float32
+        assert Poisson("x", rate=2.0).dtype == jnp.float32

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import re
+import threading
+import warnings
 from typing import Any
 
 import jax
@@ -12,6 +15,7 @@ import pytest
 
 from probpipe import (
     ApplicabilityError,
+    BatchSpec,
     EmpiricalDistribution,
     FunctionBatch,
     NumericArrayBatch,
@@ -19,8 +23,10 @@ from probpipe import (
     OpaqueSpec,
     Record,
     RecordSpec,
+    ResultKindError,
     ResultSchemaError,
     TrackedTerm,
+    function,
     workflow_run,
 )
 from probpipe.core._dispatch import (
@@ -29,11 +35,15 @@ from probpipe.core._dispatch import (
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
+from probpipe.core._expression import Conditioned, Named, Summary, draw_of
 from probpipe.core._spec_base import TermSpec
 from probpipe.core._specs import OutputSpec
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import SupportsMean, SupportsSampling
-from probpipe.distributions._distribution import Distribution, DistributionSpec
+from probpipe.distributions._conditional import ConditionalDistributionSpec
+from probpipe.distributions._distribution import Distribution, DistributionSpec, _fixed_paths
+from probpipe.functions import _execution
+from probpipe.functions._resolution import PointReport, RouteOutcome
 from probpipe.operations import (
     BoundCall,
     OperandSummary,
@@ -45,11 +55,21 @@ from probpipe.operations import (
     operation,
 )
 from probpipe.operations._moments import mean
-from probpipe.operations._operation import _workflow_draws
+from probpipe.operations._operation import (
+    _CheckedRoute,
+    _DelegatingRoute,
+    _install_expression_rule,
+    _named_operations,
+    _workflow_draws,
+)
 from probpipe.operations._sample import sample
 from probpipe.values import Function, FunctionSpec
 
 from ._laws import REAL, Bare, Gaussian, GuardedMean, Pair, Sampler
+
+type _DistributionAlias = Distribution
+type _AnyAlias = Any
+type _PathAlias = str
 
 # ---------------------------------------------------------------------------
 # A toy operation with a capability route and a Monte Carlo fallback
@@ -183,10 +203,10 @@ class TestDeclaration:
         @operation(result=_event, registry=OperationRegistry())
         def doubled(d: Distribution):
             """Twice the center."""
-            return center.with_options(raw=True)(d) * 2
+            return center.using(raw=True)(d) * 2
 
         assert doubled.is_derived
-        assert doubled.identity == "center.with_options(raw=True)(d) * 2"
+        assert doubled.identity == "center.using(raw=True)(d) * 2"
         (identity,) = doubled.routes
         assert (identity.name, identity.source, identity.exact) == (
             "identity",
@@ -203,12 +223,12 @@ class TestDeclaration:
         @operation(result=_event, identity_check=center_applies, registry=OperationRegistry())
         def doubled(d: Distribution):
             """Twice the center."""
-            return center.with_options(raw=True)(d) * 2
+            return center.using(raw=True)(d) * 2
 
         declined = doubled.check(Bare("b"))
         assert declined.feasible is False
-        assert "does not claim SupportsMean" in declined.description
-        with pytest.raises(ResolutionError, match="does not claim SupportsMean"):
+        assert "does not implement SupportsMean" in declined.description
+        with pytest.raises(ResolutionError, match="does not implement SupportsMean"):
             doubled(Bare("b"))
         report = doubled.check(Gaussian("g"))
         assert (report.route, report.exact) == ("identity", True)
@@ -216,7 +236,7 @@ class TestDeclaration:
         assert identity.condition == "The center has a route for the law."
 
     def test_a_primitive_takes_no_identity_check(self):
-        with pytest.raises(TypeError, match="derived"):
+        with pytest.raises(TypeError, match="empty body, so it cannot take identity_check"):
             _toy(identity_check=lambda d: True)
 
     def test_a_result_rule_reading_an_undeclared_name_raises(self):
@@ -237,13 +257,28 @@ class TestDeclaration:
 
 
 class TestRoles:
-    def test_roles_follow_the_annotations(self):
-        @operation(result=_open, registry=OperationRegistry())
-        def annotated(d: Distribution, value: Any, path: str):
+    @pytest.mark.parametrize(
+        "annotations",
+        [
+            {"d": Distribution, "value": Any, "path": str},
+            {"d": _DistributionAlias, "value": _AnyAlias, "path": _PathAlias},
+        ],
+        ids=["classes", "aliases"],
+    )
+    def test_roles_follow_the_annotations(self, annotations):
+        def annotated(d, value, path):
             """Three kinds of parameter."""
 
-        operands = {operand.name: operand.accepts for operand in annotated.summary().operands}
-        assert operands == {"d": (DistributionSpec,), "value": (TermSpec,), "path": ()}
+        annotated.__annotations__ = annotations
+        declared = operation(result=_open, registry=OperationRegistry())(annotated)
+
+        operands = {operand.name: operand.accepts for operand in declared.summary().operands}
+        assert operands == {
+            "d": (DistributionSpec, ConditionalDistributionSpec),
+            "value": (TermSpec,),
+            "path": (),
+            "given": (RecordSpec,),
+        }
 
     def test_a_declared_role_overrides_the_annotation(self):
         toy = _toy(roles={"d": (NumericArraySpec,)})
@@ -275,13 +310,16 @@ class TestRoles:
         def scored(d: Distribution, value):
             """An unannotated value."""
 
-        (_, value) = scored.summary().operands
+        (_, value, _) = scored.summary().operands
         assert value.accepts == (NumericArraySpec, RecordSpec, OpaqueSpec, FunctionSpec)
 
     def test_a_law_at_a_value_role_is_lifted_and_a_law_its_role_admits_passes_whole(self):
         seen: list[Any] = []
 
-        @operation(result=_open, registry=OperationRegistry())
+        def shifted_result(value: TermSpec) -> OutputSpec:
+            return OutputSpec(shifted=value)
+
+        @operation(result=shifted_result, registry=OperationRegistry())
         def shifted(d: Distribution, value):
             """The value shifted by one."""
 
@@ -296,28 +334,40 @@ class TestRoles:
         report = shifted.check(law, Gaussian("v", 2.0))
         assert (report.route, report.lifted) == ("shift", ("value",))
         with workflow_run(seed=0):
-            pushforward = shifted.with_options(n_broadcast_samples=8, dispatch="sequential")(
+            pushforward = shifted.using(n_broadcast_samples=8, dispatch="sequential")(
                 law, Gaussian("v", 2.0)
             )
         assert isinstance(pushforward, EmpiricalDistribution)
         assert len(seen) == 8
         assert all(d is law and not isinstance(value, Distribution) for d, value in seen)
 
-    def test_a_parameter_annotated_any_takes_its_argument_as_it_arrives(self):
+    @pytest.mark.parametrize("annotation", [Any, _AnyAlias], ids=["Any", "alias"])
+    def test_a_parameter_annotated_any_takes_its_argument_as_it_arrives(self, annotation):
         def rule(f: Any) -> None:
             """Leaves the result open."""
 
-        @operation(result=rule, roles={"f": (FunctionSpec,)}, registry=OperationRegistry())
-        def applied(f: Any):
+        def applied(f):
             """A function, consumed as an object."""
 
-        applied.structural_route("any", exact=True, **_route(True, 0.0))
-        functions = FunctionBatch("fs", [lambda x: x, lambda x: 2 * x], "fs")
+        applied.__annotations__ = {"f": annotation}
+        declared = operation(
+            result=rule, roles={"f": (FunctionSpec,)}, registry=OperationRegistry()
+        )(applied)
+        declared.structural_route("any", exact=True, **_route(True, 0.0))
+        functions = FunctionBatch(
+            [lambda x: x, lambda x: 2 * x],
+            "fs",
+            label="fs",
+        )
         with pytest.raises(ApplicabilityError, match=r"'f' accepts FunctionSpec.*FunctionBatch"):
-            applied(functions)
+            declared(functions)
 
     def test_apply_lifts_nothing(self):
-        laws = DistributionBatch("laws", [Gaussian("g", 1.0), Gaussian("g", 2.0)], "laws")
+        laws = DistributionBatch(
+            [Gaussian("g", 1.0), Gaussian("g", 2.0)],
+            "laws",
+            label="laws",
+        )
         with pytest.raises(ApplicabilityError, match="'d' accepts DistributionSpec"):
             center.apply(laws)
 
@@ -452,7 +502,9 @@ class TestConditions:
 
         toy = _toy(conditions=(positive_scale,))
         toy.structural_route("any", exact=True, **_route(True, 0.0))
-        with pytest.raises(ApplicabilityError, match="The law's scale is declared positive"):
+        with pytest.raises(
+            ApplicabilityError, match="requirement not met: the law's scale is declared positive"
+        ):
             toy(Gaussian("g"))
 
     def test_an_unresolved_condition_is_deferred_to_the_return(self):
@@ -463,7 +515,7 @@ class TestConditions:
         toy = _toy(conditions=(later,))
         toy.structural_route("any", exact=True, **_route(True, 4.0))
         assert any(
-            "A condition the values settle" in item for item in toy.check(Gaussian("g")).deferred
+            "a condition the values settle" in item for item in toy.check(Gaussian("g")).deferred
         )
         assert float(jnp.asarray(toy(Gaussian("g")))) == 4.0
 
@@ -531,7 +583,7 @@ class TestSelection:
             _toy()(Gaussian("g"))
 
     def test_a_capability_route_requires_membership(self):
-        with pytest.raises(ResolutionError, match="does not claim SupportsMean"):
+        with pytest.raises(ResolutionError, match="does not implement SupportsMean"):
             center(Bare("b"))
 
     def test_membership_suffices_where_the_class_defines_no_guard(self):
@@ -541,7 +593,7 @@ class TestSelection:
         report = center.check(GuardedMean("g", False))
         assert (report.route, report.exact) == ("monte_carlo", False)
         declined = {info.method_name: info for info in report.routes}["closed_form"]
-        assert "The stand-in's answer admits the closed form" in declined.description
+        assert "the stand-in's answer admits the closed form" in declined.description
 
     def test_each_probed_route_reports_its_own_exactness(self):
         report = center.check(GuardedMean("g", False))
@@ -591,16 +643,18 @@ class TestNamingAMethod:
         return toy
 
     def test_a_plain_name_matching_one_method_runs_it(self):
-        toy = self._two_registries().with_options(method="hmc")
+        toy = self._two_registries().using(method="hmc")
         assert float(jnp.asarray(toy(Gaussian("g")))) == 3.0
 
     def test_a_name_held_by_two_registries_asks_for_route_slash_method(self):
-        toy = self._two_registries().with_options(method="nuts")
-        with pytest.raises(ResolutionError, match=r"left/nuts, right/nuts.*route/method"):
+        toy = self._two_registries().using(method="nuts")
+        with pytest.raises(
+            ResolutionError, match=r"ambiguous; it matches left/nuts, right/nuts\. Pass one"
+        ):
             toy(Gaussian("g"))
 
     def test_the_qualified_form_selects_the_method_within_its_route(self):
-        toy = self._two_registries().with_options(method="right/nuts")
+        toy = self._two_registries().using(method="right/nuts")
         assert toy.check(Gaussian("g")).route == "right"
         assert float(jnp.asarray(toy(Gaussian("g")))) == 2.0
 
@@ -609,7 +663,7 @@ class TestNamingAMethod:
         toy.structural_route("nuts", exact=True, **_route(True, 1.0))
         toy.registry_route("methods", registry=_registry(nuts=(False, True, 2.0)))
         with pytest.raises(ResolutionError, match=r"nuts, methods/nuts"):
-            toy.with_options(method="nuts")(Gaussian("g"))
+            toy.using(method="nuts")(Gaussian("g"))
 
     def test_routes_sharing_a_registry_each_take_the_named_method(self):
         class _OnLaws(_Method):
@@ -621,12 +675,12 @@ class TestNamingAMethod:
         toy = _toy()
         toy.registry_route("first", registry=registry, arguments=lambda call: (object(),))
         toy.registry_route("second", registry=registry)
-        report = toy.with_options(method="nuts").check(Gaussian("g"))
+        report = toy.using(method="nuts").check(Gaussian("g"))
         assert (report.route, report.method) == ("second", "nuts")
 
     def test_a_qualified_name_no_route_holds_raises(self):
-        with pytest.raises(ResolutionError, match="no registry route 'left' holds"):
-            self._two_registries().with_options(method="left/hmc")(Gaussian("g"))
+        with pytest.raises(ResolutionError, match="route 'left' has no method 'hmc'"):
+            self._two_registries().using(method="left/hmc")(Gaussian("g"))
 
 
 class TestRegistryRoutes:
@@ -657,13 +711,13 @@ class TestRegistryRoutes:
 
     def test_method_names_a_registered_method(self):
         registry = _registry(precise=(True, True, 2.0), rough=(False, True, 3.0))
-        toy = self._operation(registry).with_options(method="rough")
+        toy = self._operation(registry).using(method="rough")
         assert toy.check(Gaussian("g")).method == "rough"
         assert float(jnp.asarray(toy(Gaussian("g")))) == 3.0
 
     def test_exact_only_excludes_the_approximate_methods_and_routes(self):
         registry = _registry(precise=(True, False, 2.0), rough=(False, True, 3.0))
-        toy = self._operation(registry).with_options(exact_only=True)
+        toy = self._operation(registry).using(exact_only=True)
         with pytest.raises(ResolutionError, match="exact_only"):
             toy(Gaussian("g"))
 
@@ -678,15 +732,15 @@ class TestRegistryRoutes:
 
     def test_method_options_reach_the_registered_methods(self):
         registry = _registry(precise=(True, True, 2.0))
-        toy = self._operation(registry).with_options(method_options={"num_warmup": 7})
+        toy = self._operation(registry).using(method_options={"num_warmup": 7})
         toy(Gaussian("g"))
         assert registry.get_method("precise").options == [{"num_warmup": 7}]
 
     def test_a_budget_is_not_a_control_of_its_own(self):
         toy = _toy()
         toy.registry_route("methods", registry=_registry(precise=(True, True, 2.0)))
-        with pytest.raises(TypeError, match="Unknown controls"):
-            toy.with_options(num_warmup=7)
+        with pytest.raises(TypeError, match="unknown control"):
+            toy.using(num_warmup=7)
 
     def test_a_registry_route_is_listed_with_its_exactness_delegated(self):
         registry = _registry(precise=(True, True, 2.0), rough=(False, True, 3.0))
@@ -696,45 +750,299 @@ class TestRegistryRoutes:
         assert "precise, rough" in routes["methods"].condition
 
 
+class _Delegate(_DelegatingRoute):
+    """A structural route that returns 2 by an exact implementation, where it has one, and 3 otherwise.
+
+    It records the ``exact_only`` restriction of each probe and run.
+    """
+
+    source = RouteSource.STRUCTURAL
+
+    def __init__(self, *, exact_available: bool) -> None:
+        super().__init__("delegate")
+        self.exact_available = exact_available
+        self.probes: list[bool] = []
+        self.runs: list[bool] = []
+
+    def probe(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Feasibility:
+        self.probes.append(exact_only)
+        if exact_only and not self.exact_available:
+            return Feasibility(False, "no exact implementation")
+        return PointReport(True, exact=self.exact_available)
+
+    def run(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Any:
+        self.runs.append(exact_only)
+        return jnp.float32(2.0 if self.exact_available else 3.0)
+
+
+class TestDelegatingRoutes:
+    """A route whose exactness is delegated is ranked twice, as a registry route is."""
+
+    def _operation(self, delegate: _Delegate) -> Any:
+        toy = _toy()
+        toy.structural_route("stand_in", exact=False, **_route(True, 1.0))
+        toy.register_route(delegate)
+        return toy
+
+    def test_its_exact_candidate_outranks_an_approximate_route_registered_before_it(self):
+        delegate = _Delegate(exact_available=True)
+        toy = self._operation(delegate)
+        report = toy.check(Gaussian("g"))
+        assert (report.route, report.method, report.exact) == ("delegate", None, True)
+        assert float(jnp.asarray(toy(Gaussian("g")))) == 2.0
+        assert delegate.runs == [True]
+
+    def test_its_approximate_candidate_ranks_by_registration_order(self):
+        delegate = _Delegate(exact_available=False)
+        report = self._operation(delegate).check(Gaussian("g"))
+        assert report.route == "stand_in"
+        assert [info.method_name for info in report.routes] == ["delegate (exact)", "stand_in"]
+
+    def test_it_runs_approximately_when_no_route_ranks_above_it(self):
+        delegate = _Delegate(exact_available=False)
+        toy = _toy()
+        toy.register_route(delegate)
+        report = toy.check(Gaussian("g"))
+        assert (report.route, report.exact) == ("delegate", False)
+        assert [info.method_name for info in report.routes] == [
+            "delegate (exact)",
+            "delegate (approximate)",
+        ]
+        assert float(jnp.asarray(toy(Gaussian("g")))) == 3.0
+        assert delegate.runs == [False]
+
+    def test_exact_only_keeps_only_its_exact_candidate(self):
+        toy = self._operation(_Delegate(exact_available=False)).using(exact_only=True)
+        with pytest.raises(ResolutionError, match=r"delegate \(exact\): no exact implementation"):
+            toy(Gaussian("g"))
+        exact = self._operation(_Delegate(exact_available=True)).using(exact_only=True)
+        assert float(jnp.asarray(exact(Gaussian("g")))) == 2.0
+
+    def test_naming_it_offers_both_candidates(self):
+        toy = self._operation(_Delegate(exact_available=False)).using(method="delegate")
+        report = toy.check(Gaussian("g"))
+        assert (report.route, report.exact) == ("delegate", False)
+        assert [info.method_name for info in report.routes] == [
+            "delegate (exact)",
+            "delegate (approximate)",
+        ]
+
+    def test_provenance_records_the_exactness_its_probe_reported(self):
+        metadata = self._operation(_Delegate(exact_available=True))(
+            Gaussian("g")
+        ).provenance.metadata
+        assert (metadata["route"], metadata["exact"]) == ("delegate", True)
+
+    def test_it_is_listed_with_the_exact_routes_and_its_exactness_delegated(self):
+        toy = self._operation(_Delegate(exact_available=True))
+        assert [route.name for route in toy.routes] == ["delegate", "stand_in"]
+        routes = {route.name: route for route in toy.summary().routes}
+        assert (routes["delegate"].source, routes["delegate"].exact) == (
+            RouteSource.STRUCTURAL,
+            None,
+        )
+
+
+class _Composite(_DelegatingRoute):
+    """A composite identity route: twice the center, by a route whose exactness it settles when it runs.
+
+    Its check leaves the exactness open unless ``exact_only`` restricts it, and
+    its run records the restriction and settles the exactness *settles*.
+    """
+
+    source = RouteSource.STRUCTURAL
+
+    def __init__(self, *, settles: bool | None) -> None:
+        super().__init__("composite")
+        self.settles = settles
+        self.runs: list[tuple[str | None, bool]] = []
+
+    def probe(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Feasibility:
+        return PointReport(
+            True, exact=True if exact_only else None, deferred=("the second step's check",)
+        )
+
+    def run(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Any:
+        self.runs.append((method, exact_only))
+        exact = True if exact_only else self.settles
+        return RouteOutcome(jnp.float32(4.0), exact)
+
+
+def _doubled(identity_route: Any, **options: Any) -> Any:
+    """A derived operation ``doubled(d)`` whose identity *identity_route* realizes."""
+
+    @operation(
+        result=_event, identity_route=identity_route, registry=OperationRegistry(), **options
+    )
+    def doubled(d: Distribution):
+        """Twice the center."""
+        return center.using(raw=True)(d) * 2
+
+    return doubled
+
+
+class TestIdentityRoute:
+    """A composite identity route replaces the generic one and is ranked once, below the direct routes."""
+
+    def test_it_replaces_the_generic_route(self):
+        doubled = _doubled(_Composite(settles=False))
+        assert doubled.is_derived
+        assert [route.name for route in doubled.routes] == ["composite"]
+        assert doubled.summary().identity == "center.using(raw=True)(d) * 2"
+
+    def test_a_method_of_the_constituent_names_the_call_that_takes_it(self):
+        message = (
+            "doubled does not pass method on to center, so call "
+            "center.using(method='monte_carlo') to choose it"
+        )
+        with pytest.raises(ResolutionError, match=re.escape(message)):
+            _doubled(_Composite(settles=True)).using(method="monte_carlo")(Gaussian("g"))
+
+    def test_an_operation_without_it_keeps_the_generic_route(self):
+        @operation(result=_event, registry=OperationRegistry())
+        def doubled(d: Distribution):
+            """Twice the center."""
+            return center.using(raw=True)(d) * 2
+
+        assert [route.name for route in doubled.routes] == ["identity"]
+
+    def test_it_ranks_below_an_exact_direct_route(self):
+        doubled = _doubled(_Composite(settles=True))
+        doubled.structural_route("direct", exact=True, **_route(True, 1.0))
+        assert [route.name for route in doubled.routes] == ["direct", "composite"]
+        for options in ({}, {"exact_only": True}):
+            report = doubled.using(**options).check(Gaussian("g"))
+            assert report.route == "direct"
+
+    def test_it_ranks_below_an_approximate_direct_route_registered_after_it(self):
+        doubled = _doubled(_Composite(settles=True))
+        doubled.structural_route("direct", exact=False, **_route(True, 1.0))
+        assert [route.name for route in doubled.routes] == ["direct", "composite"]
+        assert doubled.check(Gaussian("g")).route == "direct"
+        assert doubled.using(exact_only=True).check(Gaussian("g")).route == "composite"
+
+    def test_the_callers_route_keeps_its_own_rank(self):
+        composite = _Composite(settles=True)
+        _doubled(composite)
+        assert composite.realizes_identity is False
+
+    def test_it_is_ranked_once_and_leaves_its_exactness_open(self):
+        report = _doubled(_Composite(settles=True)).check(Gaussian("g"))
+        # A call whose exactness is open reports itself approximate.
+        assert (report.route, report.exact) == ("composite", False)
+        assert [info.method_name for info in report.routes] == ["composite"]
+        assert "the second step's check" in report.deferred
+
+    def test_provenance_records_the_exactness_it_settles_when_it_runs(self):
+        for settles in (True, False):
+            composite = _Composite(settles=settles)
+            value = _doubled(composite)(Gaussian("g"))
+            assert float(jnp.asarray(value)) == 4.0
+            assert value.provenance.metadata["exact"] is settles
+            assert composite.runs == [(None, False)]
+
+    def test_exact_only_ranks_it_among_the_exact_routes_and_restricts_it(self):
+        composite = _Composite(settles=False)
+        doubled = _doubled(composite).using(exact_only=True)
+        assert doubled.check(Gaussian("g")).exact is True
+        assert doubled(Gaussian("g")).provenance.metadata["exact"] is True
+        assert composite.runs == [(None, True)]
+
+    def test_a_primitive_takes_no_identity_route(self):
+        with pytest.raises(TypeError, match="empty body, so it cannot take identity_route"):
+            _toy(identity_route=_Composite(settles=True))
+
+    def test_it_is_not_given_beside_an_identity_check(self):
+        with pytest.raises(TypeError, match="both identity_route and identity_check"):
+            _doubled(_Composite(settles=True), identity_check=lambda d: True)
+
+    def test_it_delegates_its_exactness(self):
+        fixed = _CheckedRoute(
+            "fixed", source=RouteSource.STRUCTURAL, exact=True, **_route(True, 1.0)
+        )
+        with pytest.raises(TypeError, match="delegates its exactness"):
+            _doubled(fixed)
+
+
+class TestConditionsReadingAMap:
+    """A condition receives the map itself at a parameter whose role is FunctionSpec (V.6)."""
+
+    def test_it_receives_the_map_and_reads_its_annotations(self):
+        seen: list[Any] = []
+
+        def reads_the_map(d: Any, f: Any) -> bool:
+            """The map is a callable."""
+            seen.append((d, f))
+            return True
+
+        @operation(
+            result=_open,
+            roles={"f": (FunctionSpec,)},
+            conditions=(reads_the_map,),
+            registry=OperationRegistry(),
+        )
+        def apply_to(d: Distribution, f: Any):
+            """A toy operation over a law and a map."""
+
+        apply_to.structural_route("any", exact=True, **_route(True, 0.0))
+
+        def square(x: float) -> float:
+            return x * x
+
+        apply_to(Gaussian("g"), square)
+        (d, f), *_ = seen
+        assert isinstance(d, DistributionSpec)
+        assert f is square
+        assert f.__annotations__["x"] in (float, "float")
+
+
 # ---------------------------------------------------------------------------
 # Controls
 # ---------------------------------------------------------------------------
 
 
 class TestControls:
-    def test_with_options_returns_a_view_and_leaves_the_operation_unchanged(self):
-        view = center.with_options(method="monte_carlo")
+    def test_using_returns_a_view_and_leaves_the_operation_unchanged(self):
+        view = center.using(method="monte_carlo")
         assert view.check(Gaussian("g")).route == "monte_carlo"
         assert center.check(Gaussian("g")).route == "closed_form"
 
     def test_method_runs_the_named_route_instead_of_the_selected_one(self):
         with workflow_run(seed=0):
-            estimate = center.with_options(method="monte_carlo", n_broadcast_samples=4000)(
+            estimate = center.using(method="monte_carlo", n_broadcast_samples=4000)(
                 Gaussian("g", 3.0)
             )
         assert abs(float(jnp.asarray(estimate)) - 3.0) < 0.1
 
     def test_method_naming_no_route_raises_resolution_error(self):
-        with pytest.raises(ResolutionError, match="no route or registered method named 'nope'"):
-            center.with_options(method="nope")(Gaussian("g"))
+        with pytest.raises(ResolutionError, match="unknown method 'nope'"):
+            center.using(method="nope")(Gaussian("g"))
 
     def test_exact_only_with_a_named_approximate_route_raises(self):
-        view = center.with_options(method="monte_carlo", exact_only=True)
+        view = center.using(method="monte_carlo", exact_only=True)
         with pytest.raises(ResolutionError, match="not exact"):
             view(Gaussian("g"))
 
     def test_exact_only_excludes_every_approximate_route(self):
         with pytest.raises(ResolutionError, match="exact_only"):
-            center.with_options(exact_only=True)(Sampler("s"))
+            center.using(exact_only=True)(Sampler("s"))
 
     def test_an_unknown_control_raises_type_error(self):
-        with pytest.raises(TypeError, match="Unknown controls"):
-            center.with_options(tolerance=0.1)
+        with pytest.raises(TypeError, match="unknown control"):
+            center.using(tolerance=0.1)
 
     @pytest.mark.parametrize("controls", [{"exact_only": "yes"}, {"raw": 1}, {"method": 3}])
     def test_a_control_of_the_wrong_type_raises_type_error(self, controls):
         with pytest.raises(TypeError):
-            center.with_options(**controls)
+            center.using(**controls)
 
     def test_a_route_reads_its_budgets_from_method_options(self):
         seen: list[Any] = []
@@ -747,10 +1055,10 @@ class TestControls:
         toy.structural_route(
             "tolerant", check=lambda call, result: True, execute=execute, exact=True
         )
-        toy.with_options(method_options={"tolerance": 0.5})(Gaussian("g"))
+        toy.using(method_options={"tolerance": 0.5})(Gaussian("g"))
         assert seen == [0.5]
-        with pytest.raises(TypeError, match="Unknown controls"):
-            toy.with_options(tolerance=0.5)
+        with pytest.raises(TypeError, match="unknown control"):
+            toy.using(tolerance=0.5)
 
     def test_a_capability_route_passes_the_method_options_to_the_capability(self):
         class Tolerant(Gaussian):
@@ -769,7 +1077,7 @@ class TestControls:
             "estimate", operand="d", protocol=SupportsMean, method="_mean", exact=False
         )
         law = Tolerant("g")
-        assert float(jnp.asarray(toy.with_options(method_options={"tolerance": 0.5})(law))) == 1.5
+        assert float(jnp.asarray(toy.using(method_options={"tolerance": 0.5})(law))) == 1.5
         toy(law)
         assert law.options == [{"tolerance": 0.5}, {}]
 
@@ -783,7 +1091,7 @@ class TestControls:
         toy.capability_route(
             "closed_form", operand="d", protocol=SupportsMean, method="_mean", exact=True
         )
-        view = toy.with_options(method_options={"tolerance": 0.5})
+        view = toy.using(method_options={"tolerance": 0.5})
         assert float(jnp.asarray(view(Tolerant("g", 1.5)))) == 1.5
 
     def test_the_selected_capability_rejects_an_option_it_does_not_read(self):
@@ -792,22 +1100,22 @@ class TestControls:
             "estimate", operand="d", protocol=SupportsMean, method="_mean", exact=False
         )
         with pytest.raises(TypeError, match="patience"):
-            toy.with_options(method_options={"patience": 3})(Gaussian("g", 1.5))
+            toy.using(method_options={"patience": 3})(Gaussian("g", 1.5))
 
     def test_a_route_registered_after_a_view_is_seen_by_the_view(self):
         toy = _toy()
-        view = toy.with_options(exact_only=True)
+        view = toy.using(exact_only=True)
         toy.structural_route("late", exact=True, **_route(True, 5.0))
         assert view.check(Gaussian("g")).route == "late"
 
     def test_raw_returns_the_result_detached(self):
-        result = center.with_options(raw=True)(Gaussian("g", 2.0))
+        result = center.using(raw=True)(Gaussian("g", 2.0))
         assert not isinstance(result, TrackedTerm)
         assert float(result) == 2.0
 
     def test_the_sample_count_control_sets_the_number_of_draws(self):
         law = Sampler("s")
-        center.with_options(n_broadcast_samples=17)(law)
+        center.using(n_broadcast_samples=17)(law)
         assert law.shapes == [(17,)]
 
 
@@ -817,7 +1125,11 @@ class TestControls:
 
 
 def _laws(*laws: Distribution) -> DistributionBatch:
-    return DistributionBatch("laws", list(laws), "laws")
+    return DistributionBatch(
+        list(laws),
+        "laws",
+        label="laws",
+    )
 
 
 class TestLiftedChecks:
@@ -827,15 +1139,15 @@ class TestLiftedChecks:
         assert (report.feasible, report.route, report.exact) == (True, "closed_form", True)
         assert report.lifted == ("d",)
         assert report.result == Gaussian("g").event_spec
-        np.testing.assert_array_equal(np.asarray(center(batch).values), [1.0, 2.0])
+        np.testing.assert_array_equal(np.asarray(center(batch).raw), [1.0, 2.0])
 
     def test_an_element_no_route_applies_to_makes_the_check_infeasible(self):
         batch = _laws(Gaussian("g"), Bare("g"))
         report = center.check(batch)
         assert report.feasible is False
         assert "sweep cell (1,)" in report.description
-        assert "Bare does not claim SupportsMean" in report.description
-        with pytest.raises(ResolutionError, match="Bare does not claim SupportsMean"):
+        assert "does not implement SupportsMean" in report.description
+        with pytest.raises(ResolutionError, match=r"Bare '\S+' does not implement SupportsMean"):
             center(batch)
 
     def test_elements_that_select_different_routes_leave_the_route_undecided(self):
@@ -843,26 +1155,34 @@ class TestLiftedChecks:
         assert (report.feasible, report.route, report.exact) == (True, None, False)
 
     def test_an_element_kind_the_role_refuses_raises_as_the_call_does(self):
-        values = NumericArrayBatch("values", jnp.zeros(3), "values", element_spec=REAL)
-        with pytest.raises(ApplicabilityError, match="received a NumericArray"):
+        values = NumericArrayBatch(
+            jnp.zeros(3),
+            "values",
+            element_spec=REAL,
+            label="values",
+        )
+        with pytest.raises(ApplicabilityError, match="but got NumericArrayBatch"):
             center.check(values)
-        with pytest.raises(ApplicabilityError, match="received a NumericArray"):
+        with pytest.raises(ApplicabilityError, match="but got NumericArrayBatch"):
             center(values)
 
     def test_an_empty_sweep_is_planned_at_its_element_kind_and_selects_no_route(self):
         empty = DistributionBatch(
-            "laws", np.empty(0, object), "laws", element_spec=Gaussian("g").spec
+            np.empty(0, object),
+            "laws",
+            element_spec=Gaussian("g").spec,
+            label="laws",
         )
         report = center.check(empty)
         assert (report.feasible, report.route, report.lifted) == (True, None, ("d",))
 
     def test_a_method_names_the_route_each_point_of_a_lifted_call_takes(self):
         laws = _laws(Gaussian("g", 1.0), Gaussian("g", 2.0))
-        view = center.with_options(method="monte_carlo", n_broadcast_samples=4000)
+        view = center.using(method="monte_carlo", n_broadcast_samples=4000)
         assert view.check(laws).route == "monte_carlo"
         with workflow_run(seed=0):
             means = view(laws)
-        np.testing.assert_allclose(np.asarray(means.values), [1.0, 2.0], atol=0.1)
+        np.testing.assert_allclose(np.asarray(means.raw), [1.0, 2.0], atol=0.1)
 
     def test_exact_only_excludes_the_sampling_lift_of_a_value(self):
         @operation(result=_open, registry=OperationRegistry())
@@ -870,7 +1190,7 @@ class TestLiftedChecks:
             """The value shifted by one."""
 
         shifted.structural_route("shift", exact=True, **_route(True, 0.0))
-        view = shifted.with_options(exact_only=True)
+        view = shifted.using(exact_only=True)
         assert view.check(Gaussian("g"), Gaussian("v")).feasible is False
         with pytest.raises(ResolutionError, match="exact_only"):
             view(Gaussian("g"), Gaussian("v"))
@@ -879,9 +1199,349 @@ class TestLiftedChecks:
         assert center.check(Gaussian("g")).lifted == ()
 
     def test_a_raw_call_lifts_as_the_tracked_call_does(self):
-        means = center.with_options(raw=True)(_laws(Gaussian("g", 1.0), Gaussian("g", 2.0)))
+        means = center.using(raw=True)(_laws(Gaussian("g", 1.0), Gaussian("g", 2.0)))
         assert not isinstance(means, TrackedTerm)
         np.testing.assert_array_equal(np.asarray(means), [1.0, 2.0])
+
+
+# ---------------------------------------------------------------------------
+# Controls inside an identity
+# ---------------------------------------------------------------------------
+
+
+def _center_applies(d: Any) -> Any:
+    """The center has a route for the law."""
+    return center.check(d)
+
+
+def _body_doubled(body: Any = None, *, check: Any = _center_applies) -> Any:
+    """A fresh derived operation ``doubled(d) = 2 * body(d)``, whose body defaults to the raw center.
+
+    *check* is its identity check, and ``None`` declares it without one.
+    """
+    inner = center.using(raw=True) if body is None else body
+    options = {} if check is None else {"identity_check": check}
+
+    @operation(result=_event, registry=OperationRegistry(), **options)
+    def doubled(d: Distribution):
+        """Twice the center."""
+        return inner(d) * 2
+
+    return doubled
+
+
+@function
+def _identity_map(x):
+    """Its argument, a plain Function that a law at *x* lifts."""
+    return x
+
+
+def _via_center(*, exact: bool) -> Any:
+    """A fresh primitive operation whose one fallback route calls ``center`` on the law."""
+    via = _toy(result=_event)
+
+    def run_center(call: BoundCall, result: OutputSpec | None) -> Any:
+        return center.using(raw=True)(call.operands["d"])
+
+    via.fallback_route(
+        "via_center", check=lambda call, result: True, execute=run_center, exact=exact
+    )
+    return via
+
+
+class TestIdentityControls:
+    def test_exact_only_keeps_an_identity_whose_constituent_selects_an_exact_route(self):
+        doubled = _body_doubled()
+        result = doubled.using(exact_only=True)(Gaussian("g", 1.5))
+        assert float(jnp.asarray(result)) == 3.0
+        metadata = result.provenance.metadata
+        assert (metadata["route"], metadata["exact"]) == ("identity", True)
+
+    def test_exact_only_refuses_an_identity_whose_constituent_has_only_an_approximate_route(
+        self,
+    ):
+        view = _body_doubled().using(exact_only=True)
+        report = view.check(Sampler("s"))
+        assert report.feasible is False
+        ((name, reason),) = [(info.method_name, info.description) for info in report.routes]
+        assert name == "identity"
+        assert reason.startswith("center: no route applies with exact_only")
+        with pytest.raises(
+            ResolutionError, match="identity: center: no route applies with exact_only"
+        ):
+            view(Sampler("s"))
+
+    def test_without_exact_only_the_identity_takes_its_constituents_approximate_route(self):
+        report = _body_doubled().check(Sampler("s"))
+        assert (report.feasible, report.route, report.exact) == (True, "identity", False)
+
+    def test_exact_only_excludes_an_identity_without_an_identity_check(self):
+        doubled = _body_doubled(check=None)
+        assert float(jnp.asarray(doubled(Gaussian("g", 1.5)))) == 3.0
+        reason = "identity: the operation declares no identity_check, which exact_only requires"
+        for options in ({}, {"method": "identity"}):
+            view = doubled.using(exact_only=True, **options)
+            with pytest.raises(ResolutionError, match=reason):
+                view(Gaussian("g", 1.5))
+            assert view.check(Gaussian("g", 1.5)).feasible is False
+
+    def test_exact_only_declines_an_identity_whose_check_reports_an_approximate_result(self):
+        view = _body_doubled(check=lambda d: PointReport(True, exact=False)).using(exact_only=True)
+        assert view.check(Gaussian("g", 1.5)).feasible is False
+        with pytest.raises(ResolutionError, match="its check reports an approximate result"):
+            view(Gaussian("g", 1.5))
+
+    def test_a_checked_body_route_ranks_below_an_exact_direct_route(self):
+        doubled = _body_doubled()
+        doubled.structural_route("direct", exact=True, **_route(True, 1.0))
+        for options in ({}, {"exact_only": True}):
+            assert doubled.using(**options).check(Gaussian("g")).route == "direct"
+
+    def test_under_exact_only_a_checked_body_route_ranks_as_exact(self):
+        doubled = _body_doubled()
+        doubled.structural_route("direct", exact=False, **_route(True, 1.0))
+        assert doubled.check(Gaussian("g")).route == "direct"
+        assert doubled.using(exact_only=True).check(Gaussian("g")).route == "identity"
+
+    def test_naming_the_identity_under_exact_only_keeps_a_checked_identity(self):
+        view = _body_doubled().using(method="identity", exact_only=True)
+        assert float(jnp.asarray(view(Gaussian("g", 1.5)))) == 3.0
+
+    def test_exact_only_restricts_a_constituent_that_sets_it_false(self):
+        law = Sampler("s")
+        doubled = _body_doubled(center.using(raw=True, exact_only=False), check=lambda d: True)
+        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
+            doubled.using(exact_only=True)(law)
+        assert law.shapes == []
+
+    def test_the_sample_count_passes_to_the_constituent(self):
+        law = Sampler("s")
+        _body_doubled().using(n_broadcast_samples=33)(law)
+        assert law.shapes == [(33,)]
+
+    def test_the_sample_count_passes_through_a_nested_derived_operation(self):
+        law = Sampler("s")
+        quadrupled = _body_doubled(_body_doubled().using(raw=True))
+        quadrupled.using(n_broadcast_samples=33)(law)
+        assert law.shapes == [(33,)]
+
+    @pytest.mark.parametrize("count", [40, center.options["n_broadcast_samples"]])
+    def test_a_sample_count_the_constituent_sets_wins(self, count):
+        law = Sampler("s")
+        doubled = _body_doubled(center.using(raw=True, n_broadcast_samples=count))
+        doubled.using(n_broadcast_samples=33)(law)
+        assert law.shapes == [(count,)]
+
+    def test_a_constituent_keeps_its_class_default_when_the_derived_call_sets_no_count(self):
+        class TenDraws(Function):
+            DEFAULT_N_BROADCAST_SAMPLES = 10
+
+        ten = TenDraws(lambda x: x, label="ten")
+        doubled = _body_doubled(lambda d: mean.using(raw=True)(ten(d)))
+        for options, count in (({}, 10), ({"n_broadcast_samples": 33}, 33)):
+            law = Sampler("s")
+            with workflow_run(seed=0):
+                doubled.using(**options)(law)
+            assert law.shapes == [(count,)]
+
+    def test_method_does_not_pass_to_the_constituent(self):
+        view = _body_doubled().using(method="identity")
+        assert float(jnp.asarray(view(Gaussian("g", 1.5)))) == 3.0
+
+    def test_a_method_of_the_constituent_names_the_call_that_takes_it(self):
+        message = (
+            "doubled does not pass method on to center, so call "
+            "center.using(method='monte_carlo') to choose it"
+        )
+        with pytest.raises(ResolutionError, match=re.escape(message)):
+            _body_doubled().using(method="monte_carlo")(Gaussian("g"))
+
+    def test_an_attribute_named_like_an_operation_is_no_constituent(self):
+        @operation(result=_event, registry=OperationRegistry())
+        def shifted(d: Distribution):
+            """The law's center attribute shifted by one, which calls no operation."""
+            return d.center + 1.0
+
+        with pytest.raises(ResolutionError, match="unknown method 'monte_carlo'") as raised:
+            shifted.using(method="monte_carlo")(Gaussian("g"))
+        assert "does not pass method on" not in str(raised.value)
+
+    def test_a_constituent_called_in_a_nested_function_is_found(self):
+        @operation(result=_event, registry=OperationRegistry())
+        def doubled(d: Distribution):
+            """Twice the center, through a nested function."""
+
+            def twice(law: Distribution) -> Any:
+                return center.using(raw=True)(law) * 2
+
+            return twice(d)
+
+        with pytest.raises(ResolutionError, match=re.escape("center.using")):
+            doubled.using(method="monte_carlo")(Gaussian("g"))
+
+    def test_a_relabeled_constituent_is_named_by_its_operation(self):
+        inner = center.with_label("spread").using(raw=True)
+        message = "call center.using(method='monte_carlo') to choose it"
+        with pytest.raises(ResolutionError, match=re.escape(message)):
+            _body_doubled(inner).using(method="monte_carlo")(Gaussian("g"))
+
+    def test_a_callable_without_bytecode_names_no_operation(self):
+        assert _named_operations(max) == ()
+
+    def test_a_closure_variable_not_yet_assigned_names_no_operation(self):
+        def body(d: Distribution) -> Any:
+            return later(d)
+
+        assert _named_operations(body) == ()
+        later = center.using(raw=True)
+        assert [operation.name for operation in _named_operations(body)] == ["center"]
+
+    def test_a_method_no_constituent_has_gets_no_constituent_fix(self):
+        with pytest.raises(ResolutionError, match="unknown method 'nope'") as raised:
+            _body_doubled().using(method="nope")(Gaussian("g"))
+        assert "does not pass method on" not in str(raised.value)
+
+    def test_the_sample_count_reaches_only_the_calls_the_identity_makes(self):
+        law = Sampler("s")
+        doubled = _body_doubled(_via_center(exact=False).using(raw=True))
+        doubled.using(n_broadcast_samples=33)(law)
+        assert law.shapes == [(center.options["n_broadcast_samples"],)]
+
+    def test_exact_only_restricts_every_call_the_identity_runs(self):
+        via = _via_center(exact=True)
+        doubled = _body_doubled(via.using(raw=True), check=lambda d: via.check(d))
+        assert doubled.using(exact_only=True).check(Sampler("s")).feasible is True
+        assert float(jnp.asarray(doubled(Gaussian("g", 1.5)))) == 3.0
+        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
+            doubled.using(exact_only=True)(Sampler("s"))
+
+    def test_exact_only_refuses_a_plain_function_lifted_in_the_identity(self):
+        doubled = _body_doubled(lambda d: _identity_map(d) * 1.0)
+        with pytest.raises(ResolutionError, match="_identity_map: no evaluation rule applies"):
+            doubled.using(exact_only=True)(Gaussian("g", 1.5))
+
+    def test_the_controls_pass_to_an_apply_in_the_identity(self):
+        law = Sampler("s")
+        _body_doubled(lambda d: center.apply(d)).using(n_broadcast_samples=33)(law)
+        assert law.shapes == [(33,)]
+        doubled = _body_doubled(lambda d: center.apply(d), check=lambda d: True)
+        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
+            doubled.using(exact_only=True)(Sampler("s"))
+
+    def test_the_sample_count_passes_to_a_plain_function_lifted_in_the_identity(self):
+        law = Sampler("s")
+        doubled = _body_doubled(lambda d: mean.using(raw=True)(_identity_map(d)))
+        with workflow_run(seed=0):
+            doubled.using(n_broadcast_samples=33)(law)
+        assert law.shapes == [(33,)]
+
+    def test_each_point_of_a_lifted_call_passes_the_sample_count(self):
+        first, second = Sampler("s", 1.0), Sampler("s", 2.0)
+        _body_doubled().using(n_broadcast_samples=33)(_laws(first, second))
+        assert first.shapes == second.shapes == [(33,)]
+
+    def test_the_points_of_a_threaded_call_pass_the_sample_count(self):
+        first, second = Sampler("s", 1.0), Sampler("s", 2.0)
+        view = _body_doubled().using(n_broadcast_samples=33, dispatch="thread")
+        view(_laws(first, second))
+        assert first.shapes == second.shapes == [(33,)]
+
+    def test_exact_only_holds_in_the_workers_of_a_threaded_constituent(self):
+        def worker(d: Distribution) -> Any:
+            return center.using(raw=True)(d)
+
+        inner = Function(worker).using(dispatch="thread", raw=True)
+        doubled = _body_doubled(
+            lambda d: jnp.sum(jnp.asarray(inner(_laws(d, d)))), check=lambda d: True
+        )
+        law = Sampler("s")
+        view = doubled.using(exact_only=True)
+        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
+            view(law)
+        assert law.shapes == []
+
+    def test_exact_only_holds_in_a_worker_that_receives_a_serialized_function(self, monkeypatch):
+        cloudpickle = pytest.importorskip("cloudpickle")
+
+        def in_fresh_threads(request: Any, *, parent_frame: Any, parent_broker: Any) -> list[Any]:
+            # Stand in for a worker in another process: the work function arrives
+            # serialized, and each item runs in a thread with an empty context.
+            func = cloudpickle.loads(cloudpickle.dumps(request.func))
+            outcomes: list[Any] = []
+
+            def run(item: Any) -> None:
+                try:
+                    outcomes.append(
+                        _execution._execute_work_item(func, item, parent_frame, parent_broker)
+                    )
+                except BaseException as error:
+                    outcomes.append(error)
+
+            for item in request.work_items:
+                worker = threading.Thread(target=run, args=(item,))
+                worker.start()
+                worker.join()
+            for outcome in outcomes:
+                if isinstance(outcome, BaseException):
+                    raise outcome
+            return outcomes
+
+        monkeypatch.setattr(_execution, "execute_many_threaded", in_fresh_threads)
+
+        def worker(d: Distribution) -> Any:
+            return center.using(raw=True)(d)
+
+        inner = Function(worker).using(dispatch="thread", raw=True)
+        doubled = _body_doubled(
+            lambda d: jnp.sum(jnp.asarray(inner(_laws(d, d)))), check=lambda d: True
+        )
+        law = Sampler("s")
+        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
+            doubled.using(exact_only=True)(law)
+        assert law.shapes == []
+
+    def test_an_inherited_view_does_not_repeat_its_construction_warnings(self):
+        with pytest.warns(UserWarning, match="max_workers configures only"):
+            shifted = Function(lambda x: x + 1.0, label="shifted", max_workers=2)
+        doubled = _body_doubled(lambda d: shifted(center.using(raw=True)(d)))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            for _ in range(3):
+                doubled.using(n_broadcast_samples=50)(Gaussian("g", 1.5))
+
+    def test_an_identity_check_may_defer_a_constituent_to_the_run(self):
+        def center_later(d: Any) -> Any:
+            """The center is checked when the identity runs."""
+            return PointReport(True, deferred=("the center is checked when it runs",))
+
+        doubled = _body_doubled(check=center_later)
+        report = doubled.check(Gaussian("g", 1.5))
+        assert (report.feasible, report.route) == (True, "identity")
+        assert "the center is checked when it runs" in report.deferred
+        assert doubled.using(exact_only=True).check(Gaussian("g", 1.5)).exact is True
+        result = doubled(Gaussian("g", 1.5))
+        assert float(jnp.asarray(result)) == 3.0
+        assert result.provenance.metadata["exact"] is None
+
+    def test_the_scope_ends_when_the_identity_raises(self):
+        view = _body_doubled(check=lambda d: True).using(exact_only=True, n_broadcast_samples=33)
+        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
+            view(Sampler("s"))
+        law = Sampler("s")
+        center(law)
+        assert law.shapes == [(center.options["n_broadcast_samples"],)]
+
+    def test_the_scope_ends_when_the_identity_check_raises(self):
+        def failing(d: Any) -> Any:
+            """The check fails."""
+            raise RuntimeError("the check fails")
+
+        view = _body_doubled(check=failing).using(exact_only=True, n_broadcast_samples=33)
+        with pytest.raises(RuntimeError, match="the check fails"):
+            view(Sampler("s"))
+        law = Sampler("s")
+        center(law)
+        assert law.shapes == [(center.options["n_broadcast_samples"],)]
 
 
 # ---------------------------------------------------------------------------
@@ -897,8 +1557,40 @@ def _untracked(tree: Any) -> bool:
 
 
 class TestRawResults:
+    @pytest.mark.parametrize("mode", ["plain", "raw", "apply"])
+    @pytest.mark.parametrize("spec", [NumericArraySpec(()), BatchSpec(NumericArraySpec(()), row=2)])
+    def test_a_route_returning_the_wrong_kind_is_refused(self, mode, spec):
+        toy = _toy(result=lambda d: OutputSpec(toy=spec))
+        toy.structural_route(
+            "wrong_kind",
+            check=lambda call, result: True,
+            execute=lambda call, result: "text",
+            exact=True,
+        )
+        invoke = toy.apply if mode == "apply" else toy.using(raw=mode == "raw")
+
+        with pytest.raises(ValueError if mode == "apply" else ResultKindError):
+            invoke(Gaussian("g"))
+
+    @pytest.mark.parametrize("error", [TypeError("route failed"), ValueError("route failed")])
+    @pytest.mark.parametrize("mode", ["plain", "apply"])
+    def test_an_exception_from_the_route_is_propagated_unchanged(self, error, mode):
+        def execute(call, result):
+            raise error
+
+        toy = _toy(result=_event)
+        toy.structural_route(
+            "failure", check=lambda call, result: True, execute=execute, exact=True
+        )
+        invoke = toy.apply if mode == "apply" else toy
+
+        with pytest.raises(type(error)) as raised:
+            invoke(Gaussian("g"))
+
+        assert raised.value is error
+
     def test_a_raw_record_is_the_nested_mapping_of_its_raw_leaves(self):
-        result = center.with_options(raw=True)(Pair("p"))
+        result = center.using(raw=True)(Pair("p"))
         assert type(result) is dict and set(result) == {"a", "b"}
         assert _untracked(result)
         assert float(result["a"]) == 1.0
@@ -918,23 +1610,23 @@ class TestRawResults:
             execute=lambda call, result: {"a": jnp.float32(1.0), "g": {"b": jnp.float32(2.0)}},
             exact=True,
         )
-        result = toy.with_options(raw=True)(Gaussian("g"))
+        result = toy.using(raw=True)(Gaussian("g"))
         assert type(result) is dict and type(result["g"]) is dict
         assert _untracked(result)
         assert float(result["g"]["b"]) == 2.0
 
     def test_a_raw_batch_of_records_is_the_nested_mapping_of_its_raw_columns(self):
-        draws = sample.with_options(raw=True)(Pair("p"), (3,))
+        draws = sample.using(raw=True)(Pair("p"), (3,))
         assert type(draws) is dict and set(draws) == {"a", "b"}
         assert _untracked(draws)
         assert (jnp.shape(draws["a"]), jnp.shape(draws["b"])) == ((3,), (3, 2))
 
     def test_a_raw_moment_of_a_record_law_is_a_mapping(self):
-        result = mean.with_options(raw=True)(Pair("p"))
+        result = mean.using(raw=True)(Pair("p"))
         assert type(result) is dict and _untracked(result)
 
     def test_the_raw_evaluator_returns_the_raw_array(self):
-        result = mean.raw()(Gaussian("g", 2.0))
+        result = mean.raw(Gaussian("g", 2.0))
         assert not isinstance(result, TrackedTerm)
         assert float(result) == 2.0
 
@@ -955,7 +1647,7 @@ class TestRawResults:
             exact=True,
         )
         with pytest.raises(ValueError, match="shape"):
-            toy.with_options(raw=True)(Gaussian("g"))
+            toy.using(raw=True)(Gaussian("g"))
 
 
 # ---------------------------------------------------------------------------
@@ -976,11 +1668,60 @@ class TestResultAndRandomness:
         assert toy(Gaussian("g")).label == "g_toy"
 
     def test_a_label_rule_reads_only_the_declarations_parameters(self):
-        with pytest.raises(TypeError, match="label rule reading"):
+        with pytest.raises(TypeError, match="the label rule reads"):
             _toy(label=lambda law: "x")
 
+    def test_an_expression_rule_gives_a_law_result_its_expression(self):
+        returned = Gaussian("g")
+        toy = _toy()
+        toy.structural_route(
+            "law",
+            check=lambda call, result: True,
+            execute=lambda call, result: returned,
+            exact=True,
+        )
+        _install_expression_rule(toy, lambda d: Conditioned(d._embedded_expression(), ("y",)))
+        result = toy(Gaussian("g"))
+        assert _fixed_paths(result) == ("y",)
+        assert (result.label, result.notation) == ("g", "g(g; y)")
+        assert _fixed_paths(returned) == ()
+
+    def test_an_expression_rule_labels_a_value_result(self):
+        toy = _toy()
+        toy.structural_route("value", **_route(True, 1.0), exact=True)
+        _install_expression_rule(toy, lambda d: Summary("E", draw_of(d)))
+        result = toy(Gaussian("g"))
+        assert (float(result), result.label) == (1.0, "𝔼[g ~ g]")
+
+    def test_an_expression_rule_that_returns_none_keeps_the_routes_expression(self):
+        toy = _toy()
+        toy.structural_route(
+            "law",
+            check=lambda call, result: True,
+            execute=lambda call, result: Gaussian("g").with_label("routed"),
+            exact=True,
+        )
+        _install_expression_rule(toy, lambda: None)
+        assert toy(Gaussian("g")).label == "routed"
+
+    def test_an_operation_without_an_expression_rule_carries_its_primary_operands(self):
+        law = Gaussian("g")
+        assert _toy()._derived_expression({"d": law}) == law._embedded_expression()
+        labeled = _toy(label=lambda d: f"{d.label}_toy")
+        assert labeled._derived_expression({"d": law}) == Named("g_toy")
+
+    def test_an_expression_rule_reads_only_the_declarations_parameters(self):
+        with pytest.raises(TypeError, match="the expression rule reads"):
+            _install_expression_rule(_toy(), lambda law: Named("x"))
+        with pytest.raises(TypeError, match="needs a callable expression rule"):
+            _install_expression_rule(_toy(), Named("x"))
+
     def test_a_sweep_is_labeled_by_the_batch_it_sweeps(self):
-        laws = DistributionBatch("laws", [Gaussian("g", 1.0), Gaussian("g", 2.0)], "law")
+        laws = DistributionBatch(
+            [Gaussian("g", 1.0), Gaussian("g", 2.0)],
+            "law",
+            label="laws",
+        )
         centers = center(laws)
         assert centers.label == "laws"
         assert centers[0].label == "laws[law=0]"
@@ -1068,10 +1809,15 @@ class TestRegistry:
 
     def test_only_an_operation_registers(self):
         with pytest.raises(TypeError, match="only an operation"):
-            OperationRegistry().register(Function("plain", lambda x: x))
+            OperationRegistry().register(
+                Function(
+                    lambda x: x,
+                    label="plain",
+                )
+            )
 
     def test_an_unknown_name_raises_key_error(self):
-        with pytest.raises(KeyError, match="no operation named 'absent'"):
+        with pytest.raises(KeyError, match="unknown operation 'absent'"):
             _REGISTRY["absent"]
 
     def test_list_summarizes_operands_derivation_and_routes(self):
@@ -1081,7 +1827,10 @@ class TestRegistry:
         assert summary.priority is None
         assert summary.description == "The center of a law."
         assert summary.module_path == __name__
-        assert summary.operands == (OperandSummary("d", (DistributionSpec,), True),)
+        assert summary.operands == (
+            OperandSummary("d", (DistributionSpec, ConditionalDistributionSpec), True),
+            OperandSummary("given", (RecordSpec,), False),
+        )
         assert (summary.is_derived, summary.identity) == (False, None)
         assert summary.routes == (
             RouteSummary(
@@ -1096,7 +1845,7 @@ class TestRegistry:
 
     def test_describe_renders_one_operation_or_all(self):
         text = _REGISTRY.describe("center")
-        assert text.splitlines()[0] == "center(d) — primitive"
+        assert text.splitlines()[0] == "center(d, given) — primitive"
         assert "closed_form (capability, exact; requires SupportsMean)" in text
         assert "monte_carlo (fallback, approximate): The operand samples." in text
         assert _REGISTRY.describe() == text

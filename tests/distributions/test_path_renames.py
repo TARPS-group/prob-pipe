@@ -1,10 +1,12 @@
 """Renaming event paths and given slots keeps the law and renames its values.
 
-``with_path_names`` on a law whose rename reaches a field of a record draw
-returns a law that holds the original and renames at its boundary: its draws,
-moments, and marginals carry the new names, and a scored value, a given, or a
-path under the new names reaches the original under the old ones. Renaming a
-whole term's component alone changes only the declaration. On a kernel, a
+``with_path_names`` on a law whose rename changes the path of a field of a
+record draw returns a law that holds the original and renames at its boundary,
+unless the law's family rebuilds itself under the new paths, as an empirical
+law over records does. Either way its draws, moments, and marginals carry the
+new names, and the law that holds the original translates a scored value, a
+given, or a path under the new names to the original's. Renaming a whole term's
+component alone changes only the declaration. On a kernel, a
 given-side target is the node's new path, so a rename may group slots or split
 a field out of a structured slot; binding the renamed kernel translates the
 given to the original slots and renames what the binding returns.
@@ -37,6 +39,7 @@ from probpipe.distributions import (
 )
 from probpipe.distributions._capabilities import (
     SupportsConditionalLogProb,
+    SupportsConditionalMarginals,
     SupportsConditionalMean,
     SupportsConditionalSampling,
     SupportsCovariance,
@@ -69,7 +72,10 @@ class _Law(Distribution):
     """A law over a declared event that claims no capability."""
 
     def __init__(self, label: str, event_spec: OutputSpec) -> None:
-        super().__init__(label, event_spec)
+        super().__init__(
+            event_spec,
+            label=label,
+        )
 
 
 class _NestedLaw(
@@ -95,13 +101,17 @@ class _NestedLaw(
         }
         if sample_shape:
             return RecordBatch(
-                self.label,
                 fields,
                 "sample",
                 element_spec=self.event_spec.spec,
                 axes_per_level=(len(sample_shape),),
+                label=self.label,
             )
-        return Record(self.label, fields, event_template=self.event_spec.spec)
+        return Record(
+            fields,
+            event_template=self.event_spec.spec,
+            label=self.label,
+        )
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         return self._record(jax.random.normal(key, (*sample_shape, 6)), sample_shape)
@@ -138,7 +148,14 @@ class _FiniteLaw(_Law, SupportsExpectation):
     def _expectation(self, f: Any) -> Any:
         atoms = ((0.0, 1.0, 0.25), (1.0, 3.0, 0.75))
         return sum(
-            weight * f(Record("atom", a=jnp.asarray(a), b=jnp.asarray(b))) for a, b, weight in atoms
+            weight
+            * f(
+                Record(
+                    {"a": jnp.asarray(a), "b": jnp.asarray(b)},
+                    label="atom",
+                )
+            )
+            for a, b, weight in atoms
         )
 
 
@@ -209,10 +226,10 @@ class _NamedDensityLaw(_Law, SupportsLogProb):
 
 
 class _RecordingKernel(ConditionalDistribution):
-    """A kernel that records each given it binds and curries over the slots left.
+    """A kernel that records each given it binds and returns a kernel over the slots left.
 
-    Binding every slot returns a law over the kernel's event whose name is the
-    bound values, in slot order; binding some returns the kernel over the rest,
+    Binding every slot returns a law over the kernel's event under the kernel's
+    label and records the bound values in slot order; binding some returns the kernel over the rest,
     which keeps the values bound so far.
     """
 
@@ -225,7 +242,11 @@ class _RecordingKernel(ConditionalDistribution):
         calls: list[dict[str, Any]] | None = None,
         bound: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(label, given_spec, event_spec)
+        super().__init__(
+            given_spec,
+            event_spec,
+            label=label,
+        )
         self.calls = [] if calls is None else calls
         self.bound = dict(bound or {})
 
@@ -245,33 +266,72 @@ class _MeanKernel(ConditionalDistribution, SupportsConditionalSampling, Supports
     """``y | mu``: a record ``(y, z)`` whose mean is ``(mu, 0)``, and a draw ``(mu + e, e)``."""
 
     def __init__(self, label: str = "k") -> None:
-        super().__init__(label, {"mu": _SCALAR}, OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)))
+        super().__init__(
+            {"mu": _SCALAR},
+            OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)),
+            label=label,
+        )
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
-        return _Law(self.name, self.event_spec)
+        return _Law(self.label, self.event_spec)
 
     def _conditional_mean(self, given: Any) -> Any:
-        return Record("mean", y=jnp.asarray(given["mu"]), z=jnp.asarray(0.0))
+        return Record(
+            {"y": jnp.asarray(given["mu"]), "z": jnp.asarray(0.0)},
+            label="mean",
+        )
 
     def _conditional_mean_guard(self) -> Feasibility:
         return Feasibility(True)
 
     def _conditional_sample(self, given: Any, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         noise = jax.random.normal(key, sample_shape)
-        return Record("draw", y=given["mu"] + noise, z=noise)
+        return Record(
+            {"y": given["mu"] + noise, "z": noise},
+            label="draw",
+        )
 
 
 class _ScoreKernel(ConditionalDistribution, SupportsConditionalLogProb):
     """``(y, z) | mu`` whose density reads the given and each field by name."""
 
     def __init__(self, label: str = "k") -> None:
-        super().__init__(label, {"mu": _SCALAR}, OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)))
+        super().__init__(
+            {"mu": _SCALAR},
+            OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)),
+            label=label,
+        )
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
-        return _Law(self.name, self.event_spec)
+        return _Law(self.label, self.event_spec)
 
     def _conditional_log_prob(self, given: Any, value: Any) -> Any:
         return -((value["y"] - given["mu"]) ** 2) - 2.0 * value["z"] ** 2
+
+
+class _MarginalKernel(ConditionalDistribution, SupportsConditionalMarginals):
+    """``(y, z) | mu`` whose conditional marginal at a field is ``Normal(mu, 1)`` named by the field.
+
+    It records the given and the path of each conditional marginal, and the
+    law it returns.
+    """
+
+    def __init__(self, label: str = "k") -> None:
+        super().__init__(
+            {"mu": _SCALAR},
+            OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)),
+            label=label,
+        )
+        self.marginal_calls: list[tuple[dict[str, Any], Any]] = []
+        self.marginals: list[Distribution] = []
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        return _Law(self.label, self.event_spec)
+
+    def _conditional_marginal(self, given: Any, path: str | tuple[str, ...]) -> Distribution:
+        self.marginal_calls.append((dict(given), path))
+        self.marginals.append(Normal(path, given["mu"], 1.0))
+        return self.marginals[-1]
 
 
 def _product() -> Distribution:
@@ -284,15 +344,34 @@ _XS, _YS = jnp.array([1.0, 2.0, 4.0]), jnp.array([10.0, 20.0, 40.0])
 
 
 def _grouped_law() -> EmpiricalDistribution:
-    atoms = NumericRecordBatch("rows", {"a/x": _XS, "b/y": _YS}, "row", element_spec=_GROUPED)
-    return EmpiricalDistribution("grouped", atoms)
+    atoms = NumericRecordBatch(
+        {"a/x": _XS, "b/y": _YS},
+        "row",
+        element_spec=_GROUPED,
+        label="rows",
+    )
+    return EmpiricalDistribution(atoms, label="grouped")
 
 
-def _whole_record_law() -> EmpiricalDistribution:
-    """The atoms of ``beta`` and ``sigma`` as a whole record under the component ``parameters``."""
-    spec = RecordSpec(beta=_SCALAR, sigma=_SCALAR)
-    atoms = NumericRecordBatch("rows", {"beta": _XS, "sigma": _YS}, "row", element_spec=spec)
-    return EmpiricalDistribution("p", atoms, event_spec=OutputSpec(parameters=None))
+def _grouped_selection() -> Distribution:
+    """The selection of both groups of the grouped law.
+
+    A view does not rebuild itself under new paths, so a rename of it holds it.
+    """
+    return _grouped_law()[("a", "b")]
+
+
+def _whole_record_view() -> Distribution:
+    """The group ``parameters`` of the atoms of ``beta`` and ``sigma``, viewed as a whole record."""
+    spec = RecordSpec(parameters=RecordSpec(beta=_SCALAR, sigma=_SCALAR))
+    columns = {"parameters/beta": _XS, "parameters/sigma": _YS}
+    atoms = NumericRecordBatch(
+        columns,
+        "row",
+        element_spec=spec,
+        label="rows",
+    )
+    return EmpiricalDistribution(atoms, label="p")["parameters"]
 
 
 # -- The renamed law ------------------------------------------------------------
@@ -373,7 +452,13 @@ class TestRenamedLawValues:
         "value",
         [
             pytest.param({"x": jnp.array([0.5]), "y": jnp.array([1.0, 2.0])}, id="mapping"),
-            pytest.param(Record("v", x=jnp.array([0.5]), y=jnp.array([1.0, 2.0])), id="record"),
+            pytest.param(
+                Record(
+                    {"x": jnp.array([0.5]), "y": jnp.array([1.0, 2.0])},
+                    label="v",
+                ),
+                id="record",
+            ),
         ],
     )
     def test_the_density_scores_the_value_under_the_original_names(self, value):
@@ -443,11 +528,11 @@ class TestRenamedLawPaths:
         assert _capability_guard(renamed, "_mean") == _GuardedMeanLaw.REJECTED
 
     def test_the_marginal_guard_rejects_paths_whose_final_segments_collide(self):
-        renamed = _grouped_law().with_path_names({"b/y": "b/x"})
+        renamed = _grouped_selection().with_path_names({"b/y": "b/x"})
         report = _capability_guard(renamed, "_marginal", ("a/x", "b/x"))
         assert report.feasible is False
-        assert "final segment" in report.description
-        with pytest.raises(ValueError, match="final segment"):
+        assert "more than one path ends in 'x'" in report.description
+        with pytest.raises(ValueError, match="more than one path ends in 'x'"):
             renamed._marginal(("a/x", "b/x"))
 
 
@@ -526,9 +611,9 @@ class TestRenamedLawMoves:
         assert renamed._marginal("b").event_spec == OutputSpec(b=RecordSpec(y=_SCALAR))
 
     def test_the_marginal_at_a_group_that_gathers_several_nodes_is_rejected(self):
-        renamed = _grouped_law().with_path_names({"a/x": "g/x", "b/y": "g/y"})
+        renamed = _grouped_selection().with_path_names({"a/x": "g/x", "b/y": "g/y"})
         assert _capability_guard(renamed, "_marginal", "g").feasible is False
-        with pytest.raises(ValueError, match="no single node"):
+        with pytest.raises(ValueError, match="does not correspond to a single field"):
             renamed._marginal("g")
         assert _capability_guard(renamed, "_marginal", "g/x") == Feasibility(True)
 
@@ -559,7 +644,7 @@ class TestRenamingARenamedLaw:
     """A renamed law applies a further rename to its parent, composed with its own."""
 
     def test_a_component_rename_after_a_field_rename_keeps_the_field_rename(self, key):
-        law = _whole_record_law()
+        law = _whole_record_view()
         renamed = law.with_path_names({"parameters/beta": "parameters/b"}).with_path_names(
             parameters="theta"
         )
@@ -613,23 +698,23 @@ class TestRenamedKernelBinding:
         kernel = _RecordingKernel(
             "k", {"theta": RecordSpec(a=_SCALAR, b=_vector(2))}, OutputSpec(y=_SCALAR)
         )
-        curried = kernel.with_path_names({"theta/a": "a"})._condition_on({"a": 1.0})
-        assert isinstance(curried, ConditionalDistribution)
-        assert list(curried.given_spec) == ["theta"]
-        assert curried.given_spec["theta"] == RecordSpec(b=_vector(2))
+        rest = kernel.with_path_names({"theta/a": "a"})._condition_on({"a": 1.0})
+        assert isinstance(rest, ConditionalDistribution)
+        assert list(rest.given_spec) == ["theta"]
+        assert rest.given_spec["theta"] == RecordSpec(b=_vector(2))
         assert kernel.calls == []
-        law = curried._condition_on({"theta": {"b": jnp.zeros(2)}})
+        law = rest._condition_on({"theta": {"b": jnp.zeros(2)}})
         assert isinstance(law, Distribution)
         assert kernel.calls[0]["theta"]["a"] == 1.0
 
-    def test_binding_some_slots_curries_to_the_renamed_kernel_over_the_rest(self):
+    def test_binding_some_slots_returns_the_renamed_kernel_over_the_rest(self):
         kernel = _RecordingKernel("k", {"mu": _SCALAR, "sigma": _SCALAR}, OutputSpec(y=_SCALAR))
         renamed = kernel.with_path_names(mu="loc", sigma="scale", y="obs")
-        curried = renamed._condition_on({"loc": 1.0})
-        assert isinstance(curried, ConditionalDistribution)
-        assert list(curried.given_spec) == ["scale"]
-        assert list(curried.event_spec.components) == ["obs"]
-        law = curried._condition_on({"scale": 2.0})
+        rest = renamed._condition_on({"loc": 1.0})
+        assert isinstance(rest, ConditionalDistribution)
+        assert list(rest.given_spec) == ["scale"]
+        assert list(rest.event_spec.components) == ["obs"]
+        law = rest._condition_on({"scale": 2.0})
         assert [dict(given) for given in kernel.calls] == [{"mu": 1.0}, {"sigma": 2.0}]
         assert list(law.event_spec.components) == ["obs"]
 
@@ -643,7 +728,7 @@ class TestRenamedKernelBinding:
     def test_binding_part_of_a_structured_slot_raises_value_error(self):
         kernel = _RecordingKernel("k", {"a": _SCALAR, "b": _SCALAR}, OutputSpec(y=_SCALAR))
         grouped = kernel.with_path_names({"a": "theta/a", "b": "theta/b"})
-        with pytest.raises(ValueError, match="part of a slot"):
+        with pytest.raises(ValueError, match="cannot bind part of a given slot"):
             grouped._condition_on({"theta": {"a": 1.0}})
 
     def test_a_key_that_is_not_a_slot_raises_key_error(self):
@@ -766,10 +851,10 @@ class TestRenamedKernelCapabilities:
         assert list(draw.keys()) == ["obs", "z"]
         assert jnp.allclose(draw["obs"] - draw["z"], 1.0)
 
-    def test_a_conditional_capability_needs_every_slot(self):
+    def test_a_conditional_capability_needs_every_required_slot(self):
         kernel = _RecordingKernel("k", {"mu": _SCALAR, "sigma": _SCALAR}, OutputSpec(y=_SCALAR))
         renamed = kernel.with_path_names(mu="loc")
-        with pytest.raises(ValueError, match="every slot"):
+        with pytest.raises(ValueError, match="every required given slot"):
             renamed._parent_given({"loc": 1.0})
 
     def test_a_conditional_capability_carries_the_parent_guard(self):
@@ -791,3 +876,17 @@ class TestRenamedKernelCapabilities:
             {"mu": 1.0}, {"y": jnp.asarray(2.0), "z": jnp.asarray(0.5)}
         )
         assert jnp.allclose(renamed._conditional_log_prob({"loc": 1.0}, value), expected)
+
+    def test_the_conditional_marginal_at_a_renamed_path_is_the_parent_marginal(self):
+        parent = _MarginalKernel()
+        renamed = parent.with_path_names({"y": "g/y"})
+        assert _capability_guard(renamed, "_conditional_marginal", "g/y") == Feasibility(True)
+        marginal = renamed._conditional_marginal({"mu": 2.0}, "g/y")
+        assert parent.marginal_calls == [({"mu": 2.0}, "y")]
+        assert marginal is parent.marginals[0]
+
+    def test_the_conditional_marginal_guard_names_the_kernel_at_a_path_it_lacks(self):
+        renamed = _MarginalKernel().with_path_names({"y": "g/y"})
+        report = _capability_guard(renamed, "_conditional_marginal", "y")
+        assert report.feasible is False
+        assert "'y' is not an event path of 'k'" in report.description

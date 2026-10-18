@@ -17,6 +17,7 @@ from probpipe import (
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
+    OutputSpec,
     function,
     workflow_run,
 )
@@ -35,7 +36,7 @@ class TestTheFunction:
 
         assert isinstance(wrapped, Function)
         assert wrapped.label == "predict"
-        assert wrapped.raw() is predict
+        assert wrapped.raw is predict
 
     def test_the_decorator_takes_construction_time_controls(self):
         @function(n_broadcast_samples=500, dispatch="jax")
@@ -54,7 +55,7 @@ class TestTheFunction:
         result = predict(2.0, x)
 
         assert isinstance(result, NumericArray)
-        np.testing.assert_allclose(result.value, predict.apply(2.0, x))
+        np.testing.assert_allclose(result.raw, predict.apply(2.0, x))
         assert result.provenance is not None
         assert result.provenance.parents[0].label == "predict"
 
@@ -96,12 +97,22 @@ class TestTheEngine:
         def misaligned():
             scalar = NumericArraySpec(())
             return (
-                NumericArrayBatch("x", jnp.arange(2.0), "row", element_spec=scalar),
-                NumericArrayBatch("y", jnp.arange(3.0), "row", element_spec=scalar),
+                NumericArrayBatch(
+                    jnp.arange(2.0),
+                    "row",
+                    element_spec=scalar,
+                    label="x",
+                ),
+                NumericArrayBatch(
+                    jnp.arange(3.0),
+                    "row",
+                    element_spec=scalar,
+                    label="y",
+                ),
             )
 
         unrestricted = error_of(lambda: add(*misaligned()))
-        restricted = error_of(lambda: add.with_options(**controls)(*misaligned()))
+        restricted = error_of(lambda: add.using(**controls)(*misaligned()))
 
         assert unrestricted is not None
         assert type(restricted) is type(unrestricted)
@@ -124,7 +135,11 @@ class TestCheck:
         assert calls == []
 
     def test_check_causes_no_random_event(self):
-        @function(n_broadcast_samples=8, dispatch="sequential")
+        @function(
+            n_broadcast_samples=8,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         def identity(x):
             return x
 
@@ -145,7 +160,7 @@ class TestCheck:
         def identity(x):
             return x
 
-        identity.with_options(n_broadcast_samples=16).check(standard_normal())
+        identity.using(n_broadcast_samples=16).check(standard_normal())
 
     def test_an_argument_that_does_not_bind_raises_as_the_call_would(self):
         @function

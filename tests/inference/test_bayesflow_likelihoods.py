@@ -31,10 +31,12 @@ from probpipe import (
     condition_on,
     learn_amortized_likelihood,
     learn_amortized_ratio,
+    workflow_run,
 )
 from probpipe.distributions._capabilities import (
     SupportsConditionalLogProb,
     SupportsConditionalUnnormalizedLogProb,
+    SupportsLogProb,
 )
 from probpipe.inference._bayesflow_common import _adapter_field_keys
 from probpipe.operations._condition import condition_on as condition_on_operation
@@ -64,7 +66,7 @@ def _sim(prior):
 
 
 def _prior():
-    return Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=0.0, scale=1.0, label="b")
+    return Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)
 
 
 _SIM = _sim(_prior())
@@ -74,10 +76,10 @@ def _nested_prior():
     """Nested conjugate prior: a sub-record ``outer={a, b}`` plus a
     top-level ``m`` -- leaves ``outer/a``, ``outer/b``, ``m``, all ``N(0, 1)`` so
     ``_analytic_posterior`` applies per leaf (``flatten`` order ``[a, b, m]``)."""
-    outer = (
-        Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=0.0, scale=1.0, label="b")
-    ).with_path_names({"a": "outer/a", "b": "outer/b"})
-    return (outer * Normal(loc=0.0, scale=1.0, label="m")).with_label("joint")
+    outer = (Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)).with_path_names(
+        {"a": "outer/a", "b": "outer/b"}
+    )
+    return (outer * Normal("m", loc=0.0, scale=1.0)).with_label("joint")
 
 
 def _analytic_posterior(y_rows: np.ndarray) -> tuple[np.ndarray, float]:
@@ -93,7 +95,7 @@ def _score(lik, theta, rows):
     declaration = lik.prior.event_spec
     theta = jnp.asarray(theta)
     if declaration.exposes_record:
-        given = NumericRecord.from_vector("theta", declaration.spec, theta)
+        given = NumericRecord.from_vector(declaration.spec, theta, label="theta")
     else:
         (component,) = declaration.components
         given = {component: jnp.reshape(theta, declaration.spec.shape)}
@@ -102,38 +104,37 @@ def _score(lik, theta, rows):
 
 def _posterior(lik, prior, y):
     """The posterior of ``lik * prior`` at the observation rows *y*, by the registry's method."""
-    view = condition_on_operation.with_options(
-        method_options={"num_results": 1500, "num_warmup": 500, "random_seed": 0}
-    )
-    return view(lik * prior, {"observation": jnp.asarray(y)})
+    view = condition_on_operation.using(method_options={"num_results": 1500, "num_warmup": 500})
+    with workflow_run(seed=0):
+        return view(lik * prior, {"observation": jnp.asarray(y)})
 
 
 @pytest.fixture(scope="module")
 def nle():
     """A briefly-trained NLE, shared across the NLE tests."""
-    return learn_amortized_likelihood(
-        _prior(),
-        _SIM,
-        num_simulations=4000,
-        epochs=25,
-        batch_size=256,
-        random_seed=0,
-        verbose=0,
-    )
+    with workflow_run(seed=0):
+        return learn_amortized_likelihood(
+            _prior(),
+            _SIM,
+            num_simulations=4000,
+            epochs=25,
+            batch_size=256,
+            verbose=0,
+        )
 
 
 @pytest.fixture(scope="module")
 def nre():
     """A briefly-trained NRE-C ratio, shared across the NRE tests."""
-    return learn_amortized_ratio(
-        _prior(),
-        _SIM,
-        num_simulations=8000,
-        epochs=40,
-        batch_size=256,
-        random_seed=0,
-        verbose=0,
-    )
+    with workflow_run(seed=0):
+        return learn_amortized_ratio(
+            _prior(),
+            _SIM,
+            num_simulations=8000,
+            epochs=40,
+            batch_size=256,
+            verbose=0,
+        )
 
 
 class TestSurrogateContract:
@@ -220,7 +221,9 @@ class TestSurrogateContract:
 
     def test_a_record_and_a_mapping_given_score_alike(self, nle):
         """A record of the parameters and a mapping of them give identical scores."""
-        record = NumericRecord.from_vector("nr", _prior().event_spec.spec, jnp.array([0.4, -0.3]))
+        record = NumericRecord.from_vector(
+            _prior().event_spec.spec, jnp.array([0.4, -0.3]), label="nr"
+        )
         y_row = jnp.array([0.6, -0.1])
         np.testing.assert_allclose(
             float(nle._conditional_log_prob(record, y_row)),
@@ -237,11 +240,30 @@ class TestSurrogateContract:
             rtol=1e-6,
         )
 
+    @pytest.mark.parametrize("which", ["nle", "nre"])
+    def test_binding_some_parameters_returns_the_kernel_over_the_rest(self, which, request):
+        """Binding one parameter leaves a kernel over the other, whose law at it
+        scores as the law at both parameters bound at once."""
+        lik = request.getfixturevalue(which)
+        rest = lik._condition_on({"a": 0.4})
+        assert type(rest) is type(lik)
+        assert list(rest.given_spec) == ["b"]
+        assert list(lik.given_spec) == ["a", "b"]
+        y_row = jnp.array([0.6, -0.1])
+        in_steps = rest._condition_on({"b": -0.3})
+        at_once = lik._condition_on({"a": 0.4, "b": -0.3})
+        score = "_log_prob" if isinstance(at_once, SupportsLogProb) else "_unnormalized_log_prob"
+        np.testing.assert_allclose(
+            float(getattr(in_steps, score)(y_row)),
+            float(getattr(at_once, score)(y_row)),
+            rtol=1e-6,
+        )
+
     def test_repr(self, nle, nre):
         for kernel, cls in ((nle, "BayesFlowLikelihood"), (nre, "BayesFlowRatio")):
             text = repr(kernel)
-            assert text.startswith(f"{cls}(\n    '{kernel.label}',\n")
-            assert "theta_dim=2," in text and "data_dim=2," in text
+            # The kernel's label is its constructor's default, so the repr leaves it out.
+            assert text == f"{cls}(theta_dim=2, data_dim=2, given=('a', 'b'))"
 
     def test_data_width_guard(self, nle):
         """Wrong-width data fails fast with an actionable message."""
@@ -260,15 +282,15 @@ class TestSurrogateContract:
         def _scalar(params, key):
             return theta_vec(params)[:1] + 0.1 * jax.random.normal(key, (1,))
 
-        lik = learn_amortized_ratio(
-            _prior(),
-            SimulatorKernel(_prior(), (1,), _scalar),
-            num_simulations=256,
-            epochs=2,
-            batch_size=64,
-            random_seed=0,
-            verbose=0,
-        )
+        with workflow_run(seed=0):
+            lik = learn_amortized_ratio(
+                _prior(),
+                SimulatorKernel(_prior(), (1,), _scalar),
+                num_simulations=256,
+                epochs=2,
+                batch_size=64,
+                verbose=0,
+            )
         theta = jnp.array([0.3, -0.2])
         y3 = jnp.array([0.1, 0.4, -0.3])
         total = float(_score(lik, theta, y3))
@@ -278,11 +300,28 @@ class TestSurrogateContract:
         np.testing.assert_allclose(total, float(_score(lik, theta, y3[:, None])), rtol=1e-6)
 
 
+@pytest.mark.parametrize("cls", [BayesFlowLikelihood, BayesFlowRatio])
+class TestTheLabel:
+    """The constructors need no trained network to set the label, so a stand-in serves."""
+
+    def test_the_label_defaults_to_the_class_name(self, cls):
+        kernel = cls(object(), _prior(), _SIM, data_dim=2)
+        assert kernel.label == cls.__name__
+        assert "label=" not in repr(kernel)
+
+    def test_a_given_label_is_shown(self, cls):
+        kernel = cls(object(), _prior(), _SIM, data_dim=2, label="mylik")
+        assert (kernel.label, kernel.notation) == ("mylik", "mylik(observation | a, b)")
+        assert repr(kernel) == (
+            f"{cls.__name__}(theta_dim=2, data_dim=2, given=('a', 'b'), label='mylik')"
+        )
+
+
 class TestConditioning:
     """End-to-end: condition_on(learned * prior, observation) -> NUTS, against
     the analytic conjugate posterior (mean AND spread).
 
-    Bounds are measured: each test's config was run across 3-4 training seeds
+    Bounds are measured: each test's config was run across four workflow seeds
     (the per-assertion comments give the observed ranges) and the bound covers
     the observed spread with ~2-3x margin for cross-platform / library-version
     drift (training is seeded, so a given environment is reproducible).
@@ -298,13 +337,18 @@ class TestConditioning:
         assert (ratio_band[0] < ratio).all() and (ratio < ratio_band[1]).all(), ratio
 
     def test_nle_single_observation(self, nle):
-        # Observed across seeds: mean err 0.05-0.10 post-std, ratios 0.99-1.11.
+        # Observed across four workflow seeds: mean err 0.07-0.11 post-std,
+        # ratios 0.96-1.05.
         y = np.array([[0.8, -0.4]], dtype="float32")
         self._check_posterior(nle, _prior(), y, mean_tol=0.3, ratio_band=(0.85, 1.25))
 
     def test_a_learned_likelihood_times_a_prior_runs_a_registered_method(self, nle):
         report = condition_on_operation.check(nle * _prior(), {"observation": jnp.zeros((1, 2))})
-        assert (report.route, report.method, report.exact) == ("bayes", "blackjax_nuts", False)
+        assert (report.route, report.method, report.exact) == (
+            "inference_methods",
+            "blackjax_nuts",
+            False,
+        )
 
     def test_nle_multi_observation_sharpens(self, nle):
         """n=8 i.i.d. rows: the posterior matches the analytic n-observation
@@ -313,13 +357,14 @@ class TestConditioning:
         ratio band transitively enforces the sharpening."""
         theta_true = jnp.array([0.6, -0.6])
         y = np.asarray(_rows(theta_true, 8, jax.random.PRNGKey(3)))
-        # Observed across seeds: mean err 0.03-0.34 post-std, ratios 0.99-1.10
-        # (the per-row score errors accumulate over n rows, hence the wider
-        # mean bound than n=1).
+        # Observed across four workflow seeds: mean err 0.15-0.29 post-std,
+        # ratios 0.95-1.04 (the per-row score errors accumulate over n rows,
+        # hence the wider mean bound than n=1).
         self._check_posterior(nle, _prior(), y, mean_tol=0.6, ratio_band=(0.85, 1.25))
 
     def test_nre_single_observation(self, nre):
-        # Observed across seeds: mean err 0.02-0.09 post-std, ratios 0.95-1.08.
+        # Observed across four workflow seeds: mean err 0.03-0.10 post-std,
+        # ratios 0.94-1.07.
         y = np.array([[0.8, -0.4]], dtype="float32")
         self._check_posterior(nre, _prior(), y, mean_tol=0.3, ratio_band=(0.8, 1.25))
 
@@ -344,33 +389,37 @@ class TestConditioning:
         posterior, per nested leaf. NLE feeds raw theta to the network, so the
         nesting is purely the leaf-keyed adapter routing (no bijectors)."""
         prior = _nested_prior()
-        nle = learn_amortized_likelihood(
-            prior,
-            _sim(prior),
-            num_simulations=4000,
-            epochs=25,
-            batch_size=256,
-            random_seed=0,
-            verbose=0,
-        )
+        with workflow_run(seed=0):
+            nle = learn_amortized_likelihood(
+                prior,
+                _sim(prior),
+                num_simulations=4000,
+                epochs=25,
+                batch_size=256,
+                verbose=0,
+            )
         y = np.array([[0.8, -0.4, 0.3]], dtype="float32")
+        # Observed across four workflow seeds: mean err 0.03-0.13 post-std,
+        # ratios 0.97-1.05.
         self._check_nested_posterior(nle, prior, y, mean_tol=0.3, ratio_band=(0.85, 1.25))
 
     def test_nre_nested_prior_end_to_end(self):
         """NRE lifts a nested prior: the same nested conjugate
         recovery as NLE, via the leaf-keyed classifier routing."""
         prior = _nested_prior()
-        nre = learn_amortized_ratio(
-            prior,
-            _sim(prior),
-            num_simulations=8000,
-            epochs=40,
-            batch_size=256,
-            random_seed=0,
-            verbose=0,
-        )
+        with workflow_run(seed=0):
+            nre = learn_amortized_ratio(
+                prior,
+                _sim(prior),
+                num_simulations=8000,
+                epochs=40,
+                batch_size=256,
+                verbose=0,
+            )
         y = np.array([[0.8, -0.4, 0.3]], dtype="float32")
-        self._check_nested_posterior(nre, prior, y, mean_tol=0.3, ratio_band=(0.8, 1.25))
+        # Observed across four workflow seeds: mean err 0.09-0.23 post-std,
+        # ratios 0.90-1.00.
+        self._check_nested_posterior(nre, prior, y, mean_tol=0.5, ratio_band=(0.8, 1.25))
 
     def test_nle_constrained_prior_matches_true_likelihood(self):
         """A constrained (Gamma) prior end to end, judged against NUTS run with
@@ -380,7 +429,7 @@ class TestConditioning:
         theta."""
 
         def _gamma_prior():
-            return pp.Gamma("lam", 5.0, 1.0) * Normal(loc=0.0, scale=1.0, label="m")
+            return pp.Gamma("lam", 5.0, 1.0) * Normal("m", loc=0.0, scale=1.0)
 
         y = np.asarray(_rows(jnp.array([5.0, 0.5]), 4, jax.random.PRNGKey(5)))
 
@@ -394,23 +443,24 @@ class TestConditioning:
                 tfd.Normal(jnp.broadcast_to(jnp.stack([lam, m]), y.shape), _SIGMA), 2
             ),
         )
-        ref_post = condition_on.with_options(
-            method_options={"num_results": 1500, "num_warmup": 500, "random_seed": 0}
-        )(true_likelihood * prior, {"observation": jnp.asarray(y)})
+        with workflow_run(seed=0):
+            ref_post = condition_on.using(method_options={"num_results": 1500, "num_warmup": 500})(
+                true_likelihood * prior, {"observation": jnp.asarray(y)}
+            )
         ref = np.asarray(flat_draws(ref_post)["lam"]).reshape(-1)
-        lik = learn_amortized_likelihood(
-            _gamma_prior(),
-            _sim(_gamma_prior()),
-            num_simulations=3000,
-            epochs=20,
-            batch_size=256,
-            random_seed=0,
-            verbose=0,
-        )
+        with workflow_run(seed=0):
+            lik = learn_amortized_likelihood(
+                _gamma_prior(),
+                _sim(_gamma_prior()),
+                num_simulations=3000,
+                epochs=20,
+                batch_size=256,
+                verbose=0,
+            )
         lam = np.asarray(flat_draws(_posterior(lik, _gamma_prior(), y))["lam"]).reshape(-1)
         assert (lam > 0).all()
-        # Observed across seeds: |mean diff| 0.00-0.26 reference-std units,
-        # std ratio 1.02-1.10.
+        # Observed across four workflow seeds: |mean diff| 0.02-0.07
+        # reference-std units, std ratio 0.97-1.12.
         assert abs(lam.mean() - ref.mean()) / ref.std() < 0.6
         assert 0.8 < lam.std() / ref.std() < 1.3
 
@@ -428,16 +478,16 @@ class TestConditioning:
 
         y_obs = jnp.array([[2.0, 1.0]])
         an_mean, an_std = 5.0 / 4.0, np.sqrt(5.0) / 4.0
-        lik = learn_amortized_likelihood(
-            pp.Gamma("lam", 2.0, 2.0),
-            SimulatorKernel(pp.Gamma("lam", 2.0, 2.0), (2,), _poisson_pair),
-            num_simulations=4000,
-            epochs=25,
-            batch_size=256,
-            random_seed=0,
-            dequantize=True,
-            verbose=0,
-        )
+        with workflow_run(seed=0):
+            lik = learn_amortized_likelihood(
+                pp.Gamma("lam", 2.0, 2.0),
+                SimulatorKernel(pp.Gamma("lam", 2.0, 2.0), (2,), _poisson_pair),
+                num_simulations=4000,
+                epochs=25,
+                batch_size=256,
+                dequantize=True,
+                verbose=0,
+            )
         twin = BayesFlowLikelihood(
             lik.approximator, lik.prior, lik.simulator, data_dim=2, dequantized=False
         )
@@ -449,8 +499,8 @@ class TestConditioning:
         post = _posterior(lik, pp.Gamma("lam", 2.0, 2.0), y_obs)
         lam = np.asarray(flat_draws(post)["lam"]).reshape(-1)
         assert (lam > 0).all()
-        # Observed across seeds 0-2: mean err 0.03-0.17 posterior-std units,
-        # std ratio 0.96-1.02.
+        # Observed across four workflow seeds: mean err 0.01-0.06
+        # posterior-std units, std ratio 0.99-1.01.
         assert abs(lam.mean() - an_mean) / an_std < 0.5
         assert 0.8 < lam.std() / an_std < 1.2
 
@@ -458,8 +508,15 @@ class TestConditioning:
 class TestValidation:
     """Train-time validation -- each raises before any training runs."""
 
+    @pytest.mark.parametrize("learner", [learn_amortized_likelihood, learn_amortized_ratio])
+    def test_rejects_a_seed_keyword(self, learner):
+        """The training's seed is a workflow event, so ``random_seed`` is unexpected,
+        where ``approximator.fit`` would otherwise drop it."""
+        with pytest.raises(TypeError, match="unexpected keyword argument 'random_seed'"):
+            learner(_prior(), _SIM, num_simulations=8, epochs=1, random_seed=0)
+
     def test_rejects_unknown_sim_backend(self):
-        with pytest.raises(ValueError, match="Unknown sim_backend"):
+        with pytest.raises(ValueError, match="unknown sim_backend"):
             learn_amortized_likelihood(
                 _prior(), _SIM, sim_backend="bogus", num_simulations=8, epochs=1
             )
@@ -478,7 +535,7 @@ class TestValidation:
         class _NoGenerate:
             pass
 
-        with pytest.raises(TypeError, match="ConditionalDistribution that samples"):
+        with pytest.raises(TypeError, match="ConditionalDistribution that can be sampled"):
             learn_amortized_likelihood(_prior(), _NoGenerate(), num_simulations=8, epochs=1)
 
     def test_rejects_a_prior_that_is_not_numeric(self):
@@ -513,15 +570,15 @@ class TestDeterminism:
         """Two same-seed NLE trainings produce identical learned scores."""
 
         def _fit():
-            return learn_amortized_likelihood(
-                _prior(),
-                _SIM,
-                num_simulations=400,
-                epochs=1,
-                batch_size=256,
-                random_seed=0,
-                verbose=0,
-            )
+            with workflow_run(seed=0):
+                return learn_amortized_likelihood(
+                    _prior(),
+                    _SIM,
+                    num_simulations=400,
+                    epochs=1,
+                    batch_size=256,
+                    verbose=0,
+                )
 
         theta, y = jnp.array([0.3, -0.1]), jnp.array([0.5, 0.0])
         v1 = float(_score(_fit(), theta, y))

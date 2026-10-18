@@ -18,9 +18,9 @@ form of the target produced by
 then lift the resulting chain back through the prior's declaration,
 so the posterior names its fields by the prior's components.
 
-The per-draw diagnostics (``acceptance_rate``, ``is_divergent``,
+The per-draw diagnostics (``acceptance_rate``, ``diverging``,
 ``energy``, ``num_integration_steps``) are read off the BlackJAX
-``info`` objects and packed into a dict consumed by
+``info`` objects, under ArviZ's names, and packed into a dict consumed by
 :func:`build_mcmc_datatree`, the same ArviZ converter the TFP path
 uses. The adapted ``step_size`` is not carried on those ``info``
 objects, so it is threaded out of the warmup separately and injected
@@ -59,6 +59,7 @@ from ._inference_utils import (
     build_mcmc_datatree,
     build_target_log_prob_flat,
     is_jax_traceable,
+    no_density_reason,
     observed_parts,
     parallel_chain_map,
     run_chain_scan,
@@ -273,8 +274,14 @@ def _extract_blackjax_sample_stats(
     not present on a given algorithm are silently skipped.
     """
     stats: dict[str, np.ndarray] = {}
-    for key in ("acceptance_rate", "is_divergent", "num_integration_steps", "energy"):
-        value = getattr(infos, key, None)
+    # Each info field under the name ArviZ gives it, so a divergence is "diverging".
+    for field, key in (
+        ("acceptance_rate", "acceptance_rate"),
+        ("is_divergent", "diverging"),
+        ("num_integration_steps", "num_integration_steps"),
+        ("energy", "energy"),
+    ):
+        value = getattr(infos, field, None)
         if value is not None:
             stats[key] = np.asarray(value)
     step_sizes = np.asarray(step_sizes)
@@ -299,18 +306,28 @@ class _BlackJAXMCMCMethod(InferenceMethod):
         "num_integration_steps",
         "num_results",
         "num_warmup",
-        "random_seed",
         "step_size",
     )
 
-    def __init__(self, algorithm: Algorithm, method_name: str, method_priority: int | None):
+    def __init__(
+        self,
+        algorithm: Algorithm,
+        method_name: str,
+        method_priority: int | None,
+        method_description: str,
+    ):
         self._algorithm = algorithm
         self._method_name = method_name
         self._method_priority = method_priority
+        self._method_description = method_description
 
     @property
     def name(self) -> str:
         return self._method_name
+
+    @property
+    def description(self) -> str:
+        return self._method_description
 
     def supported_types(self) -> tuple[type, ...]:
         return (Distribution,)
@@ -323,17 +340,14 @@ class _BlackJAXMCMCMethod(InferenceMethod):
         """Whether the target has an unnormalized density that JAX traces at its initial state."""
         model, observed = observed_parts(target)
         if not isinstance(model, SupportsUnnormalizedLogProb):
-            return Feasibility(
-                feasible=False,
-                description="Requires SupportsUnnormalizedLogProb",
-            )
+            return Feasibility(feasible=False, description=no_density_reason(model))
         try:
             target_flat, flat_init, _ = build_target_log_prob_flat(model, observed)
             density, init, _ = unconstrained_chain(target_flat, flat_init, model)
             if not is_jax_traceable(density, init):
                 return Feasibility(
                     feasible=False,
-                    description="Log-prob is not JAX-traceable",
+                    description="the log-density is not JAX-traceable",
                 )
         except Exception as e:
             return Feasibility(
@@ -345,7 +359,7 @@ class _BlackJAXMCMCMethod(InferenceMethod):
     def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
         """Chains of the BlackJAX kernel on the flat form of the target's unnormalized density."""
         self._check_options(kwargs)
-        random_seed = run_seed(kwargs, self.name)
+        random_seed = run_seed(self.name)
         model, observed = observed_parts(target)
         target_flat, flat_init, event_spec = build_target_log_prob_flat(
             model,
@@ -399,7 +413,9 @@ def BlackJAXNutsMethod() -> _BlackJAXMCMCMethod:
     above ``cmdstan_nuts`` and ``pymc_nuts`` (82), which apply to disjoint
     model classes.
     """
-    return _BlackJAXMCMCMethod("nuts", "blackjax_nuts", 85)
+    return _BlackJAXMCMCMethod(
+        "nuts", "blackjax_nuts", 85, "NUTS through BlackJAX, for a JAX-traceable log-density."
+    )
 
 
 def BlackJAXHmcMethod() -> _BlackJAXMCMCMethod:
@@ -418,4 +434,9 @@ def BlackJAXHmcMethod() -> _BlackJAXMCMCMethod:
     that of ``blackjax_nuts``, so with NUTS ranked, HMC would never be
     selected automatically; ``priority=None`` makes that explicit.
     """
-    return _BlackJAXMCMCMethod("hmc", "blackjax_hmc", None)
+    return _BlackJAXMCMCMethod(
+        "hmc",
+        "blackjax_hmc",
+        None,
+        "HMC through BlackJAX with a hand-set step size, for a JAX-traceable log-density.",
+    )

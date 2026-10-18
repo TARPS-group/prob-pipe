@@ -8,6 +8,7 @@ from typing import Any
 import jax
 import numpy as np
 
+from ..core._array_backend import array_backend_for
 from ..core._numeric_record import NumericRecord
 from ..core._record_spec import _reshaped_template
 from ..core.record import Record
@@ -18,7 +19,7 @@ from ..distributions._empirical import EmpiricalDistribution, _batch_form
 from ..distributions._factored import FactoredConditionalDistribution, _event_of, _raw_record
 from ..functions import function
 from ..functions._broker import _PROBPIPE_DISTRIBUTION_PROVIDER_ABI
-from ._workflow_rng import _resolve_validation_key, _validate_positive_int
+from ._workflow_rng import _claim_validation_key, _validate_positive_int
 
 __all__ = ["predictive_check"]
 
@@ -31,7 +32,6 @@ def predictive_check[D](
     observed_data: D | None = None,
     *,
     num_replications: int = 500,
-    key: PRNGKey | None = None,
 ) -> dict:
     """Compare replicated data with the observed data through test statistics.
 
@@ -47,6 +47,10 @@ def predictive_check[D](
     event: a whole term is its value, such as an array, and an exposed record is
     the mapping of its fields. A statistic that JAX can trace is computed on
     every replication in one ``jax.vmap`` call, and any other in a loop.
+
+    The replications are one workflow-owned random event of the enclosing
+    workflow scope. A call inside ``workflow_run(seed=...)`` therefore
+    reproduces them, and a call outside every scope draws fresh replications.
 
     Parameters
     ----------
@@ -68,9 +72,6 @@ def predictive_check[D](
         takes.
     num_replications : int
         The number of replications.
-    key : PRNGKey, optional
-        JAX PRNG key. When it is omitted, the workflow supplies the key, so a
-        call inside ``workflow_run(seed=...)`` is reproducible.
 
     Returns
     -------
@@ -78,7 +79,8 @@ def predictive_check[D](
         For a single statistic, the record has the fields:
 
         - ``replicated_statistics``: an ``EmpiricalDistribution`` over the
-          statistic's values at the replications.
+          statistic's values at the replications, labeled by the statistic's
+          name and declared under the component ``replicated_statistics``.
         - ``test_fn_name``: the statistic's name.
         - ``observed_statistic``: the statistic of *observed_data*, when
           *observed_data* is given.
@@ -93,12 +95,13 @@ def predictive_check[D](
     ------
     TypeError
         If *kernel* is not a ``ConditionalDistribution``, *law* does not
-        sample, or a statistic is not callable.
+        sample, *test_fns* is neither a callable nor an iterable, a statistic
+        is not callable, or *num_replications* is not an integer.
     ValueError
         If *law* does not produce every given slot of *kernel*, naming the
         missing slots; if *law* produces a component that *kernel* produces;
         if *test_fns* is empty or holds two statistics of the same name; or if
-        *num_replications* is not a positive integer.
+        *num_replications* is not positive.
 
     Notes
     -----
@@ -110,18 +113,16 @@ def predictive_check[D](
 
     Examples
     --------
-    >>> import jax
     >>> import jax.numpy as jnp
-    >>> from probpipe import Normal, conditional_distribution
+    >>> from probpipe import Normal, conditional_distribution, workflow_run
     >>> prior = Normal("mu", 0.0, 1.0)
     >>> likelihood = conditional_distribution(
-    ...     "y_given_mu",
     ...     lambda mu: Normal("y", mu * jnp.ones(10), 1.0),
+    ...     label="y_given_mu",
     ...     given_spec=prior.event_spec.components,
     ... )
-    >>> check = predictive_check(
-    ...     likelihood, prior, jnp.mean, jnp.zeros(10), key=jax.random.key(0)
-    ... )
+    >>> with workflow_run(seed=0):
+    ...     check = predictive_check(likelihood, prior, jnp.mean, jnp.zeros(10))
     >>> check["replicated_statistics"].num_atoms
     500
     >>> 0.0 <= float(check["p_value"]) <= 1.0
@@ -133,26 +134,26 @@ def predictive_check[D](
     if isinstance(law, NumericRecord):
         name = getattr(law, "label", "posterior")
         row = _reshaped_template(law.event_template, lambda shape: shape[1:])
-        law = EmpiricalDistribution(name, _batch_form(name, law, "draw", row))
+        law = EmpiricalDistribution(_batch_form(name, law, "draw", row), label=name)
     joint = _predictive_joint(kernel, law, "predictive_check")
     observed = None if observed_data is None else _observed_event(kernel, observed_data)
 
-    if key is None:
-        # The composition is a ProbPipe law, so its draws follow the distribution ABI.
-        key = _resolve_validation_key(
-            None,
-            operation_kind="predictive-check",
-            execution_mode="sampled",
-            sample_shape=(num_replications,),
-            provider_abi=_PROBPIPE_DISTRIBUTION_PROVIDER_ABI,
-        )
+    # The composition is a ProbPipe law, so its draws follow the distribution ABI.
+    key = _claim_validation_key(
+        operation_kind="predictive-check",
+        execution_mode="sampled",
+        sample_shape=(num_replications,),
+        provider_abi=_PROBPIPE_DISTRIBUTION_PROVIDER_ABI,
+    )
     replicated = _replicated_statistics(joint, kernel, statistics, num_replications, key)
 
     results = {}
     for name, fn in statistics:
         stats_array = replicated[name]
         result: dict[str, Any] = {
-            "replicated_statistics": EmpiricalDistribution("replicated_statistics", stats_array),
+            "replicated_statistics": EmpiricalDistribution(
+                stats_array, component="replicated_statistics", label=name
+            ),
             "test_fn_name": name,
         }
         if observed is not None:
@@ -174,6 +175,16 @@ def _planned_statistics(test_fns: Any) -> tuple[tuple[str, Callable], ...]:
 
     A statistic is named by its ``__name__``, or by its ``repr`` when it has
     none.
+
+    Parameters
+    ----------
+    test_fns : callable or iterable of callable
+        One statistic, or an iterable of statistics.
+
+    Returns
+    -------
+    tuple of tuple of str and callable
+        One ``(name, statistic)`` pair per statistic, in the order given.
 
     Raises
     ------
@@ -210,9 +221,25 @@ def _planned_statistics(test_fns: Any) -> tuple[tuple[str, Callable], ...]:
 
 
 def _predictive_joint(
-    kernel: ConditionalDistribution, law: Distribution, operation: str
+    kernel: ConditionalDistribution, law: Distribution, operation: str, law_name: str = "law"
 ) -> Distribution:
     """The composition ``kernel * law``, from which a replication is drawn.
+
+    Parameters
+    ----------
+    kernel : ConditionalDistribution
+        The law of the observations given the parameters.
+    law : Distribution
+        A law over the kernel's given slots, such as a posterior or a prior.
+    operation : str
+        The name of the calling function, which each error names.
+    law_name : str
+        The name of the calling function's argument that holds *law*.
+
+    Returns
+    -------
+    Distribution
+        The joint law of the parameters and the observations.
 
     Raises
     ------
@@ -225,19 +252,19 @@ def _predictive_joint(
     """
     if not isinstance(kernel, ConditionalDistribution):
         raise TypeError(
-            f"{operation} takes the kernel of the observations, a ConditionalDistribution; "
-            f"got {type(kernel).__name__}"
+            f"{operation}: kernel must be a ConditionalDistribution of the observations given "
+            f"the parameters; got {type(kernel).__name__}"
         )
     if not isinstance(law, Distribution) or not callable(getattr(law, "_sample", None)):
         raise TypeError(
-            f"{operation} draws the kernel's given slots from a Distribution that samples; "
+            f"{operation}: {law_name} must be a Distribution that can be sampled; "
             f"got {type(law).__name__}"
         )
     joint = kernel * law
     if isinstance(joint, FactoredConditionalDistribution):
         raise ValueError(
-            f"{operation}: the law {law.label!r} does not produce the given slots "
-            f"{sorted(joint.given_spec.required)} of the kernel {kernel.label!r}"
+            f"{operation}: {law_name} {law.label!r} does not produce "
+            f"{sorted(joint.given_spec.required)}, which kernel {kernel.label!r} needs as input"
         )
     return joint
 
@@ -247,14 +274,25 @@ def _observed_event(kernel: ConditionalDistribution, observed_data: Any) -> Any:
 
     A mapping or a ``Record`` keyed by the kernel's components is
     reconstructed by the kernel's event declaration, so a whole term is its
-    component's value; any other value is the observed event as given.
+    component's value; any other value is the observed event as given. A
+    value held in a registered array host, such as a pandas or xarray object,
+    converts to the JAX array a replication holds, so a statistic receives the
+    observed data in the form of a replication.
     """
     if isinstance(observed_data, Record):
         observed_data = _raw_record(observed_data)
     declaration = kernel.event_spec
     if isinstance(observed_data, Mapping) and set(observed_data) == set(declaration.components):
-        return _event_of(declaration, observed_data)
-    return observed_data
+        return _event_of(
+            declaration, {key: _as_replication(value) for key, value in observed_data.items()}
+        )
+    return _as_replication(observed_data)
+
+
+def _as_replication(value: Any) -> Any:
+    """*value* as a replication holds it: a registered array host's JAX array, else *value*."""
+    backend = array_backend_for(value)
+    return value if backend is None else backend.to_jax(value)
 
 
 def _replicated_statistics(
@@ -309,7 +347,7 @@ def _record_check_in_annotations(
     Mutates ``distribution._annotations`` in place. This is the
     documented exception to ``Distribution`` immutability (see
     :attr:`Distribution.annotations` and design II.4) — diagnostic ops
-    attach results under named groups rather than returning renamed
+    attach results under named groups rather than returning relabeled
     clones, which would break source/identity tracking.
 
     Encoding:

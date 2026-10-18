@@ -31,25 +31,35 @@ def error_of(call: Callable[[], Any]) -> BaseException | None:
     return None
 
 
-def standard_normal(name: str = "z") -> Normal:
+def standard_normal(label: str = "z") -> Normal:
     """A scalar law that samples."""
-    return Normal(loc=0.0, scale=1.0, label=name)
+    return Normal(label, loc=0.0, scale=1.0)
 
 
-def record_law(name: str = "joint", *, n: int = 12) -> EmpiricalDistribution:
+def record_law(label: str = "joint", *, n: int = 12) -> EmpiricalDistribution:
     """An empirical law over records ``{a, b}`` whose every atom has ``b == 2 * a``."""
     a = jnp.arange(float(n))
     spec = NumericRecordSpec(a=NumericArraySpec((), a.dtype), b=NumericArraySpec((), a.dtype))
-    atoms = NumericRecordBatch("atoms", {"a": a, "b": 2.0 * a}, "atom", element_spec=spec)
-    return EmpiricalDistribution(name, atoms)
+    atoms = NumericRecordBatch(
+        {"a": a, "b": 2.0 * a},
+        "atom",
+        element_spec=spec,
+        label="atoms",
+    )
+    return EmpiricalDistribution(atoms, label=label)
 
 
-def one_field_law(name: str = "posterior", *, n: int = 12) -> EmpiricalDistribution:
+def one_field_law(label: str = "posterior", *, n: int = 12) -> EmpiricalDistribution:
     """An empirical law whose event is a record with the single field ``beta``."""
     beta = jnp.arange(2.0 * n).reshape(n, 2)
     spec = NumericRecordSpec(beta=NumericArraySpec((2,), beta.dtype))
-    atoms = NumericRecordBatch("atoms", {"beta": beta}, "atom", element_spec=spec)
-    return EmpiricalDistribution(name, atoms)
+    atoms = NumericRecordBatch(
+        {"beta": beta},
+        "atom",
+        element_spec=spec,
+        label="atoms",
+    )
+    return EmpiricalDistribution(atoms, label=label)
 
 
 def atom_leaves(law: Any) -> list[np.ndarray]:

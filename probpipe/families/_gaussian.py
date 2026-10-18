@@ -31,7 +31,9 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
+from .._messages import unknown_names
 from ..core._dispatch import Feasibility
+from ..core._expression import Operator, constant
 from ..core._repr import format_value
 from ..core._specs import OutputSpec
 from ..core.provenance import Provenance
@@ -44,10 +46,11 @@ from ..distributions._capabilities import (
     SupportsVariance,
 )
 from ..distributions._conditional import ConditionalDistribution
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import Distribution, _check_component, _class_label
 from ..distributions._factored import (
     FactoredDistribution,
     FactoredNumericDistribution,
+    _derived_product,
     _register_refinement,
 )
 from ..linalg import DenseLinOp, LinOp
@@ -96,10 +99,14 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
 
     Parameters
     ----------
-    label : str
-        The joint's label.
     factors : Sequence[Distribution | ConditionalDistribution]
         The jointly Gaussian factors, in conditional-first order.
+    label : str, optional
+        The joint's label. By default the label joins the factors' labels with
+        ``·``, as ``a·b``, and the notation reads factor by factor.
+    _scope : Mapping[str, int], optional
+        The sizes already bound in the joint's dimension scope, by dimension name, which a
+        joint rebuilt from its factors passes on.
     _component : str, optional
         The one component under which a packaged joint declares its record.
 
@@ -114,20 +121,25 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
 
     def __init__(
         self,
-        label: str,
         factors: Sequence[Distribution | ConditionalDistribution],
         *,
+        label: str | None = None,
         _scope: Mapping[str, int] | None = None,
         _component: str | None = None,
     ) -> None:
-        super().__init__(label, factors, _scope=_scope, _component=_component)
+        super().__init__(
+            factors,
+            _scope=_scope,
+            _component=_component,
+            label=label,
+        )
         if not _jointly_gaussian(self.factors):
             kinds = sorted(
                 {type(factor).__name__ for factor in self.factors if not _is_gaussian(factor)}
             )
             raise TypeError(
-                f"the factors of {label!r} are jointly Gaussian only when each is a Normal, a "
-                f"MultivariateNormal, or a packaged joint of them, got {kinds}"
+                f"FactoredMultivariateGaussian {self.label!r} accepts only Normal or "
+                f"MultivariateNormal factors, or Gaussian joints of them, got {kinds}"
             )
 
     def _condition_on(self, given: Record | Mapping[str, Any], /, **options: Any) -> Distribution:
@@ -143,7 +155,7 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
         Returns
         -------
         FactoredMultivariateGaussian
-            The joint of the remaining factors, under the same name.
+            The joint of the remaining factors, under the same label.
 
         Raises
         ------
@@ -156,17 +168,21 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
         conditioned = set(dict(top.items()))
         unknown = sorted(conditioned - set(self.event_spec.components))
         if unknown:
-            raise KeyError(f"{unknown} are not components of {self.label!r}")
+            raise KeyError(self._unknown_components(unknown))
         kept = [
             factor
             for factor in self.factors
             if not set(factor.event_spec.components) <= conditioned
         ]
         if not kept:
-            raise ValueError(
-                f"the given covers every component of {self.label!r}, so no law remains"
-            )
-        law = FactoredDistribution(self.label, kept)
+            raise ValueError(self._every_component())
+        law = _derived_product(
+            FactoredDistribution(
+                kept,
+                label=self.label,
+            ),
+            self,
+        )
         return law.with_provenance(
             Provenance.create(
                 "condition_on", parents=[self], metadata={"conditioned": sorted(conditioned)}
@@ -178,10 +194,22 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
         components = set(self.event_spec.components)
         outside = sorted(set(paths) - components)
         if outside:
-            return Feasibility(False, f"{outside} are not components of {self.label!r}")
+            return Feasibility(False, self._unknown_components(outside), actionable=True)
         if components <= set(paths):
-            return Feasibility(False, f"the paths cover every component of {self.label!r}")
+            return Feasibility(False, self._every_component(), actionable=True)
         return Feasibility(True)
+
+    def _unknown_components(self, unknown: Sequence[str]) -> str:
+        """The message for conditioning on the names *unknown*, which are not components."""
+        components = list(self.event_spec.components)
+        return f"cannot condition {self.label!r}: {unknown_names('component', unknown, components)}"
+
+    def _every_component(self) -> str:
+        """The message for conditioning on every component, which leaves no distribution."""
+        return (
+            f"cannot condition {self.label!r} on all of its components "
+            f"{list(self.event_spec.components)}; leave at least one unconditioned"
+        )
 
 
 _register_refinement(FactoredMultivariateGaussian, _jointly_gaussian)
@@ -193,13 +221,33 @@ _register_refinement(FactoredMultivariateGaussian, _jointly_gaussian)
 
 
 def _declarations(
-    name: str, output_spec: OutputSpec | None, event_spec: OutputSpec | None
+    component: str, output_spec: OutputSpec | None, event_spec: OutputSpec | None
 ) -> tuple[OutputSpec, OutputSpec]:
-    """The drawn function's output declaration and the event's, each defaulting to *name*.
+    """The drawn function's output declaration and the event's, each defaulting to *component*.
 
     The event is a function, so a declared event type is a ``FunctionSpec`` whose
     output side names the drawn function's output component. A type hole in the
     event, or in the function's output side, is filled with the output declaration.
+
+    Parameters
+    ----------
+    component : str
+        The component of the event, which the drawn function's output also takes
+        by default.
+    output_spec : OutputSpec or None
+        The declaration of the drawn function's output, or None for a type hole under
+        *component*.
+    event_spec : OutputSpec or None
+        The declaration of the function-valued event under *component*, or None for a
+        ``FunctionSpec`` under *component*.
+
+    Returns
+    -------
+    output : OutputSpec
+        The output declaration, which names one component.
+    event : OutputSpec
+        The event declaration, whose ``FunctionSpec`` names that component on its output
+        side.
 
     Raises
     ------
@@ -210,23 +258,22 @@ def _declarations(
     ValueError
         If the event's ``FunctionSpec`` names another output component.
     """
-    output = OutputSpec(**{name: None}) if output_spec is None else output_spec
+    output = OutputSpec(**{component: None}) if output_spec is None else output_spec
     if not isinstance(output, OutputSpec) or output._component_name is None:
         raise TypeError(
-            f"output_spec of {name!r} must be an OutputSpec naming one component, got "
+            f"output_spec of {component!r} must be an OutputSpec naming one component, got "
             f"{output_spec!r}"
         )
     if event_spec is None:
-        return output, OutputSpec(**{name: FunctionSpec(output_spec=output)})
+        return output, OutputSpec(**{component: FunctionSpec(output_spec=output)})
     if not isinstance(event_spec, OutputSpec):
-        raise TypeError(f"event_spec of {name!r} must be an OutputSpec, got {event_spec!r}")
+        raise TypeError(f"event_spec of {component!r} must be an OutputSpec, got {event_spec!r}")
     declared = event_spec.spec
     if declared is None:
         return output, event_spec._with_spec(FunctionSpec(output_spec=output))
     if not isinstance(declared, FunctionSpec):
         raise TypeError(
-            f"the event of the random function {name!r} is a function, so event_spec declares "
-            f"a FunctionSpec; got {type(declared).__name__}"
+            f"event_spec of {component!r} must declare a FunctionSpec, got {type(declared).__name__}"
         )
     if declared.output_spec is None:
         filled = FunctionSpec(input_spec=declared.input_spec, output_spec=output)
@@ -234,17 +281,27 @@ def _declarations(
     named = declared.output_spec._component_name
     if named != output._component_name:
         raise ValueError(
-            f"the event of {name!r} declares a function whose output is {named!r}, but the "
-            f"drawn function names the output component {output._component_name!r}"
+            f"event_spec of {component!r} names the function output {named!r}, but output_spec "
+            f"names it {output._component_name!r} (the component when output_spec is omitted); "
+            f"make them match"
         )
     return output, event_spec
+
+
+def _component_of(law: GaussianRandomFunction) -> str:
+    """The component of the function-valued event of *law*, which a map of it keeps."""
+    (component,) = law.event_spec.components
+    return component
 
 
 def _stacked(X: ArrayLike) -> Array:
     """*X* as an array whose leading axis stacks the input points."""
     X = jnp.asarray(X)
     if X.ndim == 0:
-        raise ValueError("X stacks the input points along its leading axis, so it has an axis")
+        raise ValueError(
+            "X must have a leading axis of input points, got a 0-d array; pass shape (n, ...), "
+            "such as X[None] for one point"
+        )
     return X
 
 
@@ -267,9 +324,10 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
     function's, and its event is declared under the drawn function's output
     component.
 
-    The drawn function's output component and the function-valued event's
-    component both default to the label; ``output_spec`` names the former and
-    ``event_spec`` the latter. A type that ``event_spec`` declares is a
+    The function-valued event is a whole term under *component*, and the
+    drawn function's output component defaults to it; ``output_spec`` names
+    another, and ``event_spec`` declares the event's type. A type that
+    ``event_spec`` declares is a
     ``FunctionSpec`` naming the output component, and a type hole in it, or in
     its output side, is filled with the output declaration. The mean is the
     mean function and the variance the pointwise variance function, each a
@@ -277,38 +335,45 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
 
     Shifts ``f + b``, scalings ``alpha * f`` by a scalar, output-side linear
     maps ``A @ f``, and sums ``f + g`` of independent members are again
-    members, evaluated in closed form.
+    members, evaluated in closed form. A shift, a scaling, and a linear map of
+    ``f`` keep ``f``'s label, and a sum is labeled by its expression, as
+    ``f + g``.
 
     Parameters
     ----------
-    label : str
-        The random function's label.
+    component : str
+        The component of the function-valued event.
+    label : str, optional
+        The random function's label, its class name by default.
     output_spec : OutputSpec, optional
         The declaration of the drawn function's output, naming its component.
     event_spec : OutputSpec, optional
-        The declaration of the function-valued draw, naming its component.
+        The declaration of the function-valued draw under *component*.
 
     Raises
     ------
     TypeError
-        If *output_spec* is not an ``OutputSpec`` naming one component, or
+        If *component* is not a string, *label* is not a non-empty string,
+        *output_spec* is not an ``OutputSpec`` naming one component, or
         *event_spec* is not an ``OutputSpec`` or declares a type that is not a
         ``FunctionSpec``.
     ValueError
-        If the ``FunctionSpec`` that *event_spec* declares names another output
-        component.
+        If *event_spec* names another component than *component*, or the
+        ``FunctionSpec`` it declares names another output component.
     """
 
     def __init__(
         self,
-        label: str,
+        component: str,
         *,
+        label: str | None = None,
         output_spec: OutputSpec | None = None,
         event_spec: OutputSpec | None = None,
     ) -> None:
-        output, event = _declarations(label, output_spec, event_spec)
+        _check_component(component, _class_label(self))
+        output, event = _declarations(component, output_spec, event_spec)
         self._output_spec = output
-        super().__init__(label, event)
+        super().__init__(component, event, label=label)
 
     @abstractmethod
     def predict_mean(self, X: Array) -> Array:
@@ -323,6 +388,16 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
 
         The values are flattened in row-major order of ``(n, *output_shape)``,
         so the point index varies slowest.
+
+        Parameters
+        ----------
+        X : Array
+            The ``n`` input points, stacked along the leading axis.
+
+        Returns
+        -------
+        LinOp
+            A square operator whose size is ``n`` times the size of one output value.
 
         Raises
         ------
@@ -339,6 +414,17 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
     def __call__(self, X: Array) -> Normal | MultivariateNormal:
         """The finite-dimensional law of the drawn function's value at the stacked inputs *X*.
 
+        Parameters
+        ----------
+        X : Array
+            The input points, stacked along the leading axis.
+
+        Returns
+        -------
+        Normal or MultivariateNormal
+            A ``MultivariateNormal`` over the flattened values when the member evaluates
+            jointly and there is more than one value, and a ``Normal`` otherwise.
+
         Raises
         ------
         ValueError
@@ -346,14 +432,12 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
         """
         X = _stacked(X)
         mean = jnp.asarray(self.predict_mean(X))
-        event_spec = OutputSpec(**{self._output_spec._component_name: None})
+        output = self._output_spec._component_name
         if mean.size > 1 and self._joint:
             cov = self.predict_covariance(X)
-            return MultivariateNormal(
-                self.label, jnp.reshape(mean, (-1,)), cov=cov, event_spec=event_spec
-            )
+            return MultivariateNormal(output, jnp.reshape(mean, (-1,)), cov=cov, label=self.label)
         scale = jnp.sqrt(jnp.asarray(self.predict_variance(X)))
-        return Normal(self.label, mean, scale, event_spec=event_spec)
+        return Normal(output, mean, scale, label=self.label)
 
     def _mean(self) -> Callable[[Array], Array]:
         """The mean function on stacked inputs."""
@@ -410,12 +494,14 @@ class GaussianProcess(GaussianRandomFunction):
 
     Parameters
     ----------
-    label : str
-        The process's label.
+    component : str
+        The component of the function-valued event.
     mean_fn : Callable[[Array], Array]
         The mean function, evaluated at stacked input points.
     cov_kernel : Callable[[Array, Array], Array]
         The covariance kernel, evaluated at two stacks of input points.
+    label : str, optional
+        The process's label, ``GaussianProcess`` by default.
     output_spec : OutputSpec, optional
         The declaration of the drawn function's output.
     event_spec : OutputSpec, optional
@@ -432,18 +518,22 @@ class GaussianProcess(GaussianRandomFunction):
 
     def __init__(
         self,
-        label: str,
+        component: str,
         mean_fn: Callable[[Array], Array],
         cov_kernel: Callable[[Array, Array], Array],
         *,
+        label: str | None = None,
         output_spec: OutputSpec | None = None,
         event_spec: OutputSpec | None = None,
     ) -> None:
         if not callable(mean_fn) or not callable(cov_kernel):
-            raise TypeError(f"the mean function and covariance kernel of {label!r} are callables")
+            raise TypeError(
+                f"mean_fn and cov_kernel of GaussianProcess must be callable, got "
+                f"{type(mean_fn).__name__} and {type(cov_kernel).__name__}"
+            )
         self._mean_fn = mean_fn
         self._cov_kernel = cov_kernel
-        super().__init__(label, output_spec=output_spec, event_spec=event_spec)
+        super().__init__(component, label=label, output_spec=output_spec, event_spec=event_spec)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``mean_fn`` and ``cov_kernel``."""
@@ -488,12 +578,14 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
 
     Parameters
     ----------
-    label : str
-        The random function's label.
+    component : str
+        The component of the function-valued event.
     basis : Callable[[Array], Array]
         The feature map, evaluated at stacked input points.
     weights : MultivariateNormal
         The law of the weight vector.
+    label : str, optional
+        The random function's label, ``LinearBasisFunction`` by default.
     output_spec : OutputSpec, optional
         The declaration of the drawn function's output.
     event_spec : OutputSpec, optional
@@ -511,22 +603,25 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
 
     def __init__(
         self,
-        label: str,
+        component: str,
         basis: Callable[[Array], Array],
         weights: MultivariateNormal,
         *,
+        label: str | None = None,
         output_spec: OutputSpec | None = None,
         event_spec: OutputSpec | None = None,
     ) -> None:
         if not isinstance(weights, MultivariateNormal):
             raise TypeError(f"weights must be a MultivariateNormal, got {type(weights).__name__}")
         if not callable(basis):
-            raise TypeError(f"the basis of {label!r} is a callable")
+            raise TypeError(
+                f"basis of LinearBasisFunction must be callable, got {type(basis).__name__}"
+            )
         self._basis = basis
         self._weights = weights
         self._w_mean = weights.loc
         self._w_cov = weights.cov
-        super().__init__(label, output_spec=output_spec, event_spec=event_spec)
+        super().__init__(component, label=label, output_spec=output_spec, event_spec=event_spec)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``basis`` and ``weights``."""
@@ -537,8 +632,8 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
         phi = jnp.asarray(self._basis(_stacked(X)))
         if phi.ndim < 2 or phi.shape[-1] != self._w_mean.shape[0]:
             raise ValueError(
-                f"the basis of {self.label!r} returns features of shape {phi.shape}, whose last "
-                f"axis must be the weights' dimension {self._w_mean.shape[0]}"
+                f"basis of {self.label!r} must return features whose last axis has the weights' "
+                f"size {self._w_mean.shape[0]}, got shape {phi.shape}"
             )
         return phi
 
@@ -583,7 +678,19 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
 # ---------------------------------------------------------------------------
 
 
-class _LinearMapGRF(GaussianRandomFunction):
+class _OperatorGRF(GaussianRandomFunction):
+    """A member that an operator builds from other members and constants, labeled by the operator's expression."""
+
+    def _operator_expression(self) -> Operator:
+        """The expression of the operator applied to the construction's operands."""
+        raise NotImplementedError
+
+    def _derived_label(self) -> str:
+        """The label the construction gives: the operator's expression, as ``f + g``."""
+        return self._operator_expression().render_label()
+
+
+class _LinearMapGRF(_OperatorGRF):
     """``h(x) = A g(x)`` for a member *g* with a vector output; constructed by ``A @ g``."""
 
     def __init__(self, base: GaussianRandomFunction, A: Array) -> None:
@@ -594,8 +701,16 @@ class _LinearMapGRF(GaussianRandomFunction):
         self._base = base
         self._A = A
         super().__init__(
-            f"linear_map({base.label})", output_spec=base._output_spec, event_spec=base.event_spec
+            _component_of(base),
+            label=base.label,
+            output_spec=base._output_spec,
+            event_spec=base.event_spec,
         )
+        self._store_expression(self._operator_expression())
+
+    def _operator_expression(self) -> Operator:
+        """The expression ``A @ f`` that the construction gives."""
+        return Operator("@", (constant(self._A), self._base._embedded_expression()))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``base`` and ``A``."""
@@ -610,8 +725,9 @@ class _LinearMapGRF(GaussianRandomFunction):
         shape = jax.eval_shape(self._base.predict_mean, X).shape
         if len(shape) != 2 or shape[1] != self._A.shape[1]:
             raise ValueError(
-                f"A @ f maps an output vector of size {self._A.shape[1]}, but the value of "
-                f"{self._base.label!r} at each point has shape {tuple(shape[1:])}"
+                f"A @ f needs the value of f at each point to be a vector of size "
+                f"{self._A.shape[1]} to match A's columns, but {self._base.label!r} has shape "
+                f"{tuple(shape[1:])}"
             )
 
     def predict_mean(self, X: Array) -> Array:
@@ -646,15 +762,23 @@ class _LinearMapGRF(GaussianRandomFunction):
         return jnp.einsum("ow,iwv,pv->iop", self._A, blocks, self._A)
 
 
-class _ShiftedGRF(GaussianRandomFunction):
+class _ShiftedGRF(_OperatorGRF):
     """``h(x) = g(x) + b`` for a constant *b*; constructed by ``g + b``."""
 
     def __init__(self, base: GaussianRandomFunction, b: Array) -> None:
         self._base = base
         self._b = b
         super().__init__(
-            f"shift({base.label})", output_spec=base._output_spec, event_spec=base.event_spec
+            _component_of(base),
+            label=base.label,
+            output_spec=base._output_spec,
+            event_spec=base.event_spec,
         )
+        self._store_expression(self._operator_expression())
+
+    def _operator_expression(self) -> Operator:
+        """The expression ``f + b`` that the construction gives."""
+        return Operator("+", (self._base._embedded_expression(), constant(self._b)))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``base`` and ``b``."""
@@ -674,19 +798,28 @@ class _ShiftedGRF(GaussianRandomFunction):
         return self._base.predict_covariance(X)
 
 
-class _ScaledGRF(GaussianRandomFunction):
+class _ScaledGRF(_OperatorGRF):
     """``h(x) = alpha g(x)`` for a scalar *alpha*; constructed by ``alpha * g``."""
 
     def __init__(self, base: GaussianRandomFunction, alpha: Array) -> None:
         if alpha.ndim != 0:
             raise ValueError(
-                f"alpha * f scales by a scalar, got shape {alpha.shape}; A @ f maps the outputs"
+                f"alpha * f needs a scalar alpha, got shape {alpha.shape}; to apply a matrix to "
+                f"the outputs, use A @ f"
             )
         self._base = base
         self._alpha = alpha
         super().__init__(
-            f"scale({base.label})", output_spec=base._output_spec, event_spec=base.event_spec
+            _component_of(base),
+            label=base.label,
+            output_spec=base._output_spec,
+            event_spec=base.event_spec,
         )
+        self._store_expression(self._operator_expression())
+
+    def _operator_expression(self) -> Operator:
+        """The expression ``alpha * f`` that the construction gives."""
+        return Operator("*", (constant(self._alpha), self._base._embedded_expression()))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``base`` and ``alpha``."""
@@ -709,6 +842,18 @@ class _ScaledGRF(GaussianRandomFunction):
 def _summed(left: Array, right: Array) -> Array:
     """``left + right`` for the values of two members at the same points.
 
+    Parameters
+    ----------
+    left : Array
+        The first member's mean or variance at the stacked points.
+    right : Array
+        The second member's mean or variance at the same points.
+
+    Returns
+    -------
+    Array
+        The sum, in the shape the two values share.
+
     Raises
     ------
     ValueError
@@ -718,12 +863,13 @@ def _summed(left: Array, right: Array) -> Array:
     left, right = jnp.asarray(left), jnp.asarray(right)
     if left.shape != right.shape:
         raise ValueError(
-            f"f + g adds values of one shape, got {left.shape[1:]} and {right.shape[1:]}"
+            f"f + g needs both functions to have the same output shape, got {left.shape[1:]} "
+            f"and {right.shape[1:]}"
         )
     return left + right
 
 
-class _IndependentSumGRF(GaussianRandomFunction):
+class _IndependentSumGRF(_OperatorGRF):
     """``h(x) = g₁(x) + g₂(x)`` for independent members; constructed by ``g₁ + g₂``.
 
     Independence is the caller's statement, so the covariances add; a member
@@ -733,15 +879,25 @@ class _IndependentSumGRF(GaussianRandomFunction):
     def __init__(self, left: GaussianRandomFunction, right: GaussianRandomFunction) -> None:
         if left is right:
             raise ValueError(
-                "Cannot add a GaussianRandomFunction to itself, which is not independent of "
-                "itself; use 2 * f instead."
+                f"cannot add {left.label!r} to itself, since f + g needs independent functions; "
+                f"use 2 * f instead"
             )
         self._left = left
         self._right = right
+        expression = self._operator_expression()
+        rendering = expression.label_rendering()
         super().__init__(
-            f"sum({left.label},{right.label})",
+            _component_of(left),
+            label=rendering[0],
             output_spec=left._output_spec,
             event_spec=left.event_spec,
+        )
+        self._store_expression(expression, rendering)
+
+    def _operator_expression(self) -> Operator:
+        """The expression ``f + g`` that the construction gives."""
+        return Operator(
+            "+", (self._left._embedded_expression(), self._right._embedded_expression())
         )
 
     def _repr_arguments(self) -> list[tuple[str, str]]:

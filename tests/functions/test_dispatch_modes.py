@@ -13,8 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Function, WorkflowKind, function, workflow_run
-from probpipe.functions._function import effective_workflow_kind
+from probpipe import Function, OutputSpec, WorkflowKind, function, workflow_run
 
 from ._design_helpers import atom_leaves, record_law, standard_normal
 
@@ -28,7 +27,13 @@ class TestDispatchModes:
         law = standard_normal()
         results = {}
         for dispatch in ("jax", "sequential", "thread"):
-            wrapped = Function("affine", _affine, n_broadcast_samples=8, dispatch=dispatch)
+            wrapped = Function(
+                _affine,
+                n_broadcast_samples=8,
+                dispatch=dispatch,
+                label="affine",
+                output_spec=OutputSpec(affine=None),
+            )
             with workflow_run(seed=5):
                 results[dispatch] = atom_leaves(wrapped(law))[0]
 
@@ -36,7 +41,7 @@ class TestDispatchModes:
         np.testing.assert_allclose(results["thread"], results["sequential"], rtol=1e-6)
 
     def test_auto_runs_a_body_that_does_not_trace(self):
-        @function(n_broadcast_samples=6, dispatch="auto")
+        @function(n_broadcast_samples=6, dispatch="auto", output_spec=OutputSpec(untraceable=None))
         def untraceable(z):
             return jnp.asarray(float(z) ** 2)
 
@@ -48,15 +53,39 @@ class TestDispatchModes:
     def test_auto_agrees_with_the_mode_it_selects(self):
         law = standard_normal()
         with workflow_run(seed=5):
-            auto = Function("affine", _affine, n_broadcast_samples=8, dispatch="auto")(law)
+            auto = Function(
+                _affine,
+                n_broadcast_samples=8,
+                dispatch="auto",
+                label="affine",
+                output_spec=OutputSpec(affine=None),
+            )(law)
         with workflow_run(seed=5):
-            jax_mode = Function("affine", _affine, n_broadcast_samples=8, dispatch="jax")(law)
+            jax_mode = Function(
+                _affine,
+                n_broadcast_samples=8,
+                dispatch="jax",
+                label="affine",
+                output_spec=OutputSpec(affine=None),
+            )(law)
 
         np.testing.assert_allclose(atom_leaves(auto)[0], atom_leaves(jax_mode)[0], rtol=1e-6)
 
     def test_jax_maps_an_enumeration_as_sequential_dispatch_evaluates_it(self):
-        mapped = Function("affine", _affine, n_broadcast_samples=64, dispatch="jax")
-        sequential = Function("affine", _affine, n_broadcast_samples=64, dispatch="sequential")
+        mapped = Function(
+            _affine,
+            n_broadcast_samples=64,
+            dispatch="jax",
+            label="affine",
+            output_spec=OutputSpec(affine=None),
+        )
+        sequential = Function(
+            _affine,
+            n_broadcast_samples=64,
+            dispatch="sequential",
+            label="affine",
+            output_spec=OutputSpec(affine=None),
+        )
 
         result = mapped(record_law()["a"])
 
@@ -76,7 +105,13 @@ class TestDispatchModes:
 
 class TestOrchestration:
     def test_orchestration_is_off_by_default(self):
-        assert effective_workflow_kind(Function("affine", _affine)) is WorkflowKind.OFF
+        assert (
+            Function(
+                _affine,
+                label="affine",
+            ).effective_workflow_kind
+            is WorkflowKind.OFF
+        )
 
 
 class TestFailures:
@@ -88,7 +123,12 @@ class TestFailures:
         def diverge(z):
             raise Diverged("the iteration diverged")
 
-        wrapped = Function("diverge", diverge, n_broadcast_samples=6, dispatch=dispatch)
+        wrapped = Function(
+            diverge,
+            n_broadcast_samples=6,
+            dispatch=dispatch,
+            label="diverge",
+        )
 
         with workflow_run(seed=5), pytest.raises(Diverged):
             wrapped(standard_normal())

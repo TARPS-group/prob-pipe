@@ -1,14 +1,22 @@
 """The root-ancestor capture of lifted arguments (V.5).
 
 A lifted argument is a law, and the law whose draws it reads, transitively, is
-its **root**. An element of a batch of laws reads its stored law's draw, a field
-view reads its parent's draw and projects its node, and a law registered as a
-descendant type reads its ancestor's draw and maps it, as a bijector-transformed
-law pushes its base's draw through its bijector and a renamed law moves its
-parent's draw to the new paths. The lift groups the arguments by root, so each
-group contributes one root draw per repetition and every member evaluates on
-it. Hence sibling views co-sample, two accesses of one batch element co-sample,
-a law co-samples with its own transform and its own rename, and the empirical
+its **root**. Each of these laws reads another law's draw:
+
+- an element of a batch of laws: its stored law's draw;
+- a field view: its parent's draw, projected onto its node;
+- every law that ``with_path_names``, ``with_label``, ``with_dim_names``, or
+  ``with_dim_sizes`` returns: the draw of the law it is made from, moved to the
+  new paths;
+- a law of a registered descendant type: its ancestor's draw, mapped as a
+  bijector-transformed law pushes its base's draw through its bijector.
+
+A law that renames at its boundary holds the law it renames, and every other
+result of these four methods records the law it is made from. The lift groups
+the arguments by root, so each group contributes one root draw per repetition
+and every member evaluates on it. Hence sibling views co-sample, two accesses of
+one batch element co-sample, a law co-samples with its own transform, its own
+rename, and its own relabeled or dimension-bound copy, and the empirical
 enumeration enumerates a renamed empirical law's atoms as the law's.
 
 The capture of an argument records its root, the root's sampler, the event
@@ -32,7 +40,7 @@ import jax.numpy as jnp
 from ..distributions._batches import _element_source
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
-from ..distributions._views import FieldView, _projector, _RenamedDistribution
+from ..distributions._views import FieldView, _copy_source, _projector, _RenamedDistribution
 
 _DISTRIBUTION_SAMPLING_ABI = "probpipe.distribution_sampling/v1"
 _DESCRIPTOR_DOMAIN = b"ProbPipe-descendant-descriptor-v1\0"
@@ -212,15 +220,25 @@ def _capture_stochastic_consumer(
     *,
     session: _StochasticCaptureSession,
 ) -> CapturedStochasticConsumer:
-    """The capture of *value*: a batch element's, a field view's, or a registered descendant's.
+    """The capture of *value* as a batch element, a field view, a copy, or a descendant.
 
-    A law that is none of these is its own root.
+    A copy whose renames keep every path captures as the law it is made from,
+    as a batch element captures as its stored law. A descendant is a law of a
+    registered descendant type, and a law that is none of these is its own root.
     """
     source = _element_source(value)
     if source is not None:
-        return _capture_element(value, source, session=session)
+        return _capture_source(value, source, "batch element", session=session)
     if isinstance(value, FieldView):
         return _capture_field_view(value, session=session)
+    copy_source = _copy_source(value)
+    if copy_source is not None:
+        parent, event = copy_source
+        if event.keeps_paths:
+            return _capture_source(value, parent, "copy", session=session)
+        # A rename captures as the law that renames at its boundary, so one rename
+        # gives one descriptor and one evaluator whatever class the result has.
+        return _capture_descendant(value, _RenamedDistribution, _renamed_descent, session=session)
     rule = _descent_rule(value)
     if rule is not None:
         return _capture_descendant(value, *rule, session=session)
@@ -277,22 +295,42 @@ def _lift_indices(key: Any, law: EmpiricalDistribution, sample_shape: tuple[int,
     return jnp.reshape(jax.random.permutation(order_key, index), sample_shape)
 
 
-def _capture_element(
-    element: Distribution,
+def _capture_source(
+    value: Distribution,
     source: Distribution,
+    kind: str,
     *,
     session: _StochasticCaptureSession,
 ) -> CapturedStochasticConsumer:
-    """A batch element's capture, which is its stored law's, since the element shares its draws.
+    """The capture of *source*, which *value* shares its draws with, as a batch element does.
+
+    Parameters
+    ----------
+    value : Distribution
+        A batch element, or a copy whose renames keep every path.
+    source : Distribution
+        The law whose draws *value* shares: an element's stored law, as
+        ``_element_source`` returns it, or the law a copy is made from.
+    kind : str
+        The kind of *value*, ``"batch element"`` or ``"copy"``, which a cycle's
+        error names.
+    session : _StochasticCaptureSession
+        The call-local capture session, which captures *source* and whose
+        ``active_descendants`` detect a cycle.
+
+    Returns
+    -------
+    CapturedStochasticConsumer
+        The capture of *source*, which the session caches.
 
     Raises
     ------
     TypeError
-        If the element graph is cyclic.
+        If the graph of sources is cyclic.
     """
-    identity = id(element)
+    identity = id(value)
     if identity in session.active_descendants:
-        raise TypeError("Cyclic batch element graph is unsupported")
+        raise TypeError(f"Cyclic {kind} graph is unsupported")
     session.active_descendants.add(identity)
     try:
         return session.capture_consumer(source)
@@ -310,6 +348,20 @@ def _capture_field_view(
     A view of one path records the path's segments, and a view of a root needs
     no descriptor beyond them. A selection of several paths records them in its
     descriptor.
+
+    Parameters
+    ----------
+    view : FieldView
+        The view of one path of its parent's event, or of a selection of
+        several paths.
+    session : _StochasticCaptureSession
+        The call-local capture session, which captures the parent and whose
+        ``active_descendants`` detect a cycle.
+
+    Returns
+    -------
+    CapturedStochasticConsumer
+        The capture with the parent's root and sampler.
 
     Raises
     ------
@@ -354,6 +406,24 @@ def _capture_descendant(
     session: _StochasticCaptureSession,
 ) -> CapturedStochasticConsumer:
     """A registered descendant's capture: its ancestor's root, then its map.
+
+    Parameters
+    ----------
+    value : Distribution
+        The descendant law.
+    registered : type
+        The registered class nearest *value*'s class, whose qualified name the
+        descriptor records.
+    descend : callable
+        The rule registered for *registered*, which gives *value*'s descent.
+    session : _StochasticCaptureSession
+        The call-local capture session, which captures the ancestor and whose
+        ``active_descendants`` detect a cycle.
+
+    Returns
+    -------
+    CapturedStochasticConsumer
+        The capture with the ancestor's root, sampler, and record path.
 
     Raises
     ------
@@ -422,14 +492,32 @@ def _identity(value: Any) -> Any:
     return value
 
 
-def _renamed_descent(renamed: _RenamedDistribution) -> _Descent:
-    """A renamed law's descent: its parent's draws, moved to the renamed paths."""
-    event = renamed._event
+def _renamed_descent(renamed: Distribution) -> _Descent:
+    """A renamed law's descent: the draws of the law it renames, moved to the renamed paths.
+
+    Parameters
+    ----------
+    renamed : Distribution
+        A law that ``with_path_names`` returned, which records the law it renames
+        and the renames.
+
+    Returns
+    -------
+    _Descent
+        The law that *renamed* renames as the ancestor, and the map that moves a
+        batch of its draws to the renamed paths.
+
+    Raises
+    ------
+    TypeError
+        If *renamed* renames no law.
+    """
+    source = _copy_source(renamed)
+    if source is None:  # pragma: no cover - the capture reads the source before it descends
+        raise TypeError(f"{type(renamed).__name__} renames no law")
+    parent, event = source
     return _Descent(
-        ancestor=renamed._parent,
+        ancestor=parent,
         forward=event.draw,
         descriptor=("renamed", tuple(sorted(event.leaves.items()))),
     )
-
-
-_register_descendant_type(_RenamedDistribution, _renamed_descent)

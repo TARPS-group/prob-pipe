@@ -17,12 +17,17 @@ import pytest
 
 from probpipe import (
     ApplicabilityError,
+    DistributionBatch,
+    DistributionSpec,
     EmpiricalDistribution,
     Function,
+    InputSpec,
+    NumericArrayBatch,
     NumericArraySpec,
     OutputSpec,
     RecordSpec,
     function,
+    mean,
     workflow_run,
 )
 from probpipe.core.constraints import positive
@@ -51,19 +56,32 @@ def _lifted_rate() -> Function:
 class TestTheDeclaredOutput:
     def test_a_bare_term_spec_completes_to_the_default_declaration(self):
         spec = NumericArraySpec(())
-        wrapped = Function("f", lambda x: x, output_label="value", output_spec=spec)
+        wrapped = Function(
+            lambda x: x,
+            output_label="value",
+            output_spec=OutputSpec.default(spec, component="value"),
+            label="f",
+        )
 
         assert wrapped.output_spec == OutputSpec.default(spec, component="value")
 
     def test_a_bare_record_spec_exposes_its_fields(self):
         spec = RecordSpec(a=NumericArraySpec(()))
-        wrapped = Function("f", lambda x: {"a": x}, output_spec=spec)
+        wrapped = Function(
+            lambda x: {"a": x},
+            output_spec=spec,
+            label="f",
+        )
 
         assert wrapped.output_spec.exposes_record
         assert set(wrapped.output_spec.components) == {"a"}
 
     def test_a_type_hole_is_filled_per_call_and_the_declaration_keeps_it(self):
-        wrapped = Function("f", lambda x: x, output_spec=OutputSpec(mean=None))
+        wrapped = Function(
+            lambda x: x,
+            output_spec=OutputSpec(mean=None),
+            label="f",
+        )
 
         first = wrapped(jnp.ones(2))
         second = wrapped(jnp.ones(3))
@@ -97,7 +115,7 @@ class TestTheResultOfALift:
         assert result.event_spec.spec.support is positive
 
     def test_an_undeclared_array_return_lifts_to_a_whole_term_under_output_name(self):
-        @function(n_broadcast_samples=6, dispatch="sequential")
+        @function(n_broadcast_samples=6, dispatch="sequential", output_spec=OutputSpec(square=None))
         def square(x):
             return x * x
 
@@ -108,7 +126,7 @@ class TestTheResultOfALift:
         assert not result.event_spec.exposes_record
 
     def test_the_sampling_lift_constructs_an_empirical_approximation(self):
-        @function(n_broadcast_samples=6, dispatch="sequential")
+        @function(n_broadcast_samples=6, dispatch="sequential", output_spec=OutputSpec(square=None))
         def square(x):
             return x * x
 
@@ -117,20 +135,73 @@ class TestTheResultOfALift:
 
         assert isinstance(result, EmpiricalDistribution)
 
-    @pytest.mark.pending(
-        reason="an empty sweep needs a declaration sufficient to construct its result",
-        raises=AssertionError,
-    )
     def test_an_empty_sweep_without_a_declaration_is_refused(self):
-        from probpipe import NumericArrayBatch
-
         @function(dispatch="sequential")
         def double(x):
             return 2.0 * x
 
-        empty = NumericArrayBatch("rows", jnp.zeros((0,)), "row", element_spec=NumericArraySpec(()))
+        empty = NumericArrayBatch(
+            jnp.zeros((0,)),
+            "row",
+            element_spec=NumericArraySpec(()),
+            label="rows",
+        )
 
         assert error_of(lambda: double(empty)) is not None
+
+
+class TestEmptySweepPlanning:
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto", "jax"])
+    @pytest.mark.parametrize(
+        "declaration",
+        [None, OutputSpec(value=None), NumericArraySpec(("n",)), RecordSpec(x=("n",))],
+        ids=["undeclared", "type-hole", "unbound-array", "unbound-record"],
+    )
+    @pytest.mark.parametrize("check", [False, True], ids=["execute", "check"])
+    def test_an_incomplete_declaration_is_refused_without_running_the_body(
+        self, dispatch, declaration, check
+    ):
+        @function(dispatch=dispatch, output_spec=declaration)
+        def unexpected(x):
+            raise AssertionError("An empty sweep must not evaluate the body")
+
+        empty = NumericArrayBatch(jnp.zeros((0,)), "row", label="rows")
+        call = unexpected.check if check else unexpected
+        with pytest.raises(ValueError, match="empty sweep requires a concrete output_spec"):
+            call(empty)
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto", "jax"])
+    def test_input_dimensions_complete_an_empty_sweeps_output(self, dispatch):
+        @function(
+            dispatch=dispatch,
+            input_spec=InputSpec(x=NumericArraySpec(("n",))),
+            output_spec=NumericArraySpec(("n",)),
+        )
+        def unexpected(x):
+            raise AssertionError("An empty sweep must not evaluate the body")
+
+        empty = NumericArrayBatch(jnp.zeros((0, 2)), "row", label="rows")
+        assert unexpected.check(empty).result.spec.shape == (2,)
+        result = unexpected(empty)
+        assert isinstance(result, NumericArrayBatch)
+        assert result.batch_shape == (0,)
+        assert result.element_spec.shape == (2,)
+        assert result.raw.shape == (0, 2)
+
+    def test_an_operation_derives_the_empty_sweeps_declaration(self):
+        import numpy as np
+
+        empty = DistributionBatch(
+            np.empty((0,), dtype=object),
+            "row",
+            element_spec=DistributionSpec(OutputSpec(x=NumericArraySpec(()))),
+            label="laws",
+        )
+        assert mean.check(empty).result.spec.shape == ()
+        result = mean(empty)
+        assert isinstance(result, NumericArrayBatch)
+        assert result.batch_shape == (0,)
+        assert result.element_spec.shape == ()
 
 
 class TestIncludingTheInputs:
@@ -167,7 +238,12 @@ class TestIncludingTheInputs:
         assert set(result.event_spec.components) == {"theta", "mean"}
 
     def test_a_one_field_record_draw_remains_nested(self):
-        @function(include_inputs=True, n_broadcast_samples=6, dispatch="sequential")
+        @function(
+            include_inputs=True,
+            n_broadcast_samples=6,
+            dispatch="sequential",
+            output_spec=OutputSpec(weigh=None),
+        )
         def weigh(theta):
             return 0.0
 
@@ -191,9 +267,9 @@ class TestIncludingTheInputs:
 class TestFailures:
     def test_arguments_that_do_not_unify_raise_applicability_error(self):
         wrapped = Function(
-            "add",
             lambda x, y: x + y,
             input_spec={"x": NumericArraySpec(("n",)), "y": NumericArraySpec(("n",))},
+            label="add",
         )
 
         assert isinstance(error_of(lambda: wrapped(jnp.ones(3), jnp.ones(4))), ApplicabilityError)

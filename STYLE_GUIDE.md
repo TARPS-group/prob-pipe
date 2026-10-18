@@ -110,10 +110,10 @@ calling contract; optional `input_spec: InputSpec` and `output_spec: OutputSpec`
 are authoritative schemas but never derive or replace that signature. Use
 `apply(*args, **kwargs)` for one raw evaluation with binding and schema checks.
 Use `__call__` for distribution lifting, array sweeps, orchestration, result
-wrapping, and Function-first provenance. Results use `output_label`, which
-defaults to the function's label at construction and survives `with_label`. A
-raw implementation's own label survives `apply`, while a normal call labels its
-independent result.
+wrapping, and Function-first provenance. Results derive an application expression;
+explicit `output_label` supplies a display alias. Declare whole-term output
+components with `OutputSpec`, independently of labels. A raw implementation's
+own label survives `apply`, while a normal call describes its independent result.
 
 If an implementation returns an existing `Record`, `RecordBatch`, or
 `Distribution`, `apply` preserves its identity. `__call__` instead creates a
@@ -125,8 +125,9 @@ element and `**kwargs` entry as an independent slot while reconstructing the
 original `BoundArguments` before invoking user code.
 
 Exception: the learned-likelihood factories `learn_amortized_likelihood` and
-`learn_amortized_ratio`, and the samplers `rwmh` and `elliptical_slice`, are
-plain functions. A plain public function states its reason in a comment at its
+`learn_amortized_ratio`, the samplers `rwmh` and `elliptical_slice`, and
+`summarize`, which returns the terms the operations return, are plain
+functions. A plain public function states its reason in a comment at its
 definition site.
 
 ### 1.5 Classes
@@ -168,15 +169,15 @@ Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
 `Function` keeps ProbPipe controls separate from wrapped-function
 kwargs. Use `@function(...)` for definition-time controls
 such as `dispatch` and `n_broadcast_samples`, and use
-`workflow.with_options(...)(...)` for one-call overrides such as
-`n_broadcast_samples` and `include_inputs`.
+`workflow.using(...)` for a copy with revised controls, such as
+`n_broadcast_samples` and `include_inputs`, which every call of the copy reads.
 
 Ordinary workflow calls should treat keyword arguments as user-function
 inputs. Wrapped functions may use names such as `seed`,
 `n_broadcast_samples`, and `include_inputs` when those names are part of
 their own domain API.
 
-`seed` is not a `Function` or `with_options` control. Put reproducible lifted
+`seed` is not a `Function` or `using` control. Put reproducible lifted
 executions inside `with workflow_run(seed=...):`; a wrapped function's own
 parameter named `seed` remains an ordinary domain input.
 
@@ -348,7 +349,7 @@ from probpipe.core.record import Record
 
 The public modules are these:
 
-- `core/`: `config.py`, `constraints.py`, `named_tree.py`, `node.py`,
+- `core/`: `config.py`, `constraints.py`, `named_tree.py`,
   `protocols.py`, `provenance.py`, `record.py`, `tracked.py`, and `transition.py`;
 - `linalg/`: `linear_operator.py`, `operations.py`, and `utils.py`;
 - `record/`: `design.py`;
@@ -383,13 +384,14 @@ and a non-empty ``sample_shape`` prepends batch axes on a level named
 Usage::
 
     from probpipe import Normal, sample
-    draws = sample(Normal(loc=0.0, scale=1.0, label="x"), sample_shape=(100,))
+    draws = sample(Normal("x", 0.0, 1.0), sample_shape=(100,))
 """
 ```
 
 ### 3.2 Class docstrings
 
-Summary line, then `Parameters` section:
+Summary line, then a `Parameters` section for the constructor's parameters.
+`__init__` has no docstring of its own:
 
 ```python
 class Normal(TFPDistribution):
@@ -397,18 +399,23 @@ class Normal(TFPDistribution):
 
     Parameters
     ----------
-    label : str
-        Distribution label.
+    component : str
+        The component of the law's event.
     loc : array-like
         Mean of the distribution.
     scale : array-like
         Standard deviation (> 0).
+    label : str, optional
+        The law's label, the family's class name by default.
     """
 ```
 
 ### 3.3 Function/method docstrings
 
-Summary line, then `Parameters`, `Returns`, `Raises` as needed:
+Summary line, then `Parameters`, `Returns`, and `Raises` as needed. A docstring
+with any section documents every parameter in `Parameters`, in signature order,
+and the returned value in `Returns`. Each entry states its type in words, such as
+`int or tuple of int` or `array-like`:
 
 ```python
 @operation(result=_sample_result)
@@ -437,6 +444,9 @@ def sample(d: Distribution, sample_shape: tuple[int, ...] = ()):
         If *d* does not sample.
     """
 ```
+
+The `pydoclint` pre-commit hook checks the parameters and the returned value, and
+the CI lint job runs it over `probpipe/` (CONTRIBUTING.md § Linting & pre-commit).
 
 ### 3.4 Section separators
 
@@ -589,7 +599,7 @@ record/        (core/)
      ↑
 inference/     (core/, values/, distributions/, functions/, operations/, families/)
 validation/    (core/, distributions/, functions/, operations/)
-diagnostics/   (distributions/, functions/, validation/)
+diagnostics/   (distributions/, functions/, operations/, validation/)
 ```
 
 The private helper modules (`_array_utils.py`, `_dtype.py`, `_weights.py`)
@@ -612,9 +622,12 @@ works without the engine. `functions/__init__.py` resolves its exports lazily.
 >   `design/package-structure.md`.
 > - `core/` → `families/`: the function of `core/_fingerprint.py` that
 >   fingerprints a `KDEDistribution` imports the class lazily.
+> - `core/_table.py` → `functions/_recipe.py`: the line below a table of
+>   summaries counts a call's Monte Carlo draws with `monte_carlo_draws`, which
+>   sits beside the code that records them in the call's replay anchor.
 > - `distributions/` → `diagnostics.views` (lazy import inside
 >   `Distribution.diagnostics` to construct the read-only diagnostics accessor)
-> - `diagnostics/` → `inference/`: four diagnostics modules import private
+> - `diagnostics/` → `inference/`: five diagnostics modules import private
 >   helpers of `inference/` lazily, such as the chain helpers of
 >   `inference/_approximate_distribution.py`.
 >
@@ -686,7 +699,7 @@ Define reusable fixtures at module scope:
 ```python
 @pytest.fixture
 def normal():
-    return Normal(loc=2.0, scale=0.5, label="x")
+    return Normal("x", loc=2.0, scale=0.5)
 ```
 
 Use `@pytest.fixture(params=...)` for parametrized testing across
@@ -769,18 +782,9 @@ modules (`_*.py`) whose symbols are re-exported through the package
 ### 9.2 Immutability
 
 Design II.4 owns the immutability rule and its one writable store, the
-append-only `annotations`. Every tracked term other than a distribution
+append-only `annotations`. Every tracked term, a distribution included,
 enforces the rule: assignment and deletion raise `AttributeError`, naming the
-class.
-
-**Distributions do not enforce it yet.** `Distribution` overrides both
-`__setattr__` and `__delattr__` to permit them, because the documented way to
-build an emulator is to subclass a random function and train it in place, and
-fitting has no contract yet that returns a new fitted term instead. Write new
-code as though the guard were on — an operation returns a new distribution — and
-do not add assignment to a distribution outside its constructor. The exemption
-lifts by removing both overrides, once fitting has that contract; removing one
-would leave a trainer that clears what it fitted still raising.
+class, and an operation that changes a term returns a new one.
 
 **A memo** holds what a term computes lazily. It is a `_memo` dictionary that
 `transient_memo` in `probpipe/core/_immutable.py` creates on first use, and the
@@ -791,25 +795,117 @@ declares `_memo` in `_transient_state` so no copy inherits it, and whatever
 reads it must tolerate its absence, since a copy or an unpickle arrives
 without one.
 
-### 9.3 Error messages
+### 9.3 Error and warning messages
 
-When a protocol check fails, raise `TypeError` with a message that names
-the missing capability:
+A message is read by someone who has just made a mistake and does not know the
+design. It says what went wrong in the caller's terms and how to fix it. These
+rules govern every exception and warning message, which includes a
+`Feasibility` description and the default message of an error class. The
+writing rules of §10 govern docstrings and design prose, and they do not
+govern messages, because a message built from §10 rules 1 and 2 and from the
+glossary vocabulary explains the design to a reader who needs a fix.
+
+1. **Lead with what failed.** Give the action that could not happen, then the
+   reason with the offending value, then the fix. Write one or two short
+   sentences, with no em-dash and no chain of semicolons.
+2. **State the problem, not the design.** Leave out why the rule exists. State
+   a rule only when the fix needs it, and state it as a requirement with
+   *must* or *cannot*. A rule stated as a fact, such as "weights are
+   nonnegative", reads as if it contradicts the input. Use *but* for a
+   contrast, never *and*.
+3. **Use the caller's words.** Name the function, the argument, and the value
+   the caller passed. A term is fine when the public API or the user
+   guide uses it, such as `ConditionalDistribution` or `sample_shape`. Describe
+   any other term in plain words, which includes design terms of
+   `design/glossary.md` such as packaging, whole term, and kernel.
+4. **Show no private names.** A message names nothing with a leading
+   underscore and no type the caller never sees, such as the class of a JAX
+   array. A `NotImplementedError` says what is unsupported in public
+   terms, such as "log_det_jacobian is not implemented yet", and never gives
+   an internal method path.
+5. **Show the offending value.** Print the value, shape, or type that failed
+   whenever it is at hand. A lookup of a name that does not exist also
+   lists the names that do, with `unknown_names` from `probpipe/_messages.py`.
+   Keep `KeyError` where a `Mapping` or a docstring promises it.
+6. **Give a fix only when it is certain.** Give the fix when it is short and
+   holds for every way the check can fail. A check whose branches need
+   different fixes raises a separate message from each branch.
+7. **Word each check once.** A check raised from several places builds its
+   message in one helper, so that one mistake reads the same everywhere.
+8. **Follow the mechanics.** Start in lowercase unless the message starts with
+   an identifier. End a message of one clause without a period. Write
+   "got int" rather than putting an article before a type name, and pluralize
+   a count with `count` from `probpipe/_messages.py`.
+9. **Give each route's reason once.** A message that lists the routes or
+   methods it tried already names each one, so a `Feasibility` description
+   gives only the reason. A description of a failure the caller can fix, such
+   as a field name the argument does not have, sets `actionable=True`, and the
+   listing leads with it.
+
+Each pair below shows a message that breaks these rules and its rewrite.
+
+```text
+# Explains the design (rules 1-3)
+with_path_names() keeps the packaging, so the whole term's component 'mu' is renamed in place, not moved to 'population/mu'
+cannot rename 'mu' to 'population/mu': with_path_names() can rename a single-component output but cannot move it into a group. Choose a name without '/'.
+
+# Inverted lookup with no fix (rules 1 and 5)
+not levels of this batch: ['test']; have ['quantile']
+unknown level 'test'; available levels: ['quantile']
+
+# Internal vocabulary (rule 3)
+standalone replay does not support a parent with nested automatic workflow randomness
+cannot replay this call: model draws random values through a nested Function call, which replay_run does not support. Replay the provenance of the inner call's result instead.
+
+# Rule stated as a fact (rule 2)
+X stacks the input points along its leading axis, so it has an axis
+X must have a leading axis of input points, got a 0-d array; pass shape (n, ...)
+
+# Private names and no value (rules 4 and 5)
+_ensure_matrix: Required 3 columns. Got 2.
+A must have 3 columns, got shape (3, 2)
+
+# Repeated route name (rule 9)
+bind_given_slots (exact methods): route 'bind_given_slots' declined: the conditioned object is not a kernel
+bind_given_slots (exact methods): Normal is not a ConditionalDistribution
+```
+
+A protocol check that fails raises `TypeError` and names the missing
+capability:
 
 ```python
 if not isinstance(dist, SupportsMean):
-    raise TypeError(
-        f"{type(dist).__name__} does not support mean; "
-        f"it must implement the SupportsMean protocol"
-    )
+    raise TypeError(f"{type(dist).__name__} does not support mean; it must implement SupportsMean")
 ```
+
+### 9.4 A scalar where a sequence is expected
+
+An argument that takes a shape, a sequence of names, or one axis count per
+level also takes a single item as a sequence of one:
+
+- a shape takes a single int or str as one dimension, so `3` is `(3,)` and
+  `"n"` is `("n",)`, by the rule of design II.1;
+- a sequence of names, such as level names or metric names, takes a single str
+  as one name, so `"draw"` is `("draw",)`;
+- axis counts take a single int as the count of one level.
+
+Any other sequence, such as a tuple, a list, a `range`, or a 1-D array, is read
+as one item per entry and stored as a tuple. An iterator such as a generator, a
+set, `bytes`, a `memoryview`, and a mapping are refused, so an argument is never
+used up or read in an arbitrary order. A `RecordSpec` field given as a shape
+takes a tuple only, since a field's value may also be a spec. `probpipe/core/_shapes.py`
+is the one place these arguments are read. A function that takes one calls the reader there
+rather than calling `tuple()` on the argument, passes its own name and the
+argument's for the error messages (§9.3 rule 7), and annotates the parameter
+with the alias there, such as `ShapeLike` or `NamesLike`.
 
 ---
 
 ## 10. Writing
 
 These rules govern the prose of the repository: docstrings and comments, the
-documentation and `design/`, and PR and issue text. `scripts/design/prose.py`
+documentation and `design/`, and PR and issue text. Error and warning messages
+follow §9.3 instead. `scripts/design/prose.py`
 lists the places that may break the rules a script can detect, for a reader to
 judge.
 

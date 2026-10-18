@@ -39,12 +39,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import prod
-from typing import Any
+from typing import Any, ClassVar
 
 import jax
 import jax.numpy as jnp
 
+from ..core._expression import Applied, constant
+from ..core._repr import type_name
 from ..core._specs import NumericArraySpec, OpaqueSpec, OutputSpec
+from ..core.tracked import TrackedTerm
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions._capabilities import (
     SupportsLogProb,
@@ -57,6 +60,7 @@ from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._factored import _components_of
 from ..families._random_functions import RandomFunction, RandomMeasure
 from ..values._function_base import FunctionSpec
+from ._inference_utils import described
 
 __all__ = ["MinibatchedDistribution"]
 
@@ -69,6 +73,17 @@ __all__ = ["MinibatchedDistribution"]
 def _data_size(data: Any) -> int:
     """The number of observations in *data*, the length of its leading axis.
 
+    Parameters
+    ----------
+    data : array-like
+        The observed value of the likelihood's event.
+
+    Returns
+    -------
+    int
+        The dataset size ``N``, which bounds the minibatch size and scales a
+        minibatch's log-likelihood by ``N / b``.
+
     Raises
     ------
     ValueError
@@ -76,9 +91,7 @@ def _data_size(data: Any) -> int:
     """
     shape = jnp.shape(data)
     if not shape:
-        raise ValueError(
-            "MinibatchedDistribution takes observations along a leading axis; got a scalar"
-        )
+        raise ValueError("the observed data must have a leading axis of observations; got a scalar")
     return int(shape[0])
 
 
@@ -112,6 +125,14 @@ def _reads_observations(likelihood: Any) -> bool:
     """Whether *likelihood* is a kernel that scores a subset of its observations."""
     return isinstance(likelihood, ConditionalDistribution) and callable(
         getattr(likelihood, "_observation_log_prob", None)
+    )
+
+
+def _subset_scoring_reason(likelihood: Any) -> str:
+    """Why *likelihood*, which :func:`_reads_observations` rejects, cannot be minibatched."""
+    return (
+        "the likelihood must be a ConditionalDistribution that can score a subset of its "
+        f"observations, such as one from glm_likelihood; got {described(likelihood)}"
     )
 
 
@@ -151,8 +172,6 @@ class MinibatchedDistribution(
 
     Parameters
     ----------
-    label : str
-        Distribution name.
     prior : SupportsLogProb
         Prior distribution over parameters; provides the log-prior
         term :math:`\\log p(\\theta)`.
@@ -167,6 +186,11 @@ class MinibatchedDistribution(
         along its leading axis, of length ``>= batch_size``.
     batch_size : int
         Minibatch size :math:`b`. Must be ``1 <= b <= len(data)``.
+    label : str, optional
+        The measure's label. By default the label is ``minibatch``, and the
+        notation shows the construction over the prior and the likelihood, as
+        ``minibatch(prior(beta), lik(y | beta), batch_size=40)``. A prior that
+        is not a ``Distribution`` has no label to show, so it requires one.
     with_replacement : bool, default False
         Sample minibatch indices with replacement. Default is
         without-replacement (uniform permutation, take first ``b``).
@@ -176,37 +200,50 @@ class MinibatchedDistribution(
     TypeError
         If ``prior`` is not :class:`~probpipe.SupportsLogProb`, or
         ``likelihood`` is not a kernel that scores a subset of its
-        observations.
+        observations, or ``label`` is ``None`` for a prior that is not a
+        ``Distribution``.
     ValueError
         If ``data`` has no leading axis, or ``batch_size`` is not in
         ``[1, len(data)]``.
     """
 
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
+
     def __init__(
         self,
-        label: str,
         prior: SupportsLogProb,
         likelihood: ConditionalDistribution,
         data: ArrayLike,
         batch_size: int,
         *,
+        label: str | None = None,
         with_replacement: bool = False,
     ):
         if not isinstance(prior, SupportsLogProb):
             raise TypeError(
-                f"MinibatchedDistribution requires prior to satisfy "
-                f"SupportsLogProb; got {type(prior).__name__}."
+                f"MinibatchedDistribution: prior must have a log-density (SupportsLogProb); "
+                f"got {described(prior)}"
             )
         if not _reads_observations(likelihood):
-            raise TypeError(
-                f"MinibatchedDistribution requires a likelihood kernel whose observations "
-                f"are conditionally independent and which scores a subset of them, such as "
-                f"glm_likelihood's kernel; got {type(likelihood).__name__}."
-            )
+            raise TypeError(f"MinibatchedDistribution: {_subset_scoring_reason(likelihood)}")
 
         n = _data_size(data)
         if batch_size < 1 or batch_size > n:
-            raise ValueError(f"batch_size must be in [1, len(data)={n}]; got {batch_size}.")
+            raise ValueError(f"batch_size must be in [1, len(data)={n}]; got {batch_size}")
+
+        expression = None
+        if label is None:
+            if not isinstance(prior, TrackedTerm):
+                raise TypeError(
+                    f"MinibatchedDistribution cannot take its label from a prior of type "
+                    f"{type_name(prior)}, which has no label; pass label=..."
+                )
+            expression = Applied(
+                "minibatch",
+                (prior._embedded_expression(), likelihood._embedded_expression()),
+                (("batch_size", constant(int(batch_size))),),
+            )
 
         self._prior = prior
         self._likelihood = likelihood
@@ -219,7 +256,10 @@ class MinibatchedDistribution(
         # declares them.
         self._draw_event_spec = _parameter_declaration(prior, "parameters")
 
-        super().__init__(label, DistributionSpec(self._draw_event_spec))
+        # A draw is one fixed-minibatch target, the measure's one component.
+        super().__init__("target", DistributionSpec(self._draw_event_spec), label=label)
+        if expression is not None:
+            self._store_expression(expression)
 
     # -- read-only metadata --------------------------------------------------
 
@@ -288,6 +328,10 @@ class MinibatchedDistribution(
 
     # -- repr ----------------------------------------------------------------
 
+    def _derived_label(self) -> str | None:
+        """The label the constructor gives when it is given none: ``minibatch``, for a prior that has a label."""
+        return "minibatch" if isinstance(self._prior, TrackedTerm) else None
+
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The prior, the likelihood, the dataset size, and the minibatch size."""
         return [
@@ -341,7 +385,10 @@ class _FixedMinibatchDistribution(
             label = "fixed_minibatch_distribution"
         if event_spec is None:
             event_spec = _parameter_declaration(prior, "parameters")
-        super().__init__(label, event_spec)
+        super().__init__(
+            event_spec,
+            label=label,
+        )
         self._prior = prior
         self._likelihood = likelihood
         self._data = data
@@ -409,7 +456,7 @@ class _RandomMinibatchLogProb(
 
     def __init__(self, measure: MinibatchedDistribution):
         super().__init__(
-            f"{measure.label}/random_log_prob", OutputSpec(random_log_prob=FunctionSpec())
+            "random_log_prob", FunctionSpec(), label=f"{measure.label}/random_log_prob"
         )
         self._measure = measure
 
@@ -435,8 +482,9 @@ class _RandomMinibatchLogProb(
         """
         if sample_shape != ():
             raise NotImplementedError(
-                "Batched _sample of _RandomMinibatchLogProb (sample_shape != ()) "
-                "is not supported. Call with split keys instead."
+                f"sample_shape={sample_shape} is not supported: the random log-density of a "
+                f"MinibatchedDistribution draws one function at a time. Split the key and "
+                f"sample once per key."
             )
         inner = self._measure._draw_one(key)
         # Return the bound method as a deterministic callable.
@@ -468,7 +516,10 @@ class _MinibatchLogProbAtPoint(Distribution, SupportsSampling):
 
     def __init__(self, measure: MinibatchedDistribution, theta: Any):
         # A draw is one scalar log-density value.
-        super().__init__(f"{measure.label}@theta", OutputSpec(log_prob=NumericArraySpec(())))
+        super().__init__(
+            OutputSpec(log_prob=NumericArraySpec(())),
+            label=f"{measure.label}@theta",
+        )
         self._measure = measure
         self._theta = theta
 

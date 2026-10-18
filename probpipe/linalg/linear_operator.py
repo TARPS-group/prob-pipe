@@ -23,7 +23,9 @@ from .._array_utils import (
     _ensure_square_matrix,
     _ensure_vector,
 )
+from .._messages import unknown_names
 from ..core._repr import format_dtype, format_value, sequence_repr, term_repr
+from ..core.tracked import _check_raw_is_a_property
 from ..custom_types import Array, ArrayLike
 
 
@@ -72,6 +74,14 @@ def _known_positive(scalar: float | Array) -> bool:
     return bool(scalar > 0)
 
 
+def _described(value: Any) -> str:
+    """*value* as a message names it: an array by its shape, anything else by its type."""
+    shape = getattr(value, "shape", None)
+    if isinstance(value, LinOp) or shape is None:
+        return type(value).__name__
+    return f"an array of shape {tuple(shape)}"
+
+
 def _as_linear_operator(A: LinOpLike) -> LinOp:
     """
     Wraps arrays as a DenseLinOp, and returns existing LinOp objects untouched.
@@ -82,7 +92,10 @@ def _as_linear_operator(A: LinOpLike) -> LinOp:
         try:
             return DenseLinOp(A)
         except Exception as e:
-            raise TypeError(f"Could not convert A to linear operator\nDenseLinOp error: {e}") from e
+            raise TypeError(
+                f"expected a LinOp or a numeric array with at most 2 dimensions, "
+                f"got {_described(A)}"
+            ) from e
 
 
 # -----------------------------------------------------------------------------
@@ -109,6 +122,22 @@ class LinOp(ABC):
     def __init__(self) -> None:
         self._flags: set[str] = set()
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Refuse a subclass on which ``raw`` is anything but a property.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            The class keywords, passed on to the next class in the MRO.
+
+        Raises
+        ------
+        TypeError
+            If ``raw`` on the class is anything but a property.
+        """
+        super().__init_subclass__(**kwargs)
+        _check_raw_is_a_property(cls)
+
     @property
     @abstractmethod
     def shape(self) -> tuple[int, int]:
@@ -122,6 +151,7 @@ class LinOp(ABC):
         ...
 
     # ---- The representation ----
+    @property
     @abstractmethod
     def raw(self) -> Any:
         """The stored parameterization, such as a dense operator's matrix or a lazy composite's operands."""
@@ -147,7 +177,7 @@ class LinOp(ABC):
         """Throw error if operator is not square"""
         n_out, n_in = self.shape
         if n_out != n_in:
-            raise LinAlgError(f"Linear operator is not square. Has shape ({n_out}, {n_in})")
+            raise LinAlgError(f"linear operator must be square, got shape ({n_out}, {n_in})")
 
     # ---- Optional convenience methods that implementors may override for speed ----
     def apply(self, x: ArrayLike) -> Array:
@@ -156,22 +186,22 @@ class LinOp(ABC):
 
     def matvec(self, x: ArrayLike) -> Array:
         """Return A @ x for x shape (n_in,) -> (n_out,)."""
-        x = _ensure_vector(x)
+        x = _ensure_vector(x, name="x")
         return self.to_dense() @ x
 
     def rmatvec(self, x: ArrayLike) -> Array:
         """Return A^T @ x for x shape (n_out,) -> (n_in,)."""
-        x = _ensure_vector(x)
+        x = _ensure_vector(x, name="x")
         return self.to_dense().T @ x
 
     def matmat(self, X: ArrayLike) -> Array:
         """Return A @ X for X shape (n_in, k) or (n_in,)"""
-        X = _ensure_matrix(X)
+        X = _ensure_matrix(X, name="X")
         return self.to_dense() @ X
 
     def rmatmat(self, X: ArrayLike) -> Array:
         """Return A.T @ X for X shape (n_out, k) or (n_out,)"""
-        X = _ensure_matrix(X)
+        X = _ensure_matrix(X, name="X")
         return self.to_dense().T @ X
 
     def solve(self, b: ArrayLike, **kwargs) -> Array:
@@ -182,8 +212,8 @@ class LinOp(ABC):
 
         b = jnp.asarray(b)
         if b.ndim < 2:
-            b = _ensure_vector(b, as_column=True)
-        b = _ensure_matrix(b, num_rows=n)
+            b = _ensure_vector(b, name="b", as_column=True)
+        b = _ensure_matrix(b, name="b", num_rows=n)
 
         return jnp.linalg.solve(dense_op, b)
 
@@ -222,7 +252,7 @@ class LinOp(ABC):
         A = self.to_dense()
         sign, log_det = jnp.linalg.slogdet(A)
         if sign <= 0:
-            raise LinAlgError("Log-determinant undefined: matrix has non-positive determinant.")
+            raise LinAlgError("cannot compute the log-determinant: the determinant is not positive")
         return float(log_det)
 
     def trace(self) -> float:
@@ -234,7 +264,7 @@ class LinOp(ABC):
     def add_flag(self, flag: str) -> None:
         """Attach a semantic flag (must be one of ALLOWED_FLAGS)."""
         if flag not in ALLOWED_FLAGS:
-            raise ValueError(f"Unknown flag {flag!r}. Allowed: {sorted(ALLOWED_FLAGS)}")
+            raise ValueError(unknown_names("flag", [flag], sorted(ALLOWED_FLAGS)))
         self._flags.add(flag)
 
     def remove_flag(self, flag: str) -> None:
@@ -304,9 +334,14 @@ class ProductLinOp(LinOp):
     def __init__(self, A: LinOp, B: LinOp) -> None:
         super().__init__()
         if not isinstance(A, LinOp) or not isinstance(B, LinOp):
-            raise ValueError("ProductLinOp requires LinOp operands.")
+            raise ValueError(
+                f"ProductLinOp operands must be LinOps, got {_described(A)} and {_described(B)}"
+            )
         if A.shape[1] != B.shape[0]:
-            raise ValueError("Shapes incompatible for product: A.shape[1] != B.shape[0]")
+            raise ValueError(
+                f"cannot multiply operators of shapes {A.shape} and {B.shape}: inner "
+                f"dimensions {A.shape[1]} and {B.shape[0]} differ"
+            )
         self.A = A
         self.B = B
 
@@ -319,8 +354,9 @@ class ProductLinOp(LinOp):
 
     def _operand_repr_arguments(self) -> list[tuple[str, str]]:
         """The operands, in the constructor's order."""
-        return [("operands", sequence_repr(format_value(operand) for operand in self.raw()))]
+        return [("operands", sequence_repr(format_value(operand) for operand in self.raw))]
 
+    @property
     def raw(self) -> tuple[LinOp, LinOp]:
         """The operands ``(A, B)`` of ``A @ B``."""
         return (self.A, self.B)
@@ -355,14 +391,19 @@ class SumLinOp(LinOp):
     def __init__(self, ops: Iterable[LinOp]) -> None:
         ops = list(ops)
         if not ops:
-            raise ValueError("SumLinOp needs at least one operator.")
-        if not all(isinstance(op, LinOp) for op in ops):
-            raise ValueError("SumLinOp requires all sumands to be LinOps.")
+            raise ValueError("SumLinOp needs at least one operator")
+        for index, op in enumerate(ops):
+            if not isinstance(op, LinOp):
+                raise ValueError(
+                    f"SumLinOp operands must be LinOps, got {_described(op)} at index {index}"
+                )
 
         first_shape = ops[0].shape
         for op in ops:
             if op.shape != first_shape:
-                raise ValueError("All operands to SumLinOp must have same shape.")
+                raise ValueError(
+                    f"SumLinOp operands must all have shape {first_shape}, got {op.shape}"
+                )
         super().__init__()
         self.ops = ops
 
@@ -379,8 +420,9 @@ class SumLinOp(LinOp):
 
     def _operand_repr_arguments(self) -> list[tuple[str, str]]:
         """The operands, in the constructor's order."""
-        return [("operands", sequence_repr(format_value(operand) for operand in self.raw()))]
+        return [("operands", sequence_repr(format_value(operand) for operand in self.raw))]
 
+    @property
     def raw(self) -> tuple[LinOp, ...]:
         """The summands, in order."""
         return tuple(self.ops)
@@ -398,14 +440,14 @@ class SumLinOp(LinOp):
         return all(op.is_dense for op in self.ops)
 
     def matvec(self, x: ArrayLike) -> Array:
-        x = _ensure_vector(x)
+        x = _ensure_vector(x, name="x")
         arr = jnp.zeros((self.shape[0],), dtype=self.dtype)
         for op in self.ops:
             arr = arr + op.matvec(x)
         return arr
 
     def rmatvec(self, x: ArrayLike) -> Array:
-        x = _ensure_vector(x)
+        x = _ensure_vector(x, name="x")
         arr = jnp.zeros((self.shape[1],), dtype=self.dtype)
         for op in self.ops:
             arr = arr + op.rmatvec(x)
@@ -420,7 +462,7 @@ class SumLinOp(LinOp):
         TODO: may want to only take this fast pass if X has many columns; would
         need to set some heuristic threshold.
         """
-        X = _ensure_matrix(X, as_row_matrix=False)
+        X = _ensure_matrix(X, name="X", as_row_matrix=False)
 
         # Fast path: all DenseLinOp and X has multiple columns -> densify once
         if X.shape[1] > 1 and self.is_dense:
@@ -433,7 +475,7 @@ class SumLinOp(LinOp):
         return arr
 
     def rmatmat(self, X: ArrayLike) -> Array:
-        X = _ensure_matrix(X, as_row_matrix=False)
+        X = _ensure_matrix(X, name="X", as_row_matrix=False)
 
         # Fast path: all DenseLinOp and X is matrix -> densify once
         if X.shape[1] > 1 and self.is_dense:
@@ -464,10 +506,10 @@ class ScaledLinOp(LinOp):
     def __init__(self, op: LinOp, scalar: float | Array) -> None:
         super().__init__()
         if not isinstance(op, LinOp):
-            raise ValueError("ScaledLinOp requires a LinOp object.")
+            raise ValueError(f"ScaledLinOp requires a LinOp, got {_described(op)}")
 
         self.op = op
-        value = _ensure_real_scalar(scalar, as_array=True)
+        value = _ensure_real_scalar(scalar, name="scalar", as_array=True)
         self.scalar = value if isinstance(scalar, jax.Array) else float(value)
 
         if "dense" in op.flags:
@@ -482,8 +524,9 @@ class ScaledLinOp(LinOp):
 
     def _operand_repr_arguments(self) -> list[tuple[str, str]]:
         """The operands, in the constructor's order."""
-        return [("operands", sequence_repr(format_value(operand) for operand in self.raw()))]
+        return [("operands", sequence_repr(format_value(operand) for operand in self.raw))]
 
+    @property
     def raw(self) -> tuple[LinOp, float | Array]:
         """The operands ``(A, c)`` of ``c * A``, in the constructor's order."""
         return (self.op, self.scalar)
@@ -540,8 +583,9 @@ class TransposedLinOp(LinOp):
 
     def _operand_repr_arguments(self) -> list[tuple[str, str]]:
         """The operands, in the constructor's order."""
-        return [("operands", sequence_repr(format_value(operand) for operand in self.raw()))]
+        return [("operands", sequence_repr(format_value(operand) for operand in self.raw))]
 
+    @property
     def raw(self) -> tuple[LinOp]:
         """The one operand ``A`` of ``A.T``."""
         return (self.op,)
@@ -586,10 +630,11 @@ class DenseLinOp(LinOp):
 
     def __init__(self, arr: ArrayLike, copy: bool = True) -> None:
         super().__init__()
-        self.array = _ensure_matrix(arr, copy=copy)
+        self.array = _ensure_matrix(arr, name="arr", copy=copy)
         self._dtype = self.array.dtype
         self.add_flag("dense")
 
+    @property
     def raw(self) -> Array:
         """The stored matrix."""
         return self.array
@@ -611,12 +656,19 @@ class DenseLinOp(LinOp):
 
 
 class DiagonalLinOp(LinOp):
-    """Diagonal operator represented by a 1D array of diagonal entries."""
+    """Diagonal operator represented by a 1D array of diagonal entries.
+
+    Parameters
+    ----------
+    diag : array-like
+        The diagonal entries. An array of higher rank is flattened.
+    copy : bool
+        Whether to store a copy of the flattened entries.
+    """
 
     def __init__(self, diag: ArrayLike, copy: bool = True) -> None:
-        """`diag` may be higher-dimensional array, but will be flattened."""
         super().__init__()
-        self.diagonal = _ensure_vector(jnp.asarray(diag).ravel(), copy=copy)
+        self.diagonal = _ensure_vector(jnp.asarray(diag).ravel(), copy=copy, name="diag")
         self._n = int(self.diagonal.size)
         self._dtype = self.diagonal.dtype
 
@@ -625,6 +677,7 @@ class DiagonalLinOp(LinOp):
         if jnp.all(self.diagonal > 0):
             self.add_flag("positive_definite")
 
+    @property
     def raw(self) -> Array:
         """The stored diagonal."""
         return self.diagonal
@@ -638,14 +691,14 @@ class DiagonalLinOp(LinOp):
         return self._dtype
 
     def matvec(self, x: ArrayLike) -> Array:
-        x = _ensure_vector(x)
+        x = _ensure_vector(x, name="x")
         return self.diagonal * x
 
     def rmatvec(self, x: ArrayLike) -> Array:
         return self.matvec(x)
 
     def matmat(self, X: ArrayLike) -> Array:
-        X = _ensure_matrix(X)
+        X = _ensure_matrix(X, name="X")
         return X * self.diagonal[:, None]
 
     def rmatmat(self, X: ArrayLike) -> Array:
@@ -659,19 +712,23 @@ class DiagonalLinOp(LinOp):
         For consistency with jnp.linalg.solve(), b can be (n,) or (n,k).
         """
         if jnp.any(self.diagonal == 0):
-            raise LinAlgError("Diagonal contains zero entries; not invertible.")
+            raise LinAlgError(
+                "cannot solve with a diagonal operator whose diagonal has zero entries"
+            )
 
         b = jnp.asarray(b)
         if b.ndim < 2:
-            b = _ensure_vector(b, as_column=True)
-        b = _ensure_matrix(b, num_rows=self._n)
+            b = _ensure_vector(b, name="b", as_column=True)
+        b = _ensure_matrix(b, name="b", num_rows=self._n)
 
         return b / self.diagonal[:, None]
 
     def cholesky(self, lower: bool = True, **kwargs) -> DiagonalLinOp:
         """Note that `lower` has no effect on Cholesky decomposition of diagonal matrix"""
         if jnp.any(self.diagonal <= 0):
-            raise LinAlgError("Diagonal has non-positive entries; cholesky not defined.")
+            raise LinAlgError(
+                "cannot take the Cholesky factor: the diagonal has non-positive entries"
+            )
         return DiagonalLinOp(jnp.sqrt(self.diagonal))
 
     def to_cholesky_representation(self, lower: bool = True, **kwargs) -> DiagonalRootLinOp:
@@ -682,7 +739,9 @@ class DiagonalLinOp(LinOp):
 
     def logdet(self) -> float:
         if jnp.any(self.diagonal <= 0):
-            raise LinAlgError("Non-positive diagonal entries; logdet undefined.")
+            raise LinAlgError(
+                "cannot compute the log-determinant: the diagonal has non-positive entries"
+            )
         return float(jnp.sum(jnp.log(self.diagonal)))
 
 
@@ -696,7 +755,7 @@ class TriangularLinOp(LinOp):
 
     def __init__(self, tri: Array, *, lower: bool = True, copy: bool = True) -> None:
         super().__init__()
-        tri = _ensure_square_matrix(tri, copy=copy)
+        tri = _ensure_square_matrix(tri, name="tri", copy=copy)
         self.tri = tri
         self.lower = bool(lower)
         self._n = self.tri.shape[0]
@@ -710,6 +769,7 @@ class TriangularLinOp(LinOp):
         if jnp.allclose(jnp.diag(self.tri), 1.0):
             self.add_flag("unit_diagonal")
 
+    @property
     def raw(self) -> Array:
         """The stored triangular matrix; its flags state which triangle it is."""
         return self.tri
@@ -723,19 +783,19 @@ class TriangularLinOp(LinOp):
         return self._dtype
 
     def matvec(self, x: ArrayLike) -> Array:
-        x = _ensure_vector(x)
+        x = _ensure_vector(x, name="x")
         return self.tri @ x
 
     def rmatvec(self, x: ArrayLike) -> Array:
-        x = _ensure_vector(x)
+        x = _ensure_vector(x, name="x")
         return self.tri.T @ x
 
     def matmat(self, X: ArrayLike) -> Array:
-        X = _ensure_matrix(X)
+        X = _ensure_matrix(X, name="X")
         return self.tri @ X
 
     def rmatmat(self, X: ArrayLike) -> Array:
-        X = _ensure_matrix(X)
+        X = _ensure_matrix(X, name="X")
         return self.tri.T @ X
 
     def to_dense(self) -> Array:
@@ -745,8 +805,8 @@ class TriangularLinOp(LinOp):
         """Solve triangular system Lx=b or Ux=b."""
         b_arr = jnp.asarray(b)
         if b_arr.ndim < 2:
-            b_arr = _ensure_vector(b_arr, as_column=True)
-        b_arr = _ensure_matrix(b_arr, num_rows=self._n)
+            b_arr = _ensure_vector(b_arr, name="b", as_column=True)
+        b_arr = _ensure_matrix(b_arr, name="b", num_rows=self._n)
 
         return jsla.solve_triangular(
             self.tri,
@@ -769,6 +829,7 @@ class RootLinOp(LinOp):
         self._n = self.root.shape[0]
         self.add_flag("symmetric")
 
+    @property
     def raw(self) -> LinOp:
         """The stored root ``S`` of ``A = S @ S.T``, an operator."""
         return self.root
@@ -802,8 +863,8 @@ class RootLinOp(LinOp):
         """
         b = jnp.asarray(b)
         if b.ndim < 2:
-            b = _ensure_vector(b, as_column=True)
-        b = _ensure_matrix(b, num_rows=self._n)
+            b = _ensure_vector(b, name="b", as_column=True)
+        b = _ensure_matrix(b, name="b", num_rows=self._n)
 
         S = self.root.to_dense()
         y = jnp.linalg.solve(S, b)
@@ -838,12 +899,13 @@ class CholeskyLinOp(RootLinOp):
     def __init__(self, root: TriangularLinOp) -> None:
         if not isinstance(root, TriangularLinOp):
             raise ValueError(
-                f"CholeskyLinOp requires `root` to be a TriangularLinOp object.Got {type(root)}."
+                f"CholeskyLinOp requires root to be a TriangularLinOp, got {type(root).__name__}"
             )
 
         super().__init__(root)
         self.add_flag("positive_definite")
 
+    @property
     def raw(self) -> TriangularLinOp:
         """The stored Cholesky factor, ``L`` of ``A = L @ L.T`` or ``U`` of ``A = U.T @ U``."""
         return self.root
@@ -891,8 +953,8 @@ class CholeskyLinOp(RootLinOp):
         """
         b = jnp.asarray(b)
         if b.ndim < 2:
-            b = _ensure_vector(b, as_column=True)
-        b = _ensure_matrix(b, num_rows=self._n)
+            b = _ensure_vector(b, name="b", as_column=True)
+        b = _ensure_matrix(b, name="b", num_rows=self._n)
 
         S = self.root.to_dense()
         if self.root.lower:
@@ -923,13 +985,14 @@ class DiagonalRootLinOp(DiagonalLinOp):
     def __init__(self, root: DiagonalLinOp) -> None:
         if not isinstance(root, DiagonalLinOp):
             raise ValueError(
-                f"DiagonalRootLinOp requires `root` to be a DiagonalLinOp object.Got {type(root)}."
+                f"DiagonalRootLinOp requires root to be a DiagonalLinOp, got {type(root).__name__}"
             )
 
         # Call DiagonalLinOp constructor
         super().__init__(root.diagonal**2)
         self.root = root
 
+    @property
     def raw(self) -> DiagonalLinOp:
         """The stored diagonal root ``S`` of ``A = S @ S.T``, an operator."""
         return self.root
@@ -937,7 +1000,9 @@ class DiagonalRootLinOp(DiagonalLinOp):
     def cholesky(self, lower: bool = True, **kwargs) -> DiagonalLinOp:
         """Note that `lower` has no effect on Cholesky decomposition of diagonal matrix"""
         if jnp.any(self.diagonal <= 0):
-            raise LinAlgError("Diagonal has non-positive entries; cholesky not defined.")
+            raise LinAlgError(
+                "cannot take the Cholesky factor: the diagonal has non-positive entries"
+            )
         return DiagonalLinOp(self.root.diagonal)
 
 

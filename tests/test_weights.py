@@ -171,6 +171,26 @@ class TestWeightedChoice:
         idx = weighted_choice(key, 10)
         assert idx.shape == ()
 
+    @pytest.mark.parametrize("shape", [7, [7], (7,)])
+    def test_a_single_int_is_one_axis(self, shape):
+        assert weighted_choice(jax.random.PRNGKey(0), 10, shape=shape).shape == (7,)
+
+    @pytest.mark.parametrize(
+        ("shape", "error", "match"),
+        [
+            (
+                "n",
+                TypeError,
+                "weighted_choice shape must be an int or a sequence of ints, got str 'n'",
+            ),
+            (True, TypeError, "weighted_choice shape must be an int or a sequence of ints"),
+            ((-1,), ValueError, "weighted_choice shape entry must be non-negative, got -1"),
+        ],
+    )
+    def test_a_malformed_shape_is_refused(self, shape, error, match):
+        with pytest.raises(error, match=match):
+            weighted_choice(jax.random.PRNGKey(0), 10, shape=shape)
+
 
 # ---------------------------------------------------------------------------
 # Weights class
@@ -225,7 +245,7 @@ class TestWeightsConstruction:
         assert w.n == 4
 
     def test_at_least_one_required(self):
-        with pytest.raises(ValueError, match="At least one"):
+        with pytest.raises(ValueError, match="Weights needs n, weights or log_weights"):
             Weights()  # none provided
 
     def test_n_with_weights_validates_length(self):
@@ -233,7 +253,7 @@ class TestWeightsConstruction:
         w = Weights(n=3, weights=jnp.ones(3))
         assert w.n == 3
         # Mismatched n raises
-        with pytest.raises(ValueError, match="does not match"):
+        with pytest.raises(ValueError, match=r"must have shape \(5,\), one weight per item"):
             Weights(n=5, weights=jnp.ones(3))
 
     def test_weights_and_log_weights_exclusive(self):
@@ -354,6 +374,15 @@ class TestWeightsMethods:
         assert idx.shape == (50,)
         assert jnp.all(idx >= 0) and jnp.all(idx < 10)
 
+    def test_choice_takes_a_single_int_as_one_axis(self):
+        w = Weights(n=10)
+
+        assert w.choice(jax.random.PRNGKey(0), shape=50).shape == (50,)
+        with pytest.raises(
+            TypeError, match=r"Weights\.choice shape must be an int or a sequence of ints"
+        ):
+            w.choice(jax.random.PRNGKey(0), shape="n")
+
     def test_subsample_uniform(self):
         w = Weights(n=10)
         sub = w.subsample(jnp.array([0, 2, 4]))
@@ -392,7 +421,7 @@ class TestWeightsObjectPassthrough:
         result = Weights(n=2, weights=w)
         assert result.n == 2
         # Mismatched n raises
-        with pytest.raises(ValueError, match="does not match"):
+        with pytest.raises(ValueError, match="weights must hold 5 weights, one per item, got 2"):
             Weights(n=5, weights=w)
 
     def test_n_only_gives_uniform(self):
@@ -403,7 +432,7 @@ class TestWeightsObjectPassthrough:
     def test_n_with_array_validates_length(self):
         result = Weights(n=3, weights=jnp.array([1.0, 2.0, 3.0]))
         assert result.n == 3
-        with pytest.raises(ValueError, match="does not match"):
+        with pytest.raises(ValueError, match=r"must have shape \(5,\)"):
             Weights(n=5, weights=jnp.array([1.0, 2.0, 3.0]))
 
     def test_both_arrays_raises(self):

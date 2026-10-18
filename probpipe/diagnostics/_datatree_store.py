@@ -155,6 +155,18 @@ def to_named_posterior_dataset(
     Scalar parameters have dims ``(chain, draw)``. Vector or array-valued
     parameters preserve their event axes after ``draw``.
 
+    Parameters
+    ----------
+    posterior : EmpiricalDistribution
+        The inference result, whose atoms lie on the levels ``chain`` and
+        ``draw``.
+
+    Returns
+    -------
+    xr.Dataset
+        The dataset, in which the event axes of a variable ``x`` are named
+        ``x_dim_0``, ``x_dim_1``, and so on.
+
     Notes
     -----
     A *nested* posterior contributes one variable per leaf, named by the

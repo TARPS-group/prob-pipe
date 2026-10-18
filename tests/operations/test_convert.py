@@ -1,12 +1,26 @@
-"""Contract tests of convert: an unchanged source under fresh identity, or a registered converter."""
+"""Contract tests of convert: an unchanged source, a registered converter, and the support check."""
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
+import jax.numpy as jnp
+import numpy as np
 import pytest
 
-from probpipe import ApplicabilityError
+from probpipe import (
+    ApplicabilityError,
+    EmpiricalDistribution,
+    Exponential,
+    Gamma,
+    LogNormal,
+    Normal,
+    NumericArraySpec,
+    mean,
+    real,
+    variance,
+)
 from probpipe.core._dispatch import ResolutionError
 from probpipe.core._specs import OutputSpec
 from probpipe.distributions._capabilities import SupportsSampling
@@ -26,14 +40,20 @@ class _Source(Distribution):
     """A law that the suite's converters read."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, REAL)
+        super().__init__(
+            OutputSpec(**{label: REAL}),
+            label=label,
+        )
 
 
 class _Target(Distribution):
     """A representation that an exact and an approximate converter produce."""
 
     def __init__(self, label: str, component: str | None = None) -> None:
-        super().__init__(label, OutputSpec(**{component or label: REAL}))
+        super().__init__(
+            OutputSpec(**{component or label: REAL}),
+            label=label,
+        )
 
 
 class _RoughTarget(_Target):
@@ -129,15 +149,15 @@ class TestConvert:
         assert isinstance(convert(_Source("s"), _Target), _Target)
 
     def test_method_selects_a_converter(self, suite_converters):
-        view = convert.with_options(method="operations_suite_approximate_converter")
+        view = convert.using(method="operations_suite_approximate_converter")
         assert view.check(_Source("s"), _Target).exact is False
 
     def test_exact_only_refuses_an_approximate_converter(self, suite_converters):
         with pytest.raises(ResolutionError):
-            convert.with_options(exact_only=True)(_Source("s"), _RoughTarget)
+            convert.using(exact_only=True)(_Source("s"), _RoughTarget)
 
     def test_a_converter_that_changes_the_declaration_raises_value_error(self, suite_converters):
-        with pytest.raises(ValueError, match="component"):
+        with pytest.raises(ValueError, match="fields"):
             convert(_Source("s"), _Unfaithful)
 
     def test_the_route_delegates_to_the_converter_registry(self):
@@ -148,7 +168,7 @@ class TestConvert:
         report = convert.check(Gaussian("g"), _Target)
         identity = {info.method_name: info for info in report.routes}["identity"]
         assert identity.feasible is False
-        assert "is not a _Target" in identity.description
+        assert "is not an instance of _Target" in identity.description
         assert "already" not in identity.description
 
     def test_no_applicable_converter_raises_resolution_error(self):
@@ -158,3 +178,55 @@ class TestConvert:
     def test_the_target_is_a_class(self):
         with pytest.raises(ApplicabilityError, match="distribution class or a capability protocol"):
             convert(Gaussian("g"), "Gaussian")
+
+
+def _tau() -> Gamma:
+    """A law on the positive half-line with mean 100 / 10 = 10 and variance 100 / 10**2 = 1."""
+    return Gamma("tau", concentration=100.0, rate=10.0, label="tau")
+
+
+class TestTheSupportCheck:
+    """A conversion keeps the source's support unless ``check_support=False`` is set."""
+
+    def test_a_family_on_another_support_is_refused(self):
+        refusal = (
+            "moment_match: Normal is supported on real, but 'tau' declares the support positive. "
+            "Set the converter option check_support=False to fit it anyway"
+        )
+        with pytest.raises(ResolutionError, match=re.escape(refusal)):
+            convert(_tau(), Normal)
+
+    @pytest.mark.parametrize("options", [{}, {"check_support": True}])
+    def test_with_the_check_on_the_planned_support_is_the_source_support(self, options):
+        report = convert.using(method_options=options).check(_tau(), LogNormal)
+        assert report.result == OutputSpec(DistributionSpec(_tau().event_spec))
+
+    def test_the_override_fits_the_family_on_its_own_support(self):
+        fitted = convert.using(method_options={"check_support": False})(_tau(), Normal)
+        assert isinstance(fitted, Normal)
+        assert fitted.label == "tau"
+        assert fitted.support == real
+        assert fitted.event_spec.components["tau"].support == real
+        # Moment matching reads the Gamma law's closed-form mean and variance,
+        # so the fit matches them up to rounding.
+        np.testing.assert_allclose(
+            [float(mean(fitted)), float(variance(fitted))], [10.0, 1.0], rtol=1e-6
+        )
+
+    def test_the_override_leaves_the_planned_support_open(self):
+        declared = _tau().event_spec.spec
+        report = convert.using(method_options={"check_support": False}).check(_tau(), Normal)
+        assert report.result == OutputSpec(
+            DistributionSpec(OutputSpec(tau=NumericArraySpec(declared.shape, declared.dtype)))
+        )
+
+    def test_an_empirical_law_whose_atoms_leave_the_support_converts_under_the_override(self):
+        source = EmpiricalDistribution(jnp.array([0.0, 1.0, 2.0, 3.0]), component="x")
+        with pytest.raises(
+            ValueError, match=r"lie outside it\. Set the converter option check_support=False"
+        ):
+            convert(source, Exponential)
+        fitted = convert.using(method_options={"check_support": False})(source, Exponential)
+        assert isinstance(fitted, Exponential)
+        # The fit's mean is the atoms' mean of 1.5.
+        np.testing.assert_allclose(float(mean(fitted)), 1.5, rtol=1e-6)

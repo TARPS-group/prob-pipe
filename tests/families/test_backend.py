@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import functools
 import pickle
 
 import jax
@@ -29,9 +30,10 @@ from probpipe.distributions._capabilities import (
     SupportsQuantile,
     SupportsVariance,
 )
-from probpipe.families import TFPDistribution
-from probpipe.families._backend import _allow_batched_tfp_init
+from probpipe.families import TFPDistribution, _backend
+from probpipe.families._backend import _allow_batched_tfp_init, _eager_sample
 from probpipe.linalg import DiagonalLinOp, LinOp
+from tests._compilation import count_compilations
 
 
 def _families() -> dict[str, Distribution]:
@@ -132,7 +134,7 @@ _PROTOCOLS = {
 
 class TestTheEventDeclaration:
     def test_event_spec_names_the_component_and_the_label_stays(self):
-        prior = F.Normal("prior", 0.0, 1.0, event_spec=OutputSpec(beta=None))
+        prior = F.Normal("beta", 0.0, 1.0, label="prior")
         assert prior.label == "prior"
         assert list(prior.event_spec.components) == ["beta"]
         assert prior.event_spec.spec.shape == ()
@@ -203,7 +205,7 @@ class TestTheAdapter:
         assert bool(jnp.all(jnp.diff(quantiles, axis=0) >= 0))
 
     def test_raw_is_the_backend_distribution(self):
-        assert isinstance(F.Normal("x", 0.0, 1.0).raw(), tfd.Normal)
+        assert isinstance(F.Normal("x", 0.0, 1.0).raw, tfd.Normal)
 
     def test_the_adapter_claims_the_quantile(self):
         law = F.Normal("x", 0.0, 1.0)
@@ -315,7 +317,11 @@ class TestVectorParameters:
         assert not hasattr(law, "batch_shape")
 
     def test_a_batch_of_separate_laws_is_a_distribution_batch(self):
-        batch = DistributionBatch("x", [F.Normal("x", float(i), 1.0) for i in range(5)], "x")
+        batch = DistributionBatch(
+            [F.Normal("x", float(i), 1.0) for i in range(5)],
+            "x",
+            label="x",
+        )
         assert batch.batch_shape == (5,)
         assert batch[0].label == "x[x=0]"
         assert batch[0].event_shape == ()
@@ -328,7 +334,7 @@ class TestTheSeparateLawsForm:
         with _allow_batched_tfp_init():
             law = F.Normal("x", jnp.zeros(5), 1.0)
         assert law.event_shape == ()
-        assert tuple(law.raw().batch_shape) == (5,)
+        assert tuple(law.raw.batch_shape) == (5,)
         assert law._log_prob(jnp.zeros(5)).shape == (5,)
 
     def test_the_form_is_scoped_to_the_block(self):
@@ -391,6 +397,18 @@ _COPIES = {
 }
 
 
+class TestRecordedArguments:
+    """A family rebuilds itself from its constructor arguments, so it keeps them as given."""
+
+    def test_a_numpy_argument_is_read_only(self):
+        loc = np.array([0.0, 1.0, 2.0])
+        law = F.Normal("x", loc, np.ones(3))
+
+        with pytest.raises(ValueError, match="read-only"):
+            loc[0] = 5.0
+        np.testing.assert_array_equal(pickle.loads(pickle.dumps(law)).raw.mean(), [0.0, 1.0, 2.0])
+
+
 class TestPickling:
     """A family pickles and deep-copies, rebuilt from its constructor arguments."""
 
@@ -413,4 +431,193 @@ class TestPickling:
             law = F.Normal("x", jnp.zeros(3), 1.0)
         copied = _COPIES[how](law)
         assert copied.event_shape == ()
-        assert tuple(copied.raw().batch_shape) == (3,)
+        assert tuple(copied.raw.batch_shape) == (3,)
+
+
+class _NumpyNormal(tfd.Normal):
+    """A normal backend that draws with a new NumPy generator, ignoring the key."""
+
+    def _sample_n(self, n, seed=None):
+        shape = (n, *np.shape(self.loc + self.scale))
+        noise = np.random.default_rng().standard_normal(shape).astype(np.float32)
+        return self.loc + self.scale * noise
+
+
+def _ran_compiled(law: Distribution) -> bool:
+    """Whether every call of *law* so far ran a compiled program."""
+    memo = law._memo
+    return memo["compilable"] and not any(
+        key[0] == "untraced" for key in memo if isinstance(key, tuple)
+    )
+
+
+#: The families whose quantiles their backend computes, one coordinate per draw.
+_SCALAR_QUANTILES = [
+    name
+    for name, claimed in _EXPECTED.items()
+    if SupportsQuantile in claimed and name != "MultivariateNormal"
+]
+
+
+class TestCompiledCalls:
+    """The adapter samples, scores, and takes quantiles through compiled programs that later calls reuse."""
+
+    @pytest.mark.parametrize("name", _NAMES)
+    def test_the_compiled_calls_agree_with_the_backend_called_eagerly(self, name):
+        law = _families()[name]
+        key = jax.random.PRNGKey(0)
+        draws = law._sample(key, (16,))
+        # XLA fuses the arithmetic of a compiled program differently, which changes the
+        # last float32 digit. Observed across 4 seeds and every family: at most 5.7e-7
+        # absolute and 7e-7 relative away from zero.
+        np.testing.assert_allclose(
+            draws, law.raw.sample(seed=key, sample_shape=(16,)), rtol=2e-6, atol=2e-6
+        )
+        np.testing.assert_allclose(
+            law._log_prob(draws), law.raw.log_prob(draws), rtol=2e-6, atol=2e-6
+        )
+        assert _ran_compiled(law)
+
+    @pytest.mark.parametrize("name", _SCALAR_QUANTILES)
+    def test_the_compiled_quantiles_agree_with_the_backend_called_eagerly(self, name):
+        law = _families()[name]
+        q = jnp.array([0.05, 0.5, 0.95])
+        # The tolerance of the draws above, which the quantiles meet.
+        np.testing.assert_allclose(law._quantile(q), law.raw.quantile(q), rtol=2e-6, atol=2e-6)
+        assert _ran_compiled(law)
+
+    @pytest.mark.parametrize("family", [F.Beta, F.Gamma])
+    def test_a_warm_draw_and_quantile_compile_nothing(self, family):
+        first, second = family("a", 2.0, 3.0), family("a", 4.0, 1.5)
+        keys = jax.random.split(jax.random.PRNGKey(0), 2)
+        q = jnp.array([0.1, 0.9])
+        first._sample(keys[0], (10,))
+        first._quantile(q)
+        with count_compilations() as compiled:
+            second._sample(keys[1], (10,))
+            second._quantile(q)
+        assert compiled.count == 0
+
+    @pytest.mark.parametrize("family", [F.Poisson, F.Binomial])
+    def test_a_warm_draw_of_a_discrete_family_compiles_nothing(self, family):
+        arguments = {F.Poisson: {"rate": 2.0}, F.Binomial: {"total_count": 5.0, "probs": 0.3}}
+        law = family("a", **arguments[family])
+        keys = jax.random.split(jax.random.PRNGKey(0), 2)
+        law._sample(keys[0], (10,))
+        with count_compilations() as compiled:
+            law._sample(keys[1], (10,))
+        assert compiled.count == 0
+
+    @pytest.mark.parametrize(
+        ("program", "eager", "call"),
+        [
+            (
+                "_sample_program",
+                "_eager_sample",
+                lambda law: law._sample(jax.random.PRNGKey(1), (4,)),
+            ),
+            (
+                "_log_prob_program",
+                "_eager_log_prob",
+                lambda law: law._log_prob(jnp.array([0.5, 1.5])),
+            ),
+            (
+                "_quantile_program",
+                "_eager_quantile",
+                lambda law: law._quantile(jnp.array([0.25, 0.75])),
+            ),
+        ],
+    )
+    def test_a_call_runs_the_compiled_program(self, monkeypatch, program, eager, call):
+        compiled, uncompiled = [], []
+        for name, record in ((program, compiled), (eager, uncompiled)):
+            original = getattr(_backend, name)
+            monkeypatch.setattr(
+                _backend,
+                name,
+                lambda *args, original=original, record=record: (
+                    record.append(args) or original(*args)
+                ),
+            )
+        law = F.Gamma("a", 2.0, 3.0)
+        call(law)
+        call(law)
+        assert len(compiled) == 2
+        assert uncompiled == []
+
+    @pytest.mark.parametrize(
+        "backend",
+        [
+            _NumpyNormal(0.0, 1.0),
+            tfd.Independent(_NumpyNormal(jnp.zeros(2), 1.0), 1),
+            tfd.Blockwise(
+                tfd.JointDistributionSequential(
+                    [tfd.Normal(0.0, 1.0), lambda a: _NumpyNormal(a, 1.0)]
+                )
+            ),
+        ],
+        ids=["subclass", "subclass-inside-independent", "subclass-from-a-model-function"],
+    )
+    def test_a_backend_built_from_a_class_a_user_writes_runs_eagerly(self, backend):
+        law = TFPDistribution("x", backend)
+        first = law._sample(jax.random.PRNGKey(0), (4,))
+        second = law._sample(jax.random.PRNGKey(0), (4,))
+        # A compiled program would fix the NumPy draws of its trace.
+        assert not np.array_equal(first, second)
+
+    @pytest.mark.parametrize(
+        "backend",
+        [
+            tfd.Beta(2.0, 3.0, validate_args=True),
+            tfd.Beta(jnp.full(2, 2.0), 3.0, validate_args=True),
+        ],
+        ids=["scalar", "independent-coordinates"],
+    )
+    def test_a_backend_that_validates_its_arguments_runs_eagerly(self, backend):
+        law = TFPDistribution("x", backend)
+        with pytest.raises(ValueError, match="did not hold"):
+            law._log_prob(jnp.full(law.event_shape, 1.5))
+
+    def test_a_program_that_does_not_trace_falls_back_once_to_the_eager_call(self, monkeypatch):
+        attempts = []
+
+        @functools.partial(jax.jit, static_argnums=2)
+        def masked(backend, key, sample_shape):
+            draws = backend.sample(seed=key, sample_shape=sample_shape)
+            return draws[draws > -jnp.inf]
+
+        def program(*args):
+            attempts.append(args)
+            return masked(*args)
+
+        monkeypatch.setattr(_backend, "_sample_program", program)
+        law = F.Normal("x", 0.0, 1.0)
+        key = jax.random.PRNGKey(2)
+        draws = law._sample(key, (4,))
+        law._sample(key, (4,))
+        # The boolean mask needs concrete values, so the first call's attempt raises
+        # NonConcreteBooleanIndexError, an IndexError, and the second call skips it.
+        assert len(attempts) == 1
+        np.testing.assert_array_equal(draws, law.raw.sample(seed=key, sample_shape=(4,)))
+
+    def test_an_error_the_eager_call_raises_too_propagates_and_keeps_the_program(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            _backend, "_eager_sample", lambda *args: calls.append(args) or _eager_sample(*args)
+        )
+        law = F.Gamma("x", 2.0, 3.0)
+        with pytest.raises(TypeError, match="invalid PRNG key"):
+            law._sample(jnp.zeros(3), (4,))
+        calls.clear()
+        law._sample(jax.random.PRNGKey(1), (4,))
+        assert calls == []
+
+    def test_a_call_inside_a_transformation_the_caller_opens_traces_with_it(self):
+        law = F.Gamma("x", 2.0, 3.0)
+        keys = jax.random.split(jax.random.PRNGKey(0), 3)
+        draws = jax.jit(jax.vmap(lambda key: law._sample(key, (5,))))(keys)
+        assert draws.shape == (3, 5)
+        # The log-density of Gamma(a, b) is (a - 1) log x - b x + const, so its
+        # derivative in x is (a - 1) / x - b, which is -2 at x = 1.
+        slope = jax.grad(lambda x: law._log_prob(x))(1.0)
+        np.testing.assert_allclose(slope, -2.0, rtol=1e-6)

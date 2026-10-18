@@ -28,6 +28,7 @@ from types import UnionType
 from typing import Any, Union, get_args, get_origin
 
 from ..core._dispatch import ResolutionError
+from ..core._repr import type_name
 from ..distributions._capabilities import (
     SupportsApproximateConditioning,
     SupportsCovariance,
@@ -68,22 +69,13 @@ def is_distribution_hint(expected: Any) -> bool:
     """Return whether a type hint asks for a distribution object.
 
     A union asks for one when any of its arms does, so an optional
-    distribution annotation consumes the distribution as the plain one does.
+    distribution annotation consumes the distribution as the plain one does,
+    and a type alias asks for what its value asks for.
     """
-    if get_origin(expected) in (Union, UnionType):
-        return any(is_distribution_hint(arm) for arm in get_args(expected))
-    origin = getattr(expected, "__origin__", None)
-    expected_type = origin if isinstance(origin, type) else expected
-    try:
-        if (
-            expected_type is not None
-            and isinstance(expected_type, type)
-            and issubclass(expected_type, Distribution)
-        ):
-            return True
-    except TypeError:
-        pass
-    return expected in DISTRIBUTION_HINT_PROTOCOLS
+    return any(
+        _is_concrete_distribution_hint(arm) or arm in DISTRIBUTION_HINT_PROTOCOLS
+        for arm in _arms(expected)
+    )
 
 
 def normalize_distribution_values(
@@ -145,6 +137,15 @@ def plan_distribution_values(
 ) -> tuple[dict[str, Any], dict[str, ConversionInfo], tuple[str, ...]]:
     """Plan the conversions :func:`normalize_distribution_values` executes, executing none.
 
+    Parameters
+    ----------
+    values : dict
+        The bound arguments, keyed by parameter.
+    signature_info : FunctionSignatureInfo
+        The signature and the annotations of the function.
+    conversions : Mapping, optional
+        Each parameter's entry of the ``conversions`` control.
+
     Returns
     -------
     tuple
@@ -177,9 +178,7 @@ def plan_distribution_values(
             value, target, method=method, exact_only=exact_only, **options
         )
         if info.feasible is False:
-            raise ResolutionError(
-                f"parameter {ref.label!r} converts to {_name(target)}: {info.description}"
-            )
+            raise _conversion_failure(ref.label, target, info.description)
         if info.feasible is True and info.method_name is None:
             continue
         reports[ref.label] = info
@@ -194,10 +193,32 @@ def _name(target: type) -> str:
     return getattr(target, "__name__", repr(target))
 
 
+def _conversion_failure(label: str, target: type, detail: Any) -> ResolutionError:
+    """The error for an argument at *label* that no converter takes to *target*."""
+    return ResolutionError(f"cannot convert parameter {label!r} to {_name(target)}: {detail}")
+
+
 def _entry(
     conversions: Mapping[str, Mapping[str, Any]] | None, parameter: str
 ) -> tuple[str | None, bool, dict[str, Any]]:
     """The controls and the options of *parameter*'s ``conversions`` entry.
+
+    Parameters
+    ----------
+    conversions : Mapping or None
+        The ``conversions`` control, keyed by parameter name.
+    parameter : str
+        The parameter whose entry is read.
+
+    Returns
+    -------
+    method : str or None
+        The converter the entry names, or ``None``, which lets the registry
+        select one.
+    exact_only : bool
+        Whether the conversion admits only exact converters, ``False`` by default.
+    options : dict of str to Any
+        The entry's other settings, which the converter receives as its options.
 
     Raises
     ------
@@ -208,28 +229,44 @@ def _entry(
     method = options.pop("method", None)
     exact_only = options.pop("exact_only", False)
     if method is not None and not isinstance(method, str):
-        raise TypeError(
-            f"the conversions entry of {parameter!r} names its converter by a string; got "
-            f"method={method!r}"
-        )
+        raise TypeError(f"conversions[{parameter!r}]['method'] must be a string; got {method!r}")
     if type(exact_only) is not bool:
         raise TypeError(
-            f"the conversions entry of {parameter!r} sets exact_only to a bool; got {exact_only!r}"
+            f"conversions[{parameter!r}]['exact_only'] must be a bool; got {exact_only!r}"
         )
     return method, exact_only, options
 
 
-def _arms(expected: Any) -> tuple[Any, ...]:
-    """The arms of a union annotation other than ``None``, or the annotation itself."""
-    if get_origin(expected) in (Union, UnionType):
-        return tuple(arm for arm in get_args(expected) if arm is not type(None))
-    return (expected,)
+def _arms(expected: Any, expanded: set[Any] | None = None) -> tuple[Any, ...]:
+    """The arms of a union annotation other than ``None``, or the annotation itself, each resolved.
+
+    The annotation resolves by :func:`_binding.resolved_hint` before a union
+    splits, and each arm resolves and splits in turn, so an alias whose value is
+    a union names the arms of that union. An alias that resolving an enclosing
+    union expanded is in *expanded* and stays unresolved.
+    """
+    expanded = set() if expanded is None else expanded
+    hint = _binding.resolved_hint(expected, expanded)
+    if get_origin(hint) not in (Union, UnionType):
+        return (hint,)
+    return tuple(
+        named
+        for arm in get_args(hint)
+        if arm is not type(None)
+        for named in _arms(arm, set(expanded))
+    )
 
 
 def _hint_class(arm: Any) -> Any:
-    """The class a parametrized annotation names, or the annotation itself."""
-    origin = getattr(arm, "__origin__", None)
-    return origin if isinstance(origin, type) else arm
+    """The class a resolved annotation names, or the resolved annotation.
+
+    :func:`_binding.resolved_hint` resolves *arm*, and a parametrized annotation
+    names the class it parametrizes, so an array alias parametrized by a dtype
+    names the array class.
+    """
+    hint = _binding.resolved_hint(arm)
+    origin = get_origin(hint)
+    return origin if isinstance(origin, type) else hint
 
 
 def _convert_hinted_distribution(
@@ -243,6 +280,24 @@ def _convert_hinted_distribution(
 
     The registry returns a law that already satisfies *target* as it is.
 
+    Parameters
+    ----------
+    value : Any
+        The distribution argument: a law or a backend distribution object.
+    target : type
+        The class or capability protocol the parameter names, as
+        :func:`_conversion_target` returns it.
+    entry : tuple of (str or None, bool, dict)
+        The parameter's converter, ``exact_only`` setting, and options, as
+        :func:`_entry` returns them.
+    label : str
+        The label of the argument's reference, which the message names.
+
+    Returns
+    -------
+    Distribution
+        The converted law, which replaces *value* among the arguments.
+
     Raises
     ------
     ResolutionError
@@ -255,9 +310,7 @@ def _convert_hinted_distribution(
             value, target, method=method, exact_only=exact_only, **options
         )
     except ResolutionError as error:
-        raise ResolutionError(
-            f"parameter {label!r} converts to {_name(target)}: {error}"
-        ) from error
+        raise _conversion_failure(label, target, error) from error
 
 
 def _conversion_target(value: Any, expected: Any, *, label: str) -> type | None:
@@ -269,6 +322,22 @@ def _conversion_target(value: Any, expected: Any, *, label: str) -> type | None:
     object converts to the class named, or enters ProbPipe as its law where the
     named class admits every numeric law. A backend object at a parameter that
     names no distribution enters ProbPipe as its law.
+
+    Parameters
+    ----------
+    value : Any
+        The argument, which converts only when the converter registry
+        recognizes it as a distribution.
+    expected : Any
+        The annotation that governs lifting at the argument's parameter.
+    label : str
+        The label of the argument's reference, which the message names.
+
+    Returns
+    -------
+    type or None
+        ``None`` when the argument converts to nothing, and ``Distribution``
+        when a backend object enters ProbPipe as its law.
 
     Raises
     ------
@@ -286,16 +355,15 @@ def _conversion_target(value: Any, expected: Any, *, label: str) -> type | None:
     ):
         return None
     if len(arms) > 1:
-        if any(isinstance(value, arm) for arm in arms):
+        if any(isinstance(value, _hint_class(arm)) for arm in arms):
             return None
         from ._call import ApplicabilityError
 
         accepted = " | ".join(getattr(_hint_class(arm), "__name__", repr(arm)) for arm in arms)
         raise ApplicabilityError(
-            f"parameter {label!r} accepts {accepted}, and got a {type(value).__name__}, which is "
-            f"none of them. A union of several distribution classes names no single conversion "
-            f"target: pass a law of one of those classes, or annotate the parameter with the "
-            f"class to convert to"
+            f"parameter {label!r} accepts {accepted}, but got {type_name(value)}. A distribution "
+            f"converts only to a single annotated class; pass one of {accepted}, or annotate "
+            f"{label!r} with one class"
         )
     (arm,) = arms
     if not _is_concrete_distribution_hint(arm):

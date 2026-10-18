@@ -6,7 +6,7 @@ field-keyed, a ``Record`` or a mapping of field paths. Binding a given slot
 applies the kernel, and binding a produced field conditions the law.
 
 A call resolves in two stages. The **exact stage** computes the conditional: it
-curries given slots, calls a conditioning capability, or, where no exact route
+binds given slots, calls a conditioning capability, or, where no exact route
 conditions a produced field, forms the **unnormalized conditional**, the law of
 the unconditioned fields whose unnormalized log-density is the joint's at the
 given values. The **normalization stage** returns a normalized result as it is,
@@ -18,7 +18,7 @@ value: it normalizes each law it yields once its last given is bound.
 
 The routes, in selection order:
 
-1. ``curry`` binds given slots of a kernel through its ``_condition_on``, which
+1. ``bind_given_slots`` binds given slots of a kernel through its ``_condition_on``, which
    is exact unless the kernel claims ``SupportsApproximateConditioning``, and
    normalizes the result.
 2. ``slice`` assembles the conditional from a factored law's factors when the
@@ -26,9 +26,10 @@ The routes, in selection order:
    part of a law's that conditions on them exactly, and normalizes the result.
 3. ``exact_conditioning`` calls ``_condition_on`` on a law claiming
    ``SupportsExactConditioning``.
-4. ``bayes`` curries any given slots the given names, forms the unnormalized
-   conditional of the produced fields, and normalizes it. A kernel normalized
-   per value is curried and conditioned through the kernel whose laws it
+4. ``inference_methods`` binds any given slots the given names, forms the
+   unnormalized conditional of the produced fields by Bayes' rule, and
+   normalizes it through the inference-method registry. A kernel normalized
+   per value is bound and conditioned through the kernel whose laws it
    normalizes, so its result is normalized once.
 5. ``approximate_conditioning`` calls ``_condition_on`` on a law claiming
    ``SupportsApproximateConditioning``.
@@ -45,12 +46,12 @@ result. ``check`` reports both stages: its route is the exact stage's, and its
 method the normalization's, which is ``None`` for a result that needs none.
 Whether a result needs normalization is read from the declarations: a kernel's
 conditional capabilities state whether its laws are normalized. ``check``
-computes no exact stage, so it reports a curry unresolved when the kernel's
+computes no exact stage, so it reports a binding unresolved when the kernel's
 capabilities do not state it, and the call reads the computed law's own.
 
 The inference methods' budgets, such as warmup lengths, are the entries of the
 ``method_options`` control. The routes that normalize pass them to the selected
-method, or, when they curry a kernel normalized per value, to the method that
+method, or, when they bind a kernel normalized per value, to the method that
 normalizes the law it yields; ``approximate_conditioning`` passes them to the
 law's ``_condition_on`` as keyword options, and the other routes read none. The
 method that runs validates them: an inference method refuses an entry it does
@@ -61,9 +62,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
+from itertools import pairwise
 from types import MappingProxyType
 from typing import Any, ClassVar
 
+from .._messages import unknown_names
+from ..core._catalog import registry_catalog
 from ..core._dispatch import (
     BaseDispatchRegistry,
     Feasibility,
@@ -71,14 +75,19 @@ from ..core._dispatch import (
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
+from ..core._expression import Expression
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_names, format_value, grouped_label
-from ..core._spec_base import NumericSpec, OpaqueSpec, TermSpec, _full_array_shape_or_none
-from ..core._specs import OutputSpec, _components_record
+from ..core._repr import format_names, public_class_name
+from ..core._spec_base import (
+    NumericSpec,
+    OpaqueSpec,
+    TermSpec,
+    _full_array_shape_or_none,
+)
+from ..core._specs import InputSpec, OutputSpec, _components_record
 from ..core.provenance import Provenance
 from ..core.record import Record
-from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import (
     SupportsApproximateConditioning,
     SupportsConditionalUnnormalizedLogProb,
@@ -90,8 +99,17 @@ from ..distributions._capabilities import (
     _is_normalized,
     _kernel_is_normalized,
 )
-from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
-from ..distributions._distribution import Distribution, DistributionSpec
+from ..distributions._conditional import (
+    ConditionalDistribution,
+    ConditionalDistributionSpec,
+    _moved_slots,
+)
+from ..distributions._distribution import (
+    Distribution,
+    DistributionSpec,
+    _fixed_paths,
+    _fixes_every_field,
+)
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import (
     FactoredDistribution,
@@ -99,6 +117,8 @@ from ..distributions._factored import (
     _bound_factor,
     _joined_label,
     _law_at_defaults,
+    _product_of,
+    _with_named,
 )
 from ..distributions._views import _RenamedDistribution
 from ..functions._call import checking
@@ -109,6 +129,7 @@ from ._operation import (
     BoundCall,
     RouteSource,
     _CheckedRoute,
+    _install_expression_rule,
     _RegistryRoute,
     _workflow_draws,
     operation,
@@ -129,7 +150,7 @@ _UNNORMALIZED = "unnormalized"
 
 
 class InferenceMethod(UnaryDispatchMethod):
-    """Base class for registered inference methods; declares ``exact = False``.
+    """Base class for registered inference methods; ``exact`` is ``False`` unless a method overrides it.
 
     A method normalizes the target of ``condition_on``'s normalization stage: it
     takes the target alone, a law whose data are already bound, and returns a
@@ -141,15 +162,19 @@ class InferenceMethod(UnaryDispatchMethod):
 
     A method validates the ``method_options`` entries it receives when it runs:
     a subclass names the entries its ``execute`` reads in ``_method_options``
-    and calls :meth:`_check_options` before it computes anything.
+    and calls :meth:`_check_options` before it computes anything. A built-in
+    method reads no seed among them: each of its runs draws its key from a
+    workflow-owned random event, so ``workflow_run(seed=...)`` reproduces the
+    run.
 
     Notes
     -----
-    Every inference method is approximate: a finite MCMC, SG-MCMC, slice,
-    ABC, or variational output stands in for the conditional law, whatever
-    its invariant target or asymptotic guarantee. Those guarantees are the
-    method's own documentation, not its exactness. A method that returns a
-    representation of the conditional law itself overrides ``exact``.
+    A method is exact when its result is the conditional law itself, as the
+    reweighted atoms of an empirical prior are, and such a method overrides
+    ``exact``. A finite MCMC, SG-MCMC, slice, ABC, or variational output stands
+    in for the conditional law, whatever its invariant target or asymptotic
+    guarantee, so such a method keeps ``exact = False``; those guarantees are
+    the method's own documentation.
     """
 
     #: The ``method_options`` entries the method reads; ``None`` names none, for a
@@ -165,6 +190,11 @@ class InferenceMethod(UnaryDispatchMethod):
 
         A method whose ``_method_options`` is ``None`` admits every entry.
 
+        Parameters
+        ----------
+        options : Mapping of str to Any
+            The ``method_options`` entries the method received, by name.
+
         Raises
         ------
         TypeError
@@ -176,8 +206,8 @@ class InferenceMethod(UnaryDispatchMethod):
         unread = sorted(set(options) - set(reads))
         if unread:
             raise TypeError(
-                f"method_options {unread} are not options of the inference method "
-                f"{self.name!r}, which reads {sorted(reads)}"
+                f"inference method {self.name!r}: "
+                f"{unknown_names('method option', unread, sorted(reads))}"
             )
 
 
@@ -215,6 +245,25 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
         The keyword options are the call's ``method_options``, which the
         selected method validates when it runs.
 
+        Parameters
+        ----------
+        *args : Any
+            The target of the normalization stage, or a model and the data it is
+            conditioned on, from which the installed builder forms the target.
+        method : str or None
+            A registered method name to run instead of auto-selecting.
+        exact_only : bool
+            If ``True``, approximate methods are excluded.
+        **kwargs : Any
+            The keyword options, passed to the selected method's ``check`` and
+            ``execute``.
+
+        Returns
+        -------
+        Distribution
+            The normalized law over the target's event that the selected method
+            returns.
+
         Raises
         ------
         TypeError
@@ -226,6 +275,18 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
     def _targets(args: tuple[Any, ...]) -> tuple[Any, ...]:
         """*args* with a model and its observed data replaced by their target.
 
+        Parameters
+        ----------
+        args : tuple of Any
+            The positional arguments of a registry call: a target, or a model and
+            the data it is conditioned on.
+
+        Returns
+        -------
+        tuple of Any
+            A one-element tuple of the target when *args* holds two arguments, and
+            *args* itself otherwise.
+
         Raises
         ------
         TypeError
@@ -234,15 +295,19 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
         if len(args) != 2:
             return args
         if _observed_target is None:
-            raise TypeError("the target of a model and its data needs probpipe.inference")
+            raise TypeError("conditioning a model on data requires probpipe.inference; import it")
         return (_observed_target(*args),)
 
 
-inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = _InferenceMethodRegistry()
+inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = _InferenceMethodRegistry(
+    name="inference",
+    description="Inference methods for condition_on, keyed on the target's type.",
+)
 """The registry of the normalization stage of ``condition_on``, keyed on the target's type.
 
 The methods of ``probpipe.inference`` register here.
 """
+registry_catalog.register(inference_method_registry)
 
 
 # ---------------------------------------------------------------------------
@@ -277,20 +342,109 @@ def _slots_of(d: Any) -> frozenset[str]:
 
 
 # ---------------------------------------------------------------------------
+# The reasons a route gives
+# ---------------------------------------------------------------------------
+
+
+def _named(d: Any) -> str:
+    """*d* as a message names it: its public class and its label, such as ``Normal 'mu'``."""
+    return f"{public_class_name(type(d))} {d.label!r}"
+
+
+def _given_kind(call: BoundCall) -> Feasibility | None:
+    """Why the given names no field path: it is no Record or mapping, or it is empty."""
+    given = call.operands["given"]
+    keys = _given_keys(given)
+    if keys is None:
+        return Feasibility(
+            False,
+            f"given is not a Record or a mapping keyed by field path; "
+            f"got {public_class_name(type(given))}",
+        )
+    if not keys:
+        return Feasibility(False, "given is empty; name at least one field", actionable=True)
+    return None
+
+
+def _unknown_paths(d: Any, keys: Iterable[str]) -> list[str]:
+    """The keys among *keys* that name neither a given slot of *d* nor a field it declares."""
+    slots = _slots_of(d)
+    return [
+        key
+        for key in keys
+        if (_spec_at(d.given_spec, key) if _head(key) in slots else _spec_at(d.event_spec, key))
+        is None
+    ]
+
+
+def _unknown(d: Any, unknown: list[str]) -> Feasibility:
+    """The actionable report that the keys *unknown* name nothing *d* declares."""
+    fields = list(d.event_spec.components)
+    slots = sorted(_slots_of(d))
+    if not slots:
+        return Feasibility(False, unknown_names("field", unknown, fields), actionable=True)
+    head = (
+        f"unknown given slot or field {unknown[0]!r}"
+        if len(unknown) == 1
+        else f"unknown given slots or fields {unknown}"
+    )
+    return Feasibility(False, f"{head}; given slots: {slots}, fields: {fields}", actionable=True)
+
+
+def _nested_field(key: str) -> Feasibility:
+    """The actionable report that conditioning on the nested field *key* is not supported."""
+    return Feasibility(
+        False,
+        f"conditioning on the nested field {key!r} is not supported yet; condition on the "
+        f"whole field {_head(key)!r}",
+        actionable=True,
+    )
+
+
+def _fixes_every(d: Any) -> Feasibility:
+    """The actionable report that the given fixes every field of *d*."""
+    return Feasibility(False, _fixes_every_field(d.label), actionable=True)
+
+
+# ---------------------------------------------------------------------------
 # The targets of the normalization stage
 # ---------------------------------------------------------------------------
 
 
-def _curried(kernel: ConditionalDistribution, given: Any, **options: Any) -> Any:
-    """The law or kernel that *kernel* yields at *given*, its provenance recording the curry.
+def _at_given(kernel: ConditionalDistribution, given: Any, **options: Any) -> Any:
+    """The law or kernel that *kernel* yields at *given*, its provenance recording the binding.
 
     A result that carries a record of its own keeps it.
     """
-    result = kernel._condition_on(given, **options)
+    values = _given_values(given)
+    bindings: dict[str, int] = {}
+    from ._given import _bind_given_dims_from_value
+
+    for path, value in values.items():
+        _bind_given_dims_from_value(_spec_at(kernel.given_spec, path), value, bindings, repr(path))
+    if bindings:
+        kernel = kernel.with_dim_sizes(**bindings)
+    nested = [path for path in values if _PATH_SEP in path]
+    if nested:
+        # Promote each bound node to its own slot, preserving the unbound
+        # fields of every structured slot in the boundary translation.
+        occupied = set(kernel.given_spec) | set(kernel.event_spec.components)
+        moves: dict[str, str] = {}
+        for path in nested:
+            name = "_bound"
+            while name in occupied:
+                name += "_"
+            occupied.add(name)
+            moves[path] = name
+        kernel = kernel.with_path_names(moves)
+        values = {moves.get(path, path): value for path, value in values.items()}
+    result = kernel._condition_on(values, **options)
     if result is not kernel and result.provenance is None:
         result.with_provenance(
             Provenance.create(
-                "condition_on", parents=[kernel], metadata={"stage": "exact", "route": "curry"}
+                "condition_on",
+                parents=[kernel],
+                metadata={"stage": "exact", "route": "bind_given_slots"},
             )
         )
     return result
@@ -314,7 +468,7 @@ def _unconditioned_event(law: Any, produced: Iterable[str]) -> OutputSpec:
 def _joint_value(value: Any, given: Record) -> Record:
     """The joint's value at *value*, a draw of the unconditioned fields, and at *given*."""
     fields = value.children if isinstance(value, Record) else value
-    return Record("value", {**dict(fields), **dict(given.children)})
+    return Record({**dict(fields), **dict(given.children)}, label="value")
 
 
 def _conditional_density(self: _UnnormalizedConditional, value: Any) -> Any:
@@ -369,13 +523,18 @@ class _UnnormalizedConditional(Distribution):
     def __init__(
         self, joint: Distribution, given: Any, event_spec: OutputSpec, *, keyed: bool = True
     ) -> None:
-        super().__init__(joint.label, event_spec)
+        super().__init__(
+            event_spec,
+            label=joint.label,
+        )
         self._joint = joint
         self._given = given
         self._keyed = keyed
         self.with_provenance(
             Provenance.create(
-                "condition_on", parents=[joint], metadata={"stage": "exact", "route": "bayes"}
+                "condition_on",
+                parents=[joint],
+                metadata={"stage": "exact", "route": "inference_methods"},
             )
         )
 
@@ -444,7 +603,11 @@ class _UnnormalizedConditionalKernel(ConditionalDistribution):
     def __init__(
         self, kernel: ConditionalDistribution, given: Record, event_spec: OutputSpec
     ) -> None:
-        super().__init__(kernel.label, kernel.given_spec, event_spec)
+        super().__init__(
+            kernel.given_spec,
+            event_spec,
+            label=kernel.label,
+        )
         self._kernel = kernel
         self._given = given
 
@@ -466,7 +629,7 @@ class _UnnormalizedConditionalKernel(ConditionalDistribution):
         self, given: Record | Mapping[str, Any], /, **kwargs: Any
     ) -> Distribution | ConditionalDistribution:
         """The unnormalized conditional at a value of every given slot, or a kernel over the rest."""
-        return _unnormalized_conditional(_curried(self._kernel, given, **kwargs), self._given)
+        return _unnormalized_conditional(_at_given(self._kernel, given, **kwargs), self._given)
 
 
 def _unnormalized_conditional(law: Any, given: Record) -> Any:
@@ -488,7 +651,7 @@ def _unnormalized_conditional(law: Any, given: Record) -> Any:
 
 def _joined(first: Record, second: Record) -> Record:
     """The given values of *first* and *second* in one record."""
-    return Record("given", {**dict(first.children), **dict(second.children)})
+    return Record({**dict(first.children), **dict(second.children)}, label="given")
 
 
 # ---------------------------------------------------------------------------
@@ -496,10 +659,8 @@ def _joined(first: Record, second: Record) -> Record:
 # ---------------------------------------------------------------------------
 
 
-_NO_EXACT_METHOD = (
-    "the exact stage's result is unnormalized, and no exact method normalizes it; "
-    'method="unnormalized" returns that result'
-)
+_NO_EXACT_METHOD = "the conditional is unnormalized and no exact inference method applies"
+_UNNORMALIZED_FIX = 'use method="unnormalized" to get the unnormalized conditional'
 
 
 def _packaged_alike(declared: OutputSpec, expected: OutputSpec) -> bool:
@@ -517,7 +678,7 @@ def _as_declared(source: Any, law: Any) -> EmpiricalDistribution:
     record of it.
     """
     empirical = EmpiricalDistribution(
-        source.label, law.atoms, law.weights, event_spec=source.event_spec
+        law.atoms, law.weights, label=source.label, event_spec=source.event_spec
     )
     empirical._init_annotations(law.annotations)
     return empirical.with_provenance(law.provenance)
@@ -570,14 +731,17 @@ class _Normalization:
             held, method=self.method, exact_only=self.exact_only, **self.options
         )
         if report.feasible is False and self.exact_only:
-            return replace(report, description=f"{_NO_EXACT_METHOD}: {report.description}")
+            return replace(
+                report,
+                description=f"{_NO_EXACT_METHOD}; {_UNNORMALIZED_FIX} ({report.description})",
+            )
         return report
 
     def normalize(self, law: Any) -> Any:
         """The selected method's normalized law for the target *law*.
 
         The result carries *law*'s event declaration, as the result rule of
-        currying requires. A law renamed at its boundary is normalized through
+        binding given slots requires. A law renamed at its boundary is normalized through
         the target it holds, as :func:`_held_target` states.
         """
         held, renamed = _held_target(law)
@@ -655,7 +819,11 @@ class _PerValueNormalization(ConditionalDistribution):
         return object.__new__(_capability_subclass(_PerValueNormalization, claimed))
 
     def __init__(self, kernel: ConditionalDistribution, normalization: _Normalization) -> None:
-        super().__init__(kernel.label, kernel.given_spec, kernel.event_spec)
+        super().__init__(
+            kernel.given_spec,
+            kernel.event_spec,
+            label=kernel.label,
+        )
         self._kernel = kernel
         self._normalization = normalization
 
@@ -675,7 +843,7 @@ class _PerValueNormalization(ConditionalDistribution):
 
         *kwargs* are budgets of the method that normalizes the law.
         """
-        result = _curried(self._kernel, given)
+        result = _at_given(self._kernel, given)
         if not _needs_normalization(result):
             return result
         return _normalized(result, self._normalization.with_budgets(kwargs))
@@ -687,7 +855,7 @@ class _PerValueNormalization(ConditionalDistribution):
 
         It computes that law and runs no method.
         """
-        law = _curried(self._kernel, given)
+        law = _at_given(self._kernel, given)
         if not _needs_normalization(law):
             return Feasibility(True)
         return self._normalization.with_budgets(budgets).report(law)
@@ -702,8 +870,8 @@ class _PerValueNormalization(ConditionalDistribution):
         if produced:
             return Feasibility(
                 False,
-                f"{produced} are not given slots of the kernel normalized per value, and "
-                f"Bayes' rule conditions them through the kernel it normalizes",
+                f"{self.label!r} conditions exactly only on its given slots "
+                f"{sorted(self.given_spec)}, not on {produced}",
             )
         return Feasibility(True)
 
@@ -777,27 +945,38 @@ class _ExactStage:
     yields_kernel: Callable[[BoundCall], bool]
 
 
-def _can_curry(call: BoundCall) -> Feasibility:
+def _can_bind_given_slots(call: BoundCall) -> Feasibility:
     """Every key of the given names a given slot of a conditional distribution.
 
-    Raises
-    ------
-    NotImplementedError
-        If a key names part of a structured slot.
+    Parameters
+    ----------
+    call : BoundCall
+        The bound call of ``condition_on``, whose operands ``d`` and ``given``
+        the check reads.
+
+    Returns
+    -------
+    Feasibility
+        A feasible report, or a declined one whose description names the part
+        of the condition that fails.
+
     """
     d, keys = call.operands["d"], _given_keys(call.operands["given"])
     if not isinstance(d, ConditionalDistribution):
-        return Feasibility(False, "route 'curry' declined: the conditioned object is not a kernel")
-    if not keys:
-        return Feasibility(False, "route 'curry' declined: the given names no field")
-    if not {_head(key) for key in keys} <= _slots_of(d):
-        return Feasibility(False, "route 'curry' declined: the given names a produced field")
-    if any(_PATH_SEP in key for key in keys):
-        raise NotImplementedError("condition_on.curry: binding part of a structured slot")
+        return Feasibility(False, f"{_named(d)} is not a ConditionalDistribution")
+    kind = _given_kind(call)
+    if kind is not None:
+        return kind
+    unknown = _unknown_paths(d, keys)
+    if unknown:
+        return _unknown(d, unknown)
+    fields = [key for key in keys if _head(key) not in _slots_of(d)]
+    if fields:
+        return Feasibility(False, f"{fields} are fields of {d.label!r}, not given slots")
     return Feasibility(True)
 
 
-def _curry(call: BoundCall) -> Any:
+def _bind_given_slots(call: BoundCall) -> Any:
     """The kernel's ``_condition_on`` at the given slots.
 
     A kernel whose evaluation runs a method, one normalized per value or one
@@ -809,7 +988,7 @@ def _curry(call: BoundCall) -> Any:
     options: dict[str, Any] = {}
     if isinstance(kernel, (_PerValueNormalization, SupportsApproximateConditioning)):
         options = dict(call.controls.get("method_options", {}))
-    return _curried(kernel, call.operands["given"], **options)
+    return _at_given(kernel, call.operands["given"], **options)
 
 
 def _evaluation_is_exact(call: BoundCall) -> bool:
@@ -817,15 +996,19 @@ def _evaluation_is_exact(call: BoundCall) -> bool:
     return not isinstance(call.operands["d"], SupportsApproximateConditioning)
 
 
-def _curried_is_normalized(call: BoundCall) -> bool | None:
+def _bound_is_normalized(call: BoundCall) -> bool | None:
     """Whether the kernel's laws are normalized, as its conditional capabilities declare."""
     return _laws_are_normalized(call.operands["d"])
 
 
 def _leaves_a_slot(call: BoundCall) -> bool:
     """The given leaves a given slot of the conditioned object unbound."""
-    bound = {_head(key) for key in _given_keys(call.operands["given"]) or ()}
-    return bool(_slots_of(call.operands["d"]) - bound)
+    kernel = call.operands["d"]
+    if not isinstance(kernel, ConditionalDistribution):
+        return False
+    keys = _given_keys(call.operands["given"]) or ()
+    slots = tuple(key for key in keys if _spec_at(kernel.given_spec, key) is not None)
+    return bool(_remaining_given_spec(kernel.given_spec, slots).required)
 
 
 def _can_form_the_unnormalized_conditional(call: BoundCall) -> Feasibility:
@@ -835,31 +1018,22 @@ def _can_form_the_unnormalized_conditional(call: BoundCall) -> Feasibility:
     unconditioned fields.
     """
     d, keys = call.operands["d"], _given_keys(call.operands["given"])
-    if not keys:
-        return Feasibility(False, "route 'bayes' declined: the given is not field-keyed")
+    kind = _given_kind(call)
+    if kind is not None:
+        return kind
+    unknown = _unknown_paths(d, keys)
+    if unknown:
+        return _unknown(d, unknown)
     slots = _slots_of(d)
     produced = [key for key in keys if _head(key) not in slots]
     if not produced:
-        return Feasibility(False, "route 'bayes' declined: the given names no produced field")
+        return Feasibility(False, f"given binds only given slots of {d.label!r} and no field")
     components = set(d.event_spec.components)
     for key in produced:
-        if _head(key) not in components:
-            return Feasibility(
-                False, f"route 'bayes' declined: {key!r} is neither a given slot nor an event path"
-            )
         if key not in components:
-            return Feasibility(
-                False,
-                f"route 'bayes' declined: conditioning the interior path {key!r} is not implemented",
-            )
-    if any(_PATH_SEP in key for key in keys if _head(key) in slots):
-        return Feasibility(
-            False, "route 'bayes' declined: binding part of a structured slot is not implemented"
-        )
+            return _nested_field(key)
     if components <= set(produced):
-        return Feasibility(
-            False, "route 'bayes' declined: the given names every produced field, leaving no law"
-        )
+        return _fixes_every(d)
     return Feasibility(True)
 
 
@@ -873,22 +1047,25 @@ def _evaluated(d: Any) -> Any:
 
 
 def _bayes(call: BoundCall) -> Any:
-    """The unnormalized conditional of the produced fields, the given slots curried first.
+    """The unnormalized conditional of the produced fields, the given slots bound first.
 
-    A kernel normalized per value is curried and conditioned through the kernel
+    A kernel normalized per value is bound and conditioned through the kernel
     it normalizes, so the result is normalized once.
     """
     d, values = call.operands["d"], _given_values(call.operands["given"])
     evaluated = _evaluated(d)
     slots = _slots_of(d)
     bound = {key: value for key, value in values.items() if _head(key) in slots}
-    law = _curried(evaluated, bound) if bound else evaluated
+    law = _at_given(evaluated, bound) if bound else evaluated
     produced = {key: value for key, value in values.items() if key not in bound}
-    return _unnormalized_conditional(law, Record("given", produced))
+    return _unnormalized_conditional(
+        law,
+        Record(produced, label="given"),
+    )
 
 
 def _bayes_is_exact(call: BoundCall) -> bool:
-    """Forming the unnormalized conditional is exact unless it curries an approximate kernel."""
+    """Forming the unnormalized conditional is exact unless it binds an approximate kernel."""
     d = call.operands["d"]
     binds = any(_head(key) in _slots_of(d) for key in _given_keys(call.operands["given"]) or ())
     return not (binds and isinstance(_evaluated(d), SupportsApproximateConditioning))
@@ -905,6 +1082,14 @@ def _never(call: BoundCall) -> bool:
 def _slice_plan(d: Any, keys: tuple[str, ...]) -> tuple[Feasibility, dict[int, frozenset[str]]]:
     """Whether the slice applies to the factored law *d* at *keys*, and what it fixes in each factor.
 
+    Parameters
+    ----------
+    d : Distribution
+        A joint law that claims ``SupportsFactors``, read through its
+        ``factors``.
+    keys : tuple of str
+        The field paths the given names.
+
     Returns
     -------
     tuple
@@ -918,14 +1103,12 @@ def _slice_plan(d: Any, keys: tuple[str, ...]) -> tuple[Feasibility, dict[int, f
         for component in factor.event_spec.components
     }
     fixed: dict[int, set[str]] = {}
+    unknown = [key for key in keys if key not in producer and _spec_at(d.event_spec, key) is None]
+    if unknown:
+        return _unknown(d, unknown), {}
     for key in keys:
         if key not in producer:
-            reason = (
-                f"conditioning the interior path {key!r} is not implemented"
-                if _head(key) in producer
-                else f"{key!r} is not a component of the factors"
-            )
-            return Feasibility(False, f"route 'slice' declined: {reason}"), {}
+            return _nested_field(key), {}
         fixed.setdefault(producer[key], set()).add(key)
     whole = {
         index
@@ -933,9 +1116,7 @@ def _slice_plan(d: Any, keys: tuple[str, ...]) -> tuple[Feasibility, dict[int, f
         if components == set(factors[index].event_spec.components)
     }
     if len(whole) == len(factors):
-        return Feasibility(
-            False, "route 'slice' declined: the given names every produced field, leaving no law"
-        ), {}
+        return _fixes_every(d), {}
     for index, components in sorted(fixed.items()):
         factor = factors[index]
         slots = factor.given_spec if isinstance(factor, ConditionalDistribution) else {}
@@ -947,9 +1128,8 @@ def _slice_plan(d: Any, keys: tuple[str, ...]) -> tuple[Feasibility, dict[int, f
         if free:
             return Feasibility(
                 False,
-                f"route 'slice' declined: the factor producing {sorted(components)} conditions "
-                f"on {free}, which the given leaves free, so the conditional is not a product "
-                f"of the factors",
+                f"the factor that defines {sorted(components)} conditions on {free}, which "
+                f"given does not fix, so the conditional is not a product of the factors",
             ), {}
         if index in whole:
             continue
@@ -959,9 +1139,8 @@ def _slice_plan(d: Any, keys: tuple[str, ...]) -> tuple[Feasibility, dict[int, f
         ):
             return Feasibility(
                 False,
-                f"route 'slice' declined: the factor producing {sorted(components)} produces "
-                f"{others} as well, and it does not condition on them exactly, since its fields "
-                f"are not assumed independent",
+                f"given fixes {sorted(components)} but not {others} of the same factor, which "
+                f"cannot condition on part of its fields exactly",
             ), {}
         guard = _capability_guard(factor, "_condition_on", tuple(sorted(components)))
         if guard.feasible is not True:
@@ -979,12 +1158,13 @@ def _can_slice(call: BoundCall) -> Feasibility:
     the fixed values. At least one component stays unconditioned.
     """
     d, keys = call.operands["d"], _given_keys(call.operands["given"])
-    if not isinstance(d, SupportsFactors) or isinstance(d, ConditionalDistribution):
-        return Feasibility(
-            False, "route 'slice' declined: the conditioned object is not a joint law"
-        )
-    if not keys:
-        return Feasibility(False, "route 'slice' declined: the given names no field")
+    if isinstance(d, ConditionalDistribution):
+        return Feasibility(False, f"{_named(d)} is a ConditionalDistribution, not a Distribution")
+    if not isinstance(d, SupportsFactors):
+        return Feasibility(False, f"{_named(d)} does not implement SupportsFactors")
+    kind = _given_kind(call)
+    if kind is not None:
+        return kind
     return _slice_plan(d, keys)[0]
 
 
@@ -1012,9 +1192,22 @@ def _slice(call: BoundCall) -> Any:
     """The product of the factors the given leaves unconditioned, at the fixed values.
 
     A law fixed in part is replaced by its exact conditional, and a kernel is
-    curried at the fixed components it conditions on, receiving the call's
-    ``method_options`` where evaluating it runs a method, as in currying. One
+    bound at the fixed components it conditions on, receiving the call's
+    ``method_options`` where evaluating it runs a method, as in binding
+    given slots. One
     factor kept is the result itself.
+
+    Parameters
+    ----------
+    call : BoundCall
+        The bound call of ``condition_on``, whose ``d`` is a factored law and
+        whose ``given`` fixes components of its factors.
+
+    Returns
+    -------
+    Distribution
+        A ``FactoredDistribution`` of the kept factors, or the one factor kept.
+        A result without a provenance gains one that records the slice.
 
     Raises
     ------
@@ -1043,7 +1236,13 @@ def _slice(call: BoundCall) -> Any:
     law = (
         _law_at_defaults(factors[0], ())
         if len(factors) == 1
-        else FactoredDistribution(_joined_label(f.label for f in factors), factors)
+        else _with_named(
+            FactoredDistribution(
+                factors,
+                label=_joined_label(f.label for f in factors),
+            ),
+            False,
+        )
     )
     if law.provenance is None:
         law.with_provenance(
@@ -1055,7 +1254,7 @@ def _slice(call: BoundCall) -> Any:
 
 
 def _slice_is_exact(call: BoundCall) -> bool:
-    """The slice is exact unless it curries a kernel that claims SupportsApproximateConditioning."""
+    """The slice is exact unless it binds a kernel that claims SupportsApproximateConditioning."""
     return not any(
         bound and isinstance(factor, SupportsApproximateConditioning)
         for factor, _, bound in _sliced_factors(call)
@@ -1116,7 +1315,12 @@ def _given_conformance(call: BoundCall) -> Feasibility | None:
     d, given = call.operands["d"], call.operands["given"]
     if _reads_shapes_from_data(d) or _given_keys(given) is None:
         return None
+    paths = sorted(_given_keys(given))
+    for first, second in pairwise(paths):
+        if second.startswith(first + _PATH_SEP):
+            return Feasibility(False, f"given paths overlap at {first!r}", actionable=True)
     slots = d.given_spec if isinstance(d, ConditionalDistribution) else {}
+    bindings: dict[str, int] = {}
     for path, value in _given_values(given).items():
         expected = _spec_at(slots, path)
         if expected is None:
@@ -1124,9 +1328,13 @@ def _given_conformance(call: BoundCall) -> Feasibility | None:
         if not isinstance(expected, NumericSpec) or _full_array_shape_or_none(value) is None:
             continue
         try:
-            expected._bind_dims_from_value(value, {}, repr(path))
+            expected._bind_dims_from_value(value, bindings, repr(path))
         except ValueError as error:
-            return Feasibility(False, f"the given at {path!r} does not conform: {error}")
+            return Feasibility(
+                False,
+                f"the value given for {path!r} does not match its declaration: {error}",
+                actionable=True,
+            )
     return None
 
 
@@ -1141,11 +1349,11 @@ def _conforming(check: Callable[[BoundCall], Any]) -> Callable[[BoundCall], Any]
     return checked
 
 
-_CURRY = _ExactStage(
-    check=_conforming(_can_curry),
-    compute=_curry,
+_BIND_GIVEN_SLOTS = _ExactStage(
+    check=_conforming(_can_bind_given_slots),
+    compute=_bind_given_slots,
     exact=_evaluation_is_exact,
-    normalized=_curried_is_normalized,
+    normalized=_bound_is_normalized,
     yields_kernel=_leaves_a_slot,
 )
 _SLICE = _ExactStage(
@@ -1211,7 +1419,9 @@ class _NormalizingRoute(_RegistryRoute):
             self.registry, method, exact_only, MappingProxyType(self.method_options(call))
         )
 
-    def probe(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Feasibility:
+    def probe(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Feasibility:
         """The exact stage's report, then the normalization's, under the controls.
 
         A probe runs no method. A check computes the exact stage's result only
@@ -1227,29 +1437,29 @@ class _NormalizingRoute(_RegistryRoute):
         if exact_only and not exact:
             return Feasibility(
                 False,
-                f"route {self.name!r} declined: the kernel claims "
-                f"SupportsApproximateConditioning, so evaluating it is approximate",
+                "binding the given slots runs approximate conditioning "
+                "(SupportsApproximateConditioning), which exact_only excludes",
             )
-        result = None
+        conditional = None
         normalized = self._stage.normalized(call)
         if normalized is None:
             if checking():
                 return Feasibility(
                     None,
                     pending=(
-                        f"route {self.name!r}: {type(call.operands['d']).__name__} declares no "
-                        f"conditional capability that states whether its laws are normalized, "
-                        f"so a call reads the computed law's own",
+                        f"route {self.name!r}: {_named(call.operands['d'])} does not declare "
+                        f"whether its laws are normalized, which only a call can tell",
                     ),
                 )
-            result = self._stage.compute(call)
-            normalized = not _needs_normalization(result)
+            conditional = self._stage.compute(call)
+            normalized = not _needs_normalization(conditional)
         if normalized:
             if method is not None:
                 return Feasibility(
                     False,
-                    f"route {self.name!r} declined: the exact stage's result is normalized, "
-                    f"so no inference method runs on it",
+                    f"the conditional is already normalized, so inference method {method!r} "
+                    f"does not apply; drop method",
+                    actionable=True,
                 )
             d = call.operands["d"]
             if isinstance(d, _PerValueNormalization) and not self._stage.yields_kernel(call):
@@ -1258,18 +1468,18 @@ class _NormalizingRoute(_RegistryRoute):
         normalization = self._normalization(call, method, exact_only)
         if self._stage.yields_kernel(call):
             return self._per_value_report(call, normalization, exact)
-        if result is None:
+        if conditional is None:
             if checking() and not exact:
-                evaluated = type(_evaluated(call.operands["d"])).__name__
+                evaluated = _named(_evaluated(call.operands["d"]))
                 return Feasibility(
                     None,
                     pending=(
-                        f"route {self.name!r}: the target is the law the approximate kernel "
-                        f"{evaluated} yields, which a call computes",
+                        f"route {self.name!r}: the law that the approximate {evaluated} gives "
+                        f"at given, which only a call computes",
                     ),
                 )
-            result = self._stage.compute(call)
-        info = normalization.report(result)
+            conditional = self._stage.compute(call)
+        info = normalization.report(conditional)
         if info.feasible is not True or exact or not isinstance(info, MethodInfo):
             return info
         return replace(info, exact=False)
@@ -1286,8 +1496,8 @@ class _NormalizingRoute(_RegistryRoute):
             return Feasibility(
                 None,
                 pending=(
-                    f"route {self.name!r}: the law the approximate kernel "
-                    f"{type(kernel.kernel).__name__} yields is the target, which a call computes",
+                    f"route {self.name!r}: the law that the approximate "
+                    f"{_named(kernel.kernel)} gives at given, which only a call computes",
                 ),
             )
         info = kernel._normalization_report(call.operands["given"], self.method_options(call))
@@ -1308,14 +1518,15 @@ class _NormalizingRoute(_RegistryRoute):
         if normalization.exact_only and not call.controls["exact_only"]:
             return Feasibility(
                 False,
-                f"route {self.name!r} declined: the kernel's laws are normalized once its "
-                f"last given is bound, by a method that may be approximate",
+                "the result is a ConditionalDistribution whose laws an inference method that "
+                "may be approximate normalizes",
             )
         if normalization.exact_only and not normalization.admits_an_exact_method():
             return Feasibility(
                 False,
-                f"route {self.name!r} declined: the kernel's laws are unnormalized, and no "
-                f'exact method normalizes them; method="unnormalized" returns the kernel',
+                "the result is a ConditionalDistribution whose laws are unnormalized, and no "
+                'exact inference method applies; use method="unnormalized" to get it '
+                "unnormalized",
             )
         exact = exact and normalization.exact_only
         if normalization.method is not None:
@@ -1323,20 +1534,31 @@ class _NormalizingRoute(_RegistryRoute):
             return MethodInfo(True, method_name=normalization.method, exact=exact and method.exact)
         return PointReport(True, exact=exact)
 
-    def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
+    def run(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Any:
         """The exact stage's result, normalized as the declarations, or else its own, require."""
-        result = self._stage.compute(call)
+        conditional = self._stage.compute(call)
         normalized = self._stage.normalized(call)
         if normalized is None:
-            normalized = not _needs_normalization(result)
+            normalized = not _needs_normalization(conditional)
         if normalized:
-            return result
-        return _normalized(result, self._normalization(call, method, exact_only))
+            return conditional
+        return _normalized(conditional, self._normalization(call, method, exact_only))
 
 
 # ---------------------------------------------------------------------------
 # The operation
 # ---------------------------------------------------------------------------
+
+
+def _remaining_given_spec(given_spec: InputSpec, keys: tuple[str, ...]) -> InputSpec:
+    """The given slots left after binding whole slots or nodes inside them."""
+    moves = {key: f"_bound_{index}" for index, key in enumerate(keys)}
+    while set(moves.values()) & set(given_spec):
+        moves = {key: "_" + target for key, target in moves.items()}
+    moved, _ = _moved_slots(given_spec, moves)
+    return moved.without(*moves.values())
 
 
 def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec | None:
@@ -1347,37 +1569,59 @@ def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec | None:
     returns.
     """
     if isinstance(d, ConditionalDistributionSpec) and isinstance(given, RecordSpec):
-        keys = tuple(given.children)
-        if keys and all(key in d.given_spec for key in keys):
-            left = d.given_spec.without(*keys)
+        from ._given import _bind_given_dims_from_spec
+
+        keys = tuple(given)
+        if keys and all(_spec_at(d.given_spec, key) is not None for key in keys):
+            bindings: dict[str, int] = {}
+            for key in keys:
+                _bind_given_dims_from_spec(
+                    _spec_at(d.given_spec, key), given[key], bindings, f"given/{key}"
+                )
+            left = _remaining_given_spec(d.given_spec, keys).with_dim_sizes(**bindings)
+            event = d.event_spec.with_dim_sizes(**bindings)
             if not left.required:
-                return OutputSpec(DistributionSpec(d.event_spec))
-            return OutputSpec(ConditionalDistributionSpec(left, d.event_spec))
+                return OutputSpec(DistributionSpec(event))
+            return OutputSpec(ConditionalDistributionSpec(left, event))
     return None
 
 
-def _conditioned_label(d: Any, given: Any) -> str:
-    """The label of the law that conditioning *d* on *given* returns (II.4).
+def _conditioned_expression(d: Any, given: Any) -> Expression:
+    """The expression of the law that conditioning *d* on *given* returns (II.4).
 
-    Applying a kernel at given slots keeps the kernel's label. Fixing the whole
-    events of factors upstream of the rest leaves the other factors at the
-    given values, whose labels are joined, so ``condition_on(model, {"mu": 0.5})``
-    for ``model = likelihood * prior`` is labeled ``likelihood``. Any other
-    conditioning applies Bayes' rule, and its result is labeled by the
-    expression of the law and the conditioned paths, as ``model | y``.
+    The result is *d* conditioned on the paths *given* fixes, so it keeps
+    *d*'s label: ``condition_on(model, {"y": data})`` is labeled ``model`` and
+    displays as ``model(mu; y)``, and a kernel applied at given slots keeps the
+    kernel's label and holds those slots fixed, while its other slots stay
+    given. Fixing the whole events of factors upstream of the rest leaves the
+    other factors at the given values, so ``condition_on(model, {"mu": 0.5})``
+    for ``model = likelihood * prior`` is ``likelihood`` conditioned on ``mu``,
+    as ``likelihood(y; mu)``, and several factors left form a product without
+    a label. The result holds the paths *d* holds fixed, followed by the paths
+    *given* fixes that *d* does not hold already, so conditioning a conditioned
+    law again appends the new paths. A given that names no path, such as a
+    bare value, adds none.
+
+    Parameters
+    ----------
+    d : Distribution or ConditionalDistribution
+        The law or kernel conditioned.
+    given : Any
+        The given values, a batch of them, or a law whose draws they are.
+
+    Returns
+    -------
+    Expression
+        The conditioned law's expression.
     """
-    paths = _conditioned_paths(given)
-    if paths:
-        if isinstance(d, ConditionalDistribution) and {_head(path) for path in paths} <= _slots_of(
-            d
-        ):
-            return d.label
-        kept = _factors_left(d, paths)
-        if kept is not None:
-            return _joined_label(factor.label for factor in kept)
+    paths = _conditioned_paths(given) or ()
+    kept = _factors_left(d, paths) if paths else None
+    if kept is None:
+        base = d._embedded_expression()
     else:
-        paths = (given.label if isinstance(given, TrackedTerm) else format_value(given),)
-    return f"{grouped_label(d.label)} | {', '.join(paths)}"
+        left = kept[0]._embedded_expression() if len(kept) == 1 else _product_of(kept)
+        base = left.with_fixed(_fixed_paths(d))
+    return base.with_fixed(paths)
 
 
 def _factors_left(d: Any, keys: tuple[str, ...]) -> list[Any] | None:
@@ -1425,16 +1669,15 @@ _GIVEN_KINDS: tuple[type[TermSpec], ...] = (
 @operation(
     result=_condition_on_result,
     roles={"d": (DistributionSpec, ConditionalDistributionSpec), "given": _GIVEN_KINDS},
-    label=_conditioned_label,
 )
 def condition_on(d: Distribution, given: Record | Mapping[str, Any]):
     """Fix fields of *d* at the values *given* holds, and return the resulting law, normalized.
 
-    The exact stage curries given slots, calls a conditioning capability, or
+    The exact stage binds given slots, calls a conditioning capability, or
     forms the unnormalized conditional of the produced fields, and the
     normalization stage passes an unnormalized result to the inference-method
-    registry. ``with_options(method="unnormalized")`` returns the exact stage's
-    result as it is, and ``with_options(exact_only=True)`` raises rather than
+    registry. ``using(method="unnormalized")`` returns the exact stage's
+    result as it is, and ``using(exact_only=True)`` raises rather than
     normalize by an approximate method. A batch of givens is swept: each
     element is conditioned on as one given is, and the results form a batch on
     the givens' levels.
@@ -1445,14 +1688,21 @@ def condition_on(d: Distribution, given: Record | Mapping[str, Any]):
         The law or kernel to condition.
     given : Record, Mapping, or RecordBatch
         The values, keyed by field path: given slots of a kernel, or fields the
-        law produces; or a batch of such values.
+        law produces; or a batch of such values. A path into a structured given
+        slot binds that node and leaves the other fields in the residual slot;
+        binding its last field dissolves the slot. Paths must not overlap, and
+        all values bind shared symbolic dimensions together.
 
     Returns
     -------
     Distribution, ConditionalDistribution, or DistributionBatch
         The conditional, normalized: an ordinary law once every given slot is
         bound, and otherwise a kernel over the slots left whose laws are
-        normalized; for a batch of givens, the batch of the conditionals.
+        normalized; for a batch of givens, the batch of the conditionals. It
+        keeps *d*'s label, except that fixing the whole events of factors
+        upstream of the rest gives the labels of the factors left, and it
+        holds the conditioned paths fixed after any that *d* holds, so a
+        posterior of ``model`` given ``y`` displays as ``model(mu; y)``.
 
     Raises
     ------
@@ -1462,6 +1712,9 @@ def condition_on(d: Distribution, given: Record | Mapping[str, Any]):
         If no route applies under the controls, including an exact stage whose
         result is unnormalized under ``exact_only``.
     """
+
+
+_install_expression_rule(condition_on, _conditioned_expression)
 
 
 def _given_paths(d: Any, given: Any) -> tuple[str, ...]:
@@ -1479,25 +1732,28 @@ def _conditioning_guard(call: BoundCall, result: OutputSpec | None) -> Any:
 def _exact_stage_by_name(call: BoundCall, result: OutputSpec | None) -> Any:
     """Selected only by name, as ``method="unnormalized"``; the exact stage alone then runs.
 
-    The exact stage is the first of currying, slicing, exact conditioning, and
+    The exact stage is the first of binding given slots, slicing, exact conditioning, and
     the unnormalized conditional that applies.
     """
     if call.controls["method"] != _UNNORMALIZED:
-        return Feasibility(
-            False, f'route {_UNNORMALIZED!r} declined: it is selected only by method="unnormalized"'
-        )
+        return Feasibility(False, 'used only with method="unnormalized"')
     reports = []
-    for stage in (_CURRY, _SLICE, _EXACT_CONDITIONING, _BAYES):
+    for name, stage in _NAMED_STAGES:
         report = stage.check(call)
         if report.feasible is not False:
             return report if report.feasible is None else PointReport(True, exact=stage.exact(call))
-        reports.append(report.description)
-    return Feasibility(False, f"route {_UNNORMALIZED!r} declined: {'; '.join(reports)}")
+        reports.append((name, report))
+    actionable = next((report for _, report in reports if report.actionable), None)
+    if actionable is not None:
+        return actionable
+    return Feasibility(
+        False, "; ".join(f"{name}: {report.description}" for name, report in reports)
+    )
 
 
 def _exact_stage_result(call: BoundCall, result: OutputSpec | None) -> Any:
     """The result of the exact stage that applies, normalized or not."""
-    for stage in (_CURRY, _SLICE, _EXACT_CONDITIONING, _BAYES):
+    for _, stage in _NAMED_STAGES:
         if stage.check(call).feasible is True:
             return stage.compute(call)
     raise AssertionError("the exact stage ran with no stage that applies")
@@ -1505,7 +1761,10 @@ def _exact_stage_result(call: BoundCall, result: OutputSpec | None) -> Any:
 
 condition_on.register_route(
     _NormalizingRoute(
-        "curry", source=RouteSource.STRUCTURAL, stage=_CURRY, registry=inference_method_registry
+        "bind_given_slots",
+        source=RouteSource.STRUCTURAL,
+        stage=_BIND_GIVEN_SLOTS,
+        registry=inference_method_registry,
     )
 )
 condition_on.register_route(
@@ -1531,7 +1790,10 @@ condition_on.capability_route(
 )
 condition_on.register_route(
     _NormalizingRoute(
-        "bayes", source=RouteSource.REGISTRY, stage=_BAYES, registry=inference_method_registry
+        "inference_methods",
+        source=RouteSource.REGISTRY,
+        stage=_BAYES,
+        registry=inference_method_registry,
     )
 )
 condition_on.register_route(
@@ -1563,6 +1825,15 @@ _EXACT_CONDITIONING = _ExactStage(
     exact=_always,
     normalized=_always,
     yields_kernel=_leaves_a_slot,
+)
+
+#: The ways the exact stage computes the conditional, in the order it tries them,
+#: each under the name of the route that runs it.
+_NAMED_STAGES: tuple[tuple[str, _ExactStage], ...] = (
+    ("bind_given_slots", _BIND_GIVEN_SLOTS),
+    ("slice", _SLICE),
+    ("exact_conditioning", _EXACT_CONDITIONING),
+    ("inference_methods", _BAYES),
 )
 
 
@@ -1600,15 +1871,19 @@ class _NormalizingThen(_RegistryRoute):
             f"{_guard_condition(self._admits)}"
         )
 
-    def probe(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Feasibility:
+    def probe(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Feasibility:
         """Whether the law is unnormalized and admitted, then the registry's report for it.
 
         The registry reports on the target the law holds, as :func:`_held_target`
         states.
         """
         law = call.operands["d"]
-        if not isinstance(law, Distribution) or _is_normalized(law):
-            return Feasibility(False, f"route {self.name!r} declined: the law is normalized")
+        if not isinstance(law, Distribution):
+            return Feasibility(False, f"{_named(law)} is not a Distribution")
+        if _is_normalized(law):
+            return Feasibility(False, f"{_named(law)} is already normalized")
         admitted = self._admits(call)
         if admitted.feasible is not True:
             return admitted
@@ -1617,7 +1892,9 @@ class _NormalizingThen(_RegistryRoute):
             held, method=method, exact_only=exact_only, **self.method_options(call)
         )
 
-    def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
+    def run(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Any:
         """The answer on the law the selected method returns, under the law's own paths."""
         held, renamed = _held_target(call.operands["d"])
         normalized = renamed(
@@ -1662,13 +1939,31 @@ def _an_empirical_target(call: BoundCall) -> Feasibility:
     target = call.operands["target"]
     if issubclass(EmpiricalDistribution, target):
         return Feasibility(True)
+    relation = "does not support" if getattr(target, "_is_protocol", False) else "is not a"
     return Feasibility(
-        False, f"route 'normalize' declined: an empirical law does not satisfy {target.__name__}"
+        False, f"normalizing gives an EmpiricalDistribution, which {relation} {target.__name__}"
     )
 
 
 def _empirical_of(call: BoundCall, law: Any) -> Any:
     """The normalized *law* at the target, carrying the source's event declaration.
+
+    Parameters
+    ----------
+    call : BoundCall
+        The bound call of ``convert``, whose ``d`` is the source law and whose
+        ``target`` is the class or protocol requested.
+    law : Distribution
+        The normalized law that the selected inference method returned, with
+        ``atoms`` and ``weights``.
+
+    Returns
+    -------
+    Distribution
+        The first of *law* and *law* under the source's declaration that is an
+        instance of the target and declares the source's event. Otherwise, an
+        ``EmpiricalDistribution`` of *law*'s atoms and weights, under the
+        source's label and with *law*'s annotations.
 
     Raises
     ------
@@ -1680,11 +1975,14 @@ def _empirical_of(call: BoundCall, law: Any) -> Any:
         if isinstance(candidate, target) and candidate.event_spec == source.event_spec:
             return candidate
     empirical = EmpiricalDistribution(
-        source.label, law.atoms, law.weights, event_spec=source.event_spec
+        law.atoms, law.weights, label=source.label, event_spec=source.event_spec
     )
     empirical._init_annotations(law.annotations)
     if not isinstance(empirical, target):
-        raise TypeError(f"the normalized law of {source.label!r} is not a {target.__name__}")
+        raise TypeError(
+            f"cannot convert {source.label!r} to {target.__name__}: its normalized law is an "
+            f"EmpiricalDistribution"
+        )
     return empirical
 
 

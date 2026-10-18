@@ -146,6 +146,17 @@ class TestReadIndexed:
         assert isinstance(result["alpha"], NotComputed)
         assert result["beta"] == pytest.approx(1.001)
 
+    def test_integer_coordinates_are_keyed_by_their_string_form(self):
+        da = xr.DataArray([0.1, 0.4, 0.2], dims=["obs"], coords={"obs": np.arange(3)})
+        result = read_indexed(xr.Dataset({"pareto_k": da}), "pareto_k", dim="obs")
+        assert list(result) == ["0", "1", "2"]
+        assert result == {"0": pytest.approx(0.1), "1": pytest.approx(0.4), "2": pytest.approx(0.2)}
+
+    def test_dimension_without_coordinates_is_keyed_by_position(self):
+        da = xr.DataArray([0.5, 0.25], dims=["test_fn"])
+        result = read_indexed(xr.Dataset({"p_value": da}), "p_value", dim="test_fn")
+        assert result == {"0": pytest.approx(0.5), "1": pytest.approx(0.25)}
+
 
 # ---------------------------------------------------------------------------
 # DataTreeView
@@ -292,6 +303,15 @@ class TestDiagnosticRunView:
         tree = xr.DataTree(dataset=xr.Dataset({"p_value": da}))
         result = DiagnosticRunView("ppc", tree).result
         assert result["p_value"]["b"] == pytest.approx(0.8)
+
+    def test_result_integer_coordinates_are_keyed_by_their_string_form(self):
+        pareto_k = xr.DataArray([0.1, 0.4], dims=["obs"], coords={"obs": np.arange(2)})
+        ds = xr.Dataset({"elpd_loo": xr.DataArray(-3.5), "pareto_k": pareto_k})
+        result = DiagnosticRunView("loo", xr.DataTree(dataset=ds)).result
+        assert result == {
+            "elpd_loo": pytest.approx(-3.5),
+            "pareto_k": {"0": pytest.approx(0.1), "1": pytest.approx(0.4)},
+        }
 
     def test_result_multidimensional_values_are_not_computed(self):
         da = xr.DataArray(np.ones((2, 2)), dims=["row", "col"])

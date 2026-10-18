@@ -18,8 +18,11 @@ import pytest
 from probpipe import (
     Function,
     Normal,
+    NumericArraySpec,
+    OpaqueSpec,
     OutputSpec,
     Provenance,
+    RecordSpec,
     ReplayCompatibilityError,
     ReplayUnsupportedCallableError,
     UnmanagedConcurrentWorkflowEntryError,
@@ -27,6 +30,7 @@ from probpipe import (
     sample,
     workflow_run,
 )
+from probpipe.core._expression import Conditioned
 from probpipe.functions import _replay
 from probpipe.functions._managed import (
     ManagedAttemptState,
@@ -42,18 +46,19 @@ from tests.functions._replay_fixtures import (
 
 def _draw(seed: int = 7):
     with workflow_run(seed=seed):
-        return sample(Normal(loc=0.0, scale=1.0, label="value"))
+        return sample(Normal("value", loc=0.0, scale=1.0))
 
 
 def _lifted_draw(seed: int = 7):
     workflow = Function(
+        replayable_identity,
         label="replayable_identity",
-        fn=replayable_identity,
         dispatch="sequential",
         n_broadcast_samples=5,
+        output_spec=OutputSpec(replayable_identity=None),
     )
     with workflow_run(seed=seed):
-        return workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+        return workflow(value=Normal("value", loc=0.0, scale=1.0))
 
 
 def _sample_value(result):
@@ -103,11 +108,15 @@ class TestReplayScope:
     def test_seeded_serialized_and_replay_of_replay_roundtrip(self):
         original = _draw(seed=17)
         restored = Provenance.from_dict(json.loads(json.dumps(original.provenance.to_dict())))
+        anchor = restored.controls["replay"]["callable"]
+        assert anchor["definition_abi"] == "probpipe.callable_definition/v1"
+        assert "signature_and_declarations" in anchor
+        assert "signature_and_templates" not in anchor
 
         with replay_run(restored):
-            first = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            first = sample(Normal("value", loc=0.0, scale=1.0))
         with replay_run(first.provenance):
-            second = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            second = sample(Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_sample_value(first), _sample_value(original))
         np.testing.assert_array_equal(_sample_value(second), _sample_value(original))
@@ -130,9 +139,9 @@ class TestReplayScope:
         ) as urandom:
             if explicit_scope:
                 with workflow_run():
-                    original = sample(Normal(loc=0.0, scale=1.0, label="value"))
+                    original = sample(Normal("value", loc=0.0, scale=1.0))
             else:
-                original = sample(Normal(loc=0.0, scale=1.0, label="value"))
+                original = sample(Normal("value", loc=0.0, scale=1.0))
         assert urandom.call_count == 1
 
         with (
@@ -142,7 +151,7 @@ class TestReplayScope:
             ),
             replay_run(original.provenance),
         ):
-            replayed = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = sample(Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
 
@@ -150,17 +159,17 @@ class TestReplayScope:
         captured = []
 
         def outer(value):
-            result = sample(Normal(loc=value, scale=1.0, label="value"))
+            result = sample(Normal("value", loc=value, scale=1.0))
             captured.append(result)
             return result
 
-        workflow = Function(label="outer", fn=outer, dispatch="sequential")
+        workflow = Function(outer, label="outer", dispatch="sequential")
         with workflow_run(seed=17):
             workflow(value=0.0)
         nested = captured[0]
 
         with replay_run(nested.provenance):
-            replayed = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = sample(Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(nested))
 
@@ -168,20 +177,20 @@ class TestReplayScope:
         original = _draw()
 
         with (
-            pytest.raises(ReplayCompatibilityError, match="exactly one"),
+            pytest.raises(ReplayCompatibilityError, match="without a Function call"),
             replay_run(original.provenance),
         ):
             pass
 
         with replay_run(original.provenance):
-            sample(Normal(loc=0.0, scale=1.0, label="value"))
-            with pytest.raises(ReplayCompatibilityError, match="one top-level"):
-                sample(Normal(loc=0.0, scale=1.0, label="value"))
+            sample(Normal("value", loc=0.0, scale=1.0))
+            with pytest.raises(ReplayCompatibilityError, match="second one"):
+                sample(Normal("value", loc=0.0, scale=1.0))
 
         with replay_run(original.provenance):
-            sample(Normal(loc=0.0, scale=1.0, label="value"))
+            sample(Normal("value", loc=0.0, scale=1.0))
             with pytest.raises(ReplayCompatibilityError, match="apply"):
-                sample.apply(Normal(loc=0.0, scale=1.0, label="value"))
+                sample.apply(Normal("value", loc=0.0, scale=1.0))
 
     def test_workflow_run_cannot_replace_the_replay_root(self):
         original = _draw()
@@ -192,7 +201,7 @@ class TestReplayScope:
                 workflow_run(seed=999),
             ):
                 pass
-            sample(Normal(loc=0.0, scale=1.0, label="value"))
+            sample(Normal("value", loc=0.0, scale=1.0))
 
     def test_replay_scope_rejects_reentry_nesting_and_active_workflow(self):
         original = _draw()
@@ -206,7 +215,7 @@ class TestReplayScope:
                 replay_run(original.provenance),
             ):
                 pass
-            sample(Normal(loc=0.0, scale=1.0, label="value"))
+            sample(Normal("value", loc=0.0, scale=1.0))
 
         with (
             workflow_run(seed=9),
@@ -217,14 +226,14 @@ class TestReplayScope:
 
     def test_caught_failed_root_is_rejected_when_scope_exits(self):
         original = _draw()
-        changed = Function(label="replayable_affine", fn=replayable_affine, n_broadcast_samples=5)
+        changed = Function(replayable_affine, label="replayable_affine", n_broadcast_samples=5)
 
         with (
             pytest.raises(ReplayCompatibilityError, match="did not complete"),
             replay_run(original.provenance),
-            pytest.raises(ReplayCompatibilityError, match="callable"),
+            pytest.raises(ReplayCompatibilityError, match="expected a call to sample"),
         ):
-            changed(value=Normal(loc=0.0, scale=1.0, label="value"))
+            changed(value=Normal("value", loc=0.0, scale=1.0))
 
 
 class TestReplayOwnership:
@@ -237,11 +246,11 @@ class TestReplayOwnership:
                 future = pool.submit(
                     copied.run,
                     sample,
-                    Normal(loc=0.0, scale=1.0, label="value"),
+                    Normal("value", loc=0.0, scale=1.0),
                 )
                 with pytest.raises(UnmanagedConcurrentWorkflowEntryError):
                     future.result()
-            replayed = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = sample(Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
 
@@ -252,11 +261,11 @@ class TestReplayOwnership:
             with replay_run(original.provenance):
 
                 async def call_in_child():
-                    return sample(Normal(loc=0.0, scale=1.0, label="value"))
+                    return sample(Normal("value", loc=0.0, scale=1.0))
 
                 with pytest.raises(UnmanagedConcurrentWorkflowEntryError):
                     await asyncio.create_task(call_in_child())
-                return sample(Normal(loc=0.0, scale=1.0, label="value"))
+                return sample(Normal("value", loc=0.0, scale=1.0))
 
         replayed = asyncio.run(run_replay())
 
@@ -264,9 +273,42 @@ class TestReplayOwnership:
 
 
 class TestReplayAdmission:
+    def test_unknown_callable_abi_is_rejected_before_fields_are_read(self):
+        payload = _draw().provenance.to_dict()
+        anchor = payload["controls"]["replay"]["callable"]
+        anchor["definition_abi"] = "probpipe.callable_definition/v99"
+        signature = anchor.pop("signature_and_declarations")
+        anchor["signature_and_templates"] = signature
+        signature["input_template"] = signature.pop("input_spec")
+        with (
+            patch(
+                "probpipe.functions._context.derive_event_key_words_from_encoded",
+                side_effect=AssertionError("derived key"),
+            ),
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=r"replay\.callable\.definition_abi '.*/v99'.*needs '.*/v1'",
+            ),
+            replay_run(Provenance.from_dict(payload)),
+        ):
+            raise AssertionError("An unknown callable ABI was admitted")
+
+    def test_an_anchor_that_names_its_declarations_signature_and_templates_is_refused(self):
+        payload = _draw().provenance.to_dict()
+        anchor = payload["controls"]["replay"]["callable"]
+        anchor["signature_and_templates"] = anchor.pop("signature_and_declarations")
+        with (
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=r"replay\.callable lacks fields \['signature_and_declarations'\]",
+            ),
+            replay_run(Provenance.from_dict(payload)),
+        ):
+            raise AssertionError("A former anchor was admitted")
+
     def test_legacy_unknown_and_malformed_recipes_fail_at_entry(self):
         with (
-            pytest.raises(ReplayCompatibilityError, match="RNG recipe"),
+            pytest.raises(ReplayCompatibilityError, match="no recorded random draws"),
             replay_run(Provenance("legacy")),
         ):
             pass
@@ -274,10 +316,50 @@ class TestReplayAdmission:
         payload = _draw().provenance.to_dict()
         payload["controls"]["randomness"]["rng_abi"] = "unknown-rng/v99"
         with (
-            pytest.raises(ReplayCompatibilityError, match="RNG ABI"),
+            pytest.raises(ReplayCompatibilityError, match=r"randomness\.rng_abi 'unknown-rng/v99'"),
             replay_run(Provenance.from_dict(payload)),
         ):
             pass
+
+    def test_a_result_passed_in_place_of_its_provenance_is_named(self):
+        original = _draw()
+
+        with (
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=rf"expects a Provenance, got {type(original).__name__}\. Pass "
+                r"result\.provenance",
+            ),
+            replay_run(original),
+        ):
+            pass
+
+    def test_a_python_version_drift_names_both_versions(self):
+        changed = _mutate_provenance(
+            _draw().provenance,
+            lambda controls: controls["replay"]["callable"].update(python_replay_abi="cpython-2.7"),
+        )
+
+        with (
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=r"recorded under cpython-2\.7, but this interpreter is",
+            ),
+            replay_run(changed),
+        ):
+            sample(Normal("value", loc=0.0, scale=1.0))
+
+    def test_a_sample_shape_drift_names_the_draw(self):
+        original = _draw()
+
+        with (
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=r"\(sample with sample_shape=\(3,\)\) that matches no draw",
+            ),
+            replay_run(original.provenance),
+        ):
+            sample(Normal("value", loc=0.0, scale=1.0), sample_shape=(3,))
 
     @pytest.mark.parametrize(
         "mapping_path",
@@ -288,11 +370,11 @@ class TestReplayAdmission:
             pytest.param(("replay", "standalone"), id="standalone"),
             pytest.param(("replay", "callable"), id="callable"),
             pytest.param(
-                ("replay", "callable", "signature_and_templates"),
+                ("replay", "callable", "signature_and_declarations"),
                 id="callable-signature",
             ),
             pytest.param(
-                ("replay", "callable", "signature_and_templates", "parameters", 0),
+                ("replay", "callable", "signature_and_declarations", "parameters", 0),
                 id="callable-parameter",
             ),
             pytest.param(("replay", "plan"), id="plan"),
@@ -345,7 +427,9 @@ class TestReplayAdmission:
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
             ) as derive_key,
-            pytest.raises(ReplayCompatibilityError, match="version-1 schema"),
+            pytest.raises(
+                ReplayCompatibilityError, match=r"unexpected fields \['unknown_field_v2'\]"
+            ),
             replay_run(changed),
         ):
             raise AssertionError("replay admission accepted unknown structure")
@@ -358,13 +442,13 @@ class TestReplayAdmission:
             pytest.param(
                 "randomness",
                 "probpipe.rng_recipe/v2",
-                "unknown or missing workflow RNG recipe schema",
+                "has randomness.schema 'probpipe.rng_recipe/v2'",
                 id="randomness",
             ),
             pytest.param(
                 "replay",
                 "probpipe.replay_anchor/v2",
-                "recorded replay anchor schema is incompatible",
+                "has replay.schema 'probpipe.replay_anchor/v2'",
                 id="replay",
             ),
         ],
@@ -402,12 +486,12 @@ class TestReplayAdmission:
             pytest.param(("replay", "standalone"), "restriction", id="standalone"),
             pytest.param(("replay", "callable"), "sha256", id="callable"),
             pytest.param(
-                ("replay", "callable", "signature_and_templates"),
+                ("replay", "callable", "signature_and_declarations"),
                 "output_spec",
                 id="callable-signature",
             ),
             pytest.param(
-                ("replay", "callable", "signature_and_templates", "parameters", 0),
+                ("replay", "callable", "signature_and_declarations", "parameters", 0),
                 "annotation",
                 id="callable-parameter",
             ),
@@ -470,11 +554,11 @@ class TestReplayAdmission:
         del target[field_name]
         changed = Provenance.from_dict(payload)
         if mapping_path == () and field_name == "randomness":
-            expected_error = "randomness RNG recipe must be a mapping"
+            expected_error = "no recorded random draws"
         elif field_name == "schema":
-            expected_error = "schema"
+            expected_error = r"has no .*schema|lacks fields \['schema'\]"
         else:
-            expected_error = "version-1 schema"
+            expected_error = rf"lacks fields \['{field_name}'\]"
 
         with (
             patch(
@@ -512,7 +596,9 @@ class TestReplayAdmission:
         }
 
         with (
-            pytest.raises(ReplayCompatibilityError, match="standalone replay restriction"),
+            pytest.raises(
+                ReplayCompatibilityError, match=r"restriction .* does not match eligibility"
+            ),
             replay_run(Provenance.from_dict(payload)),
         ):
             raise AssertionError("replay admission accepted a mismatched restriction")
@@ -523,13 +609,13 @@ class TestReplayAdmission:
             pytest.param(
                 ("randomness", "schema"),
                 "unknown-recipe/v99",
-                "RNG recipe schema",
+                "randomness.schema",
                 id="rng-recipe-schema",
             ),
             pytest.param(
                 ("replay", "schema"),
                 "unknown-replay/v99",
-                "replay anchor schema",
+                "replay.schema",
                 id="replay-schema",
             ),
             pytest.param(
@@ -541,73 +627,73 @@ class TestReplayAdmission:
             pytest.param(
                 ("replay", "callable", "definition_abi"),
                 "unknown-callable/v99",
-                "callable definition ABI",
+                "replay.callable.definition_abi",
                 id="callable-definition-abi",
             ),
             pytest.param(
                 ("replay", "callable", "probpipe_replay_abi"),
                 "unknown-probpipe/v99",
-                "ProbPipe replay ABI",
+                "replay.callable.probpipe_replay_abi",
                 id="probpipe-replay-abi",
             ),
             pytest.param(
                 ("replay", "callable", "module"),
                 None,
-                "invalid module",
+                "replay.callable.module must be a string",
                 id="callable-module",
             ),
             pytest.param(
-                ("replay", "callable", "signature_and_templates"),
+                ("replay", "callable", "signature_and_declarations"),
                 [],
-                "signature_and_templates",
+                "signature_and_declarations",
                 id="callable-signature",
             ),
             pytest.param(
                 ("replay", "plan", "schema"),
                 "unknown-plan/v99",
-                "stochastic plan ABI",
+                "replay.plan.schema",
                 id="plan-schema",
             ),
             pytest.param(
                 ("replay", "plan", "canonical_fields", "managed_child_policy"),
                 "unknown-managed-child/v99",
-                "managed-child",
+                "managed_child_policy",
                 id="managed-child-policy",
             ),
             pytest.param(
                 ("replay", "plan", "canonical_fields", "key_ownership"),
                 "caller",
-                "not workflow-key-owned",
+                "key_ownership must be 'automatic', got 'caller'",
                 id="plan-key-ownership",
             ),
             pytest.param(
                 ("randomness", "expected_event_count"),
                 True,
-                "event count",
+                "expected_event_count must be",
                 id="event-count-bool",
             ),
             pytest.param(
                 ("replay", "compatibility", "provider_abi"),
                 _DELETE,
-                "compatibility fields",
+                r"replay\.compatibility lacks fields \[.provider_abi.\]",
                 id="compatibility-fields",
             ),
             pytest.param(
                 ("replay", "compatibility", "execution_contract"),
                 "unknown-execution/v99",
-                "execution contract",
+                "replay.compatibility.execution_contract",
                 id="execution-contract",
             ),
             pytest.param(
                 ("replay", "compatibility", "descendant_adapter_abi"),
                 ["unknown-descendant/v99"],
-                "descendant-adapter ABI",
+                r"descendant_adapter_abi is \[.unknown-descendant/v99.\]",
                 id="descendant-adapter-abi",
             ),
             pytest.param(
                 ("replay", "compatibility", "sampling_abi"),
                 [""],
-                "sampling ABI",
+                "sampling_abi must contain only non-empty strings",
                 id="empty-sampling-abi",
             ),
             pytest.param(
@@ -619,67 +705,67 @@ class TestReplayAdmission:
             pytest.param(
                 ("randomness", "events", 0, "occurrence_path", 0, 1),
                 1,
-                "outside its anchored occurrence_path",
+                "occurrence_path does not start with randomness.occurrence_path",
                 id="event-outside-anchor",
             ),
             pytest.param(
                 ("randomness", "events", 0, "occurrence_kind"),
                 "child",
-                "occurrence kind",
+                r"occurrence_kind must be .* got .child.",
                 id="event-occurrence-kind",
             ),
             pytest.param(
                 ("randomness", "events", 0, "key_ownership"),
                 "caller",
-                "not workflow-key-owned",
+                "key_ownership must be 'automatic', got 'caller'",
                 id="event-key-ownership",
             ),
             pytest.param(
                 ("randomness", "events", 0, "source"),
                 {},
-                "must be a JSON sequence",
+                "source must be a list, got dict",
                 id="event-source-sequence",
             ),
             pytest.param(
                 ("randomness", "events", 0, "source"),
                 ["source-group", True],
-                "invalid structural value",
+                "contains invalid entry True",
                 id="event-source-value",
             ),
             pytest.param(
                 ("replay", "plan", "expected_effects", 0, "provider_abi"),
                 _DELETE,
-                "incompatible fields",
+                r"expected_effects\[0\] lacks fields",
                 id="effect-fields",
             ),
             pytest.param(
                 ("replay", "plan", "expected_effects", 0, "operation_kind"),
                 "",
-                "invalid operation_kind",
+                "operation_kind must be a non-empty string",
                 id="effect-operation-kind",
             ),
             pytest.param(
                 ("replay", "plan", "expected_effects", 0, "sample_shape"),
                 [-1],
-                "invalid sample_shape",
+                r"sample_shape must be null or a list of nonnegative integers, got \[-1\]",
                 id="effect-sample-shape",
             ),
             pytest.param(
                 ("replay", "plan", "expected_effects", 0, "record_path"),
                 [1],
-                "invalid record_path",
+                "record_path must be a list of strings",
                 id="effect-record-path",
             ),
             pytest.param(
                 ("replay", "plan", "expected_effects", 0, "descendant_descriptor"),
                 {},
-                "invalid descendant_descriptor",
+                "descendant_descriptor must be null or a nested list",
                 id="effect-descriptor-sequence",
             ),
             pytest.param(
                 ("replay", "plan", "expected_effects", 0, "descendant_descriptor"),
                 [{}],
-                "invalid descendant_descriptor",
+                "descendant_descriptor must be null or a nested list",
                 id="effect-descriptor-value",
             ),
         ],
@@ -719,7 +805,10 @@ class TestReplayAdmission:
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
             ) as derive_key,
-            pytest.raises(ReplayCompatibilityError, match="invalid descendant_descriptor"),
+            pytest.raises(
+                ReplayCompatibilityError,
+                match="descendant_descriptor must be null or a nested list",
+            ),
             replay_run(changed),
         ):
             pass
@@ -735,7 +824,7 @@ class TestReplayAdmission:
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
             ) as derive_key,
-            pytest.raises(ReplayCompatibilityError, match="finite JSON-native values"),
+            pytest.raises(ReplayCompatibilityError, match="finite JSON values"),
             replay_run(changed),
         ):
             pass
@@ -750,7 +839,7 @@ class TestReplayAdmission:
         restored = Provenance.from_dict(payload)
 
         with replay_run(restored):
-            replayed = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = sample(Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
         assert replayed.provenance.diagnostics["replay"]["source_artifact_drift"] is True
@@ -772,7 +861,7 @@ class TestReplayAdmission:
         payload["diagnostics"]["execution"][0]["future_observation"] = "worker"
 
         with replay_run(Provenance.from_dict(payload)):
-            replayed = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = sample(Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
 
@@ -835,9 +924,14 @@ class TestReplayAdmission:
             pass
 
     def test_unsupported_callable_and_nested_automatic_parent_fail_at_entry(self):
-        unsupported = Function(label="function", fn=lambda value: value, n_broadcast_samples=5)
+        unsupported = Function(
+            lambda value: value,
+            label="function",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(function=None),
+        )
         with workflow_run(seed=3):
-            unsupported_result = unsupported(value=Normal(loc=0.0, scale=1.0, label="value"))
+            unsupported_result = unsupported(value=Normal("value", loc=0.0, scale=1.0))
 
         with (
             pytest.raises(ReplayUnsupportedCallableError, match="lambda"),
@@ -846,20 +940,26 @@ class TestReplayAdmission:
             pass
 
         inner = Function(
+            lambda value: sample(Normal("inner", loc=value, scale=1.0)),
             label="function",
-            fn=lambda value: sample(Normal(loc=value, scale=1.0, label="inner")),
             dispatch="sequential",
+            output_spec=OutputSpec(function=None),
         )
 
         def nested(value):
             return inner(value=value)
 
-        outer = Function(label="nested", fn=nested, dispatch="sequential")
+        outer = Function(
+            nested,
+            label="nested",
+            dispatch="sequential",
+            output_spec=OutputSpec(nested=None),
+        )
         with workflow_run(seed=8):
             nested_result = outer(value=1.0)
 
         with (
-            pytest.raises(ReplayCompatibilityError, match="nested automatic"),
+            pytest.raises(ReplayCompatibilityError, match="nested Function call"),
             replay_run(nested_result.provenance),
         ):
             pass
@@ -876,23 +976,26 @@ class TestReplayPreflight:
     )
     def test_plan_scalar_types_are_exact_before_sampling(self, path, replacement):
         workflow = Function(
-            label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
+            replayable_identity,
+            label="replayable_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
-            original = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            original = workflow(value=Normal("value", loc=0.0, scale=1.0))
         payload = original.provenance.to_dict()
         canonical_plan = payload["controls"]["replay"]["plan"]["canonical_fields"]
         _edit_controls_path(canonical_plan, path, replacement)
         changed = Provenance.from_dict(payload)
-        candidate = Normal(loc=0.0, scale=1.0, label="value")
+        candidate = Normal("value", loc=0.0, scale=1.0)
 
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
             patch(
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
             ) as derive_key,
-            pytest.raises(ReplayCompatibilityError, match="stochastic plan"),
+            pytest.raises(ReplayCompatibilityError, match="set up differently"),
             replay_run(changed),
         ):
             workflow(value=candidate)
@@ -901,29 +1004,48 @@ class TestReplayPreflight:
 
     def test_callable_drift_fails_before_sampling(self):
         workflow = Function(
-            label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
+            replayable_identity,
+            label="replayable_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
-            original = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
-        changed = Function(label="replayable_affine", fn=replayable_affine, n_broadcast_samples=5)
+            original = workflow(value=Normal("value", loc=0.0, scale=1.0))
+        changed = Function(
+            replayable_affine,
+            label="replayable_affine",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(replayable_affine=None),
+        )
 
         with (
-            pytest.raises(ReplayCompatibilityError, match="callable"),
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=r"expected a call to .*replayable_identity, but .*replayable_affine",
+            ),
             replay_run(original.provenance),
         ):
-            changed(value=Normal(loc=0.0, scale=1.0, label="value"))
+            changed(value=Normal("value", loc=0.0, scale=1.0))
 
     def test_unsupported_current_callable_fails_before_sampling(self):
         workflow = Function(
-            label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
+            replayable_identity,
+            label="replayable_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
-            original = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
-        changed = Function(label="function", fn=lambda value: value, n_broadcast_samples=5)
-        candidate = Normal(loc=0.0, scale=1.0, label="value")
+            original = workflow(value=Normal("value", loc=0.0, scale=1.0))
+        changed = Function(
+            lambda value: value,
+            label="function",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(function=None),
+        )
+        candidate = Normal("value", loc=0.0, scale=1.0)
 
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
             pytest.raises(ReplayUnsupportedCallableError, match="lambda"),
             replay_run(original.provenance),
         ):
@@ -931,10 +1053,13 @@ class TestReplayPreflight:
 
     def test_same_import_anchor_definition_drift_fails_before_sampling(self, monkeypatch):
         workflow = Function(
-            label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
+            replayable_identity,
+            label="replayable_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
-            original = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            original = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         def changed_identity(value):
             return value + 1
@@ -946,12 +1071,19 @@ class TestReplayPreflight:
             "replayable_identity",
             changed_identity,
         )
-        changed = Function(label="changed_identity", fn=changed_identity, n_broadcast_samples=5)
-        candidate = Normal(loc=0.0, scale=1.0, label="value")
+        changed = Function(
+            changed_identity,
+            label="changed_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(changed_identity=None),
+        )
+        candidate = Normal("value", loc=0.0, scale=1.0)
 
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
-            pytest.raises(ReplayCompatibilityError, match="definition changed"),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
+            pytest.raises(
+                ReplayCompatibilityError, match="has changed since the call was recorded"
+            ),
             replay_run(original.provenance),
         ):
             changed(value=candidate)
@@ -961,90 +1093,163 @@ class TestReplayPreflight:
         [
             ({"output_label": "a"}, {"output_label": "b"}),
             ({"output_spec": OutputSpec(a=None)}, {"output_spec": OutputSpec(b=None)}),
+            (
+                {"output_label": "a", "output_spec": OutputSpec(result=NumericArraySpec(()))},
+                {"output_label": "b", "output_spec": OutputSpec(result=NumericArraySpec(()))},
+            ),
         ],
-        ids=["output-label", "declared-component"],
+        ids=["output-label", "declared-component", "default-component"],
     )
     def test_a_renamed_output_replays_to_the_same_draws(self, before, after):
         """A rename changes no value, so the replay reproduces the draws under the new names."""
 
         def lifted(**options):
+            options.setdefault("output_spec", OutputSpec(result=None))
             return Function(
+                replayable_identity,
                 label="replayable_identity",
-                fn=replayable_identity,
                 n_broadcast_samples=5,
                 **options,
             )
 
-        law = Normal(loc=0.0, scale=1.0, label="value")
+        law = Normal("value", loc=0.0, scale=1.0)
         with workflow_run(seed=4):
             original = lifted(**before)(value=law)
         with replay_run(original.provenance):
             replayed = lifted(**after)(value=law)
 
         np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
-        assert list(replayed.event_spec.components) == ["b"]
+        assert list(replayed.event_spec.components) == list(
+            after.get("output_spec", OutputSpec(result=None)).components
+        )
+
+    def test_an_input_that_differs_only_in_its_expression_replays_to_the_same_draws(self):
+        """Replay omits the expression, as it omits the label, so a relabeled input replays."""
+
+        def lifted():
+            return Function(
+                replayable_identity,
+                label="replayable_identity",
+                n_broadcast_samples=5,
+                output_spec=OutputSpec(replayable_identity=None),
+            )
+
+        law = Normal("value", loc=0.0, scale=1.0, label="value")
+        derived = law._with_expression(Conditioned(law._expression, ("y",)))
+        with workflow_run(seed=4):
+            original = lifted()(value=law)
+        with replay_run(original.provenance):
+            replayed = lifted()(value=derived)
+
+        np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
+        assert replayed.notation == "replayable_identity(value ~ value; y)"
+
+    @pytest.mark.parametrize("change", ["shape", "kind", "packaging", "declaration"])
+    def test_output_contract_drift_fails_before_sampling(self, change):
+        record = RecordSpec(left=(), right=())
+        declaration = OutputSpec(bundle=record)
+        baseline = Function(
+            replayable_identity,
+            output_label="result",
+            output_spec=declaration,
+            dispatch="sequential",
+            n_broadcast_samples=8,
+            label="identity",
+        )
+        law = Normal("left", 0.0, 1.0) * Normal("right", 0.0, 1.0)
+        with workflow_run(seed=4):
+            original = baseline(value=law)
+        declarations = {
+            "shape": OutputSpec(bundle=RecordSpec(left=(2,), right=())),
+            "kind": OutputSpec(bundle=OpaqueSpec()),
+            "packaging": OutputSpec(record),
+            "declaration": None,
+        }
+        changed = Function(
+            replayable_identity,
+            output_label="result",
+            output_spec=declarations[change],
+            dispatch="sequential",
+            n_broadcast_samples=8,
+            label="identity",
+        )
+        with (
+            patch.object(type(law), "_sample", side_effect=AssertionError("sampled")),
+            pytest.raises(
+                ReplayCompatibilityError, match="has changed since the call was recorded"
+            ),
+            replay_run(original.provenance),
+        ):
+            changed(value=law)
 
     def test_plan_drift_fails_before_distribution_sampling(self):
         workflow = Function(
-            label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
+            replayable_identity,
+            label="replayable_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
-            original = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            original = workflow(value=Normal("value", loc=0.0, scale=1.0))
         changed = Function(
-            label="replayable_identity", fn=replayable_identity, n_broadcast_samples=6
+            replayable_identity,
+            label="replayable_identity",
+            n_broadcast_samples=6,
+            output_spec=OutputSpec(replayable_identity=None),
         )
-        candidate = Normal(loc=0.0, scale=1.0, label="value")
+        candidate = Normal("value", loc=0.0, scale=1.0)
 
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
-            pytest.raises(ReplayCompatibilityError, match="stochastic plan"),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
+            pytest.raises(ReplayCompatibilityError, match="n_broadcast_samples is 6, recorded 5"),
             replay_run(original.provenance),
         ):
             changed(value=candidate)
 
     def test_direct_record_projection_drift_fails_before_key_derivation(self):
-        original_root = Normal(loc=0.0, scale=1.0, label="x") * Normal(
-            loc=2.0, scale=1.0, label="y"
-        )
+        original_root = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=2.0, scale=1.0)
         with workflow_run(seed=4):
             original = sample(original_root["x"])
         assert original.provenance.controls["replay"]["plan"]["expected_effects"][0][
             "record_path"
         ] == ["x"]
 
-        candidate_root = Normal(loc=0.0, scale=1.0, label="x") * Normal(
-            loc=2.0, scale=1.0, label="y"
-        )
+        candidate_root = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=2.0, scale=1.0)
         with (
-            patch.object(candidate_root, "_sample", side_effect=AssertionError("sampled")),
+            patch.object(type(candidate_root), "_sample", side_effect=AssertionError("sampled")),
             patch(
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
             ),
-            pytest.raises(ReplayCompatibilityError, match="stochastic effect plan"),
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=r"draw \(sample of 'y' with sample_shape=\(\)\) that matches no draw",
+            ),
             replay_run(original.provenance),
         ):
             sample(candidate_root["y"])
 
     def test_route_drift_is_diagnostic_and_preserves_values(self):
         original_workflow = Function(
+            replayable_identity,
             label="replayable_identity",
-            fn=replayable_identity,
             n_broadcast_samples=9,
             dispatch="sequential",
+            output_spec=OutputSpec(replayable_identity=None),
         )
         replay_workflow = Function(
+            replayable_identity,
             label="replayable_identity",
-            fn=replayable_identity,
             n_broadcast_samples=9,
             dispatch="thread",
             max_workers=3,
+            output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=31):
-            original = original_workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            original = original_workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         with replay_run(original.provenance):
-            replayed = replay_workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = replay_workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
         assert replayed.provenance.diagnostics["replay"]["execution_drift"] is True
@@ -1060,7 +1265,7 @@ class TestReplayPreflight:
         changed = Provenance.from_dict(payload)
 
         with replay_run(changed):
-            replayed = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = sample(Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
         diagnostics = replayed.provenance.diagnostics["replay"]
@@ -1076,7 +1281,7 @@ class TestReplayPreflight:
         changed = Provenance.from_dict(payload)
 
         with replay_run(changed):
-            replayed = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = sample(Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
         diagnostics = replayed.provenance.diagnostics["replay"]
@@ -1094,10 +1299,13 @@ class TestReplayPreflight:
         invalid_signature,
     ):
         workflow = Function(
-            label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
+            replayable_identity,
+            label="replayable_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=8):
-            original = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            original = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         monkeypatch.setattr(
             replayable_identity,
@@ -1105,10 +1313,13 @@ class TestReplayPreflight:
             invalid_signature,
             raising=False,
         )
-        candidate = Normal(loc=0.0, scale=1.0, label="value")
+        candidate = Normal("value", loc=0.0, scale=1.0)
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
-            pytest.raises(ReplayUnsupportedCallableError, match="module-level"),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
+            pytest.raises(
+                ReplayUnsupportedCallableError,
+                match=r"signature, defaults, .* replay cannot record",
+            ),
             replay_run(original.provenance),
         ):
             workflow(value=candidate)
@@ -1120,10 +1331,12 @@ class TestReplayPreflight:
             controls["replay"]["compatibility"]["sampling_abi"] = ["unknown-sampling/v99"]
 
         changed = _mutate_provenance(original.provenance, mutate)
-        candidate = Normal(loc=0.0, scale=1.0, label="value")
+        candidate = Normal("value", loc=0.0, scale=1.0)
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
-            pytest.raises(ReplayCompatibilityError, match="sampling ABI"),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
+            pytest.raises(
+                ReplayCompatibilityError, match=r"replay\.compatibility\.sampling_abi is"
+            ),
             replay_run(changed),
         ):
             sample(candidate)
@@ -1136,29 +1349,34 @@ class TestReplayPreflight:
 
         changed = _mutate_provenance(original.provenance, mutate)
         with (
-            pytest.raises(ReplayCompatibilityError, match="key-adapter ABI"),
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=r"replay\.compatibility\.key_adapter_abi 'unknown-key-adapter/v99'",
+            ),
             replay_run(changed),
         ):
             pass
 
     def test_jax_to_rowwise_route_drift_preserves_values(self):
         original_workflow = Function(
+            replayable_identity,
             label="replayable_identity",
-            fn=replayable_identity,
             n_broadcast_samples=7,
             dispatch="jax",
+            output_spec=OutputSpec(replayable_identity=None),
         )
         replay_workflow = Function(
+            replayable_identity,
             label="replayable_identity",
-            fn=replayable_identity,
             n_broadcast_samples=7,
             dispatch="sequential",
+            output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=41):
-            original = original_workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            original = original_workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         with replay_run(original.provenance):
-            replayed = replay_workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = replay_workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
         assert replayed.provenance.diagnostics["replay"]["execution_drift"] is True
@@ -1181,10 +1399,13 @@ class TestReplayEventRegistry:
                 )
 
         changed = _mutate_provenance(original.provenance, mutate)
-        candidate = Normal(loc=0.0, scale=1.0, label="value")
+        candidate = Normal("value", loc=0.0, scale=1.0)
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
-            pytest.raises(ReplayCompatibilityError, match=r"unexpected|provider ABI"),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=r"matches no draw|recorded call did not make|provider_abi is",
+            ),
             replay_run(changed),
         ):
             sample(candidate)
@@ -1218,7 +1439,9 @@ class TestReplayEventRegistry:
 
         state.claim_effect(effect, attempt=first)
         state.claim_effect(effect, attempt=retry)
-        with pytest.raises(ReplayCompatibilityError, match="missing expected"):
+        with pytest.raises(
+            ReplayCompatibilityError, match="1 random draw that this call did not make"
+        ):
             state.assert_all_events_claimed()
         with pytest.raises(ReplayCompatibilityError, match="successful attempt"):
             state.mark_successful_effects((effect,), attempt=unclaimed)
@@ -1256,7 +1479,7 @@ class TestReplayEventRegistry:
         object.__setattr__(unexpected, "stochastic_source_id", ("source-group", 99))
         attempt = ManagedAttemptState.create(ManagedWorkItemToken.create())
 
-        with pytest.raises(ReplayCompatibilityError, match="unexpected replay event"):
+        with pytest.raises(ReplayCompatibilityError, match="that the recorded call did not make"):
             state._commit_effect_batch(
                 (effect, unexpected),
                 successful_effects=(),
@@ -1274,7 +1497,9 @@ class TestReplayEventRegistry:
         attempt = ManagedAttemptState.create(ManagedWorkItemToken.create())
 
         with (
-            pytest.raises(ReplayCompatibilityError, match="missing expected"),
+            pytest.raises(
+                ReplayCompatibilityError, match="1 random draw that this call did not make"
+            ),
             _replay._remote_replay_claim_scope((effect,), attempt),
         ):
             pass
@@ -1365,14 +1590,15 @@ class TestReplayEventRegistry:
         monkeypatch,
     ):
         workflow = Function(
+            replayable_optional_nested,
             label="replayable_optional_nested",
-            fn=replayable_optional_nested,
             n_broadcast_samples=5,
             dispatch="thread",
             max_workers=2,
+            output_spec=OutputSpec(replayable_optional_nested=None),
         )
         with workflow_run(seed=71):
-            original = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            original = workflow(value=Normal("value", loc=0.0, scale=1.0))
         monkeypatch.setattr(
             _replay_fixtures,
             "ENABLE_EXTRA_AUTOMATIC",
@@ -1380,10 +1606,10 @@ class TestReplayEventRegistry:
         )
 
         with (
-            pytest.raises(ReplayCompatibilityError, match="unexpected replay event"),
+            pytest.raises(ReplayCompatibilityError, match="matches no draw of the recorded call"),
             replay_run(original.provenance),
         ):
-            workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            workflow(value=Normal("value", loc=0.0, scale=1.0))
 
 
 def test_replay_provenance_inputs_are_not_mutated():
@@ -1391,6 +1617,6 @@ def test_replay_provenance_inputs_are_not_mutated():
     before = copy.deepcopy(original.provenance.to_dict())
 
     with replay_run(original.provenance):
-        sample(Normal(loc=jnp.asarray(0.0), scale=1.0, label="value"))
+        sample(Normal("value", loc=jnp.asarray(0.0), scale=1.0))
 
     assert original.provenance.to_dict() == before

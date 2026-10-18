@@ -32,6 +32,7 @@ from probpipe import (
     MultivariateNormal,
     Normal,
     NumericArraySpec,
+    workflow_run,
 )
 from probpipe.inference import (
     elliptical_slice,
@@ -91,7 +92,7 @@ def _observations(prior, shape, obs_var=1.0, *, traceable=True):
 @pytest.fixture(scope="module")
 def gaussian_model():
     """A 1-D ``N(0, 1)`` prior and a Gaussian-mean likelihood over 10 observations."""
-    return _observations(Normal(loc=0.0, scale=1.0, label="mu"), (10,))
+    return _observations(Normal("mu", loc=0.0, scale=1.0), (10,))
 
 
 @pytest.fixture(scope="module")
@@ -109,7 +110,7 @@ class TestGaussianPriorDetection:
     """``_gaussian_prior_params`` recognises the documented Gaussian shapes."""
 
     def test_normal_scalar(self):
-        params = _gaussian_prior_params(Normal(loc=1.5, scale=0.5, label="x"))
+        params = _gaussian_prior_params(Normal("x", loc=1.5, scale=0.5))
         assert params is not None
         mean, cov = params
         np.testing.assert_allclose(np.asarray(mean), [1.5])
@@ -117,9 +118,9 @@ class TestGaussianPriorDetection:
 
     def test_multivariate_normal_diag(self):
         prior = MultivariateNormal(
+            "m",
             loc=jnp.array([0.0, 1.0]),
             cov=jnp.diag(jnp.array([1.0, 4.0])),
-            label="m",
         )
         params = _gaussian_prior_params(prior)
         assert params is not None
@@ -130,7 +131,7 @@ class TestGaussianPriorDetection:
     def test_multivariate_normal_dense(self):
         cov_in = jnp.array([[1.0, 0.3], [0.3, 2.0]])
         loc_in = jnp.array([1.0, -2.0])
-        prior = MultivariateNormal(loc=loc_in, cov=cov_in, label="m")
+        prior = MultivariateNormal("m", loc=loc_in, cov=cov_in)
         params = _gaussian_prior_params(prior)
         assert params is not None
         mean, cov = params
@@ -146,7 +147,7 @@ class TestGaussianPriorDetection:
         ``Normal`` constructor rejects a non-scalar ``loc``/``scale`` with
         a ``ValueError``.
         """
-        mean, cov = _gaussian_prior_params(Normal(loc=2.0, scale=3.0, label="x"))
+        mean, cov = _gaussian_prior_params(Normal("x", loc=2.0, scale=3.0))
         assert mean.shape == (1,)
         assert cov.shape == (1, 1)
         np.testing.assert_allclose(np.asarray(mean), [2.0])
@@ -163,15 +164,15 @@ class TestGaussianPriorDetection:
         from probpipe import DistributionBatch
 
         batch = DistributionBatch(
-            "x",
-            [Normal(loc=0.0, scale=0.5, label="x"), Normal(loc=1.0, scale=2.0, label="x")],
+            [Normal("x", loc=0.0, scale=0.5), Normal("x", loc=1.0, scale=2.0)],
             "law",
+            label="x",
         )
         assert not isinstance(batch, Normal)
         assert _gaussian_prior_params(batch) is None
 
     def test_product_of_normals_block_diagonal(self):
-        prior = Normal(loc=1.0, scale=0.5, label="a") * Normal(loc=-2.0, scale=0.7, label="b")
+        prior = Normal("a", loc=1.0, scale=0.5) * Normal("b", loc=-2.0, scale=0.7)
         params = _gaussian_prior_params(prior)
         assert params is not None
         mean, cov = params
@@ -191,10 +192,10 @@ class TestGaussianPriorDetection:
         diagonal away from the field-order concatenation
         ``[theta, beta_0, beta_1]``.
         """
-        prior = Normal(loc=3.0, scale=1.0, label="theta") * MultivariateNormal(
+        prior = Normal("theta", loc=3.0, scale=1.0) * MultivariateNormal(
+            "beta",
             loc=jnp.array([5.0, -1.0]),
             cov=jnp.diag(jnp.array([0.5, 2.0])),
-            label="beta",
         )
         params = _gaussian_prior_params(prior)
         assert params is not None
@@ -213,17 +214,15 @@ class TestGaussianPriorDetection:
     @pytest.mark.parametrize(
         "prior",
         [
-            pytest.param(Gamma(concentration=2.0, rate=1.0, label="g"), id="gamma"),
-            pytest.param(Beta(alpha=2.0, beta=2.0, label="b"), id="beta"),
+            pytest.param(Gamma("g", concentration=2.0, rate=1.0), id="gamma"),
+            pytest.param(Beta("b", alpha=2.0, beta=2.0), id="beta"),
         ],
     )
     def test_non_gaussian_returns_none(self, prior):
         assert _gaussian_prior_params(prior) is None
 
     def test_product_with_non_gaussian_component_returns_none(self):
-        prior = Normal(loc=0.0, scale=1.0, label="a") * Gamma(
-            concentration=2.0, rate=1.0, label="b"
-        )
+        prior = Normal("a", loc=0.0, scale=1.0) * Gamma("b", concentration=2.0, rate=1.0)
         assert _gaussian_prior_params(prior) is None
 
 
@@ -244,26 +243,24 @@ class TestFeasibilityCheck:
 
     def test_rejects_bare_distribution(self):
         m = BlackJAXESSMethod()
-        info = m.check(observed_target(Normal(loc=0.0, scale=1.0, label="x"), jnp.zeros(5)))
+        info = m.check(observed_target(Normal("x", loc=0.0, scale=1.0, label="x"), jnp.zeros(5)))
         assert not info.feasible
-        assert "factored joint" in info.description
+        assert "Normal 'x' conditioned on data not keyed by its fields" in info.description
 
     def test_rejects_non_gaussian_prior(self):
-        model = _observations(Gamma(concentration=2.0, rate=1.0, label="g"), (5,))
+        model = _observations(Gamma("g", concentration=2.0, rate=1.0), (5,))
         info = BlackJAXESSMethod().check(observed_target(model, {"y": jnp.ones(5)}))
         assert not info.feasible
         assert "Gaussian" in info.description
 
     def test_rejects_missing_data(self):
-        model = _observations(Normal(loc=0.0, scale=1.0, label="mu"), (5,))
+        model = _observations(Normal("mu", loc=0.0, scale=1.0), (5,))
         info = BlackJAXESSMethod().check(model)
         assert not info.feasible
-        assert "observed values" in info.description
+        assert "with no observed fields" in info.description
 
     def test_accepts_a_joint_with_a_gaussian_prior(self):
-        model = _observations(
-            MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="m"), (5, 2)
-        )
+        model = _observations(MultivariateNormal("m", loc=jnp.zeros(2), cov=jnp.eye(2)), (5, 2))
         info = BlackJAXESSMethod().check(observed_target(model, {"y": jnp.zeros((5, 2))}))
         assert info.feasible
 
@@ -279,7 +276,7 @@ class TestDeclinesToRWMH:
     """
 
     def _model(self):
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="mu")
+        prior = MultivariateNormal("mu", loc=jnp.zeros(2), cov=jnp.eye(2))
         return _observations(prior, (5, 2), traceable=False)
 
     def test_ess_check_infeasible_on_non_traceable_likelihood(self):
@@ -294,9 +291,10 @@ class TestDeclinesToRWMH:
         model = self._model()
         # No method= → registry auto-selects. ESS (75) declines
         # (non-traceable), NUTS/HMC (gradient) decline, so RWMH (55) wins.
-        posterior = condition_on.with_options(
-            method_options={"num_results": 50, "num_warmup": 20, "random_seed": 0}
-        )(model, {"y": np.zeros((5, 2))})
+        with workflow_run(seed=0):
+            posterior = condition_on.using(method_options={"num_results": 50, "num_warmup": 20})(
+                model, {"y": np.zeros((5, 2))}
+            )
         assert method_of(posterior) == "blackjax_rwmh"
 
 
@@ -316,18 +314,18 @@ class TestPosteriorRecovery:
 
     def test_one_dim_normal_normal(self):
         """N(0, 1) prior + N(mu, 1) likelihood — posterior is N(n*y_bar/(n+1), 1/(n+1))."""
-        prior = Normal(loc=0.0, scale=1.0, label="mu")
+        prior = Normal("mu", loc=0.0, scale=1.0)
         data = jax.random.normal(jax.random.PRNGKey(11), shape=(50,)) + 0.7
         model = _observations(prior, data.shape)
 
-        post = elliptical_slice(
-            model,
-            {"y": data},
-            num_results=3000,
-            num_warmup=500,
-            num_chains=2,
-            random_seed=42,
-        )
+        with workflow_run(seed=42):
+            post = elliptical_slice(
+                model,
+                {"y": data},
+                num_results=3000,
+                num_warmup=500,
+                num_chains=2,
+            )
         draws = np.concatenate(
             [np.asarray(c) for c in flat_chains(post)],
             axis=0,
@@ -336,6 +334,8 @@ class TestPosteriorRecovery:
         y_bar = float(np.asarray(data).mean())
         analytic_mean = n * y_bar / (n + 1)
         analytic_sd = float(np.sqrt(1.0 / (n + 1)))
+        # Observed across four workflow seeds: |mean error| 0.0004-0.0036,
+        # |sd error| 0.0018-0.0032.
         np.testing.assert_allclose(float(draws.mean()), analytic_mean, atol=0.05)
         np.testing.assert_allclose(
             float(draws.std(ddof=1)),
@@ -358,9 +358,9 @@ class TestPosteriorRecovery:
         sigma_prior = np.asarray(0.5 * (A @ A.T + 2 * np.eye(d)))
         prior_mean_arr = np.zeros(d)
         prior = MultivariateNormal(
+            "theta",
             loc=jnp.asarray(prior_mean_arr),
             cov=jnp.asarray(sigma_prior),
-            label="theta",
         )
 
         n = 80
@@ -371,14 +371,14 @@ class TestPosteriorRecovery:
 
         model = _observations(prior, data.shape)
 
-        post = elliptical_slice(
-            model,
-            {"y": data},
-            num_results=2000,
-            num_warmup=500,
-            num_chains=2,
-            random_seed=42,
-        )
+        with workflow_run(seed=42):
+            post = elliptical_slice(
+                model,
+                {"y": data},
+                num_results=2000,
+                num_warmup=500,
+                num_chains=2,
+            )
         draws = np.concatenate(
             [np.asarray(c) for c in flat_chains(post)],
             axis=0,
@@ -391,12 +391,14 @@ class TestPosteriorRecovery:
         y_bar = np.asarray(data).mean(axis=0)
         post_mean = sigma_post @ (lam_prior @ prior_mean_arr + n * y_bar)
 
+        # Observed across workflow seeds 0-15: max |mean error| 0.003-0.017,
+        # and a covariance error of 0.06-0.15 of the posterior covariance's norm.
         np.testing.assert_allclose(draws.mean(0), post_mean, atol=0.1)
         sample_cov = np.cov(draws, rowvar=False)
         frob = np.linalg.norm(sample_cov - sigma_post, ord="fro")
         np.testing.assert_array_less(
             frob,
-            0.15 * np.linalg.norm(sigma_post, ord="fro"),
+            0.3 * np.linalg.norm(sigma_post, ord="fro"),
         )
 
     def test_factored_joint_prior(self):
@@ -407,21 +409,21 @@ class TestPosteriorRecovery:
         the closed-form per-coordinate spread and *no* cross-correlation.
         """
         sigma_prior = np.diag([1.0, 4.0])
-        prior = Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=0.0, scale=2.0, label="b")
+        prior = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=2.0)
         n, obs_var = 15, 3.0
         rng = np.random.default_rng(1)
         truth = np.array([0.8, -1.2])
         data = jnp.asarray(np.sqrt(obs_var) * rng.standard_normal((n, 2)) + truth)
         model = _observations(prior, data.shape, obs_var)
 
-        post = elliptical_slice(
-            model,
-            {"y": data},
-            num_results=3000,
-            num_warmup=500,
-            num_chains=2,
-            random_seed=7,
-        )
+        with workflow_run(seed=7):
+            post = elliptical_slice(
+                model,
+                {"y": data},
+                num_results=3000,
+                num_warmup=500,
+                num_chains=2,
+            )
         draws = np.concatenate([np.asarray(c) for c in flat_chains(post)], axis=0)
 
         lam_prior = np.linalg.inv(sigma_prior)
@@ -430,6 +432,8 @@ class TestPosteriorRecovery:
         y_bar = np.asarray(data).mean(0)
         post_mean = sigma_post @ ((n / obs_var) * y_bar)  # prior mean is 0
 
+        # Observed across four workflow seeds: max |mean error| 0.009-0.033,
+        # sd error 2-3%, and |sample covariance| 0.0003-0.0037.
         np.testing.assert_allclose(draws.mean(0), post_mean, atol=0.06)
         np.testing.assert_allclose(
             draws.std(0, ddof=1),
@@ -453,21 +457,21 @@ class TestPosteriorRecovery:
         covariance is *sampled*, not merely detected.
         """
         sigma_prior = np.array([[1.0, 0.8], [0.8, 1.0]])
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.asarray(sigma_prior), label="theta")
+        prior = MultivariateNormal("theta", loc=jnp.zeros(2), cov=jnp.asarray(sigma_prior))
         n, obs_var = 10, 10.0
         rng = np.random.default_rng(2)
         truth = np.array([0.5, -0.7])
         data = jnp.asarray(np.sqrt(obs_var) * rng.standard_normal((n, 2)) + truth)
         model = _observations(prior, data.shape, obs_var)
 
-        post = elliptical_slice(
-            model,
-            {"y": data},
-            num_results=4000,
-            num_warmup=800,
-            num_chains=2,
-            random_seed=13,
-        )
+        with workflow_run(seed=13):
+            post = elliptical_slice(
+                model,
+                {"y": data},
+                num_results=4000,
+                num_warmup=800,
+                num_chains=2,
+            )
         draws = np.concatenate([np.asarray(c) for c in flat_chains(post)], axis=0)
 
         lam_prior = np.linalg.inv(sigma_prior)
@@ -480,6 +484,8 @@ class TestPosteriorRecovery:
         # (else this test would not discriminate a diagonalised prior).
         assert abs(sigma_post[0, 1]) > 0.1 * np.sqrt(sigma_post[0, 0] * sigma_post[1, 1])
 
+        # Observed across four workflow seeds: max |mean error| 0.005-0.015, and
+        # a covariance error of 0.006-0.018 of the posterior covariance's norm.
         np.testing.assert_allclose(draws.mean(0), post_mean, atol=0.1)
         sample_cov = np.cov(draws, rowvar=False)
         frob = np.linalg.norm(sample_cov - sigma_post, ord="fro")
@@ -496,26 +502,26 @@ class TestPosteriorRecovery:
 
 class TestProvenanceAndAnnotations:
     def test_provenance(self, gaussian_model, data):
-        post = elliptical_slice(
-            gaussian_model,
-            data,
-            num_results=50,
-            num_warmup=20,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            post = elliptical_slice(
+                gaussian_model,
+                data,
+                num_results=50,
+                num_warmup=20,
+            )
         assert method_of(post) == "elliptical_slice"
         assert post.provenance.operation == "elliptical_slice"
 
     def test_annotations_datatree_has_subiter_stats(self, gaussian_model, data):
         num_chains, num_results = 2, 50
-        post = elliptical_slice(
-            gaussian_model,
-            data,
-            num_results=num_results,
-            num_warmup=20,
-            num_chains=num_chains,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            post = elliptical_slice(
+                gaussian_model,
+                data,
+                num_results=num_results,
+                num_warmup=20,
+                num_chains=num_chains,
+            )
         assert arviz_data(post) is not None
         assert "posterior" in arviz_data(post)
         assert "sample_stats" in arviz_data(post)
@@ -530,53 +536,53 @@ class TestProvenanceAndAnnotations:
         np.testing.assert_array_equal(subiter, np.round(subiter))
 
     def test_warmup_stored(self, gaussian_model):
-        post = elliptical_slice(
-            gaussian_model,
-            {"y": jnp.zeros(10)},
-            num_results=20,
-            num_warmup=15,
-            num_chains=2,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            post = elliptical_slice(
+                gaussian_model,
+                {"y": jnp.zeros(10)},
+                num_results=20,
+                num_warmup=15,
+                num_chains=2,
+            )
         assert warmup_samples(post) is not None
         assert warmup_samples(post)[0].shape == (15, 1)
 
     def test_no_warmup_path(self, gaussian_model, data):
         """``num_warmup=0`` runs and stores no warmup chains."""
-        post = elliptical_slice(
-            gaussian_model,
-            data,
-            num_results=30,
-            num_warmup=0,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            post = elliptical_slice(
+                gaussian_model,
+                data,
+                num_results=30,
+                num_warmup=0,
+            )
         assert isinstance(post, EmpiricalDistribution)
         assert warmup_samples(post) is None
         assert num_draws(post) == 30
 
     def test_explicit_init_smoke(self, gaussian_model, data):
         """An explicit ``init=`` (matching the 1-D param dim) runs cleanly."""
-        post = elliptical_slice(
-            gaussian_model,
-            data,
-            num_results=30,
-            num_warmup=5,
-            init=jnp.array([2.5]),
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            post = elliptical_slice(
+                gaussian_model,
+                data,
+                num_results=30,
+                num_warmup=5,
+                init=jnp.array([2.5]),
+            )
         assert isinstance(post, EmpiricalDistribution)
         # 1-D Normal prior → single-parameter chains.
         assert np.asarray(flat_chains(post)[0]).shape == (30, 1)
 
     def test_multi_chain_shape(self, gaussian_model, data):
-        post = elliptical_slice(
-            gaussian_model,
-            data,
-            num_results=30,
-            num_warmup=10,
-            num_chains=3,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            post = elliptical_slice(
+                gaussian_model,
+                data,
+                num_results=30,
+                num_warmup=10,
+                num_chains=3,
+            )
         assert num_chains(post) == 3
         assert num_draws(post) == 30
 
@@ -588,16 +594,16 @@ class TestProvenanceAndAnnotations:
 
 class TestErrors:
     def test_raises_on_bare_distribution(self):
-        with pytest.raises(TypeError, match="factored joint"):
+        with pytest.raises(TypeError, match="Normal 'x' conditioned on data not keyed"):
             elliptical_slice(
-                Normal(loc=0.0, scale=1.0, label="x"),
+                Normal("x", loc=0.0, scale=1.0, label="x"),
                 jnp.zeros(5),
                 num_results=10,
                 num_warmup=5,
             )
 
     def test_raises_on_non_gaussian_prior(self):
-        model = _observations(Gamma(concentration=2.0, rate=1.0, label="g"), (5,))
+        model = _observations(Gamma("g", concentration=2.0, rate=1.0), (5,))
         with pytest.raises(TypeError, match="Gaussian"):
             elliptical_slice(
                 model,
@@ -607,7 +613,7 @@ class TestErrors:
             )
 
     def test_raises_on_none_data(self, gaussian_model):
-        with pytest.raises(TypeError, match="observed values"):
+        with pytest.raises(TypeError, match="with no observed fields"):
             elliptical_slice(
                 gaussian_model,
                 data=None,

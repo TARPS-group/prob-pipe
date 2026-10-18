@@ -98,23 +98,24 @@ class Bernoulli(TFPDistribution):
 
     Parameters
     ----------
-    label : str
-        Distribution name.
+    component : str
+        The component of the law's event.
     probs : array-like, optional
         Probability of a 1 outcome.  Exactly one of *probs* or *logits*
         must be provided.
     logits : array-like, optional
         Log-odds of a 1 outcome.
+    label : str, optional
+        The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        The declaration of one draw, which names its component. The family
-        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        A declaration of *component* that declares the type of one draw, which
+        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
-        record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If not exactly one of *probs* and *logits* is given, or *event_spec*
         declares a type that one draw does not conform to.
@@ -125,24 +126,26 @@ class Bernoulli(TFPDistribution):
 
     def __new__(
         cls,
-        label: str,
+        component: str,
         *,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
+        label: str | None = None,
         event_spec: OutputSpec | None = None,
     ) -> Bernoulli:
         return _finite_support_instance(cls, _one_coordinate(probs, logits))
 
     def __init__(
         self,
-        label: str,
+        component: str,
         *,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
+        label: str | None = None,
         event_spec: OutputSpec | None = None,
     ):
         if (probs is None) == (logits is None):
-            raise ValueError("Exactly one of probs or logits must be provided.")
+            raise ValueError("exactly one of probs or logits must be provided")
         if probs is not None:
             self._probs = _as_float_array(probs)
             self._logits = None
@@ -151,7 +154,7 @@ class Bernoulli(TFPDistribution):
             self._logits = _as_float_array(logits)
             self._probs = None
             backend = tfd.Bernoulli(logits=self._logits)
-        super().__init__(label, backend, event_spec=event_spec)
+        super().__init__(component, backend, label=label, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -175,8 +178,8 @@ class Binomial(TFPDistribution):
 
     Parameters
     ----------
-    label : str
-        Distribution name.
+    component : str
+        The component of the law's event.
     total_count : array-like
         Number of trials.
     probs : array-like, optional
@@ -184,16 +187,17 @@ class Binomial(TFPDistribution):
         *logits* must be provided.
     logits : array-like, optional
         Log-odds of success per trial.
+    label : str, optional
+        The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        The declaration of one draw, which names its component. The family
-        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        A declaration of *component* that declares the type of one draw, which
+        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
-        record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If not exactly one of *probs* and *logits* is given, or *event_spec*
         declares a type that one draw does not conform to.
@@ -204,26 +208,28 @@ class Binomial(TFPDistribution):
 
     def __new__(
         cls,
-        label: str,
+        component: str,
         total_count: ArrayLike,
         *,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
+        label: str | None = None,
         event_spec: OutputSpec | None = None,
     ) -> Binomial:
         return _finite_support_instance(cls, _one_coordinate(total_count, probs, logits))
 
     def __init__(
         self,
-        label: str,
+        component: str,
         total_count: ArrayLike,
         *,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
+        label: str | None = None,
         event_spec: OutputSpec | None = None,
     ):
         if (probs is None) == (logits is None):
-            raise ValueError("Exactly one of probs or logits must be provided.")
+            raise ValueError("exactly one of probs or logits must be provided")
         if probs is not None:
             _, (self._total_count, self._probs) = _promote_floats(total_count, probs)
             self._logits = None
@@ -232,7 +238,7 @@ class Binomial(TFPDistribution):
             _, (self._total_count, self._logits) = _promote_floats(total_count, logits)
             self._probs = None
             backend = tfd.Binomial(total_count=self._total_count, logits=self._logits)
-        super().__init__(label, backend, event_spec=event_spec)
+        super().__init__(component, backend, label=label, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -260,30 +266,39 @@ class Poisson(TFPDistribution):
 
     Parameters
     ----------
-    label : str
-        Distribution name.
+    component : str
+        The component of the law's event.
     rate : array-like
         Rate parameter (must be positive).
+    label : str, optional
+        The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        The declaration of one draw, which names its component. The family
-        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        A declaration of *component* that declares the type of one draw, which
+        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
-        record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If *event_spec* declares a type that one draw does not conform to.
+        If *component* is not a valid component name, or *event_spec* names
+        another component or declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = _MOMENTS
 
-    def __init__(self, label: str, rate: ArrayLike, *, event_spec: OutputSpec | None = None):
+    def __init__(
+        self,
+        component: str,
+        rate: ArrayLike,
+        *,
+        label: str | None = None,
+        event_spec: OutputSpec | None = None,
+    ):
         self._rate = _as_float_array(rate)
         backend = tfd.Poisson(rate=self._rate)
-        super().__init__(label, backend, event_spec=event_spec)
+        super().__init__(component, backend, label=label, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -303,23 +318,24 @@ class Categorical(TFPDistribution):
 
     Parameters
     ----------
-    label : str
-        Distribution name.
+    component : str
+        The component of the law's event.
     probs : array-like, optional
         Probabilities for each category.  Exactly one of *probs* or
         *logits* must be provided.
     logits : array-like, optional
         Unnormalized log-probabilities for each category.
+    label : str, optional
+        The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        The declaration of one draw, which names its component. The family
-        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        A declaration of *component* that declares the type of one draw, which
+        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
-        record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If not exactly one of *probs* and *logits* is given, or *event_spec*
         declares a type that one draw does not conform to.
@@ -330,10 +346,11 @@ class Categorical(TFPDistribution):
 
     def __new__(
         cls,
-        label: str,
+        component: str,
         *,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
+        label: str | None = None,
         event_spec: OutputSpec | None = None,
     ) -> Categorical:
         parameters = probs if probs is not None else logits
@@ -341,14 +358,15 @@ class Categorical(TFPDistribution):
 
     def __init__(
         self,
-        label: str,
+        component: str,
         *,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
+        label: str | None = None,
         event_spec: OutputSpec | None = None,
     ):
         if (probs is None) == (logits is None):
-            raise ValueError("Exactly one of probs or logits must be provided.")
+            raise ValueError("exactly one of probs or logits must be provided")
         if probs is not None:
             self._probs = _as_float_array(probs)
             self._logits = None
@@ -357,7 +375,7 @@ class Categorical(TFPDistribution):
             self._logits = _as_float_array(logits)
             self._probs = None
             backend = tfd.Categorical(logits=self._logits)
-        super().__init__(label, backend, event_spec=event_spec)
+        super().__init__(component, backend, label=label, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -386,8 +404,8 @@ class NegativeBinomial(TFPDistribution):
 
     Parameters
     ----------
-    label : str
-        Distribution name.
+    component : str
+        The component of the law's event.
     total_count : array-like
         Number of successes before stopping.
     probs : array-like, optional
@@ -395,16 +413,17 @@ class NegativeBinomial(TFPDistribution):
         *logits* must be provided.
     logits : array-like, optional
         Log-odds of success per trial.
+    label : str, optional
+        The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        The declaration of one draw, which names its component. The family
-        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        A declaration of *component* that declares the type of one draw, which
+        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
-        record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If not exactly one of *probs* and *logits* is given, or *event_spec*
         declares a type that one draw does not conform to.
@@ -414,15 +433,16 @@ class NegativeBinomial(TFPDistribution):
 
     def __init__(
         self,
-        label: str,
+        component: str,
         total_count: ArrayLike,
         *,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
+        label: str | None = None,
         event_spec: OutputSpec | None = None,
     ):
         if (probs is None) == (logits is None):
-            raise ValueError("Exactly one of probs or logits must be provided.")
+            raise ValueError("exactly one of probs or logits must be provided")
         if probs is not None:
             _, (self._total_count, self._probs) = _promote_floats(total_count, probs)
             self._logits = None
@@ -431,7 +451,7 @@ class NegativeBinomial(TFPDistribution):
             _, (self._total_count, self._logits) = _promote_floats(total_count, logits)
             self._probs = None
             backend = tfd.NegativeBinomial(total_count=self._total_count, logits=self._logits)
-        super().__init__(label, backend, event_spec=event_spec)
+        super().__init__(component, backend, label=label, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 

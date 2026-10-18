@@ -21,23 +21,26 @@ Provides:
 
 from __future__ import annotations
 
+import reprlib
 from abc import abstractmethod
 from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
 
+from ..core._catalog import registry_catalog
 from ..core._dispatch import (
     BinaryDispatchMethod,
     BinaryDispatchRegistry,
     Feasibility,
     MethodInfo,
     ResolutionError,
+    _approximate,
     _mro_distance,
     _Registration,
 )
 from ..core._record_spec import RecordSpec
-from ..core._repr import sequence_repr
+from ..core._repr import public_class_name, sequence_repr
 from ..core._spec_base import NumericArraySpec, TermSpec, _unify_array_shape
 from ..core._specs import OutputSpec
 from ..core.provenance import Provenance
@@ -131,14 +134,17 @@ class ConversionInfo(MethodInfo):
             raise TypeError(f"samples must be a bool; got {self.samples!r}")
         if self.method_name is not None or self.feasible is False:
             if (self.method_name is None) != (self.exact is None):
-                raise ValueError("method_name and exact are set together or not at all")
+                raise ValueError(
+                    f"ConversionInfo: pass method_name and exact together; got "
+                    f"method_name={self.method_name!r}, exact={self.exact!r}"
+                )
         elif self.exact is not True:
             raise ValueError(
-                "a feasible or unresolved ConversionInfo names its method, unless it selects "
-                "none because the source already satisfies the target, which is exact"
+                "a feasible or unresolved ConversionInfo must set method_name and exact, such "
+                "as method_name=self.name, exact=True"
             )
         if self.feasible is True and self.target_spec is None:
-            raise ValueError("a feasible ConversionInfo promises its target_spec")
+            raise ValueError("a feasible ConversionInfo must set target_spec")
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The method's arguments, then the promise where one is made."""
@@ -208,9 +214,11 @@ def _satisfaction(source: Any, target: type) -> Feasibility:
     conversion preserves.
     """
     if not isinstance(source, Distribution) or not isinstance(source, target):
-        return Feasibility(
-            False, f"a {type(source).__name__} is not a {_target_name(target)} as it is"
-        )
+        name = public_class_name(type(source))
+        label = getattr(source, "label", None)
+        subject = f"{name} {label!r}" if isinstance(source, Distribution) else name
+        relation = "does not support" if _is_capability(target) else "is not an instance of"
+        return Feasibility(False, f"{subject} {relation} {_target_name(target)}")
     method = _GUARDED_METHODS.get(target)
     if method is None:
         return Feasibility(True)
@@ -229,9 +237,9 @@ def _guaranteed(capabilities: tuple[type, ...], target: type) -> bool:
 
 def _packaging(declaration: OutputSpec) -> str:
     if declaration.exposes_record:
-        return "an exposed record"
+        return "a record of fields"
     (component,) = declaration.components
-    return f"the whole term {component!r}"
+    return f"the single field {component!r}"
 
 
 #: The names of the two declarations a conversion compares, in its messages.
@@ -259,7 +267,7 @@ def _term_difference(
         return None
     if isinstance(expected, NumericArraySpec) or isinstance(actual, NumericArraySpec):
         if not (isinstance(expected, NumericArraySpec) and isinstance(actual, NumericArraySpec)):
-            return f"{path} is {_kind(expected)} in {first} and {_kind(actual)} in {second}"
+            return f"{path} is {_kind(expected)} in {first} but {_kind(actual)} in {second}"
         try:
             _unify_array_shape(expected.shape, actual.shape, {}, path)
         except ValueError as error:
@@ -271,16 +279,16 @@ def _term_difference(
             and not np.can_cast(actual.dtype, expected.dtype, casting="same_kind")
         ):
             return (
-                f"{path} has dtype {expected.dtype} in {first} and {actual.dtype} in {second}, "
+                f"{path} has dtype {expected.dtype} in {first} but {actual.dtype} in {second}, "
                 f"which does not cast to it"
             )
         return None
     if isinstance(expected, RecordSpec) or isinstance(actual, RecordSpec):
         if not (isinstance(expected, RecordSpec) and isinstance(actual, RecordSpec)):
-            return f"{path} is {_kind(expected)} in {first} and {_kind(actual)} in {second}"
+            return f"{path} is {_kind(expected)} in {first} but {_kind(actual)} in {second}"
         if tuple(expected.children) != tuple(actual.children):
             return (
-                f"{path} has the fields {list(expected.children)} in {first} and "
+                f"{path} has the fields {list(expected.children)} in {first} but "
                 f"{list(actual.children)} in {second}"
             )
         for name, child in expected.children.items():
@@ -291,7 +299,7 @@ def _term_difference(
                 return difference
         return None
     if expected != actual:
-        return f"{path} is {_kind(expected)} in {first} and {_kind(actual)} in {second}"
+        return f"{path} is {_kind(expected)} in {first} but {_kind(actual)} in {second}"
     return None
 
 
@@ -300,7 +308,7 @@ def _kind(spec: TermSpec | None) -> str:
         return "an array"
     if isinstance(spec, RecordSpec):
         return "a record"
-    return f"a {type(spec).__name__}" if spec is not None else "undeclared"
+    return type(spec).__name__ if spec is not None else "undeclared"
 
 
 def _event_difference(
@@ -318,10 +326,10 @@ def _event_difference(
     """
     first, second = sides
     if expected.exposes_record != actual.exposes_record:
-        return f"{first} declares {_packaging(expected)} and {second} {_packaging(actual)}"
+        return f"{first} declares {_packaging(expected)} but {second} {_packaging(actual)}"
     if tuple(expected.components) != tuple(actual.components):
         return (
-            f"{first} declares the components {list(expected.components)} and {second} "
+            f"{first} declares the fields {list(expected.components)} but {second} "
             f"{list(actual.components)}"
         )
     for name, spec in expected.components.items():
@@ -396,11 +404,21 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
             )
         source, target = args[0], args[1]
         if not isinstance(target, type):
-            raise TypeError(f"a conversion target is a class or a protocol, got {target!r}")
+            raise TypeError(
+                f"a conversion target must be a class or a protocol; got {reprlib.repr(target)}"
+            )
         return (type(source), target)
 
     def _validate_supported_types(self, name: str, supported_types: Any) -> None:
         """The pair of class tuples II.7 requires, each class one ``issubclass`` can check.
+
+        Parameters
+        ----------
+        name : str
+            The converter's registered name, which error messages name.
+        supported_types : Any
+            The converter's declared ``supported_types``, checked to be a
+            ``(source_types, target_types)`` pair of tuples of classes.
 
         Raises
         ------
@@ -415,9 +433,9 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
                     issubclass(object, declared)
                 except TypeError:
                     raise TypeError(
-                        f"Method {name!r} declares {declared.__name__}, which issubclass cannot "
-                        f"check, so the registry cannot match it; a protocol with a data member "
-                        f"belongs in the converter's check"
+                        f"converter {name!r} lists {declared.__name__} in supported_types, but "
+                        f"issubclass() cannot test a protocol with data members; remove it "
+                        f"from supported_types and test for it in the converter's check"
                     ) from None
 
     def _distance(
@@ -443,6 +461,25 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
         options: dict[str, Any],
     ) -> _Plan:
         """The converter's report under its registration, held to the conversion contract.
+
+        Parameters
+        ----------
+        registration : _Registration[Converter]
+            The converter to ask, with the name and exactness the registry read from
+            it at registration.
+        args : tuple of Any
+            The call's positional arguments, which start with the source and the
+            target.
+        options : dict[str, Any]
+            The converter options, passed to the converter's ``check`` as keywords.
+
+        Returns
+        -------
+        _Plan
+            The report under the registration's name and exactness. For a
+            capability target, the report is infeasible when no promised capability
+            is the target or refines it. It is unresolved when only the converted law
+            can decide the target's guard, which the plan then awaits.
 
         Raises
         ------
@@ -479,8 +516,7 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
                     info,
                     feasible=False,
                     description=(
-                        f"it promises the capabilities {promised}, none of which is "
-                        f"{_target_name(target)}"
+                        f"it promises the capabilities {promised}, but not {_target_name(target)}"
                     ),
                 ),
             )
@@ -536,9 +572,7 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
                     named,
                     ConversionInfo(
                         False,
-                        description=(
-                            f"Method {method!r} is approximate and exact_only was requested"
-                        ),
+                        description=_approximate(method),
                         method_name=method,
                         exact=named.exact,
                     ),
@@ -611,6 +645,26 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
 
         A source that already satisfies the target is returned as it is.
 
+        Parameters
+        ----------
+        *args : Any
+            The source and the target, passed with *options* to the selected
+            converter's ``check`` and ``execute``.
+        method : str or None
+            A registered converter to run instead of auto-selecting.
+        exact_only : bool
+            If ``True``, approximate converters are excluded.
+        **options : Any
+            Converter options, which the selected converter reads; a backend
+            object's event declaration is the option ``event_spec``.
+
+        Returns
+        -------
+        Distribution
+            The source itself, or the converted law. A converted law that the
+            converter left without provenance records the source and the
+            converter's name and exactness in its provenance.
+
         Raises
         ------
         ResolutionError
@@ -637,12 +691,15 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
                 else f"Method {plan.registration.name!r} is not applicable: {info.description}"
             )
         if info.feasible is None and plan.awaiting is None:
-            subject = (
-                "the source's satisfaction of the target"
-                if plan.registration is None
-                else f"Method {plan.registration.name!r}"
+            pending = ", ".join(info.pending)
+            if plan.registration is None:
+                raise ResolutionError(
+                    f"cannot yet tell whether {public_class_name(type(args[0]))} satisfies "
+                    f"{_target_name(args[1])}; waiting on: {pending}"
+                )
+            raise ResolutionError(
+                f"Method {plan.registration.name!r} is unresolved; pending: {pending}"
             )
-            raise ResolutionError(f"{subject} is unresolved; pending: {', '.join(info.pending)}")
         registration = plan.registration
         result = registration.method.execute(*args, **options)
         self._check_result(registration, args, options, result, plan.awaiting)
@@ -666,6 +723,22 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
         awaiting: str | None,
     ) -> None:
         """Hold the converted law to the promise: the source's declaration, and the target.
+
+        Parameters
+        ----------
+        registration : _Registration[Converter]
+            The converter that ran, whose name error messages name.
+        args : tuple of Any
+            The call's positional arguments, which start with the source and the
+            target.
+        options : dict[str, Any]
+            The converter options, whose ``event_spec`` declares a backend source's
+            event.
+        result : Any
+            The value the converter's ``execute`` returned.
+        awaiting : str or None
+            The method of the target capability whose guard only the converted law
+            decides, such as ``"_sample"``. ``None`` leaves no guard to check.
 
         Raises
         ------
@@ -702,8 +775,8 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
             if guard.feasible is not True:
                 reason = guard.description or ", ".join(guard.pending)
                 raise ResolutionError(
-                    f"converter {name!r} returned a law whose {awaiting} the target "
-                    f"{_target_name(target)} needs is not available: {reason}"
+                    f"converter {name!r} returned a law that cannot provide "
+                    f"{_target_name(target)}: {reason}"
                 )
 
     def convert(
@@ -766,5 +839,9 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
         )
 
 
-converter_registry: ConverterRegistry = ConverterRegistry()
+converter_registry: ConverterRegistry = ConverterRegistry(
+    name="converters",
+    description="Converters between representations of a law, keyed on the source type and the target.",
+)
 """The global registry of converters, keyed on the source type and the requested target."""
+registry_catalog.register(converter_registry)

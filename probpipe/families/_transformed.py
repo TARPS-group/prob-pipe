@@ -34,11 +34,16 @@ from ..distributions._capabilities import (
     SupportsVariance,
     _capability_subclass,
 )
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import (
+    Distribution,
+    _class_label,
+    _constructor_label,
+    _whole_term_event,
+)
 from ..functions._descendants import _Descent, _register_descendant_type
 from ..functions._reparameterization import _as_bijector, _BackendBijector, _image, _is_affine
 from ..linalg import DenseLinOp, LinOp
-from ..values import Function, SupportsLogDetJacobian, is_invertible
+from ..values import Function, SupportsInverse, SupportsLogDetJacobian, is_invertible
 
 __all__ = ["BijectorTransformedDistribution", "LinearPushforwardDistribution"]
 
@@ -48,18 +53,20 @@ class LinearPushforwardDistribution(Distribution):
 
     The event type is ``op``'s output type, under the pushforward's own
     component. Sampling pushes the base's draws through ``op``. The mean and
-    the covariance delegate exactly, ``E[A X] = A E[X]`` and ``Cov(A X) = A
+    the covariance delegate exactly, ``𝔼[A X] = A 𝔼[X]`` and ``Cov(A X) = A
     Cov(X) Aᵀ``, lazily through the operator algebra. The log-density exists
     only when ``op`` is invertible, by change of variables.
 
     Parameters
     ----------
-    label : str
-        The pushforward's label, and the component of its event.
+    component : str
+        The component of the pushforward's event.
     base : Distribution
         The law of ``X``, whose numeric event is ``op``'s input.
     op : LinOp
         The linear map.
+    label : str, optional
+        The pushforward's label, ``LinearPushforwardDistribution`` by default.
 
     Raises
     ------
@@ -67,8 +74,33 @@ class LinearPushforwardDistribution(Distribution):
         Always, until the linear evaluation rule is implemented.
     """
 
-    def __init__(self, label: str, base: Distribution, op: LinOp) -> None:
-        raise NotImplementedError("LinearPushforwardDistribution.__init__")
+    def __init__(
+        self, component: str, base: Distribution, op: LinOp, *, label: str | None = None
+    ) -> None:
+        raise NotImplementedError("LinearPushforwardDistribution is not implemented yet")
+
+
+def _not_invertible(f: Any) -> str | None:
+    """Why the ``Function`` *f* is not invertible, as a predicate on its label, or ``None``.
+
+    Parameters
+    ----------
+    f : Any
+        The map to check, usually a :class:`~probpipe.values.Function`.
+
+    Returns
+    -------
+    str or None
+        Such as ``"does not implement SupportsInverse"``, or ``None`` when
+        :func:`~probpipe.values.is_invertible` holds for *f*.
+    """
+    if is_invertible(f):
+        return None
+    if not isinstance(f, SupportsInverse):
+        return "does not implement SupportsInverse"
+    report = f._inverse_guard()
+    detail = getattr(report, "description", "")
+    return "has no inverse here" + (f" ({detail})" if detail else "")
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +119,7 @@ def _forward(bijector: Function) -> Callable[[Array], Array]:
     engine refuses inside ``replay_run``, so a transformed law builds, samples,
     and pushes its moments forward in a replayed call as in the recorded one.
     """
-    return bijector.raw()
+    return bijector.raw
 
 
 def _per_point(function: Any, value: Array, rank: int) -> Array:
@@ -146,7 +178,7 @@ def _affine_jacobian(self: BijectorTransformedDistribution) -> Array:
 
 
 def _transformed_mean(self: BijectorTransformedDistribution) -> Array:
-    """``f(E[X])``, which is ``E[f(X)]`` for an affine ``f``."""
+    """``f(𝔼[X])``, which is ``𝔼[f(X)]`` for an affine ``f``."""
     return _forward(self._bijector)(jnp.asarray(self._base._mean()))
 
 
@@ -190,29 +222,35 @@ class BijectorTransformedDistribution(Distribution):
 
     The law claims sampling when the base does and the density the base has.
     It claims a moment only where the bijector gives it in closed form: when
-    the forward map is affine, ``E[f(X)] = f(E[X])`` and ``Cov(f(X)) = J
+    the forward map is affine, ``𝔼[f(X)] = f(𝔼[X])`` and ``Cov(f(X)) = J
     Cov(X) Jᵀ`` with ``J`` the map's constant Jacobian. The moment operations
     estimate the others by their Monte Carlo fallback.
 
     One draw is an array whose shape and dtype are those of the bijector's
-    output at a draw of the base, declared as a whole term under the law's
-    name; its support is the one the bijector maps onto when that is known.
+    output at a draw of the base, declared as a whole term under *component*;
+    its support is the one the bijector maps onto when that is known.
 
     Parameters
     ----------
-    label : str
-        The transformed law's label.
+    component : str
+        The component of the transformed law's event.
     base : Distribution
         The law of ``X``, whose draws are arrays.
     bijector : Function
         The invertible map ``f``, claiming the inverse and the log-determinant
         of its Jacobian; a backend bijector enters as such a ``Function``.
+    label : str, optional
+        The transformed law's label, ``BijectorTransformedDistribution`` by
+        default.
 
     Raises
     ------
     TypeError
-        If *base* is not a ``Distribution`` whose draws are arrays, or
-        *bijector* is neither a ``Function`` nor a backend bijector.
+        If *base* is not a ``Distribution`` whose draws are arrays, *component*
+        is not a string, *label* is not a non-empty string, or *bijector* is
+        neither a ``Function`` nor a backend bijector.
+    ValueError
+        If *component* is not a valid component name.
     ResolutionError
         If *bijector* does not claim ``SupportsInverse``, or its guard
         rejects, or it does not claim ``SupportsLogDetJacobian``.
@@ -228,39 +266,63 @@ class BijectorTransformedDistribution(Distribution):
     }
 
     def __new__(
-        cls, label: str, base: Distribution, bijector: Function | Any
+        cls,
+        component: str,
+        base: Distribution,
+        bijector: Function | Any,
+        *,
+        label: str | None = None,
     ) -> BijectorTransformedDistribution:
         claimed = _claimed(base, _as_bijector(bijector)) if isinstance(base, Distribution) else ()
         return object.__new__(_capability_subclass(cls, claimed))
 
-    def __init__(self, label: str, base: Distribution, bijector: Function | Any) -> None:
-        if not isinstance(base, Distribution) or not isinstance(
-            base.event_spec.spec, NumericArraySpec
-        ):
+    def __init__(
+        self,
+        component: str,
+        base: Distribution,
+        bijector: Function | Any,
+        *,
+        label: str | None = None,
+    ) -> None:
+        owner = _class_label(self)
+        label = _constructor_label(self, label, owner)
+        if not isinstance(base, Distribution):
             raise TypeError(
-                f"BijectorTransformedDistribution takes a base whose draws are arrays, got "
+                f"base of BijectorTransformedDistribution must be a Distribution, got "
                 f"{type(base).__name__}"
             )
-        bijector = _as_bijector(bijector)
-        missing = [
-            claim
-            for claim, holds in (
-                ("SupportsInverse", is_invertible(bijector)),
-                ("SupportsLogDetJacobian", isinstance(bijector, SupportsLogDetJacobian)),
+        base_kind = base.event_spec.spec
+        if not isinstance(base_kind, NumericArraySpec):
+            drawn = "records" if base.event_spec.exposes_record else type(base_kind).__name__
+            raise TypeError(
+                f"BijectorTransformedDistribution needs a base that draws numeric arrays, but "
+                f"{base.label!r} draws {drawn}"
             )
-            if not holds
-        ]
-        if missing:
+        bijector = _as_bijector(bijector)
+        inverse = _not_invertible(bijector)
+        if inverse is not None or not isinstance(bijector, SupportsLogDetJacobian):
+            if isinstance(bijector, SupportsLogDetJacobian):
+                reason = inverse
+            elif isinstance(bijector, SupportsInverse):
+                reason = "does not implement SupportsLogDetJacobian" + (
+                    f" and {inverse}" if inverse is not None else ""
+                )
+            else:
+                reason = "does not implement SupportsInverse and SupportsLogDetJacobian"
             raise ResolutionError(
-                f"the bijector {bijector.label!r} of {label!r} does not claim "
-                f"{' and '.join(missing)}, which a change of variables needs"
+                f"BijectorTransformedDistribution {label!r} needs an invertible bijector with a "
+                f"log-det Jacobian, but {bijector.label!r} {reason}"
             )
         base_spec = base.event_spec.spec
         point = jax.ShapeDtypeStruct(tuple(base_spec.shape), base_spec.dtype or jnp.float32)
         image = jax.eval_shape(_forward(bijector), point)
         object.__setattr__(self, "_base", base)
         object.__setattr__(self, "_bijector", bijector)
-        super().__init__(label, NumericArraySpec(tuple(image.shape), image.dtype, _image(bijector)))
+        image_spec = NumericArraySpec(tuple(image.shape), image.dtype, _image(bijector))
+        super().__init__(
+            _whole_term_event(component, image_spec, None, owner),
+            label=label,
+        )
         self.with_provenance(
             Provenance.create("transform", parents=[base], metadata={"bijector": bijector.label})
         )

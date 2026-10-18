@@ -13,17 +13,28 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
+from functools import partial
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, runtime_checkable
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax.scipy.linalg import block_diag
 
+from ..core._array_backend import _is_numeric_leaf
+from ..core._compilation import compiled_or_eager
 from ..core._dispatch import Feasibility, ResolutionError
+from ..core._expression import (
+    Named,
+    Product,
+    Selected,
+    joined_labels,
+)
+from ..core._immutable import transient_memo
 from ..core._object_batch import _is_object_array
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
-from ..core._repr import grouped_label, sequence_repr
+from ..core._repr import sequence_repr
 from ..core._spec_base import (
     NumericArraySpec,
     NumericSpec,
@@ -61,12 +72,21 @@ from ._conditional import (
     ConditionalDistributionSpec,
     _event_is_numeric,
     _given_side_is_numeric,
+    _missing_slots,
+    _unknown_slots,
 )
 from ._distribution import (
     _DECLARATION_MARKERS,
+    _EMPTY_SELECTION,
     Distribution,
     DistributionSpec,
     _declares_numeric_event,
+    _fixed_paths,
+    _keeps_fixed_paths,
+    _law_repr,
+    _no_free_dims,
+    _recorded_copy,
+    _shared_final_names,
     _whole_term_component,
 )
 
@@ -85,17 +105,88 @@ __all__ = [
 
 _PATH_SEP = "/"
 
-#: The separator a joint's label places between the labels it joins.
-_LABEL_SEP = "·"
-
 
 def _joined_label(labels: Iterable[str]) -> str:
-    """The labels of factors joined with ``·``, each grouped as an operator groups an operand's.
+    """The labels of factors joined with ``·``, each read as one unit, as a product's label joins them.
 
-    An expression is parenthesized, as a posterior labeled ``model | y`` is, and
-    a label with a space is bracketed, so each factor's label reads as one unit.
+    A label that is itself a product joins as it is, so labels join
+    associatively: ``lik·prior`` joined with ``d`` is ``lik·prior·d``. Any other
+    label is grouped as :func:`~probpipe.core._repr.grouped_label` groups an
+    operand: a compound label is parenthesized, as a label ``model | y`` is, and a
+    label with a space is bracketed.
     """
-    return _LABEL_SEP.join(grouped_label(label) for label in labels)
+    return joined_labels(labels)
+
+
+def _is_named(joint: Any) -> bool:
+    """Whether the product *joint* was given a label, so it displays by that label.
+
+    A product without a label carries a product of its factors as its
+    expression, possibly conditioned or selected, and a labeled one carries
+    its label.
+    """
+    return not isinstance(joint._expression.core(), Product)
+
+
+def _product_of(factors: Iterable[Any]) -> Product:
+    """The expression of the product of *factors*, which displays factor by factor."""
+    return Product(tuple(factor._embedded_expression() for factor in factors))
+
+
+def _with_named(joint: Any, named: bool) -> Any:
+    """*joint*, a product just built, which displays by its label when *named* and factor by factor otherwise.
+
+    A product built by ``*`` or by the ``joint`` operation is unlabeled, so it
+    displays factor by factor, and a product given a label displays by it.
+    *joint* keeps the paths it holds fixed, and it is set in place.
+    """
+    if named == _is_named(joint):
+        return joint
+    core = Named(joint.label) if named else _product_of(joint.factors)
+    joint._store_expression(core.with_fixed(_fixed_paths(joint)))
+    return joint
+
+
+def _derived_product(joint: Any, source: Any) -> Any:
+    """*joint*, a product just built from the product *source*, displayed as *source* is.
+
+    *joint* displays by its label exactly when *source* does, and it holds the
+    paths *source* holds fixed. An unlabeled *joint* reads in one of three
+    ways:
+
+    1. factor by factor over its own factors, when their labels join to
+       *source*'s label, as a renamed ``lik * prior`` does;
+    2. as *source* reads, when its factors carry the labels of *source*'s
+       factors, as a dimension transform of ``model * d`` does;
+    3. by *source*'s label and its own components otherwise, as a joint whose
+       conditioning dropped a factor does, as ``(a·b)(b)``.
+    """
+    _keeps_fixed_paths(joint, source)
+    if _is_named(source):
+        return _with_named(joint, True)
+    if _joined_label(factor.label for factor in joint.factors) == source.label:
+        return _with_named(joint, False)
+    held = _fixed_paths(joint)
+    expression = source._expression
+    if [factor.label for factor in joint.factors] != [part.label for part in source.factors]:
+        expression = Selected(expression.core(), tuple(joint.event_spec.components))
+    joint._store_expression(expression.with_fixed(held))
+    return joint
+
+
+def _labeled_product(term: Any) -> Any:
+    """*term*, the result of a function, displayed by its label when it is a product.
+
+    A product a function returns takes the function's output label as its
+    label, so it displays by that label, as ``predict(y, mu)``. An unlabeled
+    product is returned as a labeled copy that shares its factors, and any
+    other term is returned as it is.
+    """
+    if isinstance(term, (FactoredDistribution, FactoredConditionalDistribution)) and not _is_named(
+        term
+    ):
+        return _with_named(term._shallow_copy(), True)
+    return term
 
 
 type Factor = Distribution | ConditionalDistribution
@@ -182,6 +273,21 @@ def _flattened(
 
     A packaged joint is one factor, since its packaging is part of its declaration.
 
+    Parameters
+    ----------
+    factors : sequence of Factor
+        The factors in composition order, any of which may be a factored joint.
+    scope : Mapping[str, int] or None
+        The size of each dimension bound so far, keyed by its name, or ``None``
+        when none is bound.
+
+    Returns
+    -------
+    factors : tuple of Factor
+        The flat factors, in composition order.
+    scope : dict[str, int]
+        *scope* merged with the scope of each flattened joint.
+
     Raises
     ------
     ValueError
@@ -212,6 +318,18 @@ def _unify_either_way(
     first: TermSpec, second: TermSpec, bindings: dict[str, int], path: str
 ) -> None:
     """Unify two specs that meet as equals, whichever direction admits the other.
+
+    Parameters
+    ----------
+    first : TermSpec
+        The spec of one unmet given slot.
+    second : TermSpec
+        The spec of another unmet given slot of the same name.
+    bindings : dict[str, int]
+        The size of each symbolic dimension bound so far, keyed by its name, which
+        the direction that unifies extends in place.
+    path : str
+        The location that error messages name, such as ``"the given 'x'"``.
 
     Raises
     ------
@@ -246,6 +364,20 @@ def _factor_graph(
     only when a required one is among them, and an unmet slot is optional when
     every factor that names it holds it optional.
 
+    Parameters
+    ----------
+    factors : sequence of Factor
+        The factors in conditional-first order.
+    scope : Mapping[str, int] or None, optional
+        The size of each dimension already bound, keyed by its name, such as the
+        scope of a joint being rebuilt.
+
+    Returns
+    -------
+    _FactorGraph
+        The flat factors, bound in the joint's one scope, with their dependencies
+        and their unmet givens.
+
     Raises
     ------
     TypeError
@@ -257,21 +389,23 @@ def _factor_graph(
     """
     factors, bindings = _flattened(tuple(factors), scope)
     if not factors:
-        raise ValueError("a factored distribution has at least one factor")
+        raise ValueError("a FactoredDistribution needs at least one factor; got none")
     producers: dict[str, int] = {}
     component_specs: dict[str, TermSpec] = {}
     for index, factor in enumerate(factors):
         if not isinstance(factor, (Distribution, ConditionalDistribution)):
             raise TypeError(
-                f"a factor is a Distribution or a ConditionalDistribution, got "
+                f"each factor must be a Distribution or a ConditionalDistribution; got "
                 f"{type(factor).__name__}"
             )
         for component, spec in factor.event_spec.components.items():
             if component in producers:
                 raise ValueError(
-                    f"the component {component!r} is produced by both "
-                    f"{factors[producers[component]].label!r} and {factor.label!r}; each "
-                    f"component is produced once, so rename one with with_path_names"
+                    f"the field {component!r} is produced by both factor "
+                    f"{producers[component]} ({factors[producers[component]].label!r}) and "
+                    f"factor {index} ({factor.label!r}); rename it in one of them with "
+                    f"with_path_names({{{component!r}: ...}}), or build one of them with "
+                    f"another component, as Normal('{component}_2', ...)"
                 )
             producers[component] = index
             component_specs[component] = spec
@@ -296,9 +430,9 @@ def _factor_graph(
                 continue
             if producer < index:
                 raise ValueError(
-                    f"{factor.label!r} conditions on {slot!r}, which {factors[producer].label!r} "
-                    f"produces to its left; composition is conditional-first, so put the "
-                    f"producer on the right"
+                    f"{factor.label!r} conditions on {slot!r}, but {factors[producer].label!r} "
+                    f"defines {slot!r} to its left in the product; put "
+                    f"{factors[producer].label!r} to the right of {factor.label!r}"
                 )
             _unify_specs(slot_spec, component_specs[slot], bindings, f"the given {slot!r}")
             edges.append((index, producer, slot))
@@ -380,6 +514,16 @@ def _children(value: Any) -> Mapping[str, Any]:
     A raw record is a mapping of its fields. A ``Record`` is read through its
     one-level view, and a batch of records through its raw columns.
 
+    Parameters
+    ----------
+    value : Any
+        A raw record, a ``Record``, or a ``RecordBatch``.
+
+    Returns
+    -------
+    Mapping[str, Any]
+        *value* itself when it is a mapping, and a mapping read from it otherwise.
+
     Raises
     ------
     TypeError
@@ -392,7 +536,9 @@ def _children(value: Any) -> Mapping[str, Any]:
     children = getattr(value, "children", None)
     if isinstance(children, Mapping):
         return children
-    raise TypeError(f"a record value is a mapping of its fields, got {type(value).__name__}")
+    raise TypeError(
+        f"a record value must be a Record or a mapping of its fields; got {type(value).__name__}"
+    )
 
 
 def _components_of(declaration: OutputSpec, value: Any) -> dict[str, Any]:
@@ -423,6 +569,19 @@ def _event_of(declaration: OutputSpec, components: Mapping[str, Any]) -> Any:
 def _given_values(joint: Any, given: Record | Mapping[str, Any]) -> dict[str, Any]:
     """The value of each given slot of the conditional *joint* in *given*, by slot name.
 
+    Parameters
+    ----------
+    joint : FactoredConditionalDistribution
+        The conditional joint whose given slots *given* binds.
+    given : Record or Mapping[str, Any]
+        A value of each required given slot, and of any optional one, keyed by
+        slot name.
+
+    Returns
+    -------
+    dict[str, Any]
+        A new dict of the top-level entries of *given*.
+
     Raises
     ------
     KeyError
@@ -433,10 +592,10 @@ def _given_values(joint: Any, given: Record | Mapping[str, Any]) -> dict[str, An
     values = dict(top.items())
     unknown = set(values) - set(joint.given_spec)
     if unknown:
-        raise KeyError(f"{sorted(unknown)} are not given slots of {joint.label!r}")
+        raise KeyError(_unknown_slots(joint.label, sorted(unknown), joint.given_spec))
     missing = [slot for slot in joint.given_spec.required if slot not in values]
     if missing:
-        raise KeyError(f"the given of {joint.label!r} omits the required slots {missing}")
+        raise KeyError(_missing_slots(joint.label, missing))
     return values
 
 
@@ -581,6 +740,113 @@ def _factor_given(
     }
 
 
+#: The kernel method a joint maps over the draws of a factor's givens to draw the factor.
+_DRAW = "_conditional_sample"
+
+
+def _is_constant(value: Any) -> bool:
+    """Whether *value* is a string, ``None``, a boolean, or a tuple of them.
+
+    Such a value is hashable and compares equal exactly when it is the same
+    value, so a compiled program can take it as a static argument.
+    """
+    if isinstance(value, tuple):
+        return all(_is_constant(item) for item in value)
+    return value is None or isinstance(value, (str, bool, np.bool_))
+
+
+def _split_fixed(
+    factor: ConditionalDistribution, fixed: Mapping[str, Any]
+) -> tuple[dict[str, Any], tuple[tuple[str, Any], ...]] | None:
+    """The unmet givens in *fixed* a compiled call takes as arguments, and those it takes as constants.
+
+    Returns ``None`` when an unmet given is neither, and the call then runs
+    uncompiled. The three cases:
+
+    1. **Arguments:** a slot that *factor* declares numeric, holding numeric
+       leaves, as :func:`~probpipe.core._array_backend._is_numeric_leaf`
+       decides. A new value of the same shape reuses the program.
+    2. **Constants:** a value that :func:`_is_constant` admits. It is part of
+       the program's identity, so a new value compiles a new program, which
+       the factor keeps.
+    3. **Neither:** any other value, such as an object whose state may change
+       between calls, since a program would keep the state it had when it was
+       traced.
+    """
+    arguments: dict[str, Any] = {}
+    constants: list[tuple[str, Any]] = []
+    for slot, value in fixed.items():
+        if isinstance(factor.given_spec[slot], NumericSpec) and all(
+            _is_numeric_leaf(leaf) for leaf in jax.tree.leaves(value)
+        ):
+            arguments[slot] = value
+        elif _is_constant(value):
+            constants.append((slot, value))
+        else:
+            return None
+    return arguments, tuple(constants)
+
+
+def _at_each_given(
+    factor: ConditionalDistribution,
+    method: str,
+    fixed: Mapping[str, Any],
+    count: int,
+    values: Mapping[str, Any],
+    points: Any,
+) -> Any:
+    """*factor*'s *method* at each of the *count* values along the leading axis of *values*, stacked.
+
+    The *i*-th call binds the factor's givens to the *i*-th entry of *values*
+    and to the unmet givens in *fixed*, and takes the *i*-th entry of *points*:
+    a key when *method* draws, and the factor's part of the joint's value when
+    *method* is a density.
+
+    A call whose givens are numeric runs one compiled program: the factor's
+    method vectorized with ``jax.vmap`` and compiled with ``jax.jit``. It takes
+    the draws, the keys or the events, and the unmet givens as
+    :func:`_split_fixed` sorts them. The factor's memo holds the program, with
+    one compiled form for each set of constants and input shapes. The program
+    calls the factor it was built for, so a copy of the factor, which may hold
+    other bound values, builds its own. ``ConditionalDistribution`` states
+    what the factor's method may read.
+
+    The call runs uncompiled, under ``jax.vmap``, when :func:`_split_fixed`
+    returns ``None`` or when the program does not trace, as for a method that
+    converts an unmet given to a Python number.
+    :func:`~probpipe.core._compilation.compiled_or_eager` records a program
+    that does not trace for the structure of the unmet givens, so later calls
+    with that structure skip the attempt. When a given is not numeric, the
+    method is called on one value at a time.
+    """
+    fixed = {slot: fixed[slot] for slot in factor.given_spec if slot in fixed}
+    tail = ((),) if method == _DRAW else ()
+
+    def one(fixed: Mapping[str, Any], values: Mapping[str, Any], point: Any) -> Any:
+        return getattr(factor, method)(_factor_given(factor, values, fixed), point, *tail)
+
+    def uncompiled(*_: Any) -> Any:
+        return _each_value(partial(one, fixed), count, values, points, traceable=True)
+
+    if not _numeric_givens(factor, values):
+        return _each_value(partial(one, fixed), count, values, points, traceable=False)
+    split = _split_fixed(factor, fixed)
+    if split is None:
+        return uncompiled()
+    memo = transient_memo(factor)
+    program = memo.get(("mapped", method))
+    if program is None:
+
+        def mapped(arguments: dict[str, Any], constants: tuple, values: Any, points: Any) -> Any:
+            held = {**arguments, **dict(constants)}
+            return jax.vmap(partial(one, held))(values, points)
+
+        program = memo[("mapped", method)] = jax.jit(mapped, static_argnums=1)
+    arguments, constants = split
+    key = ("untraced", method, jax.tree.structure(arguments), constants)
+    return compiled_or_eager(memo, key, program, uncompiled, arguments, constants, values, points)
+
+
 def _conditional_draw(
     factor: ConditionalDistribution,
     drawn: Mapping[str, Any],
@@ -594,19 +860,16 @@ def _conditional_draw(
     those components, one given value per call, each call with its own key.
     """
     inner = {slot: drawn[slot] for slot in factor.given_spec if slot in drawn}
-
-    def given(values: Mapping[str, Any]) -> dict[str, Any]:
-        return _factor_given(factor, values, fixed)
-
     if not inner or not sample_shape:
-        return factor._conditional_sample(given(inner), key, sample_shape)
+        return factor._conditional_sample(_factor_given(factor, inner, fixed), key, sample_shape)
     count = math.prod(sample_shape)
-    draws = _each_value(
-        lambda values, subkey: factor._conditional_sample(given(values), subkey, ()),
+    draws = _at_each_given(
+        factor,
+        _DRAW,
+        fixed,
         count,
         _flatten_draws(inner, sample_shape),
         jax.random.split(key, count),
-        traceable=_numeric_givens(factor, inner),
     )
     return _unflatten_draws(draws, sample_shape)
 
@@ -637,19 +900,11 @@ def _conditional_score(
 ) -> Array:
     """*factor*'s density *method* at *event*, at the given the joint's components supply."""
     inner = {slot: components[slot] for slot in factor.given_spec if slot in graph.producers}
-
-    def given(values: Mapping[str, Any]) -> dict[str, Any]:
-        return _factor_given(factor, values, fixed)
-
-    density = getattr(factor, method)
     batch = _batch_axes(factor, inner, event)
     if not batch:
-        return density(given(inner), event)
-    scores = _each_value(
-        lambda values, one: density(given(values), one),
-        math.prod(batch),
-        *_flatten_draws((inner, event), batch),
-        traceable=_numeric_givens(factor, inner),
+        return getattr(factor, method)(_factor_given(factor, inner, fixed), event)
+    scores = _at_each_given(
+        factor, method, fixed, math.prod(batch), *_flatten_draws((inner, event), batch)
     )
     return _unflatten_draws(scores, batch)
 
@@ -853,21 +1108,20 @@ class _SoleField(Distribution):
 
     def __init__(self, law: Distribution) -> None:
         ((component, spec),) = law.event_spec.components.items()
-        super().__init__(law.label, OutputSpec(**{component: spec}))
+        super().__init__(
+            OutputSpec(**{component: spec}),
+            label=law.label,
+        )
         object.__setattr__(self, "_law", law)
         object.__setattr__(self, "_component", component)
 
-    def _repr_class_name(self) -> str:
-        """The class of the record law, which this law presents as a whole term."""
-        return self._law._repr_class_name()
+    def __repr__(self) -> str:
+        """A call of the record law's constructor, with the whole-term declaration as ``event_spec=``."""
+        return _law_repr(self, self._law._repr_arguments(), self._law)
 
-    def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The family parameters of the record law."""
-        return self._law._repr_arguments()
-
-    def _event_repr_arguments(self) -> list[tuple[str, str]]:
-        """The whole-term declaration, by which this law differs from the record law."""
-        return [("event_spec", repr(self.event_spec))]
+    def _event_repr_parts(self) -> tuple[str | None, str | None]:
+        """No component, and the whole-term declaration, by which this law differs from the record law."""
+        return None, repr(self.event_spec)
 
 
 def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]:
@@ -875,6 +1129,19 @@ def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]
 
     An exposed joint's event paths are its record's paths. A packaged joint's
     paths start with its component, below which they are the record's paths.
+
+    Parameters
+    ----------
+    joint : FactoredDistribution
+        The joint whose factor record the paths address.
+    path : str or tuple of str
+        An event path of the joint, or a tuple of event paths to select jointly.
+
+    Returns
+    -------
+    tuple of str
+        Each requested path within the factor record, in the order requested,
+        with a packaged joint's leading component removed.
 
     Raises
     ------
@@ -889,37 +1156,33 @@ def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]
     """
     paths = (path,) if isinstance(path, str) else tuple(path)
     if not paths:
-        raise ValueError("a selection of event paths names at least one path")
+        raise ValueError(_EMPTY_SELECTION)
     component = _whole_term_component(joint.event_spec)
     record = joint._graph.event_spec.spec
     inner: list[str] = []
     for requested in paths:
         if not isinstance(requested, str):
-            raise TypeError(f"an event path is a string, got {type(requested).__name__}")
+            raise TypeError(f"a field path must be a string; got {type(requested).__name__}")
         within = requested
         if component is not None:
             head, _, within = requested.partition(_PATH_SEP)
             if head != component or not within:
                 raise KeyError(
-                    f"{requested!r} is not a path below the component {component!r} of "
-                    f"{joint.label!r}"
+                    f"{requested!r} is not an event path of {joint.label!r}; its paths start "
+                    f"with {component + _PATH_SEP!r}"
                 )
         try:
             record.at_path(*within.split(_PATH_SEP))
         except KeyError:
             raise KeyError(
-                f"{requested!r} is not an event path of {joint.label!r}, whose components are "
+                f"{requested!r} is not an event path of {joint.label!r}; its fields: "
                 f"{list(joint.event_spec.components)}"
             ) from None
         inner.append(within)
     paths = tuple(inner)
     finals = [requested.rsplit(_PATH_SEP, 1)[-1] for requested in paths]
-    shared = sorted({final for final in finals if finals.count(final) > 1})
-    if shared:
-        raise ValueError(
-            f"the selected paths {list(paths)} share the final segments {shared}, which would "
-            f"name two fields of the selected record alike"
-        )
+    if len(set(finals)) < len(finals):
+        raise ValueError(_shared_final_names(paths))
     return paths
 
 
@@ -1003,6 +1266,8 @@ def _joint_sample(self: Any, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -
 
     Parameters
     ----------
+    self : FactoredDistribution
+        The joint whose capability subclass installs this function as ``_sample``.
     key : PRNGKey
         The key of the draw.
     sample_shape : tuple of int, optional
@@ -1027,6 +1292,9 @@ def _joint_log_prob(self: Any, value: Any) -> Array:
 
     Parameters
     ----------
+    self : FactoredDistribution
+        The joint whose capability subclass installs this function as
+        ``_log_prob``.
     value : Mapping[str, Any] or Record
         A value of the joint's event, or a batch of them, keyed by component.
 
@@ -1046,6 +1314,9 @@ def _joint_unnormalized_log_prob(self: Any, value: Any) -> Array:
 
     Parameters
     ----------
+    self : FactoredDistribution
+        The joint whose capability subclass installs this function as
+        ``_unnormalized_log_prob``.
     value : Mapping[str, Any] or Record
         A value of the joint's event, or a batch of them, keyed by component.
 
@@ -1060,6 +1331,12 @@ def _joint_unnormalized_log_prob(self: Any, value: Any) -> Array:
 def _joint_mean(self: Any) -> dict[str, Any]:
     """The mean of an edge-free joint, each component's from the factor that produces it.
 
+    Parameters
+    ----------
+    self : FactoredDistribution
+        The edge-free joint whose capability subclass installs this function as
+        ``_mean``.
+
     Returns
     -------
     dict
@@ -1070,6 +1347,12 @@ def _joint_mean(self: Any) -> dict[str, Any]:
 
 def _joint_variance(self: Any) -> dict[str, Any]:
     """The variance of an edge-free joint, each component's from the factor that produces it.
+
+    Parameters
+    ----------
+    self : FactoredDistribution
+        The edge-free joint whose capability subclass installs this function as
+        ``_variance``.
 
     Returns
     -------
@@ -1086,6 +1369,12 @@ def _joint_cov(self: Any) -> DenseLinOp:
     factor's covariance as a block in factor order, the order of the joint's
     flattened coordinates.
 
+    Parameters
+    ----------
+    self : FactoredDistribution
+        The edge-free joint whose capability subclass installs this function as
+        ``_cov``.
+
     Returns
     -------
     DenseLinOp
@@ -1101,6 +1390,14 @@ def _joint_quantile(self: Any, q: ArrayLike) -> dict[str, Any]:
     are the children of the factor's result. Each factor's result is its
     event's raw form with the level axes leading in each leaf, so the joint's is
     the same form of its own event.
+
+    Parameters
+    ----------
+    self : FactoredDistribution
+        The edge-free joint whose capability subclass installs this function as
+        ``_quantile``.
+    q : ArrayLike
+        The levels in ``[0, 1]``, of any shape.
 
     Returns
     -------
@@ -1121,6 +1418,19 @@ def _joint_conditional_sample(
     Each unmet given takes its value from *given*, and the factors draw as for
     the unconditional joint's ``_sample``, keys included.
 
+    Parameters
+    ----------
+    self : FactoredConditionalDistribution
+        The conditional joint whose capability subclass installs this function as
+        ``_conditional_sample``.
+    given : Record or Mapping[str, Any]
+        A value of each required given slot, and of any optional one, keyed by
+        slot name.
+    key : PRNGKey
+        The key of the draw.
+    sample_shape : tuple of int, optional
+        Batch axes prepended to every component; ``()`` draws once.
+
     Returns
     -------
     dict
@@ -1140,6 +1450,22 @@ def _joint_conditional_log_prob(self: Any, given: Record | Mapping[str, Any], va
     Each unmet given takes its value from *given*, and the factors are scored as
     the unconditional joint's are.
 
+    Parameters
+    ----------
+    self : FactoredConditionalDistribution
+        The conditional joint whose capability subclass installs this function as
+        ``_conditional_log_prob``.
+    given : Record or Mapping[str, Any]
+        A value of each required given slot, and of any optional one, keyed by
+        slot name.
+    value : Mapping[str, Any] or Record
+        A value of the joint's event, or a batch of them, keyed by component.
+
+    Returns
+    -------
+    Array
+        The log-density, shaped as the batch axes.
+
     Raises
     ------
     KeyError
@@ -1153,6 +1479,22 @@ def _joint_conditional_unnormalized_log_prob(
 ) -> Array:
     """The log-density of the joint at *given*, up to an additive constant.
 
+    Parameters
+    ----------
+    self : FactoredConditionalDistribution
+        The conditional joint whose capability subclass installs this function as
+        ``_conditional_unnormalized_log_prob``.
+    given : Record or Mapping[str, Any]
+        A value of each required given slot, and of any optional one, keyed by
+        slot name.
+    value : Mapping[str, Any] or Record
+        A value of the joint's event, or a batch of them, keyed by component.
+
+    Returns
+    -------
+    Array
+        The unnormalized log-density, shaped as the batch axes.
+
     Raises
     ------
     KeyError
@@ -1163,6 +1505,20 @@ def _joint_conditional_unnormalized_log_prob(
 
 def _joint_conditional_mean(self: Any, given: Record | Mapping[str, Any]) -> dict[str, Any]:
     """The mean of an edge-free joint at *given*, each component's from its factor.
+
+    Parameters
+    ----------
+    self : FactoredConditionalDistribution
+        The edge-free conditional joint whose capability subclass installs this
+        function as ``_conditional_mean``.
+    given : Record or Mapping[str, Any]
+        A value of each required given slot, and of any optional one, keyed by
+        slot name.
+
+    Returns
+    -------
+    dict
+        Each component's mean, keyed by component in canonical factor order.
 
     Raises
     ------
@@ -1175,6 +1531,20 @@ def _joint_conditional_mean(self: Any, given: Record | Mapping[str, Any]) -> dic
 def _joint_conditional_variance(self: Any, given: Record | Mapping[str, Any]) -> dict[str, Any]:
     """The variance of an edge-free joint at *given*, each component's from its factor.
 
+    Parameters
+    ----------
+    self : FactoredConditionalDistribution
+        The edge-free conditional joint whose capability subclass installs this
+        function as ``_conditional_variance``.
+    given : Record or Mapping[str, Any]
+        A value of each required given slot, and of any optional one, keyed by
+        slot name.
+
+    Returns
+    -------
+    dict
+        Each component's variance, keyed by component in canonical factor order.
+
     Raises
     ------
     KeyError
@@ -1185,6 +1555,20 @@ def _joint_conditional_variance(self: Any, given: Record | Mapping[str, Any]) ->
 
 def _joint_conditional_cov(self: Any, given: Record | Mapping[str, Any]) -> DenseLinOp:
     """The block-diagonal covariance of an edge-free joint at *given*.
+
+    Parameters
+    ----------
+    self : FactoredConditionalDistribution
+        The edge-free conditional joint whose capability subclass installs this
+        function as ``_conditional_cov``.
+    given : Record or Mapping[str, Any]
+        A value of each required given slot, and of any optional one, keyed by
+        slot name.
+
+    Returns
+    -------
+    DenseLinOp
+        The ``(d, d)`` covariance, where ``d`` is the size of the flattened draw.
 
     Raises
     ------
@@ -1198,6 +1582,22 @@ def _joint_conditional_quantile(
     self: Any, given: Record | Mapping[str, Any], q: ArrayLike
 ) -> dict[str, Any]:
     """The quantiles of an edge-free joint at *given* and the levels *q*, per component.
+
+    Parameters
+    ----------
+    self : FactoredConditionalDistribution
+        The edge-free conditional joint whose capability subclass installs this
+        function as ``_conditional_quantile``.
+    given : Record or Mapping[str, Any]
+        A value of each required given slot, and of any optional one, keyed by
+        slot name.
+    q : ArrayLike
+        The levels in ``[0, 1]``, of any shape.
+
+    Returns
+    -------
+    dict
+        Each component's quantiles, keyed by component in canonical factor order.
 
     Raises
     ------
@@ -1218,11 +1618,22 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
     exposed record: the one factor itself when it exposes a record, and
     otherwise the joint of the kept factors in factor order, repackaged when
     the paths name the fields in another order, so its fields follow the
-    order of the paths (III.8). The marginal keeps the joint's label, as the
-    view at *path* does.
+    order of the paths (III.8).
+
+    The marginal carries the expression the ``marginal`` operation gives it
+    (VI.8). A marginal over the whole events of some factors, none of which
+    conditions on a component outside them, is those factors: one factor
+    keeps its own label, and several form a product without a label, in the
+    order the paths name them where a product in that order declares the
+    fields in the order of the paths. Any other marginal is the joint
+    selected at *path*, which keeps the joint's label. The marginal holds the
+    paths the joint holds fixed.
 
     Parameters
     ----------
+    self : FactoredDistribution
+        The joint whose capability subclass installs this function as
+        ``_marginal``.
     path : str or tuple of str
         An event path of the joint, or a selection of several.
 
@@ -1251,9 +1662,12 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
     if report.feasible is not True:
         reason = report.description or "; ".join(report.pending)
         raise ResolutionError(f"{self.label!r} has no exact marginal at {path!r}: {reason}")
+    from ._views import _carrying, _marginal_expression_at
+
     graph: _FactorGraph = self._graph
     projection = isinstance(path, str)
-    label = self.label
+    closed = _closed_factors(self, (path,) if projection else tuple(path))
+    label = self.label if closed is None else _joined_label(part.label for part in closed)
     kept: list[Distribution] = []
     for index, requested in _requests(graph, paths).items():
         factor = graph.factors[index]
@@ -1265,10 +1679,83 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
             kept.append(factor)
     if len(kept) == 1 and (projection or kept[0].event_spec.exposes_record):
         marginal = _law_at_defaults(kept[0], ())
-        marginal = marginal if marginal.label == label else marginal.with_label(label)
+    elif closed is None:
+        marginal = FactoredDistribution(
+            kept,
+            label=label,
+        )
     else:
-        marginal = FactoredDistribution(label, kept)
-    return marginal if projection else _in_requested_order(marginal, paths)
+        marginal = FactoredDistribution(
+            closed,
+            label=label,
+        )
+    if not projection:
+        marginal = _in_requested_order(marginal, paths)
+    return _carrying(marginal, _marginal_expression_at(self, path))
+
+
+def _closed_factors(d: Any, paths: tuple[Any, ...]) -> list[Factor] | None:
+    """The factors of *d* whose events are the components *paths* name, if none conditions outside them.
+
+    A marginal over these components is the product of the factors (VI.8).
+    The factors are listed in the order the paths name their components when
+    a product in that order declares the components in the order of the
+    paths, and in factor order otherwise. An optional slot that no factor of
+    *d* produces takes its default, so it conditions on nothing.
+
+    Parameters
+    ----------
+    d : Any
+        A law; only one with ``factors`` has closed factors.
+    paths : tuple
+        The requested paths, in the order requested.
+
+    Returns
+    -------
+    list of Factor or None
+        The closed factors, or None when *d* has no factors, a path is not a
+        whole component, the components split a factor's event, or a factor
+        conditions on a component outside them.
+    """
+    parts = getattr(d, "factors", None)
+    wanted = set(paths)
+    if not parts or not all(isinstance(path, str) and _PATH_SEP not in path for path in wanted):
+        return None
+    selected = [part for part in parts if wanted & set(part.event_spec.components)]
+    produced = {component for part in selected for component in part.event_spec.components}
+    if produced != wanted:
+        return None
+    components_of_d = set(d.event_spec.components)
+    for part in selected:
+        if not isinstance(part, ConditionalDistribution):
+            continue
+        given = part.given_spec
+        conditioned = [
+            slot for slot in given if slot in components_of_d or slot not in given.optional
+        ]
+        if any(slot not in wanted for slot in conditioned):
+            return None
+    return _in_selection_order(selected, paths) or selected
+
+
+def _in_selection_order(parts: list[Factor], paths: tuple[str, ...]) -> list[Factor] | None:
+    """*parts* in the order *paths* names their components, or None when no product of them has that order.
+
+    A product declares each factor's components in turn, and it places a
+    factor before every factor that produces a component it conditions on.
+    """
+    ordered = sorted(
+        parts, key=lambda part: min(paths.index(name) for name in part.event_spec.components)
+    )
+    declared = [name for part in ordered for name in part.event_spec.components]
+    if declared != list(paths):
+        return None
+    produced: set[str] = set()
+    for part in ordered:
+        if isinstance(part, ConditionalDistribution) and produced & set(part.given_spec):
+            return None
+        produced |= set(part.event_spec.components)
+    return ordered
 
 
 def _in_requested_order(marginal: Distribution, paths: tuple[str, ...]) -> Distribution:
@@ -1310,6 +1797,19 @@ def _joint_marginal_capabilities(self: Any, path: str | tuple[str, ...]) -> froz
     joint. Several report what the joint of them claims: sampling
     and each density when every kept factor has it, a moment when no kept
     factor conditions on another and every one has the moment, and marginals.
+
+    Parameters
+    ----------
+    self : FactoredDistribution
+        The joint whose capability subclass installs this function as
+        ``_marginal_capabilities``.
+    path : str or tuple of str
+        An event path of the joint, or a selection of several.
+
+    Returns
+    -------
+    frozenset of type
+        The capability protocols the marginal at *path* claims.
 
     Raises
     ------
@@ -1468,6 +1968,26 @@ def _joint_protocols(graph: _FactorGraph, *, conditional: bool) -> set[type]:
 def _rebuilt(joint: Any, method: str, mapping: Mapping[str, Any], *, free: Any = None) -> Any:
     """*joint* rebuilt from its factors with *method* applied, recording the transform.
 
+    Parameters
+    ----------
+    joint : FactoredDistribution or FactoredConditionalDistribution
+        The joint to rebuild.
+    method : str
+        The dimension transform each factor applies, ``"with_dim_sizes"`` or
+        ``"with_dim_names"``.
+    mapping : Mapping[str, Any]
+        The transform's keyword arguments, keyed by dimension name: a size or a
+        new name.
+    free : frozenset of str, optional
+        The joint's free dimensions, which must include every key of *mapping*
+        when given.
+
+    Returns
+    -------
+    FactoredDistribution or FactoredConditionalDistribution
+        A joint of the class of *joint* over the transformed factors, packaged as
+        *joint* is, whose provenance records *method* and *mapping*.
+
     Raises
     ------
     ValueError
@@ -1476,18 +1996,18 @@ def _rebuilt(joint: Any, method: str, mapping: Mapping[str, Any], *, free: Any =
     if free is not None:
         unbound = set(mapping) - set(free)
         if unbound:
-            raise ValueError(
-                f"{type(joint).__name__} {joint.label!r} has no free dimensions "
-                f"{sorted(unbound)} to bind"
-            )
+            raise ValueError(_no_free_dims(joint, unbound, free))
     base = vars(type(joint)).get("_capability_base", type(joint))
     scope = dict(joint._graph.scope)
     if method == "with_dim_sizes":
         scope.update(mapping)
     rebuilt = base(
-        joint.label, _each_factor(joint.factors, method, mapping), _scope=scope, **_packaging(joint)
+        _each_factor(joint.factors, method, mapping),
+        label=joint.label,
+        _scope=scope,
+        **_packaging(joint),
     )
-    return rebuilt.with_provenance(
+    return _derived_product(rebuilt, joint).with_provenance(
         Provenance.create(method, parents=[joint], metadata=dict(mapping))
     )
 
@@ -1519,13 +2039,21 @@ def _register_refinement(cls: type, predicate: Callable[[tuple[Factor, ...]], bo
     transform, and a conditional joint bound at its givens construct the most
     specific registered class whose predicate holds for the flattened factors.
 
+    Parameters
+    ----------
+    cls : type
+        A subclass of :class:`FactoredDistribution`, such as a family's factored
+        class.
+    predicate : callable
+        The test that admits *cls*, called with the tuple of flattened factors.
+
     Raises
     ------
     TypeError
         If *cls* is not a subclass of :class:`FactoredDistribution`.
     """
     if not (isinstance(cls, type) and issubclass(cls, FactoredDistribution)):
-        raise TypeError(f"a refinement is a subclass of FactoredDistribution, got {cls!r}")
+        raise TypeError(f"a refinement must be a subclass of FactoredDistribution; got {cls!r}")
     _REFINEMENTS.append((cls, predicate))
 
 
@@ -1575,12 +2103,30 @@ class FactoredDistribution(Distribution, SupportsFactors):
     it names. Scoring sums the factors' densities, each at its own event
     reconstructed from the components.
 
+    A joint constructed by this class is labeled, so its :attr:`notation` is
+    its label followed by its signature, as ``model(y, mu)``. A joint that
+    ``*`` or the ``joint`` operation builds is unlabeled, and its notation joins
+    its factors' notations with ``·``, as ``lik(y | mu)·prior(mu)``, until
+    ``with_label`` gives it a label. A law built from a joint, such as a copy,
+    a packaged sub-joint, or a marginal that reduces a factor to part of its
+    event, is labeled when the joint is. A marginal over the whole events of
+    several factors is a product without a label, as ``a(a)·b(b)``, and a
+    product that a function returns takes the function's output label. An
+    unlabeled product that holds paths fixed reads as its grouped label
+    followed by its signature, as ``(lik·prior)(mu; y)``.
+
     Parameters
     ----------
-    label : str
-        The joint's label.
     factors : Sequence[Distribution | ConditionalDistribution]
         The factors, in conditional-first order.
+    label : str, optional
+        The joint's display alias. Defaults to the product of its factors' descriptions.
+    _scope : Mapping[str, int], optional
+        The size of each dimension bound in the joint that a transform rebuilds,
+        keyed by its name, which the factor graph starts from.
+    _component : str, optional
+        The component under which a packaged joint declares its record as a whole
+        term. By default the joint exposes the record.
 
     Raises
     ------
@@ -1593,13 +2139,16 @@ class FactoredDistribution(Distribution, SupportsFactors):
         ``FactoredConditionalDistribution``.
     """
 
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
+
     _capability_table = _joint_table("FactoredDistribution", conditional=False)
 
     def __new__(
         cls,
-        label: str,
         factors: Sequence[Factor],
         *,
+        label: str | None = None,
         _scope: Mapping[str, int] | None = None,
         _component: str | None = None,
     ) -> FactoredDistribution:
@@ -1613,20 +2162,31 @@ class FactoredDistribution(Distribution, SupportsFactors):
 
     def __init__(
         self,
-        label: str,
         factors: Sequence[Factor],
         *,
+        label: str | None = None,
         _scope: Mapping[str, int] | None = None,
         _component: str | None = None,
     ) -> None:
+        expression = _product_of(factors) if label is None else None
+        rendering = None
+        if expression is not None:
+            rendering = expression.label_rendering()
+            label = rendering[0]
         graph = _factor_graph(factors, _scope)
         if graph.unmet is not None:
             raise ValueError(
-                f"the factors of {label!r} leave the givens {sorted(graph.unmet)} unmet, so "
-                f"the joint is a FactoredConditionalDistribution"
+                f"no factor of {label!r} defines {sorted(graph.unmet)}, which its factors "
+                f"condition on; add a factor for them, or build a "
+                f"FactoredConditionalDistribution"
             )
-        super().__init__(label, _joint_declaration(graph, _component))
+        super().__init__(
+            _joint_declaration(graph, _component),
+            label=label,
+        )
         object.__setattr__(self, "_graph", graph)
+        if expression is not None:
+            self._store_expression(expression, rendering)
 
     @property
     def factors(self) -> tuple[Factor, ...]:
@@ -1637,8 +2197,15 @@ class FactoredDistribution(Distribution, SupportsFactors):
         """The factors, in conditional-first order."""
         return [("factors", sequence_repr(repr(factor) for factor in self.factors))]
 
+    def _derived_label(self) -> str:
+        """The label the constructor gives the factors the repr shows: their labels joined with ``·``."""
+        return _product_of(self.factors).render_label()
+
     def with_dim_sizes(self, **sizes: int) -> Self:
         """Bind named symbolic dimensions in every factor that declares them.
+
+        The result is this joint with its dimensions bound, so a lift draws it
+        together with this joint (V.5).
 
         Parameters
         ----------
@@ -1648,17 +2215,21 @@ class FactoredDistribution(Distribution, SupportsFactors):
         Returns
         -------
         Self
-            The joint of the bound factors, under the same name.
+            The joint of the bound factors, under the same label.
 
         Raises
         ------
         ValueError
             If a name is not a free dimension of the joint.
         """
-        return _rebuilt(self, "with_dim_sizes", sizes, free=self.event_spec.spec.free_dims)
+        rebuilt = _rebuilt(self, "with_dim_sizes", sizes, free=self.event_spec.spec.free_dims)
+        return _recorded_copy(rebuilt, self)
 
     def with_dim_names(self, **names: str) -> Self:
         """Rename symbolic dimensions in every factor, simultaneously.
+
+        The result is this joint under the new dimension names, so a lift draws
+        it together with this joint (V.5).
 
         Parameters
         ----------
@@ -1668,9 +2239,9 @@ class FactoredDistribution(Distribution, SupportsFactors):
         Returns
         -------
         Self
-            The joint of the renamed factors, under the same name.
+            The joint of the renamed factors, under the same label.
         """
-        return _rebuilt(self, "with_dim_names", names)
+        return _recorded_copy(_rebuilt(self, "with_dim_names", names), self)
 
 
 class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
@@ -1679,7 +2250,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
     Its ``given_spec`` is exactly the unmet givens, same-named ones unified into
     one slot, and its event declaration is read as for
     :class:`FactoredDistribution`. Conditioning on every given yields a
-    ``FactoredDistribution``, and conditioning on some curries to a smaller
+    ``FactoredDistribution``, and conditioning on some returns a smaller
     ``FactoredConditionalDistribution``.
 
     Each conditional capability is its unconditional counterpart's on
@@ -1687,12 +2258,22 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
     of the call, and each factor is called through its own capability at that
     value.
 
+    The joint is labeled or unlabeled as :class:`FactoredDistribution` states,
+    so an unlabeled one reads factor by factor, as ``lik(y | mu)·prior(mu | tau)``,
+    and a labeled one by its label, as ``model(y, mu | tau)``.
+
     Parameters
     ----------
-    label : str
-        The joint's label.
     factors : Sequence[Distribution | ConditionalDistribution]
         The factors, in conditional-first order.
+    label : str, optional
+        The joint's display alias. Defaults to the product of its factors' descriptions.
+    _scope : Mapping[str, int], optional
+        The size of each dimension bound in the joint that a transform rebuilds,
+        keyed by its name, which the factor graph starts from.
+    _component : str, optional
+        The component under which a packaged joint declares its record as a whole
+        term. By default the joint exposes the record.
 
     Raises
     ------
@@ -1704,13 +2285,16 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         joint a ``FactoredDistribution``.
     """
 
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
+
     _capability_table = _joint_table("FactoredConditionalDistribution", conditional=True)
 
     def __new__(
         cls,
-        label: str,
         factors: Sequence[Factor],
         *,
+        label: str | None = None,
         _scope: Mapping[str, int] | None = None,
         _component: str | None = None,
     ) -> FactoredConditionalDistribution:
@@ -1720,19 +2304,31 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
 
     def __init__(
         self,
-        label: str,
         factors: Sequence[Factor],
         *,
+        label: str | None = None,
         _scope: Mapping[str, int] | None = None,
         _component: str | None = None,
     ) -> None:
+        expression = _product_of(factors) if label is None else None
+        rendering = None
+        if expression is not None:
+            rendering = expression.label_rendering()
+            label = rendering[0]
         graph = _factor_graph(factors, _scope)
         if graph.unmet is None:
             raise ValueError(
-                f"the factors of {label!r} meet every given, so the joint is a FactoredDistribution"
+                f"the factors of {label!r} define every field they condition on; build a "
+                f"FactoredDistribution instead"
             )
-        super().__init__(label, graph.unmet, _joint_declaration(graph, _component))
+        super().__init__(
+            graph.unmet,
+            _joint_declaration(graph, _component),
+            label=label,
+        )
         object.__setattr__(self, "_graph", graph)
+        if expression is not None:
+            self._store_expression(expression, rendering)
 
     @property
     def factors(self) -> tuple[Factor, ...]:
@@ -1742,6 +2338,10 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The factors, in conditional-first order."""
         return [("factors", sequence_repr(repr(factor) for factor in self.factors))]
+
+    def _derived_label(self) -> str:
+        """The label the constructor gives the factors the repr shows: their labels joined with ``·``."""
+        return _product_of(self.factors).render_label()
 
     def with_dim_sizes(self, **sizes: int) -> Self:
         """Bind named symbolic dimensions in every factor that declares them.
@@ -1754,7 +2354,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         Returns
         -------
         Self
-            The joint of the bound factors, under the same name.
+            The joint of the bound factors, under the same label.
 
         Raises
         ------
@@ -1774,7 +2374,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         Returns
         -------
         Self
-            The joint of the renamed factors, under the same name.
+            The joint of the renamed factors, under the same label.
         """
         return _rebuilt(self, "with_dim_names", names)
 
@@ -1809,7 +2409,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         values = dict(top.items())
         unknown = set(values) - set(self.given_spec)
         if unknown:
-            raise KeyError(f"{sorted(unknown)} are not given slots of {self.label!r}")
+            raise KeyError(_unknown_slots(self.label, sorted(unknown), self.given_spec))
         factors: list[Factor] = []
         for factor in self.factors:
             if isinstance(factor, ConditionalDistribution):
@@ -1818,14 +2418,39 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
                     factor = _bound_factor(factor, bound, options)
             factors.append(factor)
         if set(self.given_spec.required) <= set(values):
-            return FactoredDistribution(self.label, factors, **_packaging(self))
-        return FactoredConditionalDistribution(self.label, factors, **_packaging(self))
+            joint = FactoredDistribution(
+                factors,
+                **_packaging(self),
+                label=self.label,
+            )
+        else:
+            joint = FactoredConditionalDistribution(
+                factors,
+                **_packaging(self),
+                label=self.label,
+            )
+        return _derived_product(joint, self)
 
 
 def _bound_factor(
     factor: ConditionalDistribution, bound: Mapping[str, Any], options: Mapping[str, Any]
 ) -> Factor:
     """*factor* conditioned on *bound* under *options*, checked to keep its declarations.
+
+    Parameters
+    ----------
+    factor : ConditionalDistribution
+        A kernel factor of the joint.
+    bound : Mapping[str, Any]
+        Values of some or all of the factor's given slots, keyed by slot name.
+    options : Mapping[str, Any]
+        The options passed to the factor's ``_condition_on``.
+
+    Returns
+    -------
+    Distribution or ConditionalDistribution
+        The result of the factor's ``_condition_on``: a law when *bound* covers
+        every required slot, and otherwise a kernel over the other slots.
 
     Raises
     ------

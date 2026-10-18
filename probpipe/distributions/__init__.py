@@ -34,6 +34,7 @@ from ._factored import (
     FactoredNumericDistribution,
     SupportsFactors,
 )
+from ._from_functions import distribution
 from ._views import FieldView
 
 __all__ = [
@@ -73,4 +74,5 @@ __all__ = [
     "SupportsMarginals",
     "conditional_distribution",
     "converter_registry",
+    "distribution",
 ]

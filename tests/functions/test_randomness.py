@@ -17,9 +17,12 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    EmpiricalDistribution,
     Function,
+    OutputSpec,
     ReplayCompatibilityError,
     UnmanagedConcurrentWorkflowEntryError,
+    converter_registry,
     replay_run,
     workflow_run,
 )
@@ -33,12 +36,34 @@ def _shift(z, offset=0.0):
 
 def _lift() -> Function:
     """A lifted call of a module-level def, which replay can anchor."""
-    return Function("shift", _shift, n_broadcast_samples=8, dispatch="sequential")
+    return Function(
+        _shift,
+        n_broadcast_samples=8,
+        dispatch="sequential",
+        label="shift",
+        output_spec=OutputSpec(shift=None),
+    )
 
 
 def _draws(result) -> np.ndarray:
     (leaf,) = atom_leaves(result)
     return leaf
+
+
+def _two_empirical_draws(offset):
+    """Two sets of four standard normal draws by the converter registry, shifted by *offset*."""
+    law = standard_normal()
+    first = converter_registry.convert(law, EmpiricalDistribution, num_samples=4)
+    second = converter_registry.convert(law, EmpiricalDistribution, num_samples=4)
+    return jnp.stack([first.atoms.raw, second.atoms.raw]) + offset
+
+
+def _drawing() -> Function:
+    """A Function whose body draws twice, each draw a workflow-owned event."""
+    return Function(
+        _two_empirical_draws,
+        label="two_draws",
+    )
 
 
 class TestScopes:
@@ -131,8 +156,58 @@ class TestStructuralKeys:
         assert result.provenance.controls["randomness"]["rng_abi"] == "ProbPipe-RNG-v1"
 
     def test_there_is_no_framework_key_on_a_call(self):
-        with pytest.raises(TypeError, match="Unknown Function controls"):
-            _lift().with_options(key=jnp.zeros(2, dtype=jnp.uint32))
+        with pytest.raises(TypeError, match="unknown Function option"):
+            _lift().using(key=jnp.zeros(2, dtype=jnp.uint32))
+
+
+class TestApply:
+    """Each draw in the body of an ``apply`` evaluation is its own workflow-owned event."""
+
+    def test_a_seeded_scope_reproduces_distinct_draws(self):
+        with workflow_run(seed=42):
+            first = _drawing().apply(0.0)
+        with workflow_run(seed=42):
+            second = _drawing().apply(0.0)
+
+        np.testing.assert_array_equal(first, second)
+        assert not np.array_equal(first[0], first[1])
+
+    def test_another_seed_gives_other_draws(self):
+        with workflow_run(seed=42):
+            first = _drawing().apply(0.0)
+        with workflow_run(seed=43):
+            second = _drawing().apply(0.0)
+
+        assert not np.array_equal(first[0], second[0])
+        assert not np.array_equal(first[1], second[1])
+
+    def test_repeated_evaluations_in_one_scope_draw_distinct_keys(self):
+        with workflow_run(seed=42):
+            first = _drawing().apply(0.0)
+            second = _drawing().apply(0.0)
+
+        assert not np.array_equal(first, second)
+
+    def test_an_evaluation_outside_any_scope_is_fresh(self):
+        assert not np.array_equal(_drawing().apply(0.0), _drawing().apply(0.0))
+
+    def test_an_evaluation_draws_as_a_call_does(self):
+        with workflow_run(seed=42):
+            called = _drawing()(0.0)
+        with workflow_run(seed=42):
+            applied = _drawing().apply(0.0)
+
+        np.testing.assert_array_equal(np.asarray(called), applied)
+
+    def test_an_evaluation_that_draws_nothing_does_not_shift_later_draws(self):
+        law = standard_normal()
+        with workflow_run(seed=42):
+            baseline = _lift()(law)
+        with workflow_run(seed=42):
+            Function(_shift, label="shift", output_spec=OutputSpec(shift=None)).apply(1.0)
+            after = _lift()(law)
+
+        np.testing.assert_array_equal(_draws(baseline), _draws(after))
 
 
 class TestReplay:
@@ -151,4 +226,4 @@ class TestReplay:
             recorded = _lift()(law)
 
         with pytest.raises(ReplayCompatibilityError), replay_run(recorded.provenance):
-            _lift().with_options(n_broadcast_samples=9)(law)
+            _lift().using(n_broadcast_samples=9)(law)

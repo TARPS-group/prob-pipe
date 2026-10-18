@@ -42,7 +42,7 @@ class TestEmpiricalSubsampling:
         samples = jax.random.normal(key, (50, 2))
         weights = jax.random.uniform(jax.random.PRNGKey(1), (50,))
         weights = weights / jnp.sum(weights)
-        ed = EmpiricalDistribution("x", samples, weights=weights)
+        ed = EmpiricalDistribution(samples, weights=weights, component="x")
         C = cov(ed)
         assert C.shape == (2, 2)
         assert jnp.all(jnp.isfinite(C))
@@ -58,7 +58,7 @@ class TestTFPDistributionCov:
 
     def test_scalar_cov_equals_variance(self):
         """For a scalar law, cov is the (1, 1) matrix holding the variance."""
-        d = Normal(loc=0.0, scale=2.0, label="x")
+        d = Normal("x", loc=0.0, scale=2.0)
         c = np.asarray(cov(d))
         v = variance(d)
         assert c.shape == (1, 1)
@@ -68,7 +68,7 @@ class TestTFPDistributionCov:
         """For multivariate distributions, _cov returns full covariance matrix."""
         loc = jnp.zeros(3)
         cov_matrix = jnp.eye(3) * 2.0
-        d = MultivariateNormal(loc=loc, cov=cov_matrix, label="z")
+        d = MultivariateNormal("z", loc=loc, cov=cov_matrix)
         C = cov(d)
         np.testing.assert_allclose(C, cov_matrix, atol=1e-5)
 
@@ -85,7 +85,7 @@ class TestTransformedNonTFP:
     def td(self):
         key = jax.random.PRNGKey(0)
         samples = jax.random.normal(key, (100, 2))
-        emp = EmpiricalDistribution("x", samples)
+        emp = EmpiricalDistribution(samples, component="x")
         return BijectorTransformedDistribution("transformed", emp, tfb.Exp())
 
     def test_base_property(self, td):
@@ -123,7 +123,7 @@ class TestUnnormalizedProbDefault:
     def test_unnormalized_prob_default(self):
         from probpipe import unnormalized_log_prob, unnormalized_prob
 
-        d = Normal(loc=0.0, scale=1.0, label="x")
+        d = Normal("x", loc=0.0, scale=1.0)
         x = jnp.array(1.0)
         up = unnormalized_prob(d, x)
         ulp = unnormalized_log_prob(d, x)

@@ -71,6 +71,10 @@ class ParentInfo:
         fingerprints remain useful for distinguishing live objects in one
         process but must not be reused as portable content keys. Excluded from
         equality and hashing.
+    identity : int or None
+        The ``id`` of the parent object when the descriptor was made, which
+        tells apart two parents that share a type and a label, as two laws
+        under a family's default label do. Excluded from equality and hashing.
     """
 
     type_name: str
@@ -79,6 +83,7 @@ class ParentInfo:
     fingerprint: str | None = field(default=None, compare=False)
     parent: Any | None = field(default=None, compare=False)
     fingerprint_is_weak: bool = field(default=False, compare=False)
+    identity: int | None = field(default=None, compare=False)
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +107,7 @@ class Provenance:
         descriptors participate in ancestry traversal.
     metadata : dict
         Optional scalar/string metadata about the operation (e.g. the old
-        and new names of a rename). Serialized alongside the operation by
+        and new labels of a relabeling). Serialized alongside the operation by
         :meth:`to_dict`.
     inputs : mapping of str to ParentInfo
         Descriptors of resolved plain inputs, keyed by stable parameter label.
@@ -147,6 +152,13 @@ class Provenance:
         recurse : bool
             If True, recursively serialize parent provenance chains via
             each parent's ``.provenance``.
+
+        Returns
+        -------
+        dict of str to Any
+            One entry per field, with each parent and each input as a dict of its
+            descriptor, and each metadata value that is not JSON-native as its
+            ``str``.
         """
 
         def serialize_info(p: ParentInfo) -> dict[str, Any]:
@@ -231,6 +243,7 @@ class Provenance:
                 fingerprint=_identity_fingerprint(parent),
                 parent=parent if keep else None,
                 fingerprint_is_weak=True,
+                identity=id(parent),
             )
             for parent in (container, source)
             if parent is not None
@@ -249,25 +262,31 @@ class Provenance:
     ) -> Provenance | None:
         """Build provenance respecting the active workflow's provenance mode.
 
-        Returns ``None`` when the mode is :attr:`ProvenanceMode.OFF` so that
-        call sites can pass the result directly to ``with_provenance()``
-        without an extra guard — ``with_provenance(None)`` is a no-op.
+        Call sites can pass the result directly to ``with_provenance()`` without
+        an extra guard, since ``with_provenance(None)`` is a no-op.
 
         Parameters
         ----------
-        operation:
+        operation : str
             Provenance operation label (e.g. ``"broadcast"``).
-        parents:
+        parents : tuple or list
             Raw tracked parent objects, already ordered and deduplicated by the
             caller.
-        metadata:
+        metadata : dict, optional
             Optional mapping of scalar/string metadata.
-        inputs:
+        inputs : mapping of str to Any, optional
             Resolved plain inputs keyed by stable parameter label.
-        controls:
+        controls : mapping of str to Any, optional
             Exact JSON-native replay and execution controls.
-        diagnostics:
+        diagnostics : mapping of str to Any, optional
             Exact JSON-native non-semantic execution observations.
+
+        Returns
+        -------
+        Provenance or None
+            The node, with one descriptor per parent and per input; ``None`` when
+            the mode is ``OFF`` or the call runs inside a side-effect-free probe or
+            a JAX body.
         """
         from ..functions import _context
 
@@ -301,6 +320,7 @@ class Provenance:
                 fingerprint=fp,
                 parent=p if keep else None,
                 fingerprint_is_weak=fingerprint_is_weak,
+                identity=id(p),
             )
 
         refs = tuple(_make_parent(p) for p in parents)
@@ -322,7 +342,9 @@ def _copy_json_mapping(
 ) -> dict[str, Any]:
     """Validate and detach one exact JSON-native provenance mapping."""
     if not isinstance(value, Mapping):
-        raise TypeError(f"Provenance.{field_name} must be a JSON-native mapping")
+        raise TypeError(
+            f"Provenance.{field_name} must be a JSON-native mapping, got {type(value).__name__}"
+        )
     detached = copy.deepcopy(dict(value))
     _validate_json_native(detached, path=f"Provenance.{field_name}")
     return detached
@@ -333,7 +355,7 @@ def _validate_json_native(value: Any, *, path: str) -> None:
         return
     if isinstance(value, float):
         if not math.isfinite(value):
-            raise ValueError(f"{path} numbers must be finite JSON values")
+            raise ValueError(f"{path} must be a finite number, got {value}")
         return
     if isinstance(value, list):
         for index, item in enumerate(value):
@@ -342,10 +364,15 @@ def _validate_json_native(value: Any, *, path: str) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             if not isinstance(key, str):
-                raise TypeError(f"{path} must use string keys in JSON-native mappings")
+                raise TypeError(f"{path} keys must be strings, got {key!r}")
             _validate_json_native(item, path=f"{path}.{key}")
         return
-    raise TypeError(f"{path} contains non-JSON-native value {type(value).__name__}")
+    shape = getattr(value, "shape", None)
+    got = type(value).__name__ if shape is None else f"an array of shape {tuple(shape)}"
+    raise TypeError(
+        f"{path} must be a JSON-native value (None, str, bool, int, float, list, or dict), "
+        f"got {got}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -356,20 +383,19 @@ def _validate_json_native(value: Any, *, path: str) -> None:
 def _parent_key(p: Any) -> Any:
     """Stable dedup key for a parent node.
 
-    Uses live-object identity in FULL mode (``p.parent`` is set), and a
-    ``(type_name, name, id(provenance))`` tuple in LIGHTWEIGHT mode.  The
-    parent's ``.provenance`` node is the same object on every path to the
-    same ancestor, so its id is stable even though each path holds a
-    distinct ``ParentInfo`` instance.
-
-    Two distinct *root* parents (``provenance is None``) that share a type
-    and name collapse to one key in LIGHTWEIGHT — an accepted limitation of
-    dropping object identity; FULL keeps them distinct via ``id(p.parent)``.
+    Uses live-object identity in FULL mode (``p.parent`` is set). In
+    LIGHTWEIGHT mode a parent with provenance is keyed by its provenance node,
+    which is the same object on every path to the same ancestor, and a root
+    parent, which has none, by the identity and the fingerprint its descriptor
+    recorded, so two root laws that share a type and a label, as two laws
+    under a family's default label do, stay distinct.
     """
     if isinstance(p, ParentInfo):
         if p.parent is not None:
             return id(p.parent)
-        return (p.type_name, p.label, id(p.provenance))
+        if p.provenance is not None:
+            return (p.type_name, p.label, id(p.provenance))
+        return (p.type_name, p.label, p.identity, p.fingerprint)
     return id(p)
 
 
@@ -412,7 +438,7 @@ def provenance_ancestors(node: ProvenanceNode) -> list[Any]:
 def provenance_dag(node: ProvenanceNode):
     """Build a Graphviz ``Digraph`` of the provenance chain rooted at *node*.
 
-    Each node is labelled with its type and name.  Edges point from parent
+    Each node is labelled with its type and label. Edges point from parent
     to child and are labelled with the operation that produced the child.
     Works in all modes that attach provenance (FULL and LIGHTWEIGHT).
 
@@ -431,8 +457,8 @@ def provenance_dag(node: ProvenanceNode):
 
     visited: set = set()
 
-    def _label(type_name: str, name: str) -> str:
-        return f"{type_name}\n'{name}'" if name else type_name
+    def _label(type_name: str, label: str) -> str:
+        return f"{type_name}\n'{label}'" if label else type_name
 
     def _stable_nid(p: Any) -> str:
         """Graphviz node ID that is the same for all ParentInfo of the same ancestor."""

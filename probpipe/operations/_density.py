@@ -10,6 +10,12 @@ time otherwise. ``prob`` and ``unnormalized_prob`` are derived operations,
 defined by exponentiating the matching log-density. ``random_log_prob(M)`` and
 ``random_unnormalized_log_prob(M)`` return the law of a random measure's
 log-density function.
+
+A score of a law ``d`` is labeled ``log`` followed by ``d``'s notation, as
+``log prior(mu)`` or ``log model(mu; y)``, and its component is the
+operation's name, as ``log_prob``. A density is labeled by ``d``'s notation, as
+``prior(mu)``, since that notation denotes the density, and its component is
+``prob``. A batch of scores takes the label of one score.
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ from typing import Any
 
 import jax.numpy as jnp
 
+from ..core._expression import DENSITY, SCORE, Expression, Summary
 from ..core._spec_base import NumericArraySpec, TermSpec, _unify_specs
 from ..core._specs import OutputSpec
 from ..core.constraints import non_negative
@@ -29,7 +36,7 @@ from ..distributions._capabilities import (
 )
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..functions._call import ApplicabilityError, CallReport
-from ._operation import operation
+from ._operation import _install_expression_rule, operation
 
 __all__ = [
     "log_prob",
@@ -42,11 +49,31 @@ __all__ = [
 
 
 def _score_declaration(
-    d: DistributionSpec, value: TermSpec, component: str, spec: NumericArraySpec
+    d: DistributionSpec, value: TermSpec, operation_name: str, spec: NumericArraySpec
 ) -> OutputSpec:
-    """The declaration of the score of one *value*: *spec* under the component *component*.
+    """The declaration of the score of one *value*: *spec* under the operation's name.
 
-    A batch of values is swept, so the rule reads one element's spec.
+    The component is the operation's name, as ``log_prob``, since a score is a
+    value of the whole event that no one component indexes. A batch of values
+    is swept, so the rule reads one element's spec.
+
+    Parameters
+    ----------
+    d : DistributionSpec
+        The law's spec, against whose event declaration *value* is unified.
+    value : TermSpec
+        The spec of the value scored, or of one draw where a law at the value
+        lifts the call.
+    operation_name : str
+        The operation's name, which names the component and opens each error
+        message.
+    spec : NumericArraySpec
+        The term spec of one score.
+
+    Returns
+    -------
+    OutputSpec
+        A declaration that names the score as one whole term.
 
     Raises
     ------
@@ -57,16 +84,45 @@ def _score_declaration(
     try:
         # The bindings are local to this call, so a polymorphic law scores
         # values of any size.
-        _unify_specs(d.event_spec.spec, value, {}, f"{component} value")
+        _unify_specs(d.event_spec.spec, value, {}, f"{operation_name} value")
     except (TypeError, ValueError) as error:
         raise ApplicabilityError(
-            f"{component}: the value does not conform to the event declaration: {error}"
+            f"{operation_name}: the value does not conform to the event declaration: {error}"
         ) from None
-    return OutputSpec(**{component: spec})
+    return OutputSpec(**{operation_name: spec})
+
+
+def _score_expression(d: Any) -> Expression:
+    """The expression of a score of *d*: ``log`` and *d*'s notation, as ``log prior(mu)`` (II.4)."""
+    return Summary(SCORE, d._embedded_expression())
+
+
+def _density_expression(d: Any) -> Expression:
+    """The expression of a density of *d*, which reads as *d*'s notation, as ``prior(mu)`` (II.4)."""
+    return Summary(DENSITY, d._embedded_expression())
+
+
+def _random_score_expression(M: Any) -> Expression:
+    """The expression of the law of a random measure's log-density: ``log`` and *M*'s notation."""
+    return Summary(SCORE, M._embedded_expression())
 
 
 def _log_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
     """A scalar log-density per value, under the component ``log_prob``.
+
+    Parameters
+    ----------
+    d : DistributionSpec
+        The law's spec, whose event declaration the value conforms to.
+    value : TermSpec
+        The spec of one value: for a lifted argument, the spec of one element
+        of the batch or one draw of the law.
+
+    Returns
+    -------
+    OutputSpec
+        The declaration of one scalar under the component
+        ``log_prob``.
 
     Raises
     ------
@@ -77,7 +133,21 @@ def _log_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
 
 
 def _unnormalized_log_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
-    """A scalar unnormalized log-density per value, under ``unnormalized_log_prob``.
+    """A scalar unnormalized log-density per value, under the component ``unnormalized_log_prob``.
+
+    Parameters
+    ----------
+    d : DistributionSpec
+        The law's spec, whose event declaration the value conforms to.
+    value : TermSpec
+        The spec of one value: for a lifted argument, the spec of one element
+        of the batch or one draw of the law.
+
+    Returns
+    -------
+    OutputSpec
+        The declaration of one scalar under the component
+        ``unnormalized_log_prob``.
 
     Raises
     ------
@@ -90,6 +160,20 @@ def _unnormalized_log_prob_result(d: DistributionSpec, value: TermSpec) -> Outpu
 def _prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
     """A non-negative scalar density per value, under the component ``prob``.
 
+    Parameters
+    ----------
+    d : DistributionSpec
+        The law's spec, whose event declaration the value conforms to.
+    value : TermSpec
+        The spec of one value: for a lifted argument, the spec of one element
+        of the batch or one draw of the law.
+
+    Returns
+    -------
+    OutputSpec
+        The declaration of one non-negative scalar under the component
+        ``prob``.
+
     Raises
     ------
     ApplicabilityError
@@ -99,7 +183,21 @@ def _prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
 
 
 def _unnormalized_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
-    """A non-negative scalar unnormalized density per value, under ``unnormalized_prob``.
+    """A non-negative scalar unnormalized density per value, under the component ``unnormalized_prob``.
+
+    Parameters
+    ----------
+    d : DistributionSpec
+        The law's spec, whose event declaration the value conforms to.
+    value : TermSpec
+        The spec of one value: for a lifted argument, the spec of one element
+        of the batch or one draw of the law.
+
+    Returns
+    -------
+    OutputSpec
+        The declaration of one non-negative scalar under the component
+        ``unnormalized_prob``.
 
     Raises
     ------
@@ -138,7 +236,9 @@ def log_prob(d: Distribution, value):
     Returns
     -------
     NumericArray or NumericArrayBatch
-        The log-density, or one per element of a batch value, at its levels.
+        The log-density, or one per element of a batch value, at its levels,
+        labeled ``log`` and *d*'s notation, as ``log prior(mu)``, under the
+        component ``log_prob``.
 
     Raises
     ------
@@ -170,7 +270,9 @@ def unnormalized_log_prob(d: Distribution, value):
     Returns
     -------
     NumericArray or NumericArrayBatch
-        The unnormalized log-density, or one per element of a batch value.
+        The unnormalized log-density, or one per element of a batch value,
+        labeled ``log`` and *d*'s notation, as ``log prior(mu)``, under the
+        component ``unnormalized_log_prob``.
 
     Raises
     ------
@@ -204,10 +306,21 @@ def _unnormalized_log_prob_applies(d: Any, value: Any) -> CallReport:
 def prob(d: Distribution, value):
     """The density of *value* under *d*, defined as ``exp ∘ log_prob``.
 
+    Parameters
+    ----------
+    d : Distribution
+        A law claiming ``SupportsLogProb``, or any other law that ``log_prob``
+        has a route for.
+    value : Any
+        One value conforming to ``d.event_spec.spec``, or a batch of them. A law
+        over such values lifts the call, which then returns the law of the
+        density at its draws.
+
     Returns
     -------
     NumericArray or NumericArrayBatch
-        The density, or one per element of a batch value.
+        The density, or one per element of a batch value, labeled by *d*'s
+        notation, as ``prior(mu)``, under the component ``prob``.
 
     Raises
     ------
@@ -216,17 +329,29 @@ def prob(d: Distribution, value):
     ResolutionError
         If ``log_prob`` has no route for *d*.
     """
-    return jnp.exp(log_prob.with_options(raw=True)(d, value))
+    return jnp.exp(log_prob.using(raw=True)(d, value))
 
 
 @operation(result=_unnormalized_prob_result, identity_check=_unnormalized_log_prob_applies)
 def unnormalized_prob(d: Distribution, value):
     """The density of *value* under *d* up to a factor, defined as ``exp ∘ unnormalized_log_prob``.
 
+    Parameters
+    ----------
+    d : Distribution
+        A law claiming ``SupportsUnnormalizedLogProb``, or any other law that
+        ``unnormalized_log_prob`` has a route for.
+    value : Any
+        One value conforming to ``d.event_spec.spec``, or a batch of them. A law
+        over such values lifts the call, which then returns the law of the
+        unnormalized density at its draws.
+
     Returns
     -------
     NumericArray or NumericArrayBatch
-        The unnormalized density, or one per element of a batch value.
+        The unnormalized density, or one per element of a batch value, labeled
+        by *d*'s notation, as ``prior(mu)``, under the component
+        ``unnormalized_prob``.
 
     Raises
     ------
@@ -235,7 +360,7 @@ def unnormalized_prob(d: Distribution, value):
     ResolutionError
         If ``unnormalized_log_prob`` has no route for *d*.
     """
-    return jnp.exp(unnormalized_log_prob.with_options(raw=True)(d, value))
+    return jnp.exp(unnormalized_log_prob.using(raw=True)(d, value))
 
 
 @operation(result=_random_log_prob_result)
@@ -244,6 +369,11 @@ def random_log_prob(M: Distribution):
 
     The density at a point is that random function called at the point, so the
     operation takes no value.
+
+    Parameters
+    ----------
+    M : Distribution
+        A random measure, which is a law whose draws ``D`` are distributions.
 
     Returns
     -------
@@ -266,6 +396,11 @@ random_log_prob.capability_route(
 def random_unnormalized_log_prob(M: Distribution):
     """The law of ``x ↦ log D̃(x)`` for ``D ~ M``, with ``D̃`` the unnormalized density of ``D``.
 
+    Parameters
+    ----------
+    M : Distribution
+        A random measure, which is a law whose draws ``D`` are distributions.
+
     Returns
     -------
     Distribution
@@ -285,3 +420,11 @@ random_unnormalized_log_prob.capability_route(
     method="_random_unnormalized_log_prob",
     exact=True,
 )
+
+
+_install_expression_rule(log_prob, _score_expression)
+_install_expression_rule(unnormalized_log_prob, _score_expression)
+_install_expression_rule(prob, _density_expression)
+_install_expression_rule(unnormalized_prob, _density_expression)
+_install_expression_rule(random_log_prob, _random_score_expression)
+_install_expression_rule(random_unnormalized_log_prob, _random_score_expression)

@@ -64,6 +64,11 @@ class TestTheBijectorIsAFunction:
         assert is_invertible(bijector)
         assert isinstance(bijector, SupportsLogDetJacobian)
 
+    def test_its_output_component_is_the_backend_name(self):
+        bijector = bijector_for(positive)
+        assert (bijector.label, bijector._output_component) == ("exp", "exp")
+        assert bijector.with_label("other")._output_component == "exp"
+
     @pytest.mark.parametrize("constraint", _SUPPORTED, ids=repr)
     def test_it_records_the_support_it_maps_onto(self, constraint):
         assert _image(bijector_for(constraint)) == constraint
@@ -133,7 +138,7 @@ class TestRoundTrip:
         log-Jacobian is that of the map onto them."""
         bijector = bijector_for(simplex)
         z = jnp.array([0.3, -0.2, 0.9])
-        jacobian = jax.jacfwd(lambda u: bijector.raw()(u)[:-1])(z)
+        jacobian = jax.jacfwd(lambda u: bijector.raw(u)[:-1])(z)
         expected = jnp.log(jnp.abs(jnp.linalg.det(jacobian)))
         np.testing.assert_allclose(bijector._log_det_jacobian(z), expected, rtol=1e-5)
         backend = bijector._bijector
@@ -179,7 +184,7 @@ class TestUnsupported:
             def check(self, value):
                 return jnp.asarray(value) >= 0
 
-        with pytest.raises(ResolutionError, match="No bijector registered"):
+        with pytest.raises(ResolutionError, match="no bijector registered for MyConstraint"):
             bijector_for(MyConstraint())
 
     def test_a_factory_whose_map_claims_no_inverse_is_unresolved(self, registry_snapshot):
@@ -187,7 +192,13 @@ class TestUnsupported:
             def check(self, value):
                 return jnp.asarray(value) > 0
 
-        register_bijector(_Unmapped, lambda c: Function("exp", jnp.exp))
+        register_bijector(
+            _Unmapped,
+            lambda c: Function(
+                jnp.exp,
+                label="exp",
+            ),
+        )
         with pytest.raises(ResolutionError, match="SupportsInverse"):
             bijector_for(_Unmapped())
 
@@ -234,7 +245,10 @@ class TestCustomization:
     def test_a_factory_may_return_a_function(self, registry_snapshot):
         class _Doubled(Function):
             def __init__(self) -> None:
-                super().__init__("double", lambda x: 2.0 * x)
+                super().__init__(
+                    lambda x: 2.0 * x,
+                    label="double",
+                )
 
             def _inverse(self, y):
                 return y / 2.0

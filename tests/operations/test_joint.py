@@ -8,7 +8,7 @@ import pytest
 from probpipe import ApplicabilityError
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._conditional import ConditionalDistribution
-from probpipe.distributions._factored import FactoredDistribution
+from probpipe.distributions._factored import FactoredDistribution, _is_named
 from probpipe.operations import RouteSource
 from probpipe.operations._joint import joint
 
@@ -37,6 +37,12 @@ class TestJoint:
         likelihood, prior = Kernel("y", ("slope",)), Gaussian("beta")
         assert joint(likelihood, prior, beta="slope").label == (likelihood * prior).label
 
+    def test_the_joint_is_unlabeled_so_it_reads_factor_by_factor(self):
+        likelihood, prior = Kernel("y", ("slope",)), Gaussian("beta")
+        result = joint(likelihood, prior, beta="slope")
+        assert _is_named(result) is False
+        assert str(result) == result.notation == "y(y | slope)·beta(slope)"
+
     def test_joint_equals_composition_with_the_renamed_right_factor(self):
         likelihood, prior = Kernel("y", ("slope",)), Gaussian("beta")
         assert (
@@ -49,7 +55,11 @@ class TestJoint:
             joint(Kernel(), jnp.zeros(2))
 
     def test_a_batch_of_laws_is_consumed_as_an_object_rather_than_swept(self):
-        laws = DistributionBatch("laws", [Gaussian("mu"), Gaussian("mu", 1.0)], "laws")
+        laws = DistributionBatch(
+            [Gaussian("mu"), Gaussian("mu", 1.0)],
+            "laws",
+            label="laws",
+        )
         with pytest.raises(ApplicabilityError, match=r"'B' accepts.*DistributionBatch"):
             joint(Kernel(), laws)
 

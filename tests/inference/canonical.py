@@ -112,7 +112,7 @@ class ObservationKernel(
 ):
     """The kernel of an observation vector whose law a backend distribution gives at its givens.
 
-    Its event is the response, a whole term under the kernel's name, and its law
+    Its event is the response, a whole term under the kernel's label, and its law
     at a value of every given slot is ``build(**values)``, a backend distribution
     whose event is the response. It claims conditional sampling and the
     normalized conditional density, so a joint of it and normalized priors is
@@ -137,7 +137,11 @@ class ObservationKernel(
         response: NumericArraySpec,
         build: Callable[..., tfd.Distribution],
     ) -> None:
-        super().__init__(label, dict(given), OutputSpec(**{label: response}))
+        super().__init__(
+            dict(given),
+            OutputSpec(**{label: response}),
+            label=label,
+        )
         object.__setattr__(self, "_build", build)
         object.__setattr__(self, "_support", response.support)
 
@@ -275,7 +279,7 @@ class ModelTestCase:
             raise ValueError(f"the case {self.name!r} has no Stan program")
         path = Path(directory) / f"{self.name}.stan"
         path.write_text(self.stan_program)
-        return StanModel(self.name, str(path))
+        return StanModel(str(path), label=self.name)
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +332,7 @@ def gaussian_linear(num_features: int = 3, num_observations: int = 40) -> ModelT
                 pm.Normal("y", mu=X64 @ beta, sigma=1.0, observed=y, shape=num_observations)
             return m
 
-        return PyMCModel("gaussian_linear", build)
+        return PyMCModel(build, label="gaussian_linear")
 
     program = """
     data {
@@ -399,7 +403,7 @@ def beta_bernoulli() -> ModelTestCase:
                 pm.Bernoulli("y", p=theta, observed=y, shape=trials)
             return m
 
-        return PyMCModel("beta_bernoulli", build)
+        return PyMCModel(build, label="beta_bernoulli")
 
     program = """
     data {
@@ -460,7 +464,7 @@ def gamma_poisson() -> ModelTestCase:
                 pm.Poisson("y", mu=lam, observed=y, shape=n)
             return m
 
-        return PyMCModel("gamma_poisson", build)
+        return PyMCModel(build, label="gamma_poisson")
 
     program = """
     data {
@@ -538,7 +542,7 @@ def dirichlet_multinomial() -> ModelTestCase:
                 pm.Multinomial("y", n=int(total), p=p, observed=y, shape=(draws, categories))
             return m
 
-        return PyMCModel("dirichlet_multinomial", build)
+        return PyMCModel(build, label="dirichlet_multinomial")
 
     program = """
     data {
@@ -639,7 +643,7 @@ def poisson_regression(num_observations: int = 40) -> ModelTestCase:
                 pm.Poisson("y", mu=pm.math.exp(X64 @ beta), observed=y, shape=num_observations)
             return m
 
-        return PyMCModel("poisson_regression", build)
+        return PyMCModel(build, label="poisson_regression")
 
     program = """
     data {
@@ -848,7 +852,7 @@ def eight_schools() -> ModelTestCase:
                 pm.Normal("y", mu_rv + tau_rv * theta_rv, SCHOOL_ERRORS, observed=y, shape=J)
             return m
 
-        return PyMCModel("eight_schools", build)
+        return PyMCModel(build, label="eight_schools")
 
     program = """
     data {

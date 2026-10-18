@@ -204,7 +204,8 @@ unless another `pre-commit` is on your `PATH`. A `pre-commit` already installed 
 Homebrew or pipx works too.
 
 Once the hooks are installed, `ruff` (lint + format), a few file-hygiene hooks,
-and the `no-issue-numbers` hook of CONTRACTS.md directive 2 run on your staged
+the `pydoclint` docstring check of STYLE_GUIDE.md §3.3, and the
+`no-issue-numbers` hook of CONTRACTS.md directive 2 run on your staged
 files at commit time. The hooks see only the files you're
 changing, so a commit is checked without re-linting the whole tree.
 `AGENTS.md` § Commands runs the linter and the hooks over the whole tree.
@@ -218,6 +219,11 @@ and `ruff format --check .` over the whole tree, which is clean under both, so a
 lint violation or a misformatted file fails the build. Rule selection and
 per-file ignores are in `[tool.ruff.lint]` in `pyproject.toml`, and the
 pre-commit hooks apply the same checks to your staged files at commit time.
+
+**The docstring check is blocking.** The same CI job runs
+`pre-commit run pydoclint --all-files`, which checks every module of `probpipe/`.
+The hook's entry in `.pre-commit-config.yaml` holds its version and options, so a
+local run and CI check the same rules.
 
 ### Type checking
 
@@ -336,7 +342,10 @@ full rationale.
 
 GitHub Actions (`.github/workflows/ci.yml`):
 
-- Tests on Python 3.12, 3.13, and 3.14
+- Tests on Python 3.12 and 3.14 for a pull request, and on 3.12, 3.13, and 3.14
+  for a push to `main` or `dev/overhaul` and for the nightly run of `main`.
+  Each version's selected tests run in four `test-shard` jobs, and a `test (<version>)`
+  job reports the version's result (see *Test shards* below)
 - Installs via `uv sync --frozen` from `uv.lock` (single source of truth
   for pinned dependency versions, shared between local dev and CI)
 - Test job uses extras `dev,nutpie,pymc,pyabc`. The notebooks job is a two-leg
@@ -357,8 +366,19 @@ GitHub Actions (`.github/workflows/ci.yml`):
   test that needs BridgeStan another way carries `@pytest.mark.stan`. Gated like
   the bayesflow leg — runs on pushes to main, foundational changes, or Stan-file
   changes
-- Coverage uploaded to Codecov
-- The `lint & format` job runs the ruff gate of *Linting & pre-commit*
+- A separate `test (lowest versions)` leg (Python 3.12) syncs `dev` from the
+  lock, replaces each core dependency of `pyproject.toml` with the lowest version
+  that its specifier admits, and runs `tests/functions`, `tests/converters`, and
+  `tests/operations`. The other jobs install the locked versions, so a call to an
+  API that is newer than a floor fails only in this leg. Fix such a failure by
+  raising the floor in `pyproject.toml` or by calling an API that the floor
+  provides. The leg runs on every push, on the nightly schedule, on dependency
+  changes, and on changes under `probpipe/` or `tests/`
+- Only the Python 3.12 shards measure coverage. The `coverage` job combines
+  their data, enforces the 88% floor on a full-suite run, and uploads one report
+  to Codecov
+- The `lint & format` job runs the ruff gate and the docstring check of
+  *Linting & pre-commit*
 - Both the `test` and `notebooks` jobs choose what to run via a shared,
   unit-tested AST import-graph helper — `scripts/ci/import_graph.py` (tests
   in `tests/ci/`) — so a change to a source file also exercises the tests and
@@ -368,6 +388,10 @@ GitHub Actions (`.github/workflows/ci.yml`):
   changed modules. A change to `design/` runs the four `test_design_conformance.py`
   files and `tests/docs/`, and a change to `probpipe/`, a rule document, an agent
   file, or the CHANGELOG runs `tests/docs/`.
+- The `test` job runs the full suite on a push, on the nightly run, and for a
+  pull request that changes a dependency file (`pyproject.toml`, `uv.lock`, or
+  `setup.py`), `tests/conftest.py`, or `probpipe/__init__.py`. A change to
+  `scripts/` or `.github/workflows/` runs `tests/ci/`.
 - The `design ledger (report)` job runs `scripts/design/ledger.py` and shows its
   counts of stubs, pending tests, and stale docs in the job summary. It fails
   only when the script errors.
@@ -377,6 +401,23 @@ GitHub Actions (`.github/workflows/ci.yml`):
   gate merges.
 
 Docs build (`.github/workflows/docs.yml`) with `uv run mkdocs build --strict`.
+
+### Test shards
+
+`pytest-split` divides the selected tests into four groups of about equal
+duration, using the per-test durations recorded in `.test_durations`. A test
+missing from the file counts as the average duration, so new tests keep the
+groups roughly balanced, and a group with no tests passes. Refresh the file
+when the shard times in CI drift apart, such as after adding a slow test module:
+
+```bash
+uv run pytest -o addopts="" -n 4 --store-durations --clean-durations
+```
+
+`--clean-durations` drops the durations of removed tests. Run the command with
+the extras of the `test` job installed, so that no test is skipped, and commit
+the updated `.test_durations`. To run one shard locally, add
+`--splits 4 --group <k> --splitting-algorithm least_duration` to the pytest command.
 
 ### Updating dependencies
 
@@ -400,7 +441,7 @@ probpipe/
 ├── values/         # The Function base, FunctionSpec, and pure argument binding
 ├── linalg/         # Linear operators
 ├── distributions/  # The Distribution base, capabilities, factored laws, batches, conversion
-├── functions/      # The Function engine and the experimental Module containers
+├── functions/      # The Function engine and workflow scopes
 ├── operations/     # The operations and their routes
 ├── families/       # The distribution catalog
 ├── record/         # Parameter-sweep designs

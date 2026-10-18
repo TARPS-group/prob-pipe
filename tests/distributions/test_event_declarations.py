@@ -45,6 +45,7 @@ from probpipe import (
     MultivariateNormal,
     NegativeBinomial,
     Normal,
+    NumericArraySpec,
     NumericDistribution,
     NumericRecordBatch,
     NumericRecordSpec,
@@ -60,6 +61,8 @@ from probpipe import (
     Uniform,
     VonMisesFisher,
     Wishart,
+    conditional_distribution,
+    distribution,
     sample,
 )
 from probpipe.distributions import (
@@ -69,6 +72,7 @@ from probpipe.distributions import (
 )
 from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.distributions._factored import _SoleField
+from probpipe.distributions._from_functions import _FunctionLaw
 from probpipe.distributions._views import _RenamedDistribution
 from probpipe.families import (
     BernoulliFamily,
@@ -91,7 +95,6 @@ from probpipe.families._gaussian import (
 from probpipe.families._programs import (
     PyMCModel,
     StanModel,
-    UnnormalizedDistribution,
     _StanPosterior,
     _UnconstrainedStanView,
 )
@@ -110,6 +113,7 @@ from probpipe.inference._minibatch import (
 )
 from probpipe.linalg import DenseLinOp
 from probpipe.operations._condition import _unnormalized_conditional, _UnnormalizedConditional
+from probpipe.operations._given import _GivenLaw
 from tests._stanc import require_stanc
 
 # -- Constructions ------------------------------------------------------------
@@ -121,11 +125,11 @@ def _features(X, output_shape=()):
     return jnp.stack([phi] * output_shape[0], -2) if output_shape else phi
 
 
-def _basis_function(name: str = "f", output_shape: tuple[int, ...] = ()) -> LinearBasisFunction:
+def _basis_function(label: str = "f", output_shape: tuple[int, ...] = ()) -> LinearBasisFunction:
     width = 2 * max(1, int(np.prod(output_shape)))
     weights = MultivariateNormal("w", loc=jnp.zeros(width), cov=jnp.eye(width))
     return LinearBasisFunction(
-        name, functools.partial(_features, output_shape=output_shape), weights
+        label, functools.partial(_features, output_shape=output_shape), weights
     )
 
 
@@ -134,7 +138,13 @@ def _measure() -> MinibatchedDistribution:
     y = (X[:, 0] > 0).astype(jnp.float32)
     prior = MultivariateNormal("beta", loc=jnp.zeros(2), cov=jnp.eye(2))
     likelihood = glm_likelihood("y", BernoulliFamily(), X=X)
-    return MinibatchedDistribution("measure", prior, likelihood, y, batch_size=5)
+    return MinibatchedDistribution(
+        prior,
+        likelihood,
+        y,
+        batch_size=5,
+        label="measure",
+    )
 
 
 class _ZeroNetwork:
@@ -160,14 +170,14 @@ def _pymc_model_fn(y=None):
 
 def _pymc_model() -> PyMCModel:
     pytest.importorskip("pymc")
-    return PyMCModel("model", _pymc_model_fn)
+    return PyMCModel(_pymc_model_fn, label="model")
 
 
 def _stan_model() -> _StanPosterior:
     require_stanc()
     stan_file = pathlib.Path(tempfile.mkdtemp()) / "declared.stan"
     stan_file.write_text("parameters { real mu; } model { mu ~ normal(0, 1); }")
-    return StanModel("model", str(stan_file))
+    return StanModel(str(stan_file), label="model")
 
 
 def _stan_view() -> _UnconstrainedStanView:
@@ -179,6 +189,10 @@ def _standard_normal_density(x):
     return -0.5 * jnp.sum(jnp.asarray(x) ** 2)
 
 
+def _standard_normal_draw(key):
+    return jax.random.normal(key, (2,))
+
+
 def _zero_mean(X):
     return jnp.zeros(X.shape[0])
 
@@ -187,8 +201,15 @@ def _squared_exponential(X, Y):
     return jnp.exp(-0.5 * (X[:, None, 0] - Y[None, :, 0]) ** 2)
 
 
+def _normal_at(mu):
+    return Normal("x", mu, 1.0)
+
+
 # One construction per concrete class, keyed by the class it represents.
 _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
+    _GivenLaw: lambda: _GivenLaw(
+        conditional_distribution(_normal_at, given_spec={"mu": NumericArraySpec(())}), {"mu": 0.0}
+    ),
     Normal: lambda: Normal("x", 0.0, 1.0),
     Beta: lambda: Beta("x", 2.0, 3.0),
     Gamma: lambda: Gamma("x", 2.0, 1.0),
@@ -213,9 +234,14 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     Multinomial: lambda: Multinomial("x", 4.0, probs=jnp.array([0.2, 0.3, 0.5])),
     Wishart: lambda: Wishart("x", 4.0, scale_tril=jnp.eye(2)),
     VonMisesFisher: lambda: VonMisesFisher("x", jnp.array([0.0, 1.0]), 2.0),
-    KDEDistribution: lambda: KDEDistribution("kde", jnp.arange(6.0).reshape(3, 2)),
+    KDEDistribution: lambda: KDEDistribution(jnp.arange(6.0).reshape(3, 2), component="kde"),
     EmpiricalDistribution: lambda: EmpiricalDistribution(
-        "e", OpaqueBatch("labels", ["a", "b"], "e")
+        OpaqueBatch(
+            ["a", "b"],
+            "e",
+            label="labels",
+        ),
+        component="e",
     ),
     BootstrapReplicateDistribution: lambda: BootstrapReplicateDistribution(
         "b", Normal("x", 0.0, 1.0), replicate_size=3
@@ -243,22 +269,29 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     PyMCModel: _pymc_model,
     _StanPosterior: _stan_model,
     _UnconstrainedStanView: _stan_view,
-    UnnormalizedDistribution: lambda: UnnormalizedDistribution(
-        "u", _standard_normal_density, OutputSpec(x=probpipe.NumericArraySpec((2,)))
+    _FunctionLaw: lambda: distribution(
+        sample=_standard_normal_draw,
+        log_prob=_standard_normal_density,
+        event_spec=OutputSpec(x=probpipe.NumericArraySpec((2,))),
+        label="u",
     ),
     FieldView: lambda: FieldView(Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), "a"),
     FactoredDistribution: lambda: Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0),
     _UnnormalizedConditional: lambda: _unnormalized_conditional(
-        Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), Record("given", {"a": 0.0})
+        Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
+        Record(
+            {"a": 0.0},
+            label="given",
+        ),
     ),
     _LogRatePoisson: lambda: PoissonFamily()._build_canonical("y", jnp.zeros(3)),
     MixtureDistribution: lambda: MixtureDistribution(
-        "m",
         [
-            Normal("a", 0.0, 1.0, event_spec=OutputSpec(x=None)),
-            Normal("b", 1.0, 1.0, event_spec=OutputSpec(x=None)),
+            Normal("x", 0.0, 1.0, label="a"),
+            Normal("x", 1.0, 1.0, label="b"),
         ],
         jnp.array([0.5, 0.5]),
+        label="m",
     ),
     LinearPushforwardDistribution: lambda: LinearPushforwardDistribution(
         "y", MultivariateNormal("x", jnp.zeros(2), cov=jnp.eye(2)), DenseLinOp(jnp.eye(2))
@@ -268,15 +301,21 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     ),
     FactoredMultivariateGaussian: lambda: Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
     GaussianProcess: lambda: GaussianProcess("f", _zero_mean, _squared_exponential),
-    _SoleField: lambda: _SoleField(FactoredDistribution("record", [Normal("beta", 0.0, 1.0)])),
-    _RenamedDistribution: lambda: EmpiricalDistribution(
-        "e",
+    _SoleField: lambda: _SoleField(
+        FactoredDistribution(
+            [Normal("beta", 0.0, 1.0)],
+            label="record",
+        )
+    ),
+    # A kernel density estimate does not rebuild itself under new paths.
+    _RenamedDistribution: lambda: KDEDistribution(
         NumericRecordBatch(
-            "rows",
-            {"a": jnp.zeros(2), "b": jnp.ones(2)},
+            {"a": jnp.array([0.0, 1.0]), "b": jnp.array([1.0, 3.0])},
             "row",
             element_spec=NumericRecordSpec(a=(), b=()),
+            label="rows",
         ),
+        label="kde",
     ).with_path_names({"a": "g/a"}),
 }
 
@@ -292,6 +331,7 @@ _STAN_CONSTRUCTIONS = frozenset({_StanPosterior, _UnconstrainedStanView})
 
 _BASES = frozenset(
     {
+        NumericArraySpec,
         NumericDistribution,
         FactoredNumericDistribution,
         TFPDistribution,
@@ -422,7 +462,7 @@ class TestDeclaration:
 
 
 class TestRoundTrips:
-    """A round trip of a renamed law keeps its name and its declaration."""
+    """A round trip of a relabeled law keeps its label and its declaration."""
 
     @pytest.mark.parametrize(("cls", "make"), _rows(_PICKLE_FAILURES))
     def test_pickle(self, cls, make):

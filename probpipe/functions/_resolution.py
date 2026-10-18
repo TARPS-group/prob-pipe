@@ -46,11 +46,13 @@ from ._sweep import slice_sweep_values
 
 __all__ = [
     "PointReport",
+    "RouteOutcome",
     "StandIn",
     "call_report",
     "check_point",
     "check_points",
     "selected",
+    "settled",
 ]
 
 
@@ -67,13 +69,54 @@ class StandIn:
 
 
 @dataclass(frozen=True)
+class RouteOutcome:
+    """A route's raw result with the exactness the route learned only when it ran.
+
+    A route whose check cannot know the exactness of what it will run, as a
+    route that runs one operation on the result of another cannot, returns its
+    result in this form, and the call records *exact* in place of the exactness
+    its check reported.
+
+    Attributes
+    ----------
+    value : Any
+        The route's raw result.
+    exact : bool or None
+        Whether the result denotes the call's mathematical result; ``None`` when
+        the run could not tell.
+    """
+
+    value: Any
+    exact: bool | None
+
+
+def settled(value: Any) -> tuple[Any, bool | None]:
+    """A route's raw result and the exactness it settled when it ran, ``None`` when it settled none.
+
+    Parameters
+    ----------
+    value : Any
+        What a candidate's ``run`` returned: a raw result, or a RouteOutcome.
+
+    Returns
+    -------
+    tuple
+        The raw result, and the exactness a RouteOutcome carries or ``None``.
+    """
+    if isinstance(value, RouteOutcome):
+        return value.value, value.exact
+    return value, None
+
+
+@dataclass(frozen=True)
 class PointReport(Feasibility):
     """What the check of one point finds, and, combined, what the check of a call finds.
 
     The point is feasible when a route is selected, unresolved when a route
     ranked above every feasible one still needs declarations, and infeasible
     when no route applies. A route's probe may also return one, to report a
-    feasible route of a stated exactness that runs no method.
+    feasible route of a stated exactness that runs no method, or a feasible
+    route whose ``deferred`` names the checks it leaves to its run.
 
     Attributes
     ----------
@@ -93,7 +136,8 @@ class PointReport(Feasibility):
         order. The exactness is the implementation's that the candidate's report
         selects, its route's declaration for a route that states one.
     deferred : tuple of str
-        The checks deferred to the return.
+        The checks deferred to the return: planning's, then those the selected
+        route's report defers.
     """
 
     route: str | None = None
@@ -108,6 +152,15 @@ def _probe(
     candidates: Sequence[Any], call: Any, result: OutputSpec | None
 ) -> tuple[Any, Feasibility | None, list[tuple[Any, Feasibility]]]:
     """Probe *candidates* in selection order until one is feasible or unresolved.
+
+    Parameters
+    ----------
+    candidates : sequence
+        The routes, in selection order.
+    call : Any
+        The point's call object, which each probe reads.
+    result : OutputSpec or None
+        The point's result declaration.
 
     Returns
     -------
@@ -125,25 +178,56 @@ def _probe(
     return None, None, probed
 
 
-def _no_route(name: str, controls: Mapping[str, Any], probed: list[tuple[Any, Feasibility]]) -> str:
-    """The message naming each probed candidate and why it declined."""
+def _no_route(
+    label: str, controls: Mapping[str, Any], probed: list[tuple[Any, Feasibility]]
+) -> str:
+    """The message naming each probed candidate and why it does not apply.
+
+    The message leads with the first actionable reason, which concerns a detail
+    of the call that the caller can fix rather than the kind of its arguments.
+    """
     restriction = " with exact_only" if controls.get("exact_only") else ""
     if not probed:
-        return f"{name}: no route applies{restriction}; none is registered"
+        if restriction:
+            return f"{label}: no route applies with exact_only, because none of its routes is exact"
+        return f"{label}: no route applies, because none is registered"
     tried = "; ".join(
         f"{candidate.label}: {report.description or 'infeasible'}" for candidate, report in probed
     )
-    return f"{name}: no route applies{restriction}. Tried: {tried}"
+    lead = next((report.description for _, report in probed if report.actionable), "")
+    if lead:
+        return f"{label}: {lead}. Routes tried{restriction}: {tried}"
+    return f"{label}: no route applies{restriction}. Tried: {tried}"
 
 
 def selected(
-    name: str,
+    label: str,
     controls: Mapping[str, Any],
     candidates: Sequence[Any],
     call: Any,
     result: OutputSpec | None,
 ) -> tuple[Any, Feasibility]:
     """The candidate that realizes one point of a call, and its report.
+
+    Parameters
+    ----------
+    label : str
+        The Function's label, which the messages name.
+    controls : Mapping of str to Any
+        The call's resolved controls, whose ``exact_only`` the message reports.
+    candidates : sequence
+        The Function's routes, in selection order.
+    call : Any
+        The point's call object, which each probe reads.
+    result : OutputSpec or None
+        The point's result declaration.
+
+    Returns
+    -------
+    candidate : Any
+        The selected candidate.
+    report : Feasibility
+        The candidate's feasible report, which its ``run`` receives.
 
     Raises
     ------
@@ -154,10 +238,10 @@ def selected(
     """
     candidate, report, probed = _probe(candidates, call, result)
     if candidate is None or report is None:
-        raise ResolutionError(_no_route(name, controls, probed))
+        raise ResolutionError(_no_route(label, controls, probed))
     if report.feasible is None:
         raise ResolutionError(
-            f"{name}: route {candidate.label!r} is unresolved; pending: {', '.join(report.pending)}"
+            f"{label}: route {candidate.label!r} is unresolved; pending: {', '.join(report.pending)}"
         )
     return candidate, report
 
@@ -174,6 +258,25 @@ def check_point(
 
     Without *select* the point is planned and no route is selected, as for an
     empty sweep, which runs none.
+
+    Parameters
+    ----------
+    function : Function
+        The Function realized by routes, which plans the point.
+    values : Mapping of str to Any
+        The point's arguments, by parameter name.
+    controls : Mapping of str to Any
+        The call's resolved controls.
+    candidates : sequence
+        The Function's routes, in selection order.
+    select : bool
+        Whether to probe the candidates; ``True`` unless the point runs no route.
+
+    Returns
+    -------
+    PointReport
+        The point's feasibility, with its planned result declaration and its
+        deferred checks.
 
     Raises
     ------
@@ -200,6 +303,10 @@ def check_point(
         return PointReport(
             None, pending=report.pending, result=result, routes=reports, deferred=deferred
         )
+    if isinstance(report, PointReport):
+        # A route's own deferred checks, such as one it can make only on a value
+        # its run produces, are the call's as well.
+        deferred = (*deferred, *report.deferred)
     return PointReport(
         True,
         route=candidate.route_name,
@@ -217,15 +324,23 @@ def _label(candidate: Any, report: Feasibility) -> str:
     return candidate.label if method is None else f"{candidate.route_name}/{method}"
 
 
-def _element_spec(values: Mapping[str, Any], ref: FunctionInputRef) -> TermSpec:
-    """The declaration of one element of the swept argument *ref*."""
-    spec = input_ref_value(values, ref).spec
-    return spec.element_spec if isinstance(spec, BatchSpec) else spec
-
-
 def _draws(values: Mapping[str, Any], plan: BroadcastPlan) -> dict[FunctionInputRef, StandIn]:
     """A stand-in for a draw of each law the call broadcasts over, by its reference."""
     return {ref: StandIn(input_ref_value(values, ref).event_spec.spec) for ref in plan.dist_args}
+
+
+def _stand_ins(values: Mapping[str, Any], plan: BroadcastPlan) -> dict[FunctionInputRef, StandIn]:
+    """A stand-in for a draw of each law the call broadcasts over and an element of each batch it sweeps.
+
+    A swept argument that is already one element, as in a row of a sweep,
+    keeps its value.
+    """
+    stand_ins = _draws(values, plan)
+    for ref in plan.array_args:
+        spec = getattr(input_ref_value(values, ref), "spec", None)
+        if isinstance(spec, BatchSpec):
+            stand_ins[ref] = StandIn(spec.element_spec)
+    return stand_ins
 
 
 def _points(
@@ -293,8 +408,7 @@ def check_points(
     declaration and selects no route, since it runs none.
     """
     if plan.array_args and plan.n_sweep == 0:
-        elements = {ref: StandIn(_element_spec(values, ref)) for ref in plan.array_args}
-        point = replace_input_refs(values, {**elements, **_draws(values, plan)})
+        point = replace_input_refs(values, _stand_ins(values, plan))
         return check_point(function, point, controls, candidates, select=False)
     reports: list[tuple[tuple[int, ...], PointReport]] = []
     for cell, point in _points(values, plan):
@@ -303,6 +417,44 @@ def check_points(
         if report.feasible is False:
             break
     return _combined(reports)
+
+
+def lifted_declaration(
+    function: Any, values: Mapping[str, Any], controls: Mapping[str, Any], plan: BroadcastPlan
+) -> OutputSpec | None:
+    """The result declaration of one point of a lifted call, planned from declarations alone.
+
+    The point binds a stand-in for a draw of each law the call lifts and for an
+    element of each batch it sweeps, and it evaluates and samples nothing. The
+    law of the evaluations therefore declares the components that one point's
+    result declares, as ``log_prob`` for a score.
+
+    Parameters
+    ----------
+    function : Function
+        The Function realized by routes, which plans the point.
+    values : Mapping of str to Any
+        The arguments of the call, or of one row of a sweep, by parameter name.
+    controls : Mapping of str to Any
+        The call's resolved controls.
+    plan : BroadcastPlan
+        The call's broadcast plan, which names the laws the call lifts and the
+        batches it sweeps.
+
+    Returns
+    -------
+    OutputSpec or None
+        The point's result declaration, or ``None`` when the declarations
+        leave it open.
+
+    Raises
+    ------
+    ApplicabilityError
+        If an applicability condition of the function fails at the point.
+    """
+    point = replace_input_refs(values, _stand_ins(values, plan))
+    _, result, _ = function._plan_point(point, controls)
+    return result
 
 
 def call_report(

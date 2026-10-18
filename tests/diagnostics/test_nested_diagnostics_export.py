@@ -20,7 +20,7 @@ from probpipe.inference._approximate_distribution import make_posterior
 
 def _posterior(template, vector_size, *, n_chains=2, n_draws=30, seed0=0):
     """A real posterior over *template*, plus the seeded chains behind it."""
-    prior = MultivariateNormal(loc=jnp.zeros(vector_size), cov=jnp.eye(vector_size), label="z")
+    prior = MultivariateNormal("z", loc=jnp.zeros(vector_size), cov=jnp.eye(vector_size))
     chains = [
         jax.random.normal(jax.random.PRNGKey(seed0 + i), (n_draws, vector_size))
         for i in range(n_chains)

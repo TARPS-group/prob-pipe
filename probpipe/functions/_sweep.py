@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from itertools import product as cartesian_product
+from math import prod
 from typing import Any
 
 import jax
@@ -25,11 +26,13 @@ except ImportError:
     task = flow = None
 
 from ..core._batch import Batch
+from ..core._expression import Expression
 from ..core._numeric_array import NumericArray
 from ..core._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
 from ..core._object_batch import _ObjectBatch
 from ..core._opaque import Opaque
 from ..core._record_batch import RecordBatch, _MappedBatchColumns
+from ..core._repr import type_name
 from ..core._specs import OutputSpec, RecordSpec
 from ..core.config import WorkflowKind, prefect_config
 from ..core.provenance import Provenance
@@ -64,6 +67,7 @@ def execute_sweep(
     ],
     function_name: str,
     output_label: str | None = None,
+    output_expression: Expression | None = None,
     output_spec: OutputSpec | None = None,
     include_inputs: bool = False,
     output_template: RecordSpec | None = None,
@@ -75,7 +79,9 @@ def execute_sweep(
     """Execute pure or nested sweep regimes for one workflow call.
 
     *route* is the selected route's name and exactness, which provenance
-    records.
+    records. The aggregate is labeled *output_label* and carries
+    *output_expression*, the expression the call gives its result, when one
+    is given.
     """
     if plan.regime not in ("sweep", "nested"):
         raise ValueError(f"execute_sweep requires a sweep plan; got {plan.regime!r}")
@@ -86,9 +92,8 @@ def execute_sweep(
 
     if include_inputs:
         raise NotImplementedError(
-            "include_inputs=True is not supported with batched-record "
-            "broadcasting. The inputs are already available via "
-            "provenance on the stacked output."
+            "include_inputs=True is not supported when calling over a Batch; the inputs "
+            "are recorded in the result's provenance"
         )
 
     if not dist_args:
@@ -116,8 +121,7 @@ def execute_sweep(
             # by name with the batch it swept.
             level_names=plan.sweep_level_names,
             axis_groups=plan.sweep_axis_groups,
-            name=output_label,
-            field_name=output_label,
+            label=output_label,
             output_spec=output_spec,
             output_template=output_template,
         )
@@ -143,7 +147,8 @@ def execute_sweep(
             aggregate,
             broadcast_mode=_result.BROADCAST_STACK,
             provenance=provenance,
-            field_name=output_label,
+            label=output_label,
+            expression=output_expression,
         )
 
     if stochastic_plan is None:  # pragma: no cover - Function planning contract guard
@@ -165,8 +170,7 @@ def execute_sweep(
         batch_shape=plan.sweep_batch_shape,
         level_names=plan.sweep_level_names,
         axis_groups=plan.sweep_axis_groups,
-        name=output_label,
-        field_name=output_label,
+        label=output_label,
     )
     provenance = make_sweep_provenance(
         values=values,
@@ -184,7 +188,8 @@ def execute_sweep(
         stacked,
         broadcast_mode=_result.BROADCAST_NESTED,
         provenance=provenance,
-        field_name=output_label,
+        label=output_label,
+        expression=output_expression,
     )
 
 
@@ -194,7 +199,13 @@ def slice_sweep_values(
     index: int,
     array_groups: tuple[_plan.ArrayBroadcastGroup, ...],
 ) -> dict[str, Any]:
-    """Materialize one row-major sweep cell under the zip groups."""
+    """Read one row-major sweep cell, expanding singleton axes within each level.
+
+    Each input uses zero on a size-one axis and the cell's coordinate otherwise.
+    Shapes align from the right within each named level, so an input with fewer
+    axes in a level reads that level's trailing coordinates. Each input is
+    indexed in place at its own shape.
+    """
     out = dict(values)
     rem = index
     # Highest-index group varies fastest under row-major flattening of
@@ -202,15 +213,29 @@ def slice_sweep_values(
     for group in reversed(array_groups):
         idx = rem % group.size
         rem = rem // group.size
-        # A batch spanning several axes addresses its element by position, one
-        # indexer per axis; a flat index would read the leading axis alone and
-        # run off its end.
-        position: Any = idx
-        if len(group.batch_shape) > 1:
-            position = tuple(int(i) for i in np.unravel_index(idx, group.batch_shape))
+        coordinates = (
+            (idx,)
+            if len(group.batch_shape) == 1
+            else tuple(int(i) for i in np.unravel_index(idx, group.batch_shape))
+        )
         replacements: dict[_binding.FunctionInputRef, Any] = {}
         for ref in group.arg_refs:
-            replacements[ref] = _binding.input_ref_value(values, ref)[position]
+            batch = _binding.input_ref_value(values, ref)
+            if batch.axis_groups == group.axis_groups:
+                replacements[ref] = batch[coordinates]
+                continue
+            position = []
+            offset = 0
+            for shape, target_shape in zip(batch.axis_groups, group.axis_groups, strict=True):
+                # The input's axes for this level match the trailing axes of the
+                # level's broadcast shape, so an omitted leading axis broadcasts
+                # like size one.
+                start = offset + len(target_shape) - len(shape)
+                position.extend(
+                    0 if size == 1 else coordinates[start + axis] for axis, size in enumerate(shape)
+                )
+                offset += len(target_shape)
+            replacements[ref] = batch[tuple(position)]
         out = _binding.replace_input_refs(out, replacements)
     return out
 
@@ -245,9 +270,7 @@ def execute_sweep_rows(
     has_object_batch = any(
         isinstance(_binding.input_ref_value(values, ref), _ObjectBatch) for ref in array_args
     )
-    jax_structure_supported = not (
-        has_object_batch or len(plan.array_groups) > 1 or len(array_args) > 1
-    )
+    jax_structure_supported = not (has_object_batch or len(plan.array_groups) > 1)
     jax_contract = _execution_contract.make_execution_contract(
         evaluator="jax_vmap",
         transport=_execution_contract.transport_for_workflow_kind(workflow_kind),
@@ -260,8 +283,8 @@ def execute_sweep_rows(
     )
     if requested_dispatch == "jax" and not jax_supported:
         raise ValueError(
-            "dispatch='jax' supports a sweep over one batch of records or arrays; "
-            "use dispatch='auto', 'sequential', or 'thread' for this path."
+            "dispatch='jax' can only sweep over batches of records or arrays with the same levels; use "
+            "dispatch='auto', 'sequential', or 'thread' for this call"
         )
 
     dispatch = resolve_dispatch(
@@ -279,6 +302,7 @@ def execute_sweep_rows(
             values=values,
             array_args=array_args,
             n_total=plan.n_sweep,
+            axis_groups=plan.array_groups[0].axis_groups,
             workflow_kind=workflow_kind,
             function_name=function_name,
             output_is_declared=output_is_declared,
@@ -315,25 +339,60 @@ def execute_sweep_rows(
     return _execution.execute_many(request)
 
 
-def mapped_storage(batch: Batch, n_rows: int) -> Any:
+def mapped_storage(
+    batch: Batch, n_rows: int, *, axis_groups: tuple[tuple[int, ...], ...] | None = None
+) -> Any:
     """The raw storage the map reads from the swept *batch*, as *n_rows* rows on one leading axis.
 
     The batch axes are flattened in row-major order, which is the order of the
     sweep's cells. A batch of arrays is read as its store, and a batch of records
-    as one column per field, keyed by the field's path.
+    as one column per field, keyed by the field's path. When *axis_groups* is
+    given, each named level expands to its target shape before flattening.
+    Missing leading axes align within each level, preserving its boundaries.
+
+    Parameters
+    ----------
+    batch : Batch
+        The swept batch.
+    n_rows : int
+        The number of rows, which is the product of the target batch shape.
+    axis_groups : tuple of tuple of int or None
+        Target shapes in the order of *batch*'s levels. Defaults to the batch's
+        own shapes. Each target shape must broadcast from its level's shape.
+
+    Returns
+    -------
+    jax.Array or dict of str to jax.Array
+        The store or the columns by path, as JAX arrays whose leading axis of
+        length *n_rows* precedes the element's axes.
 
     Raises
     ------
     TypeError
         If *batch* stores objects, as a batch of laws or of functions does.
+    ValueError
+        If the target has a different number of levels, a level cannot broadcast
+        to its target shape, or *n_rows* differs from the target's total size.
     """
     n_batch = len(batch.batch_shape)
+    target_groups = batch.axis_groups if axis_groups is None else axis_groups
+    aligned_shape = []
+    for shape, target in zip(batch.axis_groups, target_groups, strict=True):
+        if len(target) < len(shape) or np.broadcast_shapes(shape, target) != target:
+            raise ValueError(f"cannot broadcast level shape {shape} to {target}")
+        aligned_shape.extend((1,) * (len(target) - len(shape)) + shape)
+    target_shape = tuple(axis for shape in target_groups for axis in shape)
+    if n_rows != prod(target_shape):
+        raise ValueError(f"row count {n_rows} differs from target shape {target_shape}")
 
     def rows(column: Any) -> Any:
         column = jnp.asarray(column)
+        event_shape = jnp.shape(column)[n_batch:]
+        column = jnp.reshape(column, (*aligned_shape, *event_shape))
+        column = jnp.broadcast_to(column, (*target_shape, *event_shape))
         # The row count is stated, since ``-1`` cannot be inferred over a
         # zero-width event.
-        return jnp.reshape(column, (n_rows, *jnp.shape(column)[n_batch:]))
+        return jnp.reshape(column, (n_rows, *event_shape))
 
     if isinstance(batch, NumericArrayBatch):
         return rows(batch.as_jax())
@@ -349,8 +408,8 @@ def _mapped_row(batch: Batch, label: str, row: Any) -> NumericArray | Record:
     batch's element spec, and a batch of records a record of the row's fields.
     """
     if isinstance(batch, NumericArrayBatch):
-        return NumericArray(label, row, spec=batch.element_spec)
-    return Record(label, row)
+        return NumericArray(row, spec=batch.element_spec, label=label)
+    return Record(row, label=label)
 
 
 def mapped_row_body(
@@ -358,7 +417,7 @@ def mapped_row_body(
     func: Callable[..., Any],
     values: dict[str, Any],
     array_args: Sequence[_binding.FunctionInputRef],
-    field_name: str,
+    label: str,
     output_is_declared: bool = False,
 ) -> Callable[[Any], Any]:
     """The body ``jax.vmap`` runs for one sweep row, and the probe traces.
@@ -388,16 +447,15 @@ def mapped_row_body(
         }
         out = func(**_binding.replace_input_refs(values, replacements))
         if not output_is_declared:
-            out = _row_at_its_kind(out, field_name)
+            out = _row_at_its_kind(out, label)
             if isinstance(out, Record):
                 # As a batch row is carried, but with no level of its own: the
                 # axis the map adds is the only one the aggregate will have.
                 return _MappedBatchColumns.of_record(out)
             if isinstance(out, Opaque):
                 raise TypeError(
-                    f"{field_name}: a row returned a {type(out.value).__name__}, which is "
-                    f"an Opaque, and the mapped dispatch stacks arrays, records, and "
-                    f"batches; an opaque row runs row-wise"
+                    f"{label}: dispatch='jax' cannot stack a row that returned "
+                    f"{type_name(out.raw)}; it stacks only arrays, records, and batches"
                 )
         if isinstance(out, RecordBatch):
             return _MappedBatchColumns.of(out)
@@ -414,22 +472,24 @@ def execute_sweep_rows_jax(
     values: dict[str, Any],
     array_args: list[_binding.FunctionInputRef],
     n_total: int,
+    axis_groups: tuple[tuple[int, ...], ...] | None = None,
     workflow_kind: WorkflowKind = WorkflowKind.OFF,
     function_name: str,
     output_is_declared: bool = False,
     output_label: str,
 ) -> Any:
-    """Execute the limited single-batch sweep through ``jax.vmap``."""
+    """Execute paired numeric sweep arguments through ``jax.vmap``."""
     single_call = mapped_row_body(
         func=func,
         values=values,
         array_args=array_args,
-        field_name=output_label,
+        label=output_label,
         output_is_declared=output_is_declared,
     )
 
     vmap_input = [
-        mapped_storage(_binding.input_ref_value(values, ref), n_total) for ref in array_args
+        mapped_storage(_binding.input_ref_value(values, ref), n_total, axis_groups=axis_groups)
+        for ref in array_args
     ]
 
     def run_vmap():

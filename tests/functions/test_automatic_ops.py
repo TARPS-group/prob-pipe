@@ -22,7 +22,7 @@ from probpipe.functions import _context
 class _RecordingNormal(Normal):
     def __init__(self, calls):
         self.calls = calls
-        super().__init__(loc=0.0, scale=1.0, label="x")
+        super().__init__("x", loc=0.0, scale=1.0, label="x")
 
     def _sample(self, key, sample_shape=()):
         self.calls.append((key, tuple(sample_shape)))
@@ -39,7 +39,7 @@ class _FailOnceNormal(_RecordingNormal):
 
 class TestAutomaticSample:
     def test_seeded_runs_reproduce_distinct_sample_occurrences(self):
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
 
         def run():
             with workflow_run(seed=7):
@@ -68,7 +68,7 @@ class TestAutomaticSample:
             patch.object(_context._WorkflowInvocation, "key_for", new=record),
             workflow_run(seed=7),
         ):
-            result = sample(Normal(loc=0.0, scale=1.0, label="x"), sample_shape=(4, 5))
+            result = sample(Normal("x", loc=0.0, scale=1.0), sample_shape=(4, 5))
 
         assert result.shape == (4, 5)
         assert claims == [(("source-group", 0), ("singleton",))]
@@ -80,10 +80,12 @@ class TestAutomaticSample:
             pytest.param((np.int64(4),), id="numpy-tuple"),
             pytest.param(jnp.int32(4), id="jax-scalar"),
             pytest.param((jnp.int32(4),), id="jax-tuple"),
+            pytest.param([4], id="list"),
+            pytest.param(np.array([4]), id="numpy-array"),
         ],
     )
     def test_integer_protocol_sample_shapes_match_python_ints(self, sample_shape):
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
 
         def run(shape):
             with workflow_run(seed=7):
@@ -94,19 +96,19 @@ class TestAutomaticSample:
 
         np.testing.assert_array_equal(actual, expected)
 
-    @pytest.mark.parametrize("sample_shape", [True, -1, (2, -1), (2, 1.5), [2]])
+    @pytest.mark.parametrize("sample_shape", [True, -1, (2, -1), (2, 1.5), "S", b"ab"])
     def test_invalid_sample_shape_fails_before_event_commit(self, sample_shape):
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
             pytest.raises((TypeError, ValueError)),
         ):
-            sample(Normal(loc=0.0, scale=1.0, label="x"), sample_shape=sample_shape)
+            sample(Normal("x", loc=0.0, scale=1.0), sample_shape=sample_shape)
 
         commit.assert_not_called()
 
     def test_bare_samples_receive_independent_ephemeral_roots(self):
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
         with patch(
             "probpipe.functions._context._os_urandom",
             side_effect=[bytes(8), bytes.fromhex("0000000000000001")],
@@ -133,7 +135,7 @@ class TestAutomaticSample:
 
 class TestAutomaticExpectation:
     def test_exact_empirical_expectation_claims_no_event(self):
-        dist = EmpiricalDistribution("x", jnp.asarray([1.0, 2.0, 3.0]))
+        dist = EmpiricalDistribution(jnp.asarray([1.0, 2.0, 3.0]), component="x")
 
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
@@ -149,7 +151,7 @@ class TestAutomaticExpectation:
         dist = _RecordingNormal(calls)
 
         with workflow_run(seed=7):
-            result = expectation.with_options(n_broadcast_samples=32)(dist, lambda value: value)
+            result = expectation.using(n_broadcast_samples=32)(dist, lambda value: value)
 
         assert jnp.asarray(result).shape == ()
         assert [(shape) for _key, shape in calls] == [(32,)]
@@ -161,8 +163,8 @@ class TestAutomaticExpectation:
             workflow_run(seed=7),
             pytest.raises((TypeError, ValueError)),
         ):
-            expectation.with_options(n_broadcast_samples=num_evaluations)(
-                Normal(loc=0.0, scale=1.0, label="x"), lambda value: value
+            expectation.using(n_broadcast_samples=num_evaluations)(
+                Normal("x", loc=0.0, scale=1.0), lambda value: value
             )
 
         commit.assert_not_called()

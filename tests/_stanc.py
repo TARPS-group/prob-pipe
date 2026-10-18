@@ -11,6 +11,6 @@ def require_stanc() -> None:
     from probpipe.families._programs import _stanc
 
     try:
-        _stanc()
+        _stanc(fetch=False)
     except ImportError as exc:
         pytest.skip(f"stanc is unavailable: {exc}")

@@ -14,7 +14,14 @@ import jax.numpy as jnp
 import pytest
 import tensorflow_probability.substrates.jax as tfp
 
-from probpipe import Beta, EmpiricalDistribution, MultivariateNormal, NumericArraySpec, condition_on
+from probpipe import (
+    Beta,
+    EmpiricalDistribution,
+    MultivariateNormal,
+    NumericArraySpec,
+    condition_on,
+    workflow_run,
+)
 from probpipe.core.constraints import boolean
 from probpipe.custom_types import Array
 from probpipe.distributions import Distribution
@@ -48,7 +55,7 @@ def conjugate_linear_model() -> ConjugateLinearModel:
     beta_star = jax.random.normal(k_beta, (p,)) * jnp.sqrt(tau2)
     y = x @ beta_star + jax.random.normal(k_y, (n,))
     likelihood = glm_likelihood("y", GaussianFamily(), X=x, dispersion=1.0)
-    model = likelihood * MultivariateNormal(loc=jnp.zeros(p), cov=tau2 * jnp.eye(p), label="beta")
+    model = likelihood * MultivariateNormal("beta", loc=jnp.zeros(p), cov=tau2 * jnp.eye(p))
     cov = jnp.linalg.inv(jnp.eye(p) / tau2 + x.T @ x)
     mean = cov @ (x.T @ y)
     return ConjugateLinearModel(
@@ -62,10 +69,11 @@ def conjugate_nuts_posterior(
 ) -> EmpiricalDistribution:
     """A well-mixed NUTS fit of the conjugate model — the method under validation."""
     m = conjugate_linear_model
-    return condition_on.with_options(
-        method="blackjax_nuts",
-        method_options={"num_results": 3000, "num_warmup": 1500, "num_chains": 2, "random_seed": 0},
-    )(m.model, {"y": m.data})
+    with workflow_run(seed=0):
+        return condition_on.using(
+            method="blackjax_nuts",
+            method_options={"num_results": 3000, "num_warmup": 1500, "num_chains": 2},
+        )(m.model, {"y": m.data})
 
 
 @dataclass(frozen=True)
@@ -119,7 +127,8 @@ def beta_bernoulli_nuts_posterior(
 ) -> EmpiricalDistribution:
     """A NUTS fit of the constrained, skewed Beta-Bernoulli posterior."""
     m = beta_bernoulli_model
-    return condition_on.with_options(
-        method="blackjax_nuts",
-        method_options={"num_results": 2000, "num_warmup": 1000, "num_chains": 2, "random_seed": 0},
-    )(m.model, {"y": m.data})
+    with workflow_run(seed=0):
+        return condition_on.using(
+            method="blackjax_nuts",
+            method_options={"num_results": 2000, "num_warmup": 1000, "num_chains": 2},
+        )(m.model, {"y": m.data})

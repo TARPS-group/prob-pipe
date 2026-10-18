@@ -9,16 +9,502 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
-- **A result names each component by what its value means.**
-  - `mean`, `variance`, and `quantile` name each component of the law's event
-    by their call. The mean of a law over `mu` and `tau` is a record whose
-    fields are `mean(mu)` and `mean(tau)`, and the mean of a law over `theta` is
-    declared under `mean(theta)`: replace `mean(posterior)["mu"]` with
-    `mean(posterior)["mean(mu)"]`. A plug-in call such as
-    `predict(**mean(posterior))` names its keywords instead.
-  - `cov` is declared under the call on every component of the event, as
-    `cov(mu, tau)`, and `expectation(d, f)` under `mean(c)` for each component
-    `c` of `f`'s output declaration.
+- **`raw` is a property on every term.** Replace `x.raw()` with `x.raw`, and
+  search your code for `.raw(` to find the calls. The `raw` of a `Function`,
+  an `Operation`, or a `Bijector` is a callable, so an old `f.raw()` calls the
+  wrapped function with no arguments instead of raising.
+  - A `Record` and a `RecordBatch` no longer take a path, and `record.raw` is
+    the whole nested mapping. Replace `record.raw("x")` with
+    `record["x"].raw` to read one field's view, or with `record.raw["x"]` to
+    read the stored form, and `record.raw("g/x")` with `record.raw["g"]["x"]`.
+    Inside a JAX trace, `record["x"]` is the traced value itself, so traced
+    code reads `record.raw["x"]`. A field's view presents a stored Python
+    scalar as an array, so `record["x"].raw` is an array where
+    `record.raw["x"]` is the stored `float`.
+  - Every read returns the same raw form. A law, a kernel, or a field view
+    keeps the detached copy it returns, and the copy refuses provenance,
+    since every reader shares it; `with_label` gives a copy that can carry
+    provenance. A record keeps its resolved leaves and returns a new `dict`
+    over them on each read.
+  - A subclass of a tracked term or of `LinOp` defines `raw` with
+    `@property`, and a class on which `raw` is a method, a class or static
+    method, or a cached function raises `TypeError` when it is created.
+- **A numeric term shows its values.** The repr of a `NumericArray`, a
+  `NumericRecord`, or a batch of either shows the values below its summary, and
+  `str()` shows the values alone, so a mean shows its value without reading `raw`:
+
+  ```text
+  >>> mean(Normal("mu", 0.25, 1.0, label="prior"))
+  NumericArray('𝔼[mu ~ prior]', shape=(), dtype=float32, support=real)
+    0.25
+  ```
+
+  NumPy's printing formats the values, so `np.set_printoptions` sets the
+  precision and shortens a large array with `...`, and only the entries shown
+  are read from the device. The values are indented by two spaces under the
+  summary. A record shows one line for each field path, such as
+  `population/mu`, and the summary above those lines leaves out `fields=`.
+  `str()` of a record or a batch gave its repr before. In a notebook a record and a batch of records
+  display as a two-column table of paths and values. Inside `jax.jit`, and
+  inside another term's repr such as a law's atoms, a term shows its summary
+  alone, and a record's summary then keeps `fields=`.
+- **`with_options` is renamed `using`.** `Function.using(**controls)` and
+  `Operation.using(**controls)` behave as `with_options` did.
+  Replace `condition_on.with_options(method="tfp_nuts")(model, data)` with
+  `condition_on.using(method="tfp_nuts")(model, data)`.
+- **A kernel's conditional methods must be pure.** A joint compiles the
+  function of `conditional_distribution`, and the conditional methods of any
+  `ConditionalDistribution`, when it draws or scores the kernel at many given
+  values, and it keeps the compiled program. A call that reuses the program
+  computes with the values that the globals the function reads had when it
+  was compiled, while a call with new input shapes or a single given value
+  reads their current values. A warning the function issues is issued when a
+  program is compiled. A value that changes between calls belongs in a given
+  slot.
+- `pushforward` and `expectation` validate construction-bound arguments as
+  constants, just as they validate `fixed_args`. Maps annotated `Any` retain
+  their input/output schema checks when pushed forward, including shared
+  symbolic dimensions.
+
+- **`expectation(d, f)` integrates `f` over draws of `d` on every route.**
+  It is `mean(pushforward(d, f))`, so the integrand receives one draw at a
+  time whatever its parameter's annotation. An integrand whose declared input
+  cannot take a draw raises `ApplicabilityError` from the call and from
+  `check()`, on every route: `expectation(Normal("x", 1.0, 2.0), the_law)` for
+  `the_law(law: Distribution)` used to return `1.0`, which is the mean of
+  `the_law(d)`, and now raises. An integrand annotated `Any` receives draws,
+  where it received the whole law. A law or a batch in `fixed_args` raises
+  `ApplicabilityError`, where `closed_form` passed it to the integrand as it
+  is and the evaluation rules lifted it, so the result depended on the route;
+  `mean(function(f)(x=d, a=A))` integrates over both laws.
+- **`expectation`'s routes are `closed_form` and `pushforward_mean`,** which
+  replace `evaluation_rules` and `identity`. A rule name such as
+  `method="sampling_lift"` still selects the rule, and the qualified form is
+  `pushforward_mean/sampling_lift`. The provenance of `pushforward_mean`
+  records the exactness of the rule and of the mean together, while
+  `expectation.check` states a call whose rule is exact as approximate, since
+  the mean's route is chosen only when the call runs. Under `exact_only` both
+  steps are restricted to exact routes, so a Monte Carlo mean of a pushforward
+  that an exact rule built raises `ResolutionError` naming `mean`.
+- **`condition_on`'s route that binds given slots is named
+  `bind_given_slots`,** in place of `curry`. The route binds the given slots of
+  a `ConditionalDistribution` and runs no inference; a `check` report, a
+  result's provenance, and an error message now name it, as in
+  `bind_given_slots/nutpie_nuts`, and `method="curry"` no longer selects it.
+- **On `closed_form`, `expectation` passes a record atom to the integrand as a
+  `Record`,** as the evaluation rules pass a record draw, where it passed the
+  nested `dict` of the atom's raw leaves. The integrand's open parameter is
+  the one parameter with no default that is neither in `fixed_args` nor bound
+  by the map's `bind`, on every route, so an integrand whose only parameter has
+  a default or is variadic raises `ApplicabilityError` on `closed_form` as on
+  the other routes.
+
+- Remove the experimental `Node`, `Module`, `AbstractModule`,
+  `workflow_method`, `abstract_workflow_method`, and `InputFrozenError` APIs.
+  `Function` and `@function` no longer accept `module=`. Use ordinary callables
+  and `bind=` for construction-time arguments; call arguments override those
+  bindings, followed by Python defaults for omitted arguments.
+- **Lifted empirical laws name their atom level after the output component,**
+  such as `trajectory`, instead of `draw`. Display aliases leave this level as
+  it is. A batch-valued output keeps its event levels after the atom level, and
+  an output component named like one of those levels needs a distinct component
+  in `OutputSpec`. Two lifted laws whose output components differ, such as
+  `double` and `shift`, keep their atoms on different levels, so a function
+  called on both `.atoms` forms their outer product where it paired them on
+  `draw`.
+
+- Automatic mathematical notation uses `𝔼`, `ℙ`, `ℚ`, `𝕍`, `ℂ`, and `𝒻` for
+  expectation, generic laws or kernels, quantile, variance, covariance, and
+  anonymous functions. Explicit labels remain literal, and generated component
+  names remain ASCII.
+
+- **A value, a batch, and a function take their data first and the label as
+  the keyword `label=`.** `NumericArray(values, label="x")` replaces
+  `NumericArray("x", values)`, `Record({"a": 1.0}, label="r")` or
+  `Record.from_fields(a=1.0)` replaces `Record("r", a=1.0)`, and
+  `Function(fn, label="g")` replaces `Function("g", fn)`. `from_vector`,
+  `from_field_values`, and `from_dict` take the label as the keyword `label=`
+  after their data, as `NumericArray.from_vector(spec, vec, label="x")`, and
+  the first parameter of `Record.from_dict` is named `fields`. A raw array, an
+  opaque value, a batch of either, and a function whose callable has no name
+  require the label. A record and a record batch derive it from their validated
+  top-level fields, so path-keyed and nested fields read alike, as
+  `record(a,b)`, and a batch stacked from records takes the first record's
+  label. A function derives it from its callable's name, with `𝒻` for a lambda,
+  and a batch of functions or laws from its members, at most eight in row-major
+  order and then `…`. A call in the label-first form raises a `TypeError` that
+  shows the call to write, and a refusal of fields that are not a mapping, of an
+  empty record or object batch without a label, or of `Record.from_fields()`
+  without fields names the constructor and the fix.
+- **A function's output component comes from its callable, and `output_label`
+  is a display alias.** A result's component defaults to the callable's name,
+  with `f` for a lambda and `result` for a callable without a name or whose
+  name is not a Python identifier or is a keyword, and a record result exposes
+  its fields. An `OutputSpec` overrides that default. `output_label` and
+  `with_label` change only how a result displays, never its components, its
+  fingerprint, or its draws. A value result without an alias displays the call,
+  as `predict(ambient)`, with only the arguments the caller passed, and a law
+  the function returns keeps the function's label and displays its own
+  signature, as `predict(y, mu)`.
+- **A term that JAX rebuilds from its leaves displays `<no description>`** until
+  a managed result boundary describes it, and it stays usable inside `jax.jit`
+  and `jax.vmap`.
+- **A law's repr leaves out a label only where its constructor would give that
+  label again.** A label the constructor derives from the arguments shown, such
+  as a product's `lik·prior` or a mixture's, is left out, so evaluating the repr
+  keeps the derived notation, and any other label is shown, as for a law
+  converted from a mixture or a posterior of a product. A mixture's repr lists up
+  to eight components, as many as the weights it prints. A `KDEDistribution`'s
+  repr shows its bandwidth, and its constructor takes a list of numbers as its
+  atoms and refuses a list of different shapes or of entries that are not
+  numbers.
+- **The default labels of a mixture, a minibatched law, and the BayesFlow
+  kernels describe them.** A `MixtureDistribution` displays its components, as
+  `mixture([a(x), b(x)])`, and a `MinibatchedDistribution` its construction, as
+  `minibatch(prior(beta), lik(y | beta), batch_size=40)`. `BayesFlowLikelihood`
+  and `BayesFlowRatio` take `label=`, which defaults to the class name, where
+  they were labeled `likelihood` and `ratio`, and their repr and a conversion
+  keep a label the caller gave.
+- **A family pickled by a development build in which its label came first no
+  longer loads.** Rebuild it from its constructor and pickle it again.
+
+- **A law's label is optional, and the component of its event is required.**
+  A family takes the component first and the label as the keyword `label=`,
+  which defaults to the family's class name, so `Normal("mu", 0.0, 1.0)` keeps
+  its syntax and is labeled `Normal` over the component `mu`, where it was
+  labeled `mu`, and displays as `Normal(mu)`. Pass `label=` to name the law,
+  as `Normal("mu", 0.0, 1.0, label="prior")`, which replaces
+  `Normal("prior", 0.0, 1.0, event_spec=OutputSpec(mu=None))`; an
+  `event_spec` that names another component than the first argument raises
+  `ValueError`. The other catalog families follow: `TFPDistribution`,
+  `BootstrapDistribution`, `BootstrapReplicateDistribution`,
+  `BijectorTransformedDistribution`, `GaussianProcess`,
+  `LinearBasisFunction`, `RandomFunction`, `RandomMeasure`, and
+  `glm_likelihood` take the component first, and `GLMFamily.build` takes it
+  in place of the label. Laws and kernels without a family default to the
+  label `p`, and the calls change:
+
+  | Before | After |
+  |---|---|
+  | `EmpiricalDistribution("theta", draws)` | `EmpiricalDistribution(draws, component="theta")` |
+  | `EmpiricalDistribution("post", record_atoms)` | `EmpiricalDistribution(record_atoms, label="post")` |
+  | `KDEDistribution("x", atoms, 0.5)` | `KDEDistribution(atoms, 0.5, component="x")` |
+  | `distribution("z", sample=f, event_spec=NumericArraySpec(()))` | `distribution(sample=f, event_spec=NumericArraySpec(()), component="z")` |
+  | `conditional_distribution("lik", fn, given_spec=...)` | `conditional_distribution(fn, label="lik", given_spec=...)` |
+  | `MixtureDistribution("mix", laws, weights)` | `MixtureDistribution(laws, weights, label="mix")` |
+  | `PyMCModel("model", model_fn)` | `PyMCModel(model_fn, label="model")` |
+  | `StanModel("model", "model.stan", data=data)` | `StanModel("model.stan", data=data, label="model")` |
+
+  `EmpiricalDistribution` and `KDEDistribution` require `component` for atoms
+  that are not records and refuse it for record atoms, whose fields are the
+  components, and array atoms are labeled by the component.
+  `conditional_distribution` labels a kernel after its function's
+  `__name__`, and `ℙ` for a lambda. A law converted from a law under its
+  default label takes its own default, so `convert(Laplace("g", 9.0, 1.0),
+  Normal)` displays as `Normal(g)`, and any other converted law keeps its
+  source's label. A subclass of `Distribution` or
+  `ConditionalDistribution` declares a whole-term event as an `OutputSpec`,
+  as `OutputSpec(mu=NumericArraySpec(()))`, since a bare term spec other than
+  a `RecordSpec` no longer takes the label as its component. The repr of a law
+  or a kernel reads as a call of its constructor, as
+  `Normal('mu', loc=0.0, scale=1.0, label='prior')`, and leaves out a label
+  equal to the constructor's default, the class name or `ℙ`, as
+  `Normal('mu', loc=0.0, scale=1.0)`, so the repr of a family that holds
+  nothing fixed evaluates to an equal law. Lightweight provenance
+  keys a root parent by its identity, so two root laws under one default
+  label stay two ancestors.
+- **A law, a kernel, and a function print as their notation, and a derived
+  label groups a product.** `str()` of a law, a kernel, or a function returns
+  its new `notation` property: its label followed by its signature, which lists
+  what it is over, as `prior(mu)` for a law over `mu`, `glm(y | beta)` for a
+  kernel, and `predict(x, y)` for a function. A given slot or a parameter
+  with a default prints as `name=value`, as `counts(y | K, r, n0=50.0)` or
+  `predict(x, scale=1.0)`, and as `name=…` for a default that is not a scalar.
+  A slot with a default stays given once conditioning binds the others, so
+  `condition_on(counts, {"K": k, "r": q})` prints as
+  `counts(y | n0=50.0; K, r)`, and a given that binds it moves it after `;`.
+  It returned the repr before. A product that `*` or `joint` builds prints factor by
+  factor, as `lik(y | mu)·prior(mu)`, and a product given a label by
+  `with_label` or by the `FactoredDistribution` constructor prints by that
+  label, as `model(y, mu)`. A label built from another label parenthesizes a
+  product, a draw such as `mu ~ prior`, and a score such as `log prior(mu)`. So
+  a selection of draws from `x * y` is labeled `(x·y)[sample=0:2]`, where it was
+  `x·y[sample=0:2]`, and the posterior of `lik * prior` given `y` prints as
+  `(lik·prior)(mu; y)`. A batch element brackets a batch label of several words,
+  as `[my draws][draw=1]`. Labels still join associatively, so
+  `(lik * prior) * d` is labeled `lik·prior·d`, and a labeled product enters
+  a further product as one operand, so `model * d` prints as
+  `model(y, mu)·d(z)`. A marginal over the whole
+  events of several factors prints factor by factor, in the order the paths
+  name them where a product can take that order, so
+  `marginal(model, ("b", "a"))` prints as `b(b)·a(a)` and is labeled `b·a`,
+  where it was labeled `a·b`. A product that a function returns prints by the
+  function's output label, as `predict(y, mu)`. A batch of laws prints as the
+  notation of one law under its label, `over`, and its levels, as
+  `schools(effect) over school`, and a batch that a function lifted over a
+  law and swept over a batch gives prints as the call, as
+  `effect_of(mu ~ prior, tau) over tau`. Its element keeps the label of its
+  position, as `effect_of[tau=3]`, and prints as its row's call, as
+  `effect_of(mu ~ prior, 4.0)`. A law passed to a lifted call prints by its
+  notation, as `log_prob(g(g), q ~ q)`.
+- **A value computed from a law is labeled by that value in probability
+  notation.** For a law `prior` over `mu` and a law `model` over `y` and `mu`,
+  `sample(prior)` is labeled `mu ~ prior`, `mean(model)` is labeled
+  `E[(y, mu) ~ model]`, and `log_prob(prior, x)` is labeled `log prior(mu)`,
+  where each was labeled by its law, as `prior` or `model`. A draw from a
+  posterior lists the paths the posterior holds fixed, as `mu ~ model; y`.
+  `variance`, `cov`, and `quantile` read `Var[...]`, `Cov[...]`, and
+  `Q[...]`, `prob` is labeled by the law's notation, as `prior(mu)`, and
+  `expectation(prior, f)` is labeled `E[f(mu ~ prior)]` by `f`'s output label,
+  as `mean(f(prior))` is. A batch of draws has
+  the label of one draw, so its element is `(mu ~ prior)[sample=0]`, and a
+  value computed from a batch of laws reads the batch as one law under its
+  label, as `E[effect ~ schools]`. The law of a function lifted over laws
+  keeps the function's label and prints as the function applied to draws of
+  its inputs, as `f(beta ~ model; y)`, and its mean is labeled
+  `E[f(beta ~ model; y)]`. The call shows each argument the caller passed and
+  no parameter left at its default. An operator parenthesizes a draw or
+  a score among its operands, as `(mu ~ prior) * 2`, and a negative constant,
+  as `x + (-1.0)`. Replace a comparison of such a result's label with
+  its law's label by one with the new label, or set a label with
+  `with_label`.
+- **The law of a lifted score declares the score's component.** The law of
+  an operation lifted over a law, such as `log_prob(prior, q)` for a law `q`
+  of values, declares the component that one point's result declares, which
+  is the operation's name, as `log_prob`, where it took the label of the
+  scored law. Replace a lookup of the scored law's label by one of
+  `log_prob`.
+- **The atoms of a posterior are labeled by its components.** The atoms of the
+  empirical law that `condition_on` or an inference method returns are labeled
+  by the law's components, as `beta` or `(K, r, phi)`, where they were labeled
+  `posterior`, so an atom reads as `(K, r, phi)[chain=0, draw=7]`. The atoms of
+  an `EmpiricalDistribution` a user constructs keep the label they were given.
+- **`make_posterior` declares a whole-term event it is not given a name for
+  under the component `posterior`.** An `event_spec` that is a bare term spec,
+  or none, declares the posterior's event under `posterior`, where it took the
+  `label` as the component, so `label` names the law alone. Pass
+  `event_spec=OutputSpec(mu=spec)` to name the component.
+- **A label no longer crosses a JAX transform.** A `NumericArray`, a `Record`,
+  and a batch of either flatten with their spec alone as the static data, which
+  held the label too, so two terms that differ only in their labels have
+  equal treedefs and share a `jax.jit` compilation. A term rebuilt from its
+  leaves, as `jax.tree_util.tree_map` returns one, displays `<no description>`
+  until a managed result boundary supplies its expression.
+  Relabel a rebuilt term with `with_label`.
+- **A map or sum of Gaussian random functions displays its operation.**
+  `A @ f`, `f + b`, and `alpha * f` include their operators and operands,
+  and `(2.0 * f) + g` differs from `f + g`. Their event declarations stay
+  independent of the derived descriptions.
+- **A conditioned law keeps the label of the law it conditions, and prints the
+  paths it fixes.** `condition_on(model, {"y": data})` is labeled `model`,
+  where it was `model | y`, and it prints as `model(mu; y)`: its signature
+  lists the fixed paths after `;`, after any paths the conditioned law held
+  fixed. A kernel applied at some of its given slots prints the other slots
+  as given, as `glm(y | sigma; beta)`. Fixing the whole events of upstream
+  factors still gives the labels of the factors left, so
+  `condition_on(lik * prior, {"mu": 0.5})` is labeled `lik` and prints as
+  `lik(y; mu)`. The fixed paths are recorded whichever route conditions, an
+  inference method's included, and a marginal, a view, and `raw` keep them.
+  The repr shows them after the constructor call, as
+  `Normal('y', loc=0.5, scale=1.0, label='lik', fixed=('mu',))` or
+  `EmpiricalDistribution(atoms=..., label='model', fixed=('y',))`.
+  The posterior an inference method returns, which the result's provenance
+  keeps as a parent with the method's own record, is recorded under the
+  result's label, as `model`, where it was recorded as `posterior`.
+  Replace a comparison with a label such as `"model | y"` by one with
+  `"model"`, or compare `str(posterior)` with `"model(mu; y)"`.
+- **`raw` of a field view is the raw form of the marginal at its path.**
+  `d[p].raw` returns the TFP distribution where the marginal at `p` is a
+  parametric family, so `model["mu"].raw` for a `Normal` prior over `mu` is
+  the TFP `Normal`. Any other marginal is returned as a detached ProbPipe law,
+  labeled as `marginal(d, p)` labels it, where it was always a detached law
+  under the view's label. A parameter annotated with a TFP class, such as
+  `tfd.Distribution`, therefore receives the TFP marginal for each view of a
+  swept batch of views. To keep the ProbPipe law, call `marginal(d, p)`.
+- **A field view is labeled as the marginal at its path, and prints as it.** A
+  view at the whole event of one factor takes the factor's label, so
+  `model["mu"]` for `model = (lik * prior).with_label("model")` is labeled
+  `prior` and prints as `prior(mu)`, where it was labeled `model`. A view of the
+  whole events of several factors takes their joined label and prints factor by
+  factor, as `model[("b", "a")]` prints as `b(b)·a(a)`. Any other view keeps its
+  parent's label, as `model["y"]` prints as `model(y)`, and the repr of every
+  view names `FieldView` and the path. Replace a comparison of such a view's
+  label with its parent's label by one with the factor's label.
+- **`BatchSpec` takes its levels by name.** `BatchSpec(element_spec, **levels)`
+  maps each level's name to the shape of its axes, outermost first, as in
+  `BatchSpec(NumericArraySpec(()), chain=4, draw="S")`, and a single int or str
+  is one axis. A level name that no keyword spells goes in a mapping passed
+  positionally, as `BatchSpec(spec, {"my level": 2})`. Replace
+  `BatchSpec(spec, ((4,), (100,)), ("chain", "draw"))` with
+  `BatchSpec(spec, chain=4, draw=100)`, and
+  `BatchSpec(spec, batch.axis_groups, batch.level_names)` with
+  `BatchSpec(spec, batch.spec.levels)`. The new `BatchSpec.levels` returns the
+  mapping, and the repr is the keyword call. `dataclasses.replace` no longer
+  rebuilds a `BatchSpec`; use `copy.replace` on Python 3.13 or later, or
+  construct a new one.
+- **A string shape is one dimension.** `NumericArraySpec("loc")` is
+  `NumericArraySpec(("loc",))`, where it read the three dimensions `'l'`, `'o'`,
+  and `'c'`, and `NumericArraySpec("")` raises `ValueError`, where it gave a
+  rank-0 shape. A dimension name must be a Python identifier, so
+  `NumericArraySpec(("n obs",))` and `with_dim_names(n="n obs")` raise
+  `ValueError`. A negative size raises `ValueError` rather than `TypeError`,
+  and a `bool` size raises `TypeError`, in `with_dim_sizes` too. A generator,
+  a set, `bytes`, a `memoryview`, and a mapping are refused wherever a shape,
+  level names, or axis counts are taken, so pass a tuple or a list. A
+  `PyMCModel` names the symbolic dimensions of a variable whose name is not
+  an identifier by replacing each other character with `_`, so a nested
+  model's `sub::beta` has the dimension `sub__beta_0`, where it was
+  `sub::beta_0`.
+- **A sequence of names is a str or a sequence of str.**
+  `score_posterior(metrics=...)`, `add_mcmc_diagnostics(metrics=...)`, and
+  `simulation_based_calibration(observed=...)` read their names as level names
+  are read. A set, an iterator, `bytes`, or a mapping raises `TypeError`, where
+  a set was read in an arbitrary order and a mapping by its keys, so pass a
+  tuple or a list.
+- **A workflow-owned draw inside a JAX transformation that the caller opens
+  raises `RuntimeError`.** A ProbPipe call that claims a workflow-owned random
+  event, such as `sample`, a lifted `Function` call, or `score_posterior` with
+  the `sliced_wasserstein` metric, raises when a `jax.jit`, `jax.vmap`, or
+  `jax.grad` that the caller opened is tracing it. The error names the
+  operation that claimed the event. A compiled call can capture a key drawn
+  during tracing, and an externally mapped call has no workflow-defined
+  identity for each lane. Call the function outside the transformation,
+  or transform only its deterministic part. For transformed random scoring,
+  use `sliced_wasserstein` with an explicit key: share a key for common random
+  projections, or pass separate keys for independent projections.
+  A deterministic operation, such as
+  `mean` of a closed-form law, runs under the caller's transformation as
+  before. The engine's own traces, such as `dispatch="jax"` and an inference
+  method's compiled chains, draw as before.
+- **A record batch whose columns are all numeric is a `NumericRecordBatch`.**
+  `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when
+  every column is numeric and no explicit non-numeric `element_spec` vetoes it,
+  as `Record(...)` returns a `NumericRecord`. A view over numeric fields, such
+  as a field that `select` takes from a mixed batch or a `Design`, is a
+  `NumericRecordBatch` too. Such a batch has `to_vector`,
+  where it was a plain `RecordBatch` before. Replace a check of
+  `type(batch) is RecordBatch` with `isinstance(batch, RecordBatch)`.
+- **A term marks each NumPy array it stores read-only.** Constructing a term
+  from a NumPy array, such as a `NumericArray`, a `Record`, or a parametric
+  family, sets the array's `writeable` flag to `False` in place. A write into
+  that array afterwards, through the caller's handle or through `.raw`,
+  raises `ValueError: assignment destination is read-only`, where it used to
+  change the term. To keep a writable array, pass a copy,
+  as in `NumericArray(values.copy(), label="x")`. A pandas or xarray container is
+  stored by reference as before.
+- **A relabeled or dimension-bound copy of a law draws together with the law
+  it copies.** A lift draws every law that `with_label`, `with_dim_names`, or
+  `with_dim_sizes` returns together with the law it is made from, as it draws a
+  law that `with_path_names` returns. Each method returns the same law under a
+  new label, new dimension names, or bound dimensions. So
+  `f(d, d.with_label("e"))` evaluates `f` on one draw of `d` per repetition,
+  where it drew two independent values before, and
+  `d.with_path_names(x="y").with_dim_sizes(n=3)` and
+  `d.with_dim_sizes(n=3).with_path_names(x="y")` both draw with `d`. A law read
+  from a `Record` field draws with the law the record stores, so
+  `f(r["x"], r["x"])` also evaluates `f` on one draw. To draw two independent
+  values, construct the law twice.
+- **A distribution is immutable, as every tracked term is.** Assigning to or
+  deleting an attribute of a constructed law raises `AttributeError`, naming
+  its class, and an operation that changes a law returns a new one. A
+  subclass's `__init__` assigns its attributes as before. Replace an
+  assignment after construction as follows:
+  - Pass the value to the constructor and build a new law with it.
+  - Write a diagnostic or a validation result into the `annotations` store,
+    which stays writable.
+  - In a test, patch a method on the law's class:
+    replace `patch.object(law, "_sample", ...)` with
+    `patch.object(type(law), "_sample", ...)`.
+- **`simulation_based_calibration` calibrates any posterior, takes its
+  randomness from the enclosing workflow scope, and reads a fit's budgets from
+  `method_options`.** Its signature is
+  `simulation_based_calibration(model, *, observed, num_simulations, num_posterior_draws, posterior=None, method=None, method_options=None)`.
+  A `posterior` kernel, such as an amortized posterior, is evaluated at each
+  replication's observed values, with no fit: its given slots take the observed
+  fields of their names, and a kernel with one given slot, such as an amortized
+  posterior's `observation`, takes the one observed field. Without `posterior`,
+  each replication fits `model` with
+  `condition_on.using(method=method, method_options=method_options)`.
+  A `method` or `method_options` beside `posterior` raises `ValueError`. Each
+  replication draws `num_posterior_draws` times from its posterior with
+  `sample`, so a weighted posterior, such as SMC-ABC's particles, is resampled
+  by its weights. The function claims the workflow-owned random events of the
+  enclosing scope in program order: one
+  `sample(model, sample_shape=(num_simulations,))` draws the `θ★` and `y` of
+  every replication, and then each replication forms its posterior and draws
+  from it. A call inside `workflow_run(seed=...)` therefore reproduces its
+  ranks, and an unscoped call draws afresh.
+  - `key` is removed: replace
+    `simulation_based_calibration(model, ..., key=jax.random.key(0))` with the
+    call inside `with workflow_run(seed=0):`.
+  - The keyword budgets are retired, and a keyword other than the named
+    parameters raises `TypeError`: replace
+    `simulation_based_calibration(model, ..., num_warmup=500)` with
+    `simulation_based_calibration(model, ..., method_options={"num_warmup": 500})`.
+  - `num_posterior_draws` sets the number of draws, and no longer sets an MCMC
+    method's `num_results`, so the chain length goes in `method_options`, as
+    `{"num_results": 2000}`. The draws are drawn at random from the chains'
+    atoms, and `SBCResult.num_posterior_draws` is `num_posterior_draws`, where
+    it counted every atom of every chain. The ranks need nearly independent
+    draws, so `num_posterior_draws` should not exceed the chains' effective
+    sample size.
+- **A tracked term's identity is its `label`.** A term's label is read as
+  `.label` and replaced with `with_label`, whose provenance records
+  `old_label` and `new_label`. Every constructor takes the label as its first
+  argument `label`, so `Normal("x", 0.0, 1.0)` reads as before and its keyword
+  form is `Normal(loc=0.0, scale=1.0, label="x")`, and the factories that label
+  a term take `label` the same way, such as `function(label=...)`,
+  `conditional_distribution(label, fn)`, and `RecordBatch.stack`. A
+  `Function`'s result label is `output_label`, and a provenance parent records
+  the label as `ParentInfo.label`, which `Provenance.to_dict` serializes under
+  `"label"`. `name` stays for the identifiers that are matched or looked up: a
+  component, a field, or a level, and a method's, a route's, or an operation's
+  registry key. Replace a term's `.name`, `with_name`, and `name=` with
+  `.label`, `with_label`, and `label=`, and a function's `output_name` with
+  `output_label`.
+- **`with_resampling` takes its randomness from the workflow scope.** Its `seed`
+  parameter is removed: each resampling is a workflow-owned random event, so
+  `workflow_run(seed=...)` reproduces the resampled particles, and another seed
+  or an unscoped run resamples afresh. Replace
+  `iterate(with_resampling(step, seed=0), ...)` with
+  `iterate(with_resampling(step), ...)` inside `workflow_run(seed=0)`.
+- **Every inference method takes its seed from the workflow scope.** Each run of
+  an inference method, and each training of an amortized learner, draws its
+  seed from a workflow-owned random event. `workflow_run(seed=...)` therefore
+  reproduces it, and another seed or an unscoped call runs afresh.
+  - The `random_seed` method option is removed from `blackjax_nuts`,
+    `blackjax_hmc`, `blackjax_rwmh`, `blackjax_elliptical_slice`,
+    `blackjax_sgld`, `blackjax_sghmc`, `tfp_nuts`, `nutpie_nuts`, `pymc_nuts`,
+    `pymc_advi`, `cmdstan_nuts`, and `pyabc_smcabc`, and setting it raises the
+    `TypeError` of an unknown option.
+  - The `random_seed` parameter is removed from `rwmh`, `elliptical_slice`,
+    `condition_on_nutpie`, `learn_amortized_posterior`,
+    `learn_amortized_likelihood`, and `learn_amortized_ratio`, so the learners
+    no longer train at the seed 0 by default. A `random_seed=` or `seed=`
+    keyword raises the `TypeError` of an unexpected keyword, including in the
+    keywords that `condition_on_nutpie` passes to `nutpie.sample` and the
+    learners pass to `approximator.fit`.
+  - `pymc_advi` seeds the draws of an empirical result from the run's key, so
+    `workflow_run(seed=...)` reproduces them.
+  - `pyabc_smcabc` with a sampler whose workers run in other processes gives
+    each worker its own JAX keys, folded from the worker's numpy generator, so
+    the workers no longer repeat one another's prior draws and simulations.
+
+  Replace
+  `condition_on.using(method_options={"random_seed": 0, "num_results": 500})(model, data)`
+  with `condition_on.using(method_options={"num_results": 500})(model, data)`
+  inside `workflow_run(seed=0)`, and
+  `learn_amortized_posterior(prior, simulator, random_seed=0)` with
+  `learn_amortized_posterior(prior, simulator)` inside `workflow_run(seed=0)`.
+- **A result's component names address its parts.** A summary taken
+  coordinate by coordinate takes the law's event components and paths, and a
+  value that no one event component indexes, such as a score or a covariance,
+  takes the operation's name.
+  - `quantile` at several levels returns a batch on the level `quantile`
+    under the event's components, where the batch was declared under the
+    single component `quantile`.
+  - `expectation(d, f)` is declared under the components of `f`'s output
+    declaration, where it was declared under `expectation`.
   - A batch of draws is declared under the event's components, where it was
     declared under `sample`.
   - `OutputSpec` takes a positional `DistributionSpec`,
@@ -29,9 +515,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     each was declared under the operation's name. `factor`, `joint`,
     `random_log_prob`, `random_unnormalized_log_prob`, and the Bayes stage of
     `condition_on` declare none, and the returned law carries its own.
-  - A repr writes names that are no Python identifiers, such as `mean(mu)`,
+  - A repr writes names that are no Python identifiers, such as `my model`,
     in order inside one `**{...}` mapping, as in
-    `OutputSpec(**{'mean(theta)': NumericArraySpec(shape=())})`.
+    `OutputSpec(**{'my model': NumericArraySpec(shape=())})`.
+- **`predictive_check`, `score_posterior`, and `add_ppc` take their randomness
+  from the workflow scope.** The three drop their `key` parameter, and a `key=`
+  keyword raises `TypeError`. A call claims one workflow-owned random event of
+  the enclosing workflow scope, as a call without a key did. A call inside
+  `workflow_run(seed=...)` therefore reproduces its result, and a call outside
+  every scope draws afresh. `score_posterior` claims the event only when it
+  scores `sliced_wasserstein`. Move a call that passed a key into a seeded scope,
+  so `predictive_check(likelihood, posterior, test_fn, y, key=jax.random.key(0))`
+  becomes
+
+  ```python
+  with workflow_run(seed=0):
+      check = predictive_check(likelihood, posterior, test_fn, y)
+  ```
+
+  The scope derives the call's key from the seed and the call's position in the
+  scope, so the result differs from the one the old key gave.
+  Random scoring follows the caller-transformation restriction described
+  above. For JAX transformations, use `sliced_wasserstein` with an explicit
+  key. Scoring the other metrics, or
+  skipping sliced Wasserstein when the reference has no draws, remains
+  compatible with JIT.
 - `OutputSpec` takes one keyword or one positional `RecordSpec`, so its form
   alone decides the packaging. The form with several keywords, which exposed a
   record of them, raises `TypeError`: replace `OutputSpec(a=a_spec, b=b_spec)`
@@ -43,27 +551,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `r.with_path_names(mu="loc")` with `r.with_path_names({"g/mu": "loc"})`. A
   top-level node whose name recurs deeper, which no key could address, is
   renamed by its name.
-- **Function declarations and engine migration (#448 B1).** Construct with
-  `Function(name, fn, *, input_spec=None, output_spec=None, output_name=None, ...)`.
-  The name is required; decorators default it to the Python callable's name.
-  `FunctionSpec` now stores `InputSpec` and `OutputSpec`. The old Function
-  template properties are removed. Legacy constructor keywords emit
-  `FutureWarning`: template parameters and `seed` are ignored, while `func`
-  overrides `fn`; the required `name` and `fn` arguments remain. Bare record
-  specs expose fields; other bare term specs declare one whole component under
-  `output_name`, which defaults to the initial function name and survives
-  `with_name`. Arrays remain arrays and single-field records remain records.
-  Type holes and symbolic output dimensions are completed per call. Existing
-  tracked returns are copied and relabeled by `__call__`; `apply` preserves them.
-  This includes operation wrappers: `sample(law)` uses the label `sample`,
-  independently of the law's component names and the result's batch levels.
-  `Function`/`FunctionSpec` live in `values/`, and workflow helpers move from
-  `core/_workflow_*` into `functions/`; old imports have no shims. Declaration
-  fingerprints and replay anchors change, so regenerate persisted artifacts.
-  `Module`, `AbstractModule`, and both method decorators are experimental.
-  Resolved output declarations survive sweeps and broadcasts, including type
-  holes, output-only dimensions, and returned Function contracts. Module methods
-  infer their returns normally and use the method name as their output label.
+- **A `Function` is constructed from its label and its callable, and declares
+  its sides with `InputSpec` and `OutputSpec`.** Construct with
+  `Function(label, fn, *, input_spec=None, output_spec=None, output_label=None, ...)`.
+  The label is required, and `@function` takes it from the decorated
+  callable's `__name__`. `FunctionSpec` stores an `InputSpec` and an
+  `OutputSpec`, and the Function template properties are removed. The removed
+  constructor keywords `input_template`, `output_template`, and `seed` are
+  ignored, and `func` replaces `fn`, with a `FutureWarning` that points at the
+  caller's line; `label` and `fn` stay required.
+  - A bare `RecordSpec` exposes its fields, and any other bare term spec
+    declares one whole component under `output_label`, which defaults to the
+    label given at construction and is kept by `with_label`. An array stays an
+    array, and a one-field record stays a record.
+  - Each call completes a type hole, the dtype and the support a declared
+    array leaves unset, and the symbolic output dimensions from the term it
+    returns. The completed declaration survives sweeps and broadcasts, a
+    returned function's declaration included. `__call__` copies and relabels a
+    returned tracked term, and `apply` returns it as it is.
+  - `Function` and `FunctionSpec` are defined in `probpipe.values`, and the
+    engine moves from `core/_workflow_*` into `probpipe.functions`, with no
+    shims for the old imports. `probpipe.core.node` keeps `Node` and
+    `InputFrozenError` and no longer exports `Function`, `function`, `Module`,
+    `AbstractModule`, `workflow_method`, or `abstract_workflow_method`: import
+    them from `probpipe`. The invocation logger is
+    `probpipe.functions._function`, so a handler or a filter configured for
+    `probpipe.core.node` names it instead.
+  - Declaration fingerprints and replay anchors change, so regenerate
+    persisted artifacts.
+  - `Module`, `AbstractModule`, and both method decorators are experimental. A
+    module method infers its return as a function does and labels its result
+    by the method's name.
+- **A replay anchor stores a function's declarations under
+  `signature_and_declarations`.** The callable anchor that a call's provenance
+  records for `replay_run` stored the function's signature and its input and
+  output declarations under `signature_and_templates`. `replay_run` refuses an
+  anchor recorded before this change with `ReplayCompatibilityError`, as it
+  already refuses one recorded for a function that declares an output, since
+  that anchor's digest included the names its fingerprint now leaves out.
+  Record the call again to replay it. An anchor of another callable definition
+  ABI is refused before its fields are read, and the error names the ABI this
+  version reads.
 
 - `event_template` is removed from every distribution, so a law's event
   declaration is the one schema it records. Read the declaration instead:
@@ -102,15 +630,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `_tfp_dist` after `TFPDistribution.__init__` passes its own `event_spec`.
   - A bare `RecordSpec` exposes its fields, even when it has one, and any other
     term spec is a whole-term event whose component defaults to the law's
-    name. A law that draws one array, such as a parametric family, therefore
+    label. A law that draws one array, such as a parametric family, therefore
     declares a whole term. A component name follows the rule for a record's
     field names, so it is non-empty and has no `/`, and an `InputSpec` slot
-    name must still be a Python identifier. A name with a `/` therefore raises
+    name must still be a Python identifier. A label with a `/` therefore raises
     `ValueError` for every law whose whole-term component defaults to its
-    name, which is new for laws such as an `EmpiricalDistribution` of opaque
+    label, which is new for laws such as an `EmpiricalDistribution` of opaque
     atoms, a `SimpleGenerativeModel`, or a `MinibatchedDistribution`.
-  - `with_name` no longer moves the event component, so a renamed family keeps
-    its event component, and indexing it by that component still returns it.
+  - `with_label` no longer moves the event component, so a relabeled family
+    keeps its event component, and indexing it by that component still returns it.
   - `event_shape` is defined only for a law that draws a single array. It raises
     `ValueError` for unbound dimensions and `AttributeError` for any other draw,
     so `hasattr(law, "event_shape")` is `False` for a law that draws a record. A
@@ -142,7 +670,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the exposed form, and matches a law by unifying the two declarations. An
     unset dtype accepts any dtype and a set one a same-kind cast, sizes agree,
     and support is not compared. `DistributionSpec(RecordSpec(x=()))` therefore
-    no longer matches a `Normal` named `x`, which declares a whole term.
+    no longer matches a `Normal` labeled `x`, which declares a whole term.
   - `law[name]` returns a whole-term law itself under its component, as
     `law[(name,)]` does, and raises `KeyError` under any other key.
     `RecordSpec.infer_from` gives a distribution-valued field the law's own
@@ -150,25 +678,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fingerprints of distribution specs change, since they hash the packaging and
     the component, so cached results keyed on these fingerprints are
     invalidated.
-- A distribution's name is the required first argument of every constructor
+- A distribution's label is the required first argument of every constructor
   the design keeps, so `Normal("x", 0.0, 1.0)` replaces
-  `Normal(0.0, 1.0, name="x")`. A keyword `name=` still binds.
+  `Normal(0.0, 1.0, name="x")`. A keyword `label=` still binds.
   - The constructors are those of the parametric families and
     `TFPDistribution`, the empirical and bootstrap laws, `KDEDistribution`,
     `TransformedDistribution`, the random functions and measures,
     `MinibatchedDistribution`, `StanModel`, and `PyMCModel`.
-  - A call without a name raises `TypeError`, since no kept class derives
-    one, and so does a call that passes a keyword `name=` after positional
+  - A call without a label raises `TypeError`, since no kept class derives
+    one, and so does a call that passes a keyword `label=` after positional
     arguments. A call in the old order whose first data argument binds to
-    `name` fails as well, with `TypeError` or with a constructor's own
+    `label` fails as well, with `TypeError` or with a constructor's own
     `ValueError`: `MultivariateNormal(loc, scale_tril)`, for example, raises
     `ValueError`, since it then finds neither `scale_tril` nor `cov`.
-  - A law that `expectation` constructs is named `expectation`, for the
-    operation, and a result of the Gaussian random-function algebra is named
+  - A law that `expectation` constructs is labeled `expectation`, for the
+    operation, and a result of the Gaussian random-function algebra is labeled
     from its operands, as `sum(f,g)`.
   - The joints, `BroadcastDistribution`, `DistributionArray`, `SimpleModel`,
     `SimpleGenerativeModel`, and `ApproximateDistribution` keep a keyword
-    `name`, and `BayesFlowModel` takes none and derives its own.
+    `label`, and `BayesFlowModel` takes none and derives its own.
 - The distribution classes and the distribution capability protocols take no
   type parameter. A draw's type follows from the distribution's event
   declaration, so a parameter could record only the declaration's kind.
@@ -199,7 +727,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its separate wrapper; `NumericRecordSpec` replaces `NumericEventTemplate`.
   Replace `ValueSpec` with `TermSpec` in custom specs. Dimension binding returns
   a refined spec, `with_dim_sizes` permits partial substitution, and `with_dim_names`
-  renames symbols throughout nested declarations. The live distribution template API retains its signature for its later migration.
+  renames symbols throughout nested declarations.
   Moving and renaming schema classes changes their fingerprints and those of
   containing terms; affected persisted provenance fingerprints no longer match.
   A custom `NumericSpec` implements `_vector_size`; the public `vector_size`
@@ -314,22 +842,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   method subclassing `UnaryDispatchMethod` directly must declare `exact`
   itself.
 
-- Names are set at construction and preserved by structural transforms;
-  `with_name` is the sole renaming operation. The `name_is_auto` attribute,
-  constructor keywords, and carried state are removed. `auto_name` now returns
+- Labels are set at construction and preserved by structural transforms;
+  `with_label` is the sole relabeling operation. The `name_is_auto` attribute,
+  constructor keywords, and carried state are removed. `auto_label` now returns
   only the resolved string. Existing pickles carrying the removed state are
   unsupported.
 
-- **A batch's name is its first argument, and construction takes the axis
-  partition rather than the sizes (#398).** Two changes to the same signatures.
-
-  `Record(name, fields)` and `Opaque(name, value)` put the name first;
-  `NumericArray` and all five batch forms took it as a keyword. They now match —
-  `RecordBatch("draws", columns, "draw", element_spec=...)`,
-  `NumericArray("x", values)` — with the name and the data positional-only, as
-  `Record`'s are, and the level names still acceptable either way.
-
-  `axis_groups=` is replaced by `axes_per_level=`, which says how many axes each
+- **A batch's construction takes the axis partition rather than the sizes
+  (#398).** `axis_groups=` is replaced by `axes_per_level=`, which says how many axes each
   level holds rather than restating their sizes: `axes_per_level=(2,)` for one
   level over two axes, where the old form needed `axis_groups=((4, 5),)`. The
   sizes were never information a constructor lacked — the elements fix them and
@@ -360,15 +880,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field of a record, and `"field" in drawn` is now
   `"field" in drawn.event_template`. A single draw is unchanged.
 
-- **Every batch requires a name (#398).** `RecordBatch`, `NumericRecordBatch`,
+- **Every batch requires a label (#398).** `RecordBatch`, `NumericRecordBatch`,
   `OpaqueBatch`, and `FunctionBatch` defaulted to their own lowercased class name,
-  so a pipeline full of them read `recordbatch` / `opaquebatch` — a name that says
+  so a pipeline full of them read `recordbatch` / `opaquebatch` — a label that says
   what the object *is*, which its type already says, and nothing about which one it
   is. `NumericArray` and `NumericArrayBatch` require one for the same reason.
 
-  A name is now given, or derived from something that carries meaning. `stack`
+  A label is now given, or derived from something that carries meaning. `stack`
   derives one from the records it stacks, so no call site has to invent it, and a
-  structural transform carries the name forward with the flag saying where it came
+  structural transform carries the label forward with the flag saying where it came
   from rather than dropping it for a default that no longer exists.
 
   The distribution-side placeholders (`DistributionArray`, `EmpiricalDistribution`,
@@ -380,7 +900,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   references to use `NumericArraySpec`. The bare backend-array alias remains
   `Array`. The design baseline now gives each raw value kind a corresponding
   tracked term and batch form, including `NumericArray` / `NumericArrayBatch`
-  and `Opaque` / `OpaqueBatch`, and defines `Batch.raw()` as a shared storage
+  and `Opaque` / `OpaqueBatch`, and defines `Batch.raw` as a shared storage
   view. Runtime implementations of those design contracts land in the
   subsequent stack.
 
@@ -401,15 +921,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   anonymous, and nested `workflow_run` scopes derive keys from stable call,
   source, and logical-unit identities. All omitted-key sampling, conversion,
   validation, and diagnostics routes use the same broker. Explicit sampling
-  keys and inference `random_seed` arguments remain caller-owned, are passed
-  through unchanged, and do not advance the workflow stream. A wrapped user
-  callable's own `seed` parameter is still an ordinary input.
+  keys remain caller-owned, are passed through unchanged, and do not advance
+  the workflow stream. Each run of an inference method draws its seed from the
+  stream, as the entry "Every inference method takes its seed from the
+  workflow scope" states. A wrapped user callable's own `seed` parameter is
+  still an ordinary input.
 
-  `score_posterior(..., key=None)` no longer uses a fixed
-  `jax.random.PRNGKey(0)` for sliced Wasserstein projections. It now follows
-  the same ownership rule: a bare score receives a fresh ephemeral root, while
-  benchmark scoring must run inside `workflow_run(seed=...)` (or pass an
-  explicit `key=`) to remain reproducible.
+  `score_posterior` no longer uses a fixed `jax.random.PRNGKey(0)` for sliced
+  Wasserstein projections. It now follows the same ownership rule: a bare score
+  receives a fresh ephemeral root, while benchmark scoring must run inside
+  `workflow_run(seed=...)` to remain reproducible.
 
   PPC test functions must have unique `__name__` values because those names
   label the returned statistics; use distinct named functions instead of
@@ -449,7 +970,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that do not stack numerically fell to a single-field `RecordBatch` keyed by the
   function's name — the burial the output boundary otherwise stopped doing — and
   it was the one aggregation that left the result auto-named. Opaque rows now give
-  an `OpaqueBatch` and callable rows a `FunctionBatch`, both named for the
+  an `OpaqueBatch` and callable rows a `FunctionBatch`, both labeled for the
   function as every other aggregation already was.
 - **An empty return keeps its host's kind (#398).** A `Function` returning `{}`
   raised, and `[]` / `()` became an `Opaque`, because `Record`, `EventTemplate`,
@@ -458,7 +979,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `[]` / `()` an `OpaqueBatch` of `batch_shape == (0,)` — no element can say
   what kind it holds, and every element spec holds vacuously of none.
 
-  `Record()`, `EventTemplate()`, and `OpaqueBatch(name, [], level)` are legal as a
+  `Record()`, `EventTemplate()`, and `OpaqueBatch(label, [], level)` are legal as a
   result. A *batch* of empty records is not: a batch reads its multiplicity off
   a column, and a zero-field element supplies none, so `RecordBatch` still
   requires at least one field. An empty template is **not** promoted to `NumericEventTemplate`:
@@ -470,7 +991,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Function` swept over a batch collected numeric rows into a single-field
   `NumericRecordBatch` keyed by the function's own name, so `out["my_func"]`
   reached the column. The aggregate is now the batch form of the rows' own kind,
-  read through `.values`.
+  read through `.raw`.
 
   A row that is itself a batch keeps its levels either way. Only `RecordBatch`
   rows did before, so once a scalar law's `sample` began returning a
@@ -509,7 +1030,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   So `log_prob`, `mean`, `variance`, `quantile`, `expectation`, and a scalar
   law's `sample` all return a `NumericArray`. **A result is no longer indexable
   by the function's name** — `result["my_func"]` becomes `result` itself, and an
-  opaque result is read through `.value`.
+  opaque result is read through `.raw`.
 
   A callable result is callable because it *is* the function kind, rather than
   because a single-field record forwards `__call__`.
@@ -552,11 +1073,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`Function` controls now live outside user call kwargs.**
   `@function(...)` configures definition-time controls, and
-  `workflow.with_options(...)(...)` is the call-time override API for
+  `workflow.using(...)(...)` is the call-time override API for
   `seed`, `n_broadcast_samples`, and `include_inputs`. Wrapped
   functions may now declare and receive those names as ordinary
   parameters. Passing those names as call kwargs no longer configures
-  ProbPipe controls; use `workflow.with_options(...)(...)` instead.
+  ProbPipe controls; use `workflow.using(...)(...)` instead.
 - **`Function.workflow_kind` and `Module.workflow_kind` now require
   `WorkflowKind` enum members.** String aliases such as `"task"` / `"flow"`
   and `None` are no longer accepted and now raise `TypeError`; use
@@ -781,9 +1302,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   ```python
   >>> from probpipe import Bernoulli
-  >>> Bernoulli(probs=0.5, name="x").dtype
+  >>> Bernoulli(probs=0.5, label="x").dtype
   jnp.int32   # was float32 (the lie)
-  >>> Categorical(probs=jnp.array([0.5, 0.5]), name="x").dtype
+  >>> Categorical(probs=jnp.array([0.5, 0.5]), label="x").dtype
   jnp.int32   # was float32
   ```
 
@@ -822,7 +1343,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   ```python
   >>> from probpipe import Normal
-  >>> hasattr(Normal(loc=0.0, scale=1.0, name="x"), "batch_shape")
+  >>> hasattr(Normal(loc=0.0, scale=1.0, label="x"), "batch_shape")
   False
   ```
 
@@ -859,7 +1380,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retain `.n` (see STYLE_GUIDE §1.9 for the full table).
 
 - **TFP-backed distribution constructors reject batched parameters.**
-  `Normal(loc=jnp.zeros(5), scale=1.0, name="x")` (and the same
+  `Normal(loc=jnp.zeros(5), scale=1.0, label="x")` (and the same
   pattern for every other TFP-backed class — `Beta`, `Gamma`,
   `MultivariateNormal`, `Pareto`, `TruncatedNormal`, `Binomial`, …)
   now raises `ValueError` whenever the parameters imply a non-empty
@@ -883,7 +1404,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   ```python
   # Before (rejected)
-  n = Normal(loc=jnp.zeros(5), scale=1.0, name="x")
+  n = Normal(loc=jnp.zeros(5), scale=1.0, label="x")
 
   # After (recommended ergonomic form)
   da = Normal.from_batched_params(loc=jnp.zeros(5), scale=1.0, name="x")
@@ -999,6 +1520,213 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`summarize(d)` collects a law's standard summaries in one record that
+  displays as a table.** Each top-level field is the term an operation returns
+  for the law, with its provenance: `mean`, `sd` from `standard_deviation`,
+  `median`, and the ends of the central 80% interval, `q10` and `q90`. So
+  `summarize(d)["sd/mu"]` is the standard deviation of `mu`, and
+  `pd.DataFrame(summarize(d).raw)` gives the table.
+
+  ```text
+  >>> with workflow_run(seed=0):
+  ...     summarize(Normal("mu", 0.0, 2.0) * Poisson("count", 4.0))
+  summary of Normal(mu)·Poisson(count)
+           mean  sd  median         q10        q90
+    mu       0.  2.      0.  -2.5631032  2.5631022
+    count    4.  2.      4.   1.         6.
+  mean, sd: exact. median, q10, q90: Monte Carlo, 256 draws.
+  ```
+
+  - **Columns:** `interval=0.9` gives `q5` and `q95`. Given statistics, as
+    `summarize(d, mean, variance)` or `summarize(d, {"sd": standard_deviation})`,
+    replace the default columns.
+  - **MCMC posteriors:** a posterior on the levels `chain` and `draw` also gets
+    `r_hat`, `ess_bulk`, and `ess_tail`, and its line reads
+    `MCMC, 4 chains of 1,000 draws`.
+  - **Monte Carlo errors:** `mcse=True` adds `mcse_<name>` for each statistic:
+    ArviZ's error for an MCMC posterior, and for another law `0` where the
+    route was exact and `sd / sqrt(n)` for a mean from `n` draws.
+  - **Batches:** a `DistributionBatch` gives a batch of summary records, which
+    displays a table for each law.
+- **A record of summaries displays as a table.** A numeric record whose
+  top-level fields are records over the same paths, at least one of which
+  records how it was computed, shows one row for each path and one column for
+  each field, in its repr and in a notebook, with a line that states how each
+  column was computed. A record built by hand, as
+  `Record({"mean": mean(d), "sd": standard_deviation(d)})`, displays the same
+  way. A record of plain values keeps one line for each path.
+- **`standard_deviation(d)` returns the standard deviation of a law, the square
+  root of its variance in each coordinate.** A record law's standard deviation
+  is a record with a field per component, as `mu` and `tau`, so
+  `standard_deviation(Normal("mu", 0.0, 2.0) * Gamma("tau", 2.0, 1.0))` holds
+  `2.0` and `√2` without mapping `sqrt` over the fields of `variance`. A random
+  function's is its pointwise standard deviation function, and the result is
+  labeled `√𝕍[(mu, tau) ~ d]`. It is defined as `sqrt(variance(d))`, so it takes
+  the routes of `variance`, and `exact_only` and `n_broadcast_samples` set on it
+  pass to `variance`.
+- **A derived operation's `method` error names the operation that has the
+  route.** `standard_deviation.using(method="monte_carlo")` raises
+  `ResolutionError` saying that `standard_deviation` does not pass `method` on
+  to `variance` and to call `variance.using(method='monte_carlo')`, and
+  `expectation` names `mean` the same way.
+- **`pushforward(d, f, fixed_args)`** returns the law of `f(X)` for `X ~ d`.
+  The map receives one draw at a time whatever its parameter's annotation, so
+  a statistic annotated `Distribution` over a random measure receives each
+  draw, and `pushforward(K, f, given=s)` conditions a kernel first. An integrand
+  whose declared input cannot take a draw, and a law or a batch in
+  `fixed_args`, raise `ApplicabilityError` before any route runs.
+- **`@operation(identity_route=...)`** registers a composite route that runs
+  a route of each constituent operation in turn in place of the generic
+  identity route of a derived operation, and provenance records the exactness
+  that route learns when it runs.
+- Distribution-subject operations accept keyword-only `given=` for conditional
+  operands, including sampling, densities, moments, quantiles, expectations,
+  marginals, and conversion. Conditional capabilities serve calls directly;
+  other calls delegate to the operation after conditioning. Batch givens retain
+  their named levels, and given values bind symbolic event dimensions before
+  sampling. `condition_on` can bind individual nodes of a structured given
+  slot while keeping its residual fields available for later binding.
+
+- **`mean`, `variance`, and `quantile` compute each component of a record
+  law by its own route.** The new route `by_component` computes each component
+  whose view has an exact summary by that view's route, and the other
+  components together, from one set of draws, so the mean of a dependent
+  joint such as `likelihood * prior` holds the exact means of the prior's root
+  factors. The result is approximate when any component is, and its
+  provenance records the route and exactness of each block of components. Under
+  `exact_only=True`, the error names the components that have an exact
+  summary and the calls on their views that compute it. `cov` keeps the
+  Monte Carlo fallback for a dependent joint.
+- **`notation_config.max_depth` sets how many nested levels a label or a
+  notation shows.** A label derived from other terms, such as
+  `E[f(beta ~ model; y)]`, and the notation of a law nest one level for each
+  value or law they are computed from. A rendering shows at most
+  `notation_config.max_depth` levels, 8 by default or the value of the
+  environment variable `PROBPIPE_NOTATION_MAX_DEPTH`, and at most 64, the
+  number of levels a stored expression keeps. A part nested deeper
+  shows as its label, the name of a law or a function, or as `…` for a value,
+  so a label derived through a long loop of operations stays short. Showing a
+  term warns: `str()`, `repr()`, and `notation` warn with a `UserWarning` that
+  names the setting when what they show has a collapsed part.
+- **A single int is a shape of one axis wherever a shape is taken.**
+  `NumericArraySpec(3)`, `sample(d, sample_shape=100)`,
+  `Weights.choice(key, shape=10)`, and a batch constructor's `axes_per_level=2`
+  each read the int as a tuple of one, and these arguments take any sequence,
+  such as a list, a `range`, or a 1-D array. A `numpy` integer size is stored as
+  a Python `int`.
+- **`tfp_nuts` takes `target_accept_prob`.** The acceptance probability that
+  warmup's step-size adaptation targets is a method option, 0.75 unless set,
+  so `method_options={"target_accept_prob": 0.9}` adapts a smaller step and
+  removes the divergent transitions of a posterior with regions of high
+  curvature. A target outside the open interval from 0 to 1 raises
+  `ValueError`.
+- **`condition_on` conditions an empirical prior exactly.** The inference method
+  `empirical_reweighting` applies Bayes' rule to a joint whose prior is an
+  `EmpiricalDistribution` over numeric atoms and whose likelihood has a
+  conditional log-density: the posterior keeps the prior's atoms, each weighted
+  by its prior weight times the likelihood of the given values there, so
+  `condition_on(likelihood * particles, {"y": y})` is a particle filter's update.
+  The method is exact, so automatic selection tries it before the approximate
+  methods and `exact_only=True` admits it. It evaluates the likelihood at every
+  atom in one `jax.vmap` when the likelihood traces.
+- **Get started and six tutorials.** The documentation site gains an
+  installation page, a quickstart that fits, checks, and forecasts the
+  Challenger O-ring model, and six tutorials that follow one analysis of a
+  Ricker model of the moose counts of 1967 to 1988:
+  1. a model of the counts, built from distributions and a conditional
+     distribution, with the operations that apply to each and the exact
+     distribution of the counts at fixed parameter values;
+  2. the fit to the counts, with MCMC diagnostics, a function lifted over the
+     prior and the posterior, and a posterior predictive check that fails;
+  3. the model revised with process noise as a stage of its own, and its
+     posterior checked with a second algorithm, with a setting of that
+     algorithm, and with the same model written in PyMC;
+  4. forecasts of the population under harvests held in a batch, the
+     probabilities of events, the sources of the forecast's uncertainty, and
+     how each result was computed;
+  5. forecasts updated as each year's count arrives, by a particle filter that
+     `iterate` runs with `with_resampling`, and the coverage of the one-year
+     forecast intervals;
+  6. a model of whole animals that can only be simulated, which `condition_on`
+     fits by SMC-ABC and `learn_amortized_posterior` fits by an amortized
+     posterior, whose intervals are checked on simulated counts.
+
+  Each notebook opens on Google Colab from its badge, and the notebook
+  job of CI gains a leg for `docs/get_started/`. A notebook links to another
+  page by its file, which the docs build rewrites to the page's URL and checks.
+- **A user guide of nine chapters.** Each chapter explains one feature area on
+  small examples, and the guide's overview page lists them:
+  1. terms: the label and notation, spec, and stored data of every object,
+     immutability, batches, and provenance;
+  2. values and records;
+  3. distributions, including `distribution` from a sampler or a density;
+  4. joint models and conditional distributions;
+  5. functions on values, distributions, and batches;
+  6. conditioning and the inference methods, with a PyMC model and SMC-ABC;
+  7. MCMC diagnostics, predictive checks, leave-one-out comparison, and
+     simulation-based calibration;
+  8. empirical distributions, `convert`, resampling, and sequential updating;
+  9. routes, options, reproducible draws, and provenance.
+
+  Each chapter opens on Google Colab from its badge, and the user-guide leg
+  of the notebook job installs the `pymc` and `pyabc` extras for chapter 6.
+- **`SBCResult.coverage(levels)`** returns, for each credible level, the share
+  of the replications whose `θ★` lies in the central interval of that level, one
+  share per parameter. It reads the ranks alone: `θ★` lies in the interval when
+  its normalized rank `(r + 0.5) / (L + 1)` does. `interval_coverage` remains the
+  check of one posterior's draws.
+- **`distribution` builds a law from a sampling function, a log-density, or
+  both.** `distribution("y", sample=simulate, event_spec=spec)` returns a law
+  whose draws are `simulate(key)`, and `log_prob=` or `unnormalized_log_prob=`
+  gives it a density of one value. The law claims `SupportsSampling`,
+  `SupportsLogProb`, or `SupportsUnnormalizedLogProb` for each function given,
+  over an event of any kind. A sample shape maps the sampler over split keys
+  with `jax.vmap`, and a sampler that does not trace in JAX, such as one that
+  calls NumPy, or that draws values that are not arrays, runs in a loop over
+  the keys. Construction draws nothing and scores no value: it checks each
+  function that traces against `event_spec` with `jax.eval_shape`, and a
+  failed check raises `ValueError`. A simulator's kernel is
+  `conditional_distribution` of a function that returns
+  `distribution(..., sample=...)`, which claims conditional sampling.
+- **The registry catalog.** `probpipe.registry_catalog` lists the registries
+  and their entries, so a user can see which implementations exist and how a
+  call resolves. `print(registry_catalog)` gives one row per registry, and
+  `registry_catalog.describe(name)` lists one registry's entries, each with
+  its priority, exactness, and description. A dispatch registry's floors and
+  its opt-in-only methods are each listed in a section of their own. An entry
+  is one registered item of a registry, such as an inference method or a
+  converter.
+  - **Membership:** a registry is cataloged by implementing
+    `SupportsRegistryCataloging` and by an explicit
+    `registry_catalog.register(registry)`, which rejects an empty or duplicate
+    name. The protocol's `name`, `description`, and `kind` are read-only, and
+    its methods are `entry_summaries()` and `describe_entry()`. Constructing a registry does not catalog it, and the catalog has no
+    removal, so reloading a module that registers a registry raises.
+  - **The built-in registries:** the bijector factories, the converters, the
+    evaluation rules, the inference methods, and the operations, each under
+    its own name, and each entry with a one-line description.
+  - **Dispatch registries:** `BaseDispatchRegistry` takes keyword-only `name`
+    and `description`, which are read-only, and its `kind` is `"dispatch"`.
+    Its `entry_summaries()` reports each method's registered name, exactness,
+    floor status, effective priority, supported types, and description as an
+    `EntrySummary`, in `list_methods()` order. A method may declare a one-line
+    `description` property, which registration reads and validates with its
+    other declarations.
+  - **Floors:** a dispatch method declares `is_floor`, `False` by default, and
+    every registry ranks a floor after each method that is not one, whatever
+    their exactness and priority. Floor status is the first criterion of
+    selection order, before exactness, priority, specificity, and
+    registration order, and `set_priorities` cannot change it. The sampling
+    lift and the elementwise sweep declare it, so the evaluation rules rank
+    them as before.
+  - **Bijectors:** `register_bijector` takes a keyword-only `description`,
+    which the catalog shows, and each constraint with no smooth bijector is
+    described by the reason.
+  - **Operations:** `OperationSummary` is an `EntrySummary`, and
+    `OperationRegistry` implements `SupportsRegistryCataloging`.
+  - **Exports:** `probpipe` exports `registry_catalog` and the four classes
+    that `probpipe/core/_catalog.py` defines: `RegistryCatalog`,
+    `EntrySummary`, `RegistryInfo`, and `SupportsRegistryCataloging`.
 - **Writing rules and a prose checker.** `STYLE_GUIDE.md` §10 states the
   writing rules for docstrings, comments, the documentation, `design/`, and PR
   and issue text, and `design/README.md` § Conventions adds two rules for the
@@ -1015,7 +1743,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Checks of the contributor conventions.** The `no-issue-numbers` pre-commit
   hook rejects an issue or PR number in `probpipe/`, and ruff's
   `required-imports` setting requires the future import in each module of
-  `probpipe/`. `tests/docs/test_changelog.py` checks that each release has one
+  `probpipe/`. The `pydoclint` pre-commit hook checks that a docstring with a
+  section documents each parameter and the returned value, and the CI lint job
+  runs it over `probpipe/`, whose docstrings pass it.
+  `tests/docs/test_changelog.py` checks that each release has one
   heading per change type, so the Unreleased section merges its repeated
   headings, and `tests/test_version.py` checks that the two `pyproject.toml`
   files share one version. CI runs the conformance tests when `design/`
@@ -1067,7 +1798,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not `Numeric`.
   - `NumericArray` gains the three members. `to_vector()` returns the array's
     elements as a 1-D vector in row-major order, and
-    `NumericArray.from_vector(name, spec, vec)` rebuilds the array that a
+    `NumericArray.from_vector(label, spec, vec)` rebuilds the array that a
     `NumericArraySpec` declares from such a vector. `from_vector` raises
     `TypeError` for a vector that is not 1-D and `ValueError` for one whose
     length is not `spec.vector_size`. Its coordinate protocols present the
@@ -1104,19 +1835,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them from the event axes by its element spec, which it validates the stored
   dtype against at construction — the batch asserts that spec of every element,
   so a store that reports no single dtype cannot carry a pinned one either.
-  Selection yields a `NumericArray` under the derived name, as `RecordBatch`
+  Selection yields a `NumericArray` under the derived label, as `RecordBatch`
   yields a `Record`.
 
 - **`Opaque` — the tracked class of the opaque kind (#398).** What an operation
   returns when its declared kind is an `OpaqueSpec`, completing the pair with the
   `OpaqueBatch` that already existed. It adds identity and nothing else: no
   attribute forwarding, no `__call__`, no operators — the wrapped value is
-  reached through `.value`, explicitly. `OpaqueBatch`'s element contract is
+  reached through `.raw`, explicitly. `OpaqueBatch`'s element contract is
   unchanged; it still hands back the object the caller put in rather than
   wrapping it.
 
-  The name is the required first argument, as a `Record`'s is: an opaque value
-  exposes nothing else that says what it is, so a default would name every one
+  The label is the required first argument, as a `Record`'s is: an opaque value
+  exposes nothing else that says what it is, so a default would label every one
   of them alike. `OpaqueSpec` moves to the same module as the class it types;
   the public import path is unchanged.
 
@@ -1174,7 +1905,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the record's does, since a `/`-path could not bind to a parameter.
 
   An element is **materialized** rather than stored, which is the other side of the
-  rule the batch base states: it takes the derived name (`"post[draw=1]"`), marked
+  rule the batch base states: it takes the derived label (`"post[draw=1]"`), marked
   auto, and inherits the batch's provenance. It is built against the batch's own
   `element_spec`, so batch and element share one spec object — schema agreement is
   structural, and a row costs no declaration to build. `NumericRecordBatch` adds
@@ -1358,17 +2089,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a wrong number of indices. A whole axis is written `:` positionally; `None`
   spells it in `at_levels` alone, where a keyword cannot take a `:` literal.
 
-  A view is **named by what it selects**, naming the level each selection
+  A view is **labeled by what it selects**, naming the level each selection
   addresses — `"posterior[chain=0]"` for a sub-batch,
   `"posterior[chain=0, draw=7]"` for an element, `"posterior[draw=1:3]"` for a
   range. Levels selected whole are left out, so selecting all of a batch derives
-  the batch's own name, and the levels that appear are listed in the batch's own
-  order. The selection is tracked against the batch the name is rooted in, so a
-  derived name is a function of what the view selects: indexing two levels in one
+  the batch's own label, and the levels that appear are listed in the batch's own
+  order. The selection is tracked against the batch the label is rooted in, so a
+  derived label is a function of what the view selects: indexing two levels in one
   call, in two calls, or in the other order all read alike, and two different
   selections of one batch never do. A selection carries the *lineage* of the batch it came
   out of rather than a node recording the read: nothing is computed by reading one
-  position out of a collection, and which position it was is what the name says.
+  position out of a collection, and which position it was is what the label says.
 
   A batch's **specification is its own**, at the *family* kind: the new
   `BatchSpec` term spec carries the element's specification together with that
@@ -1387,7 +2118,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   level touches no storage, so it defaults to a shallow copy.
 
   A batch is immutable, round-trips through `pickle` and `copy`, and reprs as its
-  class, its name, and each level with its sizes, reading no element.
+  class, its label, and each level with its sizes, reading no element.
   `FunctionBatch`, `RecordBatch`, and `DistributionBatch` follow separately.
 
 - **First-class, tracked `Function` values (#368).** `Function` is now an
@@ -1446,16 +2177,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`TrackedTerm` / `Annotated` identity-and-metadata mixins (#336).** New
   `probpipe.core.tracked` module defining the shared identity attributes and methods every
-  ProbPipe object carries: `TrackedTerm` (a `name`, a `name_is_auto` flag, and a
-  write-once `provenance` attached via `with_provenance`, plus `with_name` for
-  rename-as-copy) and `Annotated` (a free-form `annotations` mapping).
+  ProbPipe object carries: `TrackedTerm` (a `label`, a `name_is_auto` flag, and a
+  write-once `provenance` attached via `with_provenance`, plus `with_label` for
+  relabel-as-copy) and `Annotated` (a free-form `annotations` mapping).
   `Distribution` and `Record` / `NumericRecord` inherit both; the batch types
   (`RecordBatch` / `NumericRecordBatch` / `DistributionArray`) are tracked
   terms too. `name_is_auto` records whether an object's name was auto-derived
   by the operation that produced it (`True`) or supplied by the user
   (`False`), so later composition can re-derive auto names while preserving
   user-given ones. The construction-time guarantee that every tracked term
-  has a non-empty name is enforced by the mixin's metaclass, replacing the
+  has a non-empty label is enforced by the mixin's metaclass, replacing the
   previous `Distribution`-only metaclass check and extending it to the
   `Record` family. Both mixins are exported from the top-level `probpipe`
   package.
@@ -1505,7 +2236,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ProvenanceMode` enum and `provenance_config` singleton for lineage-tracking
   control.** Three modes are available: `FULL` retains live references to every
   parent distribution (good for interactive debugging); `LIGHTWEIGHT` (the new
-  default) stores only `ParentInfo` descriptors — type name, distribution name,
+  default) stores only `ParentInfo` descriptors — type name, distribution label,
   and the parent's own provenance chain — so parent data arrays are free to be
   garbage-collected once a workflow step completes; `OFF` skips provenance
   entirely for minimum overhead.  The mode is set once at startup:
@@ -1516,7 +2247,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
 
 - **`ParentInfo` descriptor** (new public export).  A frozen dataclass carrying
-  `type_name`, `name`, `provenance` (the parent's own `Provenance`, kept in all
+  `type_name`, `label`, `provenance` (the parent's own `Provenance`, kept in all
   non-OFF modes so the ancestry DAG remains traversable), `fingerprint` and
   `fingerprint_is_weak` (see below), and `parent` (the live parent object, set
   only in FULL mode).
@@ -1673,7 +2404,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   template methods.
 
 - **Metaclass-enforced invariants.** Every `Distribution` instance
-  has a non-empty `name`; every `RecordDistribution` instance has a
+  has a non-empty `label`; every `RecordDistribution` instance has a
   non-`None` `record_template`. The checks fire post-`__init__` via
   the `_DistributionMeta` / `_RecordDistributionMeta` metaclasses
   (derived from `typing._ProtocolMeta` to compose with
@@ -1851,9 +2582,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``_RecordDistributionView`` (mirror the existing shims on
   ``NumericRecord`` / ``NumericRecordBatch``). Multi-field distributions
   raise ``TypeError``.
+- **Functions can lift to empirical laws of whole batches.** Atom counts,
+  weights, exact enumeration, and sampling distinguish atom axes from each
+  event's batch axes. `include_inputs=True` retains each complete batch in
+  the joint record. A subsequent lift receives each batch in its raw form,
+  or as the batch at a parameter annotated with a batch class such as
+  `NumericArrayBatch`. Under `dispatch="auto"` and `"jax"`, a body that
+  returns a numeric batch, and a later lift over its law, run in one
+  `jax.vmap`. A batch-valued event with numeric elements has
+  elementwise moments, so the mean of a trajectory law on `time` is a
+  `NumericArrayBatch` on `time`. Nested event batches combine their levels in
+  outer-to-inner order, so bootstrap replicates of trajectories support
+  moments and `include_inputs=True` lifts.
 
 ### Changed
 
+- **A parametric family and a joint's conditional factors reuse their
+  compiled code across calls.** A family samples, scores, and takes quantiles
+  through compiled programs that a later call with the same parameter shapes
+  reuses. A joint draws and scores a conditional factor with numeric givens at
+  all of its given draws through one compiled program, which the factor keeps
+  and which takes new draws, keys, and numeric unmet givens without compiling
+  again.
+  - **Speed:** a warm `sample(model, 50)` of the first tutorial's model drops
+    from about 1.2 s to about 0.005 s.
+  - **Seeded results:** a compiled program fuses its arithmetic differently,
+    which changes the last float32 digit of some draws and densities. A
+    rejection sampler or a discrete family can then return a different value
+    where a parameter differs in its last digit.
+  - **Checks:** a family's checks of its parameter values do not run inside a
+    conditional factor's compiled program, so an invalid parameter, such as a
+    negative mixture weight, gives draws and densities, such as `nan`, rather
+    than an error.
+  - **Uncompiled calls:** a backend that holds a class a user writes, a
+    function such as the model of a `JointDistributionSequential`, or a part
+    built with `validate_args=True` runs uncompiled. So does a factor that does
+    not compile, such as one that converts a given to a Python number, for
+    calls with the same structure of unmet givens.
+- **A dependent joint's mean, variance, and quantiles take `by_component`
+  rather than `monte_carlo`** when one of its components has an exact
+  summary. The check of such a call lists `by_component (exact)` and
+  `by_component (approximate)`, and a seeded estimate of the other components
+  differs from the one `monte_carlo` gave, since they are drawn through their
+  view. A component whose summary is known to be undefined, such as the mean
+  of a Cauchy root factor, now raises `MathematicalDomainError`, where the
+  fallback returned an estimate. `using(method="monte_carlo")` keeps the
+  fallback.
+- **A law's fingerprint is computed once.** A distribution keeps its
+  fingerprint in a memo that a copy or a pickle leaves out, so the views and
+  records that name a law as their parent hash it once rather than once each.
+  The fingerprint leaves out every attribute a class declares as transient
+  state, such as that memo, since that state is computed from the rest.
+- **Error and warning messages say what went wrong in the caller's terms.**
+  Each message names the call that failed, the argument and value at fault,
+  and the fix when it is certain, following the new rules of `STYLE_GUIDE.md`
+  §9.3. Messages no longer use design vocabulary such as "packaging", "whole
+  term", or "claim", and no longer name private helpers. A lookup of a name
+  that does not exist lists the names that do, as in
+  `unknown level 'test'; available levels: ['quantile']`. Code that matches
+  on the old wording needs updating, since the exception types are unchanged.
+- **A "no route applies" error leads with the reason the caller can fix.** A
+  `Feasibility` report takes `actionable=True` when it fails on a detail of the
+  call, such as a field name the argument does not have, and the error opens
+  with the first such reason before it lists every route tried. So
+  `condition_on(Normal("mu", 0.0, 1.0), {"x": 1.0})` raises
+  `condition_on: unknown field 'x'; available fields: ['mu']. Routes tried: ...`.
+  A route's reason no longer repeats the route's name, and a missing capability
+  reads "does not implement SupportsSampling".
+- **Error messages and a repr call a term's label its label.** A `Record` built
+  without a label says it requires its label as the first positional argument,
+  and that every keyword argument, `name=` and `label=` included, is a field.
+  `conditional_distribution` given a callable without `__name__` asks for a
+  label, `with_level_names` on a view says a reused dropped level would make
+  the labels of later selections ambiguous, and the repr of the TFP batch
+  backend shows the cells' base label as `label=`.
+- **`condition_on`'s registry route is named `inference_methods`.** The route
+  that forms the unnormalized conditional by Bayes' rule and normalizes it
+  through the inference-method registry was named `bayes`, so a `check`
+  report and a result's provenance now name it, as in
+  `inference_methods/blackjax_nuts`.
 - **The documentation site is rebuilt around the current API.** The user-guide
   notebooks, the `getting_started` and `flexible_inference` tutorials, the
   earlier API pages, and `example_scripts/` are removed, since each used names
@@ -2150,7 +2957,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Function calls establish a new result identity and provenance boundary
   (#368, breaking).** Existing operations such as `condition_on` and
-  `from_distribution` now record point-call operations as `workflow.<name>`,
+  `from_distribution` now record point-call operations as `workflow.<label>`,
   with the called Function as the first parent followed by tracked inputs.
   Resolved ordinary arguments are fingerprinted separately in
   `Provenance.inputs` and do not become ancestry nodes. When an implementation
@@ -2159,7 +2966,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   object, clears the implementation result's provenance, and attaches only the
   current call provenance. Consequently, implementation-domain metadata such
   as `conditioned`, `ess`, or backend algorithm details is not propagated to
-  the public call result; a plain point-call result carries `{"func": name}`
+  the public call result; a plain point-call result carries `{"func": label}`
   while broadcast and sweep results retain their own execution metadata. Use
   `Function.apply()` when raw identity, provenance, or domain metadata is
   required. Existing operation controls remain provenance metadata. Other
@@ -2167,7 +2974,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   term-result planning.
 
 - **`TrackedTerm` renamed from `Tracked` (breaking).** The mixin carrying a
-  `name`, a `name_is_auto` flag, and a `provenance` is now `TrackedTerm`, the
+  `label`, a `name_is_auto` flag, and a `provenance` is now `TrackedTerm`, the
   name the design reference uses for what it holds: the objects operations
   consume and produce are *tracked terms*, while templates and specs are
   structural helpers that are not. The private metaclass follows as
@@ -2181,11 +2988,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`from_nested_dict` and `_flatten_paths` removed — the constructor reads a
   nested mapping directly (breaking).** Under the *"a mapping is never a leaf"*
-  invariant, `Record(name, data)` already materialises every nested mapping
+  invariant, `Record(label, data)` already materialises every nested mapping
   value into a subtree, so `Record.from_nested_dict` /
   `NamedTree.from_nested_dict` (and the private `NamedTree._flatten_paths`)
   added nothing the constructor lacked. Build from a nested mapping with
-  `Record(name, data)` and round-trip via `Record(name, r.to_nested_dict())`.
+  `Record(label, data)` and round-trip via `Record(label, r.to_nested_dict())`.
   This also **tightens validation**: an input mixing a `/`-path key with a
   nested-dict value under the same prefix (e.g. `{"y/a": 1.0, "y": {"b": 2.0}}`)
   now raises, where `from_nested_dict` silently reshaped it. `Record.ensure`
@@ -2260,30 +3067,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recognises its own masked dtypes. Non-numeric extension dtypes (categorical /
   string / datetime) are not numeric and leave the container a plain `Record`.
 
-- **`Record` / `NumericRecord` construction is name-first, and all-numeric
+- **`Record` / `NumericRecord` construction is label-first, and all-numeric
   records auto-promote (#338, breaking).** The constructors are now
-  `Record(name, fields=None, /, *, event_template=None, name_is_auto=False,
+  `Record(label, fields=None, /, *, event_template=None, name_is_auto=False,
   **kw_fields)` — the
-  record's name is a required first positional argument, and the old `name=`
-  keyword and nameless forms are removed. `Record(...)` whose fields are all
+  record's label is a required first positional argument, and the old `name=`
+  keyword and unlabeled forms are removed. `Record(...)` whose fields are all
   numeric (bare arrays and scalars, no backend metadata) returns a
   `NumericRecord`; passing an explicit non-numeric `event_template=` pins a
   plain `Record`. Structural transforms (`without` / `merge` / `replace` /
   `with_path_names`) re-derive the numeric axis the same way, and a nested
   record stored as a field is renamed to its field key. An operation that
-  assembles a record supplies a meaningful, deterministic name derived from
-  its inputs (the producing distribution's or model's name, or a domain term
+  assembles a record supplies a meaningful, deterministic label derived from
+  its inputs (the producing distribution's or model's label, or a domain term
   such as `"observed"` / `"data"`) and marks it `name_is_auto=True`. The
   pytree registration now carries
   the event template and identity in the treedef aux data, so
-  `jax.tree_util.tree_map` over a `Record` preserves its template, name, and
+  `jax.tree_util.tree_map` over a `Record` preserves its template, label, and
   auto flag. Value-level (de)serialization entry points moved onto the value
-  types: `Record.from_field_values(name, template, values)` replaces
+  types: `Record.from_field_values(label, template, values)` replaces
   `EventTemplate.from_field_values(values)` (removed), and
-  `NumericRecord.from_vector(name, template, vec)` replaces
+  `NumericRecord.from_vector(label, template, vec)` replaces
   `NumericEventTemplate.from_vector` (removed) as the classmethod inverse of
   the value-level `NumericRecord.to_vector`. `Record.from_dict` likewise takes
-  the name first. Construction now validates each
+  the label first. Construction now validates each
   leaf against its field spec's `is_valid` (structure only: shape and dtype,
   the latter by `numpy.can_cast` same-kind, so a cross-kind dtype raises). A
   `NumericArraySpec`'s `support` is descriptive metadata and is not checked by
@@ -2319,8 +3126,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Distribution` and `Record` is replaced by the `TrackedTerm` / `Annotated`
   mixins, with a hard rename (no aliases): `source` → `provenance`,
   `with_source(...)` → `with_provenance(...)`, `renamed(...)` →
-  `with_name(...)` (rename provenance now records the operation as
-  `"with_name"`), and the `auxiliary` metadata store → `annotations`
+  `with_label(...)` (relabel provenance now records the operation as
+  `"with_label"`), and the `auxiliary` metadata store → `annotations`
   (`_auxiliary` → `_annotations`; a `DataTree` remains a valid value and the
   diagnostics accessors are unchanged). `make_posterior`'s `auxiliary=`
   keyword is now `annotations=`. `ParentInfo` fields follow the reference:
@@ -2390,7 +3197,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   # After (LIGHTWEIGHT default)
   ancestor = provenance_ancestors(result)[0]   # ParentInfo
-  ancestor.name                                # "prior"
+  ancestor.label                               # "prior"
   ancestor.obj                                 # None — parent may be GC'd
 
   # To restore live-object access, opt in to FULL mode
@@ -2401,7 +3208,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
   Code that checks `x in provenance_ancestors(result)` or accesses
   `.samples` / `.log_prob` on ancestors needs to be updated — either
-  switch to FULL mode, or use `ancestor.name` / `ancestor.type_name` for
+  switch to FULL mode, or use `ancestor.label` / `ancestor.type_name` for
   identity checks.
 - **Two-distribution packaging: `probpipe-core` (minimal) and `probpipe`
   (core + all backends) (#237).** The root distribution is renamed `probpipe-core` (minimal JAX base —
@@ -2712,9 +3519,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   helpers ``_default_float_dtype()`` and ``_promote_floats()`` live in
   ``probpipe/_dtype.py``. The float64-truncation warning filter previously
   in ``probpipe/__init__.py`` is removed.
+- **Sweeps over numeric batches with the same levels run as one vectorized
+  call** under `auto` and `jax` dispatch, including several paired arguments.
+  A nested numeric sweep checks once whether its function traces with JAX and
+  shares that check across its cells. Each cell keeps its own check when its
+  swept values must stay fixed or when the sweep is over stored objects.
 
 ### Removed (breaking)
 
+- **`NumericArray.value`, `Opaque.value`, and `NumericArrayBatch.values` are
+  removed.** Each returned what `raw` returns, so replace `x.value` and
+  `batch.values` with `x.raw` and `batch.raw`.
+- **`evaluate` is removed.** `pushforward(d, f)` computes the law of `f(X)`
+  for `X ~ d`, and the direct call `f(v)` replaces every other use:
+  `f(v)` for a value, `function(f)(batch)` for a batch, and `f(d)` for a map
+  that takes the law itself. `evaluate.check(f, v)` becomes `f.check(v)` or
+  `pushforward.check(d, f)`. The bootstrap distribution of a statistic is
+  `pushforward(B, stat)`.
+- **`Function` no longer takes the callable as `func=`.** `Function(g, func=h)`
+  raises `TypeError`, where it warned and used `h`; pass the callable first, as
+  `Function(h, label="g")`.
+- **`UnnormalizedDistribution` is removed.** `distribution` builds the law of a
+  density alone, as it builds the law of any combination of a sampler and a
+  density: replace `UnnormalizedDistribution(label, f, event_spec)` with
+  `distribution(label, unnormalized_log_prob=f, event_spec=event_spec)`. The
+  density scores one value, which arrives as an array or a `Record` for a
+  numeric event, and returns a scalar; the law maps it over a batch's leading
+  axes.
 - **`tfp_hmc` is removed.** Its fixed ten-step trajectory resonates on a
   near-Gaussian posterior, so its chains mixed poorly and its variances came out
   low. `blackjax_hmc` jitters its trajectory length, and `tfp_nuts` remains for
@@ -2740,6 +3571,253 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An installed PyMC older than 6.2 raises an `ImportError` that names the
+  upgrade,** as `ProbPipe needs PyMC 6.2 or later, which works with ArviZ 1.x,
+  but PyMC 5.28.5 is installed`, where PyMC 5 failed on import with an error
+  about ArviZ. Google Colab preinstalls PyMC 5, so every notebook's Colab
+  install cell, and the minimal Colab command of the installation page, also
+  installs `pymc>=6.2`, and pip no longer reports a dependency conflict.
+- **A derived operation passes `exact_only` and `n_broadcast_samples` to the
+  functions its identity calls.** `prob.using(exact_only=True)(Normal("x",
+  0.0, 2.0), 0.0)` used to raise `ResolutionError` and now returns the exact
+  density, because the `log_prob` that `prob` calls selects only exact routes.
+  `exact_only` restricts the route selection of every operation and plain
+  `Function` the identity runs, at any depth and in the workers the engine
+  dispatches to. A derived operation therefore still raises `ResolutionError`
+  when a call inside it has only an approximate route, and when it is declared
+  without an `identity_check`, which the message names. The conversion of an
+  argument inside the identity follows its parameter's `conversions` control,
+  as in a direct call. A derived operation's `n_broadcast_samples` used to be
+  dropped at its identity's calls, which drew their own default, and now sets
+  their draws when the derived call sets it, unless the identity sets its own
+  on the call. The other controls stay each call's own. A composite identity,
+  such as `expectation`'s, runs each of its steps under the same two controls.
+  A call under `exact_only` on an operation without an exact route says so,
+  where it said that no route is registered.
+- **A SciPy distribution with a location or scale its family does not hold
+  converts to the same law.** The `scipy` converter used to read a `beta`'s
+  shape arguments alone and drop the location of a `gamma`, `expon`, or
+  `lognorm`, while it reported the conversion as exact.
+  Such a distribution now enters as a `BijectorTransformedDistribution` of the
+  family under the affine map of that location and scale.
+  Its sampling, density, mean, and variance are SciPy's, and it declares the
+  shifted support, such as `greater_than(3.0)` for `scipy.stats.gamma(2.0, loc=3.0)`.
+  The approximate converters read a SciPy source through the same law, so
+  their fits and draws follow the location and scale too.
+- **A moment-matched fit refuses a family whose fixed support differs from
+  the source's.** The subset test on supports used to accept a pair it did not
+  compare, such as `interval(1.0, 3.0)` against `unit_interval`, and accepted
+  `positive` as a subset of `greater_than(1.0)`.
+  So `convert(scipy.stats.beta(2, 3, loc=1, scale=2), Beta)` fit a `Beta` on
+  `[0, 1]` with mean about 0.001 to a law on `[1, 3]` with mean 1.8.
+  Two intervals of the reals now compare by their bounds, so the `moment_match`
+  check reports such a fit infeasible, as for `scipy.stats.gamma(2, loc=1)`
+  to `Gamma` or `Normal`, and `convert` raises `ResolutionError` when no
+  other converter applies.
+  List and tuple bounds compare element-wise, as array bounds do, so a law
+  declared on `interval([0, 0], [1, 1])` can be fit by `Beta`.
+  The converter option `check_support=False` still fits the family on its own
+  support.
+  The same comparison checks a law a `Function` returns against the support its
+  output spec declares, so a returned `Uniform` on `[0, 2]` fails a declared
+  `unit_interval`.
+  The support refusals of `moment_match` at check and at fit read alike, and
+  each names the converter option `check_support=False`.
+- **A SciPy distribution without a family declares the dtype of its draws**:
+  JAX's default integer dtype for a discrete distribution, such as
+  `scipy.stats.poisson`, and the default floating dtype otherwise, which is
+  `float64` under `jax_enable_x64`.
+  It used to declare `float32` in both cases.
+- **The `tfp` converter reads the rate of a TFP `Gamma` or `Poisson` built from
+  `log_rate`.** It used to raise `ValueError`.
+- **A call over a batch of records and a law lifts the law at each record row.**
+  The call raised `TypeError` for records of several fields, as did a lift with
+  such a record among its other arguments. A record row displays as its own
+  expression, as `f(rows[row=0], mu ~ prior)`, where a row of one field
+  displayed as a dictionary. The JAX trace probe passes each argument it does
+  not map as the call passed it, as the executor does. A body that reads a
+  record's fields therefore runs in one `vmap` under `dispatch="auto"` and
+  `dispatch="jax"`, where the probe converted the record to an array and
+  failed. A pandas Series among the other arguments sends the call to
+  sequential dispatch under `"auto"`, where the JAX executor raised.
+- **Empty sweeps require a concrete output declaration before execution.**
+  Both the call and `Function.check` refuse an omitted declaration, a type hole,
+  or an output dimension that remains unbound after input dimensions bind.
+- **A display warns about a part that storage truncated only when its text
+  shows less than the part.** A law selected many times from a posterior
+  displays without a warning, and a warning that meets both a collapsed level
+  and a truncated part names both limits.
+- **A product names the positions and labels of two factors that produce one
+  field.**
+- **Reusing a term whose label nests 64 levels no longer renders it again on
+  each use**, and selecting an element of a batch of objects copies the stored
+  term once.
+- **A parameter annotated `numpy.typing.NDArray` receives the raw NumPy array
+  under NumPy 2.5 as well as earlier versions.** NumPy 2.5 defines `NDArray` as
+  a type alias, and every annotation check reads a type alias as the annotation
+  it stands for. A parameter annotated with an alias of `Normal | None`
+  therefore consumes a law as one annotated `Normal | None` does, and one
+  annotated with an alias of `Any` takes its argument as it arrives. A generic
+  alias reads with its arguments in place of its type parameters, so
+  `Maybe[Normal]` reads as `Normal | None` where `type Maybe[T] = T | None`.
+- **A function annotated with a type alias can be replayed.** Its replay
+  identity records each alias by its module, its name, its type parameters,
+  and its value, so a module-level function annotated
+  `numpy.typing.NDArray[np.float64]` under NumPy 2.5, or with any `type`
+  alias, replays where its anchor was unsupported. The identity changes when
+  the alias's value changes, including when `from __future__ import annotations`
+  postpones the annotation. An `Annotated` annotation replays on Python 3.13
+  and later too, and an alias whose value names an undefined name leaves the
+  function unreplayable.
+- **Each cell of a nested sweep over stored objects chooses its own dispatch
+  under `auto`.** A cell reused the dispatch that the first cell chose, which
+  raised `ConcretizationTypeError` when a later cell could not be traced.
+- **A function sweep broadcasts the shapes of each named level by NumPy's
+  rule.** Within a level that the swept batches share, shapes of any rank align
+  from the right and a size-one axis expands. The result carries each level's
+  broadcast shape. Incompatible sizes raise an `ApplicabilityError` that names
+  the level and each argument's shape.
+- **A single str is one name wherever a sequence of names is taken.**
+  `score_posterior(metrics="mmd")` scores `mmd`, where it raised that `'m'` is
+  an unknown metric, and `add_mcmc_diagnostics(metrics="rhat")` computes R-hat,
+  where it computed nothing. `add_mcmc_diagnostics` raises `ValueError` for an
+  unknown metric, where it ignored it.
+- A function whose returned overall kind differs from its output declaration
+  raises `ResultKindError`. A result of the declared kind with an incompatible
+  schema raises `ResultSchemaError`. The distinction applies to lifted calls
+  and operation routes. A call with `raw=True` validates its result before
+  detachment. `apply` reports output declaration violations as `ValueError`.
+- **Workflow-owned sampling works on every JAX version the package accepts.**
+  The package requires `jax>=0.9`, but a workflow-owned draw, such as `sample`
+  inside `workflow_run`, raised `AttributeError` on any JAX release before
+  0.10.1. The check of the draw's key called `jax.random.key_dtype`, which JAX
+  added in 0.10.1. The check now compares `jax.random.key_impl(key)` with
+  `"threefry2x32"`. A CI job installs the lowest version of each core
+  dependency that `pyproject.toml` allows and runs the tests of the functions,
+  converters, and operations packages against them.
+- **Caller trace detection supports JAX 0.9.** Workflow random-event guards
+  use `jax.core.find_top_trace` when `jax.extend.core.find_top_trace` is
+  unavailable.
+- **`StanModel` and `PyMCModel` take their label by the keyword `label`.** Their
+  constructors document `label` as the first parameter, but a keyword call
+  `StanModel(label=..., stan_file=...)` raised `TypeError` because the class
+  call took `name`.
+- **A real-valued support rejects a complex value with a nonzero imaginary
+  part.** JAX orders complex values lexicographically, so `positive.check(1j)`
+  and `real.check(1j)` were true, and a function that declared a positive
+  output accepted `1j`. Every built-in `Constraint` now contains a complex
+  value only where its imaginary part is zero and its real part is in the
+  support. A structured support, such as `simplex`, `sphere`, or
+  `positive_definite`, requires every entry of the event to be real. The
+  result keeps its shape, and the check still traces under `jax.jit`.
+- **Renaming an empirical law's paths returns an empirical law.**
+  `with_path_names` on an `EmpiricalDistribution` over records, such as an MCMC
+  posterior, returned a law without `atoms`, `num_atoms`, or `weights`, and its
+  repr showed the posterior's atoms under the old names. It now returns an
+  `EmpiricalDistribution` with the same label and weights whose atoms carry the
+  new paths. A law that renames at its boundary, such as a renamed
+  `KDEDistribution`, reads as `KDEDistribution(...).with_path_names({...})`. A
+  lift draws every law that `with_path_names` returns together with the law it
+  renames. A factored joint rebuilt under the new paths and a rename of a whole
+  term's component used to lift independently of the law they rename, and now
+  draw with it too.
+- **A marginal or a factor lifts independently of the joint it comes from.**
+  When `marginal` or `factor` returned a factor of a factored joint, the result
+  kept the factor's link to the batch it came from or to the law it renames, so
+  a lift drew the result together with that law. Both operations now detach
+  their result, and a lift draws it independently.
+- **A PyMC model draws its Cauchy and half-Cauchy variables with their location
+  and scale.** The lock pinned PyTensor 3.0.4, whose sampler of a Cauchy
+  variable returned location `loc / scale` and scale `1 / scale`, so a prior
+  `HalfCauchy(5)` drew as `HalfCauchy(0.2)` in `sample`, in prior and
+  prior-predictive draws, and in the Monte Carlo moments; densities, and hence
+  NUTS posteriors, were unaffected. The `pymc` extra now requires `pymc>=6.2`
+  and `pytensor>=3.2.4`, the first PyTensor release with the upstream fix, and
+  the lock moves to PyMC 6.3.2 and PyTensor 3.3.3.
+- **`StanModel` constructs on a machine where BridgeStan has never compiled a
+  model.** Construction reads the program's declarations with BridgeStan's
+  stanc compiler, which BridgeStan fetches only when it first compiles a model,
+  so the first `StanModel` on a new machine raised `ImportError`. Construction
+  now downloads BridgeStan's source tree and fetches stanc with BridgeStan's own
+  Makefile target, as BridgeStan's first compile does, and a failed fetch names
+  the command that fetches the compiler.
+- **A sweep or a lift records the dtype its batch stores.** The rows of a sweep
+  and the evaluations of a lift are stacked into one JAX array, which holds
+  their canonical dtype, so while JAX's 64-bit mode is off a 64-bit NumPy row
+  is stored as a 32-bit one. A declared, inferred, or tracked 64-bit dtype was
+  recorded in the batch's element declaration and in a lift's event
+  declaration all the same. Each now records the stored dtype, an array
+  element always and a record field where its declaration states a dtype, so a
+  declaration of `float64` yields a batch that declares and holds `float32`
+  while 64-bit mode is off. A sequential sweep and a JAX sweep therefore agree
+  on the dtype when the records they sweep declare none, where the sequential
+  one recorded none.
+- **Each draw in an `apply` body is its own workflow-owned random event.**
+  `Function.apply` gave all the draws its body made directly one shared
+  occurrence, so a body that drew twice in this way raised `RuntimeError` where
+  a call of the same function succeeded. `with_resampling(step).apply(...)`
+  raised it whenever `step` drew through `converter_registry.convert` and the
+  result was resampled. An `apply` body now draws as the body of a call does:
+  each draw is its own event, in program order, and `workflow_run(seed=...)`
+  reproduces it. The seeded draws of an `apply` body change, and they now equal
+  the draws of a call of the same function at the same position in the
+  workflow. An `apply` now takes at most one position in its workflow scope,
+  however many stochastic calls its body makes, so the draws after an `apply`
+  whose body made several can change too. An `apply` that draws nothing takes
+  no position.
+- **A parameter annotated with a raw class receives the raw form.** A function
+  body received a tracked argument whatever its parameter's annotation, so
+  `def g(c: pd.Series)` raised `AttributeError` on a record field that holds a
+  `Series`. A parameter annotated with a class such as `pd.Series`,
+  `xr.DataArray`, or `jax.Array` now receives the argument's `raw` when that is
+  an instance of the class, in a call, in `apply`, and for each element of a
+  sweep and each draw of a broadcast.
+- **A level name is any non-empty string without `/`.** A batch required a
+  Python identifier, while a level's default name comes from a label or a
+  component, so a Monte Carlo `mean`, `variance`, or `quantile` of a law
+  labeled `"my law"` raised, as did `EmpiricalDistribution("my law", array)`. A
+  level name now follows the rule for component names, and `at_levels` takes a
+  name that is no identifier in a mapping, as `at_levels(**{"my level": 0})`. A
+  bootstrap law checks its `level` by the same rule when it is constructed.
+- **`convert` fits a family on another support under `check_support=False`.**
+  Passing the option as
+  `convert.using(method_options={"check_support": False})` raised
+  `ResultSchemaError` whenever the source declared a support, as converting a
+  `Gamma` law to `Normal` did. The result now has the family's own support, as
+  `converter_registry.convert(..., check_support=False)` returns it.
+- **`pymc_nuts` runs PyMC's own NUTS sampler.** It called `pm.sample` without
+  choosing a NUTS implementation, and PyMC 6 then runs nutpie wherever nutpie
+  is installed, so `pymc_nuts` ran the sampler that `nutpie_nuts` runs while its
+  result recorded `method="pymc_nuts"`. It now passes `nuts_sampler="pymc"`.
+- **`pymc_nuts` and `pymc_advi` read the `progress_bar` method option.** They
+  refused it with `TypeError`, so
+  `condition_on.using(method_options={"progress_bar": False})` on a
+  `PyMCModel` failed wherever `pymc_nuts` was selected, as it is without
+  nutpie, and no option turned off PyMC's progress bars. Each now passes the
+  option to PyMC as `progressbar`, `True` unless set, as `nutpie_nuts` does.
+- **`posterior.diagnostics.to_dict()` works after `add_loo`.** It raised
+  `KeyError`, because a run's view selected each pointwise value by the string
+  form of its integer observation index. The views now read by position, so
+  `to_dict()` holds the LOO run, with `pareto_k` and `loo_i` keyed `"0"`, `"1"`,
+  and so on. `add_loo` also records `loo_i`, which ArviZ 1.x names `elpd_i`.
+- **Drawing from an amortized posterior prints no progress bar.** BayesFlow's
+  sampler printed a bar on every call, so each `mean`, `quantile`, or `sample`
+  of a posterior from `learn_amortized_posterior` printed one, and a notebook
+  that summarized the posterior at many observations filled with bars.
+- **`predictive_check` takes observed data held in a pandas or xarray object.**
+  It passed such an object to the statistics as given, while each replication
+  is a JAX array, so a statistic written with `jax.numpy` failed on a pandas
+  `Series` or an xarray `DataArray`. It now converts a registered array host
+  to the JAX array a replication holds, whether the data are one value or a
+  mapping of the kernel's components.
+- **`add_mcmc_diagnostics` counts the divergent transitions.** It recorded no
+  count, so `posterior.diagnostics.mcmc.n_divergences` reported "not recorded by
+  this backend" for every method. It now records the sum of the ArviZ sample
+  statistic `diverging`, which the PyMC, Stan, and nutpie methods write.
+  `blackjax_nuts` and `blackjax_hmc` wrote the statistic as `is_divergent`, and
+  `tfp_nuts` wrote none; both now write `diverging`, so read
+  `annotations["arviz"]["sample_stats"]["diverging"]` in place of
+  `["is_divergent"]`.
 - **A completed declaration keeps its declared dtypes.** `OutputSpec.with_spec`
   checked that the declared spec unifies with the produced one and then stored
   the produced spec, so a declared dtype or support was lost wherever the
@@ -2961,7 +4039,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it — **is deleted**.
 
   The container a reconstruction is handed is decoupled from the one it was built
-  from, as `with_name` already does: entries are shared, the container is not, so
+  from, as `with_label` already does: entries are shared, the container is not, so
   a write on a copy does not show through on the original. Annotations still do
   not cross a JAX transform boundary — `tree_unflatten` rebuilds a bare term,
   unchanged.

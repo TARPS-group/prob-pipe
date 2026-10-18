@@ -1,11 +1,12 @@
-"""Resolve workflow controls, bind arguments, and admit them for the call engine.
+"""Bind the arguments of a call and admit them for the call engine.
 
 Steps 2 and 3 of the call stack: the arguments bind to the wrapped function's
 signature by Python's rules, and each bound argument is admitted against what
 its parameter accepts: the kinds its role names where the Function declares
 roles, as an operation does, and otherwise its input declaration and its
 annotation. A violation of the call contract raises
-:class:`ApplicabilityError`.
+:class:`ApplicabilityError`. The module also decides the form in which the body
+receives each argument (:func:`presented_arguments`).
 """
 
 from __future__ import annotations
@@ -14,13 +15,13 @@ import html
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from types import MappingProxyType, UnionType
-from typing import Any, Literal, Union, get_args, get_origin
+from types import MappingProxyType
+from typing import Any, Literal
 
 from ..core._array_backend import _is_numeric_leaf
 from ..core._batch import Batch, BatchSpec
 from ..core._dispatch import MethodInfo
-from ..core._repr import call_repr, format_names, mapping_repr, sequence_repr
+from ..core._repr import call_repr, format_names, mapping_repr, sequence_repr, type_name
 from ..core._specs import (
     InputSpec,
     NumericArraySpec,
@@ -248,7 +249,9 @@ def _route_and_method(label: str) -> tuple[str, str]:
     """A route report's label as its route and its method.
 
     A registry route's label is ``route/method`` for the method it selects and
-    ``route (exact methods)`` for the methods it covers when it selects none.
+    ``route (exact methods)`` for the methods it covers when it selects none,
+    and another delegating route's is ``route (exact)`` or
+    ``route (approximate)`` for the implementations it covers.
     """
     route, _, method = label.partition("/")
     if method:
@@ -268,111 +271,71 @@ def _html_row(cells: tuple[str, ...], *, selected: bool) -> str:
     return f"<tr{style}>" + "".join(f"<td>{html.escape(cell)}</td>" for cell in cells) + "</tr>"
 
 
-@dataclass(frozen=True)
-class FunctionCallOptions:
-    """Optional call-time workflow controls outside user kwargs."""
-
-    n_broadcast_samples: int | None = None
-    include_inputs: bool | None = None
-
-
-@dataclass(frozen=True)
-class FunctionCallOverrides:
-    """Resolved call-time workflow settings consumed by ``Function``."""
-
-    n_broadcast_samples: int
-    include_inputs: bool
-
-
-@dataclass(frozen=True)
-class ResolvedFunctionCall:
-    """Fully resolved signature-shaped values plus workflow overrides."""
-
-    values: dict[str, Any]
-    overrides: FunctionCallOverrides
-
-
-def bind_call_inputs(
-    info: FunctionSignatureInfo,
-    args: tuple[Any, ...],
-    call_inputs: dict[str, Any],
-    *,
-    default_n_broadcast_samples: int,
-    default_include_inputs: bool,
-    options: FunctionCallOptions | None = None,
-) -> tuple[dict[str, Any], FunctionCallOverrides]:
-    """Bind user inputs and resolve workflow controls.
-
-    Call inputs bind exactly like the wrapped Python function. Workflow
-    controls come only from explicit ``options`` or construction defaults.
-    """
-    explicit_options = options if options is not None else FunctionCallOptions()
-
-    def resolve_option(name: str, default: Any = None) -> Any:
-        explicit_value = getattr(explicit_options, name)
-        if explicit_value is not None:
-            return explicit_value
-
-        return default
-
-    overrides = FunctionCallOverrides(
-        n_broadcast_samples=resolve_option(
-            "n_broadcast_samples",
-            default_n_broadcast_samples,
-        ),
-        include_inputs=resolve_option(
-            "include_inputs",
-            default_include_inputs,
-        ),
-    )
-
-    bound = info.signature.bind_partial(*args, **call_inputs)
-    return dict(bound.arguments), overrides
-
-
 def resolve_function_call(
     info: FunctionSignatureInfo,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
     *,
     bind: Mapping[str, Any],
-    module: Any | None,
-    dependency_type: type,
     function_name: str,
-    default_n_broadcast_samples: int,
-    default_include_inputs: bool,
-    options: FunctionCallOptions | None = None,
-) -> ResolvedFunctionCall:
-    """Resolve one ``Function`` call into values plus overrides."""
-    bound_inputs, overrides = bind_call_inputs(
+) -> dict[str, Any]:
+    """Bind one call's arguments to the signature and fill the inputs it omits.
+
+    The arguments bind by Python's rules, and an omitted input takes its value
+    from the construction bindings or the parameter's default.
+
+    Parameters
+    ----------
+    info : FunctionSignatureInfo
+        The wrapped function's signature and resolved annotations.
+    args : tuple
+        The call's positional arguments.
+    call_inputs : dict of str to Any
+        The call's keyword arguments.
+    bind : Mapping of str to Any
+        The Function's construction bindings.
+    function_name : str
+        The function's label, which the messages name.
+
+    Returns
+    -------
+    dict of str to Any
+        The inputs by parameter name, where a variadic parameter's name holds
+        the arguments it collects.
+
+    Raises
+    ------
+    TypeError
+        If an argument does not bind to the signature, a required input stays
+        unbound, or a construction binding names no parameter and there is no
+        variadic keyword parameter.
+    """
+    bound = info.signature.bind_partial(*args, **call_inputs)
+    return resolve_function_values(
         info,
-        args,
-        call_inputs,
-        default_n_broadcast_samples=default_n_broadcast_samples,
-        default_include_inputs=default_include_inputs,
-        options=options,
-    )
-    values = resolve_function_values(
-        info,
-        bound_inputs,
+        dict(bound.arguments),
         bind=bind,
-        module=module,
-        dependency_type=dependency_type,
         function_name=function_name,
     )
-    return ResolvedFunctionCall(values=values, overrides=overrides)
 
 
 def _consumes_kernel(expected: Any) -> bool:
-    """Whether an annotation declares that its parameter consumes a kernel itself."""
-    if get_origin(expected) in (Union, UnionType):
-        return any(_consumes_kernel(arm) for arm in get_args(expected))
-    try:
-        if isinstance(expected, type) and issubclass(expected, ConditionalDistribution):
+    """Whether an annotation declares that its parameter consumes a kernel itself.
+
+    An arm of the annotation declares it when the arm names a
+    ``ConditionalDistribution`` class or a conditional capability, after
+    :func:`_normalization._arms` resolves the arm's type aliases.
+    """
+    for arm in _normalization._arms(expected):
+        if arm in _KERNEL_HINT_PROTOCOLS:
             return True
-    except TypeError:
-        pass
-    return expected in _KERNEL_HINT_PROTOCOLS
+        named = _normalization._hint_class(arm)
+        try:
+            if isinstance(named, type) and issubclass(named, ConditionalDistribution):
+                return True
+        except TypeError:
+            continue
+    return False
 
 
 def _expects_value(expected: Any) -> bool:
@@ -381,11 +344,71 @@ def _expects_value(expected: Any) -> bool:
     A parameter expects a value when it is unannotated or annotated with a
     value type. An annotation that names a distribution, a kernel, or one of
     their capabilities declares that the parameter consumes that object, and
-    ``Any`` admits every kind.
+    ``Any`` admits every kind. :func:`_binding.resolved_hint` resolves the
+    annotation before it is compared with ``Any``.
     """
-    if expected is Any:
+    if _binding.resolved_hint(expected) is Any:
         return False
     return not (_normalization.is_distribution_hint(expected) or _consumes_kernel(expected))
+
+
+def presented_arguments(
+    info: FunctionSignatureInfo, values: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    """The arguments a body receives, in raw form where an annotation names the raw form's class.
+
+    A tracked argument is presented as its raw form when its parameter's
+    annotation names a class that the raw form is an instance of and the
+    argument is not. A body annotated ``pd.Series`` therefore receives the
+    ``Series`` that a record field holds, and one annotated ``jax.Array`` the
+    array that a ``NumericArray`` holds. A union annotation names the classes of
+    its arms, and a parametrized annotation names the class it parametrizes. A
+    type alias resolves to the class of its value, and an alias of a union to
+    the classes of the union's arms. ``npt.NDArray[np.float64]`` therefore names
+    ``np.ndarray`` whether NumPy defines ``NDArray`` as a generic alias or as a
+    type alias. Every other argument is presented as it is, as at an
+    unannotated parameter or at one annotated ``Any`` or with the argument's
+    kind.
+
+    Parameters
+    ----------
+    info : FunctionSignatureInfo
+        The wrapped function's signature and resolved annotations.
+    values : Mapping of str to Any
+        One point's arguments, shaped by the signature.
+
+    Returns
+    -------
+    Mapping of str to Any
+        The arguments, shaped by the signature, as the body receives them.
+    """
+    presented: dict[_binding.FunctionInputRef, Any] = {}
+    for ref in _binding.iter_input_refs(info, values):
+        value = _binding.input_ref_value(values, ref)
+        form = _raw_form_named(value, _binding.input_ref_hint(info, ref))
+        if form is not value:
+            presented[ref] = form
+    return _binding.replace_input_refs(values, presented) if presented else values
+
+
+def _raw_form_named(value: Any, hint: Any) -> Any:
+    """*value*'s raw form if *hint* names a class of that form and not of *value*, else *value*."""
+    if not isinstance(value, TrackedTerm) or _binding.resolved_hint(hint) is Any:
+        return value
+    classes = tuple(
+        named
+        for named in map(_normalization._hint_class, _normalization._arms(hint))
+        if isinstance(named, type)
+    )
+    try:
+        if not classes or isinstance(value, classes):
+            return value
+    except TypeError:
+        # A class that refuses an instance check, as a protocol that is not
+        # runtime checkable does, names no raw form.
+        return value
+    raw = value.raw
+    return raw if isinstance(raw, classes) else value
 
 
 def arrived_kind(value: Any) -> type[TermSpec]:
@@ -464,15 +487,22 @@ def _role_refusal(
     function_name: str | None, label: str, role: tuple[type[TermSpec], ...], value: Any
 ) -> ApplicabilityError:
     """The refusal of *value* at the parameter *label* names, whose role names *role*."""
-    owner = f"{function_name}: " if function_name else ""
     kinds = ", ".join(kind.__name__ for kind in role)
-    detail = f", whose kind is {arrived_kind(value).__name__}"
+    detail = arrived_kind(value).__name__
     if isinstance(value, Batch) and len(value.batch_shape) > 0:
         detail += f" with {type(value.element_spec).__name__} elements"
     elif isinstance(value, Distribution) and value.event_spec.spec is not None:
         detail += f" with {type(value.event_spec.spec).__name__} draws"
+    return _kind_refusal(function_name, label, kinds, value, detail)
+
+
+def _kind_refusal(
+    function_name: str | None, label: str, accepts: str, value: Any, kind: str
+) -> ApplicabilityError:
+    """The refusal of *value*, of kind *kind*, at a parameter that accepts *accepts*."""
+    owner = f"{function_name}: " if function_name else ""
     return ApplicabilityError(
-        f"{owner}{label!r} accepts {kinds}, but received a {type(value).__name__}{detail}"
+        f"{owner}parameter {label!r} accepts {accepts}, but got {type_name(value)} (kind {kind})"
     )
 
 
@@ -493,6 +523,21 @@ def _admit_by_role(
     the call lifts and the parameter is not annotated ``Any``, the kind of its
     elements or its draws.
 
+    Parameters
+    ----------
+    info : FunctionSignatureInfo
+        The wrapped function's signature and resolved annotations.
+    ref : FunctionInputRef
+        The reference to the argument, which names its parameter.
+    value : Any
+        The argument bound at *ref*.
+    role : tuple of TermSpec subclasses
+        The kinds the parameter's role names.
+    function_name : str or None
+        The function's label, for the message.
+    lifts : bool
+        Whether the call may lift the argument.
+
     Raises
     ------
     ApplicabilityError
@@ -505,7 +550,7 @@ def _admit_by_role(
     if role_admits(role, arrived_kind(value)):
         return
     hint = _binding.parameter_lifting_hint(info, ref.parameter_name)
-    if lifts and hint is not Any and role_lift(value, role) is not None:
+    if lifts and _binding.resolved_hint(hint) is not Any and role_lift(value, role) is not None:
         return
     raise _role_refusal(function_name, ref.label, role, value)
 
@@ -540,7 +585,7 @@ def admit_arguments(
     input_spec : InputSpec or None
         The declared slots, whose kinds the arguments are admitted against.
     function_name : str or None
-        The function's name, for the message.
+        The function's label, for the message.
     roles : Mapping of str to tuple of TermSpec subclasses, or None
         The kinds each parameter with a role accepts.
     lifts : bool
@@ -560,13 +605,7 @@ def admit_arguments(
             value = values[name]
             kind = _admitted_kind(value, type(spec))
             if not _accepts(type(spec), kind):
-                owner = f"{function_name}: " if function_name else ""
-                arrived = type(value).__name__
-                article = "an" if arrived[0] in "AEIOU" else "a"
-                raise ApplicabilityError(
-                    f"{owner}parameter {name!r} accepts {type(spec).__name__}, and got "
-                    f"{article} {arrived}, whose kind is {kind.__name__}"
-                )
+                raise _kind_refusal(function_name, name, type(spec).__name__, value, kind.__name__)
     for ref in _binding.iter_input_refs(info, values):
         value = _binding.input_ref_value(values, ref)
         role = (roles or {}).get(ref.parameter_name)
@@ -576,10 +615,10 @@ def admit_arguments(
         if isinstance(value, ConditionalDistribution) and _expects_value(
             info.hints.get(ref.parameter_name)
         ):
+            owner = f"{function_name}: " if function_name else ""
             raise ApplicabilityError(
-                f"parameter {ref.label!r} expects a value, and a value parameter accepts no "
-                f"ConditionalDistribution: got {type(value).__name__} {value.label!r}, which is "
-                f"a kernel with no marginal law to lift over. Condition it on a given value "
-                f"first, or annotate the parameter ConditionalDistribution to consume the "
-                f"kernel itself"
+                f"{owner}parameter {ref.label!r} expects a value, but got {type_name(value)} "
+                f"{value.label!r}, which has no marginal to broadcast over. Condition "
+                f"{value.label!r} on a value first, or annotate {ref.parameter_name!r} as "
+                f"ConditionalDistribution to receive it as is"
             )

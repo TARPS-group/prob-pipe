@@ -28,7 +28,7 @@ from ..distributions._batches import DistributionBatch
 from ..distributions._conversion import converter_registry
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution, _batch_form
-from ..functions import function
+from ..functions import _broker, function
 from ..values import Function
 from .provenance import Provenance
 
@@ -37,6 +37,11 @@ __all__ = [
     "with_conversion",
     "with_resampling",
 ]
+
+#: The sampling ABI of the PRNG key that draws one resampling's indices.
+_RESAMPLE_SAMPLING_ABI = "probpipe.resample/v1"
+#: The provider ABI of the multinomial draw of a resampling's indices by ``weighted_choice``.
+_MULTINOMIAL_RESAMPLING_PROVIDER_ABI = "probpipe.resample.multinomial/v1"
 
 
 # ---------------------------------------------------------------------------
@@ -100,8 +105,8 @@ def iterate[S](
         result = step_fn(current, inp)
         if not isinstance(result, Distribution):
             raise TypeError(
-                f"Step function at index {i} returned "
-                f"{type(result).__name__}, expected Distribution."
+                f"step function must return a Distribution, got {type(result).__name__} "
+                f"for the input at index {i}"
             )
 
         # Auto-attach provenance if not already set
@@ -124,7 +129,11 @@ def iterate[S](
             if cont is False:
                 break
 
-    return DistributionBatch(_ITERATE_LEVEL, laws, _ITERATE_LEVEL)
+    return DistributionBatch(
+        laws,
+        _ITERATE_LEVEL,
+        label=_ITERATE_LEVEL,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +142,7 @@ def iterate[S](
 
 
 def _step_fn_name(step_fn: Callable) -> str:
-    """Extract a human-readable name from a step function."""
+    """A step function's label, or a plain callable's Python name."""
     if isinstance(step_fn, Function):
         return step_fn._label
     return getattr(step_fn, "__name__", type(step_fn).__name__)
@@ -182,7 +191,7 @@ def with_conversion(
         return converter_registry.convert(result, target_type, **convert_kwargs)
 
     return Function(
-        fn=_with_conversion_impl,
+        _with_conversion_impl,
         label=f"with_conversion({inner_name}, {target_type.__name__})",
     )
 
@@ -191,7 +200,6 @@ def with_resampling(
     step_fn: Callable,
     *,
     ess_threshold: float = 0.5,
-    seed: int = 0,
 ) -> Function:
     """Wrap a step function to resample when particle weights degenerate.
 
@@ -199,6 +207,12 @@ def with_resampling(
     :class:`~probpipe.EmpiricalDistribution` with
     ``ESS / N < ess_threshold``, performs multinomial resampling to
     produce equally-weighted particles.
+
+    Each resampling is a workflow-owned random event, whose PRNG key derives
+    from the seed of the enclosing ``workflow_run`` scope and from the call's
+    position in the workflow. A run inside ``workflow_run(seed=...)``
+    therefore reproduces its resampled particles, and a run under another
+    seed or outside any scope resamples afresh.
 
     When resampling occurs, the raw result from
     ``wrapper.apply(...)`` carries ``"resample"`` provenance whose
@@ -216,9 +230,6 @@ def with_resampling(
         The underlying step function.
     ess_threshold : float
         Resample when ``ESS / N`` drops below this value (default 0.5).
-    seed : int
-        Base random seed; combined with a call counter for
-        deterministic reproducibility.
 
     Returns
     -------
@@ -232,14 +243,9 @@ def with_resampling(
     decouple this combinator from the concrete
     :class:`~probpipe.EmpiricalDistribution` type.
     """
-    import jax
-
     inner_name = _step_fn_name(step_fn)
-    call_count = 0
 
     def _with_resampling_impl(dist: Distribution, inp: Any) -> Distribution:
-        nonlocal call_count
-
         out_dist = step_fn(dist, inp)
 
         if isinstance(out_dist, EmpiricalDistribution):
@@ -248,8 +254,16 @@ def with_resampling(
             ess_ratio = ess / n
 
             if ess_ratio < ess_threshold:
-                key = jax.random.PRNGKey(seed + call_count)
-                call_count += 1
+                key = _broker._resolve_automatic_key(
+                    None,
+                    _broker._singleton_effect_plan(
+                        operation_kind="resample",
+                        execution_mode="sampled",
+                        sample_shape=(n,),
+                        sampling_abi=_RESAMPLE_SAMPLING_ABI,
+                        provider_abi=_MULTINOMIAL_RESAMPLING_PROVIDER_ABI,
+                    ),
+                )
                 indices = weighted_choice(key, n, weights=out_dist.weights, shape=(n,))
                 # The drawn atoms, equally weighted, on the one level resampling mints.
                 atoms = _batch_form(
@@ -259,7 +273,7 @@ def with_resampling(
                     out_dist.event_spec.spec,
                 )
                 resampled = EmpiricalDistribution(
-                    out_dist.label, atoms, event_spec=out_dist.event_spec
+                    atoms, label=out_dist.label, event_spec=out_dist.event_spec
                 )
                 resampled.with_provenance(
                     Provenance.create(
@@ -273,6 +287,6 @@ def with_resampling(
         return out_dist
 
     return Function(
-        fn=_with_resampling_impl,
+        _with_resampling_impl,
         label=f"with_resampling({inner_name})",
     )

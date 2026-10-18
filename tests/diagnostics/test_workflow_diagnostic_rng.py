@@ -25,9 +25,9 @@ def _maximum(values):
 def _kernel(posterior):
     """``y ~ Normal(alpha, 1)``, iid over four observations, given the posterior's slots."""
     return conditional_distribution(
-        "y_given_alpha",
         lambda alpha, beta: Normal("y", alpha * jnp.ones(4), 1.0),
         given_spec=posterior.event_spec.components,
+        label="y_given_alpha",
     )
 
 
@@ -140,45 +140,17 @@ class TestPpcDiagnosticBroker:
         assert run(3) == (1, 1)
         assert run(30) == (1, 1)
 
-    def test_explicit_key_is_reused_unchanged_without_ledger(self, posterior):
-        explicit = jax.random.key(23)
-        received = []
-
-        def fake_replicated_statistics(*args):
-            received.append(args[-1])
-            return _statistics_by_name(*args)
-
-        with (
-            patch(
-                "probpipe.diagnostics._ppc_spc._replicated_statistics",
-                side_effect=fake_replicated_statistics,
-            ),
-            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
-        ):
-            _ppc_op(
-                posterior,
-                [_mean, _maximum],
-                observed_data=np.zeros(4),
-                kernel=_kernel(posterior),
-                n_replications=3,
-                key=explicit,
-            )
-
-        assert len(received) == 1
-        assert received[0] is explicit
-        commit.assert_not_called()
-
     def test_a_missing_given_slot_fails_before_sampling_or_event(self, posterior):
         kernel = conditional_distribution(
-            "y_given_gamma",
             lambda gamma: Normal("y", gamma * jnp.ones(4), 1.0),
             given_spec={"gamma": posterior.event_spec.components["alpha"]},
+            label="y_given_gamma",
         )
         with (
             patch("probpipe.diagnostics._ppc_spc._replicated_statistics") as sample,
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=17),
-            pytest.raises(ValueError, match=r"given slots \['gamma'\]"),
+            pytest.raises(ValueError, match=r"does not produce \['gamma'\]"),
         ):
             _ppc_op(
                 posterior,

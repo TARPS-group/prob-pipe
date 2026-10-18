@@ -40,6 +40,13 @@ from probpipe.core._array_backend import (
     register_array_backend,
 )
 from probpipe.core._batch import Batch, BatchSpec
+from probpipe.core._catalog import (
+    EntrySummary,
+    RegistryCatalog,
+    RegistryInfo,
+    SupportsRegistryCataloging,
+    registry_catalog,
+)
 from probpipe.core._dispatch import MathematicalDomainError, ResolutionError
 from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric import Numeric
@@ -59,7 +66,13 @@ from probpipe.core._specs import (
     RecordSpec,
     TermSpec,
 )
-from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config, provenance_config
+from probpipe.core.config import (
+    ProvenanceMode,
+    WorkflowKind,
+    notation_config,
+    prefect_config,
+    provenance_config,
+)
 from probpipe.core.constraints import (
     Constraint,
     boolean,
@@ -87,6 +100,7 @@ from probpipe.core.transition import (
     with_conversion,
     with_resampling,
 )
+from probpipe.diagnostics import summarize
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import (
     SupportsApproximateConditioning,
@@ -110,6 +124,7 @@ from probpipe.distributions._distribution import (
     NumericDistribution,
 )
 from probpipe.distributions._empirical import EmpiricalDistribution
+from probpipe.distributions._from_functions import distribution
 from probpipe.families import (
     Bernoulli,
     Beta,
@@ -139,7 +154,6 @@ from probpipe.families import (
     TFPDistribution,
     TruncatedNormal,
     Uniform,
-    UnnormalizedDistribution,
     VonMisesFisher,
     Wishart,
 )
@@ -149,13 +163,9 @@ from probpipe.families._resampling import (
     KDEDistribution,
 )
 from probpipe.functions import (
-    AbstractModule,
-    Module,
-    abstract_workflow_method,
     bijector_for,
     function,
     register_bijector,
-    workflow_method,
 )
 from probpipe.functions._call import ApplicabilityError, CallReport
 from probpipe.functions._context import workflow_run
@@ -183,7 +193,6 @@ from probpipe.operations import (
     condition_on,
     convert,
     cov,
-    evaluate,
     expectation,
     factor,
     inverse,
@@ -195,10 +204,12 @@ from probpipe.operations import (
     mixture,
     operation_registry,
     prob,
+    pushforward,
     quantile,
     random_log_prob,
     random_unnormalized_log_prob,
     sample,
+    standard_deviation,
     unnormalized_log_prob,
     unnormalized_prob,
     variance,
@@ -217,7 +228,6 @@ from probpipe.values import (
 )
 
 __all__ = [
-    "AbstractModule",
     "Annotated",
     "ApplicabilityError",
     "ArrayBackend",
@@ -243,6 +253,7 @@ __all__ = [
     "DistributionBatch",
     "DistributionSpec",
     "EmpiricalDistribution",
+    "EntrySummary",
     "Exponential",
     "FullFactorialDesign",
     "Function",
@@ -260,7 +271,6 @@ __all__ = [
     "LogNormal",
     "MathematicalDomainError",
     "MinibatchedDistribution",
-    "Module",
     "Multinomial",
     "MultivariateNormal",
     "NamedTree",
@@ -290,6 +300,8 @@ __all__ = [
     "Record",
     "RecordBatch",
     "RecordSpec",
+    "RegistryCatalog",
+    "RegistryInfo",
     "ReplayCompatibilityError",
     "ReplayUnsupportedCallableError",
     "ResolutionError",
@@ -310,6 +322,7 @@ __all__ = [
     "SupportsQuantile",
     "SupportsRandomLogProb",
     "SupportsRandomUnnormalizedLogProb",
+    "SupportsRegistryCataloging",
     "SupportsSampling",
     "SupportsUnnormalizedLogProb",
     "SupportsVariance",
@@ -319,12 +332,10 @@ __all__ = [
     "TruncatedNormal",
     "Uniform",
     "UnmanagedConcurrentWorkflowEntryError",
-    "UnnormalizedDistribution",
     "VonMisesFisher",
     "Weights",
     "Wishart",
     "WorkflowKind",
-    "abstract_workflow_method",
     "array_backend_for",
     "bijector_for",
     "boolean",
@@ -334,8 +345,8 @@ __all__ = [
     "convert",
     "converter_registry",
     "cov",
+    "distribution",
     "elliptical_slice",
-    "evaluate",
     "evaluation_rule_registry",
     "expectation",
     "factor",
@@ -359,6 +370,7 @@ __all__ = [
     "mixture",
     "non_negative",
     "non_negative_integer",
+    "notation_config",
     "operation_registry",
     "positive",
     "positive_definite",
@@ -368,25 +380,28 @@ __all__ = [
     "provenance_ancestors",
     "provenance_config",
     "provenance_dag",
+    "pushforward",
     "quantile",
     "random_log_prob",
     "random_unnormalized_log_prob",
     "real",
     "register_array_backend",
     "register_bijector",
+    "registry_catalog",
     "replay_run",
     "rwmh",
     "sample",
     "set_default_n_broadcast_samples",
     "simplex",
     "sphere",
+    "standard_deviation",
+    "summarize",
     "unit_interval",
     "unnormalized_log_prob",
     "unnormalized_prob",
     "variance",
     "with_conversion",
     "with_resampling",
-    "workflow_method",
     "workflow_run",
 ]
 

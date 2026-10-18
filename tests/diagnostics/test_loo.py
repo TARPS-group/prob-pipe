@@ -9,7 +9,13 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from probpipe import MultivariateNormal, NumericArraySpec, OutputSpec
+from probpipe import (
+    MultivariateNormal,
+    NumericArray,
+    NumericArrayBatch,
+    NumericArraySpec,
+    OutputSpec,
+)
 from probpipe.diagnostics._datatree_store import _add_group
 from probpipe.diagnostics._loo import (
     _add_log_likelihood,
@@ -103,6 +109,12 @@ class TestAsNumpy:
     def test_none_returns_none(self):
         assert _as_numpy(None) is None
 
+    def test_a_numeric_array_and_an_array_batch_convert_through_raw(self):
+        stored = jnp.arange(3.0)
+        batch = NumericArrayBatch(stored, "draw", element_spec=NumericArraySpec(()), label="x")
+        np.testing.assert_array_equal(_as_numpy(NumericArray(stored, label="x")), [0.0, 1.0, 2.0])
+        np.testing.assert_array_equal(_as_numpy(batch), [0.0, 1.0, 2.0])
+
     def test_values_attribute(self):
         class _HasValues:
             values = np.array([7.0])
@@ -190,7 +202,7 @@ class TestLogLikelihoodToDataset:
         assert da.shape == (1, 1, 1)
 
     def test_1d_raises_clear_error(self):
-        with pytest.raises(ValueError, match="1-D log_likelihood"):
+        with pytest.raises(ValueError, match="got a 1-D array"):
             _log_likelihood_to_dataset(np.ones(10))
 
     def test_1d_dataarray_raises_clear_error(self):
@@ -444,7 +456,9 @@ class TestAddLoo:
         post = _FakePosterior(with_arviz_log_likelihood=False)
         _add_group(post, "arviz/posterior", xr.Dataset(attrs={"present": True}))
 
-        with pytest.raises(ValueError, match="No pointwise log_likelihood group"):
+        with pytest.raises(
+            ValueError, match=r"add_loo needs pointwise log likelihoods.*Pass model= and data="
+        ):
             add_loo(post)
 
     @patch("probpipe.diagnostics._loo.az.loo")
@@ -513,6 +527,25 @@ class TestAddLoo:
         loo_ds = post._annotations["diagnostics"]["runs"]["loo"].to_dataset()
         assert int(loo_ds["n_samples"]) == expected.n_samples
         assert int(loo_ds["n_data_points"]) == expected.n_data_points
+
+    def test_records_the_pointwise_contributions_to_elpd_loo(self):
+        rng = np.random.default_rng(123)
+        post = _FakePosterior(with_arviz_log_likelihood=False)
+        posterior_ds = xr.Dataset(
+            {"theta": xr.DataArray(rng.normal(size=(2, 80)), dims=["chain", "draw"])}
+        )
+        _add_group(post, "arviz/posterior", posterior_ds)
+
+        add_loo(post, log_likelihood=rng.normal(loc=-1.0, scale=0.1, size=(2, 80, 6)))
+
+        loo_ds = post._annotations["diagnostics"]["runs"]["loo"].to_dataset()
+        assert loo_ds["loo_i"].dims == ("obs",)
+        assert loo_ds["loo_i"].shape == (6,)
+        # The LOO estimate of the expected log predictive density is the sum of
+        # its pointwise contributions. Measured gap over five seeds: 0.
+        np.testing.assert_allclose(
+            float(loo_ds["loo_i"].sum()), float(loo_ds["elpd_loo"]), rtol=1e-12
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -635,9 +668,7 @@ def _gaussian_regression(n_obs: int = 20, n_features: int = 1):
     rng = np.random.default_rng(0)
     x = rng.standard_normal((n_obs, n_features))
     design = jnp.asarray(np.concatenate([np.ones((n_obs, 1)), x], axis=1), dtype=jnp.float32)
-    prior = MultivariateNormal(
-        loc=jnp.zeros(n_features + 1), cov=jnp.eye(n_features + 1), label="beta"
-    )
+    prior = MultivariateNormal("beta", loc=jnp.zeros(n_features + 1), cov=jnp.eye(n_features + 1))
     return glm_likelihood("y", GaussianFamily(), X=design, dispersion=1.0) * prior, design
 
 
@@ -696,8 +727,10 @@ class TestAddLogLikelihood:
 
     def test_a_joint_whose_likelihood_scores_no_observation_raises(self):
         post, _, data = self._setup()
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="beta")
-        with pytest.raises(TypeError, match="scores each observation"):
+        prior = MultivariateNormal("beta", loc=jnp.zeros(2), cov=jnp.eye(2))
+        with pytest.raises(
+            TypeError, match="cannot compute pointwise log likelihoods: the model must be"
+        ):
             _add_log_likelihood(post, prior, data)
 
     def test_fallback_loop_produces_same_shape(self):

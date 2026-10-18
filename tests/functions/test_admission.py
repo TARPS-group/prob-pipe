@@ -40,6 +40,10 @@ from probpipe.distributions._capabilities import SupportsExactConditioning
 
 from ._design_helpers import error_of, standard_normal
 
+type _NormalAlias = Normal
+type _KernelAlias = ConditionalDistribution
+type _AnyAlias = Any
+
 SCALAR = NumericArraySpec(())
 
 
@@ -55,11 +59,18 @@ class _Kernel(ConditionalDistribution):
     """A kernel from a scalar ``mu`` to a law over a scalar ``y``."""
 
     def _condition_on(self, given, /, **kwargs):
-        return _Law(self.name, self.event_spec)
+        return _Law(
+            self.event_spec,
+            label=self.name,
+        )
 
 
 def _kernel() -> _Kernel:
-    return _Kernel("lik", {"mu": SCALAR}, OutputSpec(y=SCALAR))
+    return _Kernel(
+        {"mu": SCALAR},
+        OutputSpec(y=SCALAR),
+        label="lik",
+    )
 
 
 class TestBinding:
@@ -68,23 +79,26 @@ class TestBinding:
         def affine(x, scale=2.0, *, shift=0.0):
             return scale * x + shift
 
-        assert float(affine(1.0).value) == 2.0
-        assert float(affine(1.0, 3.0, shift=1.0).value) == 4.0
+        assert float(affine(1.0).raw) == 2.0
+        assert float(affine(1.0, 3.0, shift=1.0).raw) == 4.0
 
     def test_an_absent_input_spec_adds_no_schema_constraints(self):
         @function
         def kind(x):
             return type(x).__name__
 
-        assert kind(jnp.ones(3)).value == "ArrayImpl"
-        assert kind("text").value == "str"
+        assert kind(jnp.ones(3)).raw == "ArrayImpl"
+        assert kind("text").raw == "str"
 
     def test_tracked_arguments_are_dependencies_and_others_inputs_by_parameter(self):
         @function
         def add(x, y):
             return x + y
 
-        tracked = NumericArray("a", jnp.ones(2))
+        tracked = NumericArray(
+            jnp.ones(2),
+            label="a",
+        )
         result = add(tracked, 3.0)
 
         assert [parent.label for parent in result.provenance.parents] == ["add", "a"]
@@ -116,7 +130,11 @@ class TestWrap:
         assert seen[0] is array
 
     def test_a_raw_collection_wraps_as_opaque_and_fails_a_numeric_slot(self):
-        wrapped = Function("f", lambda x: x, input_spec={"x": NumericArraySpec((2,))})
+        wrapped = Function(
+            lambda x: x,
+            input_spec={"x": NumericArraySpec((2,))},
+            label="f",
+        )
 
         error = error_of(lambda: wrapped([1.0, 2.0, 3.0]))
 
@@ -126,7 +144,11 @@ class TestWrap:
 
 class TestConversionPlanning:
     def test_a_backend_distribution_at_a_value_parameter_is_converted_and_lifted(self):
-        @function(n_broadcast_samples=6, dispatch="sequential")
+        @function(
+            n_broadcast_samples=6,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         def identity(x):
             return x
 
@@ -145,7 +167,10 @@ class TestConversionPlanning:
             return 0.0
 
         consume.__annotations__ = {"d": annotation}
-        Function("consume", consume)(Laplace("g", 2.0, 1.0))
+        Function(
+            consume,
+            label="consume",
+        )(Laplace("g", 2.0, 1.0))
 
         assert isinstance(seen[0], Normal)
 
@@ -160,7 +185,10 @@ class TestConversionPlanning:
             return 0.0
 
         consume.__annotations__ = {"d": annotation}
-        Function("consume", consume)(tfd.Normal(0.0, 1.0))
+        Function(
+            consume,
+            label="consume",
+        )(tfd.Normal(0.0, 1.0))
 
         assert isinstance(seen[0], Distribution)
 
@@ -168,7 +196,22 @@ class TestConversionPlanning:
         def consume(d: Normal | Gamma):
             return 0.0
 
-        error = error_of(lambda: Function("consume", consume)(Beta("b", 2.0, 2.0)))
+        error = error_of(
+            lambda: Function(
+                consume,
+                label="consume",
+            )(Beta("b", 2.0, 2.0))
+        )
+
+        assert isinstance(error, ApplicabilityError)
+        assert "'d'" in str(error) and "Normal" in str(error) and "Beta" in str(error)
+
+    def test_a_union_with_an_aliased_distribution_class_refuses_to_choose_a_conversion(self):
+        def consume(d):
+            return 0.0
+
+        consume.__annotations__ = {"d": _NormalAlias | Gamma}
+        error = error_of(lambda: Function(consume, label="consume")(Beta("b", 2.0, 2.0)))
 
         assert isinstance(error, ApplicabilityError)
         assert "'d'" in str(error) and "Normal" in str(error) and "Beta" in str(error)
@@ -181,7 +224,10 @@ class TestConversionPlanning:
             return 0.0
 
         law = Gamma("g", 2.0, 1.0)
-        Function("consume", consume)(law)
+        Function(
+            consume,
+            label="consume",
+        )(law)
 
         assert seen == [law]
 
@@ -238,42 +284,58 @@ class TestAdmission:
         body.__annotations__ = {"x": annotation}
 
         with pytest.raises(ApplicabilityError):
-            Function("body", body)(_kernel())
+            Function(
+                body,
+                label="body",
+            )(_kernel())
 
-    def test_a_kernel_at_a_parameter_that_consumes_kernels_passes(self):
+    @pytest.mark.parametrize(
+        "annotation", [ConditionalDistribution, _KernelAlias], ids=["class", "alias"]
+    )
+    def test_a_kernel_at_a_parameter_that_consumes_kernels_passes(self, annotation):
         seen = []
 
-        @function
-        def consume(kernel: ConditionalDistribution):
+        def consume(kernel):
             seen.append(kernel)
             return 0.0
 
+        consume.__annotations__ = {"kernel": annotation}
         kernel = _kernel()
-        consume(kernel)
+        Function(consume, label="consume")(kernel)
 
         assert seen == [kernel]
 
+    @pytest.mark.parametrize("annotation", [Any, _AnyAlias], ids=["Any", "alias"])
     @pytest.mark.parametrize("slot", ["parameter", "variadic positional", "variadic keyword"])
-    def test_a_kernel_at_a_slot_annotated_any_passes(self, slot):
+    def test_a_kernel_at_a_slot_annotated_any_passes(self, slot, annotation):
         seen = []
 
-        def at_parameter(proposal: Any):
+        def at_parameter(proposal):
             seen.append(proposal)
             return 0.0
 
-        def at_args(*proposals: Any):
+        def at_args(*proposals):
             seen.extend(proposals)
             return 0.0
 
-        def at_options(**options: Any):
+        def at_options(**options):
             seen.extend(options.values())
             return 0.0
 
+        at_parameter.__annotations__ = {"proposal": annotation}
+        at_args.__annotations__ = {"proposals": annotation}
+        at_options.__annotations__ = {"options": annotation}
         kernel = _kernel()
         if slot == "variadic keyword":
-            Function("body", at_options)(proposal=kernel)
+            Function(
+                at_options,
+                label="body",
+            )(proposal=kernel)
         else:
-            Function("body", at_parameter if slot == "parameter" else at_args)(kernel)
+            Function(
+                at_parameter if slot == "parameter" else at_args,
+                label="body",
+            )(kernel)
 
         assert len(seen) == 1 and seen[0] is kernel
 
@@ -282,15 +344,19 @@ class TestAdmission:
             return 0.0
 
         with pytest.raises(ApplicabilityError, match=r"proposal"):
-            Function("body", at_options)(proposal=_kernel())
+            Function(
+                at_options,
+                label="body",
+            )(proposal=_kernel())
 
     def test_a_distribution_over_the_accepted_kind_is_admitted_for_lifting(self):
         wrapped = Function(
-            "double",
             lambda x: 2.0 * x,
             input_spec={"x": SCALAR},
             n_broadcast_samples=6,
             dispatch="sequential",
+            label="double",
+            output_spec=OutputSpec(double=None),
         )
 
         with workflow_run(seed=0):
@@ -299,7 +365,11 @@ class TestAdmission:
         assert isinstance(result, Distribution)
 
     def test_a_declared_kind_mismatch_names_the_parameter_what_it_accepts_and_what_arrived(self):
-        wrapped = Function("f", lambda x: x, input_spec=InputSpec({"x": NumericArraySpec((2,))}))
+        wrapped = Function(
+            lambda x: x,
+            input_spec=InputSpec({"x": NumericArraySpec((2,))}),
+            label="f",
+        )
 
         error = error_of(lambda: wrapped("text"))
 
@@ -312,6 +382,10 @@ class TestAdmission:
                 return 0.0
 
         law_spec = DistributionSpec(OutputSpec(v=SCALAR))
-        wrapped = Function("f", lambda d: 0.0, input_spec={"d": law_spec})
+        wrapped = Function(
+            lambda d: 0.0,
+            input_spec={"d": law_spec},
+            label="f",
+        )
 
         assert isinstance(error_of(lambda: wrapped(Sampler())), ApplicabilityError)

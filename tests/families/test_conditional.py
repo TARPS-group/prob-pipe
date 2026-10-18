@@ -77,8 +77,10 @@ class _UnitScaleGaussian(GLMFamily):
     canonical_link = GaussianFamily.canonical_link
     has_dispersion = False
 
-    def build(self, name, mean, dispersion=None, *, event_spec=None):
-        return MultivariateNormal(name, mean, cov=jnp.eye(mean.shape[0]), event_spec=event_spec)
+    def build(self, component, mean, dispersion=None, *, label=None, event_spec=None):
+        return MultivariateNormal(
+            component, mean, cov=jnp.eye(mean.shape[0]), label=label, event_spec=event_spec
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -112,13 +114,19 @@ class TestTheResponseFamilies:
 
     def test_a_family_whose_canonical_link_is_not_invertible_raises_at_construction(self):
         class Opaque(GLMFamily):
-            canonical_link = Function("square", lambda mean: mean**2)
+            canonical_link = Function(
+                lambda mean: mean**2,
+                label="square",
+            )
             has_dispersion = False
 
-            def build(self, name, mean, dispersion=None, *, event_spec=None):
+            def build(self, label, mean, dispersion=None, *, event_spec=None):
                 raise AssertionError("unreachable")
 
-        with pytest.raises(ResolutionError, match="not invertible"):
+        with pytest.raises(
+            ResolutionError,
+            match="Opaque needs an invertible link, but 'square' does not implement SupportsInverse",
+        ):
             Opaque()
 
     @pytest.mark.parametrize("family", _FAMILIES)
@@ -162,9 +170,9 @@ class TestTheResponseFamilies:
     @pytest.mark.parametrize(
         ("family", "scalar"),
         [
-            (GaussianFamily, lambda name, m: Normal(name, m, 0.5)),
-            (BernoulliFamily, lambda name, m: Bernoulli(name, probs=m)),
-            (PoissonFamily, lambda name, m: Poisson(name, m)),
+            (GaussianFamily, lambda label, m: Normal(label, m, 0.5)),
+            (BernoulliFamily, lambda label, m: Bernoulli(label, probs=m)),
+            (PoissonFamily, lambda label, m: Poisson(label, m)),
         ],
     )
     def test_the_observations_are_conditionally_independent(self, family, scalar):
@@ -177,7 +185,11 @@ class TestTheResponseFamilies:
     @pytest.mark.parametrize("family", _FAMILIES)
     def test_event_spec_names_the_component(self, family):
         law = family().build(
-            "y", jnp.array([0.2, 0.5]), _dispersion(family), event_spec=OutputSpec(counts=None)
+            "counts",
+            jnp.array([0.2, 0.5]),
+            _dispersion(family),
+            label="y",
+            event_spec=OutputSpec(counts=None),
         )
         assert law.label == "y"
         assert list(law.event_spec.components) == ["counts"]
@@ -238,7 +250,7 @@ class TestTheDeclarations:
         assert list(likelihood.given_spec) == ["beta"]
 
     def test_event_spec_names_the_response(self, X):
-        likelihood = glm_likelihood("y", PoissonFamily(), X=X, event_spec=OutputSpec(counts=None))
+        likelihood = glm_likelihood("counts", PoissonFamily(), X=X, label="y")
         assert list(likelihood.event_spec.components) == ["counts"]
 
     def test_both_sides_are_numeric(self, X):
@@ -263,14 +275,21 @@ class TestTheDeclarations:
 
     def test_a_declared_response_type_binds_the_observations_on_both_sides(self):
         likelihood = glm_likelihood(
-            "y", PoissonFamily(), event_spec=OutputSpec(counts=NumericArraySpec((5,)))
+            "counts",
+            PoissonFamily(),
+            event_spec=OutputSpec(counts=NumericArraySpec((5,))),
+            label="y",
         )
         assert likelihood.event_spec.spec.shape == (5,)
         assert likelihood.given_spec["X"].shape == (5, "features")
 
     def test_a_declared_response_type_that_agrees_with_X_is_kept(self, X, beta):
         likelihood = glm_likelihood(
-            "y", PoissonFamily(), X=X, event_spec=OutputSpec(counts=NumericArraySpec((4,)))
+            "counts",
+            PoissonFamily(),
+            X=X,
+            event_spec=OutputSpec(counts=NumericArraySpec((4,))),
+            label="y",
         )
         assert likelihood.event_spec.spec.shape == (4,)
         law = likelihood._condition_on({"beta": beta})
@@ -309,8 +328,15 @@ class TestTheConstructionErrors:
             glm_likelihood("y", PoissonFamily(), jnp.exp)
 
     def test_a_link_that_is_not_invertible_raises(self):
-        with pytest.raises(ResolutionError, match="not invertible"):
-            glm_likelihood("y", PoissonFamily(), Function("square", lambda mean: mean**2))
+        with pytest.raises(ResolutionError, match="glm_likelihood needs an invertible link"):
+            glm_likelihood(
+                "y",
+                PoissonFamily(),
+                Function(
+                    lambda mean: mean**2,
+                    label="square",
+                ),
+            )
 
     def test_a_dispersion_for_a_family_without_one_raises(self):
         with pytest.raises(TypeError, match="takes no dispersion"):
@@ -327,7 +353,11 @@ class TestTheConstructionErrors:
     def test_a_declared_response_type_that_disagrees_with_X_raises(self, X):
         with pytest.raises(ValueError, match="X"):
             glm_likelihood(
-                "y", PoissonFamily(), X=X, event_spec=OutputSpec(counts=NumericArraySpec((5,)))
+                "counts",
+                PoissonFamily(),
+                X=X,
+                event_spec=OutputSpec(counts=NumericArraySpec((5,))),
+                label="y",
             )
 
 
@@ -358,7 +388,7 @@ class TestTheLaw:
         )
 
     def test_the_law_carries_the_declared_response(self, X, beta):
-        likelihood = glm_likelihood("y", PoissonFamily(), X=X, event_spec=OutputSpec(counts=None))
+        likelihood = glm_likelihood("counts", PoissonFamily(), X=X, label="y")
         law = likelihood._condition_on({"beta": beta})
         assert list(law.event_spec.components) == ["counts"]
         assert law.event_spec.spec.shape == (4,)
@@ -380,28 +410,28 @@ class TestTheLaw:
         np.testing.assert_allclose(law._mean(), X @ beta, rtol=1e-6)
         np.testing.assert_allclose(law._variance(), jnp.full(4, 0.25), rtol=1e-6)
 
-    def test_binding_some_slots_curries(self, X, beta):
+    def test_binding_some_slots_returns_a_kernel_over_the_rest(self, X, beta):
         likelihood = glm_likelihood("y", GaussianFamily())
-        curried = likelihood._condition_on({"X": X})
-        assert isinstance(curried, ConditionalDistribution)
-        assert list(curried.given_spec) == ["beta", "dispersion"]
-        assert curried.given_spec["beta"].shape == (2,)
-        assert curried.event_spec.spec.shape == (4,)
-        law = curried._condition_on({"beta": beta, "dispersion": 0.5})
+        rest = likelihood._condition_on({"X": X})
+        assert isinstance(rest, ConditionalDistribution)
+        assert list(rest.given_spec) == ["beta", "dispersion"]
+        assert rest.given_spec["beta"].shape == (2,)
+        assert rest.event_spec.spec.shape == (4,)
+        law = rest._condition_on({"beta": beta, "dispersion": 0.5})
         np.testing.assert_allclose(law._mean(), X @ beta, rtol=1e-6)
 
     def test_binding_beta_first_binds_the_features(self, X, beta):
-        curried = glm_likelihood("y", BernoulliFamily())._condition_on({"beta": beta})
-        assert list(curried.given_spec) == ["X"]
-        assert curried.given_spec["X"].shape == ("obs", 2)
+        rest = glm_likelihood("y", BernoulliFamily())._condition_on({"beta": beta})
+        assert list(rest.given_spec) == ["X"]
+        assert rest.given_spec["X"].shape == ("obs", 2)
 
-    def test_currying_leaves_the_original_kernel_unchanged(self, X):
+    def test_binding_some_slots_leaves_the_original_kernel_unchanged(self, X):
         likelihood = glm_likelihood("y", BernoulliFamily())
         likelihood._condition_on({"X": X})
         assert list(likelihood.given_spec) == ["X", "beta"]
 
     def test_an_unknown_slot_raises(self, X, beta):
-        with pytest.raises(KeyError, match="not given slots"):
+        with pytest.raises(KeyError, match="unknown given slot 'gamma'; available given slots"):
             glm_likelihood("y", PoissonFamily(), X=X)._condition_on({"beta": beta, "gamma": 1.0})
 
     def test_a_value_of_the_wrong_shape_raises(self, X):
@@ -490,7 +520,9 @@ class TestTheConditionalCapabilities:
         )
 
     def test_a_capability_needs_every_given_slot(self, likelihood, beta):
-        with pytest.raises(KeyError, match="every given slot"):
+        with pytest.raises(
+            KeyError, match=r"'ℙ' is missing values for the given slots \['dispersion'\]"
+        ):
             likelihood._conditional_mean({"beta": beta})
 
 
@@ -524,7 +556,6 @@ class TestComposition:
 class TestTheOperations:
     """III.9's fused conditional paths and conditioning, through the operations."""
 
-    @pytest.mark.pending(reason="log_prob takes given= for a conditional operand", raises=TypeError)
     def test_log_prob_given(self, X, beta):
         likelihood = glm_likelihood("y", PoissonFamily(), X=X)
         y = jnp.array([0.0, 1.0, 1.0, 2.0])

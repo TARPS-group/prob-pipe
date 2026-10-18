@@ -20,7 +20,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import MultivariateNormal
+from probpipe import MultivariateNormal, workflow_run
 from probpipe.core._dispatch import ResolutionError
 from probpipe.families import LinearGaussianConditional
 from probpipe.linalg import DenseLinOp
@@ -178,10 +178,10 @@ class TestExactness:
         expected_mean, expected_cov = model.posterior_moments(y)
         assert isinstance(posterior, MultivariateNormal)
         np.testing.assert_allclose(
-            np.asarray(mean.with_options(raw=True)(posterior)), expected_mean, rtol=1e-5
+            np.asarray(mean.using(raw=True)(posterior)), expected_mean, rtol=1e-5
         )
         np.testing.assert_allclose(
-            np.asarray(variance.with_options(raw=True)(posterior)),
+            np.asarray(variance.using(raw=True)(posterior)),
             np.diag(expected_cov),
             rtol=1e-5,
         )
@@ -189,9 +189,9 @@ class TestExactness:
     def test_exact_only_returns_the_exact_conditional(self):
         model = _regression()
         y = _observation(model)
-        posterior = condition_on.with_options(exact_only=True)(model, {"y": y})
+        posterior = condition_on.using(exact_only=True)(model, {"y": y})
         np.testing.assert_allclose(
-            np.asarray(mean.with_options(raw=True)(posterior)),
+            np.asarray(mean.using(raw=True)(posterior)),
             model.posterior_moments(y)[0],
             rtol=1e-5,
         )
@@ -199,7 +199,7 @@ class TestExactness:
     def test_exact_only_refuses_an_approximate_method(self):
         model = _regression()
         with pytest.raises(ResolutionError):
-            condition_on.with_options(method="blackjax_nuts", exact_only=True)(
+            condition_on.using(method="blackjax_nuts", exact_only=True)(
                 model, {"y": _observation(model)}
             )
 
@@ -217,20 +217,21 @@ class TestExactness:
         given = {"y": _observation(model)}
         exact = condition_on(model, given)
         reference = exact_reference(
-            np.asarray(mean.with_options(raw=True)(exact), np.float64),
-            np.asarray(variance.with_options(raw=True)(exact), np.float64),
+            np.asarray(mean.using(raw=True)(exact), np.float64),
+            np.asarray(variance.using(raw=True)(exact), np.float64),
         )
         profile = PROFILES[method]
-        approximate = condition_on.with_options(
-            method=method, method_options=profile.method_options
-        )(model, given)
+        with workflow_run(seed=0):
+            approximate = condition_on.using(method=method, method_options=profile.method_options)(
+                model, given
+            )
         assert_matches(approximate, reference, label=f"{method} against the exact conditional")
 
     def test_exact_only_rejects_a_normalization_by_inference(self):
         """Under exact_only, a joint without an exact route raises, naming method="unnormalized"."""
         case = canonical.case("gaussian_linear")
         with pytest.raises(ResolutionError, match='method="unnormalized"'):
-            condition_on.with_options(exact_only=True)(case.model, case.data)
+            condition_on.using(exact_only=True)(case.model, case.data)
 
     @pytest.mark.pending(
         reason="LinearGaussianConditional and the Gaussian algebra's exact conditioning"
@@ -243,9 +244,9 @@ class TestExactness:
             "y", DenseLinOp(X), jnp.zeros(X.shape[0]), DenseLinOp(jnp.eye(X.shape[0]))
         )
         prior = MultivariateNormal("beta", jnp.zeros(X.shape[1]), cov=4.0 * jnp.eye(X.shape[1]))
-        posterior = condition_on.with_options(exact_only=True)(likelihood * prior, case.data)
+        posterior = condition_on.using(exact_only=True)(likelihood * prior, case.data)
         np.testing.assert_allclose(
-            np.asarray(mean.with_options(raw=True)(posterior)["mean(beta)"]),
+            np.asarray(mean.using(raw=True)(posterior)["beta"]),
             case.reference.leaves["beta"].mean,
             rtol=1e-4,
         )
@@ -257,7 +258,7 @@ class TestInitialState:
         from probpipe.inference._inference_utils import get_init_state
 
         case = canonical.case("beta_bernoulli")
-        target = condition_on.with_options(method="unnormalized")(case.model, case.data)
+        target = condition_on.using(method="unnormalized")(case.model, case.data)
         init = np.asarray(get_init_state(target, None, random_seed=0))
         assert init.shape == (1,)
         assert 0.0 < float(init[0]) < 1.0

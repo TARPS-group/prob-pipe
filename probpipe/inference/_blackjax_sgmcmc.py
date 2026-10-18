@@ -43,12 +43,14 @@ from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
     as_prng_key,
+    described,
     flat_unflatten,
     get_init_state,
     model_factors,
     run_seed,
+    unfactored_model_reason,
 )
-from ._minibatch import MinibatchedDistribution, _reads_observations
+from ._minibatch import MinibatchedDistribution, _reads_observations, _subset_scoring_reason
 
 __all__ = ["BlackJAXSGHMCMethod", "BlackJAXSGLDMethod"]
 
@@ -95,7 +97,6 @@ _SGMCMC_OPTIONS = (
     "init",
     "num_results",
     "num_warmup",
-    "random_seed",
     "step_size",
     "with_replacement",
 )
@@ -104,19 +105,24 @@ _SGMCMC_OPTIONS = (
 class _BlackJAXSGMCMCMethod(InferenceMethod):
     """Base for the two BlackJAX SGMCMC methods.
 
-    Subclasses define ``_method_name``, ``_method_priority``, and
-    override :meth:`_build_algorithm` to plug in the specific BlackJAX
+    Subclasses define ``_method_name``, ``_method_priority``,
+    ``_method_description``, and override :meth:`_build_algorithm` to plug in the specific BlackJAX
     kernel constructor (``blackjax.sgld`` or ``blackjax.sghmc``) with
     method-specific kwargs.
     """
 
     _method_name: str = ""
     _method_priority: int | None = None
+    _method_description: str = ""
     _method_options = _SGMCMC_OPTIONS
 
     @property
     def name(self) -> str:
         return self._method_name
+
+    @property
+    def description(self) -> str:
+        return self._method_description
 
     def supported_types(self) -> tuple[type, ...]:
         return (_UnnormalizedConditional,)
@@ -131,37 +137,25 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         """Require a joint whose likelihood scores a subset of its observations, and a batch size."""
         factors = model_factors(target)
         if factors is None:
-            return Feasibility(
-                feasible=False,
-                description=(
-                    f"{self.name} requires a factored joint at observed values of its fields, "
-                    f"whose other factors form the prior"
-                ),
-            )
+            return Feasibility(feasible=False, description=unfactored_model_reason(target))
         if not isinstance(factors.prior, SupportsLogProb):
             return Feasibility(
                 feasible=False,
                 description=(
-                    f"{self.name} requires a prior with a log-density; got "
-                    f"{type(factors.prior).__name__}."
+                    f"the prior must have a log-density (SupportsLogProb); got "
+                    f"{described(factors.prior)}"
                 ),
             )
         if not _reads_observations(factors.likelihood):
             return Feasibility(
                 feasible=False,
-                description=(
-                    f"{self.name} requires a likelihood whose observations are conditionally "
-                    f"independent and which scores a subset of them, such as glm_likelihood's "
-                    f"kernel; got {type(factors.likelihood).__name__}."
-                ),
+                description=_subset_scoring_reason(factors.likelihood),
             )
         if "batch_size" not in kwargs:
             return Feasibility(
                 feasible=False,
-                description=(
-                    f"{self.name} requires an explicit batch_size= kwarg. "
-                    f"There is no canonical default for a stochastic sampler."
-                ),
+                description='batch_size is required; pass method_options={"batch_size": ...}',
+                actionable=True,
             )
         return Feasibility(feasible=True)
 
@@ -175,18 +169,18 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         num_results: int = kwargs.get("num_results", 1000)
         num_warmup: int = kwargs.get("num_warmup", 0)
         step_size: float = kwargs.get("step_size", 1e-3)
-        random_seed: int | PRNGKey = run_seed(kwargs, self.name)
+        random_seed: PRNGKey = run_seed(self.name)
         with_replacement: bool = kwargs.get("with_replacement", False)
 
         # The minibatched random measure supplies the stochastic gradients from
         # the prior and likelihood factors ``check()`` validated.
         measure = MinibatchedDistribution(
-            "measure",
             factors.prior,
             factors.likelihood,
             factors.observed,
             batch_size=batch_size,
             with_replacement=with_replacement,
+            label="measure",
         )
 
         # The chain moves in the prior's flat coordinates.
@@ -278,6 +272,7 @@ class BlackJAXSGLDMethod(_BlackJAXSGMCMCMethod):
 
     _method_name = "blackjax_sgld"
     _method_priority = 45
+    _method_description = "Stochastic gradient Langevin dynamics through BlackJAX, on minibatches."
 
     def _build_algorithm(self, grad_estimator, **kwargs: Any):
         return blackjax.sgld(grad_estimator)
@@ -303,6 +298,7 @@ class BlackJAXSGHMCMethod(_BlackJAXSGMCMCMethod):
 
     _method_name = "blackjax_sghmc"
     _method_priority = None
+    _method_description = "Stochastic gradient HMC through BlackJAX, on minibatches."
     _method_options = (*_SGMCMC_OPTIONS, "alpha", "beta", "num_integration_steps")
 
     def _build_algorithm(self, grad_estimator, **kwargs: Any):

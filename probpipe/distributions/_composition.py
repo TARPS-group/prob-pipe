@@ -6,7 +6,9 @@ condition on what the right produces, so ``lik * prior`` reads as the density
 C`` is one flat joint, and composition reads only component and slot names,
 never a label. The result is a ``FactoredDistribution`` when no given is left
 unmet and a ``FactoredConditionalDistribution`` over the unmet givens
-otherwise; its label joins the operands' current labels with ``·``.
+otherwise; it is unlabeled, so its expression is the product of the operands'
+expressions: its label joins the operands' current labels with ``·`` and it
+displays operand by operand, a labeled operand by its label.
 
 The base classes expose the operator through ``__mul__``, which delegates to the
 engine this module installs at import.
@@ -21,6 +23,7 @@ from ._factored import (
     FactoredDistribution,
     _factor_graph,
     _joined_label,
+    _product_of,
 )
 
 __all__: list[str] = []
@@ -31,11 +34,21 @@ def _compose(
 ) -> FactoredDistribution | FactoredConditionalDistribution:
     """The joint ``left * right``, the most specific factored kind of the flat factor graph.
 
+    Parameters
+    ----------
+    left : Distribution or ConditionalDistribution
+        The left operand, whose given slots may consume the components *right*
+        produces.
+    right : Distribution or ConditionalDistribution
+        The right operand, whose unmet given slots remain unmet in the joint.
+
     Returns
     -------
     FactoredDistribution or FactoredConditionalDistribution
         The joint, or ``NotImplemented`` when *right* is neither distribution
-        kind.
+        kind. The joint is unlabeled, so its notation joins its operands'
+        notations with ``·``, an unlabeled product operand entering as its
+        factors, as ``lik(y | mu)·prior(mu)`` or ``model(y, mu)·d(z)``.
 
     Raises
     ------
@@ -50,8 +63,17 @@ def _compose(
     operands = (left, right)
     label = _joined_label((left.label, right.label))
     if _factor_graph(operands).unmet is None:
-        return FactoredDistribution(label, operands)
-    return FactoredConditionalDistribution(label, operands)
+        joint = FactoredDistribution(
+            operands,
+            label=label,
+        )
+    else:
+        joint = FactoredConditionalDistribution(
+            operands,
+            label=label,
+        )
+    joint._store_expression(_product_of(operands))
+    return joint
 
 
 _install_composition(_compose)

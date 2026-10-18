@@ -1,11 +1,12 @@
 """Invariants of the dispatch registries.
 
-Every method declares whether it is exact; selection is exact before
+Every method declares whether it is exact and whether it is a floor;
+selection is every other method before the floors, then exact before
 approximate, then priority, then type specificity, then registration order;
-``set_priorities``
-re-ranks without touching exactness; ``check`` probes without running;
-``execute`` runs the first feasible method or raises ``ResolutionError``.
-Each test is parametrized over the unary and binary registries.
+``set_priorities`` re-ranks without changing exactness or floor status;
+``check`` probes without running; ``execute`` runs the first feasible method
+or raises ``ResolutionError``. Each test is parametrized over the unary and
+binary registries.
 """
 
 from __future__ import annotations
@@ -59,7 +60,7 @@ class RightSub(Right):
 
 
 class _FakeBase:
-    """Shared body of the two fakes: configurable name, exactness, rank, and check.
+    """Shared body of the two fakes: configurable name, exactness, floor status, rank, and check.
 
     ``report`` replaces the ``Feasibility`` the check would build, so a test
     can return anything a method might, a ``MethodInfo`` included.
@@ -71,6 +72,7 @@ class _FakeBase:
         *,
         exact: Any = True,
         priority: int | None = 10,
+        floor: Any = False,
         feasible: bool | None = True,
         pending: tuple[str, ...] = (),
         description: str = "",
@@ -83,6 +85,7 @@ class _FakeBase:
         self._name = name
         self._exact = exact
         self._priority = priority
+        self._floor = floor
         self._feasible = feasible
         self._pending = pending
         self._description = description
@@ -105,6 +108,10 @@ class _FakeBase:
     @property
     def priority(self) -> int | None:
         return self._priority
+
+    @property
+    def is_floor(self) -> Any:
+        return self._floor
 
     def check(self, *args: Any, **kwargs: Any) -> Feasibility:
         self.check_calls += 1
@@ -239,7 +246,7 @@ class TestExactnessDeclaration:
     def test_set_priorities_has_no_exactness_input(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("m", exact=False))
-        with pytest.raises(KeyError, match="No method named 'exact'"):
+        with pytest.raises(KeyError, match="unknown method 'exact'"):
             reg.set_priorities(exact=True)
         assert reg.get_method("m").exact is False
 
@@ -266,7 +273,17 @@ class TestExactnessDeclaration:
 
     def test_a_feasibility_carries_no_exactness(self):
         """A method reports only what it alone knows; exactness is the registration's."""
-        assert {f.name for f in fields(Feasibility)} == {"feasible", "description", "pending"}
+        assert {f.name for f in fields(Feasibility)} == {
+            "feasible",
+            "description",
+            "pending",
+            "actionable",
+        }
+
+    def test_only_an_infeasible_report_is_actionable(self):
+        assert Feasibility(False, "unknown field 'x'", actionable=True).actionable
+        with pytest.raises(ValueError, match="only an infeasible Feasibility can be actionable"):
+            Feasibility(True, actionable=True)
 
     @pytest.mark.parametrize("declared_exact", [True, False], ids=["exact", "approximate"])
     def test_a_check_cannot_contradict_the_registration(self, arity: Arity, declared_exact: bool):
@@ -346,7 +363,7 @@ class TestSelectionOrder:
     def test_only_opt_in_methods_means_no_auto_method(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("opt_in", priority=None))
-        with pytest.raises(ResolutionError, match="No method registered"):
+        with pytest.raises(ResolutionError, match="no method is registered"):
             reg.execute(*arity.args)
         assert reg.execute(*arity.args, method="opt_in") == "opt_in"
 
@@ -364,6 +381,89 @@ class TestSelectionOrder:
         # The opt-in-only exact method keeps its position although automatic
         # selection never reaches it: the listing ranks, it does not say what runs.
         assert reg.list_methods() == ["e_high", "e_low", "e_opt", "a_approx"]
+
+
+# ---------------------------------------------------------------------------
+# Floors: a fallback tier after every other method
+# ---------------------------------------------------------------------------
+
+
+class TestFloors:
+    """A floor ranks after every method that is not one; the other criteria order each tier."""
+
+    def test_is_floor_defaults_to_false(self):
+        assert isinstance(BaseDispatchMethod.is_floor, property)
+        assert FakeUnary("m").is_floor is False
+
+    @pytest.mark.parametrize("bad", [None, 1, 0, "floor"])
+    def test_non_boolean_is_floor_is_rejected_at_register(self, arity: Arity, bad: Any):
+        reg = arity.registry()
+        with pytest.raises(TypeError, match="is_floor as a bool"):
+            reg.register(arity.method("m", floor=bad))
+        assert reg.list_methods() == []
+
+    def test_floors_follow_every_other_method_for_any_ranks(self, arity: Arity):
+        rng = random.Random(20261017)
+        for _ in range(300):
+            reg = arity.registry()
+            names = [f"m{i}" for i in range(rng.randint(2, 8))]
+            declared = {n: (rng.random() < 0.5, rng.random() < 0.5) for n in names}
+            for n in names:
+                floor, exact = declared[n]
+                reg.register(
+                    arity.method(n, floor=floor, exact=exact, priority=rng.randint(-50, 500))
+                )
+            # Floor status first, then exactness: the listing is sorted on that pair.
+            keys = [(declared[n][0], not declared[n][1]) for n in reg.list_methods()]
+            assert keys == sorted(keys), reg.list_methods()
+
+    def test_an_approximate_method_runs_before_an_exact_floor(self, arity: Arity):
+        reg = arity.registry()
+        reg.register(arity.method("floor", floor=True, exact=True, priority=1000, result="floor"))
+        approx = arity.method("approx", exact=False, priority=-1000, result="approx")
+        reg.register(approx)
+        assert reg.list_methods() == ["approx", "floor"]
+        assert reg.execute(*arity.args) == "approx"
+        approx._feasible = False
+        assert reg.execute(*arity.args) == "floor"
+
+    def test_floors_rank_by_exactness_then_priority(self, arity: Arity):
+        reg = arity.registry()
+        reg.register(arity.method("approx_high", floor=True, exact=False, priority=100))
+        reg.register(arity.method("exact_low", floor=True, exact=True, priority=1))
+        reg.register(arity.method("exact_high", floor=True, exact=True, priority=2))
+        reg.register(arity.method("rule", exact=False, priority=0))
+        assert reg.list_methods() == ["rule", "exact_high", "exact_low", "approx_high"]
+
+    def test_specificity_does_not_lift_a_floor(self, arity: Arity):
+        reg = arity.registry()
+        reg.register(arity.method("floor", floor=True, supported=arity.specific, result="floor"))
+        reg.register(arity.method("rule", supported=arity.general, result="rule"))
+        assert reg.execute(*arity.args) == "rule"
+
+    def test_no_override_lifts_a_floor_above_another_method(self, arity: Arity):
+        reg = arity.registry()
+        reg.register(arity.method("floor", floor=True, priority=0))
+        reg.register(arity.method("rule", priority=0))
+        reg.set_priorities(floor=10**6, rule=-(10**6))
+        assert reg.list_methods() == ["rule", "floor"]
+
+    def test_an_opt_in_floor_is_skipped(self, arity: Arity):
+        reg = arity.registry()
+        reg.register(arity.method("floor", floor=True, priority=None, result="floor"))
+        with pytest.raises(ResolutionError, match="no method is registered"):
+            reg.execute(*arity.args)
+        assert reg.execute(*arity.args, method="floor") == "floor"
+
+    def test_floor_status_is_read_once(self, arity: Arity):
+        reg = arity.registry()
+        floor = arity.method("floor", floor=True, priority=100)
+        reg.register(floor)
+        reg.register(arity.method("rule", priority=0))
+        floor._floor = False
+        reg.set_priorities(rule=1)
+        assert reg.list_methods() == ["rule", "floor"]
+        assert reg.describe_entry("floor").is_floor is True
 
 
 class TestSpecificity:
@@ -489,7 +589,7 @@ class TestSpecificity:
 
 
 # ---------------------------------------------------------------------------
-# set_priorities re-ranks among methods of the same exactness only
+# set_priorities re-ranks among methods of the same floor status and exactness only
 # ---------------------------------------------------------------------------
 
 
@@ -552,14 +652,14 @@ class TestSetPriorities:
     def test_unknown_name_raises_and_applies_nothing(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("a", priority=1))
-        with pytest.raises(KeyError, match="No method named 'nope'"):
+        with pytest.raises(KeyError, match="unknown method 'nope'"):
             reg.set_priorities(a=50, nope=1)
         assert reg._effective_priority(reg._by_name["a"]) == 1
 
     @pytest.mark.parametrize(
         "kwargs, exc, match",
         [
-            ({"a": 5, "nope": 1}, KeyError, "No method named 'nope'"),
+            ({"a": 5, "nope": 1}, KeyError, "unknown method 'nope'"),
             ({"a": 6}, ValueError, "both"),
             ({"a": "high"}, TypeError, "int or None"),
         ],
@@ -596,10 +696,15 @@ class TestSetPriorities:
     def test_warns_once_on_each_crossing_of_opt_in(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("a", priority=50))
-        with pytest.warns(UserWarning, match="into opt-in-only") as rec:
+        with pytest.warns(
+            UserWarning,
+            match="from priority 50 to None, so it now runs only when requested with method='a'",
+        ) as rec:
             reg.set_priorities(a=None)
         assert len(rec) == 1
-        with pytest.warns(UserWarning, match="out of opt-in-only") as rec:
+        with pytest.warns(
+            UserWarning, match="from priority None to 42, so automatic dispatch can now select it"
+        ) as rec:
             reg.set_priorities(a=42)
         assert len(rec) == 1
 
@@ -617,7 +722,7 @@ class TestSetPriorities:
     def test_promoted_opt_in_method_joins_automatic_selection(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("opt_in", priority=None, result="ran"))
-        with pytest.warns(UserWarning, match="out of opt-in-only"):
+        with pytest.warns(UserWarning, match="automatic dispatch can now select it"):
             reg.set_priorities(opt_in=10)
         assert reg.execute(*arity.args) == "ran"
 
@@ -709,7 +814,9 @@ class TestCheck:
     def test_unknown_name_is_a_resolution_error(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("m"))
-        with pytest.raises(ResolutionError, match="Available: m"):
+        with pytest.raises(
+            ResolutionError, match=r"unknown method 'nope'; available methods: \['m'\]"
+        ):
             reg.check(*arity.args, method="nope")
 
     def test_no_arguments_is_a_type_error(self, arity: Arity):
@@ -734,9 +841,9 @@ class TestCheck:
 
     def test_binary_registry_needs_two_arguments(self):
         reg = BinaryDispatchRegistry()
-        with pytest.raises(TypeError, match="at least two positional arguments"):
+        with pytest.raises(TypeError, match="requires two positional arguments"):
             reg.check(Left())
-        with pytest.raises(TypeError, match="at least two positional arguments"):
+        with pytest.raises(TypeError, match="requires two positional arguments"):
             reg.execute(Left())
 
 
@@ -755,7 +862,9 @@ class TestExecute:
         reg = arity.registry()
         reg.register(arity.method("pending", priority=20, feasible=None, pending=("event spec",)))
         reg.register(arity.method("ready", priority=10))
-        with pytest.raises(ResolutionError, match="event spec"):
+        with pytest.raises(
+            ResolutionError, match="method 'pending' cannot tell yet whether it applies: event spec"
+        ):
             reg.execute(*arity.args)
 
     def test_no_feasible_candidate_names_the_methods_tried(self, arity: Arity):
@@ -773,7 +882,7 @@ class TestExecute:
     def test_named_infeasible_method_raises(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("m", feasible=False, description="no"))
-        with pytest.raises(ResolutionError, match="not applicable"):
+        with pytest.raises(ResolutionError, match="method 'm' does not apply: no"):
             reg.execute(*arity.args, method="m")
 
     def test_named_unresolved_method_raises(self, arity: Arity):
@@ -786,7 +895,9 @@ class TestExecute:
         """Naming a method that is not registered is a dispatch that cannot resolve."""
         reg = arity.registry()
         reg.register(arity.method("m"))
-        with pytest.raises(ResolutionError, match="Available: m"):
+        with pytest.raises(
+            ResolutionError, match=r"unknown method 'nope'; available methods: \['m'\]"
+        ):
             reg.execute(*arity.args, method="nope")
 
     @pytest.mark.parametrize("exc", [ValueError("bad"), RuntimeError("worse")])
@@ -819,7 +930,7 @@ class TestDeclarationMarkers:
         from probpipe import NumericDistribution
 
         registry = UnaryDispatchRegistry()
-        with pytest.raises(TypeError, match="not a dispatch type"):
+        with pytest.raises(TypeError, match="cannot dispatch on"):
             registry.register(FakeUnary("numeric", types=(NumericDistribution,)))
         assert registry.list_methods() == []
 
@@ -983,7 +1094,7 @@ class TestRegistration:
         m = arity.method("m")
         reg.register(m)
         assert reg.get_method("m") is m
-        with pytest.raises(KeyError, match="No method named"):
+        with pytest.raises(KeyError, match="unknown method"):
             reg.get_method("nope")
 
 
@@ -1113,7 +1224,7 @@ class TestDesignAgreement:
         assert header is not None
         section = block[header.start() :]
         section = section[: section.index("\nclass ")]
-        for attr in ("exact", "priority"):
+        for attr in ("exact", "is_floor", "priority", "description"):
             assert re.search(rf"^\s+{attr}:", section, re.M), attr
             assert isinstance(getattr(BaseDispatchMethod, attr), property)
         assert re.search(r"^\s+def supported_types\(", section, re.M)

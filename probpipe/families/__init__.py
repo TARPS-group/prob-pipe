@@ -27,8 +27,7 @@ Provides:
   - the conditional families: ``LinearGaussianConditional``, the response
     families ``GLMFamily``, ``GaussianFamily``, ``BernoulliFamily``, and
     ``PoissonFamily``, and ``glm_likelihood``;
-  - the program-defined families ``StanModel``, ``PyMCModel``, and
-    ``UnnormalizedDistribution``.
+  - the program-defined families ``StanModel`` and ``PyMCModel``.
 
 Importing the package registers the shipped converters with the converter
 registry (:mod:`._converters`).
@@ -69,7 +68,7 @@ from ._gaussian import (
 )
 from ._mixture import MixtureDistribution
 from ._multivariate import Dirichlet, Multinomial, MultivariateNormal, VonMisesFisher, Wishart
-from ._programs import PyMCModel, StanModel, UnnormalizedDistribution
+from ._programs import PyMCModel, StanModel
 from ._random_functions import RandomFunction, RandomMeasure
 from ._resampling import (
     BootstrapDistribution,
@@ -127,7 +126,6 @@ __all__ = [
     "TFPDistribution",
     "TruncatedNormal",
     "Uniform",
-    "UnnormalizedDistribution",
     "VonMisesFisher",
     "Wishart",
     "glm_likelihood",

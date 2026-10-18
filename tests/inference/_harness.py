@@ -15,15 +15,19 @@ of the central 90% interval of every coordinate, each read through the
 operation model's ``mean``, ``variance``, and ``quantile``.
 
 **Tolerances.** Every comparison is ``|estimate - reference| <= Z * MCSE`` with
-``Z = 4``, where the Monte Carlo standard error is estimated from the
+``Z = 5``, where the Monte Carlo standard error is estimated from the
 posterior's chains with their effective sample size: ArviZ's ``mcse`` of the
 mean and of the quantile, and for the variance the MCSE of the mean of the
 squared deviations, with their own effective sample size. A method whose draws
-target the posterior fails one comparison with probability about 6e-5, and a
-case's few dozen comparisons together with probability below 0.003, so a
-failure is a finding rather than noise. The keys are fixed, so every outcome is
-reproducible. An MCSE is valid only for chains that have mixed, so a method
-that runs several chains must also reach a rank-normalized R-hat below 1.05.
+target the posterior fails one comparison with probability about 6e-7 and a
+case's few dozen comparisons together with probability about 2e-5. The suite
+runs several dozen cases on each Python version, so together they fail by
+chance with probability below 0.01, and a failure is a finding rather than
+noise. Each run is in a workflow scope of a fixed seed, so its outcome
+reproduces on one platform, while a platform whose floating point differs
+runs other chains, which the band allows for. An MCSE is valid only for chains
+that have mixed, so a method that runs several chains must also reach a
+rank-normalized R-hat below 1.05.
 
 **Kinds.** A *consistent* method's draws converge to the posterior as its
 budget grows, as an MCMC chain's do, and it meets every comparison above. A
@@ -69,7 +73,7 @@ __all__ = [
 ]
 
 #: The half-width of every comparison band, in Monte Carlo standard errors.
-Z = 4.0
+Z = 5.0
 
 #: The largest rank-normalized R-hat at which a several-chain result counts as mixed.
 RHAT_LIMIT = 1.05
@@ -91,8 +95,7 @@ class MethodProfile:
         Whether the method's draws converge to the posterior, which selects the
         contract it is held to.
     method_options : Mapping[str, Any]
-        The ``method_options`` control ``condition_on.with_options`` receives,
-        budgets and seed included.
+        The ``method_options`` control ``condition_on.using`` receives.
     """
 
     representation: str
@@ -102,13 +105,29 @@ class MethodProfile:
 
 #: The budget of a gradient-based sampler: two chains of 2000 draws after 1000
 #: warmup steps, which gives every case well over a thousand effective draws.
-_GRADIENT = {"num_results": 2000, "num_warmup": 1000, "num_chains": 2, "random_seed": 0}
+_GRADIENT = {"num_results": 2000, "num_warmup": 1000, "num_chains": 2}
 
-#: The budget of the random walk, whose draws are more autocorrelated.
-_RANDOM_WALK = {"num_results": 4000, "num_warmup": 2000, "num_chains": 2, "random_seed": 0}
+#: The budget of the random walk, whose draws are more autocorrelated: two chains
+#: of 16000 draws after 4000 warmup steps. On eight_schools, two chains of 4000
+#: draws mix slowly enough that the MCSE understates the error of a tail quantile
+#: or a variance of theta_tilde. They miss their band, or R-hat its limit, at 6 of
+#: workflow seeds 0 to 63. The longer chains meet every band at those seeds, the
+#: largest error reaching 0.8 of its band.
+_RANDOM_WALK = {"num_results": 16000, "num_warmup": 4000, "num_chains": 2}
 
 #: The budget of a stochastic-gradient sampler, which needs a minibatch size.
-_STOCHASTIC = {"num_results": 2000, "num_warmup": 1000, "batch_size": 10, "random_seed": 0}
+_STOCHASTIC = {"num_results": 2000, "num_warmup": 1000, "batch_size": 10}
+
+#: The budget of SGHMC, whose step size is ten times its default of 1e-3. Each
+#: SGHMC step resamples the momentum and integrates ten Euler steps, so at the
+#: default a step moves the chain about as far as a Langevin step of 5e-5 does,
+#: and the chain does not forget its start within the budget. At 1e-3 a
+#: coefficient's mean misses its band on gaussian_linear at 15 of workflow seeds
+#: 0 to 63, with errors up to 3.2 times the band. At 1e-2 every mean of
+#: gaussian_linear and poisson_regression meets its band at seeds 0 to 127, the
+#: largest error reaching half its band. At 2e-2 the chain diverges on
+#: poisson_regression.
+_SGHMC = {**_STOCHASTIC, "step_size": 1e-2}
 
 #: Each registered method's profile. The tolerances do not depend on the
 #: budgets, since the MCSE scales with them.
@@ -118,15 +137,13 @@ PROFILES: dict[str, MethodProfile] = {
     "blackjax_rwmh": MethodProfile("probpipe", True, _RANDOM_WALK),
     "blackjax_elliptical_slice": MethodProfile("probpipe", True, _GRADIENT),
     "blackjax_sgld": MethodProfile("probpipe", False, _STOCHASTIC),
-    "blackjax_sghmc": MethodProfile("probpipe", False, _STOCHASTIC),
+    "blackjax_sghmc": MethodProfile("probpipe", False, _SGHMC),
     "tfp_nuts": MethodProfile("probpipe", True, _GRADIENT),
     "nutpie_nuts": MethodProfile("pymc", True, _GRADIENT),
     "pymc_nuts": MethodProfile("pymc", True, {**_GRADIENT, "cores": 1}),
-    "pymc_advi": MethodProfile(
-        "pymc", False, {"num_results": 2000, "num_iterations": 20000, "random_seed": 0}
-    ),
+    "pymc_advi": MethodProfile("pymc", False, {"num_results": 2000, "num_iterations": 20000}),
     "cmdstan_nuts": MethodProfile("stan", True, _GRADIENT),
-    "pyabc_smcabc": MethodProfile("probpipe", False, {"n_particles": 200, "random_seed": 0}),
+    "pyabc_smcabc": MethodProfile("probpipe", False, {"n_particles": 200}),
 }
 
 
@@ -134,8 +151,10 @@ PROFILES: dict[str, MethodProfile] = {
 #: library bug or a limit of the harness's run, with the reason, the exception
 #: the failure raises, and whether it fails on every platform. Each is collected
 #: as a pending test, so the suite stays green and the ledger lists it. A failure
-#: that depends on the platform's numerics is pending without strictness, since
-#: the same seeded run passes on some platforms.
+#: that depends on the workflow seed or on the platform's numerics is pending
+#: without strictness, since the same budget passes at some seeds and on some
+#: platforms. The comment above each entry states its failure rate under the
+#: band of ``Z`` MCSE over the workflow seeds it was measured at.
 KNOWN_FAILURES: dict[tuple[str, str, str], tuple[str, type[BaseException], bool]] = {}
 
 _ABC_BUDGET = (
@@ -147,22 +166,27 @@ _ABC_RAW_OUTCOMES = (
     "tolerance of two mismatched outcomes the ABC posterior favors a theta near 0, where "
     "the eleven observed failures are matched most often"
 )
+# Fails at four of workflow seeds 0 to 5.
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gaussian_linear")] = (
     _ABC_BUDGET,
     AssertionError,
     False,
 )
-KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "eight_schools")] = (_ABC_BUDGET, AssertionError, True)
-KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gamma_poisson")] = (_ABC_BUDGET, AssertionError, True)
+# Fails at one of workflow seeds 0 to 5.
+KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "eight_schools")] = (_ABC_BUDGET, AssertionError, False)
+# Fails at four of workflow seeds 0 to 5, and passes at seed 0.
+KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gamma_poisson")] = (_ABC_BUDGET, AssertionError, False)
+# Fails at every one of workflow seeds 0 to 5.
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "poisson_regression")] = (
     _ABC_BUDGET,
     AssertionError,
     True,
 )
+# Fails at four of workflow seeds 0 to 5, seed 0 among them.
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "beta_bernoulli")] = (
     _ABC_RAW_OUTCOMES,
     AssertionError,
-    True,
+    False,
 )
 
 
@@ -187,14 +211,13 @@ def _at(raw: Any, path: str) -> Any:
     return node
 
 
-def _node(raw: Any, law: Any, path: str, summary: str | None = None) -> Any:
-    """The node at the event path *path* of *raw*, which is a raw draw or raw *summary* of *law*.
+def _node(raw: Any, law: Any, path: str) -> Any:
+    """The node at the event path *path* of *raw*, which is a raw draw or raw summary of *law*.
 
     An exposed record's paths index its nested mapping, and a whole term's
     paths start with its component, which stands for the whole raw value. A
-    summary such as ``mean`` names each component ``c`` of the event as
-    ``mean(c)``, so the node of an exposed record's summary is read under the
-    summary's name for the path's first segment.
+    summary such as ``mean`` takes the event's paths, so a draw and a summary
+    are read alike.
 
     Raises
     ------
@@ -207,8 +230,7 @@ def _node(raw: Any, law: Any, path: str, summary: str | None = None) -> Any:
     raw = _raw_record(raw)
     head, _, rest = path.partition("/")
     if declaration.exposes_record:
-        named = head if summary is None else f"{summary}({head})"
-        return _at(raw, named + path[len(head) :])
+        return _at(raw, path)
     (component,) = declaration.components
     if head != component:
         raise AssertionError(f"{path!r} is not an event path of the whole term {component!r}")
@@ -246,7 +268,7 @@ def independent_draws(posterior: Any) -> Any:
         return posterior
     with workflow_run(seed=0):
         draws = sample(posterior, sample_shape=(INDEPENDENT_DRAWS,))
-    return EmpiricalDistribution(posterior.label, draws, event_spec=posterior.event_spec)
+    return EmpiricalDistribution(draws, event_spec=posterior.event_spec, label=posterior.label)
 
 
 def chains_at(posterior: Any, path: str, shape: tuple[int, ...]) -> np.ndarray:
@@ -261,7 +283,7 @@ def chains_at(posterior: Any, path: str, shape: tuple[int, ...]) -> np.ndarray:
 
     posterior = independent_draws(posterior)
     atoms = posterior.atoms
-    raw = atoms.values if isinstance(atoms, NumericArrayBatch) else _raw_record(atoms)
+    raw = atoms.raw if isinstance(atoms, NumericArrayBatch) else _raw_record(atoms)
     values = np.asarray(_node(raw, posterior, path), dtype=np.float64)
     chains = atoms.batch_shape[0] if len(atoms.axis_groups) > 1 else 1
     return values.reshape(chains, -1, *shape)
@@ -335,7 +357,7 @@ def assert_matches(
 ) -> None:
     """Assert that *posterior* matches *reference* under the contract of its kind.
 
-    A consistent result meets the four-MCSE band on every coordinate's mean,
+    A consistent result meets the band of ``Z`` MCSE on every coordinate's mean,
     variance, and interval endpoints, and mixes to an R-hat below 1.05 when it
     has several chains. A biased result meets the band widened by a quarter of
     a posterior standard deviation, on the means alone.
@@ -346,15 +368,15 @@ def assert_matches(
         Listing every comparison that fails.
     """
     posterior = independent_draws(posterior)
-    means = mean.with_options(raw=True)(posterior)
-    variances = variance.with_options(raw=True)(posterior)
+    means = mean.using(raw=True)(posterior)
+    variances = variance.using(raw=True)(posterior)
     levels = jnp.asarray(INTERVAL_LEVELS)
-    quantiles = quantile.with_options(raw=True)(posterior, levels)
+    quantiles = quantile.using(raw=True)(posterior, levels)
     comparisons = _Comparisons()
     for path, leaf in reference.leaves.items():
         shape = leaf.mean.shape
         chains = chains_at(posterior, path, shape)
-        estimate = _as_leaf(_node(means, posterior, path, "mean"), shape, path, "mean")
+        estimate = _as_leaf(_node(means, posterior, path), shape, path, "mean")
         mcse_mean = _mcse(chains, "mean")
         sd = np.ravel(np.sqrt(leaf.variance))
         if not consistent:
@@ -362,12 +384,10 @@ def assert_matches(
             comparisons.within("mean", path, estimate, leaf.mean, band)
             continue
         comparisons.within("mean", path, estimate, leaf.mean, Z * mcse_mean)
-        estimate_var = _as_leaf(
-            _node(variances, posterior, path, "variance"), shape, path, "variance"
-        )
+        estimate_var = _as_leaf(_node(variances, posterior, path), shape, path, "variance")
         mcse_var = _mcse_variance(chains)
         comparisons.within("variance", path, estimate_var, leaf.variance, Z * mcse_var)
-        node = np.asarray(_node(quantiles, posterior, path, "quantile"), dtype=np.float64)
+        node = np.asarray(_node(quantiles, posterior, path), dtype=np.float64)
         node = _as_leaf(node, (len(INTERVAL_LEVELS), *shape), path, "quantiles")
         for index, level in enumerate(INTERVAL_LEVELS):
             comparisons.within(
@@ -468,11 +488,12 @@ def validate_method(
             pytest.skip(f"{name} is not registered here, since its backend is not installed")
         case = canonical.case(case_name)
         model, data = _model_and_data(case, profile.representation, request)
-        view = condition_on.with_options(method=name, method_options=profile.method_options)
+        view = condition_on.using(method=name, method_options=profile.method_options)
         report = view.check(model, data)
         if report.feasible is not True:
             pytest.skip(f"{name} does not apply to {case_name}: {_skip_reason(report)}")
-        posterior = view(model, data)
+        with workflow_run(seed=0):
+            posterior = view(model, data)
         assert_matches(
             posterior,
             case.reference,
@@ -507,25 +528,24 @@ def calibration_ranks(
     """The SBC ranks of *method* on *case*: one row per replication, one column per coordinate.
 
     Each replication draws the parameters and the observations from the
-    model's joint under its own seeded workflow, conditions the model on the
-    drawn observations with *method*, or by the route ``condition_on`` selects
-    when *method* is ``None``, thins the posterior's draws to *draws* evenly
-    spaced ones, and ranks each drawn parameter coordinate among them. Under a
-    calibrated method each rank is uniform on ``{0, ..., draws}``.
+    model's joint under a seeded workflow of its own. Under a second seeded
+    workflow, it conditions the model on the drawn observations with *method*,
+    or by the route ``condition_on`` selects when *method* is ``None``. It thins
+    the posterior's draws to *draws* evenly spaced ones and ranks each drawn
+    parameter coordinate among them. Under a calibrated method each rank is
+    uniform on ``{0, ..., draws}``.
     """
     observed = tuple(case.data)
     rows = []
     for replication in range(replications):
         with workflow_run(seed=10_000 + replication):
-            joint_draw = sample.with_options(raw=True)(case.model)
+            joint_draw = sample.using(raw=True)(case.model)
         given = {name: joint_draw[name] for name in observed}
         view = condition_on
         if method is not None:
-            view = condition_on.with_options(
-                method=method,
-                method_options={**(method_options or {}), "random_seed": replication},
-            )
-        posterior = view(case.model, given)
+            view = condition_on.using(method=method, method_options=method_options or {})
+        with workflow_run(seed=replication):
+            posterior = view(case.model, given)
         ranks = []
         for path, leaf in case.reference.leaves.items():
             truth = np.ravel(np.asarray(_at(joint_draw, path), dtype=np.float64))

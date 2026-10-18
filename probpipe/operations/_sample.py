@@ -3,21 +3,25 @@
 ``sample(d)`` returns one draw at the kind the law's event declaration names,
 and a non-empty ``sample_shape`` prepends batch axes on a level named
 ``sample``, returning the batch form of that kind. The draw's key is a
-workflow-owned random event, so the operation takes no key.
+workflow-owned random event, so the operation takes no key. A draw is labeled
+by its components, ``~``, and the law's label, as ``mu ~ prior``, followed by
+the paths the law holds fixed, as ``mu ~ model; y``, and a batch of draws
+takes the label of one draw.
 """
 
 from __future__ import annotations
 
-import operator
 from collections.abc import Callable, Mapping
 from typing import Any
 
 import jax
 import numpy as np
 
-from ..core._batch import BatchSpec, _ranks_of
+from ..core._batch import BatchSpec, _flat_batch_spec, _ranks_of
+from ..core._expression import Expression, draw_of
 from ..core._record_batch import _batch_class_for
 from ..core._record_spec import RecordSpec
+from ..core._shapes import SizesLike, _as_shape
 from ..core._specs import OutputSpec
 from ..distributions._capabilities import SupportsSampling
 from ..distributions._distribution import Distribution, DistributionSpec
@@ -25,7 +29,13 @@ from ..distributions._factored import _raw_record
 from ..functions._call import ApplicabilityError
 from ..functions._result import SAMPLE_LEVEL
 from ..values import FunctionSpec
-from ._operation import BoundCall, _call_label, _workflow_draws, operation
+from ._operation import (
+    BoundCall,
+    _call_label,
+    _install_expression_rule,
+    _workflow_draws,
+    operation,
+)
 
 __all__ = ["sample"]
 
@@ -46,35 +56,42 @@ def _record_batch(value: Any, call: BoundCall, result: OutputSpec | None) -> Any
     if call.controls["raw"] or not isinstance(value, Mapping) or result is None:
         return value
     spec = result.spec
+    if isinstance(spec, BatchSpec):
+        spec = _flat_batch_spec(spec)
     if not isinstance(spec, BatchSpec) or not isinstance(spec.element_spec, RecordSpec):
         return value
     return _batch_class_for(spec.element_spec)(
-        _call_label(call),
         _raw_record(value),
         tuple(spec.level_names),
         element_spec=spec.element_spec,
         axes_per_level=_ranks_of(spec.axis_groups),
+        label=_call_label(call),
     )
 
 
 def _sample_shape(sample_shape: Any) -> tuple[int, ...]:
     """*sample_shape* as a tuple of sizes, a bare integer being one axis.
 
+    Parameters
+    ----------
+    sample_shape : int or sequence of int
+        The sample shape as the caller gave it.
+
+    Returns
+    -------
+    tuple of int
+        One non-negative Python ``int`` per axis; ``()`` for one draw.
+
     Raises
     ------
     ApplicabilityError
-        If a size is not a non-negative integer, a bool included.
+        If *sample_shape* is not an int or an iterable of ints, or a size is a
+        ``bool`` or negative.
     """
-    axes = sample_shape if isinstance(sample_shape, tuple) else (sample_shape,)
-    if any(isinstance(axis, bool) for axis in axes):
-        raise ApplicabilityError("sample_shape must be an integer or a tuple of integers, not bool")
     try:
-        shape = tuple(operator.index(axis) for axis in axes)
-    except TypeError:
-        raise ApplicabilityError("sample_shape must be an integer or a tuple of integers") from None
-    if any(axis < 0 for axis in shape):
-        raise ApplicabilityError(f"sample_shape sizes must be non-negative; got {shape!r}")
-    return shape
+        return _as_shape(sample_shape, what="sample_shape", symbolic=False)
+    except (TypeError, ValueError) as error:
+        raise ApplicabilityError(str(error)) from None
 
 
 def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
@@ -83,34 +100,60 @@ def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
     The returned kind is read from ``event_spec.spec``, so an array and a
     one-field record stay distinct under every sample shape.
 
+    Parameters
+    ----------
+    d : DistributionSpec
+        The law's spec, whose event declaration one draw takes.
+    sample_shape : int or sequence of int
+        The sample shape as the caller gave it.
+
+    Returns
+    -------
+    OutputSpec
+        ``d.event_spec`` for an empty shape, and otherwise that declaration with
+        its spec replaced by the batch spec over the sample axes followed by
+        any batch levels that belong to one event.
+
     Raises
     ------
     ApplicabilityError
-        If *sample_shape* is malformed, or the declaration has free dimensions,
-        which a draw has no value to bind.
+        If *sample_shape* is malformed, the declaration has free dimensions,
+        which a draw has no value to bind, or a non-empty *sample_shape* meets
+        a batch-valued event that already has a level named ``sample``.
     """
     shape = _sample_shape(sample_shape)
     free = d.free_dims
     if free:
+        example = ", ".join(f"{name}=..." for name in sorted(free))
         raise ApplicabilityError(
-            f"sample requires a concrete declaration; the free dimensions are {sorted(free)}"
+            f"sample: the event has unbound dimensions {sorted(free)}; bind them first with "
+            f"with_dim_sizes({example})"
         )
     if not shape:
         return d.event_spec
-    return d.event_spec._with_spec(BatchSpec(d.event_spec.spec, (shape,), (SAMPLE_LEVEL,)))
+    event = d.event_spec.spec
+    if isinstance(event, BatchSpec) and SAMPLE_LEVEL in event.level_names:
+        raise ApplicabilityError(
+            f"sample: sample_shape={shape} adds the level {SAMPLE_LEVEL!r}, but each draw is "
+            f"already a batch on the levels {list(event.level_names)}. Rename the event's level "
+            f"{SAMPLE_LEVEL!r}, such as in the function that returns the batch."
+        )
+    return d.event_spec._with_spec(
+        _flat_batch_spec(BatchSpec(d.event_spec.spec, {SAMPLE_LEVEL: shape}))
+    )
 
 
 @operation(result=_sample_result)
-def sample(d: Distribution, sample_shape: tuple[int, ...] = ()):
+def sample(d: Distribution, sample_shape: SizesLike = ()):
     """Draw from a distribution.
 
     Parameters
     ----------
     d : Distribution
         The law to draw from.
-    sample_shape : int or tuple of int
-        The batch axes to prepend; ``()`` draws once, and a bare integer is one
-        axis.
+    sample_shape : int or sequence of int
+        The batch axes to prepend; ``()`` draws once, and a single int is one
+        axis, so ``sample_shape=100`` is ``sample_shape=(100,)``.
 
     Returns
     -------
@@ -118,14 +161,22 @@ def sample(d: Distribution, sample_shape: tuple[int, ...] = ()):
         One draw at the kind the event declaration names, such as a
         ``NumericArray`` or a ``Record``; or, for a non-empty *sample_shape*, the
         batch form of that kind with the leading axes on a level named
-        ``sample``. Under ``with_options(raw=True)`` the draws are returned as
-        ``d._sample`` gives them, so a record-valued law's batch of draws is the
-        nested mapping of its raw columns.
+        ``sample``. A draw keeps *d*'s components and is labeled by them, ``~``,
+        and *d*'s label, as ``mu ~ prior`` or ``(y, mu) ~ model``, followed by
+        ``;`` and the paths *d* holds fixed, as ``mu ~ model; y``. A batch of
+        draws takes the label of one draw, so its element is labeled
+        ``(mu ~ prior)[sample=0]``. Under ``using(raw=True)`` the draws
+        are returned as ``d._sample`` gives them, so a record-valued law's
+        batch of draws is the nested mapping of its raw columns. A batch-valued
+        event keeps its own levels for one draw, and a non-empty *sample_shape*
+        adds the ``sample`` level before them.
 
     Raises
     ------
     ApplicabilityError
-        If *sample_shape* is malformed, or the declaration has free dimensions.
+        If *sample_shape* is malformed, the declaration has free dimensions, or
+        a non-empty *sample_shape* meets a batch-valued event that already has
+        a level named ``sample``.
     ResolutionError
         If *d* does not sample.
     """
@@ -173,3 +224,11 @@ def _function_draws(draws: Any, shape: tuple[int, ...]) -> Any:
 sample.capability_route(
     "exact", operand="d", protocol=SupportsSampling, method="_sample", exact=True, execute=_draw
 )
+
+
+def _drawn_expression(d: Any) -> Expression:
+    """The expression of a draw from *d*: its components drawn from *d*, as ``mu ~ prior`` (II.4)."""
+    return draw_of(d)
+
+
+_install_expression_rule(sample, _drawn_expression)

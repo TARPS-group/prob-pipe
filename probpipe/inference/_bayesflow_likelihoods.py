@@ -23,12 +23,13 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .._messages import unknown_names
 from ..core._spec_base import NumericArraySpec
 from ..core._specs import OutputSpec
 from ..core.record import Record
@@ -40,7 +41,7 @@ from ..distributions._capabilities import (
     SupportsUnnormalizedLogProb,
 )
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import Distribution, _class_label, _constructor_label
 from ._bayesflow_common import (
     _OBSERVATION_KEY,
     SimBackend,
@@ -51,6 +52,7 @@ from ._bayesflow_common import (
     _simulate_offline,
     _validate_learn_inputs,
 )
+from ._inference_utils import integer_seed, run_seed
 
 if TYPE_CHECKING:
     from bayesflow.approximators import ContinuousApproximator, RatioApproximator
@@ -73,7 +75,10 @@ class _LearnedLaw(Distribution):
     """The law a learned kernel yields at a value of every parameter, over datasets of rows."""
 
     def __init__(self, kernel: _BayesFlowLikelihoodBase, values: Mapping[str, Any]) -> None:
-        super().__init__(kernel.label, kernel.event_spec)
+        super().__init__(
+            kernel.event_spec,
+            label=kernel.label,
+        )
         self._kernel = kernel
         self._values = dict(values)
 
@@ -122,9 +127,12 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
     data_dim : int
         Flattened per-row observation width the network was trained on (fixed
         by the simulator's per-draw output at training time).
-    label : str
-        The kernel's label.
+    label : str, optional
+        The kernel's label, the name of its public class by default.
     """
+
+    #: The constructors take no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
 
     def __init__(
         self,
@@ -133,12 +141,12 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         simulator: ConditionalDistribution,
         *,
         data_dim: int,
-        label: str,
+        label: str | None = None,
     ):
         super().__init__(
-            label,
             dict(prior.event_spec.components),
             OutputSpec(**{_observation_slot(prior): NumericArraySpec(("observations", data_dim))}),
+            label=_constructor_label(self, label, _class_label(self)),
         )
         attributes = {
             "_approximator": approximator,
@@ -174,12 +182,19 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         ``event_size`` (static under jit: shapes are concrete at trace time).
         """
         components = tuple(self._prior.event_spec.components)
-        t = Record("params", {name: values[name] for name in components}).to_numeric().to_vector()
+        t = (
+            Record(
+                {name: values[name] for name in components},
+                label="params",
+            )
+            .to_numeric()
+            .to_vector()
+        )
         t = jnp.ravel(jnp.asarray(t))
         if t.shape[0] != self._theta_dim:
             raise ValueError(
-                f"params has {t.shape[0]} values but the estimator was trained on "
-                f"{self._theta_dim}-dimensional parameters."
+                f"params has {t.shape[0]} values, but {self.label!r} was trained on "
+                f"parameters of {self._theta_dim} values"
             )
         return t
 
@@ -199,15 +214,27 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
             rows = jnp.atleast_2d(rows)
         if rows.shape[-1] != self._data_dim:
             raise ValueError(
-                f"data rows have {rows.shape[-1]} values but the estimator was "
-                f"trained on observations of size {self._data_dim}; pass a dataset "
-                "of shape (n, d_y) (or a single (d_y,) observation) matching the "
-                "simulator's flattened output."
+                f"each observation in data has {rows.shape[-1]} values, but {self.label!r} was "
+                f"trained on observations of size {self._data_dim}. Pass data of shape "
+                f"(n, {self._data_dim}) or a single observation of shape ({self._data_dim},)."
             )
         return rows.reshape(-1, self._data_dim)
 
     def _values(self, given: Any, kwargs: Mapping[str, Any]) -> dict[str, Any]:
         """The parameter values bound so far and those *given* binds, by slot.
+
+        Parameters
+        ----------
+        given : Record or Mapping of str to Any
+            The values ``condition_on`` passes positionally, by slot.
+        kwargs : Mapping of str to Any
+            The values ``condition_on`` passes by keyword, which take precedence
+            over *given*.
+
+        Returns
+        -------
+        dict of str to Any
+            The earlier bindings, updated with *given* and then with *kwargs*.
 
         Raises
         ------
@@ -217,7 +244,7 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         values = {**dict(given.children if isinstance(given, Record) else given), **kwargs}
         unknown = sorted(set(values) - set(self.given_spec))
         if unknown:
-            raise KeyError(f"{unknown} are not given slots of {self.label!r}")
+            raise KeyError(unknown_names("parameter", unknown, list(self.given_spec)))
         return {**self._bound, **values}
 
     def _score(self, values: Mapping[str, Any], data: Any) -> Array:
@@ -243,11 +270,11 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         left = {slot: spec for slot, spec in self.given_spec.items() if slot not in values}
         if not left:
             return self._law(values)
-        curried = self._shallow_copy()
-        object.__setattr__(curried, "_provenance", None)
-        object.__setattr__(curried, "_bound", values)
-        object.__setattr__(curried, "_spec", ConditionalDistributionSpec(left, self.event_spec))
-        return curried
+        rest = self._shallow_copy()
+        object.__setattr__(rest, "_provenance", None)
+        object.__setattr__(rest, "_bound", values)
+        object.__setattr__(rest, "_spec", ConditionalDistributionSpec(left, self.event_spec))
+        return rest
 
     @abstractmethod
     def _law(self, values: Mapping[str, Any]) -> _LearnedLaw:
@@ -280,6 +307,30 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase, SupportsConditionalLogProb):
     ``P(y | theta) = integral over [y, y+1)^d of p(u | theta) du``
     (Theis et al., 2016, arXiv:1511.01844). Pass raw integer-valued
     observations; the kernel owns the cell convention.
+
+    Parameters
+    ----------
+    approximator : ContinuousApproximator
+        The trained BayesFlow approximator whose standardizer and inference
+        network score the rows.
+    prior : Distribution
+        The prior the estimator was trained against, whose components are the
+        given slots.
+    simulator : ConditionalDistribution
+        The training simulator.
+    data_dim : int
+        The flattened width of one observation row the network was trained on.
+    label : str, optional
+        The kernel's label, ``BayesFlowLikelihood`` by default.
+    dequantized : bool, optional
+        Whether the flow was trained on jittered integer-valued observations,
+        so that scoring shifts the data to the unit-cell midpoint; ``False``
+        by default.
+
+    Raises
+    ------
+    TypeError
+        If *label* is neither ``None`` nor a non-empty string.
     """
 
     def __init__(
@@ -289,9 +340,16 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase, SupportsConditionalLogProb):
         simulator: ConditionalDistribution,
         *,
         data_dim: int,
+        label: str | None = None,
         dequantized: bool = False,
     ):
-        super().__init__(approximator, prior, simulator, data_dim=data_dim, label="likelihood")
+        super().__init__(
+            approximator,
+            prior,
+            simulator,
+            data_dim=data_dim,
+            label=label,
+        )
         object.__setattr__(self, "_dequantized", dequantized)
 
     def _law(self, values: Mapping[str, Any]) -> _LearnedDensity:
@@ -346,6 +404,26 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase, SupportsConditionalUnnormalizedLo
     discrete/continuous rows are fine) and has no minimum observation
     dimension -- the two cases where :class:`BayesFlowLikelihood`'s coupling
     flow needs, respectively, dequantization or a custom network.
+
+    Parameters
+    ----------
+    approximator : RatioApproximator
+        The trained BayesFlow ratio approximator whose classifier scores the
+        rows.
+    prior : Distribution
+        The prior the estimator was trained against, whose components are the
+        given slots.
+    simulator : ConditionalDistribution
+        The training simulator.
+    data_dim : int
+        The flattened width of one observation row the network was trained on.
+    label : str, optional
+        The kernel's label, ``BayesFlowRatio`` by default.
+
+    Raises
+    ------
+    TypeError
+        If *label* is neither ``None`` nor a non-empty string.
     """
 
     def __init__(
@@ -355,8 +433,15 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase, SupportsConditionalUnnormalizedLo
         simulator: ConditionalDistribution,
         *,
         data_dim: int,
+        label: str | None = None,
     ):
-        super().__init__(approximator, prior, simulator, data_dim=data_dim, label="ratio")
+        super().__init__(
+            approximator,
+            prior,
+            simulator,
+            data_dim=data_dim,
+            label=label,
+        )
 
     def _law(self, values: Mapping[str, Any]) -> _LearnedRatioLaw:
         return _LearnedRatioLaw(self, values)
@@ -403,7 +488,6 @@ def _train_offline(
     epochs: int,
     batch_size: int,
     sim_backend: SimBackend,
-    random_seed: int,
     theta_role: str,
     build_approximator: Any,
     optimizer: str | KerasOptimizer,
@@ -416,7 +500,45 @@ def _train_offline(
     -- ``"inference_conditions"`` for NLE, ``"inference_variables"`` for NRE --
     with the observation taking the other slot. With ``dequantize``, U[0,1)
     jitter is added to the simulated observations after simulation (the
-    simulator stays untouched). Returns ``(approximator, d_y)``.
+    simulator stays untouched). Once the inputs are valid, the training's seed
+    is drawn from a workflow-owned random event, and it seeds the simulation,
+    the jitter, and keras.
+
+    Parameters
+    ----------
+    prior : Distribution
+        The learner's prior.
+    simulator : ConditionalDistribution
+        The learner's simulator, a kernel from the prior's fields to one
+        observation.
+    caller : str
+        The name of the public learner, which the error messages name and the
+        seed's event records as its provider.
+    num_simulations : int
+        The number of simulations the network trains on.
+    epochs : int
+        The number of training epochs.
+    batch_size : int
+        The size of each training batch.
+    sim_backend : {"jax", "sequential"}
+        The learner's simulation backend.
+    theta_role : str
+        The adapter slot of the theta fields.
+    build_approximator : callable
+        ``build_approximator(bf, adapter, data_dim)``, the BayesFlow
+        approximator to train.
+    optimizer : str or keras.Optimizer
+        The optimizer that ``approximator.compile`` receives.
+    fit_kwargs : dict
+        The keyword arguments of ``approximator.fit``.
+    dequantize : bool
+        Whether to add ``U[0,1)`` jitter to the simulated observations.
+
+    Returns
+    -------
+    tuple
+        ``(approximator, d_y)``: the trained approximator and the flattened
+        size of one observation.
     """
     record = _validate_learn_inputs(
         prior,
@@ -428,12 +550,14 @@ def _train_offline(
             ("batch_size", batch_size),
             ("epochs", epochs),
         ),
+        fit_kwargs=fit_kwargs,
     )
     # Numeric leaves (slash paths for a nested prior; == fields for a flat one).
     # NLE/NRE feed raw theta to the network, so no bijectors -- just the keying.
     leaf_keys = tuple(record.leaf_shapes)
 
     bf = _import_bayesflow()
+    random_seed = integer_seed(run_seed(caller))
     with _isolated_keras_seeding(random_seed):
         key = jax.random.PRNGKey(random_seed)
         k_jitter = None
@@ -456,10 +580,10 @@ def _train_offline(
         if dequantize:
             if float(np.abs(y).max()) >= 2.0**23:
                 raise ValueError(
-                    "dequantize=True requires counts below 2**23: float32 "
-                    "spacing reaches 1.0 there, silently rounding away the "
-                    "jitter and the midpoint shift. Rescale the observations "
-                    "or use learn_amortized_ratio."
+                    f"dequantize=True requires simulated counts below 2**23, where float32 "
+                    f"can still hold the added jitter; the largest simulated count is "
+                    f"{float(np.abs(y).max()):g}. Rescale the observations or use "
+                    f"learn_amortized_ratio."
                 )
             y = np.asarray(jnp.asarray(y) + jax.random.uniform(k_jitter, y.shape), dtype="float32")
         internal_keys = _adapter_field_keys(leaf_keys)
@@ -494,7 +618,6 @@ def learn_amortized_likelihood(
     sim_backend: SimBackend = "jax",
     inference_network: InferenceNetwork | None = None,
     dequantize: bool = False,
-    random_seed: int = 0,
     optimizer: str | KerasOptimizer = "adam",
     **fit_kwargs: Any,
 ) -> BayesFlowLikelihood:
@@ -507,6 +630,13 @@ def learn_amortized_likelihood(
     then runs a registered gradient-based MCMC method (BlackJAX/TFP NUTS) for
     datasets of any size, since per-row scores sum under conditional
     independence. The network conditions on the raw constrained ``theta``.
+
+    The training's seed is drawn from a workflow-owned random event, so
+    ``workflow_run(seed=...)`` reproduces the trained network, and an unscoped
+    call trains afresh. The seed fixes the offline simulation, the
+    dequantization jitter, and keras's network initialization and training.
+    The caller's global NumPy and Python random states are restored after
+    training.
 
     Parameters
     ----------
@@ -521,8 +651,12 @@ def learn_amortized_likelihood(
         The kernel of one observation given the prior's fields, which samples;
         its given values are the prior's structured per-draw record (named-field
         access). Must be JAX-vmappable unless ``sim_backend="sequential"``.
-    num_simulations, epochs, batch_size : int
-        Offline simulation count and keras training schedule.
+    num_simulations : int
+        Number of ``(theta, y)`` pairs simulated offline for training.
+    epochs : int
+        Number of keras training passes over the simulations.
+    batch_size : int
+        Number of simulations in each keras training batch.
     sim_backend : {"jax", "sequential"}
         ``"jax"`` (default) vmaps the simulator; ``"sequential"`` runs an eager
         per-draw loop for non-JAX simulators.
@@ -555,9 +689,6 @@ def learn_amortized_likelihood(
         needed, prefer :func:`learn_amortized_ratio`, whose classifier
         consumes discrete observations natively (cf. MNLE, Boelts et al.,
         2022, for the mixed-data approach in the torch ``sbi`` ecosystem).
-    random_seed : int
-        Seeds simulation, network init, and training; the caller's global
-        NumPy / Python RNG state is restored afterwards.
     optimizer : str or keras.Optimizer
         Passed to ``approximator.compile``.
     **fit_kwargs
@@ -578,7 +709,8 @@ def learn_amortized_likelihood(
         simulated observations reach ``2**23``.
     TypeError
         If a count parameter is not an integer, ``simulator`` is not a kernel
-        that samples, or ``prior`` is not a numeric distribution.
+        that samples, ``prior`` is not a numeric distribution, or
+        ``fit_kwargs`` holds ``random_seed`` or ``seed``.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """
@@ -586,10 +718,9 @@ def learn_amortized_likelihood(
     def _build(bf: Any, adapter: Any, data_dim: int) -> Any:
         if inference_network is None and data_dim < 2:
             raise ValueError(
-                "NLE's default coupling flow requires observations with at least 2 "
-                f"dimensions, but the simulator emits {data_dim}-dimensional data. "
-                "Use learn_amortized_ratio (the NRE classifier has no minimum "
-                "dimension) or pass a custom inference_network."
+                "the default network of learn_amortized_likelihood requires observations of "
+                f"at least 2 values, but the simulator gives {data_dim}. Pass an "
+                "inference_network, or use learn_amortized_ratio, which has no minimum."
             )
         net = inference_network or bf.networks.CouplingFlow()
         return bf.ContinuousApproximator(inference_network=net, adapter=adapter)
@@ -602,7 +733,6 @@ def learn_amortized_likelihood(
         epochs=epochs,
         batch_size=batch_size,
         sim_backend=sim_backend,
-        random_seed=random_seed,
         theta_role="inference_conditions",
         build_approximator=_build,
         optimizer=optimizer,
@@ -623,7 +753,6 @@ def learn_amortized_ratio(
     batch_size: int = 128,
     sim_backend: SimBackend = "jax",
     inference_network: KerasLayer | None = None,
-    random_seed: int = 0,
     optimizer: str | KerasOptimizer = "adam",
     **fit_kwargs: Any,
 ) -> BayesFlowRatio:
@@ -640,6 +769,12 @@ def learn_amortized_ratio(
     docstring. The classifier handles discrete-valued observations and
     one-dimensional data natively.
 
+    The training's seed is drawn from a workflow-owned random event, so
+    ``workflow_run(seed=...)`` reproduces the trained classifier, and an
+    unscoped call trains afresh. The seed fixes the offline simulation and
+    keras's network initialization and training. The caller's global NumPy and
+    Python random states are restored after training.
+
     Parameters
     ----------
     prior : Distribution
@@ -651,17 +786,16 @@ def learn_amortized_ratio(
         its given values are the prior's structured per-draw record.
     num_simulations : int
         Number of ``(theta, y)`` pairs simulated offline for training.
-    epochs, batch_size : int
-        keras training schedule.
+    epochs : int
+        Number of keras training passes over the simulations.
+    batch_size : int
+        Number of simulations in each keras training batch.
     sim_backend : {"jax", "sequential"}
         ``"jax"`` (default) vmaps the simulator; ``"sequential"`` runs an eager
         per-draw loop for non-JAX simulators.
     inference_network : keras.Layer or None
         The classifier body (defaults to ``bayesflow.networks.MLP()``); the
         ``RatioApproximator`` adds its own scalar projection head.
-    random_seed : int
-        Seeds simulation, network init, and training; the caller's global
-        NumPy / Python RNG state is restored afterwards.
     optimizer : str or keras.Optimizer
         Passed to ``approximator.compile``.
     **fit_kwargs
@@ -678,7 +812,8 @@ def learn_amortized_ratio(
         (no minimum observation dimension, unlike NLE).
     TypeError
         If a count parameter is not an integer, ``simulator`` is not a kernel
-        that samples, or ``prior`` is not a numeric distribution.
+        that samples, ``prior`` is not a numeric distribution, or
+        ``fit_kwargs`` holds ``random_seed`` or ``seed``.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """
@@ -695,7 +830,6 @@ def learn_amortized_ratio(
         epochs=epochs,
         batch_size=batch_size,
         sim_backend=sim_backend,
-        random_seed=random_seed,
         theta_role="inference_variables",
         build_approximator=_build,
         optimizer=optimizer,

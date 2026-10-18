@@ -2,7 +2,7 @@
 
 ``TFPDistribution`` implements the capability set on raw arrays over a wrapped
 backend distribution, and every parametric family is a thin constructor over
-it. It is the only class that knows the backend exists, and its ``raw()`` is
+it. It is the only class that knows the backend exists, and its ``raw`` is
 the wrapped backend distribution.
 
 Every family samples and has a normalized density. Beyond those, a family
@@ -25,15 +25,18 @@ import contextlib
 import contextvars
 import functools
 import inspect
-from collections.abc import Callable, Generator
-from typing import TYPE_CHECKING, Any, ClassVar
+from collections.abc import Callable, Generator, Iterator
+from typing import Any, ClassVar
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import tensorflow_probability.substrates.jax.bijectors as tfb
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from .._array_utils import _slice_leading_axes
+from ..core._array_backend import _read_only
+from ..core._compilation import compiled_or_eager
+from ..core._immutable import transient_memo
 from ..core._repr import format_value
 from ..core._specs import NumericArraySpec, OutputSpec
 from ..core.constraints import Constraint
@@ -47,11 +50,13 @@ from ..distributions._capabilities import (
     SupportsVariance,
     _implements,
 )
-from ..distributions._distribution import Distribution, NumericDistribution
+from ..distributions._distribution import (
+    NumericDistribution,
+    _class_label,
+    _constructor_label,
+    _whole_term_event,
+)
 from ..linalg import DenseLinOp, DiagonalLinOp, LinOp
-
-if TYPE_CHECKING:
-    from ..core._spec_base import TermSpec
 
 __all__ = ["TFPDistribution"]
 
@@ -88,6 +93,115 @@ def _allow_batched_tfp_init() -> Generator[None, None, None]:
         yield
     finally:
         _BATCHED_INIT_BYPASS.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# Compiled calls of the backend
+# ---------------------------------------------------------------------------
+#
+# Called eagerly, a backend whose sampler loops, such as the rejection sampler
+# of a Beta, Gamma, or Poisson, builds a new loop body on every call, so XLA
+# compiles the loop again each time. Each call therefore goes through one
+# module-level jitted function that takes the backend as an argument. A backend
+# is a pytree whose leaves are its parameters, so JAX keys the compiled program
+# by the backend's class, its parameter shapes and dtypes, and the static
+# arguments, and a law with new parameter values of the same shapes reuses it.
+# Within an enclosing transformation, such as a user's ``jax.vmap`` or an MCMC
+# scan, the jitted function is transformed with it and compiles as part of the
+# enclosing program.
+
+
+def _eager_sample(backend: tfd.Distribution, key: PRNGKey, sample_shape: tuple[int, ...]) -> Array:
+    """Draws of *backend*, with *sample_shape* leading."""
+    return backend.sample(seed=key, sample_shape=sample_shape)
+
+
+def _eager_log_prob(backend: tfd.Distribution, value: Array) -> Array:
+    """The normalized log-density of *backend* at *value*."""
+    return backend.log_prob(value)
+
+
+def _eager_quantile(backend: tfd.Distribution, q: Array, event_rank: int) -> Array:
+    """The quantile of each coordinate of *backend* at the probabilities *q*, the axes of *q* leading."""
+    return _coordinates(backend).quantile(jnp.reshape(q, q.shape + (1,) * event_rank))
+
+
+_sample_program = jax.jit(_eager_sample, static_argnums=2)
+_log_prob_program = jax.jit(_eager_log_prob)
+_quantile_program = jax.jit(_eager_quantile, static_argnums=2)
+
+
+def _parameter_values(value: Any) -> Iterator[Any]:
+    """The values in *value*, a parameter of a backend, with lists, tuples, and dicts opened."""
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _parameter_values(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _parameter_values(item)
+    else:
+        yield value
+
+
+def _compilable(backend: tfd.Distribution) -> bool:
+    """Whether *backend*, and each distribution and bijector it is built from, is TFP's own and validates nothing.
+
+    A class TFP defines is a pytree that rebuilds from its parameters, and its
+    methods compute from them alone, so a compiled call computes what an eager
+    call computes. Three kinds of part can depend on more than the parameters,
+    so a backend holding one runs eagerly:
+
+    1. a class a user writes, which may keep state outside its parameters or
+       draw with NumPy's generator, and a trace fixes both at their first
+       values;
+    2. a function among the parameters, such as the model of a
+       ``JointDistributionSequential``, which builds parts that the walk
+       cannot inspect;
+    3. a part built with ``validate_args=True``, whose checks of argument
+       values run in Python and are skipped by a trace.
+
+    A class among the parameters, such as a ``dtype``, is not a function.
+    """
+    pending: list[Any] = [backend]
+    while pending:
+        part = pending.pop()
+        if not type(part).__module__.startswith("tensorflow_probability."):
+            return False
+        if getattr(part, "validate_args", False):
+            return False
+        for value in _parameter_values(list(getattr(part, "parameters", {}).values())):
+            if isinstance(value, (tfd.Distribution, tfb.Bijector)):
+                pending.append(value)
+            elif callable(value) and not isinstance(value, type):
+                return False
+    return True
+
+
+def _compiled(
+    law: TFPDistribution,
+    method: str,
+    program: Callable[..., Array],
+    eager: Callable[..., Array],
+    *arguments: Any,
+) -> Array:
+    """*program* at the backend of *law* and *arguments*, or *eager* when the backend runs eagerly.
+
+    A backend that :func:`_compilable` refuses runs *eager*. Otherwise
+    :func:`~probpipe.core._compilation.compiled_or_eager` runs *program* and
+    records in the law's memo, under *method*, a program that does not trace.
+    The record belongs to the law, since a law has one backend.
+    """
+    memo = transient_memo(law)
+    if "compilable" not in memo:
+        memo["compilable"] = _compilable(law._tfp_dist)
+    if not memo["compilable"]:
+        return eager(law._tfp_dist, *arguments)
+    return compiled_or_eager(memo, ("untraced", method), program, eager, law._tfp_dist, *arguments)
+
+
+def _sample_shape(sample_shape: Any) -> tuple[int, ...]:
+    """*sample_shape* as a tuple of Python integers, which a compiled program takes as static."""
+    return tuple(int(n) for n in np.ravel(sample_shape))
 
 
 # ---------------------------------------------------------------------------
@@ -137,10 +251,11 @@ def _backend_cov(self: TFPDistribution) -> LinOp:
 
 def _backend_quantile(self: TFPDistribution, q: ArrayLike) -> Array:
     """The quantile of each coordinate at the levels *q*, of shape ``(*q.shape, *event_shape)``."""
-    coordinates = _coordinates(self._tfp_dist)
-    levels = jnp.asarray(q, dtype=coordinates.dtype)
+    probabilities = jnp.asarray(q, dtype=_coordinates(self._tfp_dist).dtype)
     event_rank = len(self.event_spec.spec.shape)
-    return coordinates.quantile(jnp.reshape(levels, levels.shape + (1,) * event_rank))
+    return _compiled(
+        self, "quantile", _quantile_program, _eager_quantile, probabilities, event_rank
+    )
 
 
 #: The method that realizes each capability a family's backend may compute, by name.
@@ -162,12 +277,15 @@ def _recording_arguments(init: Callable[..., None]) -> Callable[..., None]:
 
     A family's constructor calls the adapter's, so the arguments recorded are
     those the family was called with, together with whether it was built in the
-    separate-laws form.
+    separate-laws form. A pickle rebuilds the law from them, so a NumPy array
+    among them is marked read-only.
     """
 
     @functools.wraps(init)
     def __init__(self: TFPDistribution, *args: Any, **kwargs: Any) -> None:
         if getattr(self, "_constructor_arguments", None) is None:
+            args = tuple(_read_only(value) for value in args)
+            kwargs = {name: _read_only(value) for name, value in kwargs.items()}
             recorded = (args, kwargs, _BATCHED_INIT_BYPASS.get())
             object.__setattr__(self, "_constructor_arguments", recorded)
         init(self, *args, **kwargs)
@@ -182,8 +300,8 @@ def _rebuilt_family(
     separate_laws: bool,
 ) -> TFPDistribution:
     """The family *cls* constructed from *args* and *kwargs* in the form it was built in."""
-    form = _allow_batched_tfp_init() if separate_laws else contextlib.nullcontext()
-    with form:
+    layout = _allow_batched_tfp_init() if separate_laws else contextlib.nullcontext()
+    with layout:
         return cls(*args, **kwargs)
 
 
@@ -203,32 +321,37 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
     the family the method realizing each, unless the family defines its own.
 
     One draw is the backend event's array, with its shape and dtype and the
-    family's support, declared as a whole term, so every instance is a
-    :class:`~probpipe.NumericDistribution`. Its component defaults to the law's
-    name, and an ``event_spec`` declaration names another. A backend whose
-    parameters have axes beyond one law's is reinterpreted as one law whose
-    leading event axes are those axes, over independent coordinates or rows.
+    family's support, declared as a whole term under *component*, so every
+    instance is a :class:`~probpipe.NumericDistribution`. A family's label
+    defaults to its class name, as ``Normal``, and the adapter's to the name of
+    the backend's class. A backend whose parameters have axes beyond one law's
+    is reinterpreted as one law whose leading event axes are those axes, over
+    independent coordinates or rows.
 
     Parameters
     ----------
-    label : str
-        The law's label, and the component of its event unless *event_spec*
-        names another.
+    component : str
+        The component of the law's event.
     backend_dist : tfd.Distribution
         The wrapped backend distribution, which a family's constructor builds
         from its parameters.
+    label : str, optional
+        The law's label. It defaults to the family's class name, and for the
+        adapter itself to the name of the backend's class, as ``Normal`` for
+        a ``tfd.Normal``.
     event_spec : OutputSpec, optional
-        The declaration of one draw, which names its component. The adapter
-        fills a pending type, as in ``OutputSpec(theta=None)``, with the
-        backend event's array.
+        A declaration of *component* that declares the type of one draw, which
+        the adapter completes with the backend event's array.
 
     Raises
     ------
     TypeError
-        If *backend_dist* is not a backend distribution, or *event_spec* is
-        not an :class:`~probpipe.OutputSpec` or exposes a record.
+        If *component* is not a string, *label* is not a non-empty string,
+        *backend_dist* is not a backend distribution, or *event_spec* is not an
+        :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If *event_spec* declares a type that one draw does not conform to.
+        If *component* is not a valid component name, or *event_spec* names
+        another component or declares a type that one draw does not conform to.
 
     Notes
     -----
@@ -263,27 +386,28 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
     @_recording_arguments
     def __init__(
         self,
-        label: str,
+        component: str,
         backend_dist: tfd.Distribution,
         *,
+        label: str | None = None,
         event_spec: OutputSpec | None = None,
     ) -> None:
         if not isinstance(backend_dist, tfd.Distribution):
             raise TypeError(
                 f"backend_dist must be a backend distribution, got {type(backend_dist).__name__}"
             )
+        owner = _class_label(self)
+        default = type(backend_dist).__name__ if owner == "TFPDistribution" else owner
         backend_dist = self._reinterpreted(backend_dist)
         self._tfp_dist = backend_dist
         produced = NumericArraySpec(
             tuple(backend_dist.event_shape), backend_dist.dtype, self._event_support()
         )
-        if event_spec is None:
-            declaration: OutputSpec | TermSpec = produced
-        elif isinstance(event_spec, OutputSpec):
-            declaration = event_spec.with_spec(produced)
-        else:
-            raise TypeError(f"event_spec must be an OutputSpec, got {type(event_spec).__name__}")
-        super().__init__(label, declaration)
+        declaration = _whole_term_event(component, produced, event_spec, owner)
+        super().__init__(
+            declaration,
+            label=_constructor_label(self, label, default),
+        )
 
     def _reinterpreted(self, backend: tfd.Distribution) -> tfd.Distribution:
         """*backend* with its batch axes leading the event's, over independent coordinates or rows."""
@@ -302,6 +426,7 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
         """
         return None
 
+    @property
     def raw(self) -> tfd.Distribution:
         """The wrapped backend distribution."""
         return self._tfp_dist
@@ -309,28 +434,35 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
     def __reduce__(self) -> tuple[Any, ...]:
         """Rebuild from the recorded constructor arguments, then restore the other state.
 
-        Every attribute but the backend is restored, so a label or provenance
-        assigned after construction is kept.
+        Every attribute but the backend and the recorded arguments is restored,
+        so a label or provenance assigned after construction is kept.
         """
         arguments = getattr(self, "_constructor_arguments", None)
         if arguments is None:
             return super().__reduce__()
         instance_dict, slots = self.__getstate__()
-        kept = {key: value for key, value in (instance_dict or {}).items() if key != "_tfp_dist"}
-        return (_rebuilt_family, (type(self), *arguments), (kept or None, slots))
+        rebuilt = ("_tfp_dist", "_constructor_arguments")
+        kept = {key: value for key, value in (instance_dict or {}).items() if key not in rebuilt}
+        return (
+            _rebuilt_family,
+            (type(self), *arguments),
+            (kept or None, slots),
+        )
 
     # -- sampling and the density ---------------------------------------------
 
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         """Draws of the backend, with *sample_shape* leading."""
-        return self._tfp_dist.sample(seed=key, sample_shape=sample_shape)
+        return _compiled(
+            self, "sample", _sample_program, _eager_sample, key, _sample_shape(sample_shape)
+        )
 
     def _log_prob(self, value: ArrayLike) -> Array:
         """The backend's normalized log-density, keeping the leading axes of *value*."""
-        return self._tfp_dist.log_prob(jnp.asarray(value))
+        return _compiled(self, "log_prob", _log_prob_program, _eager_log_prob, jnp.asarray(value))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The arguments the family's constructor was called with, other than the label and the declaration.
+        """The arguments the family's constructor was called with, other than the component, the label, and the declaration.
 
         The repr shows the arguments the call passed, so it reads as the call
         that built the law.
@@ -346,7 +478,7 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
         parameters = bound.signature.parameters
         fields: list[tuple[str, str]] = []
         for parameter, value in list(bound.arguments.items())[1:]:
-            if parameter in ("label", "event_spec"):
+            if parameter in ("component", "label", "event_spec"):
                 continue
             if parameters[parameter].kind is inspect.Parameter.VAR_KEYWORD:
                 fields.extend((key, format_value(entry)) for key, entry in value.items())
@@ -360,19 +492,18 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
     def _make_array_backend(
         cls,
         *,
-        name: str,
+        component: str,
         batch_shape: tuple[int, ...],
         **batched_params: Any,
     ) -> _TFPArrayBackend:
         """Construct the fused storage of this family's laws at batched parameters.
 
         The storage holds one backend over the batched parameters in the
-        separate-laws form, and builds each cell with the family's constructor
-        at that cell's parameters.
+        separate-laws form.
         """
         return _TFPArrayBackend(
             dist_cls=cls,
-            name=name,
+            component=component,
             batch_shape=tuple(batch_shape),
             batched_params=dict(batched_params),
         )
@@ -383,8 +514,8 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
 # ---------------------------------------------------------------------------
 
 
-_ARRAY_BACKEND_NAME_SUFFIX = "__array_backend"
-"""Suffix appended to a backend's base ``name`` when constructing the
+_ARRAY_BACKEND_LABEL_SUFFIX = "__array_backend"
+"""Suffix appended to the component of a backend's laws to label the
 wrapped batched ``TFPDistribution``. Centralised so
 ``_TFPArrayBackend.__init__`` and ``tree_unflatten`` can't drift."""
 
@@ -392,11 +523,11 @@ wrapped batched ``TFPDistribution``. Centralised so
 def _construct_batched_dist(
     dist_cls: type[TFPDistribution],
     *,
-    name: str,
+    component: str,
     batched_params: dict[str, Any],
 ) -> TFPDistribution:
     """Construct the fused batched distribution in the separate-laws form,
-    with the centralised ``__array_backend``-suffixed name.
+    over *component*, with the centralised ``__array_backend``-suffixed label.
 
     Used by both :meth:`_TFPArrayBackend.__init__` and
     :meth:`_TFPArrayBackend.tree_unflatten` so the suffix and the form
@@ -404,8 +535,7 @@ def _construct_batched_dist(
     """
     with _allow_batched_tfp_init():
         return dist_cls(
-            **batched_params,
-            label=f"{name}{_ARRAY_BACKEND_NAME_SUFFIX}",
+            component, **batched_params, label=f"{component}{_ARRAY_BACKEND_LABEL_SUFFIX}"
         )
 
 
@@ -413,16 +543,11 @@ class _TFPArrayBackend:
     """The fused storage of a family's laws at batched parameters, over one TFP batch.
 
     Owns one ``tfd.Distribution`` instance with TFP's native
-    ``batch_shape != ()`` plus the constructor params used to make it,
-    so per-cell materialisation (``cell(i)``) can construct a fresh
-    *scalar* :class:`Distribution` with the row-``i`` slice of each
-    param.
+    ``batch_shape != ()`` plus the constructor params used to make it.
 
     Implementation strategy: the backend wraps a *single* ProbPipe
-    ``Distribution`` instance constructed with the batched params.
-    Vectorised ops forward to that wrapped instance's TFP backend;
-    ``cell(i)`` slices the params and runs the ordinary scalar
-    constructor with a suffixed name.
+    ``Distribution`` instance constructed with the batched params, and the
+    vectorised ops forward to that wrapped instance's TFP backend.
 
     Not a :class:`Distribution` itself — the backend exists only as
     the contract of :meth:`TFPDistribution._make_array_backend`. See
@@ -432,28 +557,26 @@ class _TFPArrayBackend:
     ----------
     dist_cls : type[TFPDistribution]
         The concrete ``TFPDistribution`` subclass (e.g., ``Normal``).
-        Used to materialise per-cell scalars.
-    name : str
-        Base name. Per-cell scalars auto-suffix as ``f"{name}_{flat}"``
-        where ``flat`` is the row-major flat index over ``batch_shape``.
+    component : str
+        The component of the wrapped law, whose label is *component* with the
+        suffix ``__array_backend``.
     batch_shape : tuple of int
         Leading shape of the batched parameters.
     batched_params : dict[str, Any]
         Constructor kwargs for ``dist_cls`` with leading ``batch_shape``
-        already applied. Scalars are passed through unchanged in
-        ``cell(i)`` (broadcast across all cells).
+        already applied.
     """
 
     def __init__(
         self,
         *,
         dist_cls: type[TFPDistribution],
-        name: str,
+        component: str,
         batch_shape: tuple[int, ...],
         batched_params: dict[str, Any],
     ) -> None:
         self._dist_cls = dist_cls
-        self._name = name
+        self._component = component
         self._batch_shape = tuple(batch_shape)
         # Single pass: validate every higher-rank param's leading
         # axes against the declared ``batch_shape``, broadcasting
@@ -473,19 +596,16 @@ class _TFPArrayBackend:
                     leading = arr.shape[: len(self._batch_shape)]
                     if leading != self._batch_shape:
                         raise ValueError(
-                            f"_TFPArrayBackend: declared "
-                            f"batch_shape={self._batch_shape} but "
-                            f"parameter {key!r} has leading shape "
-                            f"{leading}; the two must match. Check "
-                            f"that every batched parameter broadcasts "
-                            f"to batch_shape."
+                            f"batch_shape={self._batch_shape} does not match parameter "
+                            f"{key!r} with leading shape {leading}; every batched parameter "
+                            f"must broadcast to batch_shape"
                         )
                 normalised[key] = arr
             batched_params = normalised
         self._batched_params = batched_params
         self._batched_dist: TFPDistribution = _construct_batched_dist(
             dist_cls,
-            name=name,
+            component=component,
             batched_params=batched_params,
         )
         # Final sanity check: TFP's inferred batch_shape must match
@@ -498,10 +618,9 @@ class _TFPArrayBackend:
         actual = tuple(self._batched_dist._tfp_dist.batch_shape)
         if actual != self._batch_shape:
             raise ValueError(
-                f"_TFPArrayBackend: declared batch_shape={self._batch_shape} "
-                f"but {dist_cls.__name__} with the given batched_params "
-                f"produced TFP batch_shape={actual}. Check that every "
-                f"batched parameter broadcasts to batch_shape."
+                f"batch_shape={self._batch_shape} does not match the batch shape {actual} that "
+                f"{dist_cls.__name__} gets from its parameters; every batched parameter must "
+                f"broadcast to batch_shape"
             )
 
     # -- shape ---------------------------------------------------------------
@@ -533,62 +652,6 @@ class _TFPArrayBackend:
             support = None
         return NumericArraySpec(spec.shape, spec.dtype, support)
 
-    # -- per-cell materialisation -------------------------------------------
-
-    def cell(self, index: int | tuple[int, ...]) -> Distribution:
-        """Fabricate a fresh scalar :class:`Distribution` for cell ``index``.
-
-        ``index`` may be a flat ``int`` (interpreted row-major over
-        ``batch_shape``) or a ``tuple[int, ...]`` of axis-aligned
-        indices. The returned distribution is fully scalar
-        (``batch_shape == ()``) — no caching; each call re-runs the
-        ordinary ``dist_cls(**scalar_params, name=...)`` constructor.
-
-        A zero-axis backend has a single law, which needs no fused
-        storage, so ``batch_shape`` is taken to be non-empty here.
-        """
-        multi, flat = self._normalize_index(index)
-        scalar_params = {
-            key: _slice_leading_axes(value, multi) for key, value in self._batched_params.items()
-        }
-        cell = self._dist_cls(
-            **scalar_params,
-            label=f"{self._name}_{flat}",
-        )
-        # The per-cell suffix is derived by the backend, not user-typed.
-        return cell
-
-    def _normalize_index(self, index: int | tuple[int, ...]) -> tuple[tuple[int, ...], int]:
-        """Return ``(multi_index, flat_index)`` for the given input.
-
-        Lets :meth:`cell` slice with the multi-d index *and* name the
-        result with the flat index in one pass, without round-tripping
-        through ``np.ravel_multi_index`` / ``np.unravel_index`` for
-        the common 1-D case. Out-of-range indices raise ``IndexError``
-        via NumPy; rank mismatches are caught here with a clearer
-        message than NumPy's default.
-        """
-        bshape = self._batch_shape
-        if isinstance(index, (int, np.integer)) or hasattr(index, "__index__"):
-            i = int(index)
-            if len(bshape) == 1:
-                if not 0 <= i < bshape[0]:
-                    raise IndexError(
-                        f"_TFPArrayBackend.cell: index {i} out of range for batch_shape={bshape}."
-                    )
-                return (i,), i
-            multi = tuple(int(x) for x in np.unravel_index(i, bshape))
-            return multi, i
-        idx = tuple(int(x) for x in index)
-        if len(idx) != len(bshape):
-            raise IndexError(
-                f"_TFPArrayBackend.cell: index {idx} has rank "
-                f"{len(idx)} but batch_shape={bshape} has rank "
-                f"{len(bshape)}."
-            )
-        flat = int(np.ravel_multi_index(idx, bshape))
-        return idx, flat
-
     # -- vectorised ops (forward to the wrapped batched distribution) -------
 
     def _sample(
@@ -613,7 +676,7 @@ class _TFPArrayBackend:
     def __repr__(self) -> str:
         return (
             f"_TFPArrayBackend({self._dist_cls.__name__}, "
-            f"batch_shape={self._batch_shape}, name={self._name!r})"
+            f"batch_shape={self._batch_shape}, component={self._component!r})"
         )
 
     # -- JAX pytree registration --------------------------------------------
@@ -623,15 +686,15 @@ class _TFPArrayBackend:
 
         Children are the batched parameter values (the JAX-array
         leaves the user passed); aux carries everything needed to
-        reconstruct the backend (the distribution class, the cell
-        name, the declared ``batch_shape``, and the parameter keys
+        reconstruct the backend (the distribution class, the
+        component of its laws, the declared ``batch_shape``, and the parameter keys
         in iteration order). The wrapped ``_batched_dist`` is
         reconstructed inside ``tree_unflatten`` from the params, so
         successive ``jit`` / ``vmap`` traces stay consistent.
         """
         keys = tuple(self._batched_params.keys())
         children = tuple(self._batched_params[k] for k in keys)
-        aux = (self._dist_cls, self._name, self._batch_shape, keys)
+        aux = (self._dist_cls, self._component, self._batch_shape, keys)
         return children, aux
 
     @classmethod
@@ -647,15 +710,15 @@ class _TFPArrayBackend:
         round-trip; the wrapped ``_batched_dist`` is rebuilt directly
         from the leaves.
         """
-        dist_cls, name, batch_shape, keys = aux
+        dist_cls, component, batch_shape, keys = aux
         instance = cls.__new__(cls)
         instance._dist_cls = dist_cls
-        instance._name = name
+        instance._component = component
         instance._batch_shape = tuple(batch_shape)
         instance._batched_params = dict(zip(keys, children))
         instance._batched_dist = _construct_batched_dist(
             dist_cls,
-            name=name,
+            component=component,
             batched_params=instance._batched_params,
         )
         return instance

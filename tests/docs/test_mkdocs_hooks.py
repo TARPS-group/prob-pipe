@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -73,7 +73,72 @@ def test_each_section_heading_of_the_design_is_a_target(tmp_path):
     }
 
 
+def _page(src_uri: str, url: str) -> SimpleNamespace:
+    """A stand-in for an MkDocs page, with the attributes the hook reads."""
+    return SimpleNamespace(file=SimpleNamespace(src_uri=src_uri), url=url)
+
+
+def _files(urls: dict[str, str]) -> SimpleNamespace:
+    """A stand-in for MkDocs' files, whose documentation pages are *urls*."""
+    pages = [SimpleNamespace(src_uri=src, url=url) for src, url in urls.items()]
+    return SimpleNamespace(documentation_pages=lambda: pages)
+
+
 def test_the_page_hook_strips_sphinx_roles_and_links_citations(monkeypatch):
     monkeypatch.setattr(hooks, "_sections", lambda: SECTIONS)
     html = "<p>:class:<code>~probpipe.Weights</code> (II.4)</p>"
-    assert hooks.on_page_content(html) == f"<p><code>Weights</code> ({LINK})</p>"
+    page = _page("api/values.md", "api/values/")
+    assert hooks.on_page_content(html, page=page, files=_files({})) == (
+        f"<p><code>Weights</code> ({LINK})</p>"
+    )
+
+
+URLS = {
+    "index.md": "",
+    "tutorials/01_first_analysis.ipynb": "tutorials/01_first_analysis/",
+    "tutorials/02_forecasting.ipynb": "tutorials/02_forecasting/",
+    "get_started/installation.md": "get_started/installation/",
+}
+
+
+@pytest.mark.parametrize(
+    ("link", "expected"),
+    [
+        ("02_forecasting.ipynb", "../02_forecasting/"),
+        ("../get_started/installation.md#colab", "../../get_started/installation/#colab"),
+        ("../index.md", "../.."),
+    ],
+)
+def test_a_notebook_links_to_a_page_by_its_file(link, expected):
+    html = f'<p><a href="{link}">next</a></p>'
+    rewritten = hooks.link_notebook_pages(
+        html, "tutorials/01_first_analysis.ipynb", "tutorials/01_first_analysis/", URLS
+    )
+    assert rewritten == f'<p><a href="{expected}">next</a></p>'
+
+
+@pytest.mark.parametrize(
+    "link", ["https://example.org/page.md", "#section", "/docs/page.md", "data/moose.csv"]
+)
+def test_a_link_to_no_page_file_stays(link):
+    html = f'<a href="{link}">x</a>'
+    assert hooks.link_notebook_pages(html, "tutorials/01_first_analysis.ipynb", "x/", URLS) == html
+
+
+def test_a_link_to_a_file_the_site_does_not_build_warns(caplog):
+    html = '<a href="03_updating.ipynb">next</a>'
+    rewritten = hooks.link_notebook_pages(
+        html, "tutorials/01_first_analysis.ipynb", "tutorials/01_first_analysis/", URLS
+    )
+    assert rewritten == html
+    assert "03_updating.ipynb" in caplog.text
+
+
+def test_the_page_hook_rewrites_a_notebook_s_page_links_only():
+    html = '<a href="02_forecasting.ipynb">next</a>'
+    notebook = _page("tutorials/01_first_analysis.ipynb", "tutorials/01_first_analysis/")
+    markdown = _page("tutorials/index.md", "tutorials/")
+    assert hooks.on_page_content(html, page=notebook, files=_files(URLS)) == (
+        '<a href="../02_forecasting/">next</a>'
+    )
+    assert hooks.on_page_content(html, page=markdown, files=_files(URLS)) == html
