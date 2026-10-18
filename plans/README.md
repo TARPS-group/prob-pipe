@@ -2,7 +2,7 @@
 
 This folder holds the shared plans for a sequence of PRs that puts three areas of ProbPipe on precise contracts before the workshop of 2026-10-27:
 1. **the execution layer:** how a computation runs, including code JAX cannot compile, and where (#580);
-2. **addressing:** how a path or a subscript picks out a part of a term (#573);
+2. **addressing:** how a path or a list of paths picks out a part of a term (#573);
 3. **declarations:** how terms declare what they produce and consume, and the operations on those declarations (#571).
 
 Earlier work in these areas was planned one change at a time, which left inconsistent designs, duplicated code, and an API that is hard to learn.
@@ -18,7 +18,7 @@ Every session that works on the push reads this file in full before anything els
 | [`decisions.md`](decisions.md) | Every decision taken during the push, with its date and reason, and the queue of questions waiting for the maintainer |
 | [`gaps-and-conflicts.md`](gaps-and-conflicts.md) | The places where the plans disagree or leave a decision open. This PR merges once each is settled. |
 | [`execution-layer.md`](execution-layer.md) | The execution-layer design (#580) |
-| [`declarations-and-addressing.md`](declarations-and-addressing.md) | The reconciled declarations and addressing design (#571, #573): grammar B, slots and components, subscripts and paths, `&`, and steps S0, S1, S2a, S2b, S3, S4, G1a, G1b, and G2–G5 |
+| [`declarations-and-addressing.md`](declarations-and-addressing.md) | The reconciled declarations and addressing design (#571, #573): grammar B, slots and components, paths and lists of paths, `&`, and steps S0, S1, S2a, S2b, S3, S4, G1a, G1b, and G2–G5 |
 | [`declarations.md`](declarations.md), [`addressing.md`](addressing.md) | The two source texts the reconciled design replaced, kept for comparison until the maintainer has reviewed the reconciled text |
 | [`call-context-proposal.md`](call-context-proposal.md) | Superseded: the call-context design, folded into `execution-layer.md` § 6.16 on 2026-10-18; kept for its revision history and deleted before this PR merges |
 | [`deferred.md`](deferred.md) | Work found or postponed during the push, to become issues after the workshop |
@@ -98,7 +98,7 @@ Each step's content and its done-condition are stated where the step's plan sect
 
 **Priorities and off-ramps.** The push aims to merge every step marked "before" by the freeze, with several people and sessions working in parallel. The most fundamental contracts start first and are never cut; the rest are off-ramps, cut in a fixed order if the checkpoint of 2026-10-22 finds time short.
 
-1. **Never cut**, started first as their dependencies allow: P0b, PV, S0, S1, S2a, S2b, S3, E0, E1, E2, E3a, E3b, E4, and E6. These are the declarations and subscripts a user types, the call context, executor dispatch for traceable and opaque functions, the boundary, and the public target interface.
+1. **Never cut**, started first as their dependencies allow: P0b, PV, S0, S1, S2a, S2b, S3, E0, E1, E2, E3a, E3b, E4, and E6. These are the declarations and paths a user types, the call context, executor dispatch for traceable and opaque functions, the boundary, and the public target interface.
 2. **Off-ramps**, cut in this order: E8, then E7, then G1b, then E5, then G1a, then S4. Each cut keeps the steps above it buildable: cutting E5 also cuts G1b, which depends on it, and cutting S4 also cuts G1a.
 
 A clean cut means:
@@ -124,8 +124,8 @@ Since every merge leaves `dev/overhaul` coherent (directive 7), the code can be 
 
 | Step | What | Plan section | Depends on | Before |
 |---|---|---|---|---|
-| S0 | Design text: II.2 states the grammar rule and the declarations, II.6 the paths and the reading of a subscript; IV.2 retitled "Merging distributions", with "merge" for `&`; the glossary | `declarations-and-addressing.md` § 19.2 | PL | yes |
-| S1 | One subscript reader and one `_PATH_SEP`; `[]` returns groups on `Record` and `RecordSpec`; lists of paths keep their paths; `in`, laws included; `marginal(d, paths)`; `select` flattens to last segments; `()` on a batch raises | § 19.3 | S0 | yes |
+| S0 | Design text: II.2 states the grammar rule and the declarations, II.6 the paths and how `[]` reads them; IV.2 retitled "Merging distributions", with "merge" for `&`; the glossary | `declarations-and-addressing.md` § 19.2 | PL | yes |
+| S1 | One path reader and one `_PATH_SEP`; `[]` returns groups on `Record` and `RecordSpec`; lists of paths keep their paths; `in`, laws included; `marginal(d, paths)`; `select` flattens to last segments; `()` on a batch raises | § 19.3 | S0 | yes |
 | S2a | **Announced, mechanical.** `OutputSpec` becomes a mapping of its components; `spec` becomes `term_spec`; every read of `components`, `exposes_record`, and `_component_name` outside `_specs.py` moves to the mapping | § 19.4 | S0 | yes |
 | S2b | `project` and `without` through S1's reader; one reading of slots; the size shorthand; `&` on `InputSpec` and `OutputSpec`; the refusal of a law's or a kernel's event declaration that exposes a law, a kernel, a function, or a batch | § 19.4 | S1, S2a | yes |
 | S3 | **Announced, mechanical.** `&` replaces `*` for laws and kernels, and `merge` on records; "merge" replaces "composition" in the code that implements `&`; `rename`; `MarginalView`. S3 and E4 may merge in either order; the second rebases | § 19.5 | S2b | yes |
@@ -133,7 +133,7 @@ Since every merge leaves `dev/overhaul` coherent (directive 7), the code can be 
 | G1a | Grammar B for views and marginals of groups, the library's laws declared whole over a record, and factors that hold a group | § 19.7 | S2b, S4 | yes, cut fifth |
 | G1b | Grammar B for outputs: a function that returns a law or a function exposes its output, a lifted law-returning function wraps its draws, defaults by kind, and the reading of a bare `output_spec` | § 19.7 | G1a, E5 | yes, cut third |
 | G2 | Grammar B for the remaining kinds, then enforcement: random measures, random functions and Gaussian processes, bootstrap laws, empirical laws of laws, and minibatched targets wrap their draws; then the keyword form of `OutputSpec` refuses a spec with parts, once G3 has moved views at law-valued fields off the old form | § 19.8 | G1b, G3 | after |
-| G3 | Paths through every kind; `Function[]`; the public `component` accessor, and a whole term's name stops being a subscript; a view of a field that holds a law or a function wraps | § 19.8 | G1a | after |
+| G3 | Paths through every kind; `Function[]`; the public `component` accessor, and `[]` stops accepting a whole term's name; a view of a field that holds a law or a function wraps | § 19.8 | G1a | after |
 | G4 | `condition_on` declared as `d.without(*fixed)`; `law.without` | § 19.8 | G1a | after |
 | G5 | `[]` on batches of laws and on kernels | § 19.8 | G3 | after |
 

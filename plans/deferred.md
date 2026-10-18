@@ -47,7 +47,7 @@ When the push ends, each issue's text is updated to match, and none closes until
 | [#522](https://github.com/TARPS-group/prob-pipe/issues/522) `LinOp` and the differentiability claim | Nothing | All of it, then the execution plan's supplied derivatives (`vjp`, `jacobian`, `jvp`) and the `jacobian` operation on top of it (Q11) | gaps D8 |
 | [#451](https://github.com/TARPS-group/prob-pipe/issues/451) One n-ary dispatch registry | Nothing: the executor registry uses today's unary registry | All of it; the executor registry moves to the n-ary class with the others | gaps D8 |
 | [#571](https://github.com/TARPS-group/prob-pipe/issues/571) Declarations | Steps S2a, S2b, S3, S4, G1a, and G1b | Step G2 and the deferred `&` kinds listed above; the issue points to the reconciled plan | gaps D1–D4 |
-| [#573](https://github.com/TARPS-group/prob-pipe/issues/573) Field paths and subscripts | Step S1 | Steps G3–G5 | gaps D1, D4 |
+| [#573](https://github.com/TARPS-group/prob-pipe/issues/573) Field paths and field selections | Step S1 | Steps G3–G5 | gaps D1, D4 |
 | [#580](https://github.com/TARPS-group/prob-pipe/issues/580) Execution layer | Steps E0–E8 | The execution-layer work listed above | `execution-layer.md` §13 |
 | [#585](https://github.com/TARPS-group/prob-pipe/issues/585) An exact result lost to a budget | Nothing | All of it; its text needs `max_evaluations` after #586 | `execution-layer.md` Q12 |
 

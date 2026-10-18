@@ -19,6 +19,7 @@ Newest first.
 
 | Date | Decision | Area | Source |
 |---|---|---|---|
+| 2026-10-18 | No term "subscript": plans, design text, and docstrings say "a path or a list of paths", or "paths" where the context is clear, and "what `[]` takes" when positions are meant too; the reader of `declarations-and-addressing.md` § 8 is the path reader. A term that names nothing the plain words do not already name is not added (`STYLE_GUIDE.md` §10, rule 6). | naming | maintainer |
 | 2026-10-18 | What `&` does is called a **merge** for every kind, laws and kernels included; "composition" keeps its meaning of `f ∘ g` and `A B`. S0 retitles IV.2 "Merging distributions" and splits the operations table of `design/README.md`; S3 renames the code that implements `&` (`distributions/_composition.py`, the `joint` operation's `"compose"` route). | naming | jhuggins on #593; maintainer |
 | 2026-10-18 | O7's rationale cites III.5: a `NumericRecord` has the vector-space operators (`+`, `-`, scalar `*` and `/`, `map`), and `&` is not among them. The decision of O7 is unchanged. | declarations | jhuggins on #593; maintainer |
 | 2026-10-18 | M6 confirmed: never cut are P0b, PV, S0, S1, S2a, S2b, S3, E0, E1, E2, E3a, E3b, E4, and E6; the off-ramps, cut in order, are E8, E7, G1b, E5, G1a, S4. G1a is an off-ramp, not never cut: no workshop notebook views a group or conditions on a law declared whole over a record (survey of `dev/workshop-tutorials`, the quickstart, and the User Guide). | process | maintainer; jhuggins on #593 |

@@ -44,7 +44,7 @@ On top of these rules, the plan gives the declarations public operations:
 5. The grammar rule
 6. `InputSpec`: slots
 7. `OutputSpec`: components
-8. Reading a subscript
+8. Reading paths and positions
 9. Indexing each kind
 10. Indexing with several paths
 11. Membership
@@ -64,10 +64,10 @@ On top of these rules, the plan gives the declarations public operations:
 
 This plan decides two things:
 1. **declarations:** how a term declares what it produces and what it consumes, and the operations on those declarations;
-2. **addressing:** how a path or a subscript picks out a part of a term.
+2. **addressing:** how a path or a list of paths picks out a part of a term.
 
 **In scope:**
-- the definitions of term specs, producers, consumers, slots, components, declarations, paths, and subscripts;
+- the definitions of term specs, producers, consumers, slots, components, declarations, paths, lists of paths, and positions;
 - the grammar rule, which decides which declarations may name a value whole;
 - the reading of slots, the size shorthand, and the operations on `InputSpec` and `OutputSpec`;
 - what `[]` reads and returns on every kind, lists of paths, positions, and membership (`in`);
@@ -83,7 +83,7 @@ This plan decides two things:
 - the tutorials in `docs/tutorials/`, which are being rewritten separately (README directive 6).
 
 The execution plan relies on this plan in two places.
-An embeddable `Function` needs a complete `term_spec` (execution plan §6.2), and claims that name parts of an input use the subscript reader of § 8.
+An embeddable `Function` needs a complete `term_spec` (execution plan §6.2), and claims that name parts of an input use the path reader of § 8.
 The execution plan uses two words that this plan does not: an **evaluation point** is one evaluation of a callable, and a **requester** is the code that asks for a set of evaluation points.
 In this plan, a **consumer** is a term that declares what it consumes (§ 4.3).
 
@@ -168,7 +168,7 @@ A few sections also use terms whose construction does not matter to the example:
 The design must guarantee thirteen properties.
 In the table:
 - `d` is a law, `t` is any term, and `f` is a function;
-- `s` is a subscript, which is a path or a list of paths;
+- `s` is a path or a list of paths;
 - `p` and `q` are paths;
 - `ps` is a list of paths that is not empty, has no path inside another, and leaves something out.
 
@@ -184,7 +184,7 @@ I9 and I12 are rules this plan chooses, and the others follow from its definitio
 
 | # | Invariant | In code | Delivered by |
 | --- | --- | --- | --- |
-| I1 | **One set of paths.** A subscript valid on a law is valid on every value derived from it, and on its declaration. | `s` works on `d`, `sample(d)`, each element of `sample(d, sample_shape=n)`, `mean(d)`, and `d.event_spec.project(s)` | S1 for records and batches, S2b for declarations, G2 for the draws of the G2 families, G3 for every kind |
+| I1 | **One set of paths.** A path or a list of paths valid on a law is valid on every value derived from it, and on its declaration. | `s` works on `d`, `sample(d)`, each element of `sample(d, sample_shape=n)`, `mean(d)`, and `d.event_spec.project(s)` | S1 for records and batches, S2b for declarations, G2 for the draws of the G2 families, G3 for every kind |
 | I2 | **Indexing commutes with sampling.** A draw of a view is a draw of its parent, indexed. | `sample(d[s])` is distributed as `sample(d)[s]` | S1 for lists of paths, G1a for groups |
 | I3 | **Indexing commutes with summaries.** | `mean(d)[s]` and `mean(d[s])` estimate the same quantity, and are equal when both take exact routes; likewise `variance`, `standard_deviation`, and `quantile` | #576 with S1 |
 | I4 | **Positions and paths commute on a batch.** | `draws[i][s] == draws[s][i]` | S1 |
@@ -192,7 +192,7 @@ I9 and I12 are rules this plan chooses, and the others follow from its definitio
 | I6 | **Declarations agree.** | `d[s].event_spec == d.event_spec.project(s) == marginal(d, s).event_spec`; at a field that holds a law or a function, the view's declaration is the wrap of `project`'s (§ 7.5) | S2b, G1a for groups, G3 at held laws and functions |
 | I7 | **A view and a marginal are one law.** | `marginal(d, s)` equals `d[s]`; one is detached, the other refers to `d` | S1 for lists of paths, G1a for groups |
 | I8 | **Draws of a list of paths condition back.** | `condition_on(d, sample(d[ps]))` fixes the nodes in `ps` and nothing else | G4 |
-| I9 | **The form of the subscript decides the result.** | `t["g"]` is the node; `t[["g"]]` is a record that holds it, as pandas `df["a"]` and `df[["a"]]` are | S1 |
+| I9 | **Whether paths come as one path or as a list decides the result.** | `t["g"]` is the node; `t[["g"]]` is a record that holds it, as pandas `df["a"]` and `df[["a"]]` are | S1 |
 | I10 | **A list of paths and `without` partition the leaf paths**, for every kind that has `without`: records, record specs, batches, output declarations, and laws. | Every leaf path of `t` is a leaf path of one and only one of `t[ps]` and `t.without(*ps)` | S1 for records, record specs, and batches; S2b for declarations; G4 for laws |
 | I11 | **Conditioning removes what it fixes.** For a law, the fixed paths leave its event. For a kernel, bound slots, and the bound parts of a record slot, leave its `given_spec`. | `condition_on(d, given).event_spec == d.without(*fixed).event_spec`, where `fixed` are the event paths that `given` names, whichever route computes the result | G4 |
 | I12 | **A component is the term at its address.** | `t.component(c)` is `t[address(c)]`, and `t` itself when the address is the root: `grouped.component("g") == grouped["g"]`, and `sample(Normal("x", 0.0, 1.0), sample_shape=4).component("x")` is the batch | G3 |
@@ -345,17 +345,17 @@ The two roles differ in one rule:
 1. **A component is produced once.** Two operands that produce one name raise `ValueError`.
 2. **A slot may be shared.** Same-named slots of several operands become one slot, which carries the unification of their specs.
 
-### 4.5 Subscripts
+### 4.5 Lists of paths and positions
 
 | Term | Meaning | Example | Change from today |
 | --- | --- | --- | --- |
 | **list of paths** | Several paths in a Python list or a tuple, to pick several nodes at once. | `["a", "g/c"]` | today a tuple of paths is accepted on laws only and is one nested path elsewhere; a Python list is refused everywhere |
 | **position** | An integer, a slice, or a tuple of them, indexing a batch's axes. | `draws[3]`, `draws[0:10]` | II.5's prose also says "selection", which goes |
-| **subscript** | What is written inside `[]`, Python's own term: a path, a list of paths, or, on a batch, a position. | `grouped["g/c"]`, `grouped["a", "g/c"]` | replaces "key" |
 
+`[]` takes a path, a list of paths, or, on a batch, a position. The three need no shared name, since one `[]` never mixes a path with a position (§ 8).
 The public API gets no new noun for a list of paths: docstrings say "a path, or a list of paths".
 The word "selection" is avoided because `select` is already a method with another meaning; the glossary keeps only *selection order* (II.7).
-The word **key** is not used for subscripts, since ProbPipe already uses it for random keys.
+The word **key** is not used for paths, since ProbPipe already uses it for random keys.
 It keeps its Python sense of a mapping's keys, as in `keys()` or the keys of a rename mapping.
 Today the glossary also uses it for a field's path.
 
@@ -363,7 +363,7 @@ Today the glossary also uses it for a field's path.
 
 ### 5.1 The problem today
 
-Today a law and its own values often disagree on what a subscript means, and a term can offer names that its value does not hold.
+Today a law and its own values often disagree on what a path means, and a term can offer names that its value does not hold.
 Every result below was run on `dev/overhaul` at `a703f15e`, where `*` merges laws:
 
 | Expression | Result today | The related expression | Result today |
@@ -414,7 +414,7 @@ params_prior["beta"]                 # KeyError: "'beta' is not an event path of
 params_prior.with_path_names({"params/beta": "params/b"})   # renames inside the whole term; rename from S3
 ```
 
-A whole base term's name stays a subscript until G3, when the `component` accessor replaces it (§ 9.5).
+`[]` still accepts a whole base term's name until G3, when the `component` accessor replaces it (§ 9.5).
 So `Normal("x", 0.0, 1.0)["x"]` returns the law until G3, and `"x" in Normal("x", 0.0, 1.0)`, which S1 makes legal, is true until then.
 S1 keeps the list form at the root as today's tuple form gives it: `Normal("x", 0.0, 1.0)[["x"]]`, like today's `Normal("x", 0.0, 1.0)[("x",)]`, is the law over the record `{x}` (§ 21, O6).
 
@@ -422,7 +422,7 @@ S1 keeps the list form at the root as today's tuple form gives it: `Normal("x", 
 When a name is outside a structured value, the term has two sets of paths.
 Its value is indexed from inside, by `beta`, while merges and renames see it from outside, by `params/beta`.
 Grammar B keeps every name inside the value, or names a value that has no paths at all, so there is one set of paths:
-- subscripts, rename keys, and draws agree (I12);
+- the paths `[]` takes, rename keys, and draws agree (I12);
 - no rename key can be ambiguous;
 - the spec alone fixes whether a declaration is whole or exposed, so a declaration needs no flag to record it.
 
@@ -957,7 +957,7 @@ OutputSpec(mean=None).with_term_spec(NumericArraySpec(()))
 ### 7.5 `project`
 
 `decl.project(paths)` is the declaration of the part at `paths`. For a law `d`, it is the declaration of the view (III.7): `d[s].event_spec == d.event_spec.project(s)` (I6), except at a field that holds a law or a function, where the view adds a wrap (below).
-Its argument takes the subscripts that `d[...]` takes: a path, or a list of paths.
+It takes what `d[...]` takes: a path, or a list of paths.
 
 On an exposed record:
 1. **One path to a base node** gives that node whole, under a component named by the path's last segment.
@@ -966,7 +966,7 @@ On an exposed record:
 4. **A list of paths** gives an exposed record that keeps each node at its own path, in the declaration's canonical order, whatever order the paths are given in.
 
 On an exposed law, kernel, function, or batch, the projection applies to the declaration it holds, and the result exposes the same kind of term.
-That is the declaration of the law, the function, or the batch at the subscript.
+That is the declaration of the law, the function, or the batch at those paths.
 
 **The view adds the wrap.**
 A law's view at a field that holds a law or a function wraps the node under the field's name, on top of `project` (§ 5.3).
@@ -1107,9 +1107,9 @@ class OutputSpec(Mapping[str, TermSpec | None]):    # component names to compone
 jhuggins's reply sketches the recursion behind `project`, `without`, and path reading as two methods on every term spec, `produced_declaration()` and `with_produced_declaration(declaration)`, with `None` for a base spec.
 § 21, O11 asks whether they are public.
 
-## 8. Reading a subscript
+## 8. Reading paths and positions
 
-Every term that is indexed by path reads a subscript the same way:
+Every term that is indexed by path reads what `[]` is given the same way:
 - a `str` is one path;
 - a list or tuple of `str` is a list of paths;
 - an integer, a slice, or a tuple of them is a position, on a batch only.
@@ -1133,15 +1133,15 @@ The reader accepts these types and nothing else:
 - **A position** is an `int`, anything with `__index__` (NumPy and JAX integer scalars included), a `slice`, or a tuple of those.
 - `bool`, `None`, and `...` raise `TypeError`. `None` keeps its one meaning, a whole axis in `at_levels`.
 
-It refuses a malformed subscript before anything is looked up:
+It refuses malformed paths and positions before anything is looked up:
 
-| Subscript | Error | Reason |
+| Indexing | Error | Reason |
 | --- | --- | --- |
 | `t[""]`, `t["g//c"]`, `t["/a"]` | `ValueError` | an empty path or an empty segment |
 | `t[[]]`, `t[()]` | `ValueError` | no paths at all; on a batch too, so `t[tuple(paths)]` with no paths never returns everything |
 | `t["a", "a"]` | `ValueError` | the same path twice |
 | `t["g", "g/c"]` | `ValueError` | a path inside another would duplicate a variable, giving a degenerate joint law |
-| `t["a", 0]` | `TypeError` | a path and a position in one subscript |
+| `t["a", 0]` | `TypeError` | a path and a position in one `[]` |
 | `draws[[0, 2]]` | `TypeError` | a list of positions; there is no fancy indexing |
 | `draws[jnp.array([0, 2])]`, `draws[np.array([0, 2])]` | `TypeError` | an integer array is a list of positions too; today it raises `TypeError` as well |
 | `t[{"a"}]`, `t[iter(["a"])]` | `TypeError` | a set has no order and an iterator can be read only once, as `_as_names` already rules |
@@ -1206,7 +1206,7 @@ Step G3 delivers this section.
 ### 9.3 Record specs and declarations
 
 A `RecordSpec` indexes as a record does, returning specs.
-A declaration is indexed by component name, and `project` takes a subscript:
+A declaration is indexed by component name, and `project` takes a path or a list of paths:
 
 ```python
 draw_spec = draw.spec                 # RecordSpec {a, g: {c, e}}
@@ -1275,7 +1275,7 @@ grouped["g"].event_spec      # OutputSpec(RecordSpec(c=..., e=...)): the view an
 grouped[["g"]].event_spec    # OutputSpec(RecordSpec(g=RecordSpec(c=..., e=...)))
 ```
 
-**A whole term's name is not a subscript.**
+**A whole term's name is not a path.**
 Today `Normal("x", 0.0, 1.0)["x"]` returns the law itself, since III.7 lets a consumer index a law by component whatever its form.
 Under grammar B a whole declaration has no path below its root, so `x` is a name and not a path, and `Normal("x", 0.0, 1.0)["x"]` raises `KeyError`.
 `Normal("x", 0.0, 1.0).component("x")` returns the law (I12).
@@ -1284,15 +1284,15 @@ This change comes with the public accessor in step G3, so a reader always has on
 
 **`FieldView` becomes `MarginalView` (decided 2026-10-17).**
 The class covers groups and lists of paths, not only fields, so "field" undersells it.
-By I7 it is the marginal law at its subscript, kept as a view rather than detached, and the name pairs with `marginal`.
+By I7 it is the marginal law at its paths, kept as a view rather than detached, and the name pairs with `marginal`.
 The rename changes the class, its repr, III.7, III.8, and the User Guide; `d[s]` is unchanged.
 It merges in step S3.
 
 ### 9.6 Functions and kernels
 
 A function is indexed by the paths of what it returns, and indexing comes after the call (I13).
-A function with a declared output checks the subscript when it is indexed.
-A function without one, whose `output_spec` is `None`, checks it when the indexed function is called, against what the call returns.
+A function with a declared output checks the paths when it is indexed.
+A function without one, whose `output_spec` is `None`, checks them when the indexed function is called, against what the call returns.
 
 ```python
 emulator["mean"]             # the function theta -> emulator(theta)["mean"]   (today: TypeError, no [])
@@ -1353,7 +1353,7 @@ hier["s1/theta", "s2/theta"]          # a law over {s1: {theta}, s2: {theta}}
 # today: ValueError, "more than one path ends in 'theta', which would give the result two fields of the same name"
 ```
 
-The form of the subscript decides the result (I9).
+Whether paths come as one path or as a list decides the result (I9).
 One path gives the node, and a list of one path gives a record that holds it:
 
 ```python
@@ -1413,7 +1413,7 @@ Two consequences can surprise:
 
 ## 12. Operations that take paths
 
-Every operation reads its paths through the reader of § 8, so a subscript means the same thing wherever it is passed.
+Every operation reads its paths through the reader of § 8, so a path means the same thing wherever it is passed.
 A few arguments also accept a name that is not a path:
 
 | Argument | Paths | Names as well |
@@ -1432,7 +1432,7 @@ They stay unambiguous because IV.2 keeps a name from being both an unmet slot an
 
 ### 12.1 `marginal`
 
-`marginal(d, paths)` takes the subscripts that `d[paths]` takes and returns the same law, detached from `d` (I7).
+`marginal(d, paths)` takes what `d[paths]` takes and returns the same law, detached from `d` (I7).
 The parameter is renamed from `field` to `paths`, documented as "a path, or a list of paths", as in `without(*paths)`.
 
 ```python
@@ -1523,7 +1523,7 @@ sample(hier).select("s1/theta", "s2/theta")   # ValueError: both flatten to thet
 
 `with_path_names` becomes `rename` (decided 2026-10-17), the name pandas (`df.rename`) and xarray (`ds.rename`) use.
 It renames and moves nodes by their paths, and renames a whole term's name.
-Under grammar B its keys are the term's paths, plus that one name, so a view's subscripts and its rename keys agree:
+Under grammar B its keys are the term's paths, plus that one name, so the paths a view takes and its rename keys agree:
 
 ```python
 Normal("x", 0.0, 1.0).rename(x="y")       # Normal(y): renames the whole term   (unchanged)
@@ -1837,7 +1837,7 @@ One vocabulary runs through this plan and `design/`, and through the docstrings 
 | "map-like kind" (II.2) | "consumer" | It pairs with "producer". The execution plan says "requester" for the code that asks for a set of evaluation points. |
 | "packaged sub-joint" (IV.1), "packaged joint" (IV.2) | "grouped sub-joint" | A rename that gathers components under one node creates it. IV.2's paragraph "Packing the joint" becomes "The joint's event". |
 | "interior node", "subtree", "field group", "group of fields" | "group" | One word for a node of a record that is itself a record. |
-| "key" for a field path | "path"; "subscript" for what `[]` takes | "Key" means a random key, and a mapping's keys. |
+| "key" for a field path | "path", and "a path or a list of paths" for what `[]` takes | "Key" means a random key, and a mapping's keys. |
 | "selection" for batch positions and for several paths | "positions" and "a list of paths" | `select` is a method with another meaning. |
 | `FieldView` | `MarginalView` | It covers groups and lists of paths, and pairs with `marginal`. |
 | `with_path_names` | `rename` | The name pandas and xarray use. |
@@ -1853,7 +1853,7 @@ Three steps edit `design/glossary.md`, each for its own terms:
 - the execution terms, such as evaluation point, requester, and executor, are added by step E1.
 
 **The glossary changes of step S0:**
-- **new entries:** base spec, spec with parts, node, group, leaf path, slot, producer, consumer, exposes, whole declaration, exposed declaration, address, component spec, wrap, position, subscript, merge;
+- **new entries:** base spec, spec with parts, node, group, leaf path, slot, producer, consumer, exposes, whole declaration, exposed declaration, address, component spec, wrap, position, list of paths, merge;
 - **redefined:** *component* takes the definition of § 4.4 and keeps its second sense, the component laws of a `MixtureDistribution` (VII.3); *field*, *path*, and *declaration* take the definitions of § 4.2 and § 4.4; *marginal* takes "a path or a list of paths"; *view* names `MarginalView`; *type hole* names `with_term_spec`;
 - **narrowed:** *key* keeps only the random key and a mapping's keys;
 - **removed:** *packaging*, and *selection*, apart from *selection order* (II.7), which stays (gaps T3);
@@ -1873,7 +1873,7 @@ The execution plan's "automatic selection" points to *selection order* (gaps T3)
 
 ### 18.1 `design/`, section by section
 
-II.6 becomes the one statement of paths and subscripts, and II.2 the one statement of the declarations and the grammar rule.
+II.6 becomes the one statement of paths, lists of paths, and how `[]` reads them, and II.2 the one statement of the declarations and the grammar rule.
 Every other section cites them instead of restating a rule (`STYLE_GUIDE.md` §10, rule 8).
 Step S0 writes the target text of every row; the design conformance tests get pending entries for the signatures that change before the code does.
 
@@ -1883,7 +1883,7 @@ Step S0 writes the target text of every row; the design conformance tests get pe
 | II.2 Declarations | The keyword form names any spec whole; `spec`, `components`, `exposes_record`, `with_spec`; "packaging"; "map-like kind"; a whole term's paths start with its name; "an exposed record's components are its fields"; `OutputSpec(posterior=DistributionSpec(...))` as the example of a function returning a law; a law's exposed components typed by one draw's value | The definitions of § 4; the grammar rule; `OutputSpec` as a mapping with `term_spec`, `with_term_spec`, `project`, `without`, `rename`, and `&`; the exposure table of § 7.2; components, addresses, and component specs; the law's event rule; the four sources of slots; `InputSpec` `&`, `without`, and `rename`; defaults by kind and type holes; a returned law is exposed or wrapped |
 | II.4 Labels and views | A field of a value takes its path as its label; batch positions are a "selection" | Adds the label of a value indexed by several paths, `(a, g/c)`; positions are "positions" |
 | II.5 `Batch` | A tuple of names is one path; positions are a "selection"; `()` is the whole batch; a raw batch keeps a bare element spec; for a whole element, a name returns the batch | A batch is indexed by its element's paths and always holds an element declaration (`BatchSpec.element`); raw defaults; `BatchSpec` compares names, while a batch's equality, hashing, fingerprint, and pytree use the name-free canonical spec (§ 15.3); `()` and lists of positions raise; `in` tests paths; the component accessor reads a whole element |
-| II.6 `NamedTree` | A path may be a tuple; `[]` raises on a group; `in` tests fields; a key is a field's path; `without(path)` takes one path | Owns the definitions of § 4.2, the reading of a subscript, and `in`; `[]` returns groups; paths continue into a held law, function, or batch; a list of paths keeps its paths, in the tree's order; `without(*paths)` as the code has it; `rename` |
+| II.6 `NamedTree` | A path may be a tuple; `[]` raises on a group; `in` tests fields; a key is a field's path; `without(path)` takes one path | Owns the definitions of § 4.2, how `[]` reads paths, and `in`; `[]` returns groups; paths continue into a held law, function, or batch; a list of paths keeps its paths, in the tree's order; `without(*paths)` as the code has it; `rename` |
 | III.3 `Function` | Output components default to the callable's name for any non-record; a bare term spec uses the same default; no `[]` | The output default by kind (§ 5.5) and the bare-spec reading (§ 5.6, gaps T4); `input_spec` takes the four sources; `f[s]` indexes what `f` returns |
 | III.5 `Record` | `select` names entries by full path | `[]` names groups and held terms; `select` flattens to last segments; `&` |
 | III.6 `RecordBatch` | A tuple of names is one path | Cites II.6; a list of paths returns a `RecordBatch`; `select` flattens as on a record |
@@ -1946,7 +1946,7 @@ Every rename and removal is a clean break: no alias, no deprecation warning, and
 | A bare law, function, or batch spec given as `output_spec` is exposed instead of whole | G1b |
 | A random measure, a random function, a bootstrap law, an empirical law of laws, and a minibatched target wrap their draws, and a law's whole-term event over a law, a function, or a batch is wrapped by default | G2 |
 | `OutputSpec(name=spec)` raises for a spec with parts, and so does filling a type hole with one | G2 |
-| A whole term's name is no longer a subscript: `Normal("x", 0.0, 1.0)["x"]` raises | G3 |
+| `[]` no longer accepts a whole term's name: `Normal("x", 0.0, 1.0)["x"]` raises | G3 |
 | `condition_on` returns a law that exposes a record on every route | G4 |
 
 ## 19. Implementation
@@ -1964,7 +1964,7 @@ A mechanical step changes names and call sites only, so its done-condition is th
 ### 19.2 S0: the design text
 
 **Delivers:** the target text of § 18.1 and the glossary changes that § 17 assigns to S0.
-II.2 states the declarations and the grammar rule, and II.6 the paths and the reading of a subscript.
+II.2 states the declarations and the grammar rule, and II.6 the paths and how `[]` reads them.
 IV.2's rationale takes the fix of § 14.5, and IV.2 is retitled "Merging distributions": "merge" replaces "composition" for `&` throughout `design/`, and the operations table of `design/README.md` splits "merge" (`p(x | y) · p(y)`) from "composition" (`f ∘ g`, `A B`).
 V.6 and III.3 state the bare-spec reading of § 5.6.
 S0 does not change `STYLE_GUIDE.md`, which changes with the code (§ 18.2).
@@ -1973,7 +1973,7 @@ S0 does not change `STYLE_GUIDE.md`, which changes with the code (§ 18.2).
 
 **Done when:** `tests/docs/` and the four `test_design_conformance.py` files pass, with pending entries for the signatures that change before the code; `scripts/design/design_blocks.py check` passes for each edited section; and each candidate that `scripts/design/prose.py` reports is resolved under `STYLE_GUIDE.md` §10.
 
-### 19.3 S1: one subscript reader
+### 19.3 S1: one path reader
 
 **Delivers:**
 - the reader of § 8, with its errors, and one `_PATH_SEP`;
@@ -1984,7 +1984,7 @@ S0 does not change `STYLE_GUIDE.md`, which changes with the code (§ 18.2).
 - `marginal(d, paths)` (§ 12.1), the reader's errors in `without` (§ 12.4), and `select` (§ 12.5);
 - `STYLE_GUIDE.md` §1.10 for paths (§ 18.2).
 
-A whole declaration's name stays a subscript (§ 5.2): `Normal("x", 0.0, 1.0)["x"]` is the law, `"x" in Normal("x", 0.0, 1.0)` is true, and `Normal("x", 0.0, 1.0)[["x"]]` is the law over the record `{x}`, as today's tuple form gives it (§ 21, O6).
+`[]` still accepts a whole declaration's name (§ 5.2): `Normal("x", 0.0, 1.0)["x"]` is the law, `"x" in Normal("x", 0.0, 1.0)` is true, and `Normal("x", 0.0, 1.0)[["x"]]` is the law over the record `{x}`, as today's tuple form gives it (§ 21, O6).
 
 **Invariants:** I4, I9, I5 on records and batches, I10 on records, record specs, and batches, I2 and I7 for lists of paths, I1 for records and batches, and I3 with #576.
 
@@ -2033,14 +2033,14 @@ Its renames change about 50 modules, which is why it is announced.
 - the refusal of a law's event that exposes a law, a kernel, a function, or a batch;
 - `docs/api/declarations.md` opens with the definitions.
 
-**S2b invariants:** I6 for the subscripts S1 supports, I10 on declarations, and I1 for declarations.
+**S2b invariants:** I6 for the paths S1 supports, I10 on declarations, and I1 for declarations.
 
 **S2b files:**
 - `core/_specs.py`: `project`, `without`, `&`, the event-rule check;
 - `values/_function_base.py`: the `input_spec` reading in `Function._initialize`;
 - `distributions/_conditional.py`: `_slots_of`, `_complete_given_spec`, `ConditionalDistributionSpec`'s `given_spec`, the event rule;
 - `distributions/_distribution.py`: `DistributionSpec` and the event rule;
-- `distributions/_views.py`: `_view_declaration` becomes `OutputSpec.project` for every subscript except one path to a group, which keeps today's whole form until G1a;
+- `distributions/_views.py`: `_view_declaration` becomes `OutputSpec.project` for every path or list of paths except one path to a group, which keeps today's whole form until G1a;
 - `distributions/_factored.py`: the joint's event and its unmet slots in `_factor_graph`, through `&`;
 - the three callers of `InputSpec.without` (§ 6.5);
 - `docs/api/declarations.md`.
@@ -2147,7 +2147,7 @@ If G1b is cut, the G1a allowance stays in force until G1b merges after the works
 | Step | Delivers | Invariants | Files | Done when |
 | --- | --- | --- | --- | --- |
 | G2 | The event default of § 5.5 wraps a law, a function, or a batch; the G2 families wrap their draws (§ 5.3); then the keyword form and the filling of a type hole refuse a spec with parts (§ 5.2, § 5.5) | I1 for the draws of those families | `_whole_term_event`, `_event_repr_parts` (`distributions/_distribution.py`), `distribution` (`distributions/_from_functions.py`), `_agreed_event_spec` (`distributions/_conditional.py`), `families/_random_functions.py`, `families/_gaussian.py`, `families/_resampling.py`, `distributions/_empirical.py`, `inference/_minibatch.py`, `core/_specs.py` | `rm`'s draws are `{G: law}` and `gp`'s are `{f: function}`; `OutputSpec(params=RecordSpec(beta=(), sigma=()))` raises `TypeError` with the message of § 5.2; `OutputSpec(x=None).with_term_spec(RecordSpec(a=()))` raises; the probe is removed |
-| G3 | Paths through every kind (§ 4.2, § 9.2); `Function[]` (§ 9.6); `component` (§ 9.7); a view at or below a field that holds a law or a function wraps under the field's name (§ 5.3); a whole term's name stops being a subscript (§ 9.5) | I1 and I5 across kinds, I6 at held laws and functions, I12, I13 for functions | `core/named_tree.py`, `core/record.py`, `core/_batch.py`, `values/_function_base.py`, `distributions/_views.py`, `core/tracked.py` | property tests of I1, I5, I12, and I13 over records, laws, functions, and batches; `rm["G/mu"]` draws `{G: law["mu"]}` |
+| G3 | Paths through every kind (§ 4.2, § 9.2); `Function[]` (§ 9.6); `component` (§ 9.7); a view at or below a field that holds a law or a function wraps under the field's name (§ 5.3); `[]` stops accepting a whole term's name (§ 9.5) | I1 and I5 across kinds, I6 at held laws and functions, I12, I13 for functions | `core/named_tree.py`, `core/record.py`, `core/_batch.py`, `values/_function_base.py`, `distributions/_views.py`, `core/tracked.py` | property tests of I1, I5, I12, and I13 over records, laws, functions, and batches; `rm["G/mu"]` draws `{G: law["mu"]}` |
 | G4 | `condition_on` declared as `d.without(*fixed)` on every route, with nested paths route by route (§ 12.2); `law.without` (§ 12.4) | I8, I10 on laws, I11 | `operations/_condition.py`, the conditioning routes of the families, `distributions/_views.py` | property tests of I8, I10, and I11, including the Gaussian route |
 | G5 | `[]` on batches of laws and of functions, and on kernels (§ 9.4, § 9.6); `STYLE_GUIDE.md` §1.11 | I13 for kernels, I1 on batches of laws | `distributions/_batches.py`, `distributions/_conditional.py`, `core/_function_batch.py` | `laws["mu"]` is the batch of views; `lik[s](v)` is `lik(v)[s]` |
 | — | `&` on functions and batches, spec-level `&`, `InputSpec.rename`, lifting by postcomposition (§ 14.4), and `without` on the other kinds (§ 16) | — | `values/_function_base.py`, `core/_batch.py`, `core/_specs.py`, `functions/_broadcast.py` | the examples of § 14.4 run |
@@ -2158,8 +2158,8 @@ Before G1a, G1b, and G2 are final, jhuggins's Rocq model should be extended to r
 
 This is #571's checklist, rewritten for the reconciled design.
 
-- [ ] **The design reference (S0).** II.2 owns the definitions, the grammar rule, the exposure table, the law's event rule, `term_spec`, the sources of slots, and the operations. II.1 states the size shorthand once. II.5 states the element declaration and the raw defaults. II.6 owns paths and subscripts and states `without(*paths)`. III.3, III.9, and IV.4 point to II.2 for the sources of `input_spec` and `given_spec`. III.7 defines a view's declaration from `event_spec.project(s)`. IV.1 and IV.2 use the new vocabulary and define the joint's event with `&`. The glossary changes as § 17 lists. *(Done as § 19.2 states.)*
-- [ ] **The subscript reader (S1).** *(Done as § 19.3 states.)*
+- [ ] **The design reference (S0).** II.2 owns the definitions, the grammar rule, the exposure table, the law's event rule, `term_spec`, the sources of slots, and the operations. II.1 states the size shorthand once. II.5 states the element declaration and the raw defaults. II.6 owns paths and how `[]` reads them and states `without(*paths)`. III.3, III.9, and IV.4 point to II.2 for the sources of `input_spec` and `given_spec`. III.7 defines a view's declaration from `event_spec.project(s)`. IV.1 and IV.2 use the new vocabulary and define the joint's event with `&`. The glossary changes as § 17 lists. *(Done as § 19.2 states.)*
+- [ ] **The path reader (S1).** *(Done as § 19.3 states.)*
 - [ ] **`OutputSpec` as a mapping, and `term_spec` (S2a).** Replace the reads of `exposes_record`, of `_component_name` outside `_specs.py`, and of `.spec` on a declaration (`.output_spec.spec` on 4 lines of `probpipe/` and 24 of `tests/`, besides the counts of § 19.4). Update the docstrings and messages that say "packaging", "packaged", or "map-like kind", such as the `InputSpec` docstring. *(Done as § 19.4 states for S2a.)*
 - [ ] **The law's event rule (S2b).** Refuse an exposed law, kernel, function, or batch as the event declaration in the constructors of `Distribution`, `ConditionalDistribution`, `DistributionSpec`, and `ConditionalDistributionSpec`. *(Done when the law of § 5.4 raises `TypeError` at construction.)*
 - [ ] **One reading of slots (S2b).** The `InputSpec` constructor accepts the four sources and the size shorthand; `_slots_of`, `_complete_given_spec`, and the `input_spec` reading construct through it; the keyword form of `OutputSpec` accepts the shorthand. *(Done as § 19.4 states for S2b.)*
@@ -2246,7 +2246,7 @@ G1a does not edit `_broadcast.py`, so it depends only on S2b and S4.
 
 **Resolved by README § Steps**, whose rows now name them:
 - S1 makes `select` flatten to last segments (§ 12.5) and adds `in` on laws (§ 11);
-- G3 makes a whole term's name stop being a subscript, with the `component` accessor that replaces it (§ 9.5), and `project` keeps today's reading of a whole name until then (§ 7.5).
+- G3 makes `[]` stop accepting a whole term's name, with the `component` accessor that replaces it (§ 9.5), and `project` keeps today's reading of a whole name until then (§ 7.5).
 
 ### Open
 
@@ -2512,7 +2512,7 @@ Until G3, a view at a field that holds a law or a function keeps today's whole f
 | The implementation sequence | six steps, tentative | S0, S1, S2a, S2b, S3, S4, G1a, and G1b before the workshop, G2–G5 after; README § Steps owns the order (§ 19) |
 | The workshop split | not covered | G1a and G1b before, G2 after, with the refusal of the old form last (§ 5.8) |
 | Defaults | one rule by kind | two entry points: the output default changes in G1b and the event default in G2 (§ 5.5) |
-| Membership and `[]` on a whole term's name | the name is not a subscript | the same, from G3; until then the old reading stays (§ 5.2) |
+| Membership and `[]` on a whole term's name | the name is not a path | the same, from G3; until then the old reading stays (§ 5.2) |
 | A bare `output_spec` | not covered | read by the defaults by kind (§ 5.6, gaps T4) |
 | IV.2's rationale | a note for #571 | the fix of § 14.5 (gaps T5) |
 | "Selection" in the glossary | both senses removed | only *selection order* stays (gaps T3) |
