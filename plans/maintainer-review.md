@@ -240,3 +240,27 @@ None of these needs a decision before the workshop.
   - any behaviour on a GPU or TPU;
   - Prefect with Ray or Dask runners.
 - **Two published HTML artifacts carry older copies of the plans** ("ProbPipe execution layer design (#580)" and "ProbPipe addressing plan, grammar B"). Only the two Claude Docs got a pointer note. Say if the artifacts should get one too.
+
+---
+
+## E. New since your review: provisional decisions from the call-context review (2026-10-18)
+
+Two adversarial reviews of the folded call context (`execution-layer.md` § 6.16) found two blockers and a dozen major issues, all fixed. Five fixes needed a design choice; each is written into § 6.16 as the design and listed in its "Decisions" table, awaiting your confirmation.
+
+| | Choice made | Why | Alternative |
+|---|---|---|---|
+| M13 | Settings are **traced** (can change a compiled result: `sampling.*`) or **untraced** (cannot: `notation.*`, `provenance.*`, `prefect.*`); untraced settings are readable while JAX traces and never enter a cache key; a call opened inside a staging trace runs inline with no Prefect orchestration | Every nested call reads `config.prefect.workflow_kind` today, so the old "neither kind raises" rule would have broken every nested call inside a compiled kernel | Keep "presentation" and exempt `prefect` by name |
+| M14 | Notes made while JAX traces (the `num_samples` used, the once-per-call warnings) are recorded with the compiled JAX program and re-applied on every cache hit | Otherwise a cold call and a warm call report different provenance | Forbid notes while tracing |
+| M15 | Work shipped to a worker process carries the session's settings in effect when the call opened (`session_config_values`), applied in the worker | Otherwise `config.sampling.num_samples = 4096` set at session level is 1024 in a `process` worker but 4096 in a `thread` | Ship only `using` blocks, and document the difference |
+| M16 | One rule for what a call's provenance reports: what it ran itself, plus, for a derived route, its formula's calls; each evaluation point notes into its own buffer, merged on success | Removes phantom counts from failed or retried evaluation points, and makes provenance the same under every executor | Merge logs into every parent call |
+| M17 | `executor` and `executor_options` resolve as one unit; `using(executor=None)` restores inheritance; to opt out of an inherited executor, name one such as `"sequential"`; a traceable callable is always compiled by `jax` | Options belong to the executor they were named with; the earlier wording paired one function's options with an inherited executor | `using(executor=None)` means automatic selection |
+
+Smaller choices the reviser made, for a glance:
+- **The evaluation run table (E7):** bounded at 65,536 entries with least-recently-used eviction. Concurrent misses on one evaluation point de-duplicate in flight.
+- **Root calls:** marked by a `call_depth` field and `is_root_call()`.
+- **Process pools:** keyed by the shipped JAX settings and reused across calls.
+- **Renames in P0b:** a table of renames for vague names in the code it changes, for example `_plan_point` → `_plan_route_request` and `_passing_down` → `_passing_controls_to_formula_calls`.
+- **The formula rename:** P0b writes "identity", the term current on `dev/overhaul`, and E0 then renames every occurrence, P0b's text included, so there is no partial migration.
+- **PV's new field:** PV adds `session_config_values` with the `provenance` section only, and E3a extends it to every section.
+
+A second round of review is running on the revised § 6.16.
