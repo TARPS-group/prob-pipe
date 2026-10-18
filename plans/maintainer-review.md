@@ -61,7 +61,7 @@ Each item says why it matters, what is recommended, and where to read more.
 | OD3 | A callback in a JAX program the user compiles runs under the default context on every thread | Accept: otherwise `jit` and `pmap` read different settings |
 | OD4 | Process workers return the `num_samples` their Monte Carlo estimates used with their outcomes, starting in E3a | Accept |
 | OD5 | #587 creates the one context before it merges, rather than a follow-up PR (M3) | Accept |
-| OD6 | A compiled JAX program's key holds the passed controls and the traced settings only | Accept (option A′) |
+| OD6 | A compiled JAX program's key holds the passed controls and the static settings only | Accept (option A′) |
 | OD7 | An embedded call inside a program the `jax` executor compiles uses the call's executor, so `growth.using(executor="slurm")` sends the opaque `forward` inside it to the cluster | Accept; Q8 then covers only calls an evaluation point makes in Python |
 | OD8 | The program store holds `jax.jit` objects, which JAX itself keys by its global settings | Accept |
 
@@ -249,7 +249,7 @@ Two adversarial reviews of the folded call context (`execution-layer.md` § 6.16
 
 | | Choice made | Why | Alternative |
 |---|---|---|---|
-| M13 | Settings are **traced** (can change a compiled result: `sampling.*`) or **untraced** (cannot: `notation.*`, `provenance.*`, `prefect.*`); untraced settings are readable while JAX traces and never enter a cache key; a call opened inside a staging trace runs inline with no Prefect orchestration | Every nested call reads `config.prefect.workflow_kind` today, so the old "neither kind raises" rule would have broken every nested call inside a compiled kernel | Keep "presentation" and exempt `prefect` by name |
+| M13 | **Decided 2026-10-18:** settings are **static** (part of the cache key: `sampling.*`) or **inert** (cannot change a computed value: `notation.*`, `provenance.*`, `prefect.*`); a call opened inside a staging trace runs inline | | |
 | M14 | Notes made while JAX traces (the `num_samples` used, the once-per-call warnings) are recorded with the compiled JAX program and re-applied on every cache hit | Otherwise a cold call and a warm call report different provenance | Forbid notes while tracing |
 | M15 | Work shipped to a worker process carries the session's settings in effect when the call opened (`session_config_values`), applied in the worker | Otherwise `config.sampling.num_samples = 4096` set at session level is 1024 in a `process` worker but 4096 in a `thread` | Ship only `using` blocks, and document the difference |
 | M16 | One rule for what a call's provenance reports: what it ran itself, plus, for a derived route, its formula's calls; each evaluation point notes into its own buffer, merged on success | Removes phantom counts from failed or retried evaluation points, and makes provenance the same under every executor | Merge logs into every parent call |
