@@ -11,7 +11,7 @@ After that, a question raised during implementation is added here, written as RE
 
 | Raised | By | Question | Where it is explained |
 |---|---|---|---|
-| 2026-10-18 | call-context review, round 2 | the `prefect` section is not shipped to workers; a new public error `UnshippableSettingError(RuntimeError)` for a setting that cannot travel to a worker; while ProbPipe is already tracing, an inner call's body runs inline in the outer trace (M22) | `execution-layer.md` § 6.16, "Decisions" (provisional table) |
+| 2026-10-18 | call-context review, round 3 | M22: while ProbPipe is already tracing, an inner call's body runs inline in the outer trace | `maintainer-review.md` § E; `execution-layer.md` § 6.16, "Decisions" |
 
 ## Settled
 
@@ -19,6 +19,7 @@ Newest first.
 
 | Date | Decision | Area | Source |
 |---|---|---|---|
+| 2026-10-18 | M21: the `prefect` section is never shipped to a worker process, so a nested call there runs without Prefect orchestration; another value that cannot be pickled travels as a placeholder raising the new public `UnshippableSettingError(RuntimeError)`, from `core/config.py`, only when read. A broader analysis of Prefect support is deferred until after the workshop. | execution | maintainer |
 | 2026-10-18 | M19: a refusing executor raises when it was named for this callable, on its own `Function` or as the call's own callable, and falls back with a warning when inherited, however its evaluation points arrive. The executor choice records that callable in `applies_only_to` (`None` when the choice applies to every opaque callable of the call). | execution | maintainer |
 | 2026-10-18 | M18: a backward pass that runs after its call closed (an eager `grad` or `vjp` through a supplied derivative) runs under the default context, and a forward pass never keeps its token among its residuals; this behaviour must be documented clearly in the derivative parameters' docstrings, V.13, and the user guide when supplied derivatives land. | execution | maintainer |
 | 2026-10-18 | M17: `executor` and `executor_options` resolve as one unit, so options always belong to the executor they were named with; options named without an executor go to the automatically selected one and are never inherited; `using(executor=None)` restores inheritance; a call opts out of an inherited executor by naming one; a traceable callable is always compiled by `jax`. | execution | maintainer |

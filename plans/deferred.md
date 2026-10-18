@@ -62,5 +62,6 @@ When the push ends, each issue's text is updated to match, and none closes until
 | 2026-10-17 | Rename `with_level_names` and `with_dim_names` to `rename_levels` and `rename_dims`, so all three renames read alike. | addressing plan; `declarations-and-addressing.md` O13 | Not part of the push. |
 | 2026-10-17 | Rename a mixture's `components=` parameter, so "component" keeps one sense in the API. | `declarations-and-addressing.md` O14 | Not part of the push. |
 | 2026-10-18 | Rename `LinOp` to `LinearOperator`, with its module and every use, as a clean break. | maintainer | Not part of the push. |
+| 2026-10-18 | A comprehensive analysis of ProbPipe's Prefect support, and possibly a refactor: how orchestration, task runners, caching, and the planned `prefect` executor fit together, and what a nested call in a worker should do. | maintainer, decision M21 | After the workshop. |
 | 2026-10-16 | Issues to open: deterministic fields of a joint (Q4) and a Gibbs method (Q10). | execution plan | |
 | 2026-10-16 | An exact route ruled out only by a budget should be reported, and the call should warn. | execution plan, Q12 | Tracked in #585; its text needs `max_evaluations` after #586. |
