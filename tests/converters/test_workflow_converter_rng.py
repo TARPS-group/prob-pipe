@@ -170,7 +170,7 @@ class TestBuiltInConversionRandomness:
         source = _CovarianceSource(calls) if closed_form else _VectorSource(calls)
 
         info = converter_registry.check(source, MultivariateNormal, num_samples=16)
-        assert info.samples is not closed_form
+        assert info.draws_from_source is not closed_form
         with (
             patch(
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
@@ -209,7 +209,7 @@ class TestBuiltInConversionRandomness:
         descendant = BijectorTransformedDistribution("descendant", root, tfb.Exp())
 
         info = converter_registry.check(descendant, Normal, num_samples=16, check_support=False)
-        assert (info.method_name, info.samples) == ("moment_match", True)
+        assert (info.method_name, info.draws_from_source) == ("moment_match", True)
         with (
             patch(
                 "probpipe.functions._context._commit_stochastic_invocation",
@@ -307,8 +307,6 @@ class TestCustomConverterRandomness:
             def check(self, source, target_type, **options):
                 return ConversionInfo(
                     feasible=True,
-                    method_name=self.name,
-                    exact=False,
                     target_spec=Normal("x", loc=0.0, scale=1.0).spec,
                 )
 

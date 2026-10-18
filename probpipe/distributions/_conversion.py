@@ -84,12 +84,16 @@ _GUARDED_METHODS: dict[type, str] = {
 class ConversionInfo(MethodInfo):
     """The report of one conversion, before it executes.
 
-    The registry's ``check`` returns one in every state. A feasible report
-    promises the declaration the result carries and states whether the
-    conversion is exact and whether executing it draws from the source; an
-    infeasible report leaves the promise at its defaults, which promise nothing.
-    The exactness is the selected converter's declaration, which the registry
-    fills in from the registration, so a converter states only its promise.
+    A converter's ``check`` returns one, and the registry's ``check`` returns
+    one in every state. A feasible report promises the declaration the result
+    carries and states whether the conversion is exact and whether executing it
+    draws from the source; an infeasible report leaves the promise at its
+    defaults, which promise nothing.
+
+    A converter states only its promise and leaves ``method_name`` and
+    ``exact`` unset. The registry sets both on the report it returns, from the
+    registration of the converter it selected, so a report from the registry
+    names its converter and carries that converter's declared exactness.
 
     Attributes
     ----------
@@ -99,50 +103,58 @@ class ConversionInfo(MethodInfo):
         The representation class of the result, when known.
     capabilities : tuple of type
         The capability protocols guaranteed on the result.
-    samples : bool
-        Whether executing the conversion draws from the source, a
-        workflow-owned random event.
+    draws_from_source : bool
+        ``True`` when executing the conversion draws from the source, which is
+        a workflow-owned random event (V.8), so the result depends on the
+        workflow scope's seed. ``False`` when the conversion makes no draw, so
+        its result is a deterministic function of the source and the converter
+        options. ``check`` decides it without drawing, and a report that selects
+        no converter states ``False``.
 
     Raises
     ------
     TypeError
-        If ``samples`` is not a ``bool``, or on a condition
+        If ``draws_from_source`` is not a ``bool``, or on a condition
         :class:`~probpipe.core._dispatch.Feasibility` rejects.
     ValueError
-        If exactly one of ``method_name`` and ``exact`` is set on a report that
-        selects a converter or is infeasible; if a feasible or unresolved report
-        names no converter and is not exact; if a feasible report promises no
-        ``target_spec``; or on a condition ``Feasibility`` rejects.
+        If ``method_name`` is set without ``exact``; if ``exact`` is set
+        without ``method_name`` on a report that is infeasible or not exact;
+        if a feasible report promises no ``target_spec``; or on a condition
+        ``Feasibility`` rejects.
 
     Notes
     -----
-    ``method_name`` is ``None`` when no converter is selected. That is either an
-    infeasible report, whose ``description`` lists each converter tried, or the
-    report of a source that already satisfies the target, which needs no
-    conversion and is exact. The pending requirements of an unresolved report
+    A report with no ``method_name`` is a converter's own report, before the
+    registry names it; an infeasible report of the registry, whose
+    ``description`` lists each converter tried; or the report of a source that
+    already satisfies the target, which needs no conversion and so is exact,
+    with ``exact=True``. The pending requirements of an unresolved report
     are those of :class:`~probpipe.core._dispatch.Feasibility`.
     """
 
     target_spec: DistributionSpec | None = None
     target_class: type | None = None
     capabilities: tuple[type, ...] = ()
-    samples: bool = False
+    draws_from_source: bool = False
 
     def __post_init__(self) -> None:
         Feasibility.__post_init__(self)
-        if type(self.samples) is not bool:
-            raise TypeError(f"samples must be a bool; got {self.samples!r}")
-        if self.method_name is not None or self.feasible is False:
-            if (self.method_name is None) != (self.exact is None):
-                raise ValueError(
-                    f"ConversionInfo: pass method_name and exact together; got "
-                    f"method_name={self.method_name!r}, exact={self.exact!r}"
-                )
-        elif self.exact is not True:
-            raise ValueError(
-                "a feasible or unresolved ConversionInfo must set method_name and exact, such "
-                "as method_name=self.name, exact=True"
+        if type(self.draws_from_source) is not bool:
+            raise TypeError(
+                f"ConversionInfo's draws_from_source must be a bool, got {self.draws_from_source!r}"
             )
+        if self.method_name is not None and self.exact is None:
+            raise ValueError(
+                f"ConversionInfo: pass exact with method_name={self.method_name!r}; a converter "
+                "leaves both unset, and the registry sets them from the registration"
+            )
+        if self.method_name is None and self.exact is not None:
+            if self.feasible is False or self.exact is not True:
+                raise ValueError(
+                    f"ConversionInfo: exact={self.exact!r} without a method_name states a source "
+                    f"that needs no conversion, which is exact and not infeasible; got "
+                    f"feasible={self.feasible!r}. A converter leaves exact unset"
+                )
         if self.feasible is True and self.target_spec is None:
             raise ValueError("a feasible ConversionInfo must set target_spec")
 
@@ -156,8 +168,8 @@ class ConversionInfo(MethodInfo):
         if self.capabilities:
             names = (capability.__name__ for capability in self.capabilities)
             fields.append(("capabilities", sequence_repr(names)))
-        if self.samples:
-            fields.append(("samples", "True"))
+        if self.draws_from_source:
+            fields.append(("draws_from_source", "True"))
         return fields
 
 
@@ -182,7 +194,10 @@ class Converter(BinaryDispatchMethod):
         """Promise the conversion of *source* to *target_type* without executing it.
 
         It never samples, fits, or evaluates a density, and it reports as
-        pending whatever it cannot settle without the source's values.
+        pending whatever it cannot settle without the source's values. The
+        report states the promise and ``draws_from_source`` and leaves
+        ``method_name`` and ``exact`` unset, which the registry sets from the
+        registration.
         """
 
     @abstractmethod

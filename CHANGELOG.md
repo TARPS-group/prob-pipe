@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`ConversionInfo.samples` is renamed `draws_from_source`.** It is `True`
+  when executing the conversion draws from the source, a workflow-owned random
+  event, so the result depends on the workflow seed, and `False` when the
+  result is a deterministic function of the source and the converter options.
+  Replace `info.samples` with `info.draws_from_source`, and pass
+  `draws_from_source=` where a converter's `check` passed `samples=`.
+- **A converter's `check` states only its promise.** It leaves
+  `method_name` and `exact` unset on the `ConversionInfo` it returns, and the
+  converter registry sets both from the registration. A converter that still
+  passes them works as before, since the registry replaces them, but
+  `ConversionInfo` now refuses `method_name` without `exact`, and `exact`
+  without `method_name` except on the exact report of a source that needs no
+  conversion.
 - **`raw` is a property on every term.** Replace `x.raw()` with `x.raw`, and
   search your code for `.raw(` to find the calls. The `raw` of a `Function`,
   an `Operation`, or a `Bijector` is a callable, so an old `f.raw()` calls the
