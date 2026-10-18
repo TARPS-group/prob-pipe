@@ -72,7 +72,7 @@ The design in eleven statements:
 8. **Errors.** A call context closes in a `finally` clause: it releases its token if it registered one, merges its draw counts into its parent only on success, and restores the context variable. The engine raises a callback's recorded failures in place of whatever exception JAX raises.
 9. **Tokens only where embedded calls are.** A call registers a token only before it runs a JAX program that stages an embedded call, and only such a call waits for its JAX programs before it closes. Every other call registers nothing and keeps JAX's asynchronous dispatch.
 10. **Names.** `_CallContext` in a new module `core/_call_context.py`. #587's `record` becomes `draw_counts`, `_MonteCarloRecord` becomes `_MonteCarloDrawCounts`, and `_CarriedContext` becomes `_ContextBoundFunction`. The token table is `_ActiveCalls`.
-11. **Order.** #587 creates the one context with the fields it needs before it merges. E3a adds the executor choice, its reset where each evaluation point starts, and the shipped JAX settings; E4 the embedded-call state (the token and the failures); E7 the run table; and E8 the check of the JAX settings, each as a field or a rule of the same type.
+11. **Order.** #587 creates the one context with the fields it needs before it merges. E3a adds the executor choice, its reset where each evaluation point starts, and the shipped JAX settings; E4 the embedded-call state (the token and the failures); E7 the evaluation run table; and E8 the check of the JAX settings, each as a field or a rule of the same type.
 
 **What #587 changes before it merges** (§ 7.2):
 1. its three context variables become the fields of one value, which its carried wrapper carries;
@@ -232,7 +232,7 @@ A call context, a block, and an installed evaluation context each restore the pr
 - **Default context:** the `_CallContext` with every field at its default: no blocks, no passed controls, no call, automatic selection.
 - **`config` block:** the temporary values that `config.<section>.using(...)` or `config.using(...)` sets for the extent of a `with` statement (#587).
 - **Passed controls:** the `exact_only`, `max_evaluations`, and `num_samples` that a derived operation's identity passes to the calls it makes (VI.0). Today they are the value of `_INHERITED_CONTROLS`.
-- **Evaluation context:** the call context that an evaluation point of a call runs under, which `_CallContext.evaluation_context()` returns. It is the call's context without the executor choice, the embedded-call state, and the run table.
+- **Evaluation context:** the call context that an evaluation point of a call runs under, which `_CallContext.evaluation_context()` returns. It is the call's context without the executor choice, the embedded-call state, and the evaluation run table.
 - **Call token:** a `numpy.uint32` that names one open call context in the table of active calls (execution plan §5). Token 0 names no call. A call registers a token only before it runs a JAX program that stages an embedded call.
 - **JAX program with embedded calls:** a JAX program ProbPipe opens whose trace staged at least one embedded call. The program store finds this by searching the JAX program's jaxpr when it lowers the JAX program, before the JAX program first runs (§ 5.2).
 - **ProbPipe is tracing:** `_TRACED_CALL_TOKEN` is set, which holds while ProbPipe traces a JAX program it opens.
@@ -292,7 +292,7 @@ class _CallContext:
     while ProbPipe traces one of its JAX programs raises.
 
     The dataclass is frozen. Its mutable parts (`draw_counts`, `evaluation_log`,
-    `embedded_calls`, `run_table`) are separate objects that it references, each
+    `embedded_calls`, `evaluation_run_table`) are separate objects that it references, each
     with its own lock, so copying a context never copies an accumulator.
 
     Attributes
@@ -328,7 +328,7 @@ class _CallContext:
         with embedded calls; the failures that host callbacks record; and the
         outputs the call waits for before it releases its token. `None` for a call
         opened while JAX traces.
-    run_table : _RunTable or None
+    evaluation_run_table : _EvaluationRunTable or None
         The evaluation points the call has run, so an opaque `Function` runs at
         most once per distinct evaluation point within the call.
     """
@@ -346,7 +346,7 @@ class _CallContext:
     # --- added by E4 ----------------------------------------------------------------------
     embedded_calls: _EmbeddedCallState | None = None
     # --- added by E7 ----------------------------------------------------------------------
-    run_table: _RunTable | None = None
+    evaluation_run_table: _EvaluationRunTable | None = None
 
     def with_config_block(self, values: Mapping[str, Mapping[str, Any]]) -> _CallContext: ...
     def with_passed_controls(self, passed: Mapping[str, Any] | None) -> _CallContext: ...
@@ -367,7 +367,7 @@ Field by field:
 | `execution` | `_ExecutionChoice(executor, options, source)`, the one home of the executor choice | `opening_call`, from the call's own `executor` controls, else the parent's choice; `evaluation_context` resets it | the executor dispatcher; the host side through the token | E3a | the controls `dispatch` and `max_workers` | new |
 | `evaluation_log` | `_EvaluationLog` | the executor dispatcher and the host side; a closing child merges its log into its parent's, on success and on error | provenance; replay's `executor` | E3a | the key broker's `requested_dispatch` | **Change:** moves off the broker |
 | `embedded_calls` | `_EmbeddedCallState`: the call token (`None` until registered), the failure list, and the outputs of the JAX programs with embedded calls the call ran | `opening_call` creates it, empty, outside a trace; the engine registers the token before it first runs a JAX program with embedded calls; the host side writes failures | JAX programs with embedded calls; `_ACTIVE_CALLS`; the engine at close | E4 | none | new |
-| `run_table` | `_RunTable` | the host side and the dispatcher | the same, before running an evaluation point | E7 | none | new |
+| `evaluation_run_table` | `_EvaluationRunTable` | the host side and the dispatcher | the same, before running an evaluation point | E7 | none | new |
 | `jax_settings` | mapping of the shipped settings: `jax_enable_x64`, `jax_default_prng_impl`, `jax_threefry_partitionable`, `jax_default_matmul_precision` | `opening_call` at a root call; inherited by children | the worker initializer of the `process` executor (E3a); the check at close and on the host side, and provenance (E8) | E3a | none | new |
 
 Three pieces of state that the task listed have their home elsewhere, so they are not fields:
@@ -407,7 +407,7 @@ def _opening_call_context(method):
 2. **`passed_controls`:** the parent's passed `exact_only` alone, or `None`, as `_EXACT_ONLY_BELOW` does today. The passed counts therefore apply only to the calls an identity makes directly.
 3. **`controls`, `label`, `execution`:** as resolved above.
 4. **`draw_counts`:** a new, empty `_MonteCarloDrawCounts`.
-5. **`embedded_calls` and `run_table`:** new and empty, when the call opens while no trace is active (E4, E7). Creating them registers nothing. A call opened while a trace is active gets neither, because its JAX programs become part of the traced JAX program and run later under that JAX program's token.
+5. **`embedded_calls` and `evaluation_run_table`:** new and empty, when the call opens while no trace is active (E4, E7). Creating them registers nothing. A call opened while a trace is active gets neither, because its JAX programs become part of the traced JAX program and run later under that JAX program's token.
 6. **`jax_settings`:** the parent's snapshot, or a new snapshot of the four shipped settings when the parent has no call (E3a).
 
 Two methods differ from `__call__`:
@@ -547,7 +547,7 @@ Ask whether two calls that differ only in this setting may share one compiled JA
 | an executor set on the `Function` itself, or named on a call that opens while a trace is active | the host side, from the `Function` that the staged callback holds | (c): an executor's options can hold objects with no hash, such as a pool, so they never enter a JAX program key |
 | the `jax` executor's `batch_size` | compiling a lifted JAX program | (b) |
 | `memo` | the staging of an embedded call | (b), as the execution plan §6.10 item 2 states |
-| the failures in `embedded_calls` and the run table | the host side | (c) |
+| the failures in `embedded_calls` and the evaluation run table | the host side | (c) |
 | the traced settings: `passed_controls`, and the `config` settings declared traced (today `sampling.max_evaluations` and `sampling.num_samples`), as ProbPipe code traced inside a JAX program ProbPipe opens reads them | the trace | (b): part of the cache key of every JAX program ProbPipe opens (OD6); reading any other setting while ProbPipe traces raises (CC4) |
 | JAX's global settings: `jax_enable_x64`, `jax_default_prng_impl`, `jax_threefry_partitionable`, `jax_default_matmul_precision` | tracing and XLA | (b), through `jax.jit`'s own cache (OD8), and checked on the host side as (c) |
 
@@ -608,7 +608,7 @@ Each name says what the thing is, and none uses "record" for anything but `Recor
 | (execution plan) traced token variable | `_TRACED_CALL_TOKEN` | |
 | (execution plan) resolved execution settings | `_ExecutionChoice` | the executor, its options, and where the choice came from |
 
-Names introduced by later steps follow the same pattern: `_EvaluationLog` (E3a), `_EmbeddedCallState` (E4), and `_RunTable` (E7).
+Names introduced by later steps follow the same pattern: `_EvaluationLog` (E3a), `_EmbeddedCallState` (E4), and `_EvaluationRunTable` (E7).
 **Glossary:** "call context" and "evaluation context" are new terms, which the PR that adds `_CallContext` adds to `design/glossary.md` (directive 11).
 
 ---
@@ -687,7 +687,7 @@ Each step adds fields and behaviour to the same type and the same functions, and
 |---|---|---|
 | E3a | `execution` and `_ExecutionChoice`; `evaluation_context()` drops `execution`; `evaluation_log` and its merge into the parent; `jax_settings`, shipped to process workers through the pool's initializer; `EvaluationChunk` carries `evaluation_context()` and returns its draw counts (OD4); the program store, holding `jax.jit` objects, tracing and lowering each JAX program before its first run (execution plan §6.10, item 3), with the passed controls and the traced settings in its cache key, and the declaration of each `config` setting's kind (OD6, CC4); replay reads `executor` from the context; the broker's requested-execution fields go | `_under_call_context`, `evaluation_context`, `_ContextBoundFunction` (or `EvaluationChunk.run` in its place) |
 | E4 | `embedded_calls` and `_EmbeddedCallState`, `_ActiveCalls`; `evaluation_context()` drops `embedded_calls`; `_TRACED_CALL_TOKEN` and `_jax_tracing_active()`; detection and validity by a search of the jaxpr; lazy registration, the rule inside a trace, and the wait before release; raising recorded failures; the token threaded through every JAX program ProbPipe opens that runs user or route code, the inference runners included (execution plan §6.10, item 4, moves into E4); the output check per evaluation point and its cast warning; the error for reading a setting of neither kind while ProbPipe traces | the same |
-| E7 | `run_table`; `evaluation_context()` drops it | the same |
+| E7 | `evaluation_run_table`; `evaluation_context()` drops it | the same |
 | E8 | the check of the JAX settings at close and on the host side; their provenance | the same |
 
 ### 7.4 Prefect until the `prefect` executor
@@ -1000,3 +1000,4 @@ Nothing else changes. The sections, their checks and environment variables, `res
 | 16 | (2026-10-18) *Point* is renamed *evaluation point*: *point context* became *evaluation context*, `for_point()` became `evaluation_context()`, *point boundary* became *evaluation boundary*, the point-run table became the run table (`_RunTable`, field `evaluation_runs`), `point_sets_run` and `_PointSetLog` became `evaluations_run` and `_EvaluationLog`, `PointChunk` became `EvaluationChunk`, and `functions/_point_keys.py` became `functions/_evaluation_keys.py`. | The maintainer and jhuggins found "point" too generic. |
 | 17 | (2026-10-18) "JAX program" replaces "program" wherever a compiled JAX program is meant, with a definition in § 4; *empty context* became *default context* and `is_empty()` became `is_default()`; *evaluation boundary* is dropped, since it named the place an evaluation point starts and no boundary; `_tracing_active()` became `_jax_tracing_active()`. | The maintainer's review. |
 | 18 | (2026-10-18) "Cache key" replaces "key" for what a cache looks a compiled JAX program up by, so "key" keeps its random-key and mapping senses; `_CallContext` gets a full docstring; the fields `evaluations_run` and `evaluation_runs`, easy to confuse, became `evaluation_log` and `run_table`. | The maintainer's review. |
+| 19 | (2026-10-18) `run_table` became `evaluation_run_table`, and `_RunTable` became `_EvaluationRunTable`. | The maintainer's review. |

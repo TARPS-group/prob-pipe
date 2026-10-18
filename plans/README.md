@@ -219,6 +219,6 @@ At a checkpoint:
 ## When the push ends
 
 Steps S0 and E1 move the design into `design/`, which stays the single source of the target design; later steps update `design/` with their code.
-Before `plans/` is deleted, one PR re-evaluates the repository's rule documents against this push: `STYLE_GUIDE.md`, `CONTRACTS.md`, `CONTRIBUTING.md`, `AGENTS.md`, and the skills in `.claude/skills/`. It moves into them every directive of this file that proved useful and is not already there, such as the code-quality rules of directive 5 and the rule of directive 14, so the standards outlive the push.
+Before `plans/` is deleted, one PR re-evaluates the repository's rule documents against this push: `STYLE_GUIDE.md`, `CONTRACTS.md`, `CONTRIBUTING.md`, `AGENTS.md`, and the skills in `.claude/skills/`. It moves into them every directive of this file that proved useful and is not already there, such as the code-quality rules of directive 5 and the rule of directive 14, so the standards outlive the push. The same PR removes what the push added to the `review-pr` skill (its plan check and the matching line in `.claude/skills/README.md`), since `plans/` no longer exists.
 Once that PR has merged, every step before the workshop has merged, and the post-workshop work is recorded, `plans/` is deleted; git keeps its history.
 The items left in `deferred.md` become GitHub issues.

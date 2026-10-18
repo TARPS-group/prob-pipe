@@ -571,7 +571,7 @@ Each term below is a proposal for `design/glossary.md`.
 | **evaluation points** | the evaluation points of one callable that one request evaluates, as one collection: the callable, the arguments every evaluation point shares, the arguments that vary by evaluation point, one key per evaluation point, and each one's point index |
 | **point index** | an evaluation point's position within its evaluation points |
 | **evaluation point identity** | an evaluation point's unique name within its call: the callable, the ordinal of its evaluation points among those the call requested, and its point index; used in reports and errors |
-| **evaluation context** | the call context an evaluation point runs under: its call's context without the executor choice, the embedded-call state, and the run table ([`call-context-proposal.md`](call-context-proposal.md) § 4) |
+| **evaluation context** | the call context an evaluation point runs under: its call's context without the executor choice, the embedded-call state, and the evaluation run table ([`call-context-proposal.md`](call-context-proposal.md) § 4) |
 | **chunk** | a contiguous slice of evaluation points that an executor runs as one unit, such as one cluster job. A chunk can be pickled. |
 | **outcome** | an evaluation point's result: its output, or a failure that says why it has none |
 | **executor** | an entry of the executor registry: a named way to run a set of evaluation points, such as `sequential`, `thread`, or a user's `slurm` |
