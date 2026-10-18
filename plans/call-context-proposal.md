@@ -159,10 +159,10 @@ A compiled JAX program takes the token as an argument, and a host callback looks
 
 ```python
 # execution plan §6.9, pseudocode
-def host_side(token, theta, *, ranks):
-    call = active_calls.get(int(token))     # the call's executor, options, controls, and failures
-    points = evaluation_points(forward, theta, ranks)
-    outcomes = select(call).execute(points)
+def host_side(call_token, theta, *, argument_ranks):
+    call_context = active_calls.get(int(call_token))   # the call's executor, options, controls, and failures
+    evaluation_points = flatten_to_evaluation_points(forward, theta, argument_ranks)
+    evaluation_outcomes = select_executor(call_context).execute(evaluation_points)
     ...
 ```
 
@@ -348,8 +348,8 @@ class _CallContext:
     # --- added by E7 ----------------------------------------------------------------------
     evaluation_run_table: _EvaluationRunTable | None = None
 
-    def with_config_block(self, values: Mapping[str, Mapping[str, Any]]) -> _CallContext: ...
-    def with_passed_controls(self, passed: Mapping[str, Any] | None) -> _CallContext: ...
+    def with_config_block(self, config_values: Mapping[str, Mapping[str, Any]]) -> _CallContext: ...
+    def with_passed_controls(self, passed_controls: Mapping[str, Any] | None) -> _CallContext: ...
     def opening_call(self, *, label: str, controls: Mapping[str, Any], execution_choice: _ExecutionChoice) -> _CallContext: ...
     def evaluation_context(self) -> _CallContext: ...
     def is_default(self) -> bool: ...
@@ -364,7 +364,7 @@ Field by field:
 | `label` | `str` or `None` | `opening_call` | messages and warnings | #587 | none | new |
 | `controls` | mapping | `opening_call`: the view's `options` after `_inheriting`, without `executor` and `executor_options`, whose one home is `execution_choice` | `_current_num_samples`, executors (E3a), requesters that read `method_options["on_failure"]` | #587 | `_MonteCarloRecord.num_samples` and `Function.options` | **Change:** `_MonteCarloRecord.num_samples` goes |
 | `num_samples_used` | `_NumSamplesUsed` | routes, through `_note_num_samples_used`; `opening_call` and `_collecting_num_samples_used` create one | the call's provenance; the parent's counts on success, when the parent collects calls | #587 | `_MONTE_CARLO` (#586) | **Change:** renamed; the variable goes |
-| `execution_choice` | `_ExecutionChoice(executor, options, source)`, the one home of the executor choice | `opening_call`, from the call's own `executor` controls, else the parent's choice; `evaluation_context` resets it | the executor dispatcher; the host side through the token | E3a | the controls `dispatch` and `max_workers` | new |
+| `execution_choice` | `_ExecutionChoice(executor, executor_options, source)`, the one home of the executor choice | `opening_call`, from the call's own `executor` controls, else the parent's choice; `evaluation_context` resets it | the executor dispatcher; the host side through the token | E3a | the controls `dispatch` and `max_workers` | new |
 | `evaluation_log` | `_EvaluationLog` | the executor dispatcher and the host side; a closing child merges its log into its parent's, on success and on error | provenance; replay's `executor` | E3a | the key broker's `requested_dispatch` | **Change:** moves off the broker |
 | `embedded_calls` | `_EmbeddedCallState`: the call token (`None` until registered), the failure list, and the outputs of the JAX programs with embedded calls the call ran | `opening_call` creates it, empty, outside a trace; the engine registers the token before it first runs a JAX program with embedded calls; the host side writes failures | JAX programs with embedded calls; `_ACTIVE_CALLS`; the engine at close | E4 | none | new |
 | `evaluation_run_table` | `_EvaluationRunTable` | the host side and the dispatcher | the same, before running an evaluation point | E7 | none | new |
@@ -386,19 +386,23 @@ The decorator that wraps `check`, `apply`, and `__call__` today, `_inheriting_co
 **Proposed** (`values/_function_base.py`):
 
 ```python
-def _opening_call_context(method):
-    """*method* of a Function, run in a call context of its own, opened from the current one."""
-    @wraps(method)
+def _opening_call_context(entry_method):
+    """*entry_method* of a Function (`check`, `apply`, or `__call__`), run in a call context
+    of its own, opened from the current one."""
+    @wraps(entry_method)
     def run_in_child_call_context(self, /, *args, **kwargs):
-        parent = current_call_context()
-        view = self if parent.passed_controls is None else self._inheriting(parent.passed_controls)
-        context = parent.opening_call(
-            label=view.label,
-            controls=view.options,                           # explicit, then passed, then block, then session
-            execution_choice=_execution_choice(view, parent),       # E3a; see § 5.3
+        parent_context = current_call_context()
+        function_view = (
+            self if parent_context.passed_controls is None
+            else self._inheriting(parent_context.passed_controls)
         )
-        with _call_context_open(context, parent):           # releases any token (E4) and restores on exit
-            return method(view, *args, **kwargs)
+        child_context = parent_context.opening_call(
+            label=function_view.label,
+            controls=function_view.options,     # explicit, then passed, then block, then session
+            execution_choice=_resolve_execution_choice(function_view, parent_context),   # E3a; see § 5.3
+        )
+        with _call_context_open(child_context, parent_context):   # releases any token (E4) and restores on exit
+            return entry_method(function_view, *args, **kwargs)
     return run_in_child_call_context
 ```
 
@@ -423,13 +427,13 @@ Two methods differ from `__call__`:
 A JAX program that ProbPipe opens while tracing another is part of the outer JAX program, so its embedded calls make the outer JAX program one with embedded calls.
 
 **Deriving without a call.** Two scopes change the current context without opening a call:
-- **A `config` block** derives `current.with_config_block(values)`: the enclosing blocks merged with the new values, an inner value winning.
-- **A derived route's scope** derives `current.with_passed_controls(passed)` for the extent of the identity's check and run.
+- **A `config` block** derives `current_context.with_config_block(config_values)`: the enclosing blocks merged with the new values, an inner value winning.
+- **A derived route's scope** derives `current_context.with_passed_controls(passed_controls)` for the extent of the identity's check and run.
 
 Each installs the derived context with `_under_call_context`, which resets the variable on exit.
 
 **Evaluation points.** An evaluation point opens no call.
-Wherever it runs, it runs under `context.evaluation_context()`, installed by `_under_call_context`.
+Wherever it runs, it runs under its call's `call_context.evaluation_context()`, installed by `_under_call_context`.
 A ProbPipe call the evaluation point makes then opens a child of the evaluation context.
 
 **Closing.** `_call_context_open` closes the context in this order:
@@ -484,10 +488,10 @@ Each boundary has one mechanism, and every mechanism installs with the same func
 | Boundary | Mechanism | What crosses | Evidence |
 |---|---|---|---|
 | A nested call in the same thread | the context variable; the child derives from the current context | everything; the child computes its own controls, `num_samples_used`, and token | ✅ `v01` |
-| The engine's worker threads (today `dispatch="thread"`; E3a's `thread` executor) | the work function carries `current.evaluation_context()`: `_ContextBoundFunction(func, context)` today, the `EvaluationChunk` from E3a | the evaluation context; `num_samples_used` by reference | ✅ `v01`, `v09` item 2, `v12` |
+| The engine's worker threads (today `dispatch="thread"`; E3a's `thread` executor) | the work function carries `current_context.evaluation_context()`: `_ContextBoundFunction(work_function, call_context)` today, the `EvaluationChunk` from E3a | the evaluation context; `num_samples_used` by reference | ✅ `v01`, `v09` item 2, `v12` |
 | Prefect tasks and flows (`workflow_kind` `TASK` or `FLOW`) | the same wrapper, inside Prefect's payload | the evaluation context; `num_samples_used` is copied under a process runner | ✅ `v10` |
 | Spawned worker processes (E3a's `process` executor) | the pool's worker initializer applies `jax_settings` before the worker unpickles any chunk; the `EvaluationChunk` pickles the evaluation context | the evaluation context; `num_samples_used` comes back with the outcomes (OD4) | ✅ `v05` |
-| Host callbacks in JAX programs ProbPipe opens, under `jit`, `vmap`, and `pmap` | the call token, an argument of the JAX program; the host side calls `_ACTIVE_CALLS.lookup(token)` | the whole context to the host side, which runs each evaluation point under its `evaluation_context()` | ✅ `v02`, `v03`, `v06`, `v13` |
+| Host callbacks in JAX programs ProbPipe opens, under `jit`, `vmap`, and `pmap` | the call token, an argument of the JAX program; the host side calls `_ACTIVE_CALLS.lookup(call_token)` | the whole context to the host side, which runs each evaluation point under its `evaluation_context()` | ✅ `v02`, `v03`, `v06`, `v13` |
 | A JAX program ProbPipe opens while tracing another | the enclosing traced token, passed as the inner JAX program's token argument | as above | ✅ `v06` |
 | A JAX program the user opens with their own `jax.jit` | no token: an embedded call stages token 0, and the host side runs under the default context | nothing | ✅ `v06`; OD3 |
 
@@ -502,10 +506,10 @@ Four facts decide these mechanisms:
 ```python
 class _ActiveCalls:
     """The open call contexts that compiled programs may call back into, by call token."""
-    def register(self, context: _CallContext) -> int: ...   # a token no open context holds, never 0;
-                                                             # called before a program with embedded calls first runs
-    def lookup(self, token: int) -> _CallContext: ...        # 0 gives the default context; an unknown token raises
-    def release(self, token: int) -> None: ...
+    def register(self, call_context: _CallContext) -> int: ...   # a token no open context holds, never 0;
+                                                                  # called before a program with embedded calls first runs
+    def lookup(self, call_token: int) -> _CallContext: ...        # 0 gives the default context; an unknown token raises
+    def release(self, call_token: int) -> None: ...
 
 _ACTIVE_CALLS = _ActiveCalls()
 ```
@@ -588,7 +592,7 @@ Each name says what the thing is, and none uses "record" for anything but `Recor
 | #586 and #587 | Proposed | Reason |
 |---|---|---|
 | (three context variables) | `_CallContext`, held in `_CALL_CONTEXT` | "call context" is the execution plan's term (§5) and is free in the glossary |
-| `_CarriedContext` | `_ContextBoundFunction(func, context)` | a function bound to the call context it runs under |
+| `_CarriedContext` | `_ContextBoundFunction(work_function, call_context)` | a function bound to the call context it runs under |
 | `_CarriedContext.record` | `_CallContext.num_samples_used` | it holds the `num_samples` each Monte Carlo estimate used |
 | `_CarriedContext.inherited` | `_CallContext.passed_controls` | VI.0 says a derived route *passes* controls to the calls its formula makes |
 | `_CarriedContext.settings` | `_CallContext.config_blocks` | it holds the active `config.using` blocks, not every setting |
@@ -637,7 +641,7 @@ The layering of `design/package-structure.md` and the decided Q5 place the code 
 The changes, in the order a reviewer reads them:
 
 1. **The module.** Add `core/_call_context.py` with `_CallContext` holding the five #587 fields of § 5.1, the context variable, `current_call_context`, and `_under_call_context`.
-2. **`config` blocks.** `_Section._current` reads `current_call_context().config_blocks`. `_Section.using` and `Config.using` install `current.with_config_block(checked)`. `_TEMPORARY`, `_temporarily`, `_temporary_settings`, and `_applying` are removed.
+2. **`config` blocks.** `_Section._current` reads `current_call_context().config_blocks`. `_Section.using` and `Config.using` install `current_context.with_config_block(checked_config_values)`. `_TEMPORARY`, `_temporarily`, `_temporary_settings`, and `_applying` are removed.
 
    ```python
    # #587
@@ -647,21 +651,23 @@ The changes, in the order a reviewer reads them:
 
    # Proposed
    def _current(self, setting):
-       block = current_call_context().config_blocks.get(self._name)
+       section_block = current_call_context().config_blocks.get(self._name)
        ...
    ```
 
-3. **Passed controls.** `_passing_down` installs `current.with_passed_controls(...)`. `_INHERITED_CONTROLS` is removed, and `_inheriting_controls` becomes `_opening_call_context` (§ 5.2).
+3. **Passed controls.** `_passing_down` installs `current_context.with_passed_controls(...)`. `_INHERITED_CONTROLS` is removed, and `_inheriting_controls` becomes `_opening_call_context` (§ 5.2).
 4. **`num_samples` used.** `_recording_monte_carlo` becomes `_collecting_num_samples_used`, which installs a context with fresh `num_samples_used`. `_opening_call_context` uses it, so `_call_function_in_context` no longer opens a record of its own. `_ByComponent._run_block` uses it for each block, as today. `_current_num_samples` reads `current_call_context().controls["num_samples"]` inside a call, and the block's or the session's value outside every call. `_MONTE_CARLO` is removed.
-5. **The carrier.** `_carrying_call_context(func)` returns `_ContextBoundFunction(func, current_call_context().evaluation_context())`, or `func` itself when the context is empty. In #587 `evaluation_context()` returns the context unchanged, because the fields it drops arrive with E3a and E4.
+5. **The carrier.** `_carrying_call_context(work_function)` returns `_ContextBoundFunction(work_function, current_call_context().evaluation_context())`, or `work_function` itself when the current context is the default context. In #587 `evaluation_context()` returns the context unchanged, because the fields it drops arrive with E3a and E4.
 
    ```python
    # #587
    return _CarriedContext(func, inherited, record, settings)
 
    # Proposed
-   context = current_call_context()
-   return func if context.is_default() else _ContextBoundFunction(func, context.evaluation_context())
+   current_context = current_call_context()
+   if current_context.is_default():
+       return work_function
+   return _ContextBoundFunction(work_function, current_context.evaluation_context())
    ```
 
 6. **Pickling.** `_CallContext` pickles its mappings as plain dicts, as `_CarriedContext` does today.
@@ -747,7 +753,7 @@ with workflow_run(seed=3), config.sampling.using(num_samples=4096):
 
 **Proposed:**
 1. `loss`'s call opens a context with the block, `execution_choice = ("thread", {"max_workers": 8}, "call")`, and its own `num_samples_used`.
-2. Each cell is an evaluation point. The thread executor gives each worker `_ContextBoundFunction(evaluate_cell, context.evaluation_context())`, from E3a an `EvaluationChunk` holding the same evaluation context. One copied `Context` cannot serve two threads (✅ `v01`), and copying the whole context would carry the workflow frame (✅ `v12`), so carrying the named value is the mechanism.
+2. Each cell is an evaluation point. The thread executor gives each worker `_ContextBoundFunction(evaluate_cell, call_context.evaluation_context())`, from E3a an `EvaluationChunk` holding the same evaluation context. One copied `Context` cannot serve two threads (✅ `v01`), and copying the whole context would carry the workflow frame (✅ `v12`), so carrying the named value is the mechanism.
 3. In a worker, `mean`'s call opens a child of the evaluation context. It inherits the block (4096) and no executor, so a Monte Carlo summary runs where the cell runs. Its `num_samples_used` is its own, and `loss`'s provenance does not collect them, because `loss` is not a derived operation.
 4. A `config.using` block that the body opens in one cell applies to that cell alone (✅ `v09` item 3: evaluation point 0 read 7, the other evaluation points and the caller read 1024).
 
@@ -953,11 +959,11 @@ Thanks for #587. The `config` sections and the `using` blocks are what we want, 
 **The proposal.** One frozen `_CallContext`, in one context variable, in a new module `core/_call_context.py`. Your three variables become three of its fields, and the execution steps add their fields to the same type later. The full design is in `plans/call-context-proposal.md`.
 
 **Concrete changes in #587:**
-1. Add `core/_call_context.py` with `_CallContext` (fields `config_blocks`, `passed_controls`, `label`, `controls`, `num_samples_used`), the context variable, `current_call_context()`, and `_under_call_context(context)`.
-2. `_Section._current` reads `current_call_context().config_blocks`, and `using` installs `current.with_config_block(...)`. `_TEMPORARY`, `_temporarily`, `_temporary_settings`, and `_applying` go.
-3. `_passing_down` installs `current.with_passed_controls(...)`, and `_INHERITED_CONTROLS` goes. `_inheriting_controls` becomes `_opening_call_context`, which opens a child context for every call.
-4. `_recording_monte_carlo` becomes `_collecting_num_samples_used`, and `_MONTE_CARLO` goes. The call's resolved `num_samples` is read from `context.controls`, so `_MonteCarloRecord.num_samples` goes.
-5. `_carrying_call_context(func)` returns `_ContextBoundFunction(func, current_call_context().evaluation_context())`. In this PR `evaluation_context()` returns the context unchanged.
+1. Add `core/_call_context.py` with `_CallContext` (fields `config_blocks`, `passed_controls`, `label`, `controls`, `num_samples_used`), the context variable, `current_call_context()`, and `_under_call_context(call_context)`.
+2. `_Section._current` reads `current_call_context().config_blocks`, and `using` installs `current_context.with_config_block(...)`. `_TEMPORARY`, `_temporarily`, `_temporary_settings`, and `_applying` go.
+3. `_passing_down` installs `current_context.with_passed_controls(...)`, and `_INHERITED_CONTROLS` goes. `_inheriting_controls` becomes `_opening_call_context`, which opens a child context for every call.
+4. `_recording_monte_carlo` becomes `_collecting_num_samples_used`, and `_MONTE_CARLO` goes. The call's resolved `num_samples` is read from `call_context.controls`, so `_MonteCarloRecord.num_samples` goes.
+5. `_carrying_call_context(work_function)` returns `_ContextBoundFunction(work_function, current_call_context().evaluation_context())`. In this PR `evaluation_context()` returns the context unchanged.
 6. Renames, so no name uses "record" for anything but `Record`: `_MonteCarloRecord` → `_NumSamplesUsed`, the field `record` → `num_samples_used`, `.recorded` → `.provenance_num_samples`, `_note_monte_carlo` → `_note_num_samples_used`, `_CarriedContext` → `_ContextBoundFunction`, and the locals named `record`. If #586 is still open, these belong there.
 7. In V.2, replace "A setting read while JAX traces a function is its value at trace time." A compiled JAX program is reused across calls, so a value baked in while tracing leaks into the next call. The replacement says that ProbPipe reads settings when a call starts, in Python, and that ProbPipe code inside a user's own `jax.jit` keeps the values in effect while that JAX program was traced.
 8. Add "call context" to the glossary.
@@ -1004,3 +1010,4 @@ Nothing else changes. The sections, their checks and environment variables, `res
 | 20 | (2026-10-18) A derived operation's "identity" is its **formula**, and the identity route is the **derived route**, so `passed_controls` are the controls a derived route passes to the calls its formula makes, and the identity scope is the derived route's scope (`_derived_route_scope`). | The maintainer's review. |
 | 21 | (2026-10-18) The record of the Monte Carlo draws a call took is named after the public control it reports: `draw_counts` became `num_samples_used`, `_MonteCarloDrawCounts` became `_NumSamplesUsed`, `_note_monte_carlo_draws` became `_note_num_samples_used`, and `_counting_monte_carlo_draws` became `_collecting_num_samples_used`; `execution` became `execution_choice`. | The maintainer's review: one name for what the user sees as `num_samples`, and "draw counts" also named an MCMC method's draws. |
 | 22 | (2026-10-18) The wrapper inside `_opening_call_context` is named `run_in_child_call_context`, not `entered`. | The maintainer's review. |
+| 23 | (2026-10-18) Vague names in proposed code replaced under README directive 5's naming rules: `current` became `current_context`, `parent` became `parent_context`, `view` became `function_view`, the opened `context` became `child_context` and a looked-up one `call_context`, `method` became `entry_method`, `values` and `passed` became `config_values` and `passed_controls`, `func` became `work_function`, `token` became `call_token` in signatures, `_execution_choice` became `_resolve_execution_choice`, and `_ExecutionChoice`'s `options` became `executor_options`; in the quoted host side, `call`, `points`, `outcomes`, and `ranks` became `call_context`, `evaluation_points`, `evaluation_outcomes`, and `argument_ranks`. | The maintainer found `entered` and `current` too vague. |

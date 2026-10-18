@@ -136,10 +136,10 @@ def likelihood(theta, sigma):
 @function(traceable=False,                                  # new: never trace this callable
           output_spec=NumericArraySpec((40,), "float32"))   # new: the output shape, which a callback needs
 def forward(theta):
-    with tempfile.TemporaryDirectory() as d:                # each evaluation point gets its own files
-        np.savetxt(f"{d}/in.txt", np.asarray(theta))
-        subprocess.run(["./solver", f"{d}/in.txt", f"{d}/out.txt"], check=True)
-        return np.loadtxt(f"{d}/out.txt").astype(np.float32)   # the declared dtype
+    with tempfile.TemporaryDirectory() as run_dir:          # each evaluation point gets its own files
+        np.savetxt(f"{run_dir}/in.txt", np.asarray(theta))
+        subprocess.run(["./solver", f"{run_dir}/in.txt", f"{run_dir}/out.txt"], check=True)
+        return np.loadtxt(f"{run_dir}/out.txt").astype(np.float32)   # the declared dtype
 
 @conditional_distribution(given_spec={"theta": NumericArraySpec((2,)), "sigma": NumericArraySpec(())})
 def likelihood(theta, sigma):
@@ -257,14 +257,14 @@ Two words describe what follows:
 Later calls with the same input shapes reuse the compiled JAX program and skip both steps.
 
 ```python
-calls = []
+python_runs = []
 @jax.jit
-def side(x):
-    calls.append("ran")      # a Python side effect, such as writing a file
+def increment(x):
+    python_runs.append("ran")   # a Python side effect, such as writing a file
     return x + 1
 
-side(1.0); side(2.0); side(3.0)
-len(calls)                    # 1: the Python body ran once, while tracing
+increment(1.0); increment(2.0); increment(3.0)
+len(python_runs)                # 1: the Python body ran once, while tracing
 ```
 
 **Why it matters.** A side effect inside a traced function happens once per trace, not once per call.
@@ -309,16 +309,16 @@ for t in [1.0, 2.0, 3.0]:
 
 def scale(t, x): return x * t
 @jax.jit
-def apply(fn, x): return fn(x)
+def call_scaling(scaling, x): return scaling(x)
 for t in [1.0, 2.0, 3.0]:
-    apply(jax.tree_util.Partial(scale, t), jnp.ones(3))   # one compilation
+    call_scaling(jax.tree_util.Partial(scale, t), jnp.ones(3))   # one compilation
 
 @jax.jit
 def draw(key): return jax.random.normal(key, (3,))
 for i in range(5): draw(jax.random.key(i))    # one compilation: a key is an ordinary argument
 
-g = jax.jit(lambda x, n: x * n, static_argnums=1)
-for n in range(4): g(jnp.ones(2), n)          # four compilations: a static argument is part of the program
+scale_static = jax.jit(lambda x, n: x * n, static_argnums=1)
+for n in range(4): scale_static(jnp.ones(2), n)   # four compilations: a static argument is part of the program
 ```
 
 `jax.tree_util.Partial` works because it splits a function into a fixed part, `scale`, which identifies the JAX program, and data, `t`, which JAX passes as an argument.
@@ -337,16 +337,16 @@ Each evaluation point of the batch is called a **lane**.
 ```python
 keys = jax.random.split(jax.random.key(0), 8)
 thetas = jnp.arange(8.0)[:, None]
-def point(theta, key): return theta + jax.random.normal(key, (3,))
+def perturb(theta, key): return theta + jax.random.normal(key, (3,))
 
-v = jax.vmap(point)(thetas, keys)
-l = jnp.stack([point(thetas[i], keys[i]) for i in range(8)])
-bool((v == l).all())          # True: the same keys give the same draws, lane by lane
+vectorized = jax.vmap(perturb)(thetas, keys)
+looped = jnp.stack([perturb(thetas[i], keys[i]) for i in range(8)])
+bool((vectorized == looped).all())   # True: the same keys give the same draws, lane by lane
 ```
 
 Two compiled forms of the same computation can still round differently in the last bit.
 XLA may merge operations or change the order of a sum, and floating-point addition is not associative.
-`jax.lax.map(lambda a: point(*a), (thetas, keys), batch_size=3)` differed from the `vmap` above by at most one ulp, 4.8e-7 absolute at these magnitudes (✅ `t4`).
+`jax.lax.map(lambda args: perturb(*args), (thetas, keys), batch_size=3)` differed from the `vmap` above by at most one ulp, 4.8e-7 absolute at these magnitudes (✅ `t4`).
 
 **Why it matters.** When each evaluation point's key is fixed in advance, every way of running the evaluation points gives the same numbers, up to the last bit.
 This is principle P3, and it is what lets a user switch executors without changing results.
@@ -703,7 +703,7 @@ def jvp(args, tangents) -> Array:       # the output's tangent; serves forward m
    A traceable callable may supply one as well, to replace JAX's own rule, for example for numerical stability.
 4. **`version`** names what a fingerprint of the Python code cannot see, such as the solver binary the callable runs: `version="solver-2.3"`. The memo uses it (6.5).
 
-A key parameter follows #554: a callable that takes randomness declares a parameter named `key`, or names another one with `random_key="rng"`.
+A key parameter follows #554: a callable that takes randomness declares a parameter named `key`, or names another one, as `random_key="sim_key"` does.
 
 #### How ProbPipe learns whether a callable traces
 
@@ -850,8 +850,8 @@ sample's call context: executor=slurm, n_jobs=50, token 7
 ```python
 @dataclass(frozen=True)
 class EvaluationFailure:
-    index: int                                            # the point index: its position within its evaluation points (6.7)
-    identity: tuple                                       # the evaluation point identity, unique within the call (6.7)
+    point_index: int                                      # its position within its evaluation points (6.7)
+    point_identity: tuple                                 # the evaluation point identity, unique within the call (6.7)
     kind: Literal["error", "invalid", "lost", "timeout"]  # user code raised; output failed validation;
                                                           # the infrastructure lost it; it ran out of time
     error_type: str                                       # the exception's qualified name, which survives shipping
@@ -867,7 +867,7 @@ class EvaluationOutcomes:
     @classmethod
     def lost(cls, chunk: EvaluationChunk, reason: str) -> EvaluationOutcomes: ...  # every evaluation point of the chunk lost
     @classmethod
-    def merge(cls, parts: Iterable[EvaluationOutcomes]) -> EvaluationOutcomes: ... # sorted by start, in the order of the evaluation points
+    def merge(cls, chunk_outcomes: Iterable[EvaluationOutcomes]) -> EvaluationOutcomes: ...  # sorted by start, in the order of the evaluation points
 
 class EvaluationError(RuntimeError):
     failures: tuple[EvaluationFailure, ...]
@@ -956,8 +956,8 @@ This design fixes only its relation to the memo: the two are independent, both a
 ```python
 @dataclass(frozen=True)
 class EvaluationReport:                       # one per callable whose evaluation points the call evaluates
-    callable: str
-    evaluation_points: int | None              # the number of evaluation points; None when the requester is adaptive
+    callable_name: str
+    num_evaluation_points: int | None          # None when the requester is adaptive
     traceable: bool
     traceability_source: Literal["claimed", "probed"]
     executor: MethodInfo                       # the executor chosen, and why each higher one could not run
@@ -973,7 +973,7 @@ Whether a lift over an empirical law evaluates every atom or a sample of them is
 ```pycon
 >>> forward.check(prior)
 CallReport(route='sampling_lift', ..., execution=ExecutionReport(
-    evaluations=(EvaluationReport(callable='forward', evaluation_points=256, traceable=False,
+    evaluations=(EvaluationReport(callable_name='forward', num_evaluation_points=256, traceable=False,
                                   traceability_source='claimed',
                                   executor=MethodInfo('sequential', feasible=True, ...),
                                   failure_rule='raise'),)))
@@ -1017,17 +1017,17 @@ A set of evaluation points describes its members without building each one, so a
 class EvaluationPoints:
     origin: str                          # the Function or site, for messages and reports
     claims: ExecutionClaims              # traceable, vectorized, differentiable
-    output: TermSpec | None              # each evaluation point's declared output, when complete
+    output_spec: TermSpec | None         # each evaluation point's declared output, when complete
 
     def __len__(self) -> int: ...
-    def chunks(self, *, size: int | None = None, n: int | None = None) -> list[EvaluationChunk]: ...
-    def shared(self) -> SharedPayload: ...           # the arguments every evaluation point shares, shipped once per worker
+    def chunks(self, *, chunk_size: int | None = None, num_chunks: int | None = None) -> list[EvaluationChunk]: ...
+    def shared_payload(self) -> SharedPayload: ...   # the arguments every evaluation point shares, shipped once per worker
     def shipping_check(self) -> Feasibility: ...     # whether chunks and the payload can be pickled; cached per call
 
 class EvaluationChunk:                   # can be pickled, so it can run in another process or machine
     start: int
     stop: int
-    def run(self, shared: SharedPayload) -> EvaluationOutcomes: ...   # every evaluation point of the chunk, in order
+    def run(self, shared_payload: SharedPayload) -> EvaluationOutcomes: ...   # every evaluation point of the chunk, in order
 ```
 
 The varying arguments, the keys, and the point indices are private to the set of evaluation points, so an executor cannot change them (P2).
@@ -1066,8 +1066,8 @@ class EvaluationExecutor(DispatchMethod):  # one argument under #451
     description: str                       # one line, for the registry catalog
 
     def supported_types(self): return ((EvaluationPoints,),)
-    def check(self, points: EvaluationPoints, /, **options) -> Feasibility: ...
-    def execute(self, points: EvaluationPoints, /, **options) -> EvaluationOutcomes: ...
+    def check(self, evaluation_points: EvaluationPoints, /, **executor_options) -> Feasibility: ...
+    def execute(self, evaluation_points: EvaluationPoints, /, **executor_options) -> EvaluationOutcomes: ...
 
 executor_registry.register(SlurmExecutor())
 ```
@@ -1093,34 +1093,37 @@ This sketch uses `submitit`, whose `map_array` submits one Slurm array job per c
 ```python
 import submitit
 
-def run_chunk(chunk, shared):
-    return chunk.run(shared)
+def run_chunk(chunk, shared_payload):
+    return chunk.run(shared_payload)
 
 class SlurmExecutor(EvaluationExecutor):
     name = "slurm"
     priority = None                                         # never selected automatically
     description = "Run chunks of evaluation points as Slurm array jobs."
 
-    def check(self, points, /, *, n_jobs=1, partition="short", retries=0):
-        return points.shipping_check()
+    def check(self, evaluation_points, /, *, n_jobs=1, partition="short", retries=0):
+        return evaluation_points.shipping_check()
 
-    def execute(self, points, /, *, n_jobs=1, partition="short", retries=0):
-        pool = submitit.AutoExecutor(folder="slurm_logs")
-        pool.update_parameters(slurm_partition=partition)
-        pending, done = points.chunks(n=n_jobs), []          # done: EvaluationOutcomes, each with its start
+    def execute(self, evaluation_points, /, *, n_jobs=1, partition="short", retries=0):
+        submitit_executor = submitit.AutoExecutor(folder="slurm_logs")
+        submitit_executor.update_parameters(slurm_partition=partition)
+        shared_payload = evaluation_points.shared_payload()
+        pending_chunks = evaluation_points.chunks(num_chunks=n_jobs)
+        chunk_outcomes = []                                  # EvaluationOutcomes, each with its start
         for attempt in range(retries + 1):
-            jobs = pool.map_array(run_chunk, pending, [points.shared()] * len(pending))
-            failed = []
-            for chunk, job in zip(pending, jobs):
+            jobs = submitit_executor.map_array(run_chunk, pending_chunks, [shared_payload] * len(pending_chunks))
+            failed_chunks = []
+            for chunk, job in zip(pending_chunks, jobs):
                 try:
-                    done.append(job.result())                # user-code errors are inside the outcomes
-                except Exception as lost:                    # the job itself died: infrastructure
-                    failed.append((chunk, lost))
-            pending = [chunk for chunk, _ in failed]
-            if not pending:
+                    chunk_outcomes.append(job.result())      # user-code errors are inside the outcomes
+                except Exception as job_error:               # the job itself died: infrastructure
+                    failed_chunks.append((chunk, job_error))
+            pending_chunks = [chunk for chunk, _ in failed_chunks]
+            if not pending_chunks:
                 break
-        done += [EvaluationOutcomes.lost(chunk, reason=str(err)) for chunk, err in failed]
-        return EvaluationOutcomes.merge(done)                # sorts by start, so the order of the evaluation points holds
+        chunk_outcomes += [EvaluationOutcomes.lost(chunk, reason=str(job_error))
+                           for chunk, job_error in failed_chunks]
+        return EvaluationOutcomes.merge(chunk_outcomes)      # sorts by start, so the order of the evaluation points holds
 
 executor_registry.register(SlurmExecutor())
 ```
@@ -1170,20 +1173,21 @@ In pseudocode:
 
 ```python
 # What ProbPipe stages for `forward(theta)` inside a traced program (pseudocode)
-def staged_forward(token, theta):
-    host = partial(host_side, ranks=(1,))            # each argument's rank per evaluation point, fixed at staging
-    return pure_callback(host, ShapeDtypeStruct((40,), float32),    # from forward's output declaration
-                         token, theta, vmap_method="expand_dims")   # a batch arrives as ONE host call
+def staged_forward(call_token, theta):
+    host_callback = partial(host_side, argument_ranks=(1,))   # each argument's rank per evaluation point, fixed at staging
+    return pure_callback(host_callback, ShapeDtypeStruct((40,), float32),   # from forward's output declaration
+                         call_token, theta, vmap_method="expand_dims")      # a batch arrives as ONE host call
 
-def host_side(token, theta, *, ranks):
-    call = active_calls.lookup(token.item())         # the call's context; under vmap the token has shape (1,)
-    points = evaluation_points(forward, theta, ranks)  # flatten the batch axes into evaluation points; forward's own memo
+def host_side(call_token, theta, *, argument_ranks):
+    call_context = _ACTIVE_CALLS.lookup(call_token.item())   # under vmap the token has shape (1,)
+    evaluation_points = flatten_to_evaluation_points(forward, theta, argument_ranks)
+                                                     # flatten the batch axes into evaluation points; forward's own memo
                                                      # serves the evaluation points it already holds
-    outcomes = select(call).execute(points)          # the executor runs them
-    if outcomes.failures:
-        call.note_failures(outcomes.failures)
+    evaluation_outcomes = select_executor(call_context).execute(evaluation_points)
+    if evaluation_outcomes.failures:
+        call_context.note_failures(evaluation_outcomes.failures)
         raise EvaluationPointsFailed                 # stops the program; the engine raises the typed error
-    return stack(outcomes.outputs)                   # reshape to the batch
+    return stack(evaluation_outcomes.outputs)        # reshape to the batch
 ```
 
 It works in five steps:
@@ -1280,7 +1284,7 @@ It changes what a joint's event holds, which belongs to the distributions part o
 The `jax` executor and ProbPipe's own methods follow J1 to J9.
 The work #535 planned and #556 did not finish continues here.
 
-1. **Lifted calls compile.** The `jax` executor builds `jax.jit(jax.vmap(point))` once per input structure and keeps it in the `Function`'s program store. Today the lifted path runs an eager `vmap` that traces the body twice per call (2.1, row 4).
+1. **Lifted calls compile.** The `jax` executor builds `jax.jit(jax.vmap(user_callable))` once per input structure and keeps it in the `Function`'s program store. Today the lifted path runs an eager `vmap` that traces the body twice per call (2.1, row 4).
 2. **Copies share JAX programs when it is safe.** A JAX program's cache key is the input structure plus the **static options**: the options that change the compiled JAX program, such as the `jax` executor's `batch_size`, plus the passed controls and the `config` settings declared traced (call-context OD6). Options that only travel through the token, such as the executor of an embedded call, a `Function`'s own executor, their options, and the failure rule, are run-time options and do not enter the cache key. The store holds `jax.jit` objects, which JAX itself keys by its global settings (call-context OD8). The memo is static, because it is bound from the `Function` when the call is staged. Copies made by `using` share the store, and a copy that changes a static option compiles its own JAX program. A copy with another callable or other bindings has its own store, as #556 requires for kernels with different given values.
 3. **One fallback rule.** `compiled_or_eager` separates tracing from running. It traces with `jax.jit(f).trace(...)`, whose jaxpr the search for embedded calls reads, then lowers the traced JAX program; it records the eager route when tracing fails, and it lets a compiled JAX program's run-time error propagate. ✅ `t10`: `lower()` raised for a body that does not trace, and a traced JAX program's run-time failure raised only when run. `inference/_pyabc._compiled` is replaced by it.
 4. **Inference runners** are module-level, take the call token, and take their target as `jax.tree_util.Partial(density, observed=...)`, with the chain count, the draw counts, and the algorithm static. This removes the 7 compilations a warm `condition_on` makes today (#556), and it is what lets an embedded call inside a runner find its call.
@@ -1375,9 +1379,9 @@ This answers V.9's open point on other array frameworks and gives #216 a way to 
 import torch
 
 def torch_vjp(x, cotangent):                             # x: (n, 3), the stacked evaluation points
-    xt = torch.as_tensor(np.asarray(x)).requires_grad_()
-    net(xt).backward(torch.as_tensor(np.asarray(cotangent)))
-    return (xt.grad.numpy(),)
+    x_tensor = torch.as_tensor(np.asarray(x)).requires_grad_()
+    net(x_tensor).backward(torch.as_tensor(np.asarray(cotangent)))
+    return (x_tensor.grad.numpy(),)
 
 @function(traceable=False, vectorized=True,
           output_spec=NumericArraySpec((10,), "float32"),
@@ -1502,9 +1506,9 @@ A `process` executor would send the same chunks to worker processes.
 ### 7.5 ABC where some simulations fail
 
 ```python
-@function(traceable=False, output_spec=NumericArraySpec((50,), "float32"), random_key="rng")
-def simulate(theta, rng):                     # crashes for some theta
-    gen = numpy_generator(rng)
+@function(traceable=False, output_spec=NumericArraySpec((50,), "float32"), random_key="sim_key")
+def simulate(theta, sim_key):                 # crashes for some theta
+    numpy_rng = numpy_generator(sim_key)
     ...
 
 posterior = condition_on.using(
@@ -1542,7 +1546,7 @@ with workflow_run(seed=3):
 ```python
 @function                                         # traceable; takes randomness through `key`
 def update(theta, *, key):
-    value, gradient = value_and_grad(theta, key=key)
+    loss_value, gradient = value_and_grad(theta, key=key)
     return theta - 0.1 * gradient
 
 with workflow_run(seed=42):
@@ -2161,3 +2165,4 @@ A second adversarial round read the rewritten draft and found these, all now add
 | 2026-10-18 | *Point* renamed *evaluation point* throughout: *point set* became *evaluation points*, *point context* became *evaluation context*, *point identity* became *point index*, the point-run table became the run table, and the code names follow (`EvaluationPoints`, `EvaluationChunk`, `EvaluationOutcomes`, `EvaluationFailure`, `EvaluationError`, `EvaluationExecutor`, `evaluate_at_points`, `EvaluationReport`, `_CallContext.evaluation_context()`, `core/_evaluation_points.py`, `functions/_evaluation_keys.py`). Section 5 defines the new terms, and E0 renames "managed work item" to "evaluation point". | The maintainer and jhuggins found "point" too generic |
 | 2026-10-18 | "JAX program" replaces "program" wherever a compiled JAX program is meant; *empty context* became *default context*; `_tracing_active()` became `_jax_tracing_active()`. | Maintainer's review of the call context |
 | 2026-10-18 | A derived operation's "identity" is its **formula**, and the identity route is the **derived route**; the rename joins step E0. | Maintainer's review of the call context |
+| 2026-10-18 | Vague names in proposed code replaced under README directive 5's naming rules. In the host side, `token`, `host`, `call`, `points`, `outcomes`, `ranks`, and `select` became `call_token`, `host_callback`, `call_context`, `evaluation_points`, `evaluation_outcomes`, `argument_ranks`, and `select_executor`. `EvaluationPoints.output` became `output_spec`, `shared()` became `shared_payload()`, and `chunks(size=, n=)` became `chunks(chunk_size=, num_chunks=)`; an executor's methods take `evaluation_points` and `**executor_options`; `EvaluationFailure.index` and `identity` became `point_index` and `point_identity`; `EvaluationReport.callable` and `evaluation_points` became `callable_name` and `num_evaluation_points`. The Slurm sketch's locals, the primer's `side`, `apply`, `point`, `v`, `l`, and `g`, and the examples' `d`, `xt`, `gen`, and `value` were renamed too. | Maintainer's review of the call context |

@@ -88,7 +88,7 @@ The old positions stay in the table so the reconciled text can say what changes 
 | h | Equality of batches whose elements differ only in component names | not equal | as the body | equal: names stay out of equality, hashing, and the JAX pytree | ✅ grammar B, confirmed in D3. |
 | i | Merging declarations | `OutputSpec.merge`, `InputSpec.merge` | `&` replaces `*` and both `merge` methods | uses `&` in its examples | ✅ `&`, on which the reply and grammar B agree. D2 keeps the renames and the timing. |
 | j | The paths of a whole declaration | the component followed by the paths inside the term, as `c/beta` | as the body | only the root, since a whole declaration names a base value | ✅ grammar B |
-| k | The column of a group in a batch of records, `rb["g"]` | not covered (a field's column carries `OutputSpec(a=...)`) | as the body | carries the exposed record `{c, e}` | ✅ grammar B |
+| k | The column of a group in a batch of records, `grouped_draws["g"]` (a batch of draws of `grouped`) | not covered (a field's column carries `OutputSpec(a=...)`) | as the body | carries the exposed record `{c, e}` | ✅ grammar B |
 | l | `&` on an operand that exposes a law or a batch | not covered | raises | as the reply; since grammar B exposes more outputs, such outputs must be wrapped to merge | ✅ the reply and grammar B agree |
 | m | `OutputSpec.without` on a whole declaration | removes nodes inside its term | as the body | has nothing to remove, since a whole declaration names a base value with no paths below it | ✅ grammar B |
 

@@ -111,7 +111,7 @@ These are the terms the plan relies on before § 4 defines its own:
 | **joint law** | The law of several parts together; `&` composes laws and kernels into one | `lik & prior` |
 | **view** | `d[...]`: a law over part of `d`'s event that keeps a reference to `d`; its class is `MarginalView` (today `FieldView`) | `prior["mu"]` |
 | **marginal** | `marginal(d, ...)`: the same law as the view, detached from `d` | `marginal(prior, "mu")` |
-| **conditioning** | `condition_on(d, values)`: the law of the rest of `d` given values for some of its parts | `condition_on(model, {"y": data})` |
+| **conditioning** | `condition_on(d, given)`: the law of the rest of `d` given values for some of its parts | `condition_on(model, {"y": y_observed})` |
 | **summary** | A mean, variance, standard deviation, or quantile of a law | `mean(d)` |
 | **route** | How an operation computes its result: by an exact method, or approximately by Monte Carlo from draws | an exact mean of a Normal |
 | **label** | A display name for a term; no operation reads it | `mu ~ prior` |
@@ -145,13 +145,13 @@ hier = (Normal("t1", 0.0, 1.0) & Normal("t2", 0.0, 1.0) & Normal("mu", 0.0, 1.0)
 # A kernel lik(y | mu), and the joint law model, whose draws are {y, mu, tau}.
 lik = conditional_distribution(lambda mu: Normal("y", mu, 1.0), given_spec={"mu": ()}, label="lik")
 model = lik & prior
-post = condition_on(model, {"y": data})    # a posterior whose draws are {mu, tau}
-post_spec = post.spec                      # its DistributionSpec
+post = condition_on(model, {"y": y_observed})   # a posterior whose draws are {mu, tau}
+post_spec = post.spec                           # its DistributionSpec
 ```
 
 A few sections also use terms whose construction does not matter to the example:
 
-- `data`: an observed value of `y`.
+- `y_observed`: an observed value of `y`.
 - `emulator`: a function from `theta` to a record `{mean, var}`, returned by a function `fit_emulator`; `theta` is a value of its input.
 - `lik_g`: a kernel `lik_g(y | g)` whose slot `g` takes a record `{c, e}`.
 - `rm`: a random measure, a law whose draws hold a law under the name `G`.
@@ -274,10 +274,10 @@ A path continues past a field that holds a term with parts, into that term's own
 - a function's are those of what it returns;
 - a batch's are those of one element.
 
-So the record `r = Record({"n": 3.0, "G": post})`, whose field `G` holds the posterior over `{mu, tau}`, has the paths `n`, `G`, `G/mu`, and `G/tau`.
-`r["G/mu"]` is `r["G"]["mu"]`.
-The fields of `r`, which `keys()` lists, are still only its own: `n` and `G`.
-The leaf paths of `r` are `n`, `G/mu`, and `G/tau`.
+So the record `record_with_law = Record({"n": 3.0, "G": post})`, whose field `G` holds the posterior over `{mu, tau}`, has the paths `n`, `G`, `G/mu`, and `G/tau`.
+`record_with_law["G/mu"]` is `record_with_law["G"]["mu"]`.
+The fields of `record_with_law`, which `keys()` lists, are still only its own: `n` and `G`.
+The leaf paths of `record_with_law` are `n`, `G/mu`, and `G/tau`.
 
 **Change from today:** paths stop at a field, and a law, function, or batch held in a field is indexed only by a second `[]`.
 
@@ -469,15 +469,15 @@ Under grammar B a law has parts, so the declaration exposes it or wraps it:
 ```python
 # exposed: the function returns the law, and offers its event's components
 fit = Function(run_inference, output_spec=OutputSpec(post_spec))
-fitted = fit(data)                  # the law; its components mu and tau are the views fitted["mu"] and fitted["tau"]
+fitted = fit(y_observed)            # the law; its components mu and tau are the views fitted["mu"] and fitted["tau"]
 list(fit.output_spec)               # ["mu", "tau"]
 fit.output_spec["mu"]               # the spec of post["mu"], a DistributionSpec
 
 # wrapped: the function returns a record that holds the law
-def run_inference_wrapped(data):
-    return {"posterior": run_inference(data)}
+def run_inference_wrapped(y_observed):
+    return {"posterior": run_inference(y_observed)}
 fit = Function(run_inference_wrapped, output_spec=OutputSpec(RecordSpec(posterior=post_spec)))
-fit(data)["posterior"]              # the law; a consumer with the slot posterior receives it
+fit(y_observed)["posterior"]        # the law; a consumer with the slot posterior receives it
 ```
 
 **The body builds the record (decided 2026-10-17).**
@@ -569,16 +569,16 @@ The rule removes a failure that exists today:
 
 ```python
 # Today: a law whose draws are laws, declared to offer the parts of each draw
-inner = Normal("mu", 0.0, 1.0)
+mu_law = Normal("mu", 0.0, 1.0)
 laws_of_laws = distribution(sample=lambda key: Normal("mu", jax.random.normal(key), 1.0),
-                            event_spec=OutputSpec(inner.spec))
+                            event_spec=OutputSpec(mu_law.spec))
 joint = laws_of_laws * Normal("x", 0.0, 1.0)
 joint.event_spec        # declares the field mu as a NumericArraySpec
 sample(joint)           # ResultSchemaError: ... output/mu does not conform to NumericArraySpec(...): got Normal
 
 # Proposed: the construction of laws_of_laws raises TypeError; wrap the draws instead
 laws_of_laws = distribution(sample=lambda key: {"G": Normal("mu", jax.random.normal(key), 1.0)},
-                            event_spec=OutputSpec(RecordSpec(G=inner.spec)))
+                            event_spec=OutputSpec(RecordSpec(G=mu_law.spec)))
 ```
 
 The exposed forms of a law, a kernel, a function, and a batch declare what a `Function` returns (VI.0).
@@ -624,22 +624,22 @@ A lifted law-returning function gives an `EmpiricalDistribution` whose atoms are
 `_lift_result` builds it with an explicit wrapped event in G1b, while an empirical law of laws that a user builds keeps the whole form until G2.
 
 ```python
-def mk(x):
+def law_of_y(x):
     return Normal("y", x, 1.0)
 
 # Today
-Function(mk)(Normal("x", 0.0, 1.0)).event_spec    # OutputSpec(mk=DistributionSpec(...)): whole over a law
+Function(law_of_y)(Normal("x", 0.0, 1.0)).event_spec  # OutputSpec(law_of_y=DistributionSpec(...)): whole over a law
 OutputSpec.default(BatchSpec(NumericArraySpec(()), sample=3), component="f")
-                                                  # OutputSpec(f=BatchSpec(...)): whole over a batch
+                                                      # OutputSpec(f=BatchSpec(...)): whole over a batch
 
 # Proposed
-Function(mk)(Normal("x", 0.0, 1.0)).event_spec    # OutputSpec(RecordSpec(mk=DistributionSpec(...))): draws {mk: law}
+Function(law_of_y)(Normal("x", 0.0, 1.0)).event_spec  # OutputSpec(RecordSpec(law_of_y=DistributionSpec(...))): draws {law_of_y: law}
 OutputSpec.default(BatchSpec(NumericArraySpec(()), sample=3), component="f")
-                                                  # the exposed batch whose element is whole f; it offers f
+                                                      # the exposed batch whose element is whole f; it offers f
 ```
 
 The default component is the callable's name, never its label (`_callable_component` in `values/_function_base.py`).
-So `Function(lambda x: ..., label="mk")` has the default component `f`, which is the name of a lambda.
+So `Function(lambda x: ..., label="law_of_y")` has the default component `f`, which is the name of a lambda.
 
 **Type holes.**
 `OutputSpec(x=None)` names a value whose type is filled in later, with `with_term_spec`:
@@ -873,8 +873,8 @@ class InputSpec(Mapping[str, TermSpec]):        # slot names to term specs, in o
     def optional(self) -> frozenset[str]: ...        # unchanged
     def with_optional(self, *names: str) -> InputSpec: ...   # unchanged
     def without(self, *names: str) -> InputSpec: ...         # an unknown name raises KeyError (new)
-    def __and__(self, other: InputSpec | Mapping | RecordSpec | OutputSpec) -> InputSpec: ...   # new
-    def rename(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> InputSpec: ...
+    def __and__(self, other_slots: InputSpec | Mapping | RecordSpec | OutputSpec) -> InputSpec: ...   # new
+    def rename(self, renames: Mapping[str, str] | None = None, /, **keyword_renames: str) -> InputSpec: ...
     # new, after the workshop
 ```
 
@@ -975,12 +975,12 @@ Until G3 the view keeps today's whole form, so I6 there reads `d[p].event_spec =
 
 ```python
 fit = Function(run_inference_wrapped, output_spec=OutputSpec(RecordSpec(posterior=post_spec)))
-fit.output_spec.project("posterior")   # OutputSpec(post_spec): exposes mu and tau, as fit(data)["posterior"] is the law
+fit.output_spec.project("posterior")   # OutputSpec(post_spec): exposes mu and tau, as fit(y_observed)["posterior"] is the law
 rm.event_spec.project("G")             # OutputSpec(law_spec): the law held at G, exposed
 rm["G"].event_spec                     # OutputSpec(RecordSpec(G=law_spec)): the view adds the wrap (from G3)
 ```
 
-If `project` wrapped, `fit.output_spec.project("posterior")` would declare `{posterior: law}` while `fit(data)["posterior"]` is the law itself.
+If `project` wrapped, `fit.output_spec.project("posterior")` would declare `{posterior: law}` while `fit(y_observed)["posterior"]` is the law itself.
 § 21, O1 asks the maintainer to confirm this split.
 
 On a whole declaration there is no path below the root, so a path raises `KeyError`.
@@ -1081,12 +1081,12 @@ class OutputSpec(Mapping[str, TermSpec | None]):    # component names to compone
     def term_spec(self) -> TermSpec | None: ...   # the produced term's type; None while a type hole is pending
 
     @classmethod
-    def default(cls, spec: TermSpec, *, component: str) -> OutputSpec: ...   # the defaults of § 5.5
-    def with_term_spec(self, spec: TermSpec) -> OutputSpec: ...
+    def default(cls, term_spec: TermSpec, *, component: str) -> OutputSpec: ...   # the defaults of § 5.5
+    def with_term_spec(self, term_spec: TermSpec) -> OutputSpec: ...
     def project(self, paths: str | Sequence[str]) -> OutputSpec: ...
     def without(self, *paths: str) -> OutputSpec: ...
-    def rename(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> OutputSpec: ...
-    def __and__(self, other: OutputSpec) -> OutputSpec: ...
+    def rename(self, renames: Mapping[str, str] | None = None, /, **keyword_renames: str) -> OutputSpec: ...
+    def __and__(self, other_spec: OutputSpec) -> OutputSpec: ...
     # unchanged: is_concrete, with_dim_sizes, with_dim_names
 ```
 
@@ -1149,11 +1149,11 @@ Only three places accept a list of paths: `[]`, `marginal`, and `project` on a d
 Every other argument takes one path as a `str`, and the same reader checks it, so `without("a", "a")` and `without("g", "g/c")` raise as `[]` does:
 
 ```python
-rec.at_path("g", "c")         # separate segments, joined with "/" (unchanged)
-rec.at_path(("g", "c"))       # TypeError: unpack the tuple, at_path(*segments)   (today: the path g/c)
-rec.without("a", "g/e")       # removes several paths, one per argument (unchanged)
-rec.without(("a", "g/e"))     # TypeError: pass the paths as separate arguments   (today: KeyError, the path a/g/e)
-rec.without("a", "a")         # ValueError                                         (today: removes a)
+draw.at_path("g", "c")        # separate segments, joined with "/" (unchanged)
+draw.at_path(("g", "c"))      # TypeError: unpack the tuple, at_path(*segments)   (today: the path g/c)
+draw.without("a", "g/e")      # removes several paths, one per argument (unchanged)
+draw.without(("a", "g/e"))    # TypeError: pass the paths as separate arguments   (today: KeyError, the path a/g/e)
+draw.without("a", "a")        # ValueError                                         (today: removes a)
 condition_on(grouped, {"g/c": 0.5})    # a mapping from paths to values
 ```
 
@@ -1174,18 +1174,18 @@ Paths name groups everywhere, `Record` included, and continue into a field that 
 ### 9.1 Records
 
 ```python
-rec = sample(grouped)             # Record {a, g: {c, e}}
+draw = sample(grouped)            # Record {a, g: {c, e}}
 
-rec["a"]            # NumericArray, labeled "a"                    (unchanged)
-rec["g/c"]          # NumericArray, labeled "g/c"                  (unchanged)
-rec["g"]            # Record {c, e}, a view labeled "g"            (today: KeyError, "use at_path()")
-rec["g"]["c"]       # the same as rec["g/c"]
-rec["a", "g/c"]     # Record {a, g: {c}}, labeled "(a, g/c)"      (today: KeyError, the path a/g/c)
-rec[["g"]]          # Record {g: {c, e}}                           (today: TypeError)
-rec.keys()          # ("a", "g/c", "g/e"): fields only            (unchanged)
+draw["a"]           # NumericArray, labeled "a"                    (unchanged)
+draw["g/c"]         # NumericArray, labeled "g/c"                  (unchanged)
+draw["g"]           # Record {c, e}, a view labeled "g"            (today: KeyError, "use at_path()")
+draw["g"]["c"]      # the same as draw["g/c"]
+draw["a", "g/c"]    # Record {a, g: {c}}, labeled "(a, g/c)"      (today: KeyError, the path a/g/c)
+draw[["g"]]         # Record {g: {c, e}}                           (today: TypeError)
+draw.keys()         # ("a", "g/c", "g/e"): fields only            (unchanged)
 ```
 
-`rec.at_path("g")` stays as a synonym of `rec["g"]`, and `at_path("g", "c")` still takes separate segments.
+`draw.at_path("g")` stays as a synonym of `draw["g"]`, and `at_path("g", "c")` still takes separate segments.
 Step S1 delivers this section.
 
 ### 9.2 A field that holds a law, a function, or a batch
@@ -1193,11 +1193,11 @@ Step S1 delivers this section.
 A path continues into the term a field holds:
 
 ```python
-r = Record({"n": 3.0, "G": post})    # post's draws are {mu, tau}
+record_with_law = Record({"n": 3.0, "G": post})   # post's draws are {mu, tau}
 
-r["G"]              # post                                         (unchanged)
-r["G/mu"]           # the view post["mu"]                          (today: KeyError)
-r["G"]["mu"]        # the same view (I5)
+record_with_law["G"]            # post                                 (unchanged)
+record_with_law["G/mu"]         # the view post["mu"]                  (today: KeyError)
+record_with_law["G"]["mu"]      # the same view (I5)
 ```
 
 Step G3 delivers this section.
@@ -1208,8 +1208,8 @@ A `RecordSpec` indexes as a record does, returning specs.
 A declaration is indexed by component name, and `project` takes a subscript:
 
 ```python
-spec = rec.spec                       # RecordSpec {a, g: {c, e}}
-spec["g"]                             # RecordSpec {c, e}                 (today: KeyError; step S1)
+draw_spec = draw.spec                 # RecordSpec {a, g: {c, e}}
+draw_spec["g"]                        # RecordSpec {c, e}                 (today: KeyError; step S1)
 
 decl = grouped.event_spec             # exposes {a, g: {c, e}}
 decl["g"]                             # RecordSpec {c, e}: the component spec of g   (step S2a)
@@ -1369,7 +1369,7 @@ grouped.without("a")            # a law over {g: {c, e}}: the same order
 ```
 
 A path through a field that holds a law, a function, or a batch cuts that term down too.
-With `r = Record({"n": 3.0, "G": post})`, `r["n", "G/mu"]` is the record `{n, G}` whose `G` is `post[["mu"]]` (step G3).
+With `record_with_law = Record({"n": 3.0, "G": post})`, `record_with_law["n", "G/mu"]` is the record `{n, G}` whose `G` is `post[["mu"]]` (step G3).
 
 A value indexed by several paths is labeled by its paths, as `(a, g/c)` (decided 2026-10-15).
 Today `sample(grouped["a", "g/c"]).label` is `"(a, c) ~ Normal·Normal·Normal"`.
@@ -1384,11 +1384,11 @@ To pass chosen fields to a function as keyword arguments, use `select`, which fl
 That covers groups, and paths through a held law, function, or batch, on records, record specs, batches, laws, and functions.
 
 ```python
-rec = sample(grouped)
-"g/c" in rec          # True                                   (unchanged)
-"g" in rec            # True: rec["g"] works                   (today: False)
-("a", "g/c") in rec   # False: a list of paths is not a path   (False today too, as the path a/g/c)
-"G/mu" in r           # True, for r = Record({"n": 3.0, "G": post})   (today: False; step G3)
+draw = sample(grouped)
+"g/c" in draw               # True                                   (unchanged)
+"g" in draw                 # True: draw["g"] works                  (today: False)
+("a", "g/c") in draw        # False: a list of paths is not a path   (False today too, as the path a/g/c)
+"G/mu" in record_with_law   # True, for record_with_law of § 9.2     (today: False; step G3)
 
 draws = sample(grouped, sample_shape=100)
 "a" in draws          # True                                   (today: False, by iterating the draws)
@@ -1461,7 +1461,7 @@ post["mu"]                          # works for every posterior
 Nested paths, records, and arrays are passed as follows:
 
 ```python
-condition_on(model, {"y": data})                    # unchanged
+condition_on(model, {"y": y_observed})              # unchanged
 condition_on(grouped, {"g/c": 0.5})                 # a nested path
                                                     # (today: ResolutionError, "conditioning on the nested field 'g/c' is not supported yet")
 condition_on(grouped, sample(grouped["a", "g/c"]))  # a record read by its paths (I8)
@@ -1499,7 +1499,7 @@ It applies to records, record specs, batches, output declarations, and laws, whe
 What remains keeps the form it had: removing from an exposed record leaves an exposed record, even when one node is left, so `without` and a list of paths stay complements (I10).
 
 ```python
-rec.without("g/e")            # Record {a, g: {c}}
+draw.without("g/e")           # Record {a, g: {c}}
 post.without("tau")           # a view of post over the record {mu}   (today: AttributeError, laws have no without)
 ```
 
@@ -1512,8 +1512,8 @@ Today it names each entry by its full path, and `"g/c"` cannot be a keyword.
 `RecordBatch.select` changes the same way; each of its entries stays a one-column batch, as today.
 
 ```python
-rec.select("a", "g/c")        # {"a": ..., "c": ...}           (today: {"a": ..., "g/c": ...})
-rec.select(x="g/c")           # {"x": ...}                    (unchanged)
+draw.select("a", "g/c")       # {"a": ..., "c": ...}           (today: {"a": ..., "g/c": ...})
+draw.select(x="g/c")          # {"x": ...}                    (unchanged)
 sample(hier).select("s1/theta", "s2/theta")   # ValueError: both flatten to theta; name one with a keyword
                                               # (today: {"s1/theta": ..., "s2/theta": ...})
 ```
@@ -1545,11 +1545,11 @@ A summary that has one value per field of the event keeps the law's paths and de
 This holds for `mean`, `variance`, `standard_deviation`, and `quantile`, and `expectation(d, f)` takes the paths of `f`'s output.
 
 ```python
-m = mean(grouped)
-m["a"], m["g/c"]             # the means of a and g/c           (works since #576)
-m["g"]                       # the record of means {c, e}       (today: KeyError, a record stops at groups; step S1)
-mean(Normal("x", 0.0, 1.0))  # an array: the whole term x, like a draw
-m.label                      # "𝔼[(a, g) ~ Normal·Normal·Normal]": the label says it is a mean
+grouped_mean = mean(grouped)
+grouped_mean["a"], grouped_mean["g/c"]   # the means of a and g/c       (works since #576)
+grouped_mean["g"]                        # the record of means {c, e}   (today: KeyError, a record stops at groups; step S1)
+mean(Normal("x", 0.0, 1.0))              # an array: the whole term x, like a draw
+grouped_mean.label                       # "𝔼[(a, g) ~ Normal·Normal·Normal]": the label says it is a mean
 ```
 
 A summary binds wherever a draw of the same type binds, so plug-in estimates work, such as `condition_on(lik, mean(post[["mu"]]))` and `log_prob(prior, mean(prior))`.
@@ -1701,8 +1701,8 @@ draws = sample(Normal("mu", 0.0, 1.0), sample_shape=4)
 draws.spec          # BatchSpec(NumericArraySpec(shape=(), dtype=float32, support=real), sample=4): nothing says "mu"
 draws.components    # AttributeError
 draws["mu"]         # TypeError: cannot index NumericArrayBatch by 'mu': its elements have no named fields
-rb = sample(grouped, sample_shape=4)
-rb["a"].spec        # BatchSpec(NumericArraySpec(...), sample=4): the column's name is not stored
+grouped_draws = sample(grouped, sample_shape=4)
+grouped_draws["a"].spec   # BatchSpec(NumericArraySpec(...), sample=4): the column's name is not stored
 ```
 
 II.5 already specifies that a batch an operation produces carries the producer's declaration, and that `Batch` has `components`; the code stores a bare `TermSpec` in the field `BatchSpec.element_spec`.
@@ -1712,11 +1712,11 @@ II.5 already specifies that a batch an operation produces carries the producer's
 Every batch holds an element declaration (step S4):
 1. **A batch an operation produces** stores its producer's declaration: the event declaration for draws (VI.3), and the completed output declaration for a sweep (V.6).
 2. **A batch built from raw values** gets the default: a record element is exposed, a law or function element is exposed through its own declaration, and a base element is whole under the name `element`.
-3. **A column of a batch of records** follows the view rule: `rb["a"]` stores the whole declaration `OutputSpec(a=...)`, and a group's column `rb["g"]` stores the exposed record `{c, e}`.
+3. **A column of a batch of records** follows the view rule: `grouped_draws["a"]` stores the whole declaration `OutputSpec(a=...)`, and a group's column `grouped_draws["g"]` stores the exposed record `{c, e}`.
 
 So after S4 a group's column is exposed while the law's view of the same group, `grouped["g"]`, stays a whole term until G1a.
 The two steps are separate on purpose: S4 stores declarations, and G1a changes what a law's view offers, which users see.
-Between them, `rb["g"].components` offers `c` and `e` while `grouped["g"].event_spec` offers `g`.
+Between them, `grouped_draws["g"].components` offers `c` and `e` while `grouped["g"].event_spec` offers `g`.
 
 Grammar B applies to the stored declaration as to any other.
 A batch of draws of `grouped` stores the exposed record `{a, g: {c, e}}`, and a batch of draws of `Normal("mu", 0.0, 1.0)` stores the whole term `mu`.
@@ -1730,8 +1730,8 @@ A batch of draws of `grouped` stores the exposed record `{a, g: {c, e}}`, and a 
 draws.spec.element      # OutputSpec(mu=NumericArraySpec(shape=(), dtype=float32, support=real))
 draws.components        # the same declaration: list(draws.components) == ["mu"]
 NumericArrayBatch(jnp.arange(4.0), "draw", label="xs").components   # OutputSpec(element=...)
-rb["a"].components      # OutputSpec(a=...)
-rb["g"].components      # OutputSpec(RecordSpec(c=..., e=...))
+grouped_draws["a"].components   # OutputSpec(a=...)
+grouped_draws["g"].components   # OutputSpec(RecordSpec(c=..., e=...))
 ```
 
 **What indexing uses.**
@@ -1768,11 +1768,11 @@ A `jit`-compiled function would also recompile for each name, and the two branch
 **The cost.**
 Keeping the names out costs what labels already cost, and only for the names of whole elements.
 The names of a record element are stored in the element's `RecordSpec`, which is static data already, so they survive.
-A whole element's name, as in a batch of arrays or a column such as `rb["a"]`, does not cross a raw JAX transform:
+A whole element's name, as in a batch of arrays or a column such as `grouped_draws["a"]`, does not cross a raw JAX transform:
 
 ```python
 jax.tree_util.tree_map(jnp.subtract, x, y)   # today: labeled '<no description>', as every raw rebuild is
-jax.jit(g)(x)                                # comes back offering the default component element, not x
+jax.jit(lambda batch: batch)(x)              # comes back offering the default component element, not x
 ```
 
 So `.component("x")` on that result, or binding it to a slot `x`, fails.
@@ -1812,10 +1812,10 @@ Because paths go through every kind, indexing a law, a function, or a batch held
 | `without` on the other kinds | `Function.without`, `ConditionalDistribution.without`, `without` on a batch of laws, and `Record.without` at a path through a held law do not exist, so I10 does not apply to them | They are after the workshop (`deferred.md`). I10 holds for records, record specs, batches, output declarations, and laws. |
 | `&` on values | `sample(Normal("x", 0.0, 1.0) & Normal("y", 0.0, 1.0))` is a record `{x, y}`, but `sample(Normal("x", 0.0, 1.0)) & sample(Normal("y", 0.0, 1.0))` raises `TypeError`, since NumPy's `&` refuses float arrays; on integer or boolean arrays it is the bitwise "and", elementwise; the same holds for two batches of arrays | A base term carries no name in its value, so sampling commutes with `&` only when both operands expose records. |
 | `&` on records and on arrays | `&` on two `Record`s, `NumericRecord`s included, merges their fields, while `&` on two `NumericArray`s is elementwise | A record is a tree of named values, and `&` on trees is the merge; § 21, O7 asks whether to keep this or restrict it. |
-| A batch of arrays through raw JAX | `jax.jit(g)(draws)` comes back offering `element` instead of `x` | Whole-element names stay out of the pytree (§ 15.3). |
+| A batch of arrays through raw JAX | `jax.jit(lambda batch: batch)(draws)` comes back offering `element` instead of `x` | Whole-element names stay out of the pytree (§ 15.3). |
 | Labels | `sample(grouped["a", "g/c"])` and `sample(grouped)["a", "g/c"]` are draws of the same law under different labels | A label says how a term was made, for a reader; no operation reads it. |
 | Kernels, until step G5 | `lik["y"]` raises `TypeError`, and so does a path through a field that holds a kernel | Kernel views come in a later step. |
-| Python's mapping rule | `"g" in rec` is true, while `"g"` is not in `rec.keys()` | `keys()` lists fields only, and `in` agrees with `[]` (§ 11). |
+| Python's mapping rule | `"g" in draw` is true, while `"g"` is not in `draw.keys()` | `keys()` lists fields only, and `in` agrees with `[]` (§ 11). |
 
 **Before every step has merged.**
 Some invariants hold only once their step merges, as § 3's last column states.
@@ -2082,7 +2082,7 @@ Its renames change about 50 modules, which is why it is announced.
 **Done when:**
 - `sample(Normal("mu", 0.0, 1.0), sample_shape=4).components == OutputSpec(mu=...)`;
 - `NumericArrayBatch(values, "draw").components` offers `element`;
-- `rb["a"].components == OutputSpec(a=...)`, and `rb["g"].components` exposes `{c, e}`, while `grouped["g"]` is still whole (§ 15.2);
+- `grouped_draws["a"].components == OutputSpec(a=...)`, and `grouped_draws["g"].components` exposes `{c, e}`, while `grouped["g"]` is still whole (§ 15.2);
 - `x.spec != y.spec` for draws of `Normal("x", 0.0, 1.0)` and `Normal("y", 0.0, 1.0)`, while `x == y` holds for equal values;
 - `jax.tree_util.tree_map(jnp.subtract, x, y)` works, a jitted function compiles once for both, and a jitted call made with `y` after one made with `x` returns a batch offering `element`, never `x`;
 - the same holds for a record whose field holds such a batch;
@@ -2120,7 +2120,7 @@ The event default does not change in G1b (§ 5.5).
 
 **G1b is done when:**
 - `Function(run_inference, output_spec=post_spec).output_spec` offers `mu` and `tau`, and a `fit_emulator` declaration offers `mean` and `var`;
-- lifting `def mk(x)` over a law gives draws `{mk: law}`;
+- lifting `def law_of_y(x)` over a law gives draws `{law_of_y: law}`;
 - `OutputSpec.default(BatchSpec(NumericArraySpec(()), sample=3), component="f")` offers `f`;
 - the declaration probe finds no library-built whole declaration over a spec with parts outside G1b's allowance.
 
@@ -2253,7 +2253,7 @@ A function's output declaration is an exposed record too, so `project` would the
 
 ```python
 fit = Function(run_inference_wrapped, output_spec=OutputSpec(RecordSpec(posterior=post_spec)))
-fit(data)["posterior"]                    # the law
+fit(y_observed)["posterior"]              # the law
 # if project wrapped:
 fit.output_spec.project("posterior")      # OutputSpec(RecordSpec(posterior=post_spec)): declares {posterior: law}
 ```
@@ -2480,7 +2480,7 @@ Until G3, a view at a field that holds a law or a function keeps today's whole f
 | Equality of batches that differ only in names | unequal | as the body | equal; names out of equality, hashing, the pytree, and fingerprints (§ 15.3) |
 | Merging | `OutputSpec.merge`, `InputSpec.merge` | `&` replaces `*` and both `merge` methods | `&` (§ 6.4, § 7.7, § 14) |
 | `&` on an operand that exposes a law or a batch | not covered | raises | raises; such outputs are wrapped to merge (§ 7.7) |
-| The column of a group, `rb["g"]` | not covered | as the body | stores the exposed record `{c, e}` (§ 15.2) |
+| The column of a group, `grouped_draws["g"]` | not covered | as the body | stores the exposed record `{c, e}` (§ 15.2) |
 | A function's output | cannot be exposed | exposed through `FunctionSpec` | exposed, in G1b (§ 7.2) |
 | `with_spec` | open question | `with_term_spec` | `with_term_spec` (§ 7.4) |
 | Aliases | open question | none | none (§ 18.4) |

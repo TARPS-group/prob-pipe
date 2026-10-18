@@ -185,7 +185,10 @@ documentation:
 - Which step does the PR implement? Does it deliver that step's plan section,
   and does it meet the step's done-condition?
 - Check each standing directive of `plans/README.md` in turn, with evidence:
-  no partial migration, no bridging code, names that say what each thing is,
+  no partial migration, no bridging code, names that say what each thing is
+  (quote each vague name you find, local variables included, against the five
+  naming rules of directive 5, including vague names already present in the
+  code the PR changes and left unrenamed),
   modules ordered from the public API down, no duplicated helper, comments that
   earn their place, docstrings written for users, and stale code replaced
   rather than worked around.
