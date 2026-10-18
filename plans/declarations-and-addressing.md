@@ -50,7 +50,7 @@ On top of these rules, the plan gives the declarations public operations:
 11. Membership
 12. Operations that take paths
 13. Summaries
-14. Composition with `&`
+14. Merging with `&`
 15. Batches and their element declarations
 16. Deliberate exceptions
 17. Vocabulary
@@ -73,7 +73,7 @@ This plan decides two things:
 - what `[]` reads and returns on every kind, lists of paths, positions, and membership (`in`);
 - the operations that take paths: `marginal`, `condition_on`, `log_prob`, `without`, `select`, and `rename`;
 - what a summary is indexed by;
-- composition with `&` for every kind;
+- merging with `&` for every kind;
 - the declaration a batch stores for its elements, and how it enters equality and JAX;
 - the vocabulary, the changes to `design/`, and the content and done-condition of the steps S0, S1, S2a, S2b, S3, S4, G1a, G1b, and G2–G5 of [`README.md`](README.md) § Steps.
 
@@ -108,7 +108,8 @@ These are the terms the plan relies on before § 4 defines its own:
 | **batch** | Many values of one kind, stacked along named axes called **levels** | `sample(d, sample_shape=100)` has the level `sample` |
 | **kernel** | A conditional distribution, the class `ConditionalDistribution`: a law for each value of its inputs | `lik(y \| mu)` |
 | **function** | A tracked callable, the class `Function`, with named inputs and a declared output | `Function(run_inference, output_spec=...)` |
-| **joint law** | The law of several parts together; `&` composes laws and kernels into one | `lik & prior` |
+| **joint law** | The law of several parts together; `&` merges laws and kernels into one | `lik & prior` |
+| **merge** | What `&` does: it combines two terms by name. A name both terms produce raises, a name both consume becomes one slot, and for laws and kernels a name the left term consumes and the right term produces is matched (§ 14.2). "Composition" keeps its meaning of `f ∘ g` and `A B` | `lik & prior`, `rec1 & rec2` |
 | **view** | `d[...]`: a law over part of `d`'s event that keeps a reference to `d`; its class is `MarginalView` (today `FieldView`) | `prior["mu"]` |
 | **marginal** | `marginal(d, ...)`: the same law as the view, detached from `d` | `marginal(prior, "mu")` |
 | **conditioning** | `condition_on(d, given)`: the law of the rest of `d` given values for some of its parts | `condition_on(model, {"y": y_observed})` |
@@ -116,11 +117,11 @@ These are the terms the plan relies on before § 4 defines its own:
 | **route** | How an operation computes its result: by an exact method, or approximately by Monte Carlo from draws | an exact mean of a Normal |
 | **label** | A display name for a term; no operation reads it | `mu ~ prior` |
 | **JAX pytree** | How JAX sees a value: the arrays it transforms, plus static data it compares to decide whether two values have the same structure | |
-| **factor** | One of the laws or kernels a joint law is composed from | `lik` and `prior` are the factors of `model` |
+| **factor** | One of the laws or kernels a joint law is merged from | `lik` and `prior` are the factors of `model` |
 | **atoms** | The stored values an empirical law draws from | `EmpiricalDistribution(atoms)` |
 | **fingerprint** | A content hash of a term, which caching and replay use to recognize the same computation | computed automatically |
 
-The examples are written in the proposed API, so they compose with `&` and rename with `rename`.
+The examples are written in the proposed API, so they merge with `&` and rename with `rename`.
 A "Today" example uses today's API, `*` and `with_path_names`, and shows what `a703f15e` returns.
 Today's output prints `NumericRecordSpec` for a record of numeric fields, a subclass of `RecordSpec`; the proposed examples write `RecordSpec` for short.
 
@@ -174,7 +175,7 @@ In the table:
 § 16 lists the cases where an invariant does not hold on purpose.
 
 jhuggins's Rocq model proves I1 for laws, draws, and batches, and I2, I4, I5, and I10 for every kind of term it models.
-It also proves the fact behind I12, that composition keeps every path of an operand except the root (`graft_identity_B`).
+It also proves the fact behind I12, that a merge keeps every path of an operand except the root (`graft_identity_B`).
 Some of its results about values hold in a model where laws are point masses.
 The model does not contain the wrap of a view at a field that holds a law or a function: its lemma `sub_VB_breaks_rule` shows only that the unwrapped view breaks the law's event rule.
 At such fields I2, I5, and I9 hold up to the wrap, as § 16 states, and no proof covers that form.
@@ -332,14 +333,14 @@ A component name is a name, so it may contain any character but `/`.
 A component meets a slot only when its name is also a valid slot name.
 
 Under grammar B, a component's address is the path of its own name, except where the name belongs to a whole base value, whose address is the root.
-Composition places every path of an operand at the same path in the joint, apart from the root (`graft_identity_B`).
+A merge places every path of an operand at the same path in the joint, apart from the root (`graft_identity_B`).
 Today a whole declaration over structure breaks both facts: its name is outside its value, and § 5 shows the problems this causes.
 
 A term's **term spec** in a declaration is the type of the produced term: `prior.event_spec.term_spec` is the type of one draw.
 A tracked term's own `spec` is unchanged, so `prior.spec` is still the law's `DistributionSpec`.
 
-**Composition matches by name.**
-Composition meets a slot with the component of the same name, and the component's spec must unify with the slot's spec (IV.2).
+**A merge matches by name.**
+A merge meets a slot with the component of the same name, and the component's spec must unify with the slot's spec (IV.2).
 The two roles differ in one rule:
 1. **A component is produced once.** Two operands that produce one name raise `ValueError`.
 2. **A slot may be shared.** Same-named slots of several operands become one slot, which carries the unification of their specs.
@@ -363,7 +364,7 @@ Today the glossary also uses it for a field's path.
 ### 5.1 The problem today
 
 Today a law and its own values often disagree on what a subscript means, and a term can offer names that its value does not hold.
-Every result below was run on `dev/overhaul` at `a703f15e`, where `*` composes laws:
+Every result below was run on `dev/overhaul` at `a703f15e`, where `*` merges laws:
 
 | Expression | Result today | The related expression | Result today |
 | --- | --- | --- | --- |
@@ -419,7 +420,7 @@ S1 keeps the list form at the root as today's tuple form gives it: `Normal("x", 
 
 **Why.**
 When a name is outside a structured value, the term has two sets of paths.
-Its value is indexed from inside, by `beta`, while composition and renames see it from outside, by `params/beta`.
+Its value is indexed from inside, by `beta`, while merges and renames see it from outside, by `params/beta`.
 Grammar B keeps every name inside the value, or names a value that has no paths at all, so there is one set of paths:
 - subscripts, rename keys, and draws agree (I12);
 - no rename key can be ambiguous;
@@ -562,7 +563,7 @@ Today `OutputSpec(BatchSpec(NumericArraySpec(()), sample=3))` raises `TypeError`
 
 **A law's event is a whole base term or an exposed record.**
 This holds for the `event_spec` of every `Distribution` and `ConditionalDistribution`.
-Composition stores the value at each component of a draw as a field of the joint's draw, and only these two forms give that value the component's spec.
+A merge stores the value at each component of a draw as a field of the joint's draw, and only these two forms give that value the component's spec.
 A law's event declaration that exposes a law, a kernel, a function, or a batch raises `TypeError` at construction.
 
 The rule removes a failure that exists today:
@@ -724,7 +725,7 @@ In `design/`, about 22 passages state or show the whole form over parts: II.2, I
 Grammar B for the kinds the workshop uses merges before the workshop, in two steps.
 [`README.md`](README.md) § Steps owns their order, their dependencies, and the cut.
 
-Step G1a is never cut:
+Step G1a is the fifth cut if time runs short:
 - a view or marginal of a group exposes its parts;
 - the library's laws declared whole over a record are exposed or wrapped;
 - a grouped sub-joint wraps its group.
@@ -821,7 +822,7 @@ OutputSpec(K=())                                  # today: TypeError
 The shorthand applies to an `InputSpec` slot, to `given_spec`, and to the keyword form of `OutputSpec`.
 II.1's rule for a `RecordSpec` field applies unchanged, so the shorthand is a tuple only: `K=3` is refused, while a shape argument would read it as `(3,)`.
 A slot declared by the shorthand sets no dtype and no support.
-Composition still accepts it, since a spec that sets no dtype or support unifies with any dtype and support.
+A merge still accepts it, since a spec that sets no dtype or support unifies with any dtype and support.
 
 ### 6.4 `&` on slots
 
@@ -913,7 +914,7 @@ Only the keyword form admits a type hole, so an exposed term always has a comple
 
 ### 7.3 A mapping of its components
 
-Composition matches slots with components by name, so both declarations map names to term specs.
+A merge matches slots with components by name, so both declarations map names to term specs.
 `OutputSpec` becomes a `Mapping` from component names to component specs, as `InputSpec` is a mapping from slot names to slot specs:
 
 ```python
@@ -1421,7 +1422,7 @@ A few arguments also accept a name that is not a path:
 | `without(*paths)`, `select(*paths)`, `at_path(*segments)`, `is_field(path)` | one path per argument | none |
 | the keys of `rename` | paths of the term | a whole term's name, which renames it |
 | the keys of `condition_on(d, given)` | paths of `d`'s event | for a kernel, its slot names, each optionally followed by a path inside a record slot |
-| composition with `&` | none | meets each component with the slot of the same name |
+| merging with `&` | none | meets each component with the slot of the same name |
 
 Under grammar B no rename key can be read both as a name and as a path.
 A whole term is a base term, which has no path below its name, and every other component's name is its own path.
@@ -1533,7 +1534,7 @@ grouped["g"].rename(c="k")                # a view exposing k and e
 ```
 
 Two cases follow from the rule:
-1. **A whole base term's name cannot become a nested path**, since the term has no record to place it in. `Normal("x", 0.0, 1.0).rename(x="g/y")` raises `ValueError`, as it does today; compose it into a joint first.
+1. **A whole base term's name cannot become a nested path**, since the term has no record to place it in. `Normal("x", 0.0, 1.0).rename(x="g/y")` raises `ValueError`, as it does today; merge it into a joint first.
 2. **On a batch**, renaming the element's whole component renames the batch's one component: `draws.rename(x="y")` on draws of `Normal("x", 0.0, 1.0)` offers `y`.
 
 The rename applies to every kind that has `with_path_names` today, in one mechanical PR with `&` and `MarginalView` (step S3): `NamedTree` and its families, `OutputSpec`, `Distribution`, `ConditionalDistribution`, and batches.
@@ -1560,15 +1561,16 @@ So a Bernoulli law's mean is refused where its `int32` event is required.
 
 Results that are not one value per field are base terms under the operation's name: `cov(d)` is one array, and a score is declared under `log_prob`.
 
-## 14. Composition with `&`
+## 14. Merging with `&`
 
 ### 14.1 Why `&`
 
-Today `*` composes laws and kernels: `lik * prior` is the joint law.
+Today `*` merges laws and kernels: `lik * prior` is the joint law.
 `*` is also arithmetic: it multiplies two `NumericArray`s, scales a `LinOp` by a number, and scales a Gaussian random function by a number.
-So `d1 * d2` composes two laws, while `sample(d1) * sample(d2)` multiplies the two draws when both events are arrays.
-A `NumericRecord` has no `*`: `r * r` and `r * 2` raise `TypeError` today.
-`&` reads as "both", and it replaces `*` for composition (decided 2026-10-17), with no alias for `*`.
+So `d1 * d2` merges two laws, while `sample(d1) * sample(d2)` multiplies the two draws when both events are arrays.
+On a `NumericRecord`, `*` is only scaling by a number: III.5 gives records the vector-space operators, `+` and `-` between records of one schema, scalar `*` and `/`, and `map`, so `r * 2` scales while `r * r` raises `TypeError`. The code does not implement these operators yet, and `&` is not among them.
+`&` reads as "both", and it replaces `*` for merging laws and kernels (decided 2026-10-17), with no alias for `*`.
+What `&` does is called a **merge** for every kind (decided 2026-10-18), and "composition" keeps its meaning of `f ∘ g` and of a product of linear operators `A B`; today the design reference calls both "composition" (`design/README.md`, the operations table).
 `*` keeps its arithmetic meanings, and `GaussianRandomFunction.__mul__` keeps only its scaling branch.
 
 ### 14.2 The rule for every kind
@@ -1609,7 +1611,7 @@ data_model.given_spec == lik_nee.given_spec & lik_lai.given_spec
 
 The joint's label and notation keep joining their operands with `·`, as `lik·prior` and `lik(y | mu)·prior(mu)`, since `·` there is the product of densities (§ 21, O12).
 
-### 14.3 What composition does to paths
+### 14.3 What a merge does to paths
 
 **A joint's paths are its operands' paths, side by side.**
 The joint exposes a record whose children are the operands' components.
@@ -1625,7 +1627,7 @@ joint["g/c"]            # the same node as grouped["g/c"]
 Under the old grammar, a whole term over structure moved under its name in the same way, so every one of its paths changed: `params_prior["beta"]` became `joint["params/beta"]`.
 Under grammar B that cannot happen, because only a base term is named whole, and a base term has no paths below the root.
 
-**Composition meets components with slots by name, and a view offers what the grammar rule says it offers.**
+**A merge meets components with slots by name, and a view offers what the grammar rule says it offers.**
 A kernel whose slot is a whole group meets the group only through a list of one path:
 
 ```python
@@ -1643,9 +1645,9 @@ jhuggins proves this boundary in a model where laws are point masses (`sample_co
 
 **Two views can offer the same name.**
 `hier["s1"]` and `hier["s2"]` each offer `theta`, so `hier["s1"] & hier["s2"]` raises `ValueError`, since a joint cannot produce one name twice.
-Today `hier["s1"] * hier["s2"]` composes, because each view is a whole term named after its group.
+Today `hier["s1"] * hier["s2"]` merges, because each view is a whole term named after its group.
 The joint law of both groups is `hier["s1", "s2"]`, which keeps the paths and the dependence between them.
-`hier[["s1"]] & hier[["s2"]]` composes as well, but as the product of two marginals, so it is the joint only if the two groups are independent.
+`hier[["s1"]] & hier[["s2"]]` merges as well, but as the product of two marginals, so it is the joint only if the two groups are independent.
 
 **An operand that exposes a law or a batch.**
 `&` on declarations refuses an operand that exposes a law, a kernel, a function, or a batch (§ 7.7).
@@ -1736,7 +1738,7 @@ grouped_draws["g"].components   # OutputSpec(RecordSpec(c=..., e=...))
 
 **What indexing uses.**
 A batch is indexed by its element's paths, so it agrees with its law without reading the stored names (§ 9.4).
-The stored names serve composition, binding, and the component accessor:
+The stored names serve merging, binding, and the component accessor:
 
 ```python
 draws["mu"]              # KeyError: mu names the whole element, not a path inside it
@@ -1839,7 +1841,8 @@ One vocabulary runs through this plan and `design/`, and through the docstrings 
 | "selection" for batch positions and for several paths | "positions" and "a list of paths" | `select` is a method with another meaning. |
 | `FieldView` | `MarginalView` | It covers groups and lists of paths, and pairs with `marginal`. |
 | `with_path_names` | `rename` | The name pandas and xarray use. |
-| `*` for composition | `&` | `*` is arithmetic on values. |
+| `*` for merging laws and kernels | `&` | `*` is arithmetic on values. |
+| "composition" for what `&` or `*` does to laws, kernels, and records | "merge" | "Composition" means `f ∘ g` and `A B`; `&` matches names. |
 | `OutputSpec.spec`, `with_spec` | `term_spec`, `with_term_spec` | The glossary's term for the produced term's type. |
 | `marginal(d, field)` | `marginal(d, paths)` | It takes a path or a list of paths. |
 
@@ -1850,7 +1853,7 @@ Three steps edit `design/glossary.md`, each for its own terms:
 - the execution terms, such as evaluation point, requester, and executor, are added by step E1.
 
 **The glossary changes of step S0:**
-- **new entries:** base spec, spec with parts, node, group, leaf path, slot, producer, consumer, exposes, whole declaration, exposed declaration, address, component spec, wrap, position, subscript;
+- **new entries:** base spec, spec with parts, node, group, leaf path, slot, producer, consumer, exposes, whole declaration, exposed declaration, address, component spec, wrap, position, subscript, merge;
 - **redefined:** *component* takes the definition of § 4.4 and keeps its second sense, the component laws of a `MixtureDistribution` (VII.3); *field*, *path*, and *declaration* take the definitions of § 4.2 and § 4.4; *marginal* takes "a path or a list of paths"; *view* names `MarginalView`; *type hole* names `with_term_spec`;
 - **narrowed:** *key* keeps only the random key and a mapping's keys;
 - **removed:** *packaging*, and *selection*, apart from *selection order* (II.7), which stays (gaps T3);
@@ -1889,7 +1892,7 @@ Step S0 writes the target text of every row; the design conformance tests get pe
 | III.9 Kernels | No `[]`; `given_spec` sources stated locally | Points to II.2 for the sources of `given_spec`; states the `[]` exception now and `lik[s]` as the target |
 | III.10 Batches of laws | Silent on `[]` | `laws[s]` is the batch of views |
 | IV.1 Joints | A "packaged sub-joint" declares a group as one whole term | A grouped sub-joint wraps its group, so its draws carry the group's level; the joint's event uses `&` |
-| IV.2 Composition | `*`; "produced slots"; "Packing the joint"; associativity "rests on" `G_B ∩ F_A = ∅` | `&`; components; "The joint's event"; the rationale of § 14.5 (gaps T5); the operator-coexistence note says `*` scales and `&` composes |
+| IV.2 Composition, retitled "Merging distributions" | `*`; "produced slots"; "Packing the joint"; associativity "rests on" `G_B ∩ F_A = ∅` | `&`; components; "The joint's event"; the rationale of § 14.5 (gaps T5); the operator-coexistence note says `*` scales and `&` merges; "merge" replaces "composition" for `&` throughout |
 | IV.4 Laws from functions | Sources of `given_spec` stated locally | Points to II.2 |
 | V.5, V.6 Lifting and planning | Atoms and outputs named whole under a component; "The declared output" reads any non-record bare spec as whole | Defaults by kind: a lifted law of laws wraps its draws, and a sweep's batch is exposed through its element; the bare-spec reading of § 5.6 |
 | VI.0 The operation model | "Selection commutes with a coordinatewise summary" | "Indexing commutes with a coordinatewise summary" |
@@ -1932,7 +1935,7 @@ Every rename and removal is a clean break: no alias, no deprecation warning, and
 | `OutputSpec.components` and `exposes_record` are removed: an `OutputSpec` is a mapping of its components | S2a |
 | `InputSpec.without` raises `KeyError` for a name that is not a slot | S2b |
 | A law's event declaration that exposes a law, a kernel, a function, or a batch raises `TypeError` | S2b |
-| `&` replaces `*` for composing laws and kernels, and replaces `merge` on records (§ 21, R2) | S3 |
+| `&` replaces `*` for merging laws and kernels, and replaces `merge` on records (§ 21, R2) | S3 |
 | `with_path_names` is renamed `rename` | S3 |
 | `FieldView` is renamed `MarginalView` | S3 |
 | A raw batch of arrays offers the default component `element`; two batches that differ only in a whole element's name are equal | S4 |
@@ -1962,7 +1965,7 @@ A mechanical step changes names and call sites only, so its done-condition is th
 
 **Delivers:** the target text of § 18.1 and the glossary changes that § 17 assigns to S0.
 II.2 states the declarations and the grammar rule, and II.6 the paths and the reading of a subscript.
-IV.2's rationale takes the fix of § 14.5.
+IV.2's rationale takes the fix of § 14.5, and IV.2 is retitled "Merging distributions": "merge" replaces "composition" for `&` throughout `design/`, and the operations table of `design/README.md` splits "merge" (`p(x | y) · p(y)`) from "composition" (`f ∘ g`, `A B`).
 V.6 and III.3 state the bare-spec reading of § 5.6.
 S0 does not change `STYLE_GUIDE.md`, which changes with the code (§ 18.2).
 
@@ -2055,16 +2058,17 @@ Its renames change about 50 modules, which is why it is announced.
 ### 19.5 S3: `&`, `rename`, and `MarginalView`
 
 **Delivers:** one announced mechanical PR:
-- `&` replaces `*` for composing laws and kernels: `Distribution.__mul__`, `ConditionalDistribution.__mul__`, and the composition branch of `GaussianRandomFunction.__mul__`, whose scaling branch stays;
+- `&` replaces `*` for merging laws and kernels: `Distribution.__mul__`, `ConditionalDistribution.__mul__`, and the merge branch of `GaussianRandomFunction.__mul__`, whose scaling branch stays;
+- "merge" replaces "composition" in the code that implements `&`: `distributions/_composition.py` becomes `distributions/_merge.py`, `tests/distributions/test_composition.py` becomes `test_merge.py`, the `joint` operation's route `"compose"` becomes `"merge"` with its functions `_can_compose`, `_compose`, and `_composed_expression`, and their docstrings and comments; composition of linear operators and of functions keeps its name;
 - `&` replaces `merge` on `Record` and `RecordSpec` (§ 21, R2);
 - `with_path_names` becomes `rename` on every kind that has it, and `STYLE_GUIDE.md` §1.10 says `rename`;
 - `FieldView` becomes `MarginalView`.
 
 **Invariants:** none new; every existing test passes under the new names.
 
-**Files:** `distributions/_distribution.py`, `distributions/_conditional.py`, `families/_gaussian.py`, `core/named_tree.py`, `core/_specs.py`, `distributions/_views.py`, and every caller: about 400 lines name `with_path_names` and about 260 name `FieldView` across `probpipe/`, `tests/`, `docs/`, and `design/`.
+**Files:** `distributions/_distribution.py`, `distributions/_conditional.py`, `distributions/_composition.py`, `operations/_joint.py`, `families/_gaussian.py`, `core/named_tree.py`, `core/_specs.py`, `distributions/_views.py`, and every caller: about 400 lines name `with_path_names` and about 260 name `FieldView` across `probpipe/`, `tests/`, `docs/`, and `design/`.
 
-**Done when:** no `__mul__` composes laws; a search for `with_path_names`, `FieldView`, and `.merge(` on a record finds nothing outside the CHANGELOG; the User Guide notebooks run; and the full suite passes.
+**Done when:** no `__mul__` merges laws, and no code name, docstring, or comment calls `&` or a joint law's construction a composition; a search for `with_path_names`, `FieldView`, and `.merge(` on a record finds nothing outside the CHANGELOG; the User Guide notebooks run; and the full suite passes.
 
 ### 19.6 S4: every batch stores its element declaration
 
@@ -2090,7 +2094,7 @@ Its renames change about 50 modules, which is why it is announced.
 
 ### 19.7 G1a and G1b: grammar B for the kinds the workshop uses
 
-**G1a delivers**, and is never cut:
+**G1a delivers**, and is the fifth cut if time runs short:
 1. a view or marginal of a group exposes its parts, and a group's marginal is the factor's view at the group (§ 9.5, § 12.1);
 2. the library's laws declared whole over a record are exposed or wrapped (§ 5.8);
 3. a grouped sub-joint wraps its group (§ 5.8).
@@ -2174,7 +2178,7 @@ This is #571's checklist, rewritten for the reconciled design.
 5. **Names in a batch's equality and pytree**, as #571 proposed. Draws of `x` and `y` would then be different structures to JAX, so `jit` would recompile per name and `lax.cond` could not return either (decided 2026-10-17).
 6. **`components` returns a `RecordSpec`.** A `RecordSpec` indexes leaf paths, so `components["growth"]` would raise for a component that is a record, and every reader of `components` would change.
 7. **`RecordSpec` replaces `InputSpec`.** A record has no optional fields and no rule for identifier names, and its merge raises on a shared name, where slots unify.
-8. **A given slot's type stays pending until composition fills it.** `conditional_distribution` evaluates the function at stand-ins of each slot's type to read its event declaration and its claims (IV.4), and III.7 requires a complete declaration, so a kernel with a pending slot would have no event declaration.
+8. **A given slot's type stays pending until a merge fills it.** `conditional_distribution` evaluates the function at stand-ins of each slot's type to read its event declaration and its claims (IV.4), and III.7 requires a complete declaration, so a kernel with a pending slot would have no event declaration.
 9. **`given_spec` holds specs for more names than the function has parameters.** This removes the need for `without`, and it accepts a misspelled name without an error.
 10. **A law's event exposes laws, and each operation keeps what the declaration exposes.** A field of the joint's draw would then hold a law, and the joint's declaration would type it by the inner law's event, which is the failure of § 5.4.
 11. **`produced slot` and `consumed slot`** in place of component and slot, with `OutputSpec.produced_slots`. The paired names state the matching, but the current names give each role its own word and keep the reading `decl[c]`; jhuggins's reply keeps component and slot.
@@ -2352,7 +2356,7 @@ Today `Normal("x", 0.0, 1.0)[("x",)]` returns the law over the record `{x}`, and
 
 **Background.**
 `&` on two `Record`s, `NumericRecord`s included, merges their fields (S3), while `&` on two `NumericArray`s is NumPy's elementwise "and", which refuses float arrays.
-A `NumericRecord` has no arithmetic today, so no elementwise meaning is lost.
+III.5 gives a `NumericRecord` the vector-space operators, `+` and `-` between records of one schema, scalar `*` and `/`, and `map`, and `&` is not among them, so merging takes no elementwise meaning away from records.
 
 **Options.**
 1. Keep both meanings, and state the difference as an exception (§ 16).
@@ -2396,7 +2400,7 @@ After S4 a `BatchSpec` holds a declaration, and a user who declares a batch outp
 2. Treat it as an exposed record with no components.
 3. Treat it as a base spec, nameable whole.
 
-**Recommendation.** Option 1. A producer that offers nothing has no use in composition, and the refusal matches `without`. An `InputSpec` with no slots stays valid, since a consumer may take no input.
+**Recommendation.** Option 1. A producer that offers nothing has no use in a merge, and the refusal matches `without`. An `InputSpec` with no slots stays valid, since a consumer may take no input.
 
 #### O11. Whether `produced_declaration` and `with_produced_declaration` are public
 

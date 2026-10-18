@@ -124,13 +124,13 @@ Since every merge leaves `dev/overhaul` coherent (directive 7), the code can be 
 
 | Step | What | Plan section | Depends on | Before |
 |---|---|---|---|---|
-| S0 | Design text: II.2 states the grammar rule and the declarations, II.6 the paths and the reading of a subscript; the glossary | `declarations-and-addressing.md` § 19.2 | PL | yes |
+| S0 | Design text: II.2 states the grammar rule and the declarations, II.6 the paths and the reading of a subscript; IV.2 retitled "Merging distributions", with "merge" for `&`; the glossary | `declarations-and-addressing.md` § 19.2 | PL | yes |
 | S1 | One subscript reader and one `_PATH_SEP`; `[]` returns groups on `Record` and `RecordSpec`; lists of paths keep their paths; `in`, laws included; `marginal(d, paths)`; `select` flattens to last segments; `()` on a batch raises | § 19.3 | S0 | yes |
 | S2a | **Announced, mechanical.** `OutputSpec` becomes a mapping of its components; `spec` becomes `term_spec`; every read of `components`, `exposes_record`, and `_component_name` outside `_specs.py` moves to the mapping | § 19.4 | S0 | yes |
 | S2b | `project` and `without` through S1's reader; one reading of slots; the size shorthand; `&` on `InputSpec` and `OutputSpec`; the refusal of a law's or a kernel's event declaration that exposes a law, a kernel, a function, or a batch | § 19.4 | S1, S2a | yes |
-| S3 | **Announced, mechanical.** `&` replaces `*` for laws and kernels, and `merge` on records; `rename`; `MarginalView`. S3 and E4 may merge in either order; the second rebases | § 19.5 | S2b | yes |
-| S4 | Every batch stores its element declaration | § 19.6 | S2b, E3b | yes |
-| G1a | Grammar B for views and marginals of groups, the library's laws declared whole over a record, and factors that hold a group | § 19.7 | S2b, S4 | yes, never cut |
+| S3 | **Announced, mechanical.** `&` replaces `*` for laws and kernels, and `merge` on records; "merge" replaces "composition" in the code that implements `&`; `rename`; `MarginalView`. S3 and E4 may merge in either order; the second rebases | § 19.5 | S2b | yes |
+| S4 | Every batch stores its element declaration | § 19.6 | S2b, E3b | yes, cut sixth |
+| G1a | Grammar B for views and marginals of groups, the library's laws declared whole over a record, and factors that hold a group | § 19.7 | S2b, S4 | yes, cut fifth |
 | G1b | Grammar B for outputs: a function that returns a law or a function exposes its output, a lifted law-returning function wraps its draws, defaults by kind, and the reading of a bare `output_spec` | § 19.7 | G1a, E5 | yes, cut third |
 | G2 | Grammar B for the remaining kinds, then enforcement: random measures, random functions and Gaussian processes, bootstrap laws, empirical laws of laws, and minibatched targets wrap their draws; then the keyword form of `OutputSpec` refuses a spec with parts, once G3 has moved views at law-valued fields off the old form | § 19.8 | G1b, G3 | after |
 | G3 | Paths through every kind; `Function[]`; the public `component` accessor, and a whole term's name stops being a subscript; a view of a field that holds a law or a function wraps | § 19.8 | G1a | after |
@@ -147,7 +147,7 @@ Since every merge leaves `dev/overhaul` coherent (directive 7), the code can be 
 | E3a | In `core/`: sets of evaluation points, the executor registry and its built-in executors, the call context's executor choice and evaluation context, the program store of `jax.jit` objects that traces and lowers each JAX program before its first run, with the static settings, which include the passed controls and the call's resolved static controls, in its cache key, and the JAX settings shipped to process workers; the controls `executor` and `executor_options` | § 13 | E0, E1, P0b, PV | yes |
 | E3b | The executors replace the dispatch modes in `_broadcast.py`, `_sweep.py`, and `_execution.py`; `dispatch` and `max_workers` go; the closed execution contract goes | § 13 | E3a, S2a | yes |
 | E4 | The boundary: embedded calls and call tokens in every JAX program ProbPipe opens that runs user or route code, the inference runners included; the search of the jaxpr; lazy token registration; failures; the output check per evaluation point | § 13 | E2, E3b, S2b | yes |
-| E5 | `evaluate_at_points` in lifting and sweeps, joint factors, laws built from functions, and expectations | § 13 | E4 | yes |
+| E5 | `evaluate_at_points` in lifting and sweeps, joint factors, laws built from functions, and expectations | § 13 | E4 | yes, cut fourth |
 | E6 | The public target interface: `InferenceTarget` and `make_posterior`, with the run key passed as #554 §8 states | § 13 | E4 | yes |
 | E7 | At most one run per distinct evaluation point inside a call | § 13 | E4 | yes, cut second |
 | E8 | The JAX settings contract: the check at close and on the host side, and provenance | § 13 | E4 | yes, cut first |

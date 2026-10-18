@@ -2762,7 +2762,7 @@ V.8 and #554 say "random event" throughout, with the same collision. Renaming it
 |---|---|
 | **#506** what a function body receives | `EvaluationChunk.run` presents arguments by its rules, and the `jax` executor reads its rule for host types (6.2). |
 | **#575** `raw` as a property | Sets of evaluation points carry raw values. `Distribution.raw` returns a new object on each access, so no JAX program is keyed on it (J7). |
-| **#571** declarations | An embeddable `Function` needs a complete `term_spec` (6.2). `&` replaces `*` for composition (decided 2026-10-17), and the examples use it. |
+| **#571** declarations | An embeddable `Function` needs a complete `term_spec` (6.2). `&` replaces `*` for merging laws and kernels (decided 2026-10-17), and is called a merge (decided 2026-10-18), and the examples use it. |
 | **#573** field paths | Claims that name parts of an input, such as a partial `differentiable`, use its one reader. |
 | **#509**, **#510** sweeps | A sweep is a lazy set of evaluation points registered as an index range, and the `jax` executor vectorizes paired batches. |
 | **#520** randomness audit | Feasibility checks stop tracing at fixed keys, because they read the probe result. pyabc's global NumPy seeding is replaced (6.12). |
