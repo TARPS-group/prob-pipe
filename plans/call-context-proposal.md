@@ -359,10 +359,10 @@ Field by field:
 
 | Field | Type | Written by | Read by | Step | Today's home | Change |
 |---|---|---|---|---|---|---|
-| `config_blocks` | mapping of section to setting to value | `config.<section>.using` and `config.using`, through `with_config_block` | `_Section._current` in `core/config.py` | #587 | `_TEMPORARY` (#587) | **Change:** the variable goes; its value is a field |
+| `config_blocks` | mapping of section to setting to value | `config.<section>.using` and `config.using`, through `with_config_block` | `_Section._value_in_effect` in `core/config.py` | #587 | `_TEMPORARY` (#587) | **Change:** the variable goes; its value is a field |
 | `passed_controls` | mapping or `None` | `_passing_down` in a derived route's scope; `opening_call`, which clears the counts and keeps `exact_only` (today's `_EXACT_ONLY_BELOW`) | `opening_call` through `Function._inheriting` | #587 | `_INHERITED_CONTROLS` (#547, #586) | **Change:** the variable goes; its value is a field |
 | `label` | `str` or `None` | `opening_call` | messages and warnings | #587 | none | new |
-| `controls` | mapping | `opening_call`: the view's `options` after `_inheriting`, without `executor` and `executor_options`, whose one home is `execution_choice` | `_current_num_samples`, executors (E3a), requesters that read `method_options["on_failure"]` | #587 | `_MonteCarloRecord.num_samples` and `Function.options` | **Change:** `_MonteCarloRecord.num_samples` goes |
+| `controls` | mapping | `opening_call`: the view's `options` after `_inheriting`, without `executor` and `executor_options`, whose one home is `execution_choice` | `_num_samples_in_effect`, executors (E3a), requesters that read `method_options["on_failure"]` | #587 | `_MonteCarloRecord.num_samples` and `Function.options` | **Change:** `_MonteCarloRecord.num_samples` goes |
 | `num_samples_used` | `_NumSamplesUsed` | routes, through `_note_num_samples_used`; `opening_call` and `_collecting_num_samples_used` create one | the call's provenance; the parent's counts on success, when the parent collects calls | #587 | `_MONTE_CARLO` (#586) | **Change:** renamed; the variable goes |
 | `execution_choice` | `_ExecutionChoice(executor, executor_options, source)`, the one home of the executor choice | `opening_call`, from the call's own `executor` controls, else the parent's choice; `evaluation_context` resets it | the executor dispatcher; the host side through the token | E3a | the controls `dispatch` and `max_workers` | new |
 | `evaluation_log` | `_EvaluationLog` | the executor dispatcher and the host side; a closing child merges its log into its parent's, on success and on error | provenance; replay's `executor` | E3a | the key broker's `requested_dispatch` | **Change:** moves off the broker |
@@ -408,7 +408,7 @@ def _opening_call_context(entry_method):
 
 `opening_call` builds the child:
 1. **`config_blocks`:** the parent's mapping, the same object.
-2. **`passed_controls`:** the parent's passed `exact_only` alone, or `None`, as `_EXACT_ONLY_BELOW` does today. The passed counts therefore apply only to the calls an identity makes directly.
+2. **`passed_controls`:** the parent's passed `exact_only` alone, or `None`, as `_EXACT_ONLY_BELOW` does today. The passed counts therefore apply only to the calls a derived route's formula makes directly.
 3. **`controls`, `label`, `execution_choice`:** as resolved above.
 4. **`num_samples_used`:** a new, empty `_NumSamplesUsed`.
 5. **`embedded_calls` and `evaluation_run_table`:** new and empty, when the call opens while no trace is active (E4, E7). Creating them registers nothing. A call opened while a trace is active gets neither, because its JAX programs become part of the traced JAX program and run later under that JAX program's token.
@@ -428,7 +428,7 @@ A JAX program that ProbPipe opens while tracing another is part of the outer JAX
 
 **Deriving without a call.** Two scopes change the current context without opening a call:
 - **A `config` block** derives `current_context.with_config_block(config_values)`: the enclosing blocks merged with the new values, an inner value winning.
-- **A derived route's scope** derives `current_context.with_passed_controls(passed_controls)` for the extent of the identity's check and run.
+- **A derived route's scope** derives `current_context.with_passed_controls(passed_controls)` for the extent of the derived route's check and run.
 
 Each installs the derived context with `_under_call_context`, which resets the variable on exit.
 
@@ -476,8 +476,8 @@ This one rule contains each of the three rules it reconciles:
 | VI.0 | an inherited count applies "unless that call's view sets its own" | source 1 before source 2 |
 
 One case needs a sentence of its own.
-A count passed by an identity beats a `config` block even when the block is opened inside the derived route's scope, because the passed count is an explicit choice on the derived call.
-In practice this case does not arise. The calls that take a passed count are the ones the formula makes directly, and the formula is ProbPipe's code, so no user's block opens between the identity and those calls.
+A count passed by a derived route beats a `config` block even when the block is opened inside the derived route's scope, because the passed count is an explicit choice on the derived call.
+In practice this case does not arise. The calls that take a passed count are the ones the formula makes directly, and the formula is ProbPipe's code, so no user's block opens between the derived route and those calls.
 
 A setting that is not a control, such as `config.notation.max_depth`, resolves from sources 3 to 5 at the moment it is read.
 
@@ -641,7 +641,7 @@ The layering of `design/package-structure.md` and the decided Q5 place the code 
 The changes, in the order a reviewer reads them:
 
 1. **The module.** Add `core/_call_context.py` with `_CallContext` holding the five #587 fields of § 5.1, the context variable, `current_call_context`, and `_under_call_context`.
-2. **`config` blocks.** `_Section._current` reads `current_call_context().config_blocks`. `_Section.using` and `Config.using` install `current_context.with_config_block(checked_config_values)`. `_TEMPORARY`, `_temporarily`, `_temporary_settings`, and `_applying` are removed.
+2. **`config` blocks.** `_Section._current` becomes `_Section._value_in_effect`, which reads `current_call_context().config_blocks`. `_Section.using` and `Config.using` install `current_context.with_config_block(checked_config_values)`. `_TEMPORARY`, `_temporarily`, `_temporary_settings`, and `_applying` are removed.
 
    ```python
    # #587
@@ -649,14 +649,14 @@ The changes, in the order a reviewer reads them:
        block = _TEMPORARY.get().get(self._name)
        ...
 
-   # Proposed
-   def _current(self, setting):
+   # Proposed: renamed, since "current" alone does not say what it returns (README directive 5)
+   def _value_in_effect(self, setting_name):
        section_block = current_call_context().config_blocks.get(self._name)
        ...
    ```
 
 3. **Passed controls.** `_passing_down` installs `current_context.with_passed_controls(...)`. `_INHERITED_CONTROLS` is removed, and `_inheriting_controls` becomes `_opening_call_context` (§ 5.2).
-4. **`num_samples` used.** `_recording_monte_carlo` becomes `_collecting_num_samples_used`, which installs a context with fresh `num_samples_used`. `_opening_call_context` uses it, so `_call_function_in_context` no longer opens a record of its own. `_ByComponent._run_block` uses it for each block, as today. `_current_num_samples` reads `current_call_context().controls["num_samples"]` inside a call, and the block's or the session's value outside every call. `_MONTE_CARLO` is removed.
+4. **`num_samples` used.** `_recording_monte_carlo` becomes `_collecting_num_samples_used`, which installs a context with fresh `num_samples_used`. `_opening_call_context` uses it, so `_call_function_in_context` no longer starts a `num_samples_used` of its own. `_ByComponent._run_block` uses it for each block, as today. `_current_num_samples` becomes `_num_samples_in_effect`, which reads `current_call_context().controls["num_samples"]` inside a call, and the block's or the session's value outside every call. `_MONTE_CARLO` is removed.
 5. **The carrier.** `_carrying_call_context(work_function)` returns `_ContextBoundFunction(work_function, current_call_context().evaluation_context())`, or `work_function` itself when the current context is the default context. In #587 `evaluation_context()` returns the context unchanged, because the fields it drops arrive with E3a and E4.
 
    ```python
@@ -960,7 +960,7 @@ Thanks for #587. The `config` sections and the `using` blocks are what we want, 
 
 **Concrete changes in #587:**
 1. Add `core/_call_context.py` with `_CallContext` (fields `config_blocks`, `passed_controls`, `label`, `controls`, `num_samples_used`), the context variable, `current_call_context()`, and `_under_call_context(call_context)`.
-2. `_Section._current` reads `current_call_context().config_blocks`, and `using` installs `current_context.with_config_block(...)`. `_TEMPORARY`, `_temporarily`, `_temporary_settings`, and `_applying` go.
+2. `_Section._current` becomes `_Section._value_in_effect` and reads `current_call_context().config_blocks`, and `using` installs `current_context.with_config_block(...)`. `_TEMPORARY`, `_temporarily`, `_temporary_settings`, and `_applying` go.
 3. `_passing_down` installs `current_context.with_passed_controls(...)`, and `_INHERITED_CONTROLS` goes. `_inheriting_controls` becomes `_opening_call_context`, which opens a child context for every call.
 4. `_recording_monte_carlo` becomes `_collecting_num_samples_used`, and `_MONTE_CARLO` goes. The call's resolved `num_samples` is read from `call_context.controls`, so `_MonteCarloRecord.num_samples` goes.
 5. `_carrying_call_context(work_function)` returns `_ContextBoundFunction(work_function, current_call_context().evaluation_context())`. In this PR `evaluation_context()` returns the context unchanged.
@@ -1011,3 +1011,4 @@ Nothing else changes. The sections, their checks and environment variables, `res
 | 21 | (2026-10-18) The record of the Monte Carlo draws a call took is named after the public control it reports: `draw_counts` became `num_samples_used`, `_MonteCarloDrawCounts` became `_NumSamplesUsed`, `_note_monte_carlo_draws` became `_note_num_samples_used`, and `_counting_monte_carlo_draws` became `_collecting_num_samples_used`; `execution` became `execution_choice`. | The maintainer's review: one name for what the user sees as `num_samples`, and "draw counts" also named an MCMC method's draws. |
 | 22 | (2026-10-18) The wrapper inside `_opening_call_context` is named `run_in_child_call_context`, not `entered`. | The maintainer's review. |
 | 23 | (2026-10-18) Vague names in proposed code replaced under README directive 5's naming rules: `current` became `current_context`, `parent` became `parent_context`, `view` became `function_view`, the opened `context` became `child_context` and a looked-up one `call_context`, `method` became `entry_method`, `values` and `passed` became `config_values` and `passed_controls`, `func` became `work_function`, `token` became `call_token` in signatures, `_execution_choice` became `_resolve_execution_choice`, and `_ExecutionChoice`'s `options` became `executor_options`; in the quoted host side, `call`, `points`, `outcomes`, and `ranks` became `call_context`, `evaluation_points`, `evaluation_outcomes`, and `argument_ranks`. | The maintainer found `entered` and `current` too vague. |
+| 24 | (2026-10-18) Four mentions of a derived operation's "identity" missed by row 20 now say "derived route" or "formula"; #587's `_Section._current` becomes `_value_in_effect(setting_name)` and #586's `_current_num_samples` becomes `_num_samples_in_effect`, under README directive 5's rule 5; a "record" noun removed. | The maintainer's review. |
