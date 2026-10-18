@@ -11,7 +11,7 @@ After that, a question raised during implementation is added here, written as RE
 
 | Raised | By | Question | Where it is explained |
 |---|---|---|---|
-| 2026-10-18 | call-context review | M15–M17: shipping the session's settings to workers; one provenance merge rule; resolving the executor and its options as one unit | `maintainer-review.md` § E; `execution-layer.md` § 6.16, "Decisions" |
+| 2026-10-18 | call-context review | M16–M17: one provenance merge rule; resolving the executor and its options as one unit | `maintainer-review.md` § E; `execution-layer.md` § 6.16, "Decisions" |
 | 2026-10-18 | call-context review, round 2 | A backward rule that runs after its call closed runs under the default context; a refusing executor raises when named for this callable and falls back when inherited; evaluation points read the session snapshot taken when the root call opened; the `prefect` section is not shipped to workers; a new public error `UnshippableSettingError(RuntimeError)` for a setting that cannot travel to a worker; while ProbPipe is already tracing, an inner call's body runs inline in the outer trace (M22) | `execution-layer.md` § 6.16, "Decisions" (provisional table) |
 
 ## Settled
@@ -20,6 +20,7 @@ Newest first.
 
 | Date | Decision | Area | Source |
 |---|---|---|---|
+| 2026-10-18 | M15: work shipped to a worker process carries a snapshot of the settings in effect when the call opened, session values included (`session_config_values`); the worker applies it, and blocks still win over it. `prefect` is the exception (M21). | execution | maintainer |
 | 2026-10-18 | M14: notes made while JAX traces (the `num_samples` used, once-per-call warnings) are captured with the compiled JAX program's store entry and applied once per run, cold or warm, so provenance does not depend on whether the program was cached. A note must depend only on the cache key; a later trace that captures a different note raises. The contract and its tests are in `execution-layer.md` § 6.16. Static and inert settings are defined there precisely, and each setting's docstring and `docs/api/config.md` state its kind. | execution | maintainer |
 | 2026-10-18 | M13: every `config` setting declares one of two kinds. **Static** settings (`sampling.num_samples`, `sampling.max_evaluations`) are compile-time constants of a JAX program and part of its cache key, as JAX's `static_argnames` are; **inert** settings (`notation.*`, `provenance.*`, `prefect.*`) cannot change a computed value and never enter a cache key. A setting of neither kind raises when read while ProbPipe traces. A call opened inside a staging trace runs inline, with no Prefect orchestration. "Traced" is not used for a setting, since JAX calls runtime data traced. | execution | maintainer |
 | 2026-10-18 | jhuggins asked that the push make the call-context changes on #587's branch itself; step P0b pushes its commits to `dev/config-sections`. | process | jhuggins, maintainer |
