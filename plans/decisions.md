@@ -12,7 +12,7 @@ After that, a question raised during implementation is added here, written as RE
 | Raised | By | Question | Where it is explained |
 |---|---|---|---|
 | 2026-10-18 | call-context review | M13–M17: traced and untraced settings; replaying notes made while tracing; shipping the session's settings to workers; one provenance merge rule; resolving the executor and its options as one unit | `maintainer-review.md` § E; `execution-layer.md` § 6.16, "Decisions" |
-| 2026-10-18 | call-context review, round 2 | A backward rule that runs after its call closed runs under the default context; a refusing executor raises when named for this callable and falls back when inherited; evaluation points read the session snapshot taken when the root call opened; the `prefect` section is not shipped to workers; a new public error `UnshippableSettingError(RuntimeError)` for a setting that cannot travel to a worker | `execution-layer.md` § 6.16, "Decisions" (provisional table) |
+| 2026-10-18 | call-context review, round 2 | A backward rule that runs after its call closed runs under the default context; a refusing executor raises when named for this callable and falls back when inherited; evaluation points read the session snapshot taken when the root call opened; the `prefect` section is not shipped to workers; a new public error `UnshippableSettingError(RuntimeError)` for a setting that cannot travel to a worker; while ProbPipe is already tracing, an inner call's body runs inline in the outer trace (M22) | `execution-layer.md` § 6.16, "Decisions" (provisional table) |
 
 ## Settled
 

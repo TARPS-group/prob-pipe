@@ -263,7 +263,7 @@ Smaller choices the reviser made, for a glance:
 - **The formula rename:** P0b writes "identity", the term current on `dev/overhaul`, and E0 then renames every occurrence, P0b's text included, so there is no partial migration.
 - **PV's new field:** PV adds `session_config_values` with the `provenance` section only, and E3a extends it to every section.
 
-A second round of review then found no blockers but eight problems, all fixed. It added four more provisional choices:
+A second round of review then found no blockers but eight problems, all fixed, and a third round confirmed the fixes and found one more problem, also fixed. Together they added five more provisional choices:
 
 | | Choice made | Alternative |
 |---|---|---|
@@ -271,3 +271,4 @@ A second round of review then found no blockers but eight problems, all fixed. I
 | M19 | A refusing executor raises when it was named for this callable, and falls back with a warning when inherited, however its evaluation points arrive | Raise only for an executor named on the operation's call itself |
 | M20 | Inside an evaluation point, under every executor, a setting no block sets reads the session as it was when the root call opened, so `thread` and `process` agree; this changes #587, where a worker thread reads the current session | Keep #587's behaviour |
 | M21 | The `prefect` section is never shipped to a worker process, so a nested call there runs without Prefect orchestration; another value that cannot travel arrives as a placeholder raising a new public error, `UnshippableSettingError` | Ship `prefect` too, with a placeholder for an unpicklable task runner |
+| M22 | While ProbPipe is already tracing, an inner call's body runs inline in the outer trace instead of in a separately stored JAX program, so an executor named on a traceable `Function` inside a kernel (`growth.using(executor="slurm")`) reaches the opaque code it calls; only the outermost JAX program is cached. JAX compiles the inner code into the outer program anyway, so nothing is lost | Keep a separate inner JAX program and put the inner call's executor choice into its cache key |

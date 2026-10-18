@@ -1752,7 +1752,7 @@ A batch's component names stay out of its equality, its hashing, the static data
 
 **Why.**
 A batch is a JAX pytree, so JAX splits it into arrays and static data.
-JAX compares the static data to decide whether two values have the same structure, which decides whether `jit` reuses a compiled program and whether the two branches of `lax.cond` may return the batch.
+JAX compares the static data to decide whether two values have the same structure, which decides whether `jit` reuses a compiled JAX program and whether the two branches of `lax.cond` may return the batch.
 Today a batch's static data is its `BatchSpec`.
 If the names were static data, draws of `Normal("x", 0.0, 1.0)` and of `Normal("y", 0.0, 1.0)` would become different structures:
 
@@ -2301,7 +2301,7 @@ A declaration must still tell names apart: `OutputSpec(BatchSpec(...))` for a ba
 II.5 already names the stored declaration `BatchSpec.element`, and a batch's static data is its `BatchSpec`.
 
 **Options.**
-1. `BatchSpec` holds the name, but its equality and hash ignore it, and a batch's own flatten resets it to `element`. This leaks names: a record whose field holds a batch carries that `BatchSpec` in its `RecordSpec` static data, and JAX returns the first call's static data from a cached program (§ 15.3). Two `BatchSpec`s that are equal while holding different names are also unsafe keys for the execution plan's probe results and program store.
+1. `BatchSpec` holds the name, but its equality and hash ignore it, and a batch's own flatten resets it to `element`. This leaks names: a record whose field holds a batch carries that `BatchSpec` in its `RecordSpec` static data, and JAX returns the first call's static data from a cached JAX program (§ 15.3). Two `BatchSpec`s that are equal while holding different names are also unsafe keys for the execution plan's probe results and program store.
 2. The name is stored on the batch beside its label, as the addressing plan said. A declaration that exposes a batch then has nowhere to store the name without a flag.
 3. `BatchSpec` holds the name and compares it in its own equality and hash. A batch's equality and hashing, fingerprints, and every pytree flatten, recursively through records and every spec that can hold a `BatchSpec`, use a name-free canonical spec.
 
