@@ -88,7 +88,7 @@ Each step's content and its done-condition are stated where the step's plan sect
 
 **Dates.** The workshop is on 2026-10-27, and the code freezes at the end of 2026-10-25, when `dev/overhaul` is tagged. A checkpoint on 2026-10-20 reviews progress, and a checkpoint on 2026-10-22 decides any cut.
 
-**Priorities and off-ramps.** The push aims to land every step marked "before" by the freeze, with several people and sessions working in parallel. The most fundamental contracts start first and are never cut; the rest are off-ramps, cut in a fixed order if the checkpoint of 2026-10-22 finds time short.
+**Priorities and off-ramps.** The push aims to merge every step marked "before" by the freeze, with several people and sessions working in parallel. The most fundamental contracts start first and are never cut; the rest are off-ramps, cut in a fixed order if the checkpoint of 2026-10-22 finds time short.
 
 1. **Never cut**, started first as their dependencies allow: CC, P0b, S0, S1, S2a, S2b, S3, E0, E1, E2, E3a, E3b, E4, and E6. These are the declarations and subscripts a user types, the call context, executor dispatch for traceable and opaque functions, the boundary, and the public target interface.
 2. **Off-ramps**, cut in this order: E8, then E7, then G1b, then E5, then G1a, then S4. Each cut keeps the steps above it buildable: cutting E5 also cuts G1b, which depends on it, and cutting S4 also cuts G1a.
