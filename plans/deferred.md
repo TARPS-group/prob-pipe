@@ -27,7 +27,7 @@ From `execution-layer.md` §13, "After the workshop":
 | `evaluate_at_points` at the remaining sites: LOO, predictive checks, KSD, minibatching, empirical reweighting, SBC | §13 item 1 |
 | Failure options: dropping failed evaluation points, retries, `cancel_on_failure`, interrupts | §6.4, §13 item 2 |
 | The memo across calls, and `DiskMemo` keyed by `version`; a content-fingerprinted `DiskMemo` after #504 | §6.5, Q6 |
-| Supplied derivatives (`vjp`, `jacobian`, `jvp`) after #522, and the `jacobian` operation with `grad` | §6.9, Q11 |
+| Supplied derivatives (`vjp`, `jacobian`, `jvp`) after #522, and the `jacobian` operation with `grad`. Their docstrings, V.13, and the user guide must state clearly that a backward pass run after its call closed (an eager `grad` or a kept `vjp`) uses the default context, with an example (decision M18) | §6.9, Q11; § 6.16 rule 7 |
 | The opt-in executors `futures` and `prefect` | §6.8, Q9 |
 | The rest of the compiled layer: compiled lifting if it did not join the core, the mixture sampler, the persistent cache, public `count_compilations` | §6.10 |
 | pyabc and BayesFlow on sets of evaluation points and executors; see jhuggins's lighter pyabc route below | §6.12 |

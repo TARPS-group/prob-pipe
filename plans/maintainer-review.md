@@ -267,7 +267,7 @@ A second round of review then found no blockers but eight problems, all fixed, a
 
 | | Choice made | Alternative |
 |---|---|---|
-| M18 | A backward rule that runs after its call closed (eager `grad`/`vjp` through a `custom_vjp`) runs under the default context; a forward pass never keeps its token among its residuals. This matters only once supplied derivatives arrive after the workshop. | Bind the call's context into the backward closure, which conflicts with CC7 |
+| M18 | **Decided 2026-10-18:** a backward pass after its call closed uses the default context, documented clearly when supplied derivatives land | |
 | M19 | A refusing executor raises when it was named for this callable, and falls back with a warning when inherited, however its evaluation points arrive | Raise only for an executor named on the operation's call itself |
 | M20 | **Decided 2026-10-18:** evaluation points read the snapshot taken when the root call opened, under every executor | |
 | M21 | The `prefect` section is never shipped to a worker process, so a nested call there runs without Prefect orchestration; another value that cannot travel arrives as a placeholder raising a new public error, `UnshippableSettingError` | Ship `prefect` too, with a placeholder for an unpicklable task runner |
