@@ -2217,7 +2217,7 @@ The maintainer took each of these as recommended on 2026-10-18.
 
 Settled elsewhere: there is no `config.execution` section for now (gaps D7, option 1), and Prefect's auto-detection stays until the `prefect` executor ("Prefect until the `prefect` executor").
 
-**Provisional decisions of the review of 2026-10-18.** The adversarial reviews of 2026-10-18 led to these, which this plan states as the design and the maintainer has not yet confirmed:
+**Decisions from the reviews of 2026-10-18.** The adversarial reviews of 2026-10-18 led to these choices; each was first proposed provisionally and the maintainer decided it on 2026-10-18 (M13–M22 in `decisions.md`). The alternative column records what was weighed.
 
 | Decision | Where | Alternative |
 |---|---|---|
@@ -2230,7 +2230,7 @@ Settled elsewhere: there is no `config.execution` section for now (gaps D7, opti
 | **Decided 2026-10-18.** A refusing executor raises when it was named for the callable, on its own `Function` or as the call's own callable, and falls back with a warning when it was inherited, whether the evaluation points arrive from Python or through a token | 6.3, operation rule 6 | Raise only for an executor named on the operation's call itself, and fall back for every executor whose evaluation points arrive through a token. |
 | **Decided 2026-10-18.** Inside an evaluation point, under every executor, a setting no block sets reads the session snapshot taken when the root call opened, not the session's current values | "Lifecycle", "Evaluation points" | Keep #587's behaviour, where a worker thread reads the session's current values, and accept that `thread` and `process` can disagree after a session change during a call. |
 | **Decided 2026-10-18,** with `UnshippableSettingError` accepted as a public name. The `prefect` section is never shipped to a worker process, so a nested call there runs without Prefect orchestration; any other unshippable value travels as a placeholder that raises `UnshippableSettingError` on read | "Transport", fact 3 | Ship `prefect` like the other sections, with an unpicklable task runner as a placeholder that raises when a nested call in the worker reads it. |
-| While ProbPipe is already tracing, the program store runs an inner call's body inline in the outer trace instead of opening a stored JAX program for it, so the inner call's executor choice is staged into the outer JAX program, and only the outermost JAX program is stored and keyed | "Tracing", "Inner calls while tracing" | Open the stored inner JAX program, and put a hashable identity of a non-automatic choice made within the trace into its static settings. |
+| **Decided 2026-10-18.** While ProbPipe is already tracing, the program store runs an inner call's body inline in the outer trace instead of opening a stored JAX program for it, so the inner call's executor choice is staged into the outer JAX program, and only the outermost JAX program is stored and keyed | "Tracing", "Inner calls while tracing" | Open the stored inner JAX program, and put a hashable identity of a non-automatic choice made within the trace into its static settings. |
 
 #### Worked examples
 
@@ -3105,3 +3105,4 @@ A second adversarial round read the rewritten draft and found these, all now add
 | 2026-10-18 | The setting kinds are **static** and **inert** (M13): "traced" was dropped because JAX calls runtime data traced and compile-time constants static. `_TracedSettings`, `traced_settings`, and `with_traced_settings` became `_StaticSettings`, `static_settings`, and `with_static_settings`. | Maintainer's decision |
 | 2026-10-18 | Static and inert settings defined precisely in 6.16, "Definitions", with the test that classifies a setting; each setting's docstring and `docs/api/config.md` state its kind (E3a); the glossary gains both terms. M14 decided: notes made while tracing are captured and applied once per run, and a later trace that captures a different note raises, with tests. | Maintainer's decisions |
 | 2026-10-18 | M15–M20 decided (the session snapshot in shipped work and in evaluation points, two merge rules, the executor resolved as one unit, a late backward pass under the default context with clear documentation, refusal by whom the executor was named for); `named_for_callable` became `applies_only_to`. | Maintainer's decisions |
+| 2026-10-18 | M21 and M22 decided; every provisional decision of the call-context reviews is now settled. | Maintainer's decisions |
