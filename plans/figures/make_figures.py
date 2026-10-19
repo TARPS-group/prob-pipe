@@ -95,6 +95,7 @@ class Port:
     name: str
     optional: bool = False
     label: str | None = None
+    factor: bool = False  # a factor input of a law: drawn hollow and dashed (§ 5.2)
 
     @property
     def text(self) -> str:
@@ -156,10 +157,11 @@ class Canvas:
         )
         self.extend(x, y, x + w, y + h)
 
-    def circle(self, x, y, r, *, fill, stroke, width=1.6):
+    def circle(self, x, y, r, *, fill, stroke, width=1.6, dash=None):
+        dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
         self.elements.append(
             f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="{fill}" stroke="{stroke}" '
-            f'stroke-width="{width}"/>'
+            f'stroke-width="{width}"{dash_attr}/>'
         )
         self.extend(x - r, y - r, x + r, y + r)
 
@@ -270,8 +272,11 @@ def _rows_of(parts: list[Part], depth: int = 0) -> list[tuple[int, Part]]:
     return rows
 
 
+BADGE_TEXT = {"value": "base value"}
+
+
 def badge_width(kind: str) -> float:
-    return text_width(kind, 10.5, mono=False) + 14
+    return text_width(BADGE_TEXT.get(kind, kind), 10.5, mono=False) + 14
 
 
 def draw_badge(canvas: Canvas, x: float, y: float, kind: str) -> float:
@@ -282,7 +287,7 @@ def draw_badge(canvas: Canvas, x: float, y: float, kind: str) -> float:
     canvas.text(
         x + w / 2,
         y + 12.5,
-        kind,
+        BADGE_TEXT.get(kind, kind),
         size=10.5,
         mono=False,
         anchor="middle",
@@ -363,7 +368,14 @@ def draw_obj(canvas: Canvas, obj: Obj, x: float, y: float) -> Placed:
     for index, port in enumerate(obj.inputs):
         input_y[port.name] = row_y(index)
         colour = FAULT if port.name in obj.faults else INK
-        canvas.text(x + w - 12, row_y(index) + 4.5, port.text, anchor="end", fill=colour)
+        canvas.text(
+            x + w - 12,
+            row_y(index) + 4.5,
+            port.text,
+            anchor="end",
+            fill=MUTED if port.factor and colour == INK else colour,
+            italic=port.factor,
+        )
 
     if obj.body:
         left_w, right_w = _side_widths(obj)
@@ -392,9 +404,10 @@ def draw_obj(canvas: Canvas, obj: Obj, x: float, y: float) -> Placed:
         canvas.circle(
             x + w,
             input_y[port.name],
-            PORT_RADIUS,
-            fill=PANEL_FILL if port.optional else colour,
+            PORT_RADIUS + (0.8 if port.factor else 0),
+            fill=PANEL_FILL if port.optional or port.factor else colour,
             stroke=colour,
+            dash="2.2 1.8" if port.factor else None,
         )
     return Placed(obj, x, y, w, h, output_y, input_y)
 
@@ -514,9 +527,18 @@ def merge_figure(
     placed_right = draw_obj(canvas, right, right_x, box_top)
     lowest = max(placed_left.bottom, placed_right.bottom)
 
-    def boundary_port(x: float, y: float, name: str, side: str, optional: bool = False) -> None:
+    def boundary_port(
+        x: float, y: float, name: str, side: str, optional: bool = False, factor: bool = False
+    ) -> None:
         colour = FAULT if name in fault_results else BOUNDARY
-        canvas.circle(x, y, PORT_RADIUS, fill=PANEL_FILL if optional else colour, stroke=colour)
+        canvas.circle(
+            x,
+            y,
+            PORT_RADIUS,
+            fill=PANEL_FILL if optional or factor else colour,
+            stroke=colour,
+            dash="2.2 1.8" if factor else None,
+        )
         text_colour = FAULT if name in fault_results else INK
         if side == "left":
             canvas.text(x - 10, y + 4.5, name, anchor="end", weight="bold", fill=text_colour)
@@ -577,7 +599,9 @@ def merge_figure(
             stroke=colour,
             arrow=True,
         )
-        boundary_port(boundary_right, y_band, port.name, "right", optional_of[port.name])
+        boundary_port(
+            boundary_right, y_band, port.name, "right", optional_of[port.name], port.factor
+        )
         if port.name in shared:
             fan_x = placed_right.right + 16 + 10 * shared.index(port.name)
             y_right = placed_right.input_y[port.name]
@@ -600,7 +624,7 @@ def merge_figure(
             stroke=wire_colour(port.name),
             arrow=True,
         )
-        boundary_port(boundary_right, y, port.name, "right", port.optional)
+        boundary_port(boundary_right, y, port.name, "right", port.optional, port.factor)
 
     boundary_bottom = (
         (channel_top + 22 * (len(right_outputs) - 1) + 16) if right_outputs else lowest + 16
@@ -792,6 +816,23 @@ class Legend:
             64,
         )
         y += 90
+
+        placed = draw_obj(
+            canvas,
+            Obj("a & c", "law", inputs=[Port("sigma", optional=True, factor=True)]),
+            40,
+            y,
+        )
+        self.explain(
+            [
+                "A dashed port is a factor input: an input a",
+                "factor of a law still takes, which a later",
+                "merge can feed or share.",
+            ],
+            y,
+            placed.h,
+        )
+        y += placed.h + 26
 
         canvas.rect(20, y, 270, 40, rx=14, stroke=FAULT, width=2.2, dash="6 4")
         canvas.cross(46, y + 20)
@@ -1004,6 +1045,29 @@ def figures() -> dict[str, Canvas]:
                 ),
             ],
         ),
+        "factor-inputs": single_figure(
+            "The law a & c, whose factor a still takes the optional input sigma",
+            Obj(
+                "a & c",
+                "law",
+                outputs=[Part("y"), Part("mu")],
+                inputs=[Port("sigma", optional=True, factor=True, label="sigma")],
+                body=["factors: a, c"],
+            ),
+            notes=["no inputs; one factor input, sigma (dashed),", "left at its default 1"],
+        ),
+        "merge-factor-input": merge_figure(
+            "A later merge feeds the factor input sigma of the law a & c",
+            Obj(
+                "a & c",
+                "law",
+                outputs=[Part("y"), Part("mu")],
+                inputs=[Port("sigma", optional=True, factor=True)],
+            ),
+            Obj("e", "law", root_output="sigma", body=["a draw is an array"]),
+            result_name="(a & c) & e",
+            result_kind="law",
+        ),
         "merge-invalid-output": merge_figure(
             "Refused: x is an output of both operands",
             Obj("a", "law", outputs=[Part("x"), Part("y")], faults={"x"}),
@@ -1056,7 +1120,7 @@ def figures() -> dict[str, Canvas]:
         ),
         "merge-invalid-law": merge_figure(
             "Refused: the right operand produces a law, which a record cannot hold unnamed",
-            Obj("a", "function", root_output="y", inputs=[Port("theta")]),
+            Obj("a", "function", root_output="y", inputs=[Port("params")]),
             Obj(
                 "b",
                 "function",
