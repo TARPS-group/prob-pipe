@@ -256,8 +256,10 @@ class TestConversionInfo:
         """A source that already satisfies the target needs no converter, and is exact."""
         info = ConversionInfo(feasible=True, exact=True, target_spec=Source().spec)
         assert info.method_name is None and info.exact is True
-        with pytest.raises(ValueError, match="needs no conversion, which is exact"):
+        with pytest.raises(ValueError, match="got exact=False without method_name"):
             ConversionInfo(feasible=True, exact=False, target_spec=Source().spec)
+        with pytest.raises(ValueError, match="got exact=False without method_name"):
+            ConversionInfo(feasible=None, pending=("the event declaration",), exact=False)
 
     def test_promises_nothing_by_default(self):
         info = ConversionInfo(feasible=False)
@@ -306,18 +308,17 @@ class TestConversionInfo:
     def test_a_method_name_needs_its_exactness(self, feasible: bool | None):
         promise = {"target_spec": Source().spec} if feasible else {}
         pending = {"pending": ("the event declaration",)} if feasible is None else {}
-        with pytest.raises(ValueError, match="pass exact with method_name='m'"):
+        with pytest.raises(ValueError, match="got method_name='m' without exact"):
             ConversionInfo(feasible=feasible, method_name="m", **promise, **pending)
 
     def test_an_infeasible_report_names_no_exactness_without_a_converter(self):
-        with pytest.raises(
-            ValueError, match="needs no conversion, which is exact and not infeasible"
-        ):
+        with pytest.raises(ValueError, match="got exact=True without method_name on an infeasible"):
             ConversionInfo(feasible=False, exact=True)
 
     def test_a_converter_states_only_its_promise(self):
         """A converter's report leaves the name and the exactness to the registry, in every state."""
-        assert ConversionInfo(feasible=True, target_spec=Source().spec).method_name is None
+        feasible = ConversionInfo(feasible=True, target_spec=Source().spec)
+        assert (feasible.method_name, feasible.exact) == (None, None)
         unresolved = ConversionInfo(feasible=None, pending=("the event declaration",))
         assert (unresolved.method_name, unresolved.exact) == (None, None)
         assert ConversionInfo(feasible=False).exact is None

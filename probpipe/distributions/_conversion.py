@@ -86,9 +86,10 @@ class ConversionInfo(MethodInfo):
 
     A converter's ``check`` returns one, and the registry's ``check`` returns
     one in every state. A feasible report promises the declaration the result
-    carries and states whether the conversion is exact and whether executing it
-    draws from the source; an infeasible report leaves the promise at its
-    defaults, which promise nothing.
+    carries and states whether executing the conversion draws from the source,
+    and the registry's report also states whether the conversion is exact; an
+    infeasible report leaves the promise at its defaults, which promise
+    nothing.
 
     A converter states only its promise and leaves ``method_name`` and
     ``exact`` unset. The registry sets both on the report it returns, from the
@@ -145,16 +146,19 @@ class ConversionInfo(MethodInfo):
             )
         if self.method_name is not None and self.exact is None:
             raise ValueError(
-                f"ConversionInfo: pass exact with method_name={self.method_name!r}; a converter "
-                "leaves both unset, and the registry sets them from the registration"
+                f"ConversionInfo got method_name={self.method_name!r} without exact; "
+                "a converter's check must leave both unset"
             )
-        if self.method_name is None and self.exact is not None:
-            if self.feasible is False or self.exact is not True:
-                raise ValueError(
-                    f"ConversionInfo: exact={self.exact!r} without a method_name states a source "
-                    f"that needs no conversion, which is exact and not infeasible; got "
-                    f"feasible={self.feasible!r}. A converter leaves exact unset"
-                )
+        if self.method_name is None and self.exact is False:
+            raise ValueError(
+                "ConversionInfo got exact=False without method_name; "
+                "a converter's check must leave exact unset"
+            )
+        if self.method_name is None and self.exact is True and self.feasible is False:
+            raise ValueError(
+                "ConversionInfo got exact=True without method_name on an infeasible report; "
+                "a converter's check must leave exact unset"
+            )
         if self.feasible is True and self.target_spec is None:
             raise ValueError("a feasible ConversionInfo must set target_spec")
 

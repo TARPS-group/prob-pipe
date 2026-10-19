@@ -107,7 +107,7 @@ It subclasses `Converter` and defines five members:
 4. `check`: the promise of a conversion as a `ConversionInfo`, computed without converting, which leaves `method_name` and `exact` for the registry to set from the registration;
 5. `execute`: the converted law, which carries the source's event declaration.
 
-`check` and `execute` receive a call's converter options as keywords, such as `num_samples`, and `execute` refuses an option the converter does not read.
+`check` and `execute` receive a call's converter options as keywords, such as `num_samples`, and a converter's `execute` must raise `TypeError` for an option it does not read.
 `converter_registry.register` registers an instance, and `convert` and `with_conversion` then select among the registered converters.
 The shipped converters have priorities from 10 to 20, and a new converter sets its `priority` to take part in automatic selection.
 
