@@ -426,7 +426,7 @@ Figures read from right to left, as a density $p(y \mid \mu)$ does, where `y` is
 | --- | --- | --- | --- |
 | Naming | every input is named | only a base value is named from outside | values are supplied to inputs by name; a produced value with parts carries its own names |
 | Names allowed | identifiers | any name | an input matches an argument; an output becomes a field |
-| Structure | flat: each input is one name, and a path may reach into a record input | one root output, or top-level paths with paths below | an input receives one value; an output is a place in a produced object |
+| Structure | flat: each input is one name, and a path may name part of a record input | one root output, or top-level paths with paths below | an input receives one value; an output is a place in a produced object |
 | Presence | may be optional | always present | a produced object has a value at every output |
 | Type unknown | never | type hole | a binding is checked against the input's type |
 | Equality | ignores order | keeps order | binding is by name; output order fixes layout |
@@ -820,7 +820,7 @@ Batches of laws can fail associativity, since each element is one factor.
 <details>
 <summary>Technical note: when renaming commutes</summary>
 
-For a one-to-one rename `m` of the names of `a` and `b`, applied to inputs and outputs alike, renaming `a & b` by `m` equals merging `a` and `b` each renamed by its part of `m`, for laws, kernels, records, and functions, provided `m` renames no factor input of a law: a law's rename does not reach its factors' inputs, while the merged kernel's rename may.
+For a one-to-one rename `m` of the names of `a` and `b`, applied to inputs and outputs alike, renaming `a & b` by `m` equals merging `a` and `b` each renamed by its part of `m`, for laws, kernels, records, and functions, provided `m` renames no factor input of a law: a law's rename does not rename its factors' inputs, while the merged kernel's rename may.
 A rename that moves a node into a group does not commute.
 
 </details>
@@ -2918,7 +2918,7 @@ Today `*` merges laws and kernels, as `k * p`.
 | the specs | "input declaration", "output declaration", "event declaration" | "input spec", "output spec", "event spec" | R |
 | sides of a term | "map-like kind", "producer", "consumer" | not terms: "inputs", "produced object" | S0, S2a |
 | the two forms | "whole declaration", "exposed declaration", "exposes", "packaging" | keyword form, positional form; "offers its outputs" | S0, S2a |
-| where a name sits | "address" | "the output at the root", "a top-level path" | S0 (T25); R |
+| where a name stands | "address" | "the output at the root", "a top-level path" | S0 (T25); R |
 | the type of an output | "component spec" | "the type of an output" | S0 (T25); R |
 | the relation of § 5.3 | "meets", "is matched", "wire", "bound", "connections" | "feeds" | S0; S3 in the code |
 | inputs no factor feeds | IV.2's "unmet" | "unfed" in `design/` | S0; S3 in the code |
@@ -2988,7 +2988,7 @@ A law and its own values disagree on what a path means (run at `a703f15e`, for `
 | `mean(d)["g/b"]` | the mean of `b`, since #576 | `mean(d)["g"]` | `KeyError` |
 | `Normal("x", 0.0, 1.0)["x"]` | the law itself | `sample(Normal("x", 0.0, 1.0))["x"]` | `TypeError`: JAX does not index by string |
 
-Four causes: a tuple means two paths on a law and one nested path on a record or batch; `Record[...]` stops at fields; a name can sit outside the value it names, as `d["g"]` is declared whole under `g`; and summaries renamed their fields, which #576 fixed.
+Four causes: a tuple means two paths on a law and one nested path on a record or batch; `Record[...]` stops at fields; a name can stand outside the value it names, as `d["g"]` is declared whole under `g`; and summaries renamed their fields, which #576 fixed.
 
 **Inputs.**
 Declaring a kernel's inputs from other objects' outputs takes conversions: `RecordSpec(ke.event_spec.components)` for a kernel whose event is named at the root, then `x.event_spec.spec.without("sigma").merge(...)`.
