@@ -10,13 +10,27 @@ Postponed work leaves the current behaviour unchanged (README directive 8).
 
 | Work | Source |
 |---|---|
-| Grammar B for random measures, random functions and Gaussian processes, bootstrap laws, empirical laws of laws, and minibatched targets; then the refusal of a whole declaration over a spec with parts (step G2) | `declarations-and-addressing.md` § 19.8; gaps D4 |
-| Paths through every kind, `Function[]`, and the public `component` accessor (step G3) | `declarations-and-addressing.md` § 9, § 19.8 |
-| `condition_on` declared as `d.without(*fixed)`, and `law.without` (step G4) | `declarations-and-addressing.md` § 12, § 19.8 |
-| `[]` on batches of laws and on kernels (step G5) | `declarations-and-addressing.md` § 9, § 19.8 |
-| `&` on `Function`, `FunctionSpec`, `Batch`, and `BatchSpec`, and lifting by postcomposition, so a consumer can meet a function's parts | `declarations-and-addressing.md` § 14.4 |
-| `without` on a `Function`, a `ConditionalDistribution`, a batch of laws, and through a law held in a record field, so I10 holds for every kind | `declarations-and-addressing.md` § 3, § 16 |
-| `&` on `DistributionSpec` and `ConditionalDistributionSpec`, and `InputSpec` renames, so a function that builds a model declares its output | `declarations-and-addressing.md` § 14.4 |
+| Grammar B for random measures, random functions and Gaussian processes, bootstrap laws, empirical laws of laws, and minibatched targets, each wrapping its draws under the name its constructor takes; then the refusal of the interim whole form, and the private event default goes (step G2) | `declarations-and-addressing-io.md` § 19.8; gaps D4 |
+| Paths through every kind, `Function[]`, the accessor `t.component(c)`, and views at held fields with no wrap (step G3) | `declarations-and-addressing-io.md` § 9, § 19.8 |
+| `condition_on` declared as `d.without(*fixed)`, `law.without`, and paths into a record input of an `InputSpec` (step G4) | `declarations-and-addressing-io.md` § 12, § 6.4, § 19.8 |
+| `[]` on batches of laws and on kernels (step G5) | `declarations-and-addressing-io.md` § 9, § 19.8 |
+| The rename of "slot" and "component" to "input" and "output" in `design/`, the glossary, and the code, with `components` → `outputs`, `component=` → `output_name=`, and `t.component(c)` → `t.output(c)`, in one announced PR right after the workshop | `declarations-and-addressing-io.md` § 17.1, § 19.8, § 21.3 Q1 |
+| `&` on `Function`, where functions feed as point-mass kernels, and on batches other than `RecordBatch`, element by element | `declarations-and-addressing-io.md` § 14.8, § 14.14 |
+| `without` on a `Function`, a `ConditionalDistribution`, a batch of laws, and through a law held in a record field, so I10 holds for every kind | `declarations-and-addressing-io.md` § 3, § 16 |
+| `&` on `DistributionSpec`, `ConditionalDistributionSpec`, `FunctionSpec`, and `BatchSpec`, and `InputSpec.rename`, so a function that builds a model declares its output | `declarations-and-addressing-io.md` § 14.14 |
+
+From the inputs and outputs plan (`inputs-and-outputs.md` Appendix C.4), merged into `declarations-and-addressing-io.md` on 2026-10-18:
+
+| Work | Source |
+|---|---|
+| The point-mass reading of merges across categories: a record as the law of one draw, and a function as the kernel whose laws are point masses, so `lik & Record({"mu": 0.3})` and `f & d` have a meaning | `declarations-and-addressing-io.md` § 14.3 |
+| Refusing a merge of two views of one parent, or returning their joint view, since today `hier[["s1"]] & hier[["s2"]]` is the product of the marginals | `declarations-and-addressing-io.md` § 14.9 |
+| A merge that sorts the flattened factors topologically, so a kernel can be added between two merged operands | `declarations-and-addressing-io.md` § 20, item 25; `inputs-and-outputs.md` Appendix D, item 18 |
+| The joint's spec for a shared input becomes the unification `U` instead of the first operand's spec; one test asserts today's choice | `declarations-and-addressing-io.md` § 4.12, § 14.7, § 21.3 Q4(d) |
+| A bug: `condition_on` of a joint kernel ignores an optional input that a merge feeds, as in `condition_on(lik_opt * s_prior, {"mu": 0.0})`; S3's rename carries it unchanged | `declarations-and-addressing-io.md` § 14.6; `inputs-and-outputs.md` fact 34 |
+| Two different dimension names at one axis become one dimension, which changes II.1 and `_unify_specs` | `inputs-and-outputs.md` Appendix D, item 14 |
+| The long-term rule for optional inputs across merges; recommended: a merge that leaves optional inputs shows them, as a kernel whose inputs are all optional | `declarations-and-addressing-io.md` § 14.11, § 21.3 Q4(b) |
+| The dimension scopes of merge results: store a scope on every result, input specs and functions included, with `with_dim_names` renaming stored names, or substitute and forget everywhere | `declarations-and-addressing-io.md` § 14.12, § 21.3 Q6 |
 
 ### The execution layer
 
@@ -46,7 +60,7 @@ When the push ends, each issue's text is updated to match, and none closes until
 | [#506](https://github.com/TARPS-group/prob-pipe/issues/506) What a function body receives | Sets of evaluation points present raw values to the callable (step E3a) | Raw forms by default for every body, annotations that ask for tracked terms, one converter registry for every kind, `ArrayBackend.axes` | gaps D8 |
 | [#522](https://github.com/TARPS-group/prob-pipe/issues/522) `LinOp` and the differentiability claim | Nothing | All of it, then the execution plan's supplied derivatives (`vjp`, `jacobian`, `jvp`) and the `jacobian` operation on top of it (Q11) | gaps D8 |
 | [#451](https://github.com/TARPS-group/prob-pipe/issues/451) One n-ary dispatch registry | Nothing: the executor registry uses today's unary registry | All of it; the executor registry moves to the n-ary class with the others | gaps D8 |
-| [#571](https://github.com/TARPS-group/prob-pipe/issues/571) Declarations | Steps S2a, S2b, S3, S4, G1a, and G1b | Step G2 and the deferred `&` kinds listed above; the issue points to the reconciled plan | gaps D1–D4 |
+| [#571](https://github.com/TARPS-group/prob-pipe/issues/571) Declarations | Steps S2a, S2b, S3, S4, G1a, and G1b | Step G2, the rename to "input" and "output", and the deferred `&` kinds listed above; the issue points to the merged plan, `declarations-and-addressing-io.md` | gaps D1–D4 |
 | [#573](https://github.com/TARPS-group/prob-pipe/issues/573) Field paths and field selections | Step S1 | Steps G3–G5 | gaps D1, D4 |
 | [#580](https://github.com/TARPS-group/prob-pipe/issues/580) Execution layer | Steps E0–E8 | The execution-layer work listed above | `execution-layer.md` §13 |
 | [#585](https://github.com/TARPS-group/prob-pipe/issues/585) An exact result lost to a budget | Nothing | All of it; its text needs `max_evaluations` after #586 | `execution-layer.md` Q12 |
@@ -59,8 +73,8 @@ When the push ends, each issue's text is updated to match, and none closes until
 | 2026-10-16 | The Gaussian route of `condition_on` accepts a given record with a missing or extra field. | addressing plan | A bug, separate from the push. |
 | 2026-10-16 | Inference on a law declared whole over a record fails with a wrong message. Reproduced 2026-10-18: `condition_on(k * marginal(post, "params"), {"y": ...})`, where `post` is a posterior over a record field `params`, says the draws "must be a numeric array or a record of numeric arrays", though they are a record of numeric arrays; `condition_on.check` also chose empirical reweighting as exact before the call raised. A hand-built law declared whole over a record conditions correctly. | addressing plan; jhuggins on #593 | Grammar B removes the cause (step G1a). G1a is the fifth off-ramp; if it is cut, this stays broken until after the workshop. No workshop notebook reaches this path. |
 | 2026-10-16 | A lighter pyabc route: a `pyabc.sampler.Sampler` subclass seeds NumPy's global generator per evaluation from `fold_in(fold_in(run_key, t), i)` and sends the seeds to the executor as one set of evaluation points. A 60-line prototype gave bitwise-identical populations run sequentially, with chunks in reverse order, on 4 processes, and with two batch sizes. The thread executor cannot run these evaluation points. | jhuggins, comment on the execution Doc | Would replace the plan's pyabc reimplementation. |
-| 2026-10-17 | Rename `with_level_names` and `with_dim_names` to `rename_levels` and `rename_dims`, so all three renames read alike. | addressing plan; `declarations-and-addressing.md` O13 | Not part of the push. |
-| 2026-10-17 | Rename a mixture's `components=` parameter, so "component" keeps one sense in the API. | `declarations-and-addressing.md` O14 | Not part of the push. |
+| 2026-10-17 | Rename `with_level_names` and `with_dim_names` to `rename_levels` and `rename_dims`, so all three renames read alike. | addressing plan; `declarations-and-addressing-io.md` O13 | Not part of the push. |
+| 2026-10-17 | Rename a mixture's `components=` parameter, so "component" keeps one sense in the API. | `declarations-and-addressing-io.md` O14 | Not part of the push; less pressing once the rename after the workshop leaves "component" with only this sense. |
 | 2026-10-18 | Rename `LinOp` to `LinearOperator`, with its module and every use, as a clean break. | maintainer | Not part of the push. |
 | 2026-10-18 | A comprehensive analysis of ProbPipe's Prefect support, and possibly a refactor: how orchestration, task runners, caching, and the planned `prefect` executor fit together, and what a nested call in a worker should do. | maintainer, decision M21 | After the workshop. |
 | 2026-10-16 | Issues to open: deterministic fields of a joint (Q4) and a Gibbs method (Q10). | execution plan | |

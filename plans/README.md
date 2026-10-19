@@ -3,7 +3,7 @@
 This folder holds the shared plans for a sequence of PRs that puts three areas of ProbPipe on precise contracts before the workshop of 2026-10-27:
 1. **the execution layer:** how a computation runs, including code JAX cannot compile, and where (#580);
 2. **addressing:** how a path or a list of paths picks out a part of a term (#573);
-3. **declarations:** how terms declare what they produce and consume, and the operations on those declarations (#571).
+3. **inputs and outputs:** what terms produce and receive, the input specs and output specs that state it, and the operations on them, merge included (#571).
 
 Earlier work in these areas was planned one change at a time, which left inconsistent designs, duplicated code, and an API that is hard to learn.
 This push plans the three areas together, and every PR in it is judged against the whole plan, not only its own step.
@@ -18,19 +18,22 @@ Every session that works on the push reads this file in full before anything els
 | [`decisions.md`](decisions.md) | Every decision taken during the push, with its date and reason, and the queue of questions waiting for the maintainer |
 | [`gaps-and-conflicts.md`](gaps-and-conflicts.md) | The places where the plans disagree or leave a decision open. This PR merges once each is settled. |
 | [`execution-layer.md`](execution-layer.md) | The execution-layer design (#580) |
-| [`declarations-and-addressing.md`](declarations-and-addressing.md) | The reconciled declarations and addressing design (#571, #573): grammar B, slots and components, paths and lists of paths, `&`, and steps S0, S1, S2a, S2b, S3, S4, G1a, G1b, and G2–G5 |
+| [`declarations-and-addressing-io.md`](declarations-and-addressing-io.md) | The declarations and addressing design (#571, #573) with the inputs and outputs plan merged in, provisionally: grammar B, inputs and outputs, paths and lists of paths, one definition of `&`, and steps S0, S1, S2a, S2b, S3, S4, G1a, G1b, and G2–G5 |
+| [`declarations-and-addressing.md`](declarations-and-addressing.md) | The declarations and addressing plan as it stood before the inputs and outputs merge, kept unchanged for recovery until the maintainer accepts the merged copy; the git tag `plans-before-io` marks that state |
+| [`inputs-and-outputs.md`](inputs-and-outputs.md) | The accepted proposal merged into `declarations-and-addressing-io.md`, kept for the proofs, alternatives, and checked facts that the merged copy cites |
 | [`declarations.md`](declarations.md), [`addressing.md`](addressing.md) | The two source texts the reconciled design replaced, kept for comparison until the maintainer has reviewed the reconciled text |
 | [`call-context-proposal.md`](call-context-proposal.md) | Superseded: the call-context design, folded into `execution-layer.md` § 6.16 on 2026-10-18; kept for its revision history and deleted before this PR merges |
 | [`deferred.md`](deferred.md) | Work found or postponed during the push, to become issues after the workshop |
 
-`declarations-and-addressing.md` replaces `declarations.md` and `addressing.md` (gaps D1); the two sources are deleted once the maintainer has reviewed it.
+`declarations-and-addressing.md` replaced `declarations.md` and `addressing.md` (gaps D1); the two sources are deleted once the maintainer has reviewed it.
+`declarations-and-addressing-io.md` supersedes `declarations-and-addressing.md` provisionally (decisions, 2026-10-18); the original is kept for recovery until the maintainer accepts the merge.
 
 ## Standing directives
 
 These apply to every person and agent working on the push.
 They add to `CONTRACTS.md`, `STYLE_GUIDE.md`, and the implementation guidelines of `execution-layer.md` §12, which still apply in full.
 
-1. **Read the full design first.** Before working on a step, read this file, `decisions.md`, and the current plans in full: `declarations-and-addressing.md` and `execution-layer.md`, whose § 6.16 holds the call context. Read them whole, not only the sections the step implements. The superseded `declarations.md`, `addressing.md`, and `call-context-proposal.md` are not plans; skip them. Check that the work fits the broader goals of the push and of `design/`.
+1. **Read the full design first.** Before working on a step, read this file, `decisions.md`, and the current plans in full: `declarations-and-addressing-io.md` and `execution-layer.md`, whose § 6.16 holds the call context. Read them whole, not only the sections the step implements. The superseded `declarations.md`, `addressing.md`, and `call-context-proposal.md` are not plans; skip them. `declarations-and-addressing.md`, kept for recovery, and `inputs-and-outputs.md`, merged into the `-io` copy, are not current plans either; read them only for what the `-io` copy cites. Check that the work fits the broader goals of the push and of `design/`.
 2. **Design gaps go to the maintainer.** The plans will have gaps that implementation exposes. A gap that needs a real design decision is never settled by the implementer alone: follow § When to stop and ask. A fix to a gap serves the long-term design, never only the step at hand.
 3. **Contracts, not patches.** Write well-designed, coherent contracts. Never patch or work around a deeper design problem. If the problem is within the push's scope, fix it; otherwise record it in `deferred.md` for work after the workshop.
 4. **PR descriptions written for people.** Give the context, and do not assume the reviewer knows ProbPipe's internals. Show specific examples of new behaviour, such as code before and after. Avoid jargon and dense blocks of text. The reasoning should flow, and the summary of changes should read naturally.
@@ -93,6 +96,7 @@ A choice that changes none of the above, such as a private helper's structure, i
 "Before" marks a step planned before the workshop.
 A step may not start until every step and PR it depends on has merged into `dev/overhaul`, or it stacks as § Branches and PRs allows.
 Each step's content and its done-condition are stated where the step's plan section says; this table owns only the order, the dependencies, and the cut.
+The declarations and addressing steps follow `declarations-and-addressing-io.md`, which merged the inputs and outputs plan on 2026-10-18; the original `declarations-and-addressing.md` is kept unchanged for recovery, pending the maintainer's acceptance of the merge, and the tag `plans-before-io` marks the state before it.
 
 **Dates.** The workshop is on 2026-10-27, and the code freezes at the end of 2026-10-25, when `dev/overhaul` is tagged. A checkpoint on 2026-10-20 reviews progress, and a checkpoint on 2026-10-22 decides any cut.
 
@@ -109,7 +113,7 @@ A clean cut means:
 
 Since every merge leaves `dev/overhaul` coherent (directive 7), the code can be frozen after any merge.
 
-**The critical path** has two chains. PL → S0 → S1 → S2b → S3, with S2b and E3b → S4 → G1a. PL → E1 → E3a → E3b → E4 → E5 → G1b. S2a, E0, and E2 run beside them.
+**The critical path** has two chains. PL → S0 → S1 → S2b → S3, with S2b and E3b → S4 → G1a; the maintainer's acceptance of the inputs and outputs merge also precedes S0, so each day it waits after PL merges delays this chain (`declarations-and-addressing-io.md` § 19.1). PL → E1 → E3a → E3b → E4 → E5 → G1b. S2a, E0, and E2 run beside them.
 
 ### Before any step
 
@@ -118,23 +122,23 @@ Since every merge leaves `dev/overhaul` coherent (directive 7), the code can be 
 | P0 | The in-flight PRs #586 and #587 merge (#575, #583, and #474 merged on 2026-10-17) | — |
 | P0b | The call context is created as `execution-layer.md` § 6.16 describes, in #587 before it merges. jhuggins asked on 2026-10-18 that the push make these changes on his branch, so a session of the push does P0b by pushing commits to `dev/config-sections` | #586 |
 | PV | The provenance mode becomes a per-call setting, and the `workflow_run` frame and the Prefect payload stop keeping their own copy (decided 2026-10-18; `execution-layer.md` § 6.16, "The provenance mode per call (step PV)", states it and its done-condition); PV adds the call context's `session_config_values` field, with the `provenance` section only, which E3a extends to every section | P0, P0b |
-| PL | This `plans/` PR merges, with the call context folded into `execution-layer.md` § 6.16 and the superseded sources deleted | every item of `gaps-and-conflicts.md` and every open point of `declarations-and-addressing.md`, all settled on 2026-10-18 |
+| PL | This `plans/` PR merges, with the call context folded into `execution-layer.md` § 6.16 and the superseded sources deleted | every item of `gaps-and-conflicts.md` and every open point of the declarations and addressing plan, all settled on 2026-10-18; PL does not wait on the inputs and outputs questions, which gate S0 instead |
 
 ### Declarations and addressing
 
 | Step | What | Plan section | Depends on | Before |
 |---|---|---|---|---|
-| S0 | Design text: II.2 states the grammar rule and the declarations, II.6 the paths and how `[]` reads them; IV.2 retitled "Merging distributions", with "merge" for `&`; the glossary | `declarations-and-addressing.md` § 19.2 | PL | yes |
+| S0 | Design text: II.2 states the grammar rule, input specs, and output specs indexed by path, II.6 the paths and how `[]` reads them; IV.2 retitled "Merging distributions", with the one definition of merge, "merge" for `&`, and "unfed" for "unmet"; "conforms" and "unify" one word per relation; the glossary; all in today's words "slot" and "component", which one PR renames after the workshop | `declarations-and-addressing-io.md` § 19.2 | PL; the maintainer's acceptance of the inputs and outputs merge (`declarations-and-addressing-io.md`, provisional 2026-10-18) | yes |
 | S1 | One path reader and one `_PATH_SEP`; `[]` returns groups on `Record` and `RecordSpec`; lists of paths keep their paths; `in`, laws included; `marginal(d, paths)`; `select` flattens to last segments; `()` on a batch raises | § 19.3 | S0 | yes |
-| S2a | **Announced, mechanical.** `OutputSpec` becomes a mapping of its components; `spec` becomes `term_spec`; every read of `components`, `exposes_record`, and `_component_name` outside `_specs.py` moves to the mapping | § 19.4 | S0 | yes |
-| S2b | `project` and `without` through S1's reader; one reading of slots; the size shorthand; `&` on `InputSpec` and `OutputSpec`; the refusal of a law's or a kernel's event declaration that exposes a law, a kernel, a function, or a batch | § 19.4 | S1, S2a | yes |
-| S3 | **Announced, mechanical.** `&` replaces `*` for laws and kernels, and `merge` on records; "merge" replaces "composition" in the code that implements `&`; `rename`; `MarginalView`. S3 and E4 may merge in either order; the second rebases | § 19.5 | S2b | yes |
-| S4 | Every batch stores its element declaration | § 19.6 | S2b, E3b | yes, cut sixth |
-| G1a | Grammar B for views and marginals of groups, the library's laws declared whole over a record, and factors that hold a group | § 19.7 | S2b, S4 | yes, cut fifth |
-| G1b | Grammar B for outputs: a function that returns a law or a function exposes its output, a lifted law-returning function wraps its draws, defaults by kind, and the reading of a bare `output_spec` | § 19.7 | G1a, E5 | yes, cut third |
-| G2 | Grammar B for the remaining kinds, then enforcement: random measures, random functions and Gaussian processes, bootstrap laws, empirical laws of laws, and minibatched targets wrap their draws; then the keyword form of `OutputSpec` refuses a spec with parts, once G3 has moved views at law-valued fields off the old form | § 19.8 | G1b, G3 | after |
-| G3 | Paths through every kind; `Function[]`; the public `component` accessor, and `[]` stops accepting a whole term's name; a view of a field that holds a law or a function wraps | § 19.8 | G1a | after |
-| G4 | `condition_on` declared as `d.without(*fixed)`; `law.without` | § 19.8 | G1a | after |
+| S2a | **Announced, mechanical.** `spec` becomes `term_spec` and `with_spec` becomes `with_term_spec`; `exposes_record` goes; every read of `_component_name` outside `_specs.py` moves to one private helper; `components` keeps its name | § 19.4 | S0 | yes |
+| S2b | `OutputSpec[]`, `in`, and `without` through S1's reader; one reading of inputs, with list selection on `InputSpec`; the size shorthand; `&` on `InputSpec` and `OutputSpec`; a produced law or kernel offers no outputs; `merge` on records, record specs, and `RecordBatch` becomes shallow | § 19.4 | S1, S2a | yes |
+| S3 | **Announced, mechanical.** `&` replaces `*` for laws and kernels, and `merge` on `NamedTree`, `Record`, `RecordSpec`, and `RecordBatch`; "merge" replaces "composition" in the code that implements `&`; `rename`; `MarginalView`. S3 and E4 may merge in either order; the second rebases | § 19.5 | S2b | yes |
+| S4 | Every batch stores its element spec: `BatchSpec.element_spec` becomes an output spec, whose `term_spec` is the old meaning, changed at every use; a batch's outputs are its columns | § 19.6 | S2b, E3b | yes, cut sixth |
+| G1a | Grammar B for views and marginals of groups, the library's laws declared whole over a record, and factors that hold a group, which stay one factor | § 19.7 | S2b, S4 | yes, cut fifth |
+| G1b | Grammar B for outputs: a function that returns a law has a positional output with no outputs, one that returns a function offers its outputs, a lifted law-returning function wraps its draws, one `OutputSpec.default` by kind, and the reading of a bare `output_spec` | § 19.7 | G1a, E5 | yes, cut third |
+| G2 | Grammar B for the remaining kinds, then enforcement: random measures, random functions and Gaussian processes, bootstrap laws, empirical laws of laws, and minibatched targets wrap their draws under the name their constructor takes; then the keyword form of `OutputSpec` refuses a spec with parts, once G3 has moved views at law-valued fields off the old form, and the private event default goes | § 19.8 | G1b, G3 | after |
+| G3 | Paths through every kind; `Function[]`; the public accessor `t.component(c)` (`t.output(c)` after the rename), and `[]` and `OutputSpec[]` stop reading the name of the output at the root; a view at a field that holds a law, a kernel, a function, or a batch is positional, with no wrap | § 19.8 | G1a | after |
+| G4 | `condition_on` declared as `d.without(*fixed)`; `law.without`; paths into a record input of an `InputSpec` | § 19.8 | G1a | after |
 | G5 | `[]` on batches of laws and on kernels | § 19.8 | G3 | after |
 
 ### The execution layer

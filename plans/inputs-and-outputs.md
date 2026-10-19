@@ -5,6 +5,7 @@
 > It changes `plans/declarations-and-addressing.md`, here called **the plan**. Appendix C lists every section of the plan whose text changes and gives the replacement text of each step whose plan done-condition becomes false; every other part of the plan stands.
 > § 3 lists every decision it reverses, with its date and source, and the open question of § 14 that asks it.
 > It gates step S0 and the declaration steps after it, not `plans/` itself (step PL) or the execution steps (§ 13).
+> **Merged 2026-10-18** into [`declarations-and-addressing-io.md`](declarations-and-addressing-io.md), with the recommended answer to each question of § 14, provisionally. At the merge, `element_output_spec` was renamed `element_spec` (decisions, 2026-10-18): today's `BatchSpec.element_spec`, the element's term spec, becomes `element_spec.term_spec`, and `element_spec` is the output spec of one element as a term, `held` of the batch's spec (§ 5.6, § 5.7). This text was revised to match; the merged plan's § 21.4 explains the choice.
 > Claims about today's code cite `file:line` at `6f8859fc` and were checked by running scripts with `uv run python` from the worktree root; Appendix E lists them.
 > Before the workshop it keeps today's behaviour wherever a corner is hard, states that behaviour's consequences (§ 8.10, § 8.11), and leaves the long-term choice to an open question.
 
@@ -79,7 +80,7 @@ Both have consequences that § 8.10 and § 8.11 state in full, and § 14, Q4(b) 
 
 § 3 lists the decisions reversed, and § 12 every other difference.
 
-1. **Vocabulary.** Input and output, input spec and output spec, produced term, and feeds. "Slot", "component" (apart from a mixture's component laws), "producer", "consumer", "address", "whole declaration", "exposed declaration", "component spec", and "packaging" are not terms. `t.output(c)` replaces the decided `t.component(c)`, and `element_output_spec` replaces O15's `element_declaration`; `bt.element_output_spec.outputs` replaces II.5's `Batch.components`.
+1. **Vocabulary.** Input and output, input spec and output spec, produced term, and feeds. "Slot", "component" (apart from a mixture's component laws), "producer", "consumer", "address", "whole declaration", "exposed declaration", "component spec", and "packaging" are not terms. `t.output(c)` replaces the decided `t.component(c)`, and `element_spec`, an output spec, replaces O15's `element_declaration`; `bt.element_spec.outputs` replaces II.5's `Batch.components`.
 2. **A produced term that is a law or a kernel offers no outputs.** The law's event rule and the wrap of a view at a held law go, so I2, I5, I6, and I9 hold without exception once G3 has merged.
 3. **`OutputSpec[s]` replaces `project`.** `OutputSpec` is not a `Mapping`; its attribute `outputs` replaces `components`.
 4. **Merge has one definition**, with IV.2's order rule restated and its flattening stated as today's behaviour. Functions feed, and merge only with complete specs. Batches merge by their elements.
@@ -131,7 +132,7 @@ Each row names the question of § 14 that asks it.
 | --- | --- | --- | --- | --- |
 | 1 | The words "slot" and "component", "input declaration" and "output declaration", and the glossary terms producer, consumer, exposes, whole declaration, exposed declaration, address, and component spec | the plan's § 4.3, § 4.4, and § 17, accepted 2026-10-18 (`decisions.md`, "accepted every recommendation of `maintainer-review.md`") | input, output, input spec, output spec; none of the glossary terms (Appendix C.3) | Q1 |
 | 2 | The accessor `t.component(c)` | `decisions.md`, 2026-10-17 | `t.output(c)` on terms; no accessor on output specs (§ 7.7) | Q1, Q5 |
-| 3 | `BatchSpec.element_declaration` (O15), and `Batch.components` (II.5; the plan's § 15.2 and S4) | the plan's O15 and S4, accepted 2026-10-18; II.5 | `element_output_spec`, the elements' own output spec (§ 5.7) | Q1 |
+| 3 | `BatchSpec.element_declaration` (O15), and `Batch.components` (II.5; the plan's § 15.2 and S4) | the plan's O15 and S4, accepted 2026-10-18; II.5 | `element_spec`, the output spec of one element as a term, whose `term_spec` is today's `element_spec` (§ 5.7) | Q1 |
 | 4 | The outputs of a produced term that is a law: its event's components, typed by the views | the plan's § 4.4 and § 5.3, accepted 2026-10-18 | none (§ 5.9) | Q2(ii) |
 | 5 | The law's event rule: "#571's rule that a law's event is whole or an exposed record stands unchanged" | `decisions.md`, 2026-10-17; the plan's § 5.4 | removed | Q2(i) |
 | 6 | "A view at or below a field that holds a law or a function wraps, keeping the field's name" | `decisions.md`, 2026-10-17; the plan's § 5.3, R3, and O5 | no view wraps (§ 7.2) | Q2(i) |
@@ -395,9 +396,9 @@ This proposal writes `held(T)` for the output spec that `T` holds, and `with_hel
 | `DistributionSpec` | `T.event_spec` | one draw | — |
 | `ConditionalDistributionSpec` | `T.event_spec` | one draw, at one value of the inputs | `given_spec` |
 | `FunctionSpec` | `T.output_spec`, which may be `None` | one return value | `input_spec` |
-| `BatchSpec` | the output spec of one element, as a term: `T.element_output_spec` (§ 5.7) when the elements are values, and `OutputSpec(T.element_spec)` when they are laws, kernels, or functions | one element | the levels |
+| `BatchSpec` | `T.element_spec`, the output spec of one element as a term (§ 5.7) | one element | the levels |
 
-For a `BatchSpec`, `with_held` inverts `held`: for a batch of values, `with_held(T, E)` sets `element_spec` to `E.term_spec` and stores `E` as `element_output_spec`, which keeps a base element's name; for a batch of laws, kernels, or functions, it sets `element_spec` to `E.term_spec`.
+For a `BatchSpec`, `with_held(T, E)` stores `E` as `element_spec`, which keeps a base element's name.
 A `RecordSpec` holds no output spec, since its children are its structure, and a base spec holds none.
 `held` and `with_held` are notation in this document; in code they are private helpers of `core/_specs.py`, which jhuggins's reply calls `produced_declaration` and `with_produced_declaration` (the plan's O11 keeps them private).
 
@@ -421,20 +422,19 @@ In formulas, `input_spec(t)` is `t`'s input spec, or the empty `InputSpec()` whe
 `output_spec(t)` is `t`'s output spec.
 
 **The elements' own output spec.**
-`bt.element_output_spec` is the output spec of each element's produced term; `BatchSpec` stores it only for base elements, whose name nothing else holds, and derives it otherwise (D6):
-- for an element that is a record, the record's own output spec, `OutputSpec(element_spec)`;
-- for an element that is a base value, which has no output spec of its own, the output spec under which the batch offers it, stored in `BatchSpec` under the name its maker gave or `element` (the plan's § 15, O2, O3);
-- for a law or a kernel, its `event_spec`, which is III.10's `DistributionBatch.event_spec` and `ConditionalDistributionBatch.event_spec`;
-- for a function, its `output_spec`.
+`bt.element_spec` is the output spec of one element as a term, `held(bt.spec)`, and `bt.element_spec.term_spec` is the element's term spec, which today's `BatchSpec.element_spec` holds:
+- for an element that is a base value, which has no output spec of its own, the keyword form under the name its maker gave or `element` (the plan's § 15, O2, O3), the one thing `element_spec` stores beyond the term spec;
+- for an element that is a record, the record's own output spec, `OutputSpec(element_spec.term_spec)`;
+- for a law, a kernel, or a function, the positional form over its spec.
 
-So `bt.element_output_spec == output_spec(bt[j])` at every position `j` for every element kind but a base value, for which the batch supplies the name.
+So `bt.element_spec == output_spec(bt[j])` at every position `j` of a batch of values, the batch supplying a base element's name. For a batch of laws, kernels, or functions, each element's own output spec is the one its term spec holds: `element_spec.term_spec.event_spec`, III.10's `DistributionBatch.event_spec` and `ConditionalDistributionBatch.event_spec`, or `element_spec.term_spec.output_spec`.
 The batch's own output spec, `OutputSpec(bt.spec)`, describes the batch as a produced term and offers its columns; `[]`, `t.output(c)`, and `InputSpec(o)` read it, while a merge of batches reads the elements' own specs (§ 8.2).
 
 **The attribute names.**
 Each side has two attribute names, and each name says the role of what it describes:
 - `event_spec` is the output spec of a law or a kernel, and describes a draw. A kernel and the function that returns its laws are one map `S → P(T)`, but their produced terms differ, a draw and a law, and the two names keep that difference visible.
 - `output_spec` is the output spec of a function, and describes its return value.
-- `element_output_spec` is the elements' own output spec, above.
+- `element_spec` is the output spec of one element, above, as `event_spec` is of one draw.
 - `given_spec` is the input spec of a kernel, named for what it is conditioned on, the word its own calls use: `condition_on(k, given)` and `sample(k, given=...)`.
 - `input_spec` is the input spec of a function, and describes its arguments.
 
@@ -450,7 +450,7 @@ Merge refuses such an operand (§ 8.3, M5).
 lik.given_spec          # its input spec: the input mu
 lik.event_spec          # its output spec: OutputSpec(y=NumericArraySpec(())), one output y at the root
 prior.event_spec        # OutputSpec(RecordSpec(mu=..., tau=...))
-draws.spec.element_output_spec      # OutputSpec(RecordSpec(mu=..., tau=...)): each element's own output spec
+draws.spec.element_spec             # OutputSpec(RecordSpec(mu=..., tau=...)): one element
 ```
 
 ### 5.8 Paths, and the spec at a path
@@ -574,7 +574,7 @@ A term spec `A` **conforms** to a term spec `B` when every value of type `A` is 
 4. **output specs:** the same form and name, and `A`'s term spec conforms to `B`'s; a type hole in `B` admits any term spec;
 5. **laws:** `A`'s event spec conforms to `B`'s, so laws are covariant in what they produce;
 6. **kernels and functions** (III.9's variance): the same input names; each input spec of `B` conforms to `A`'s input spec of the same name, and an input optional in `B` is optional in `A`, so inputs are contravariant; `A`'s output spec conforms to `B`'s, so outputs are covariant; a side that `B` leaves `None` admits any side of `A`, and a side that only `A` leaves `None` does not conform;
-7. **batches:** the same levels, and `A`'s element spec conforms to `B`'s.
+7. **batches:** the same levels, and `A`'s element term spec, `element_spec.term_spec`, conforms to `B`'s; a base element's name is not compared, as the plan's § 15.3 keeps names out of a batch's equality.
 
 II.1's "binding by unification against a spec" is this relation, and today `_unify_specs(B, A, ...)` checks its array case (`core/_spec_base.py:525`); the joint calls it for each fed input with the output's spec as `A` (`distributions/_factored.py:437`).
 
@@ -587,7 +587,7 @@ Two term specs **unify** when their unification `U(A, B)` below exists, in one s
 4. **output specs:** the same form and name, and `U` of the term specs; a type hole takes the other's term spec;
 5. **laws:** `U` of the event specs;
 6. **kernels and functions:** the same input names, with equal input specs and optional flags, and `U` of the output specs; a side that one leaves `None` takes the other's;
-7. **batches:** the same levels, and `U` of the element specs.
+7. **batches:** the same levels, and `U` of the element term specs.
 
 Any other pair, such as an array spec with a record spec, does not unify.
 `U` is symmetric, and associative on the specs it accepts.
@@ -630,7 +630,7 @@ Each concept on one side has its counterpart on the other, with the same structu
 | 17 | a batch's inputs are its elements' inputs | a batch's outputs are its columns | one binding fills the same input of every element, while a produced batch is offered column by column; a merge of batches reads the elements on both sides (§ 8.2) |
 | 18 | `InputSpec(o)` reads an output spec as the inputs it would feed | nothing reads an input spec as outputs | an output spec states a produced term, from which inputs follow; an input spec states no produced term, so no output spec follows from it |
 | 19 | `InputSpec.rename` comes after the workshop | `OutputSpec.rename` comes in S3 | `rename` replaces `with_path_names`, which `OutputSpec` has today and `InputSpec` does not; a kernel's own `rename` renames its inputs already (III.9) |
-| 20 | `given_spec`, `input_spec` | `event_spec`, `output_spec`, `element_output_spec` | each attribute names its kind's role (§ 5.7) |
+| 20 | `given_spec`, `input_spec` | `event_spec`, `output_spec`, `element_spec` | each attribute names its kind's role (§ 5.7) |
 
 The two sides share everything else: selection with one name or a list (§ 7.3, § 7.4), `without` (§ 7.5), `&` (§ 8.6), membership (§ 7.6), the size shorthand, and one dimension scope.
 
@@ -683,7 +683,7 @@ InputSpec(R)                  # two inputs, growth (a record) and phi: the same 
 | a law `d` | the view, of class `MarginalView` (today `FieldView`, renamed in step S3): the law of `X`'s node at `s`, for `X ~ d`, which refers to `d`; `marginal(d, s)` is the same law detached | `d[s].event_spec == d.event_spec[s]` |
 | a kernel `k` (step G5) | the kernel whose law at each input record `w` is the law of `X`'s node at `s`, for `X ~ k(w)` | `k[s].event_spec == k.event_spec[s]` and `k[s].given_spec == k.given_spec` |
 | a function `f` (step G3) | the function `w ↦ f(w)[s]` | `f[s].output_spec == f.output_spec[s]` and `f[s].input_spec == f.input_spec` |
-| a batch `bt` | the batch, over the same levels, of each element's node at `s`; for one path, the column | `bt[s].spec.element_output_spec == bt.spec.element_output_spec[s]` |
+| a batch `bt` | the batch, over the same levels, of each element's node at `s`; for one path, the column | `bt[s].spec.element_spec == bt.spec.element_spec[s]` |
 
 So on a law, a kernel, a function, or a batch, `t[s]` is the term of the same kind whose produced term is the node at `s` of `t`'s produced term.
 A record is its own produced term, and its nodes are its values and held terms, so `r[s]` is the node itself: `r["a"]` is an array labeled `a`, and `record_with_law["G"]` is the law held there.
@@ -950,9 +950,9 @@ An array and an opaque value belong to no merge category: they offer no output, 
 **Batches merge by their elements.**
 Two batches have **equal levels** when they have the same level names, in the same order, with the same axis sizes, as `RecordBatch.merge` requires today (`core/_record_batch.py:783`).
 For such batches, `a & b` is the batch, over the same levels, whose element at each position `j` is `ã_j & b̃_j`, where an element read as an operand `x̃_j` is:
-- for an element that is a base value, the record `rec_E(x_j)` under the batch's `element_output_spec` `E` (§ 5.10), so it merges as a record;
+- for an element that is a base value, the record `rec_E(x_j)` under the batch's `element_spec` `E` (§ 5.10), so it merges as a record;
 - for a record, the record itself;
-- for a law, a kernel, or a function, the element as one factor, with the input spec and `element_output_spec` that the batch states for it (§ 5.7).
+- for a law, a kernel, or a function, the element as one factor, with the input spec and output spec of its term spec `element_spec.term_spec` (§ 5.7).
 
 The merge category, the conditions M2 to M8, `fed`, `shared`, and the result's inputs and outputs are those of the element merge, read once on those specs.
 A batch's own outputs, its columns, serve `[]`, `t.output(c)`, and `InputSpec(o)`, and take no part in a merge.
@@ -1236,7 +1236,7 @@ Appendix B lists the cases where an invariant does not hold on purpose.
 | I3 | **Indexing commutes with summaries.** `mean(d)[s]` and `mean(d[s])` estimate one quantity, equal on exact routes; likewise the other per-field summaries | follows from I2 and the summaries rule of #576 | #576 with S1 |
 | I4 | **Positions and paths commute on a batch.** `bt[j][s] == bt[s][j]` | follows from § 5.4 and § 7.1 | S1 |
 | I5 | **Paths chain, across kinds.** `t[p][q] == t[p + "/" + q]` | follows from § 5.8, case 2 | S1 for records and batches, G1a for laws, G3 across kinds |
-| I6 | **Output specs agree.** For a law, a kernel, a function, or a batch, `output_spec(t[s]) == output_spec(t)[s]`: `d[s].event_spec == d.event_spec[s] == marginal(d, s).event_spec`, `f[s].output_spec == f.output_spec[s]`, `k[s].event_spec == k.event_spec[s]`, and `bt[s].spec.element_output_spec == bt.spec.element_output_spec[s]`; for a record, `r[s].spec == r.spec[s]` | follows from § 7.1 and § 7.3 | S2b for the paths S1 supports, G1a for groups, G3 at held fields, S4 for batches with the output at the root from G3, G5 for kernels |
+| I6 | **Output specs agree.** For a law, a kernel, a function, or a batch, `output_spec(t[s]) == output_spec(t)[s]`: `d[s].event_spec == d.event_spec[s] == marginal(d, s).event_spec`, `f[s].output_spec == f.output_spec[s]`, `k[s].event_spec == k.event_spec[s]`, and `bt[s].spec.element_spec == bt.spec.element_spec[s]`; for a record, `r[s].spec == r.spec[s]` | follows from § 7.1 and § 7.3 | S2b for the paths S1 supports, G1a for groups, G3 at held fields, S4 for batches with the output at the root from G3, G5 for kernels |
 | I7 | **A view and a marginal are one law.** `marginal(d, s)` equals `d[s]`, detached | rule (VI.8) | S1 for lists, G1a for groups |
 | I8 | **Draws of a list of paths condition back.** `condition_on(d, sample(d[ps]))` fixes the nodes at `ps` and nothing else | rule (decided 2026-10-15) | G4 |
 | I9 | **One path gives the node; a list gives a record that holds it.** `t["g"]` is the node, and `t[["g"]]` is the record `{g: ...}`, or the term whose produced term is that record; for the output at the root, named `n`, `t[[n]]` is likewise the record `{n: ...}`, or the term that produces it | rule (decided 2026-10-15; the plan's O6) | S1 |
@@ -1261,7 +1261,7 @@ The plan's I11 is kept as it was; binding a kernel keeps today's rule (§ 5.3).
 
 Only the public members this proposal adds or changes are shown; the rest is the plan's.
 Each comment is the contract a user reads.
-Names follow this proposal's vocabulary; under § 14, Q1's option 2 they arrive in the rename after the workshop, and until then `outputs` is spelled `components`, `output_name=` is `component=`, `element_output_spec` is `element_declaration`, and `t.output(c)` is `t.component(c)`.
+Names follow this proposal's vocabulary; under § 14, Q1's option 2 they arrive in the rename after the workshop, and until then `outputs` is spelled `components`, `output_name=` is `component=`, and `t.output(c)` is `t.component(c)`; `element_spec` is a final name, which S4 introduces directly.
 
 ### 10.1 `OutputSpec`
 
@@ -1367,23 +1367,21 @@ class BatchSpec(TermSpec):
     # element is the elements' type, or an OutputSpec that names base elements (keyword form) or gives
     # a record element (positional form) (the plan's O8). A bare base spec gets the name "element".
     @property
-    def element_spec(self) -> TermSpec: ...            # the type of one element, unchanged
-    @property
-    def element_output_spec(self) -> OutputSpec: ...
-    # The output spec of each element's produced term (§ 5.7): stored for base elements under their
-    # name; derived for a record (OutputSpec(element_spec)), a law or kernel (its event_spec), and a
-    # function (its output_spec) (step S4).
+    def element_spec(self) -> OutputSpec: ...
+    # The output spec of one element as a term (§ 5.7): the keyword form under a base element's name;
+    # otherwise the positional form over the element's term spec (step S4). Its term_spec is what
+    # today's element_spec returns.
 
 class Batch:
     @property
-    def element_output_spec(self) -> OutputSpec: ...   # a view on spec; its outputs replace II.5's Batch.components
+    def element_spec(self) -> OutputSpec: ...          # a view on spec; its outputs replace II.5's Batch.components
     def __and__(self, other_batch: Batch, /) -> Batch: ...
     # The merge of the elements, position by position, each read as one factor (§ 8.2). ValueError unless both have equal levels;
     # TypeError for elements of different kinds. RecordBatch: today's merge, with the shallow rule (S2b),
     # under its new name (S3); other batches after the workshop.
 ```
 
-A batch's own output spec is `OutputSpec(bt.spec)`, derived, whose outputs are its columns (S4); a `DistributionBatch`'s and a `ConditionalDistributionBatch`'s `event_spec` equals `element_output_spec` (III.10).
+A batch's own output spec is `OutputSpec(bt.spec)`, derived, whose outputs are its columns (S4); a `DistributionBatch`'s and a `ConditionalDistributionBatch`'s `event_spec` is `element_spec.term_spec.event_spec` (III.10).
 
 ### 10.4 Terms
 
@@ -1609,7 +1607,7 @@ All of these follow § 14, Q1, which decides when they happen.
 | 7 | meets, is matched, wire, bound, connections | feeds | One word for one relation |
 | 8 | `components` (removed in the plan), `decl[c]` | `O.outputs`, `O.outputs[c]` | § 3, row 8 |
 | 9 | `t.component(c)` | `t.output(c)` | § 3, row 2 |
-| 10 | `BatchSpec.element_declaration`, `Batch.components` | `element_output_spec`, and its `outputs` | § 3, row 3 |
+| 10 | `BatchSpec.element_declaration`, `Batch.components` | `element_spec`, and its `outputs` | § 3, row 3 |
 | 11 | the distribution families' keyword `component=`, `factor(d, component_name)`, `OutputSpec.default(component=)` | `output_name` | § 14, Q1 |
 | 12 | the private names `_exposed_components`, `_component_name`, `_components_of`, `_callable_component`, and the page `docs/api/declarations.md` | `_exposed_outputs`, `_root_output_name`, `_outputs_of`, `_callable_output_name`, and `docs/api/input_and_output_specs.md` | Directive 5, rule 5, in the step that renames the vocabulary |
 
@@ -1649,7 +1647,7 @@ README's rows for S0, S2a, S2b, S3, S4, G1b, G3, and G4, which describe step con
 | S2a | The plan's renames, without rewriting `components` into a mapping; under Q1's option 1, the vocabulary rename too | Smaller than the plan's S2a under option 2; larger under option 1 (§ 14, Q1) |
 | S2b | § 13.1 | The plan's content, minus the event rule, plus three items |
 | S3 | `&` replaces `*` for laws and kernels and `merge` on `NamedTree`, `Record`, `RecordSpec`, and `RecordBatch`; `rename`; `MarginalView` | One more method, `RecordBatch.merge` |
-| S4 | `element_output_spec`, and a batch's outputs typed by their columns | One function more, `_exposed_components`; no test changes (Appendix E, fact 30) |
+| S4 | `element_spec` as an output spec, and a batch's outputs typed by their columns | One function more, `_exposed_components`; no test changes (Appendix E, fact 30) |
 | G1a | The done-condition reads `[]`, not `project`; the grouped sub-joint stays one factor after its wrap | One line: `_flattened`'s test for a grouped sub-joint (`_whole_term_component(...) is None`, `distributions/_factored.py:300`) stops identifying it once G1a makes its event positional, so G1a changes that test to keep recognizing the grouped sub-joint |
 | G1b | A function returning a law offers no outputs, so no view specs are computed | Smaller |
 | G2 | The G2 families wrap their draws under the name their constructor takes (C5), then the keyword form refuses a spec with parts; the private event default goes | Smaller |
@@ -1700,7 +1698,7 @@ Six questions need the maintainer, in order of importance; § 3 maps every rever
 **Background.**
 The plan uses "slot" and "component", which are not parallel; "slot" is a technical word, and "component" also names a mixture's component laws.
 "Input" and "output" are plain and parallel, and already spelled in `InputSpec`, `OutputSpec`, `input_spec`, and `output_spec`.
-Choosing them also renames three decided names: `t.component(c)` becomes `t.output(c)` (2026-10-17), O15's `element_declaration` becomes `element_output_spec`, and II.5's `Batch.components` becomes `element_output_spec.outputs` (2026-10-18).
+Choosing them also renames three decided names: `t.component(c)` becomes `t.output(c)` (2026-10-17), O15's `element_declaration` becomes `element_spec` (whose old meaning becomes `element_spec.term_spec`), and II.5's `Batch.components` becomes `element_spec.outputs` (2026-10-18).
 The design does not depend on the words; the question is when they change, since directive 7 requires a PR that changes a name or a meaning to change every use, and directive 11 requires the code to use the glossary's words.
 
 What the rename covers, counted at `6f8859fc`:
@@ -1722,7 +1720,7 @@ What the rename covers, counted at `6f8859fc`:
    | `O.outputs` | `O.components`, with this proposal's meaning (§ 5.9) |
    | `t.output(c)` | `t.component(c)` (G3) |
    | `output_name=` | `component=` |
-   | `element_output_spec` | `element_declaration` (O15) |
+   | `element_spec` | `element_spec`, a final name that S4 introduces |
    | feeds, produced term, conforms, unify | the same words, which name no renamed thing |
 
    S2a is the plan's S2a without the mapping rewrite of `components`. The cost is one more breaking rename after the workshop, of `components`, `component=`, and the accessor, with a CHANGELOG entry.
@@ -1893,7 +1891,7 @@ The plan's § 16 stays, with these changes: its row "Views at a field that holds
 | Python's mapping rule | `"g" in draw` is true while `"g"` is not in `draw.keys()`; from G4, `"g/c" in lik_g.given_spec` is true while `"g/c"` is not in its `keys()` | `keys()` lists fields or inputs, and `in` agrees with `[]` |
 | Interim whole forms, until G2 | an interim whole form has an output at the root and paths below it, so grammar B's guarantee fails; in `Normal("a", 0.0, 1.0) & F`, for `grouped`'s factor `F` with event `OutputSpec(g=...)`, `F.event_spec["g"]` is `F.event_spec` while the merge's `["g"]` is the group, so I17 and property 4 fail; the grouped sub-joint's form ends at G1a | Today's reading, kept until G2 (§ 5.5) |
 | Views at held fields, until G3 | `d["G"].event_spec` is the interim whole form `OutputSpec(G=...)`, so I6 reads `d[p].event_spec == OutputSpec(**{last(p): d.event_spec[p].term_spec})` there | Today's behaviour, kept until G3 (§ 7.2) |
-| A batch's output at the root, until G3 | `x_draws["x"]` raises while `x_draws.spec.element_output_spec["x"]` is that spec | § 7.3, rule 4, mirrors laws, and `[]` on a batch refuses the name today |
+| A batch's output at the root, until G3 | `x_draws["x"]` raises while `x_draws.spec.element_spec["x"]` is that spec | § 7.3, rule 4, mirrors laws, and `[]` on a batch refuses the name today |
 | The list form at the root | `Normal("x", 0.0, 1.0)[["x"]]` succeeds while `sample(Normal("x", 0.0, 1.0))` is an array that NumPy indexes, and `OutputSpec(x=...).without("x")` raises | § 7.3's rule 3 is an extra rule at the top level; I1 and I10 cover paths |
 | A shared optional input that a binding omits | each factor takes its own default, so one input holds two values, and the law at the defaults is not the kernel at any single value of that input | Defaults belong to the factors (§ 8.4) |
 | A kernel whose inputs are all optional | `k_opt & Normal("z", 0.0, 1.0)` is a law, sampled at `s = 1.0`, while `sample(k_opt)` raises | IV.2's table decides the kind by the required inputs left (§ 8.4) |
@@ -1930,7 +1928,7 @@ Under § 14, Q1's option 2, the plan keeps "slot" and "component" in its prose, 
 | § 9.5 | item 3: from G3 a view at a held field is positional, not wrapped |
 | § 9.7, § 11, § 14 | replaced by § 7.7, § 7.6, and § 8 |
 | § 12 | line 1421: `decl.project(...)` becomes `O[...]`; line 1425: "meets each component with the slot of the same name" becomes "feeds each slot from the component of the same name"; lines 1430–1431: "an unmet slot" becomes "a slot of a factor that no component feeds" |
-| § 15.2 | `BatchSpec.element` becomes `element_declaration` (`element_output_spec` after the rename), stored for base elements only, and `Batch.components` is not added |
+| § 15.2 | `BatchSpec.element` becomes `element_spec`, an output spec whose `term_spec` is today's `element_spec`, and `Batch.components` is not added |
 | § 16 | as Appendix B |
 | § 17 | replaced by Appendix C.3 |
 | § 18.1 | rows II.2 (indexing by path, the attribute of outputs, no event rule), II.5 (the elements' output spec), III.7 (no wrap), IV.2 (merge, flattening kept, conformance and unification, "unfed" for "unmet"), V.5 and V.6 (the lift's reason), VI.11 (two batches merge by elements), VII (the G2 families wrap their draws under their constructor's name), and § 12.3's passages |
@@ -1942,7 +1940,7 @@ Under § 14, Q1's option 2, the plan keeps "slot" and "component" in its prose, 
 ### C.2 Replacement text for the steps that change
 
 Each block replaces the plan's text for that step in its § 19; the parts not named stay.
-The blocks use the names of § 14, Q1's recommended option 2: `*` until S3, `components` for the attribute of outputs, `element_declaration`, `t.component(c)`, and `component=`; under option 1 each takes § 12.2's name from S2a.
+The blocks use the names of § 14, Q1's recommended option 2: `*` until S3, `components` for the attribute of outputs, `t.component(c)`, and `component=`, with `element_spec` final; under option 1 each takes § 12.2's name from S2a.
 
 **S2a (§ 19.4).**
 *Delivers:* `spec` becomes `term_spec`, `with_spec` becomes `with_term_spec`, `exposes_record` goes, and the reads of `_component_name` outside `core/_specs.py` move to one private helper. `components` keeps its name and is not rewritten into a mapping. Under Q1's option 1, also the full rename of § 12.2.
@@ -1966,14 +1964,14 @@ The blocks use the names of § 14, Q1's recommended option 2: `*` until S3, `com
 *Delivers and done when:* as the plan, with `RecordBatch.merge` and `NamedTree.merge` among the renamed methods: a search finds no `.merge(` on a `NamedTree`, a `Record`, a `RecordSpec`, or a `RecordBatch`, and no `*` between two laws or kernels in `probpipe/`, `tests/`, or `docs/`.
 
 **S4 (§ 19.6).**
-*Delivers:* `BatchSpec` stores `element_declaration` for base elements, under their name, and derives it for every other element (§ 5.7); draws, sweeps, and stacked batches of base values store the name their maker gave; a raw batch gets the default `element`; a batch's outputs are its columns, each typed by its column's `BatchSpec` (`_exposed_components` for batches); the name-free canonical spec of the plan's § 15.3.
+*Delivers:* `BatchSpec.element_spec` and `Batch.element_spec` become the output spec of one element (§ 5.7), and every use of the old meaning becomes `element_spec.term_spec`; draws, sweeps, and stacked batches of base values store the name their maker gave; a raw batch gets the default `element`; a batch's outputs are its columns, each typed by its column's `BatchSpec` (`_exposed_components` for batches); the name-free canonical spec of the plan's § 15.3.
 *Files:* the plan's S4 files, and `core/_specs.py` for `_exposed_components`.
 *Done when:*
-- `sample(Normal("mu", 0.0, 1.0), sample_shape=4).spec.element_declaration == OutputSpec(mu=...)`;
-- `NumericArrayBatch(values, "draw").spec.element_declaration` offers `element`;
-- `grouped_draws["a"].spec.element_declaration == OutputSpec(a=...)`, and `grouped_draws["g"]`'s is `OutputSpec(RecordSpec(c=..., e=...))`, derived;
+- `sample(Normal("mu", 0.0, 1.0), sample_shape=4).spec.element_spec == OutputSpec(mu=...)`;
+- `NumericArrayBatch(values, "draw").spec.element_spec` offers `element`;
+- `grouped_draws["a"].spec.element_spec == OutputSpec(a=...)`, and `grouped_draws["g"]`'s is `OutputSpec(RecordSpec(c=..., e=...))`;
 - `OutputSpec(grouped_draws.spec).components["a"]` is the `BatchSpec` of the column `a`;
-- a `DistributionBatch`'s `event_spec == spec.element_declaration`;
+- a `DistributionBatch`'s `event_spec == spec.element_spec.term_spec.event_spec`;
 - the plan's equality, hashing, pytree, and fingerprint conditions hold.
 
 **G1a (§ 19.7).**
@@ -2007,7 +2005,7 @@ The blocks use the names of § 14, Q1's recommended option 2: `*` until S3, `com
 - **Redefined:** *component*, after a rename, keeps only a mixture's component laws (VII.3); *declaration* keeps only its broad sense, and its sentence on `InputSpec` and `OutputSpec` points to their entries; *conversion* and *event* say "event spec" for "event declaration"; *field* and *path* take § 5.2's meanings; *name* lists the names of inputs, outputs, fields, and levels; *type hole* names `with_term_spec`; *signature* says "a law's outputs, a kernel's outputs with `|` and its inputs, or a function's parameters", in the words Q1 settles.
 - **Removed:** *packaging*; *key* in its sense of a field's path; *selection*, apart from *selection order* (II.7).
 - **Not added**, although the plan proposed them: producer, consumer, exposes, whole declaration, exposed declaration, address, component spec, leaf path, wrap (which stays a plain verb), position, and list of paths (plain phrases, as decided 2026-10-18 for "subscript"). "Merge category" and "interim whole form" are words of this document's rules, not glossary terms.
-- **Canonical names:** "a distribution's event spec, an `OutputSpec`: `event_spec`" replaces the row that says "event declaration"; the row for the name of a family's output at the root reads `component` until the rename and `output_name` after it; the elements' own output spec joins the row for `element_spec`.
+- **Canonical names:** "a distribution's event spec, an `OutputSpec`: `event_spec`" replaces the row that says "event declaration"; the row for the name of a family's output at the root reads `component` until the rename and `output_name` after it; the row for `element_spec` says it is the output spec of one element, whose `term_spec` is the element's type.
 
 ### C.4 The items for `deferred.md`
 
