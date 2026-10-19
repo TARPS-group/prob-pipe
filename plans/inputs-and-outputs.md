@@ -6,6 +6,7 @@
 > § 3 lists every decision it reverses, with its date and source, and the open question of § 14 that asks it.
 > It gates step S0 and the declaration steps after it, not `plans/` itself (step PL) or the execution steps (§ 13).
 > **Merged 2026-10-18** into [`declarations-and-addressing-io.md`](declarations-and-addressing-io.md), with the recommended answer to each question of § 14, provisionally. At the merge, `element_output_spec` was renamed `element_spec` (decisions, 2026-10-18): today's `BatchSpec.element_spec`, the element's term spec, becomes `element_spec.term_spec`, and `element_spec` is the output spec of one element as a term, `held` of the batch's spec (§ 5.6, § 5.7). This text was revised to match; the merged plan's § 21.4 explains the choice.
+> **Reviewed 2026-10-18.** The adversarial review of that night corrected the merged plan, and where the two texts differ the merged plan wins. This text was corrected only where it stated a rule wrongly or contradicted the decision on the words: I12 (§ 7.7, § 9), the list rule of § 7.3, § 2's item 6, Appendix B, and Appendix C.3.
 > Claims about today's code cite `file:line` at `6f8859fc` and were checked by running scripts with `uv run python` from the worktree root; Appendix E lists them.
 > Before the workshop it keeps today's behaviour wherever a corner is hard, states that behaviour's consequences (§ 8.10, § 8.11), and leaves the long-term choice to an open question.
 
@@ -120,7 +121,7 @@ This proposal gates S0, and PL can merge without waiting for it (§ 13).
    One word, *feeds*, names the relation between them, and *conforms* and *unify* name the two checks on specs.
    § 5.13 lists every remaining asymmetry with its reason.
 6. **"The word 'declaration', and the name `project`."**
-   "Declaration" leaves this area: the objects are named after their classes, *input spec* and *output spec*, and "declaration" keeps its broad sense of a static claim (II.7), as `plans/execution-layer.md` uses it.
+   "Declaration" leaves this area in the final words: the objects are named after their classes, *input spec* and *output spec*, and "declaration" keeps its broad sense of a static claim (II.7). Under § 14, Q1's option 2, `design/`, the code, and `plans/execution-layer.md` keep "input declaration", "output declaration", and "event declaration" until the rename PR after the workshop.
    `project` is removed in favour of `[]`.
 
 ## 3. Decisions this proposal reverses
@@ -741,8 +742,11 @@ It replaces the plan's `project` and today's private `_view_declaration` (`distr
    - a path below such a field gives the spec of a term of the held term's kind, whose produced term is the node there.
 2. **A list of paths `ps`** gives `OutputSpec(restrict(O.term_spec, ps))`, where `restrict` keeps each node at its own path:
    - for a `RecordSpec` `T`: the children of `T` that a path of `ps` names or enters, in `T`'s order; a child that `ps` names is kept whole, and a child that `ps` enters through the remaining paths `qs` is kept as `restrict(child, qs)`;
-   - for a `T` that holds `E`: `with_held(T, E[ps])`.
-3. **A list may also name the output at the root, at the top level only.** A list is read against the record of outputs (§ 5.10), which for an output at the root named `n` is `{n: v}`. So `O[[n]]` is `OutputSpec(RecordSpec(n=O.term_spec))` for an output spec in the keyword form, and `OutputSpec(with_held(T, E[[n]]))` for one positional over a batch or function spec `T` holding `E`. This is an extra rule beside rules 1 and 2, kept from the plan's O6: `Normal("x", 0.0, 1.0)[["x"]]` is the law over `{x}`. Inside `restrict`, a path must be a path, so for a field `G` that holds `Normal("x", 0.0, 1.0)`, `O[["G/x"]]` raises `KeyError`.
+   - for a `T` that holds `E` in the positional form: `with_held(T, OutputSpec(restrict(E.term_spec, ps)))`;
+   - for a `T` that holds an interim whole form `E`, until G2: `with_held(T, E[ps])`, by § 5.5's rule 3.
+
+   Every path of `ps` must be a path of `O` (§ 5.8), checked before `restrict` runs, else `KeyError`: for `O = OutputSpec(RecordSpec(G=Normal("x", 0.0, 1.0).spec))`, `O[["G/x"]]` raises `KeyError`, since `G/x` is no path of `O` (§ 5.8, case 4).
+3. **A list may also name the output at the root, at the top level only.** A list is read against the record of outputs (§ 5.10), which for an output at the root named `n` is `{n: v}`. So `O[[n]]` is `OutputSpec(RecordSpec(n=O.term_spec))` for an output spec in the keyword form, and `OutputSpec(with_held(T, E[[n]]))` for one positional over a batch or function spec `T` holding `E`. This is an extra rule beside rules 1 and 2, kept from the plan's O6: `Normal("x", 0.0, 1.0)[["x"]]` is the law over `{x}`. It applies only to the list `O[...]` is given, never inside `restrict`.
 4. **The name of the output at the root, alone.** Until step G3, `O[n]` is `O` itself. This mirrors `Distribution.__getitem__`, which returns the law for that name today (`distributions/_distribution.py:1015`), so I6 holds for laws at every step; G3 removes the reading from both at once, so it is not bridging code. From G3, `O[n]` raises `KeyError`, and `t.output(n)` reads the term (§ 7.7).
 
 An interim whole form follows § 5.5's rules 3 and 4 until G2.
@@ -874,7 +878,7 @@ A name that is not an output raises `KeyError`, so a term whose produced term is
 | a function | the function `w ↦ t(w)[c]`, or `t` itself when its output `c` is at the root |
 | a batch | the column `t[c]`, or `t` itself when its elements' output `c` is at the root |
 
-For every term `t` with outputs, `output_spec(t).outputs[c]` is the term spec of the produced term of `t.output(c)` (I12).
+For every term `t` with outputs, `output_spec(t).outputs[c]` is the term spec of the value at the output `c` of `t`'s produced term (§ 5.9; I12): for a record or a batch, the spec of `t.output(c)` itself, so `OutputSpec(record_with_law.spec).outputs["G"]` is `post.spec`; for a law, a kernel, or a function, the term spec of `t.output(c)`'s produced term.
 
 ```python
 grouped.output("g")                                         # grouped["g"]
@@ -1242,7 +1246,7 @@ Appendix B lists the cases where an invariant does not hold on purpose.
 | I9 | **One path gives the node; a list gives a record that holds it.** `t["g"]` is the node, and `t[["g"]]` is the record `{g: ...}`, or the term whose produced term is that record; for the output at the root, named `n`, `t[[n]]` is likewise the record `{n: ...}`, or the term that produces it | rule (decided 2026-10-15; the plan's O6) | S1 |
 | I10 | **A list and `without` partition.** Every leaf path of `t` is a leaf path of exactly one of `t[ps]` and `t.without(*ps)`, on records (for paths that do not go through a held term, until after the workshop), record specs, batches of records, output specs, and laws; every input of `I` is in exactly one of `I[ns]` and `I.without(*ns)` | follows from § 7.3 to § 7.5 | S1 for records, record specs, and batches; S2b for output and input specs; G4 for laws |
 | I11 | **Conditioning removes what it fixes.** `condition_on(d, given).event_spec == d.event_spec.without(*fixed)`, whichever route computes it | rule (decided 2026-10-15) | G4 |
-| I12 | **The term at an output.** For every term `t` with outputs, `t.output(name)` is `t[name]`, or `t` for the output at the root, and `output_spec(t).outputs[name]` is the term spec of `t.output(name)`'s produced term | follows from § 5.9 and § 7.7 | G3; S4 stores what it reads for batches |
+| I12 | **The term at an output.** For every term `t` with outputs, `t.output(name)` is `t[name]`, or `t` for the output at the root, and `output_spec(t).outputs[name]` is the term spec of the value at the output `name` of `t`'s produced term (§ 5.9): for a record or a batch, the spec of `t.output(name)` itself; for a law, a kernel, or a function, the term spec of `t.output(name)`'s produced term | follows from § 5.9 and § 7.7 | G3; G5 for kernels; S4 stores what it reads for batches |
 | I13 | **Indexing commutes with producing.** `f[s](w) == f(w)[s]`; the law of `k[s]` at `w` is the law of `X`'s node at `s`, for `X ~ k(w)` | follows: it is § 7.1's definition | G3 for functions, G5 for kernels |
 | I14 | **Indexing keeps inputs** (new). `f[s].input_spec == f.input_spec`; `k[s].given_spec == k.given_spec` | follows from § 7.1 | G3, G5 |
 | I15 | **Sides are disjoint** (new). `names(unfed(t)) ∩ outputs(t) = ∅` for every kernel, law, and merge | rule for kernels (III.9, `distributions/_conditional.py:131`); follows for merges from M4 and M5 (§ 8.9, property 2) | today for kernels; S3 for merges |
@@ -1885,7 +1889,7 @@ The plan's § 16 stays, with these changes: its row "Views at a field that holds
 | `without` on other kinds | `Function.without`, `ConditionalDistribution.without`, `without` on a batch of laws, and `Record.without` at a path through a held term do not exist yet | After the workshop (`deferred.md`) |
 | `&` on base values | `sample(Normal("x", 0.0, 1.0)) & sample(Normal("y", 0.0, 1.0))` raises `TypeError`, as NumPy's `&` refuses floats, while two integer or boolean arrays combine bitwise; `(x & y)[j]` on two records is a field, while `x[j] & y[j]` on two arrays is a bitwise element | A base value carries no name, so I20 needs record outputs; the plan's O7 keeps NumPy's `&` |
 | `&` on records and on arrays | `&` on two records merges their fields by top-level name, while `&` on two `NumericArray`s is elementwise | A record is a tree of named values (the plan's O7) |
-| A batch of arrays through raw JAX | `jax.jit(lambda b: b)(draws)` comes back offering `element` | Whole-element names stay out of the pytree (decided 2026-10-17) |
+| A batch of arrays through raw JAX | `jax.jit(lambda b: b)(draws)` comes back offering `element` | Base-element names stay out of the pytree (decided 2026-10-17) |
 | Labels | `sample(grouped["a", "g/c"])` and `sample(grouped)["a", "g/c"]` differ in label | No operation reads a label |
 | Kernels until step G5 | `lik["y"]` raises `TypeError` | Kernel views come in G5 |
 | Python's mapping rule | `"g" in draw` is true while `"g"` is not in `draw.keys()`; from G4, `"g/c" in lik_g.given_spec` is true while `"g/c"` is not in its `keys()` | `keys()` lists fields or inputs, and `in` agrees with `[]` |
@@ -2002,10 +2006,10 @@ The blocks use the names of § 14, Q1's recommended option 2: `*` until S3, `com
 
 - **New entries, in any option:** base spec, spec with parts, node, group, column, produced term, feeds, merge, conforms, unify (II.1 and IV.2, as § 5.12 defines them), and *unfed*, said of an input of a joint's factors that no factor feeds (§ 8.1), replacing IV.2's "unmet".
 - **New entries by § 14, Q1:** under option 1, input (replacing *given slot* and *optional slot*), input spec, output, and output spec, in S0; under option 2, *slot* is added and *component* redefined as the plan's § 17 proposes, with this proposal's meanings, and the rename PR after the workshop replaces them with *input* and *output*; under option 3, the same as option 2, permanently.
-- **Redefined:** *component*, after a rename, keeps only a mixture's component laws (VII.3); *declaration* keeps only its broad sense, and its sentence on `InputSpec` and `OutputSpec` points to their entries; *conversion* and *event* say "event spec" for "event declaration"; *field* and *path* take § 5.2's meanings; *name* lists the names of inputs, outputs, fields, and levels; *type hole* names `with_term_spec`; *signature* says "a law's outputs, a kernel's outputs with `|` and its inputs, or a function's parameters", in the words Q1 settles.
+- **Redefined:** *component*, after a rename, keeps only a mixture's component laws (VII.3); in S0 under option 1, and in the rename PR under option 2, *declaration* keeps only its broad sense, its sentence on `InputSpec` and `OutputSpec` points to their entries, and *conversion* and *event* say "event spec" for "event declaration"; *field* and *path* take § 5.2's meanings; *name* lists the names of inputs, outputs, fields, and levels; *type hole* names `with_term_spec`; *signature* says "a law's outputs, a kernel's outputs with `|` and its inputs, or a function's parameters", in the words Q1 settles.
 - **Removed:** *packaging*; *key* in its sense of a field's path; *selection*, apart from *selection order* (II.7).
 - **Not added**, although the plan proposed them: producer, consumer, exposes, whole declaration, exposed declaration, address, component spec, leaf path, wrap (which stays a plain verb), position, and list of paths (plain phrases, as decided 2026-10-18 for "subscript"). "Merge category" and "interim whole form" are words of this document's rules, not glossary terms.
-- **Canonical names:** "a distribution's event spec, an `OutputSpec`: `event_spec`" replaces the row that says "event declaration"; the row for the name of a family's output at the root reads `component` until the rename and `output_name` after it; the row for `element_spec` says it is the output spec of one element, whose `term_spec` is the element's type.
+- **Canonical names:** "a distribution's event spec, an `OutputSpec`: `event_spec`" replaces the row that says "event declaration", in S0 under option 1 and in the rename PR under option 2; the row for the name of a family's output at the root reads `component` until the rename and `output_name` after it; the row for `element_spec` says it is the output spec of one element, whose `term_spec` is the element's type.
 
 ### C.4 The items for `deferred.md`
 
