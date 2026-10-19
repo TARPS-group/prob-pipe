@@ -708,7 +708,7 @@ _DEFAULTED_BY_NONE = frozenset(
 )
 
 #: The two count controls, which a derived operation's identity passes down.
-_COUNT_CONTROLS = ("max_evaluations", "num_samples")
+_PASSED_COUNT_CONTROLS = ("max_evaluations", "num_samples")
 
 
 @contextmanager
@@ -1235,7 +1235,7 @@ class Function(TrackedTerm, Annotated):
         control_revisions: dict[str, Any] = {}
         if passed_controls["exact_only"] and not effective_controls["exact_only"]:
             control_revisions["exact_only"] = True
-        for name in _COUNT_CONTROLS:
+        for name in _PASSED_COUNT_CONTROLS:
             passed_count = passed_controls[name]
             if (
                 passed_count is not None
@@ -1595,7 +1595,7 @@ def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) 
         raise TypeError(
             f"workflow_kind must be a WorkflowKind enum member; got {options['workflow_kind']!r}"
         )
-    for name in _COUNT_CONTROLS:
+    for name in _PASSED_COUNT_CONTROLS:
         _checked_count(options[name], name)
     for flag in ("include_inputs", "exact_only", "raw"):
         if not isinstance(options[flag], bool):

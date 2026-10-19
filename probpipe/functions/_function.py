@@ -219,9 +219,21 @@ def effective_workflow_kind(function: Function) -> WorkflowKind:
     orchestration is ``OFF``. A requested ``TASK`` or ``FLOW`` falls back to
     ``OFF``, with a warning, when Prefect is not installed.
     """
-    raw = function.options["workflow_kind"]
+    return _orchestration_mode(function.options["workflow_kind"])
 
-    kind = raw if raw is not WorkflowKind.DEFAULT else config.prefect.workflow_kind
+
+def _orchestration_mode(workflow_kind_control: WorkflowKind) -> WorkflowKind:
+    """The orchestration mode that the ``workflow_kind`` control *workflow_kind_control* selects.
+
+    ``DEFAULT`` defers to ``config.prefect.workflow_kind``; when both are
+    ``DEFAULT``, orchestration is ``OFF``. A requested ``TASK`` or ``FLOW``
+    falls back to ``OFF``, with a warning, when Prefect is not installed.
+    """
+    kind = (
+        workflow_kind_control
+        if workflow_kind_control is not WorkflowKind.DEFAULT
+        else config.prefect.workflow_kind
+    )
 
     if kind is WorkflowKind.DEFAULT:
         kind = WorkflowKind.OFF
@@ -245,14 +257,15 @@ def _make_execution_config(
     *,
     mode: _execution.WorkflowExecutionMode | None = None,
 ) -> _execution.WorkflowExecutionConfig:
-    """Build resolved execution metadata for row-wise call dispatch."""
+    """Build resolved execution metadata for row-wise dispatch of the running call of *function*."""
+    resolved_controls = current_call_context().resolved_controls
     if mode is None:
-        match function.effective_workflow_kind:
+        match _orchestration_mode(resolved_controls["workflow_kind"]):
             case WorkflowKind.TASK:
                 mode = "prefect_task"
             case WorkflowKind.FLOW:
                 mode = "prefect_flow"
-            case _ if function.options["dispatch"] == "thread":
+            case _ if resolved_controls["dispatch"] == "thread":
                 mode = "thread"
             case _:
                 mode = "sequential"
@@ -260,7 +273,7 @@ def _make_execution_config(
     is_prefect = mode in ("prefect_task", "prefect_flow")
 
     if is_prefect and (
-        function.options["dispatch"] == "thread" or function.options["max_workers"] is not None
+        resolved_controls["dispatch"] == "thread" or resolved_controls["max_workers"] is not None
     ):
         warnings.warn(
             "dispatch='thread' and max_workers configure only local "
@@ -271,7 +284,7 @@ def _make_execution_config(
 
     return _execution.WorkflowExecutionConfig(
         mode=mode,
-        max_workers=function.options["max_workers"] if mode == "thread" else None,
+        max_workers=resolved_controls["max_workers"] if mode == "thread" else None,
         name=function._label,
         prefect_task_runner=(config.prefect.resolve_task_runner() if is_prefect else None),
     )
@@ -705,7 +718,7 @@ def _run_call(
             ),
         )
 
-    workflow_kind = function.effective_workflow_kind
+    workflow_kind = _orchestration_mode(resolved_controls["workflow_kind"])
     _broker._record_active_requested_execution(
         resolved_controls["dispatch"],
         workflow_kind.value,
@@ -1380,8 +1393,9 @@ def _resolve_dispatch(
     independent of orchestration (``workflow_kind``), which wraps
     whichever strategy is chosen.
     """
-    if function.options["dispatch"] != "auto":
-        return function.options["dispatch"]
+    requested_dispatch = current_call_context().resolved_controls["dispatch"]
+    if requested_dispatch != "auto":
+        return requested_dispatch
 
     if not jax_supported:
         return "sequential"
@@ -1507,7 +1521,8 @@ def _resolve_route(
         detail = (
             f"pending: {', '.join(info.pending)}" if info.feasible is None else info.description
         )
-        restriction = " (exact_only=True)" if function.options["exact_only"] else ""
+        exact_only = current_call_context().resolved_controls["exact_only"]
+        restriction = " (exact_only=True)" if exact_only else ""
         raise ResolutionError(
             f"{function.label}: no evaluation rule applies to a call over {ref.label!r}"
             f"{restriction}. {detail}"
@@ -1526,7 +1541,8 @@ def _route_report(
     The report probes without executing, as :func:`_resolve_route` states the
     selection; the route is ``None`` unless the report is feasible.
     """
-    method, exact_only = rule_method, function.options["exact_only"]
+    resolved_controls = current_call_context().resolved_controls
+    method, exact_only = rule_method, resolved_controls["exact_only"]
     if broadcast_plan.regime == "none":
         if method is not None:
             return MethodInfo(
@@ -1541,7 +1557,7 @@ def _route_report(
     parameter = ref.parameter_name
     variadic = ref.subscript is not None
     fixed_args = {name: value for name, value in values.items() if variadic or name != parameter}
-    controls = dict(function.options)
+    controls = dict(resolved_controls)
     registry = _rules.evaluation_rule_registry
     info = registry.check(
         function,
