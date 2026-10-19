@@ -125,8 +125,11 @@ class ConversionInfo(MethodInfo):
 
     Notes
     -----
-    A report with no ``method_name`` is a converter's own report, before the
-    registry names it; an infeasible report of the registry, whose
+    ``ConversionInfo`` relaxes the rule of
+    :class:`~probpipe.core._dispatch.MethodInfo` that a feasible or unresolved
+    report names its method; the rule holds for the registry's report of a
+    selected converter. A report with no ``method_name`` is a converter's own
+    report, before the registry names it; an infeasible report of the registry, whose
     ``description`` lists each converter tried; or the report of a source that
     already satisfies the target, which needs no conversion and so is exact,
     with ``exact=True``. The pending requirements of an unresolved report
