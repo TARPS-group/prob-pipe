@@ -63,8 +63,12 @@ _OTHER_PACKAGES = frozenset(
     }
 )
 
-_AWAITS_MERGE_OPERATOR = "laws and kernels merge with & and rename with rename, where they use * and with_path_names"
-_AWAITS_MARGINAL_VIEW = "the view a law's [] returns is the class FieldView, which III.7 names MarginalView"
+_AWAITS_MERGE_OPERATOR = (
+    "laws and kernels merge with & and rename with rename, where they use * and with_path_names"
+)
+_AWAITS_MARGINAL_VIEW = (
+    "the view a law's [] returns is the class FieldView, which III.7 names MarginalView"
+)
 
 #: Declarations the implementation does not match yet, with the change each awaits.
 _PENDING: dict[str, str] = {
