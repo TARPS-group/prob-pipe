@@ -251,6 +251,43 @@ class TestScopesExitInOrder:
         held_open.close()
         assert current_call_context().is_default()
 
+    def test_a_block_closed_in_a_copied_context_stops_applying_in_the_original(
+        self, copied_context
+    ):
+        copied_context.run(self._close_in_a_copy_a_block_opened_outside_it)
+
+    @staticmethod
+    def _close_in_a_copy_a_block_opened_outside_it():
+        session_num_samples = config.sampling.num_samples
+        held_open = _held_open_block()
+        next(held_open)
+
+        @function
+        def closes_the_block(x):
+            with pytest.raises(RuntimeError, match="is still running"):
+                held_open.close()
+            return x
+
+        contextvars.copy_context().run(closes_the_block, 1.0)
+        assert current_call_context().is_default()
+        assert config.sampling.num_samples == session_num_samples
+
+    def test_a_block_that_repeats_its_enclosing_values_is_named_as_a_block(self, copied_context):
+        def leave_an_equal_block_open():
+            with (
+                config.sampling.using(num_samples=7),
+                pytest.raises(RuntimeError) as error,
+                config.notation.using(max_depth=3),
+            ):
+                held_open = _held_open_block()
+                next(held_open)
+            return str(error.value)
+
+        message = copied_context.run(leave_an_equal_block_open)
+        assert message.startswith(
+            "a block of config.notation ended while a block of config.sampling, opened inside it"
+        )
+
     def test_scopes_that_exit_in_order_raise_nothing(self, copied_context):
         def nested_scopes():
             with config.notation.using(max_depth=3), config.sampling.using(num_samples=7):

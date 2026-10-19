@@ -261,8 +261,7 @@ _INSTALLED_SCOPE: ContextVar[_InstalledScope | None] = ContextVar(
 
 def current_call_context() -> _CallContext:
     """The call context in effect in the running thread: the default context outside every call and block."""
-    installed_scope = _INSTALLED_SCOPE.get()
-    return _DEFAULT_CALL_CONTEXT if installed_scope is None else installed_scope.call_context
+    return _context_of(_innermost_open_scope(_INSTALLED_SCOPE.get()))
 
 
 @contextmanager
@@ -301,7 +300,7 @@ def _under_call_context(call_context: _CallContext) -> Iterator[_CallContext]:
         On exit, after the context is restored, if a scope opened inside this
         one is still open, naming both scopes.
     """
-    installed_scope = _InstalledScope(call_context, _INSTALLED_SCOPE.get())
+    installed_scope = _InstalledScope(call_context, _innermost_open_scope(_INSTALLED_SCOPE.get()))
     _INSTALLED_SCOPE.set(installed_scope)
     try:
         yield call_context
@@ -555,9 +554,10 @@ def _unpickled_call_context(field_values: Mapping[str, Any]) -> _CallContext:
 class _InstalledScope:
     """One open scope that installed a call context, linked to the scope it was opened in.
 
-    The scopes of a thread form a chain from the innermost open scope, which
+    The scopes of a thread form a chain from the innermost scope, which
     ``_INSTALLED_SCOPE`` holds, to the outermost. A scope that is closed out of
-    order is marked closed and skipped when a context is restored.
+    order is marked closed, and reading or restoring the context skips it, in
+    every context that holds the chain, a copied one included.
 
     Parameters
     ----------
@@ -631,9 +631,10 @@ def _described_scope(installed_scope: _InstalledScope) -> str:
     """The scope *installed_scope* in a user's words, for an error message."""
     call_context = installed_scope.call_context
     enclosing_context = _context_of(installed_scope.enclosing_scope)
+    # A block derives a new mapping of the blocks, and every other scope keeps it.
     if (
         installed_scope.opens_call()
-        or call_context.config_blocks == enclosing_context.config_blocks
+        or call_context.config_blocks is enclosing_context.config_blocks
     ):
         if call_context.function_label is None:
             return "a scope of the settings"
@@ -641,7 +642,7 @@ def _described_scope(installed_scope: _InstalledScope) -> str:
     added_sections = [
         f"config.{section_name}"
         for section_name, section_values in call_context.config_blocks.items()
-        if enclosing_context.config_blocks.get(section_name) != section_values
+        if enclosing_context.config_blocks.get(section_name) is not section_values
     ]
     return f"a block of {', '.join(added_sections)}"
 
