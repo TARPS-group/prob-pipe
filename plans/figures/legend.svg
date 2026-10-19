@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="710" height="934" viewBox="0 0 710 934" role="img">
+  <title>Legend of the figures</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#424a53"/>
+    </marker>
+  </defs>
+  <rect x="0.5" y="0.5" width="709" height="932" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <g transform="translate(-2.0,15.5)">
+    <path d="M 250.0,16.0 L 40.0,16.0" fill="none" stroke="#424a53" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <text x="250.0" y="36.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#59636e" text-anchor="end" font-style="italic">inputs enter</text>
+    <text x="40.0" y="36.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#59636e" text-anchor="start" font-style="italic">outputs leave</text>
+    <text x="330.0" y="15.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">Data flows from right to left, as a density</text>
+    <text x="330.0" y="33.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">p(y | mu) is written: produced, then received.</text>
+    <rect x="40.0" y="64.0" width="112.0" height="58.0" rx="8" fill="#f6f0ff" stroke="#8250df" stroke-width="1.6"/>
+    <rect x="50.0" y="71.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
+    <text x="65.8" y="83.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
+    <text x="89.6" y="84.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">prior</text>
+    <text x="330.0" y="87.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">A term is a rounded box. Its badge names its kind.</text>
+    <rect x="40.0" y="136.0" width="43.4" height="17.0" rx="8.5" fill="#0969da" stroke="#0969da" stroke-width="1"/>
+    <text x="61.7" y="148.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">value</text>
+    <rect x="91.4" y="136.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
+    <text x="107.2" y="148.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
+    <rect x="131.0" y="136.0" width="49.3" height="17.0" rx="8.5" fill="#bf3989" stroke="#bf3989" stroke-width="1"/>
+    <text x="155.7" y="148.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">kernel</text>
+    <rect x="188.3" y="136.0" width="61.0" height="17.0" rx="8.5" fill="#1a7f37" stroke="#1a7f37" stroke-width="1"/>
+    <text x="218.8" y="148.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">function</text>
+    <rect x="257.4" y="136.0" width="43.4" height="17.0" rx="8.5" fill="#9a6700" stroke="#9a6700" stroke-width="1"/>
+    <text x="279.1" y="148.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">batch</text>
+    <text x="330.0" y="140.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">The kinds of term: values, laws, kernels,</text>
+    <text x="330.0" y="158.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">functions, and batches.</text>
+    <rect x="40.0" y="186.0" width="112.0" height="80.0" rx="8" fill="#eef6ff" stroke="#0969da" stroke-width="1.6"/>
+    <rect x="50.0" y="193.0" width="43.4" height="17.0" rx="8.5" fill="#0969da" stroke="#0969da" stroke-width="1"/>
+    <text x="71.7" y="205.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">value</text>
+    <text x="101.4" y="206.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">r</text>
+    <text x="52.0" y="231.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">a</text>
+    <text x="52.0" y="253.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">b</text>
+    <circle cx="40.0" cy="227.0" r="4.5" fill="#0969da" stroke="#0969da" stroke-width="1.6"/>
+    <circle cx="40.0" cy="249.0" r="4.5" fill="#0969da" stroke="#0969da" stroke-width="1.6"/>
+    <text x="330.0" y="221.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">An output is a port on the left edge,</text>
+    <text x="330.0" y="239.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">labelled inside the box with its name.</text>
+    <rect x="70.0" y="288.0" width="151.0" height="58.0" rx="8" fill="#fff0f7" stroke="#bf3989" stroke-width="1.6"/>
+    <rect x="80.0" y="295.0" width="49.3" height="17.0" rx="8.5" fill="#bf3989" stroke="#bf3989" stroke-width="1"/>
+    <text x="104.6" y="307.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">kernel</text>
+    <text x="137.3" y="308.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">k</text>
+    <text x="59.0" y="323.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="end">y</text>
+    <text x="150.5" y="333.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle" font-style="italic">a draw is an array</text>
+    <circle cx="70.0" cy="329.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
+    <text x="330.0" y="312.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">An output at the root offers a base value whole.</text>
+    <text x="330.0" y="330.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">Its name stands outside the box.</text>
+    <rect x="40.0" y="368.0" width="112.0" height="80.0" rx="8" fill="#fff0f7" stroke="#bf3989" stroke-width="1.6"/>
+    <rect x="50.0" y="375.0" width="49.3" height="17.0" rx="8.5" fill="#bf3989" stroke="#bf3989" stroke-width="1"/>
+    <text x="74.6" y="387.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">kernel</text>
+    <text x="107.3" y="388.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">k</text>
+    <text x="140.0" y="413.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="end">mu</text>
+    <text x="140.0" y="435.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="end">s</text>
+    <circle cx="152.0" cy="409.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
+    <circle cx="152.0" cy="431.0" r="4.5" fill="#ffffff" stroke="#bf3989" stroke-width="1.6"/>
+    <text x="330.0" y="403.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">An input is a port on the right edge.</text>
+    <text x="330.0" y="421.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">A hollow port is an optional input.</text>
+    <rect x="40.0" y="470.0" width="112.0" height="124.0" rx="8" fill="#eef6ff" stroke="#0969da" stroke-width="1.6"/>
+    <rect x="50.0" y="477.0" width="43.4" height="17.0" rx="8.5" fill="#0969da" stroke="#0969da" stroke-width="1"/>
+    <text x="71.7" y="489.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">value</text>
+    <text x="101.4" y="490.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">r</text>
+    <text x="52.0" y="515.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">a</text>
+    <text x="52.0" y="537.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">g</text>
+    <text x="68.0" y="559.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">c</text>
+    <text x="68.0" y="581.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">e</text>
+    <path d="M 56.0,543.0 L 56.0,555.0 L 65.0,555.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M 56.0,543.0 L 56.0,577.0 L 65.0,577.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="40.0" cy="511.0" r="4.5" fill="#0969da" stroke="#0969da" stroke-width="1.6"/>
+    <circle cx="40.0" cy="533.0" r="4.5" fill="#0969da" stroke="#0969da" stroke-width="1.6"/>
+    <text x="330.0" y="518.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">The parts of a value are a tree inside the box:</text>
+    <text x="330.0" y="536.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">here the field a and the group g, which holds</text>
+    <text x="330.0" y="554.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">the fields c and e.</text>
+    <rect x="50.0" y="614.0" width="116.6" height="102.0" rx="8" fill="#fff8d6" stroke="#9a6700" stroke-width="1.2"/>
+    <rect x="45.0" y="619.0" width="116.6" height="102.0" rx="8" fill="#fff8d6" stroke="#9a6700" stroke-width="1.2"/>
+    <rect x="40.0" y="624.0" width="116.6" height="102.0" rx="8" fill="#fff8d6" stroke="#9a6700" stroke-width="1.6"/>
+    <rect x="50.0" y="631.0" width="43.4" height="17.0" rx="8.5" fill="#9a6700" stroke="#9a6700" stroke-width="1"/>
+    <text x="71.7" y="643.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">batch</text>
+    <text x="101.4" y="644.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">draws</text>
+    <text x="52.0" y="669.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">mu</text>
+    <text x="52.0" y="691.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">tau</text>
+    <text x="52.0" y="716.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#59636e" text-anchor="start">levels: sample</text>
+    <circle cx="40.0" cy="665.0" r="4.5" fill="#9a6700" stroke="#9a6700" stroke-width="1.6"/>
+    <circle cx="40.0" cy="687.0" r="4.5" fill="#9a6700" stroke="#9a6700" stroke-width="1.6"/>
+    <text x="330.0" y="670.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">A batch is a stack of boxes.</text>
+    <text x="330.0" y="688.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">Its levels are listed at the bottom.</text>
+    <rect x="20.0" y="752.0" width="112.0" height="58.0" rx="8" fill="#fff0f7" stroke="#bf3989" stroke-width="1.6"/>
+    <rect x="30.0" y="759.0" width="49.3" height="17.0" rx="8.5" fill="#bf3989" stroke="#bf3989" stroke-width="1"/>
+    <text x="54.6" y="771.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">kernel</text>
+    <text x="87.3" y="772.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">a</text>
+    <text x="120.0" y="797.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="end">x</text>
+    <circle cx="132.0" cy="793.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
+    <rect x="200.0" y="752.0" width="112.0" height="58.0" rx="8" fill="#f6f0ff" stroke="#8250df" stroke-width="1.6"/>
+    <rect x="210.0" y="759.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
+    <text x="225.8" y="771.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
+    <text x="249.6" y="772.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">b</text>
+    <text x="212.0" y="797.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">x</text>
+    <circle cx="200.0" cy="793.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <path d="M 195.5,793.0 L 138.5,793.0" fill="none" stroke="#424a53" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <text x="330.0" y="767.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">In a &amp; b, an output of b feeds the input of a</text>
+    <text x="330.0" y="785.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">with the same name: a wire runs from the</text>
+    <text x="330.0" y="803.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">output to the input.</text>
+    <rect x="20.0" y="836.0" width="270.0" height="64.0" rx="14" fill="none" stroke="#6e7781" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <rect x="40.0" y="846.0" width="70.0" height="44.0" rx="8" fill="#fff0f7" stroke="#bf3989" stroke-width="1.6"/>
+    <rect x="170.0" y="846.0" width="70.0" height="44.0" rx="8" fill="#fff0f7" stroke="#bf3989" stroke-width="1.6"/>
+    <circle cx="110.0" cy="868.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
+    <circle cx="240.0" cy="868.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
+    <path d="M 283.5,848.0 L 130.0,848.0 L 130.0,868.0 L 116.5,868.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <path d="M 258.0,848.0 L 258.0,868.0 L 246.5,868.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <circle cx="258.0" cy="848.0" r="3" fill="#424a53" stroke="#424a53" stroke-width="1"/>
+    <circle cx="290.0" cy="848.0" r="4.5" fill="#6e7781" stroke="#6e7781" stroke-width="1.6"/>
+    <text x="330.0" y="854.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">The result of a merge is a dashed boundary,</text>
+    <text x="330.0" y="872.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">with the result's ports on its edges. One port</text>
+    <text x="330.0" y="890.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">that fans out to both operands is a shared input.</text>
+  </g>
+</svg>

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="703" height="184" viewBox="0 0 703 184" role="img">
+  <title>How a figure draws a merge</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#424a53"/>
+    </marker>
+  </defs>
+  <rect x="0.5" y="0.5" width="702" height="183" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <g transform="translate(-2.0,18.0)">
+    <rect x="20.0" y="0.0" width="112.0" height="58.0" rx="8" fill="#fff0f7" stroke="#bf3989" stroke-width="1.6"/>
+    <rect x="30.0" y="7.0" width="49.3" height="17.0" rx="8.5" fill="#bf3989" stroke="#bf3989" stroke-width="1"/>
+    <text x="54.6" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">kernel</text>
+    <text x="87.3" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">a</text>
+    <text x="120.0" y="45.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="end">x</text>
+    <circle cx="132.0" cy="41.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
+    <rect x="200.0" y="0.0" width="112.0" height="58.0" rx="8" fill="#f6f0ff" stroke="#8250df" stroke-width="1.6"/>
+    <rect x="210.0" y="7.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
+    <text x="225.8" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
+    <text x="249.6" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">b</text>
+    <text x="212.0" y="45.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">x</text>
+    <circle cx="200.0" cy="41.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <path d="M 195.5,41.0 L 138.5,41.0" fill="none" stroke="#424a53" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <text x="330.0" y="15.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">In a &amp; b, an output of b feeds the input of a</text>
+    <text x="330.0" y="33.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">with the same name: a wire runs from the</text>
+    <text x="330.0" y="51.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">output to the input.</text>
+    <rect x="20.0" y="84.0" width="270.0" height="64.0" rx="14" fill="none" stroke="#6e7781" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <rect x="40.0" y="94.0" width="70.0" height="44.0" rx="8" fill="#fff0f7" stroke="#bf3989" stroke-width="1.6"/>
+    <rect x="170.0" y="94.0" width="70.0" height="44.0" rx="8" fill="#fff0f7" stroke="#bf3989" stroke-width="1.6"/>
+    <circle cx="110.0" cy="116.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
+    <circle cx="240.0" cy="116.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
+    <path d="M 283.5,96.0 L 130.0,96.0 L 130.0,116.0 L 116.5,116.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <path d="M 258.0,96.0 L 258.0,116.0 L 246.5,116.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <circle cx="258.0" cy="96.0" r="3" fill="#424a53" stroke="#424a53" stroke-width="1"/>
+    <circle cx="290.0" cy="96.0" r="4.5" fill="#6e7781" stroke="#6e7781" stroke-width="1.6"/>
+    <text x="330.0" y="102.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">The result of a merge is a dashed boundary,</text>
+    <text x="330.0" y="120.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">with the result's ports on its edges. One port</text>
+    <text x="330.0" y="138.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">that fans out to both operands is a shared input.</text>
+  </g>
+</svg>
