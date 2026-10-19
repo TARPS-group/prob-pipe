@@ -1,5 +1,7 @@
 # Gaps and conflicts across the plans
 
+> *Historical record. Every item was settled by 2026-10-18; where an item disagrees with `decisions.md` or the current plans, they win. Later changes: D1 (the accessor is `t.component(c)` until the rename after the workshop, then `t.output(c)`); D4 ruling 2 (no view wraps, and #571's event rule is dropped: inputs and outputs Q2); D6 Q15 and Q16 (the class is `EvaluationExecutor`, the module `functions/_evaluation_keys.py`, and "point" became "evaluation point"); D9 (the cut is README § Steps'); F1 (S2 and E3 are split into S2a, S2b, E3a, and E3b; `map_points` is `evaluate_at_points`). The orientation below uses the words of 2026-10-17, such as "point sets", "project", and "address", which the plans have since replaced; `declarations.md`, `addressing.md`, and `call-context-proposal.md` are deleted before the plans PR merges (see git history). New questions are in `decisions.md` § Waiting for a decision.*
+
 This file lists every place where the three plans disagree with each other, are out of date, or leave a decision open that implementation needs.
 The `plans/` PR merges once each item here is settled, together with the open points O1–O16 of `declarations-and-addressing.md`, and the plans are updated to match (README § Steps, step PL). All were settled on 2026-10-18.
 Settled items move to [`decisions.md`](decisions.md), and the plan texts change in the same commit.
@@ -34,14 +36,14 @@ The plan adds:
 - the **embedded call**, which runs opaque code inside a compiled JAX program through a host callback, so a joint's compiled sampler or a BlackJAX kernel can send a batch of simulator runs to a cluster;
 - the **call token**, a small integer passed into compiled programs so a callback can find the settings of the call it belongs to.
 
-**Declarations** ([`declarations.md`](declarations.md), issue #571) decide *how terms describe what they produce and consume*.
+**Declarations** (`declarations.md`, deleted; see git history; issue #571) decide *how terms describe what they produce and consume*.
 A law's `event_spec` and a function's `output_spec` are `OutputSpec`s, which offer named **components**.
 A kernel's `given_spec` and a function's `input_spec` are `InputSpec`s, which declare named **slots**.
 Composition meets a component with the slot of the same name.
 #571 gives these declarations public operations (`project`, `without`, merging), one way of reading slots, and the batch's stored element declaration.
 jhuggins's reply makes `OutputSpec` a mapping and proposes `&` for composition.
 
-**Addressing** ([`addressing.md`](addressing.md), issue #573) decides *how a path or a subscript picks out a part of a term*.
+**Addressing** (`addressing.md`, deleted; see git history; issue #573) decides *how a path or a subscript picks out a part of a term*.
 Today `x["a", "b"]` means one nested path on a record and two paths on a law.
 The plan gives one reading of a subscript everywhere, and adopts **grammar B**: only an array or an opaque value may be named as a whole, and anything with parts offers its parts or is wrapped in a one-field record.
 
@@ -119,7 +121,7 @@ grouped[["g"]].event_spec   # grammar B: OutputSpec(RecordSpec(g=RecordSpec(c=..
 
 **Blocks:** S2, S3, S4, and every later step of the declarations and addressing track, until the reconciled text exists.
 
-**Status:** ✅ settled 2026-10-17. The conflicts are resolved by precedence, the plan becomes one reconciled text, and the accessor is named `component`.
+**Status:** ✅ settled 2026-10-17. The conflicts are resolved by precedence, the plan becomes one reconciled text, and the accessor is named `component`. *Renamed 2026-10-18 (provisional, inputs and outputs Q1 and Q5): `t.component(c)` until the rename after the workshop, then `t.output(c)`.*
 
 ---
 
@@ -275,7 +277,7 @@ Timing: option 1. The size and the open rulings make option 2 a risk to everythi
 
 **Status:** ✅ settled 2026-10-17.
 1. Grammar B, not B′.
-2. A view of a field that holds a law or a function wraps, keeping the field's name, so #571's event rule stands unchanged.
+2. A view of a field that holds a law or a function wraps, keeping the field's name, so #571's event rule stands unchanged. *Reversed 2026-10-18 (provisional, inputs and outputs Q2): no view wraps, and the event rule is removed (`declarations-and-addressing-io.md` § 21.5).*
 3. The body of a function with a wrapped output returns the record, and the declaration checks it. A pending type filled with a spec that has parts raises.
 4. Grammar B for the kinds the workshop uses merges before it (step G1). Random measures, random functions, and Gaussian processes do not appear in the workshop, so they wait until after it (step G2).
 
@@ -334,7 +336,7 @@ Each is explained from scratch in the plan's section 9, so here each gets its co
 
 Questions Q6 (the memo across calls), Q9 (Prefect), Q10 (a Gibbs method), and Q11 (who owns the differentiability claim) belong to post-workshop steps.
 
-**Status:** ✅ settled 2026-10-17: every recommendation in the table is accepted, Q5 and Q14 included. Q16's module is named `functions/_point_keys.py`, since `_work_scope.py` was too vague.
+**Status:** ✅ settled 2026-10-17: every recommendation in the table is accepted, Q5 and Q14 included. Q16's module is named `functions/_point_keys.py`, since `_work_scope.py` was too vague. *Superseded 2026-10-18: the class is `EvaluationExecutor`, not `PointExecutor` (Q15), the module is `functions/_evaluation_keys.py`, and "point" is "evaluation point" (`decisions.md`).*
 
 ---
 
@@ -379,7 +381,7 @@ So the plan passes a **call token** into every program as an argument, and the h
 1. There is one call context, and its core logic is implemented once. #587's carried context and the execution plan's call context become the same mechanism, with no duplicated or redundant code.
 2. The field `record` of #587's `_CarriedContext` is renamed, since "record" collides with ProbPipe's `Record`; the class `_MonteCarloRecord` has the same collision.
 
-An independent design agent wrote the precise contract, first as `plans/call-context-proposal.md` and now `execution-layer.md` § 6.16: what the context holds, its lifecycle and precedence, its transport across threads, processes, Prefect, and host callbacks, the rule for settings read while tracing, the names, and what changes in #587 versus the execution steps. Once the maintainer accepts it, it is folded into the execution plan, and a comment on #587 describes the unified design to jhuggins.
+An independent design agent wrote the precise contract, first as `plans/call-context-proposal.md` (deleted; see git history) and now `execution-layer.md` § 6.16: what the context holds, its lifecycle and precedence, its transport across threads, processes, Prefect, and host callbacks, the rule for settings read while tracing, the names, and what changes in #587 versus the execution steps. Once the maintainer accepts it, it is folded into the execution plan, and a comment on #587 describes the unified design to jhuggins.
 
 ---
 
@@ -424,7 +426,7 @@ The principle proposed on 2026-10-17: change everything a user types before the 
 | E1–E7 | The execution core of the plan's section 13 | yes |
 | E8 | The JAX settings contract | yes, but the first to cut if time runs short |
 
-**Status:** ✅ settled 2026-10-17. Before the workshop: S0–S4, G1, and E1–E8. After it: G2–G5 and the execution plan's post-workshop list. If time runs short, the cuts are E8 first, then E7, then the lifting and default-output parts of G1; S0–S4 and E1–E6 are never cut.
+**Status:** ✅ settled 2026-10-17. Before the workshop: S0–S4, G1, and E1–E8. After it: G2–G5 and the execution plan's post-workshop list. If time runs short, the cuts are E8 first, then E7, then the lifting and default-output parts of G1; S0–S4 and E1–E6 are never cut. *Superseded 2026-10-18 by decision M6: README § Steps owns the never-cut set and the cut order (E8, E7, G1b, E5, G1a, S4).*
 
 ---
 
@@ -525,7 +527,7 @@ Run in the wrong order, each rebase redoes the other's work.
 5. E4 and E5 after S2 and S3, since both edit `_conditional.py` and `_factored.py`.
 6. S4 after E3, since both rewrite the sweep.
 
-**Status:** ✅ settled 2026-10-17: the order above.
+**Status:** ✅ settled 2026-10-17: the order above. *Superseded: README § Steps owns the order; S2 and E3 are split into S2a, S2b, E3a, and E3b, and `map_points` is `evaluate_at_points`.*
 
 ---
 
