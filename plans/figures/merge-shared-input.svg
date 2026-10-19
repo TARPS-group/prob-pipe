@@ -1,42 +1,45 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="660" height="198" viewBox="0 0 660 198" role="img">
-  <title>The merge lik_nee &amp; lik_lai of two kernels that share the input theta</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="570" height="198" viewBox="0 0 570 198" role="img">
+  <title>The merge a &amp; b of two kernels that share the input theta</title>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
       <path d="M 0 1 L 9 5 L 0 9 z" fill="#424a53"/>
     </marker>
+    <marker id="arrow-fault" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#cf222e"/>
+    </marker>
   </defs>
-  <rect x="0.5" y="0.5" width="659" height="196" rx="12" fill="#ffffff" stroke="#d0d7de"/>
-  <g transform="translate(53.8,45.5)">
-    <rect x="69.8" y="38.0" width="138.9" height="58.0" rx="8" fill="#fff0f7" stroke="#bf3989" stroke-width="1.6"/>
-    <rect x="79.8" y="45.0" width="49.3" height="17.0" rx="8.5" fill="#bf3989" stroke="#bf3989" stroke-width="1"/>
-    <text x="104.4" y="57.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">kernel</text>
-    <text x="137.1" y="58.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">lik_nee</text>
-    <text x="58.8" y="73.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="end">nee</text>
-    <text x="196.7" y="83.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="end">theta</text>
-    <circle cx="69.8" cy="79.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
-    <circle cx="208.7" cy="79.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
-    <rect x="363.5" y="38.0" width="138.9" height="58.0" rx="8" fill="#fff0f7" stroke="#bf3989" stroke-width="1.6"/>
-    <rect x="373.5" y="45.0" width="49.3" height="17.0" rx="8.5" fill="#bf3989" stroke="#bf3989" stroke-width="1"/>
-    <text x="398.1" y="57.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">kernel</text>
-    <text x="430.8" y="58.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">lik_lai</text>
-    <text x="352.5" y="73.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="end">lai</text>
-    <text x="490.4" y="83.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="end">theta</text>
-    <circle cx="363.5" cy="79.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
-    <circle cx="502.4" cy="79.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
-    <path d="M 65.3,79.0 L 6.5,79.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <rect x="0.5" y="0.5" width="569" height="196" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <g transform="translate(37.9,45.5)">
+    <rect x="53.9" y="38.0" width="112.0" height="58.0" rx="8" fill="#fff0f7" stroke="#bf3989" stroke-width="1.6"/>
+    <rect x="63.9" y="45.0" width="49.3" height="17.0" rx="8.5" fill="#bf3989" stroke="#bf3989" stroke-width="1"/>
+    <text x="88.6" y="57.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">kernel</text>
+    <text x="121.2" y="58.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">a</text>
+    <text x="42.9" y="73.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="end">x</text>
+    <text x="153.9" y="83.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="end">theta</text>
+    <circle cx="53.9" cy="79.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
+    <circle cx="165.9" cy="79.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
+    <rect x="315.9" y="38.0" width="112.0" height="58.0" rx="8" fill="#fff0f7" stroke="#bf3989" stroke-width="1.6"/>
+    <rect x="325.9" y="45.0" width="49.3" height="17.0" rx="8.5" fill="#bf3989" stroke="#bf3989" stroke-width="1"/>
+    <text x="350.6" y="57.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">kernel</text>
+    <text x="383.2" y="58.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">b</text>
+    <text x="304.9" y="73.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="end">y</text>
+    <text x="415.9" y="83.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="end">theta</text>
+    <circle cx="315.9" cy="79.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
+    <circle cx="427.9" cy="79.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
+    <path d="M 49.4,79.0 L 6.5,79.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
     <circle cx="0.0" cy="79.0" r="4.5" fill="#6e7781" stroke="#6e7781" stroke-width="1.6"/>
-    <text x="-10.0" y="83.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="end">nee</text>
-    <path d="M 359.0,79.0 L 341.5,79.0 L 341.5,118.0 L 6.5,118.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <text x="-10.0" y="83.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="end">x</text>
+    <path d="M 311.4,79.0 L 293.9,79.0 L 293.9,118.0 L 6.5,118.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
     <circle cx="0.0" cy="118.0" r="4.5" fill="#6e7781" stroke="#6e7781" stroke-width="1.6"/>
-    <text x="-10.0" y="122.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="end">lai</text>
-    <path d="M 531.9,16.0 L 238.7,16.0 L 238.7,79.0 L 215.2,79.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
-    <circle cx="538.4" cy="16.0" r="4.5" fill="#6e7781" stroke="#6e7781" stroke-width="1.6"/>
-    <text x="548.4" y="20.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="start">theta</text>
-    <path d="M 518.4,16.0 L 518.4,79.0 L 508.9,79.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
-    <circle cx="518.4" cy="16.0" r="3" fill="#424a53" stroke="#424a53" stroke-width="1"/>
-    <rect x="0.0" y="0.0" width="538.4" height="134.0" rx="14" fill="none" stroke="#6e7781" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text x="-10.0" y="122.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="end">y</text>
+    <path d="M 457.4,16.0 L 195.9,16.0 L 195.9,79.0 L 172.4,79.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <circle cx="463.9" cy="16.0" r="4.5" fill="#6e7781" stroke="#6e7781" stroke-width="1.6"/>
+    <text x="473.9" y="20.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="start">theta</text>
+    <path d="M 443.9,16.0 L 443.9,79.0 L 434.4,79.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <circle cx="443.9" cy="16.0" r="3" fill="#424a53" stroke="#424a53" stroke-width="1"/>
+    <rect x="0.0" y="0.0" width="463.9" height="134.0" rx="14" fill="none" stroke="#6e7781" stroke-width="1.5" stroke-dasharray="6 4"/>
     <rect x="4.0" y="-27.0" width="49.3" height="17.0" rx="8.5" fill="#bf3989" stroke="#bf3989" stroke-width="1"/>
     <text x="28.6" y="-14.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">kernel</text>
-    <text x="61.3" y="-14.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">lik_nee &amp; lik_lai</text>
+    <text x="61.3" y="-14.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">a &amp; b</text>
   </g>
 </svg>

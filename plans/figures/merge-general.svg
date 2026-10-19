@@ -4,6 +4,9 @@
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
       <path d="M 0 1 L 9 5 L 0 9 z" fill="#424a53"/>
     </marker>
+    <marker id="arrow-fault" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#cf222e"/>
+    </marker>
   </defs>
   <rect x="0.5" y="0.5" width="513" height="240" rx="12" fill="#ffffff" stroke="#d0d7de"/>
   <g transform="translate(37.9,45.5)">

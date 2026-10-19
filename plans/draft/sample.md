@@ -1,31 +1,20 @@
 # Inputs, outputs, paths, and merge
 
 > [!NOTE]
-> **This is a style sample**, for approval before the full document is written.
-> It holds the front matter and three sections in their final form: § 3 (inputs and outputs), § 5 (merge), and § 14 (records).
-> Links to other sections do not resolve yet.
-> [`outline.md`](outline.md) lists every section.
+> **Style sample**, for approval before the full document is written: the front matter and §§ 3, 5, and 14 in final form.
+> Links to other sections do not resolve yet; [`outline.md`](outline.md) lists every section.
 
-ProbPipe builds statistical workflows from a few kinds of pieces: values, probability laws, kernels, functions, and batches of any of these.
-This document is the design of how those pieces describe themselves and fit together.
-It answers four questions:
-1. **Names:** how the parts of a value are named, so that a law, its draws, and its summaries are all indexed by the same names.
-2. **Inputs and outputs:** what each piece receives, what it offers, and how it says so.
-3. **Selecting:** how a part of any piece is picked out, removed, or renamed.
-4. **Merging:** how two pieces are combined into one by matching the names of what one offers with what the other receives, as a likelihood and a prior are combined into a joint model.
+ProbPipe builds statistical workflows from values, laws, kernels, functions, and batches of these.
+This document designs how they fit together:
+1. **Names:** how the parts of a value are named, so that a law, its draws, and its summaries share one set of names.
+2. **Inputs and outputs:** what each object receives and what it offers.
+3. **Selecting:** how a part of any object is picked out, removed, or renamed.
+4. **Merging:** how two objects combine into one by matching names, as a likelihood and a prior combine into a joint model.
 
-Part I explains the ideas without code, from the most general to the most specific, so that the design can be judged from Part I alone.
-Part II gives the code that realizes each idea, class by class, with its API and short examples.
-The appendices hold everything that is not the design itself:
-- the open questions;
-- the plan for implementing the design;
-- how it differs from today's code;
-- how it relates to earlier plans;
-- the alternatives that were weighed;
-- its status and history.
-
-The document is written for ProbPipe's developers, and assumes no part in the earlier discussions of the design.
-Citations such as II.6 and D1 name sections and principles of the design reference in [`design/`](../../design/README.md).
+Part I states the ideas without code; the design can be judged from it alone.
+Part II gives the code, class by class.
+The appendices hold the open questions, the implementation plan, the differences from today's code, the relation to earlier plans, the alternatives weighed, and the status.
+Citations such as II.6 and D1 name sections and principles of [`design/`](../../design/README.md).
 
 ## Contents
 
@@ -35,42 +24,43 @@ Citations such as II.6 and D1 name sections and principles of the design referen
    1. [Base values and records](#11-base-values-and-records)
    2. [Paths, nodes, fields, and groups](#12-paths-nodes-fields-and-groups)
    3. [The parts of a value](#13-the-parts-of-a-value)
-2. [Terms, kinds, and types](#2-terms-kinds-and-types)
-   1. [Terms and their kinds](#21-terms-and-their-kinds)
-   2. [What a term produces](#22-what-a-term-produces)
-   3. [The type of a term](#23-the-type-of-a-term)
-   4. [The paths of every term](#24-the-paths-of-every-term)
-   5. [When one type admits another: conformance and unification](#25-when-one-type-admits-another-conformance-and-unification)
+2. [Objects, kinds, and types](#2-objects-kinds-and-types)
+   1. [Objects and their kinds](#21-objects-and-their-kinds)
+   2. [What an object produces](#22-what-an-object-produces)
+   3. [The type of an object](#23-the-type-of-an-object)
+   4. [The paths of every object](#24-the-paths-of-every-object)
+   5. [When one type admits another](#25-when-one-type-admits-another)
 3. [Inputs and outputs](#3-inputs-and-outputs)
-   1. [Inputs: where a term receives values](#31-inputs-where-a-term-receives-values)
-   2. [Outputs: what a term offers](#32-outputs-what-a-term-offers)
+   1. [Inputs](#31-inputs)
+   2. [Outputs](#32-outputs)
    3. [How outputs are named](#33-how-outputs-are-named)
-   4. [The input spec and the output spec](#34-the-input-spec-and-the-output-spec)
-   5. [A term's signature, and how a figure draws it](#35-a-terms-signature-and-how-a-figure-draws-it)
+   4. [Input specs and output specs](#34-input-specs-and-output-specs)
+   5. [Signatures and their figures](#35-signatures-and-their-figures)
    6. [Inputs and outputs compared](#36-inputs-and-outputs-compared)
 4. [Selecting, removing, and renaming parts](#4-selecting-removing-and-renaming-parts)
    1. [Selecting one part](#41-selecting-one-part)
-   2. [Selecting several parts at once](#42-selecting-several-parts-at-once)
+   2. [Selecting several parts](#42-selecting-several-parts)
    3. [Removing parts](#43-removing-parts)
    4. [Selecting from a type](#44-selecting-from-a-type)
    5. [Renaming and moving parts](#45-renaming-and-moving-parts)
-   6. [The term at an output](#46-the-term-at-an-output)
-5. [Merging terms by name](#5-merging-terms-by-name)
+   6. [The object at an output](#46-the-object-at-an-output)
+5. [Merging objects by name](#5-merging-objects-by-name)
    1. [Why merge](#51-why-merge)
-   2. [The definition of merge](#52-the-definition-of-merge)
-   3. [The value of a merge](#53-the-value-of-a-merge)
-   4. [Why each condition holds](#54-why-each-condition-holds)
-   5. [Properties of merge](#55-properties-of-merge)
-   6. [What merge is not](#56-what-merge-is-not)
+   2. [The definition](#52-the-definition)
+   3. [Optional inputs](#53-optional-inputs)
+   4. [The value of a merge](#54-the-value-of-a-merge)
+   5. [Refused merges](#55-refused-merges)
+   6. [Properties](#56-properties)
+   7. [What merge is not](#57-what-merge-is-not)
 6. [The kinds, one by one](#6-the-kinds-one-by-one)
-   1. [Records and base values](#61-records-and-base-values)
+   1. [Base values and records](#61-base-values-and-records)
    2. [Laws](#62-laws)
    3. [Kernels](#63-kernels)
    4. [Functions](#64-functions)
    5. [Batches](#65-batches)
 7. [Invariants](#7-invariants)
    1. [The invariants](#71-the-invariants)
-   2. [Where an invariant does not hold, on purpose](#72-where-an-invariant-does-not-hold-on-purpose)
+   2. [Exceptions on purpose](#72-exceptions-on-purpose)
 
 **[Part II: The design in code](#part-ii-the-design-in-code)**
 
@@ -78,19 +68,19 @@ Citations such as II.6 and D1 name sections and principles of the design referen
 9. [Term specs](#9-term-specs)
 10. [`InputSpec`](#10-inputspec)
 11. [`OutputSpec`](#11-outputspec)
-12. [Indexing in code: `[]`, `in`, `without`, and `rename`](#12-indexing-in-code--in-without-and-rename)
-13. [Merging in code: `&`](#13-merging-in-code-)
+12. [Indexing in code](#12-indexing-in-code)
+13. [Merging in code](#13-merging-in-code)
 14. [Records: `Record` and `RecordSpec`](#14-records-record-and-recordspec)
-15. [Laws: `Distribution` and `MarginalView`](#15-laws-distribution-and-marginalview)
-16. [Kernels: `ConditionalDistribution`](#16-kernels-conditionaldistribution)
-17. [Functions: `Function`](#17-functions-function)
-18. [Batches: `Batch` and `BatchSpec`](#18-batches-batch-and-batchspec)
-19. [Errors and their messages](#19-errors-and-their-messages)
+15. [Laws](#15-laws)
+16. [Kernels](#16-kernels)
+17. [Functions](#17-functions)
+18. [Batches](#18-batches)
+19. [Errors and messages](#19-errors-and-messages)
 20. [Symbolic dimensions in code](#20-symbolic-dimensions-in-code)
 
 **Appendices**
 
-- [A. Open questions](#a-open-questions)
+- [A. Open questions and issues](#a-open-questions-and-issues)
 - [B. Implementation plan and sequencing](#b-implementation-plan-and-sequencing)
 - [C. Differences from today's code](#c-differences-from-todays-code)
 - [D. Relation to previous plans](#d-relation-to-previous-plans)
@@ -101,695 +91,458 @@ Citations such as II.6 and D1 name sections and principles of the design referen
 
 ## 3. Inputs and outputs
 
-A term meets the rest of a workflow in two ways.
-It receives values at its inputs, and it offers what it produces at its outputs.
-This section defines both, states the rule that decides how outputs are named, and shows how a figure draws a term with its inputs and outputs.
+An object receives values at its inputs and offers what it produces at its outputs.
 
-### 3.1 Inputs: where a term receives values
+### 3.1 Inputs
 
 > [!IMPORTANT]
-> **Definition (input).** An *input* of a term is a named place where the term receives one value.
-> An input has three attributes:
-> - a *name*, which is also a Python identifier, since a value is supplied to an input by its name;
-> - a *type*, which states the values the input admits (§ 2.3);
-> - a flag, which makes the input *required* or *optional*.
+> **Definition (input).** An *input* is a named place where an object receives one value.
+> It has a name, which is a Python identifier; a type (§ 2.3); and a flag, *required* or *optional*.
+> An *optional* input has a default, held by the object that owns the input.
 
 > [!IMPORTANT]
-> **Definition (optional input).** An *optional input* has a default value.
-> The term that owns the input holds the default.
-
-A kernel has one input for each value it conditions on, and a function has one input for each of its parameters.
-A batch of kernels or of functions has the inputs of its elements, since one value bound to an input goes to every element.
-A value and a law have no inputs.
-
-> [!IMPORTANT]
-> **Definition (binding).** *Binding* supplies values to some of a term's inputs, by name.
-> A binding may omit an optional input, and the term then uses its own default for it.
-
-Calling a function binds its parameters, and conditioning a kernel on values binds the inputs it conditions on.
-Binding a kernel's last required input gives a law, in which every optional input that the binding omits takes its default.
-Where a later section needs to write the values of a binding, it writes them as a record with one field for each input supplied, such as `{mu: 0.3, s: 2.0}`.
-
-**Example.**
-Take the kernel `lik_opt`, which for each pair of values `mu` and `s` is the law of `y ~ Normal(mu, s)`, and whose `s` has the default 1.
-- It has two inputs, each an array of shape `()`: `mu`, which is required, and `s`, which is optional.
-- Binding `mu` to 0.3 gives the law `Normal(0.3, 1)`, with `s` at its default.
-- Binding `mu` to 0.3 and `s` to 2 gives the law `Normal(0.3, 2)`.
+> **Definition (binding).** *Binding* supplies values to some of an object's inputs, by name.
+> An omitted optional input takes its default.
 
 > [!NOTE]
-> **Consequence.** An input whose type is a record type is one input, and a binding supplies it with one record.
+> 1. Kernels have an input for each value they condition on, and functions one for each parameter. A batch of kernels or functions has its elements' inputs. Base values, records, and laws have none.
+> 2. Binding a kernel's last required input gives a law.
+> 3. An input of record type is one input, supplied with one record.
+
+The kernel `a(y | mu, sigma)` draws `y ~ Normal(mu, sigma)`, with `sigma` optional and default 1.
+Binding `mu = 0.3` gives the law `Normal(0.3, 1)`; binding also `sigma = 2` gives `Normal(0.3, 2)`.
+The values of a binding are written as a record, `{mu: 0.3, sigma: 2.0}`.
 
 <details>
 <summary>Technical note: binding part of a record input</summary>
 
-A binding may supply part of a record input through a path into it.
-For an input `g` of the record type `{c, e}`, a binding may supply `g/c` alone.
-The input `g` then takes only the rest of the record, `{e}`, and it is required from then on, since a default is a whole value (III.9).
+A binding may supply part of a record input by a path: for an input `g` of type `{b, c}`, it may supply `g/b` alone.
+The input `g` then takes the rest, `{c}`, and becomes required, since a default is a whole value (III.9).
 
 </details>
 
-### 3.2 Outputs: what a term offers
+### 3.2 Outputs
 
 > [!IMPORTANT]
-> **Definition (output).** An *output* of a term is a name under which the term offers part or all of what it produces.
+> **Definition (output).** An *output* is a name under which an object offers part or all of what it produces (§ 2.2).
 > The *value at an output* is that part, or the whole.
-
-Which parts a term offers, and under which names, depends only on what it produces (§ 2.2).
-The next subsection states the rule.
 
 ### 3.3 How outputs are named
 
-A name can be attached to a value in two places.
-It can stand outside the value, as one name for the whole, or inside it, as the names of the value's parts.
-A value with parts that also carried a name outside would have two sets of paths.
-Suppose a law whose draws are records `{beta, sigma}` were also named `params` from outside.
-Its draws would be indexed by `beta`, while everything that sees the law from outside, such as a rename, would index it by `params/beta`.
+A value with parts that also had a name outside would have two sets of paths.
+If a law whose draws are `{mu, sigma}` were also named `params` from outside, its draws would be indexed by `mu` and the law by `params/mu`.
 The naming rule gives each name one place.
 
 > [!IMPORTANT]
-> **Definition (the naming rule).** A produced term offers its outputs as follows:
-> 1. **A base value** is offered whole, under one name that stands outside it, which the term that produces it states. This output is *at the root*.
-> 2. **A record** offers its children: one output for each child, under the child's name.
-> 3. **A function** offers the outputs of its return value. The value at an output `c` is the function that maps each value of its inputs to the value at `c` of its return value.
-> 4. **A batch** offers the outputs of its elements. The value at an output `c` is the batch, over the same levels, of the elements' values at `c`.
-> 5. **A law or a kernel** offers no outputs.
+> **Definition (naming rule).** A produced object offers:
+> 1. **a base value:** itself, whole, under one name, stated by the object that produces it; this output is *at the root*;
+> 2. **a record:** its children, under their names;
+> 3. **a function:** the outputs of its return value, each as the function that returns the value there;
+> 4. **a batch:** the outputs of its elements, each as the batch of the elements' values there;
+> 5. **a law or a kernel:** nothing.
 >
-> The outputs of a term are the outputs that its produced term offers.
-> So no value other than a base value is ever named from outside.
-
-Rules 3 and 4 apply to what a function returns and to what a batch holds, whatever its kind.
-Rule 5 concerns a law that is itself produced, such as a law that a function returns or that a random measure draws.
-A law as a term offers the outputs of its draws, since its produced term is a draw: a law whose draws are records `{mu, tau}` offers `mu` and `tau`, and the value at `mu` is the field `mu` of a draw.
+> An object's outputs are those of its produced object, so only a base value is ever named from outside.
 
 > [!IMPORTANT]
-> **Definition (wrap).** To offer a value that is not a base value under one name, the code that produces it *wraps* it: it produces the one-field record `{name: value}` instead.
-> The record's one child is then the one output, and `name` is a path of every value produced.
+> **Definition (wrap).** To offer a value that is not a base value under one name `n`, the object that produces it *wraps* it: it produces the record `{n: value}` instead.
 
-![Three terms. A kernel lik whose draw is an array offers it whole under the name y, drawn outside the box. A law params_prior whose draws are records offers its fields beta and sigma. The same law wrapped offers one output, params, which holds beta and sigma.](../figures/output-naming.svg)
+A law's produced object is a draw, so a law offers its draws' outputs; rule 5 concerns a produced law, such as one a function returns.
 
-The figure shows the first two rules and a wrap.
-Each example below builds the term it uses.
-- The kernel `lik` draws `y ~ Normal(mu, 1)` for each value of `mu`. Its draw is an array, so by rule 1 it offers the array whole, under the name `y`, at the root.
-- A law `params_prior` whose draws are records `{beta, sigma}` offers `beta` and `sigma`, by rule 2.
-- A law whose draws are records `{params: {beta, sigma}}` offers one output, `params`, by rule 2. Its draws are indexed by `params/beta`, and so is the law.
-- A function `emulator` that maps `theta` to a record `{mean, var}` offers `mean` and `var`, by rules 3 and 2. The value at `mean` is the function that maps `theta` to the field `mean` of `emulator(theta)`.
-- A function `fit` that returns a posterior law offers no outputs, by rules 3 and 5. To offer the posterior under a name, `fit` returns the record `{posterior: law}` instead.
-- A batch of 100 draws of a law over `{mu, tau}` offers `mu` and `tau`, by rules 4 and 2. The value at `mu` is the batch of the 100 values of `mu`.
-- A batch of 4 draws of a law whose draws are arrays named `x` offers `x`, by rules 4 and 1. The value at `x` is the whole batch.
+![Three objects. A kernel k whose draw is an array offers it whole under the name y, written outside the box. A law d whose draws are records offers mu and sigma. The same law wrapped offers one output, params, holding mu and sigma.](../figures/output-naming.svg)
+*Figure: a base value is offered whole under an outside name (rule 1); a record offers its children (rule 2); a wrap offers the record under one name.*
 
-> [!NOTE]
-> **Consequence (one set of paths).** A term offers either one output at the root, or outputs that are all paths of one name, never both.
-> The name of an output at the root is not a path, since nothing is below it.
-> The name of every other output is its own path.
-
-The reason is that rule 1 gives an output at the root only to a base value, which has no parts, and rules 2 to 4 give outputs that are top-level parts, of a record or of every return value or element.
-So the names that pick out a term's parts, the names its outputs are offered under, and the paths of its draws all agree.
+| Object | Offers | By rules |
+| --- | --- | --- |
+| kernel `k(y \| mu)`, whose draw is an array | `y`, at the root | 1 |
+| law `d` with draws `{mu, sigma}` | `mu`, `sigma` | 2 |
+| law with draws `{params: {mu, sigma}}` | `params`; its draws and the law have the path `params/mu` | 2 |
+| function `f` from `x` to `{y, z}` | `y`, `z`; the value at `y` maps `x` to `f(x)`'s `y` | 3, 2 |
+| function `h` returning a law | nothing; to offer it, `h` returns `{params: law}` | 3, 5 |
+| 100 draws of `d` | `mu`, `sigma`, each a batch of 100 values | 4, 2 |
+| 4 draws of a law over an array `x` | `x`, the whole batch | 4, 1 |
 
 > [!NOTE]
-> **Consequence.** A base value that no term produced, such as an array on its own, has no outputs: nothing states a name for it, and its label is not a name (§ 2.1).
+> 1. An object offers either one output at the root or outputs that are all one-name paths, never both.
+> 2. The name of an output at the root is not a path, since nothing is below it; every other output's name is its own path. So an object's outputs, its parts, and its draws' paths use one set of names.
+> 3. A base value that no object produced, such as a lone array, has no outputs: nothing states its name, and a label is not one.
 
 <details>
-<summary>Technical note: why a function into records offers its outputs, and a law over records does not</summary>
+<summary>Technical note: why a function into records offers outputs and a law over records does not</summary>
 
-A function `f` into records `{mean, var}` is determined by its two output functions: `f(x)` is the record `{mean: f_mean(x), var: f_var(x)}`, where `f_mean` maps `x` to the field `mean` of `f(x)`.
-So offering `f` by its outputs loses nothing.
-A batch of records is determined by its columns in the same way.
-
-A law over records `{mu, tau}` is not determined by its two marginal laws, since many joint laws have the same marginals.
-If a produced law offered its marginals as outputs, a later step could receive `mu` and `tau` as two separate laws and lose the dependence between them.
-So a produced law offers no outputs (D1), and a batch of laws offers none either, by rules 4 and 5.
+A function `f` into `{y, z}` is determined by its output functions, since `f(x)` is `{y: f_y(x), z: f_z(x)}`, and a batch of records by its columns.
+A law over `{mu, sigma}` is not determined by its marginals, since many joint laws share them.
+Offering the marginals would let a later step receive `mu` and `sigma` as separate laws and lose their dependence (D1), so a produced law offers nothing, and so does a batch of laws.
 
 </details>
 
 <details>
-<summary>Technical note: the names of outputs and of inputs</summary>
+<summary>Technical note: names of outputs and of inputs</summary>
 
-The name of an output is any name (§ 1.1), since it becomes the name of a field.
-The name of an input is also a Python identifier.
-So an output whose name is not an identifier, such as `"n-obs"`, cannot supply an input of the same name.
+An output's name is any name (§ 1.1), since it becomes a field; an input's name is also a Python identifier.
+An output named `"n-obs"` therefore supplies no input.
 
 </details>
 
-### 3.4 The input spec and the output spec
-
-A term's inputs and its outputs are each described apart from the term: the inputs by an input spec, and what the term produces by an output spec.
+### 3.4 Input specs and output specs
 
 > [!IMPORTANT]
-> **Definition (input spec).** The *input spec* of a term lists its inputs, in order: each input's name and type, and which inputs are optional.
-> It holds no defaults, since each default belongs to the term.
-> Two input specs are equal when they list the same inputs, with equal types and the same optional inputs, in any order.
-
-A term with no inputs has the empty input spec.
+> **Definition (input spec).** An object's *input spec* lists its inputs in order: names, types, and which are optional.
+> It holds no defaults. Two input specs are equal when they list the same inputs, types, and optional inputs, in any order.
 
 > [!IMPORTANT]
-> **Definition (output spec).** The *output spec* of a term describes its produced term by two things:
-> 1. the type of the produced term;
-> 2. when that type is a base type, the name of the output at the root.
->
-> The output spec of a law or of a kernel is also called its *event spec*, since it describes one draw.
+> **Definition (output spec).** An object's *output spec* states the type of its produced object and, when that type is a base type, the name of the output at the root.
+> A law's or kernel's output spec is its *event spec*.
+
+> [!IMPORTANT]
+> **Definition (type of an output).** The type of the value at that output.
+
+> [!IMPORTANT]
+> **Definition (type hole).** An output spec may name the output at the root before its type is known; the pending type is a *type hole*, filled once the object knows it (§ 11).
+
+> [!IMPORTANT]
+> **Definition (record of outputs).** A produced base value `v` offered under `n` is read as the record `{n: v}`; a produced record is its own record of outputs.
 
 > [!NOTE]
-> **Consequence.** The type alone decides whether an output spec names an output at the root: it names one exactly when the type is a base type.
-> So no separate flag records how a term offers its outputs.
+> 1. The type alone decides whether an output spec names an output at the root, so no flag records it.
+> 2. Each output's type is read from the output spec: the produced object's type at the root, the child's type for a record, a function type for a function's output, a batch type for a batch's output.
+> 3. A produced base value or record is rebuilt from its record of outputs. A produced function, batch, or law has none.
 
-> [!IMPORTANT]
-> **Definition (type of an output).** The *type of an output* is the type of the value at that output.
-
-> [!NOTE]
-> **Consequence.** The type of every output can be read from the output spec alone:
-> - an output at the root has the type of the produced term;
-> - an output of a record has the type of its child;
-> - an output `c` of a function has the type of a function with the same inputs that returns the value at `c` of the return value;
-> - an output `c` of a batch has the type of a batch, over the same levels, of the elements' values at `c`.
-
-**Example.**
-- The kernel `lik`, which draws `y ~ Normal(mu, 1)`, has an output spec that states the array type of shape `()` and the name `y`. Its one output, `y`, has that array type.
-- A law over `{mu, tau}`, both scalars, has an event spec that states the record type `{mu, tau}` and no name. Its outputs `mu` and `tau` each have the array type of shape `()`.
-- A batch of 100 draws of that law, over the level `sample`, has the outputs `mu` and `tau`, each of the type "a batch over `sample` of arrays of shape `()`".
-
-> [!IMPORTANT]
-> **Definition (type hole).** An output spec may state the name of an output at the root before its type is known.
-> The pending type is a *type hole*, which the term fills once it knows the type, as a function can once it has run.
-
-§ 11 states how a hole is filled.
-
-> [!IMPORTANT]
-> **Definition (record of outputs).** A produced term that is a base value or a record can be read as the *record of its outputs*:
-> - a record is its own record of outputs;
-> - a base value `v` offered under the name `n` is the record `{n: v}`.
-
-> [!NOTE]
-> **Consequence.** A produced term is rebuilt from its record of outputs: a record is the record itself, and a base value is the field `n` of `{n: v}`.
-
-For example, a draw `0.3` of `lik` is the record of outputs `{y: 0.3}`, and a draw `{mu: 0.1, tau: 1.2}` of a law over `{mu, tau}` is its own record of outputs.
-A produced function, batch, or law has no record of outputs in this sense, since it is not a record and carries no name.
+The kernel `a(y | mu)` has an output spec stating an array type of shape `()` and the name `y`; its draw `0.3` is the record of outputs `{y: 0.3}`.
+A law over `{mu, sigma}` has an event spec stating the record type `{mu, sigma}` and no name.
 
 <details>
 <summary>Technical note: equality and order</summary>
 
-The order of a term's outputs is the order of the fields of its record of outputs, which fixes the layout of a numeric record as a flat vector.
-So two output specs that list the same outputs in two orders are unequal.
-Input specs are compared without order, since a binding reads inputs by name.
-
-An output spec that names a base value `n` and an output spec whose type is the record `{n: ...}` offer the same output and describe different produced terms, so they are unequal.
+Output order is the field order of the record of outputs, which fixes a numeric record's flat layout, so output specs listing the same outputs in two orders are unequal.
+An output spec naming a base value `n` and one whose type is `{n: …}` offer the same output and are unequal.
 
 </details>
 
-### 3.5 A term's signature, and how a figure draws it
+### 3.5 Signatures and their figures
 
 > [!IMPORTANT]
-> **Definition (signature).** The *signature* of a term is its outputs and its inputs, written `name(outputs | inputs)`, as in `lik_opt(y | mu, s)`.
-> A term with no inputs is written without the bar, as in `prior(mu, tau)`.
+> **Definition (signature).** An object's *signature* is `name(outputs | inputs)`, as `a(y | mu, sigma)`; with no inputs, `name(outputs)`, as `d(mu, sigma)`.
 
-This document draws a term by its signature.
-Data flows from right to left in every figure, as a density `p(y | mu)` is written, with what is produced before the bar and what is received after it: inputs enter a term on its right edge, and outputs leave on its left edge.
+Figures read from right to left, as a density $p(y \mid \mu)$ does: inputs enter on the right edge, outputs leave on the left.
 
-![The legend for terms. Data flows from right to left. A term is a rounded box whose badge names its kind: value, law, kernel, function, or batch. An output is a port on the left edge, labelled inside the box. An output at the root has its name outside the box. An input is a port on the right edge, and a hollow port is an optional input. The parts of a value are a tree inside the box. A batch is a stack of boxes with its levels at the bottom.](../figures/legend-terms.svg)
+![The legend for objects: data flows right to left; an object is a rounded box with a kind badge; outputs are ports on the left edge; an output at the root has its name outside the box; inputs are ports on the right edge, hollow when optional; a value's parts are a tree inside the box; a batch is a stack of boxes.](../figures/legend-objects.svg)
+*Figure: how a figure draws an object.*
 
-The kernel `lik_opt` of § 3.1 draws `y ~ Normal(mu, s)`, with the default `s = 1`.
-Its draw is an array, offered under `y`, so `y` is an output at the root, drawn outside the box.
-It takes `mu`, and `s` is optional, so the port of `s` is hollow.
+![The kernel k with the output y outside its left edge, the input mu, and the optional input sigma as a hollow port.](../figures/signature.svg)
+*Figure: the kernel `k(y | mu, sigma)`; its draw is an array offered under `y`, and `sigma` is optional.*
 
-![The kernel lik_opt: the output y on its left edge, with its name outside the box; the input mu on its right edge; and the optional input s, a hollow port below it.](../figures/signature.svg)
-
-A record is its own produced term, so it offers its children, by rule 2 of the naming rule.
-The record `{a: 1.0, g: {c: 2.0, e: 3.0}}` offers `a` and `g`, and the group `g` holds the fields `c` and `e`.
-
-![The record r with the outputs a and g on its left edge, and the fields c and e drawn as a tree below g.](../figures/record-parts.svg)
+![The record r with the outputs a and g; g holds the fields b and c.](../figures/record-parts.svg)
+*Figure: the record `{a: 1.0, g: {b: 2.0, c: 3.0}}` offers its children `a` and `g`.*
 
 ### 3.6 Inputs and outputs compared
 
-The two sides have the same structure, apart from the differences below.
-Each follows from the definitions of this section.
-
-| | Inputs | Outputs | Why they differ |
+| | Inputs | Outputs | Why |
 | --- | --- | --- | --- |
-| Where a name stands | every input is named | only a base value is named from outside; a record carries its names inside | a value is always supplied to an input by name, while a produced value with parts carries its own names |
-| What a name may be | a Python identifier | any name | an input matches a parameter, while an output becomes a field |
-| Structure | flat names | one output at the root, or top-level paths, with paths below them | an input receives one value, while an output is a place inside a produced term |
-| Presence | an input may be optional, with the term's default | an output is always present | a produced term has a value at every output |
-| A type not yet known | never | a type hole | a binding is checked against an input's type, while a term may learn its output's type when it runs |
-| Equality | ignores order | keeps order | a binding reads inputs by name, while the order of outputs fixes the layout of a record |
-| None at all | a term may have no inputs | an output spec never describes an empty record | a term with no inputs is a law or a value, while an empty record describes nothing produced |
-| Batches | a batch's inputs are its elements' | a batch's outputs are its elements' outputs, as batches | one binding supplies every element, while a produced batch is offered output by output |
+| Naming | every input is named | only a base value is named from outside | values are supplied to inputs by name; a produced value with parts carries its own names |
+| Names allowed | identifiers | any name | an input matches a parameter; an output becomes a field |
+| Structure | flat | one root output, or top-level paths with paths below | an input receives one value; an output is a place in a produced object |
+| Presence | may be optional | always present | a produced object has a value at every output |
+| Type unknown | never | type hole | a binding is checked against the input's type |
+| Equality | ignores order | keeps order | binding is by name; output order fixes layout |
+| None at all | allowed | never an empty record | an empty record describes nothing produced |
+| Batches | the elements' inputs | the elements' outputs, as batches | one binding supplies every element |
 
 ---
 
-## 5. Merging terms by name
+## 5. Merging objects by name
 
 ### 5.1 Why merge
 
-A statistical model is often written as a product of densities, joined by the names they share.
-For data `y` with a location `mu` and a scale `tau`:
+A model is often a product of densities joined by shared names:
 
-```math
-p(y, \mu, \tau) = p(y \mid \mu)\; p(\mu, \tau)
-```
+$$p(y, \mu, \tau) = p(y \mid \mu)\, p(\mu, \tau)$$
 
-The first factor is a kernel, `lik(y | mu)`, which draws `y ~ Normal(mu, 1)` for each value of `mu`.
-The second is a law, `prior(mu, tau)`, with `mu ~ Normal(0, 5)` and `tau ~ Normal(1, 1)`.
-The product joins the two by the name `mu`: the value of `mu` that the prior draws is the value the likelihood conditions on.
+Here the kernel `lik(y | mu)` draws `y ~ Normal(mu, 1)`, and the law `prior(mu, tau)` draws `mu ~ Normal(0, 5)` and `tau ~ Normal(1, 1)`.
+The merge `lik & prior` is the joint law over `{y, mu, tau}`, built by matching the name `mu`.
+Merge also puts records side by side, combines functions by name, and combines input specs or output specs.
+It reads right to left, as the density does: in `a & b`, `b` may supply inputs of `a`, never the reverse.
 
-*Merging* builds a joint term from two terms by matching names in this way.
-`lik & prior` is the law over `{y, mu, tau}` whose density is the product above.
-The same operation puts two records side by side, combines two functions by name, and combines the input specs or output specs of several terms.
-
-A merge is written from right to left, as the density is.
-In `a & b`, the right operand `b` may supply inputs of the left operand `a`, and never the reverse.
-
-### 5.2 The definition of merge
-
-A merge combines two terms of one family.
+### 5.2 The definition
 
 > [!IMPORTANT]
-> **Definition (family).** Two terms are of one *family* when they are:
-> - two records;
-> - two laws, two kernels, or a law and a kernel, in either order;
-> - two functions;
-> - two batches over equal levels, which means the same level names, in the same order, with the same sizes.
->
-> Two types are of one family when they are two input specs, two output specs, two record types, two types of laws or kernels, two function types, or two batch types.
+> **Definition (family).** Two objects are of one *family* when they are two records; two laws or kernels, in any mix; two functions; or two batches over equal levels (the same level names, order, and sizes).
+> Two types are of one family when they are two input specs, two output specs, two record types, two law or kernel types, two function types, or two batch types.
 
 > [!IMPORTANT]
-> **Definition (feeds).** In `a & b`, an output `c` of `b` *feeds* the input `c` of `a`, when `a` has an input of that name: the value `b` offers at `c` becomes the value `a` receives at `c`.
+> **Definition (feeds, shared).** In `a & b`, an output `c` of `b` *feeds* the input `c` of `a`: `a` receives at `c` the value `b` offers there.
+> An input of both `a` and `b` that `b` does not feed is *shared*.
 
 > [!IMPORTANT]
-> **Definition (shared input).** In `a & b`, an input that `a` and `b` both have, and that `b` does not feed, is *shared*.
+> **Definition (merge).** The *merge* `a & b` of two objects of one family has:
+> 1. **outputs:** `a`'s outputs, then `b`'s;
+> 2. **inputs:** `a`'s inputs that `b` does not feed, then `b`'s inputs that are not shared; a shared input is one input, typed by the unification of its two types (§ 2.5), and optional only if optional in both;
+> 3. **kind:** records give a record; laws and kernels give a kernel if a required input remains and a law otherwise; functions give a function; batches give a batch over the same levels;
+> 4. **produced object:** the record of all outputs, with `b`'s part produced first and `a`'s next, from its inputs and the values `b` feeds (§ 5.4).
 
 > [!IMPORTANT]
-> **Definition (merge).** The *merge* `a & b` of two terms of one family is the term with:
-> 1. **Outputs:** the outputs of `a`, followed by the outputs of `b`.
-> 2. **Inputs:** the inputs of `a` that `b` does not feed, followed by the inputs of `b` that are not shared. A shared input is one input of the result, which supplies both operands. Its type is the unification of its two types (§ 2.5), and it is optional only when it is optional in both operands.
-> 3. **Kind:** two records give a record; two laws or kernels give a kernel when a required input remains, and a law when none does; two functions give a function; two batches give a batch over the same levels.
-> 4. **Produced term:** the record of all its outputs. The part from `b` is produced first, from the values of the inputs `b` takes. The part from `a` is produced next, from the values of the inputs `a` takes, among them the values that `b` feeds. § 5.3 states this for each family.
+> **Definition (valid merge).** `a & b` is refused unless:
+> 1. **one family:** `a` and `b` are of one family;
+> 2. **recordable produced objects:** each operand produces a base value or a record, of known type;
+> 3. **one source per output:** `outputs(a) ∩ outputs(b) = ∅`;
+> 4. **order:** `inputs(b) ∩ outputs(a) = ∅`;
+> 5. **separate sides:** within each operand, no name is both an input and an output;
+> 6. **fed types conform:** each feeding output's type conforms to its input's type (§ 2.5);
+> 7. **shared types unify:** the two types of each shared input unify;
+> 8. **one dimension scope:** no dimension name stands for two sizes, and no two unbound names meet at one axis (§ 2.3).
 
-> [!IMPORTANT]
-> **Definition (valid merge).** The merge `a & b` exists only when all of these conditions hold, and otherwise it is refused:
-> 1. **One family:** `a` and `b` are of one family.
-> 2. **Produced terms that a record can hold:** each operand's produced term is a base value or a record, and its type is known. So no output has a type hole, and a function states its inputs and its return type.
-> 3. **One source for each output:** no name is an output of both `a` and `b`.
-> 4. **The order rule:** no input of `b` is an output of `a`.
-> 5. **Separate sides:** within each operand, no name is both an input and an output.
-> 6. **Fed types conform:** the type of each output of `b` that feeds an input of `a` conforms to the type of that input (§ 2.5).
-> 7. **Shared types unify:** the two types of each shared input unify (§ 2.5).
-> 8. **One dimension scope:** all the types of both operands form one dimension scope (§ 2.3), so no dimension name stands for two sizes, and no two different unbound names meet at one axis.
+![The legend for merges: a wire runs from an output of b to the input of a with the same name; the result is a dashed boundary with its ports on its edges; a port fanning out to both operands is a shared input; a refused merge is red with a cross.](../figures/legend-merge.svg)
+*Figure: how a figure draws a merge.*
 
-§ 5.4 gives the reason for each condition.
+![The merge a & b: b's output x feeds a's input x; w fans out to both operands; the result offers u, v, x, z and takes w and q.](../figures/merge-general.svg)
+*Figure: `a(u, v | x, w) & b(x, z | w, q)`. `x` is fed, and stays an output; `w` is shared; the result is the kernel `(u, v, x, z | w, q)`.*
 
-A figure draws a merge with three more conventions.
+![The merge lik & prior: prior's output mu feeds lik's input mu; the result is a law offering y, mu, tau.](../figures/merge-kernel-law.svg)
+*Figure: `lik & prior`. `mu` is fed, no input remains, so the result is a law; `lik`'s root output `y` becomes the field `y` of the joint draw.*
 
-![The legend for merges. In a & b, a wire runs from an output of b to the input of a with the same name. The result of a merge is a dashed boundary with the result's ports on its edges, and one port that fans out to both operands is a shared input.](../figures/legend-merge.svg)
-
-The figure below shows every part of the definition at once, for two kernels `a(u, v | x, w)` and `b(x, z | w, q)`.
-
-![The merge a & b of two kernels. b's output x feeds a's input x. The input w of both operands is one port of the result, which fans out to both. The result offers u, v, x, and z on its left edge, and takes w and q on its right edge.](../figures/merge-general.svg)
-
-- `b`'s output `x` feeds `a`'s input `x`, so `x` is not an input of the result.
-- `w` is an input of both operands, and `b` does not feed it, so it is shared: the result has one input `w`, whose port fans out to both operands.
-- The result offers `u` and `v`, from `a`, then `x` and `z`, from `b`. Feeding `x` to `a` does not remove it from the outputs.
-- The result takes `w`, then `q`. Required inputs remain, so `a & b` is a kernel.
-
-**Example: a likelihood and a prior.**
-Take the kernel `lik(y | mu)`, which draws `y ~ Normal(mu, 1)`, and the law `prior(mu, tau)`, with `mu ~ Normal(0, 5)` and `tau ~ Normal(1, 1)`.
-In `lik & prior`, `prior`'s output `mu` feeds `lik`'s input `mu`.
-No input remains, so the result is a law, with the outputs `y`, `mu`, and `tau`.
-`lik` offers its array draw at the root under `y`, so in the joint draw `{y, mu, tau}` the same value is the field `y`.
-
-![The merge lik & prior. The output mu of prior feeds the input mu of lik. The result is a law offering y, mu, and tau, with no inputs.](../figures/merge-kernel-law.svg)
-
-`prior & lik` is refused by the order rule: `lik`, on the right, takes `mu`, which `prior`, on the left, outputs.
-Written `lik & prior`, the term that produces `mu` stands on the right, as in the density `p(y | mu) p(mu, tau)`.
-
-**Example: two kernels that share an input.**
-Take two kernels of one parameter `theta`: `lik_nee(nee | theta)` and `lik_lai(lai | theta)`.
-Neither outputs `theta`, so in `lik_nee & lik_lai` the input `theta` is shared.
-The result is a kernel with the one input `theta`, and a value bound to `theta` supplies both operands.
-If `lik_nee` declares `theta` as an array of shape `("p",)` and `lik_lai` as an array of shape `(3,)`, the result's `theta` is their unification, an array of shape `(3,)`.
-
-![The merge lik_nee & lik_lai. The result has one input theta, which fans out to the input theta of both operands. The result offers nee and lai.](../figures/merge-shared-input.svg)
+![The merge a & b of two kernels sharing theta: one input theta fans out to both.](../figures/merge-shared-input.svg)
+*Figure: `a(x | theta) & b(y | theta)`. `theta` is shared; types `("n",)` and `(3,)` would unify to `(3,)`.*
 
 > [!WARNING]
-> **A later merge can feed or share an optional input of a law built by merging.**
-> Take `lik_opt(y | mu, s)`, which draws `y ~ Normal(mu, s)` with the default `s = 1`, and the prior above.
-> `lik_opt & prior` is a law: `mu` is fed, and `s` keeps its default, so the law takes no inputs.
-> Yet a later merge still sees `s`.
-> Let `s_prior` be a law with `s ~ Normal(100, 0.001)`: merging `lik_opt & prior` with `s_prior` feeds `s`, and `y`'s scale then follows `s`, near 100.
-> The reason is that a merge reads a law or a kernel through its factors, as the note below states.
-> § 5.5 lists the consequences.
+> A merge reads a law or kernel through its factors, so a law built by merging can still have an optional input fed later (§ 5.3).
 
 <details>
-<summary>Technical note: factors, and the inputs that a law's factors still take</summary>
+<summary>Technical note: factors, and the inputs a law's factors still take</summary>
 
 > [!IMPORTANT]
-> **Definition (factor).** A merge of laws and kernels keeps its operands' factors.
-> The *factors* of a law or a kernel `t` are:
-> - for a law or a kernel built by merging, the factors it keeps;
-> - for any other law or kernel, `t` itself.
->
-> A *grouped sub-joint*, the factor that a rename creates when it gathers outputs of several factors under one group (§ 4.5), stays one factor.
+> **Definition (factor).** A merge of laws and kernels keeps its operands' factors. A law or kernel built by merging has the factors it kept; any other has itself as its one factor. A *grouped sub-joint*, which a rename creates by gathering outputs of several factors under one group (§ 4.5), is one factor.
 
 > [!IMPORTANT]
-> **Definition (remaining inputs of the factors).** The *remaining inputs of the factors* of a law or a kernel `t` are the inputs, required or optional, that `t`'s factors take and that no factor of `t` feeds, in order of first appearance:
-> - for a kernel, its inputs;
-> - for a law of a distribution family, such as `Normal`, none;
-> - for a law built by merging, the optional inputs that its factors left at their defaults;
-> - for a grouped sub-joint, its own inputs when it is a kernel, and none when it is a law, so the optional inputs inside it are not read.
+> **Definition (remaining inputs of the factors).** The inputs, required or optional, that the factors take and no factor feeds, in order of first appearance: for a kernel, its inputs; for a law of a family such as `Normal`, none; for a law built by merging, the optional inputs its factors left at their defaults; for a grouped sub-joint, its own inputs if it is a kernel, none if a law.
 
-For a law or a kernel operand, every use of "the inputs of `a`" or "the inputs of `b`" in the definitions of this section means the remaining inputs of its factors.
-The order rule then reads: no remaining input of `b`'s factors, required or optional, is an output of `a`.
-The result keeps `a`'s factors, followed by `b`'s.
-
-For a record, a function, and a type, the remaining inputs are its inputs.
-A type, and an element of a batch in a merge of batches, is read as one factor.
-
-For example, `lik_opt & prior` is a law with no inputs, and the remaining inputs of its factors are `s`, optional.
-So `(lik_opt & prior) & s_prior` feeds `s`, and `s_prior & (lik_opt & prior)` is refused by the order rule.
+For laws and kernels, "inputs" in the definitions above means these remaining inputs, so condition 4 covers optional ones.
+For records, functions, and types, the remaining inputs are the inputs; a type, and an element in a merge of batches, is one factor.
 
 </details>
 
 <details>
 <summary>Technical note: merging types</summary>
 
-A merge of two types describes the merge of two terms of those types:
-- **Two output specs** give the output spec of two terms side by side, with nothing fed, since an output spec has no inputs. Its type is the record type of the first output spec's outputs, followed by the second's. An output at the root named `n` becomes the child `n`, so its value moves from the root to the path `n`. A record contributes its children unchanged, so every path of either operand is a path of the result, with the same type. Conditions 2, 3, and 8 apply.
-- **Two input specs** give the input spec of two terms that take their inputs side by side, with nothing fed, since an input spec has no outputs. The inputs appear in order of first appearance. A shared input has the unification of its two types, and it is optional only when it is optional in both. The two operands form one dimension scope, whose bindings the result does not keep.
-- **Two record types** give the record type of both sets of children. A top-level name in both is refused by condition 3.
-- **Two types of laws or kernels, two function types, or two batch types** give the type of the merged term.
+- **Output specs:** the record type of the first's outputs, then the second's; a root output `n` becomes the child `n`, and every other path keeps its type. Conditions 2, 3, and 8 apply.
+- **Input specs:** inputs in order of first appearance; a shared input is unified, and optional only if optional in both; dimension bindings are not kept.
+- **Record types:** both sets of children; a shared top-level name is refused.
+- **Law, kernel, function, and batch types:** the type of the merged object.
 
-An input spec and an output spec are of two families, so they do not merge.
-The inputs that an output spec's outputs would feed are the input spec with one required input for each output, of the output's type.
-Merging those input specs describes the inputs that several terms' outputs would supply together.
+An input spec and an output spec do not merge. The inputs an output spec's outputs would feed form the input spec with one required input per output, of its type.
 
 </details>
 
 <details>
-<summary>Technical note: terms of two families do not merge</summary>
+<summary>Technical note: objects of two families</summary>
 
-A record could be read as the law that gives the record itself with probability one, and a function as the kernel whose law at each input is a point mass at its return value.
-Under that reading, a kernel and a record, such as `lik & {mu: 0.3}`, would have a meaning.
-A law with a point-mass factor has no joint density, and the factors of a joint law are laws and kernels only (IV.1).
-So terms of two families are refused by condition 1.
+A record could be read as a law giving itself with probability one, and a function as a kernel of point masses. A law with a point-mass factor has no joint density, and a joint's factors are laws and kernels (IV.1), so objects of two families are refused.
 
 </details>
 
-### 5.3 The value of a merge
+### 5.3 Optional inputs
 
-The definition of merge states the result's signature and the order in which its produced term is made.
-This subsection states the produced term for each family.
+An optional input that the other operand does not feed stays an optional input of the result; one that it feeds is fed like any other.
 
-**Laws and kernels.**
-Let `u` be values of the result's inputs, written as a record (§ 3.1), and write:
-- `u_a` for the values in `u` of the inputs that `a` takes and `b` does not feed;
-- `u_b` for the values in `u` of the inputs that `b` takes.
+![The merge a & b where a takes mu and an optional sigma, and b produces mu from theta: the result takes sigma, hollow, and theta.](../figures/merge-optional-open.svg)
+*Figure: `a(y | mu, sigma) & b(mu | theta)`. `sigma` is not fed, so it stays an optional input of the kernel result.*
 
-> [!IMPORTANT]
-> **Definition (the law of a merge).** A draw `z` of `a & b` at `u` is made by drawing the right operand first:
-> 1. draw `z_b` from `b` at `u_b`;
-> 2. draw `z_a` from `a` at `u_a`, together with the values of `z_b` at the names that `b` feeds;
-> 3. `z` is the record of outputs of `z_a` (§ 3.4), followed by the record of outputs of `z_b`.
+![The merge a & b where b is a law offering mu and sigma: both inputs of a are fed and the result is a law.](../figures/merge-optional-fed.svg)
+*Figure: `a(y | mu, sigma) & b(mu, sigma)`. `b` feeds the optional `sigma` too; no input remains, so the result is a law.*
 
-When both operands have densities, the same law has the density
-
-```math
-p_{a \mathbin{\&} b}(z \mid u) \;=\; p_a\!\left(z_a \mid u_a,\ z_{\text{fed}}\right)\; p_b\!\left(z_b \mid u_b\right)
-```
-
-Here `z_a` and `z_b` are the two operands' draws, rebuilt from their outputs in `z` (§ 3.4), and `z_fed` is the values in `z` of the names that `b` feeds.
-
-For `lik & prior`, the prior is drawn first, giving `{mu, tau}`.
-Then `lik` is drawn at that `mu`, giving an array `y`.
-The joint draw is `{y, mu, tau}`, and the density is the product of § 5.1:
-
-```math
-p(y, \mu, \tau) = p_{\text{lik}}(y \mid \mu)\; p_{\text{prior}}(\mu, \tau)
-```
-
-**Records.**
-A record takes no inputs, so nothing is fed, and `a & b` is the record of `a`'s children followed by `b`'s children.
-
-> [!NOTE]
-> **Consequence (records merge by top-level name).** A group is one child, so two records that both have a group `g` are refused by condition 3, even when the two groups hold different fields.
-
-For example, `{a: 1.0} & {b: 2.0, g: {c: 3.0}}` is the record `{a, b, g: {c}}`, while `{g: {c: 1.0}} & {g: {e: 2.0}}` is refused.
-
-![The merge of the records r1 = {a} and r2 = {b, g: {c}}: the result offers a, then b and g.](../figures/merge-records.svg)
-
-> [!TIP]
-> To merge two records that share the group `g`, merge the groups first and put the result back: with removal and selection of § 4, that is `(r1 without g) & (r2 without g) & {g: r1[g] & r2[g]}`.
-
-**Functions.**
-A function is the kernel whose law at each value of its inputs is a point mass at its return value.
-So two functions merge as two kernels do, with each draw replaced by a return value: `(a & b)(u)` is the record of outputs of `a`'s return value at `u_a` and the fed values, followed by the record of outputs of `b`'s return value at `u_b`.
-
-For example, take two functions of an array `y` of shape `("n",)`: `center(center | y)`, which returns the mean of `y`, and `spread(spread | y)`, which returns its standard deviation.
-`center & spread` takes `y` once, as a shared input, and returns the record `{center, spread}`.
-For `standardize(z | y, center, spread)`, which returns `(y - center) / spread`, the merge `standardize & (center & spread)` feeds `center` and `spread`, shares `y`, and returns `{z, center, spread}`.
-
-**Batches.**
-Two batches over equal levels merge element by element: the element of `a & b` at each position is the merge of the operands' elements at that position.
-An element that is a base value is read as its record of outputs, so it merges as a record.
-For example, a batch of 3 draws of a law over an array `x` and a batch of 3 draws of a law over an array `y` merge into a batch of 3 records `{x, y}`.
+> [!WARNING]
+> A law built by merging keeps optional inputs its factors left at their defaults, and a later merge can feed them.
+> For a law `c(mu)`, `a & c` is a law that takes no inputs, with `sigma` at 1; merging it with a law `e(sigma)`, where `sigma ~ Normal(100, 0.001)`, feeds `sigma`, so `y`'s scale becomes about 100.
 
 <details>
 <summary>Technical note: a shared optional input that a binding omits</summary>
 
-When a binding supplies a shared input, one value supplies every operand that takes it.
-When a binding omits a shared optional input, each factor takes its own default.
-A default belongs to the term that owns the input, and an input spec holds none.
-So one input can then hold two values, one in each factor, and the law at the defaults need not be the kernel at any single value of that input.
+Each factor then takes its own default, since defaults belong to objects and an input spec holds none; the law at the defaults need not equal the kernel at any one value of the input.
 
 </details>
 
 <details>
 <summary>Technical note: a merge that leaves only optional inputs</summary>
 
-The kind of a merge of laws and kernels depends on the required inputs that remain.
-A kernel whose inputs are all optional is a kernel on its own, while a merge that leaves only optional inputs is a law, which samples and scores its factors at their defaults.
-So for a kernel `k_opt` whose one input `s` is optional, `k_opt & z_law`, for a law `z_law` with `z ~ Normal(0, 1)`, is a law, sampled at the default of `s`, although sampling `k_opt` alone asks for `s` (IV.2).
+It gives a law, sampled at the defaults, while a kernel whose inputs are all optional stays a kernel (IV.2).
 
 </details>
+
+### 5.4 The value of a merge
+
+**Laws and kernels.**
+For values `u` of the result's inputs, let `u_a` be those `a` takes and `b` does not feed, and `u_b` those `b` takes.
+
+> [!IMPORTANT]
+> **Definition (law of a merge).** A draw `z` of `a & b` at `u`: draw `z_b` from `b` at `u_b`; draw `z_a` from `a` at `u_a` and the values `z_b` feeds; `z` is `z_a`'s record of outputs followed by `z_b`'s.
+
+With densities, where `z_fed` is the fed values:
+
+$$p_{a \& b}(z \mid u) = p_a(z_a \mid u_a, z_{\mathrm{fed}})\; p_b(z_b \mid u_b)$$
+
+For `lik & prior`, this is the product of § 5.1.
+
+**Records.** No inputs, so nothing is fed: `a & b` is `a`'s children followed by `b`'s.
+
+> [!NOTE]
+> Records merge by top-level name: two records that both have a group `g` are refused by condition 3, whatever the groups hold.
+
+![The merge of r1 = {a} and r2 = {b, g: {c}}: the result offers a, b, g.](../figures/merge-records.svg)
+*Figure: `{a: 1.0} & {b: 2.0, g: {c: 3.0}}` is `{a, b, g: {c}}`.*
+
+> [!TIP]
+> To merge two records that share `g`, merge the groups first: `(x without g) & (y without g) & {g: x[g] & y[g]}`.
+
+**Functions.** A function is a kernel of point masses, so `(a & b)(u)` is `a`'s record of outputs at `u_a` and the fed values, followed by `b`'s at `u_b`.
+For `a(mu | data)` returning the mean and `b(sigma | data)` the standard deviation, `a & b` takes `data` once and returns `{mu, sigma}`.
+
+**Batches.** Over equal levels, element by element; a base element is read as its record of outputs, so 3 draws of `x` and 3 draws of `y` merge into 3 records `{x, y}`.
 
 <details>
-<summary>Technical note: batches merge element by element, each element as one factor</summary>
+<summary>Technical note: batches merge element by element</summary>
 
-In a merge of batches, each element is read as one operand, whose input spec and output spec are those of the elements' type.
-The conditions of § 5.2 are checked once, on those types.
-An element that is a law is read as one factor, so the optional inputs that its own factors left at their defaults are not fed in a merge of batches.
+Each element is one operand, typed by the elements' type, and the conditions are checked once on that type; an element that is a law is one factor, so its factors' hidden optional inputs are not fed.
 
 </details>
 
-### 5.4 Why each condition holds
+### 5.5 Refused merges
 
 | Condition | Why |
 | --- | --- |
-| 1. One family | Each family has its own rule for the produced term (§ 5.3) |
-| 2. Produced terms that a record can hold | The result holds each operand's outputs as fields, and each operand's produced term must be rebuilt from them |
-| 3. One source for each output | An output offers a value, and two operands offering one name would give it two values |
-| 4. The order rule | It keeps the result's sides separate, and makes the written order one in which each operand is produced after the operands that feed it |
-| 5. Separate sides | Whether a name is fed or shared is then decided by the names alone |
-| 6. Fed types conform | The fed values are given, so the input must admit each of them |
-| 7. Shared types unify | One value supplies both inputs, so neither type is preferred |
-| 8. One dimension scope | A dimension name stands for one size wherever types meet (II.1) |
+| 1. One family | each family has its own produced object (§ 5.4) |
+| 2. Recordable produced objects | each operand's produced object is rebuilt from fields of the result |
+| 3. One source per output | one name cannot hold two values |
+| 4. Order | sides stay separate, and each operand follows those that feed it |
+| 5. Separate sides | fed and shared are then decided by names alone |
+| 6. Fed types conform | the input must admit every value fed to it |
+| 7. Shared types unify | one value supplies both inputs |
+| 8. One dimension scope | a dimension name is one size (II.1) |
 
-<details>
-<summary>Technical note: why produced terms must be values that a record can hold</summary>
+![A refused merge where a and b both output x.](../figures/merge-invalid-output.svg)
+*Figure: refused by condition 3: `x` is an output of both `a` and `b`.*
 
-The produced term of `a & b` holds the value at each output of both operands as a field.
-Each operand's own produced term must then be rebuilt from those fields, since a joint law scores each factor's density on that factor's own draw (IV.2).
-A base value and a record are rebuilt from their record of outputs without loss (§ 3.4).
-A produced law, kernel, function, or batch is not a record and carries no name, so the merge would have to split it into its outputs or invent a name for it.
-The code that produces it wraps it instead (§ 3.3), keeping it whole under a name it chooses.
+![A refused merge where b takes x, which a outputs.](../figures/merge-invalid-order.svg)
+*Figure: refused by condition 4: `b` takes `x`, which `a` outputs; written `b & a`, it is valid.*
 
-This condition rests on rebuilding, not on the rule that a produced law offers no outputs.
+![A refused merge where b's output x of shape (4,) feeds a's input x of shape (3,).](../figures/merge-invalid-conform.svg)
+*Figure: refused by condition 6: the output `x` of shape `(4,)` does not conform to the input of shape `(3,)`.*
 
-</details>
+![A refused merge where the shared input theta has shapes (2,) and (3,).](../figures/merge-invalid-unify.svg)
+*Figure: refused by condition 7: the shared `theta` has shapes `(2,)` and `(3,)`, which do not unify.*
+
+![A refused merge where the function b returns a law.](../figures/merge-invalid-law.svg)
+*Figure: refused by condition 2: `b` returns a law, which a record cannot hold unnamed; `b` should return `{params: law}`.*
 
 <details>
 <summary>Technical note: why outputs feed only from right to left</summary>
 
-If a factor of `b` took an input that `a` outputs, nothing in the merge would supply it, since only `b` feeds `a`, so the result would keep that input while it also outputs the name: one name on both sides.
-With the order rule, each operand in a chain `a & b & c` is fed only from its right, so the written order lists every factor after the factors that feed it, and the density reads from left to right.
-
-The order rule does not make associativity hold: a chain of kernels has the same inputs, outputs, and validity in every grouping with or without it.
-Nor does it let a merge build every acyclic graph one module at a time.
-Take the kernels `c(z | y)` and `a(y | x)`, a law `b` over `x`, and `cb = c & b`.
-Both `a & cb` and `cb & a` are refused, while `c & a & b` builds the same graph from its factors.
+If a factor of `b` took an input that `a` outputs, nothing would feed it, so the result would have the name on both sides.
+With the order rule, in `a & b & c` each operand is fed only from its right, and the density reads left to right.
+The rule does not make associativity hold, and it does not let every acyclic graph be built one module at a time: for kernels `c(z | y)`, `a(y | x)` and a law `b(x)`, both `a & (c & b)` and `(c & b) & a` are refused, while `c & a & b` is valid.
 
 </details>
 
 <details>
 <summary>Technical note: a merge never lifts</summary>
 
-An output feeds an input only when its type conforms to the input's type.
-A merge does not apply the receiving term to each draw of a law that it is fed instead of a value.
-Doing so would ignore the dependence between that law and everything else the receiving term is given, which only the merge itself can see.
+An output feeds an input only when its type conforms. A merge does not apply the receiver to each draw of a law fed in place of a value, which would ignore the law's dependence on the receiver's other inputs.
 
 </details>
 
 <details>
-<summary>Technical note: two selections of one law merge as independent factors</summary>
+<summary>Technical note: two selections of one law</summary>
 
-For a hierarchical law `hier` over `{s1: {theta}, s2: {theta}, mu}`, the selections `hier[[s1]]` and `hier[[s2]]` (§ 4.2) merge into the product of their two marginal laws.
-A merge reads names and factors, and a selection of a law is one factor, so the merge cannot tell two selections of one law from two independent laws.
-The joint law of both groups, which keeps their dependence, is the selection `hier[[s1, s2]]`.
-
-The selections `hier[s1]` and `hier[s2]` both offer `theta`, so their merge is refused by condition 3.
-Wrapping the two selections would silence that refusal and drop the dependence between the groups, so the refusal's message points to `hier[[s1, s2]]` (§ 19).
+For a law `d` over `{g1: {theta}, g2: {theta}}`, `d[[g1]] & d[[g2]]` is the product of the two marginals, since a selection is one factor; the joint is `d[[g1, g2]]`.
+`d[g1] & d[g2]` is refused, both offering `theta`, and its message points to `d[[g1, g2]]` (§ 19).
 
 </details>
 
-### 5.5 Properties of merge
-
-Each property below follows from the definitions of § 5.2 and § 5.3.
-Appendix D says where each is proved.
+### 5.6 Properties
 
 > [!NOTE]
-> **Property (separate sides).** No name is both an input and an output of `a & b`.
-
-> [!NOTE]
-> **Property (paths are kept).** Every path of an operand is a path of `a & b`, with the same type there once dimension names are bound.
-> An output of an operand at the root, named `n`, becomes the path `n` of the result.
-
-For example, merging a law over an array `x` with a law over `{a, g: {c, e}}` gives a law over `{x, a, g: {c, e}}`.
-The paths `a`, `g`, `g/c`, and `g/e` are unchanged, and `x`, at the root in its operand, becomes the path `x`.
-
-> [!NOTE]
-> **Property (the specs of a merge).** The output spec of `a & b` is the merge of the operands' output specs.
-> The input spec of `a & b` is the merge of `a`'s input spec without the inputs that `b` feeds and `b`'s input spec.
-> Both hold once dimension names are bound.
-
-> [!NOTE]
-> **Property (associative when both groupings are valid).** When `(a & b) & c` and `a & (b & c)` are both valid, they have the same factors, the same outputs in the same order, the same inputs with the same types and optional flags, and the same value.
-> This holds for laws, kernels, records, record types, output specs, and batches of records or of base values.
-
-> [!NOTE]
-> **Property (commutative up to order).** When neither operand feeds the other, `a & b` and `b & a` are valid together and have the same law or value.
-> Their outputs come in two orders, so their output specs are unequal, and their input specs are equal.
-
-> [!NOTE]
-> **Property (sampling commutes with merge).** For two laws `a` and `b` that do not feed each other and whose draws are records, when `a & b` is valid, a draw of `a & b` is distributed as the merge of a draw of `a` and a draw of `b`.
-
-> [!NOTE]
-> **Property (renaming commutes with merge).** Renaming the names of `a & b` gives the merge of the operands renamed, under the conditions of the note below.
-
-> [!NOTE]
-> **Property (labels are not read).** Relabeling an operand changes only the result's label, which joins the operands' labels with `·`, as `lik·prior`.
+> 1. **Separate sides:** no name is both an input and an output of `a & b`.
+> 2. **Paths kept:** every path of an operand is a path of `a & b` with the same type, once dimension names are bound; a root output `n` becomes the path `n`.
+> 3. **Specs:** the output spec of `a & b` is the merge of the operands' output specs, and its input spec the merge of `a`'s without the fed inputs and `b`'s.
+> 4. **Associative when both groupings are valid**, for laws, kernels, records, record types, output specs, and batches of records or base values.
+> 5. **Commutative up to order** when neither operand feeds the other: same law or value, outputs in another order.
+> 6. **Sampling commutes** for laws that do not feed each other and draw records: a draw of `a & b` is distributed as a draw of `a` merged with a draw of `b`.
+> 7. **Renaming commutes** under the conditions below.
+> 8. **Labels are not read;** the result's label joins the operands' with `·`.
 
 <details>
-<summary>Technical note: when the validity of two groupings differs</summary>
+<summary>Technical note: when two groupings differ in validity</summary>
 
-The two groupings of `a & b & c` check different pairs of types, so one can be refused while the other is valid, in two cases:
-1. a name that `a` and `b` both take and `c` outputs, whose types in `a` and `b` do not unify while `c`'s type conforms to each;
-2. two different unbound dimension names at one axis in one grouping, which the other grouping binds first.
-
-Input specs and functions keep no dimension scope after a merge, so for them the two groupings also agree only when no dimension name that one grouping binds is unbound in the operand it is merged with later.
-For three input specs `J1` with `u` of shape `("n",)`, `J2` with `u` of shape `(3,)` and `q` of shape `("n",)`, and `J3` with `w` of shape `("n",)`, the grouping `(J1 & J2) & J3` binds `n` to 3 in its first merge and forgets it, so `w` keeps the shape `("n",)`, while `J1 & (J2 & J3)` gives `w` the shape `(3,)`.
-
-For batches of laws or of kernels, associativity can fail, since a merge of batches reads each element as one factor and so drops the element's factors and dimension scope.
+`(a & b) & c` and `a & (b & c)` check different pairs: a name `a` and `b` take and `c` outputs, whose types in `a` and `b` do not unify while `c`'s conforms to each; or two unbound dimension names at one axis that one grouping binds first.
+Input specs and functions keep no dimension scope, so for inputs `x: ("n",)`, then `x: (3,)` with `y: ("n",)`, then `z: ("n",)`, the left grouping leaves `z: ("n",)` and the right gives `z: (3,)`.
+Batches of laws can fail associativity, since each element is one factor.
 
 </details>
 
 <details>
-<summary>Technical note: the conditions under which renaming commutes with merge</summary>
+<summary>Technical note: when renaming commutes</summary>
 
-The rename `m` maps names to names, one to one over the names of `a` and `b`, and renames inputs and outputs alike.
-`m_a` and `m_b` are its restrictions to each operand's names.
-Then renaming `a & b` by `m` gives `a` renamed by `m_a` merged with `b` renamed by `m_b`.
-This holds for laws, kernels, records, and functions, provided `m` renames no remaining input of a law operand's factors.
-A law's rename does not rename such an input, while the merged kernel's rename may, so the two sides can differ there.
-
-A rename that moves a node to a path does not commute with merge: moving `c` and `e` under `g` in two operands before merging them is refused at `g` by condition 3.
+For a one-to-one rename `m` of the names of `a` and `b`, applied to inputs and outputs alike, renaming `a & b` by `m` equals merging `a` and `b` each renamed by its part of `m`, for laws, kernels, records, and functions, provided `m` renames no remaining input of a law's factors.
+A rename that moves a node into a group does not commute.
 
 </details>
 
 <details>
-<summary>Technical note: optional inputs across merges, and their consequences</summary>
+<summary>Technical note: optional inputs across merges</summary>
 
-A merge reads its operands' factors (§ 5.2), so an optional input that a factor left at its default can be fed or shared by a later merge.
-For `M = lik_opt & mu_law`, where `mu_law` is a law with `mu ~ Normal(0, 0.001)`, `M` is a law in which `y`'s scale is near 1:
-1. **A later merge can feed it.** `(lik_opt & prior) & s_prior` feeds `s`, so `y`'s scale is near 100, the same law as `lik_opt & (prior & s_prior)`. This keeps associativity.
-2. **A later merge can share it.** For a kernel `k2(w | s)` that neither feeds nor is fed by `M`, `M & k2` is a kernel whose input `s` is required, and binding `s` to 30 gives `y` a scale near 30. Condition 7 also checks the types of such a shared input, so a merge can be refused over an input that no type of `M` shows.
-3. **It appears with no sharing.** For an unrelated kernel `kw(v | w)`, `M & kw` is a kernel with two inputs: `s`, which is optional, and `w`. A law, which has no inputs, gains the input `s` through a merge with a term that does not mention it.
-4. **Equal laws merge differently.** `lik_opt & prior` and `lik & prior` are equal laws, since `lik` is `lik_opt` at `s = 1`, yet merging each with `s_prior` gives `y` a scale near 100 in the first and near 1 in the second.
-5. **Whether a result keeps the factor depends on the operation.** A result keeps an optional input that a factor left at its default exactly when it keeps that factor unchanged:
-
-   | Law built from `M` | Keeps `lik_opt` as a factor | Merged with `s_prior`, `y`'s scale is near |
-   | --- | --- | --- |
-   | the selection `M[[y, mu]]` | no: a selection is one factor | 1 |
-   | the marginal law of `M` at `[y, mu]`, as a merge of factors | yes | 100 |
-   | `M` with `y` renamed to `w/y` | yes | 100 |
-   | `lik_opt & mu_law & tau_law`, for a law `tau_law` over `tau`, conditioned on `tau`, on its exact route | yes | 100 |
-   | `M` conditioned on observed `y` | no: a law of stored draws | — |
-   | `lik_opt & z_law`, for a law `z_law` over `z`, conditioned on `mu` | no: `lik_opt` is bound | 1 |
-   | a law regrouped so that `lik_opt` is inside a grouped sub-joint | no: the sub-joint is one factor | 1 |
-
-   So a selection and a marginal law of one joint, which § 4.1 defines as one law, can merge differently.
-6. **A merge of types can be valid where the merge of terms is refused.** `s_prior`'s type merged with the type of `lik_opt & prior` reads a law's type, which states no remaining inputs of factors, so it feeds nothing and is valid, while `s_prior & (lik_opt & prior)` is refused by the order rule. So the type of a merge equals the merge of the types only when neither operand's factors take a remaining input that its input spec does not state.
-7. **A merge of batches reads each element as one factor**, so an element's hidden optional inputs are not fed.
+For `M = a & c`, with `a(y | mu, sigma)` and a law `c(mu)`:
+1. `M & e` feeds `sigma` for a law `e(sigma)`, and equals `a & (c & e)`.
+2. For a kernel `k(w | sigma)`, `M & k` shares `sigma`, now required; condition 7 checks a type no spec of `M` shows.
+3. For an unrelated kernel `k(w | v)`, `M & k` gains the optional input `sigma`.
+4. `M` and `a1 & c`, for a kernel `a1(y | mu)` equal to `a` at `sigma = 1`, are equal laws that merge differently with `e`.
+5. A result keeps `sigma` exactly when it keeps `a` as a factor: a selection of `M` does not, the marginal computed as a merge of factors does, a rename does, conditioning on observed `y` does not.
+6. The merge of types can be valid where the merge of objects is refused: `e`'s type and `M`'s type merge, while `e & M` breaks condition 4.
 
 </details>
 
 <details>
 <summary>Technical note: dimension scopes across merges</summary>
 
-A merged law or kernel keeps its dimension scope: the sizes it bound to dimension names.
-A merged input spec, output spec, record type, or function applies those sizes to its types and keeps nothing more.
-Two consequences follow:
-1. **Merges of specs and of functions are associative only under a condition**, which the note on validity states.
-2. **A kept scope can refuse a merge over a name that no type shows.** Let `m1 = a & b3`, for a kernel `a(ya | u)` whose `ya` and `u` both have shape `("n",)` and a law `b3` over `u` of shape `(3,)`: its event is `{ya, u}`, both of shape `(3,)`, and it keeps `n = 3`. Let `m2 = k & lv`, for a kernel `k(w | v)` with both of shape `("n",)` and a law `lv` over `v` of shape `(4,)`, which keeps `n = 4`. Then `m1 & m2` is refused by condition 8, and renaming `n` in `m1` first does not help, since neither event spec contains `n`. The merge of a draw of `m1` and a draw of `m2` is still a valid merge of records, so sampling commutes with merge only when `a & b` is valid.
-
-Keeping the scope is what makes the merge of laws and kernels associative; forgetting it is what keeps merges of specs simple.
+A merged law or kernel keeps its dimension scope; merged specs and functions apply it and keep nothing.
+A kept scope can refuse a merge over a name no type shows: if `m1` bound `n = 3` and `m2` bound `n = 4`, `m1 & m2` breaks condition 8 although neither event spec contains `n`.
 
 </details>
 
-### 5.6 What merge is not
+### 5.7 What merge is not
 
-- **Merge is not composition.** The composition `f ∘ g` passes `g`'s whole result to `f` by position and returns only `f`'s result, and the product of linear operators `A B` is a composition too. A merge matches by name and returns the outputs of both operands.
-- **Merge is not conditioning.** Conditioning `lik` on `mu = 0.5` fixes `mu`, and the result does not produce `mu`. In `lik & prior`, `mu` is fed by a law and stays an output.
-- **Merge is not renaming.** To merge under new names, rename an operand first (§ 4.5), then merge.
+1. **Not composition:** `f ∘ g` passes `g`'s result to `f` by position and returns `f`'s; a merge matches names and returns both operands' outputs.
+2. **Not conditioning:** conditioning `lik` on `mu = 0.5` removes `mu`; in `lik & prior`, `mu` is fed and stays an output.
+3. **Not renaming:** rename an operand first (§ 4.5), then merge.
 
 ---
 
 ## 14. Records: `Record` and `RecordSpec`
 
-A record is a tree of named values (§ 1.1), and its type is a record type (§ 2.3).
-`Record` is the class of records, and `RecordSpec` is the class of record types.
-A record is its own produced term, so its outputs are its children (§ 3.3, rule 2), and records merge side by side (§ 5.3).
+A record is represented by the tracked term `Record`, and a record type by the term spec `RecordSpec` (§ 8).
+Both share the tree interface of `NamedTree` (II.6); only members this design defines or changes are shown.
 
-### 14.1 The API
-
-Only the members that this design defines or changes are shown.
-`RecordSpec` and `Record` share the tree interface of `NamedTree` (II.6), and a `RecordSpec` is the record kind's `TermSpec`.
+### 14.1 API
 
 ```python
 class RecordSpec(NamedTree[TermSpec], TermSpec):
     """The type of a record: a tree of names whose fields hold term specs.
 
-    A record spec is the record kind's term spec, and the schema of one
-    structured value, such as a draw. Its paths are the paths of the records it
-    types (§ 1.2), and indexing it gives the type of the same part of those
-    records.
+    Its paths are those of the records it types (§ 1.2); indexing it gives the
+    type of the same part of those records.
     """
 
     def __init__(self, field_specs: Mapping[str, TermSpec | Mapping | tuple] | None = None, /,
                  **fields: TermSpec | Mapping | tuple) -> None:
         """Build the type from its children.
 
-        A tuple of sizes is the array type of that shape, with no dtype and no
-        support. A mapping is a group. The positional mapping also accepts
-        paths as keys, such as "g/c".
+        A tuple of sizes is the array type of that shape, with no dtype or support;
+        a mapping is a group; the positional mapping also takes paths as keys.
 
         Raises:
-            TypeError: A field is given None, which means a pending type; an
-                opaque field is OpaqueSpec().
+            TypeError: A field is None, a pending type; an opaque field is OpaqueSpec().
         """
 
     def __getitem__(self, paths: str | Sequence[str], /) -> TermSpec:
-        """The type at a path, or the record type of the nodes at a list of paths.
+        """The type at a path, or the RecordSpec of the nodes at a list of paths.
 
-        One path gives the type of the node there: a field's term spec, or a
-        group's RecordSpec. A list of paths gives the RecordSpec of the chosen
-        nodes, each at its own path, in this spec's order.
+        A list keeps each node at its own path, in this spec's order.
 
         Raises:
             KeyError: A path is not a path of this spec.
@@ -800,46 +553,40 @@ class RecordSpec(NamedTree[TermSpec], TermSpec):
         """Whether path is a str and self[path] succeeds."""
 
     def keys(self) -> tuple[str, ...]:
-        """The paths of the fields, in canonical order; groups are not listed."""
+        """The field paths in canonical order; groups are not listed."""
 
     def without(self, *paths: str) -> RecordSpec:
-        """This type without the nodes at paths, each other node at its path.
-
-        A group left with no fields goes too.
+        """This type without the nodes at paths; an emptied group goes too.
 
         Raises:
             KeyError: A path is not a path of this spec.
-            ValueError: Nothing would be left, a path is given twice, or one
-                path is inside another.
+            ValueError: Nothing would remain, a path repeats, or one path is inside another.
         """
 
     def rename(self, renames: Mapping[str, str] | None = None, /,
                **keyword_renames: str) -> RecordSpec:
-        """Rename or move nodes by their paths, by the rules of II.6 (§ 4.5)."""
+        """Rename or move nodes by path, by II.6's rules (§ 4.5)."""
 
-    def __and__(self, other_record_spec: RecordSpec, /) -> RecordSpec:
-        """The children of both types, this type's first (§ 5.2).
+    def __and__(self, other: RecordSpec, /) -> RecordSpec:
+        """Both types' children, this one's first (§ 5.2).
 
         Raises:
-            TypeError: The other operand is not a RecordSpec.
-            ValueError: A top-level name is in both, a group included, or a
-                dimension name is bound to two sizes.
+            TypeError: other is not a RecordSpec.
+            ValueError: A top-level name is in both, or a dimension name binds two sizes.
         """
 
 
 class Record(NamedTree[Any], TrackedTerm):
     """A tree of named values.
 
-    A record is its own produced term, so its outputs are its children, and its
-    output spec is OutputSpec(record.spec), derived and never stored. An empty
-    record has no output spec.
+    A record is its own produced object, so its outputs are its children; its
+    output spec, OutputSpec(record.spec), is derived, and an empty record has none.
     """
 
     def __init__(self, fields: Mapping[str, Any], /, *, label: str | None = None) -> None:
         """Build a record from a nested mapping, in which a mapping is a group.
 
-        A field may hold any tracked term, such as a law, which keeps its
-        identity. The paths of the record continue into that term (§ 2.4).
+        A field may hold any tracked term, such as a law; paths continue into it (§ 2.4).
         """
 
     @property
@@ -849,206 +596,179 @@ class Record(NamedTree[Any], TrackedTerm):
     def __getitem__(self, paths: str | Sequence[str], /) -> Any:
         """The node at a path, or the record of the nodes at a list of paths.
 
-        One path gives the node itself: a field's value as a tracked term of
-        its kind, a group as a Record, or the term that a field holds. A path
-        continues into a term that a field holds, so record["G/mu"] is
-        record["G"]["mu"]. A list of paths gives the record of the chosen
-        nodes, each at its own path, in this record's order, labelled by its
-        paths, as "(a, g/c)".
+        One path gives the node: a field's value as a tracked term, a group as a
+        Record, or the term a field holds; a path continues into that term, so
+        r["g/mu"] is r["g"]["mu"]. A list keeps each node at its own path, in
+        this record's order, labelled by its paths, as "(a, g/b)".
 
         Raises:
-            KeyError: A path is not a path of this record; the message lists
-                its paths.
+            KeyError: A path is not a path of this record; the message lists its paths.
             ValueError: The path reader refuses the argument (§ 12).
         """
 
     def __contains__(self, path: object, /) -> bool:
-        """Whether path is a str and self[path] succeeds, so groups count."""
+        """Whether path is a str and self[path] succeeds, groups included."""
 
     def keys(self) -> tuple[str, ...]:
-        """The paths of the fields, in canonical order; groups are not listed."""
+        """The field paths in canonical order; groups are not listed."""
 
     def at_path(self, *segments: str) -> Any:
-        """self[path], for the path that joins segments with "/"; [] is the recommended form."""
+        """self["/".join(segments)]; [] is preferred."""
 
     def output(self, output_name: str, /) -> Any:
-        """The term at the output output_name, which is the child of that name (§ 4.6).
+        """The child output_name (§ 4.6).
 
         Raises:
-            KeyError: output_name is not a child of this record.
+            KeyError: output_name is not a child.
         """
 
     def without(self, *paths: str) -> Record:
-        """This record without the nodes at paths, each other node at its path.
-
-        A group left with no fields goes too, and so does a field holding a
-        term all of whose leaf paths are removed.
+        """This record without the nodes at paths; an emptied group, or a held term
+        whose every leaf path is removed, goes too.
 
         Raises:
             KeyError: A path is not a path of this record.
-            ValueError: Nothing would be left, a path is given twice, or one
-                path is inside another.
+            ValueError: Nothing would remain, a path repeats, or one path is inside another.
         """
 
     def rename(self, renames: Mapping[str, str] | None = None, /,
                **keyword_renames: str) -> Record:
-        """Rename or move nodes by their paths, by the rules of II.6 (§ 4.5)."""
+        """Rename or move nodes by path, by II.6's rules (§ 4.5)."""
 
     def select(self, *paths: str, **remap: str) -> dict[str, Any]:
-        """The nodes at paths, as a dict for passing as keyword arguments.
-
-        Each path is keyed by its last name, and each keyword argument names
-        its entry: select(x="g/c") is {"x": self["g/c"]}.
+        """The nodes at paths, keyed by last name, for keyword arguments; select(x="g/b") is {"x": ...}.
 
         Raises:
-            ValueError: Two paths have the same last name.
+            ValueError: Two paths share a last name.
         """
 
-    def __and__(self, other_record: Record, /) -> Record:
-        """The fields of both records, this record's first (§ 5.3).
+    def __and__(self, other: Record, /) -> Record:
+        """Both records' fields, this one's first (§ 5.4).
 
         Raises:
-            TypeError: The other operand is not a Record.
+            TypeError: other is not a Record.
             ValueError: A top-level name is in both, a group included.
         """
 ```
 
 ### 14.2 Examples
 
-Each example builds what it uses.
-
-**A record and its parts.**
-A record's paths name every node, groups included, while `keys()` lists only its fields.
+**Parts.** Paths name every node; `keys()` lists only fields.
 
 ```python
 from probpipe import Record
 
-draw = Record({"a": 1.0, "g": {"c": 2.0, "e": 3.0}}, label="draw")
-draw.keys()          # ("a", "g/c", "g/e"): the fields
-draw["a"]            # NumericArray 1.0, labelled "a"
-draw["g"]            # Record {c: 2.0, e: 3.0}: a group is a node too
-draw["g/c"]          # NumericArray 2.0
-draw["g"]["c"]       # the same node as draw["g/c"]: paths chain
-"g" in draw          # True, since draw["g"] succeeds
-"g" in draw.keys()   # False, since g is a group, not a field
+r = Record({"a": 1.0, "g": {"b": 2.0, "c": 3.0}}, label="r")
+r.keys()          # ("a", "g/b", "g/c")
+r["g"]            # Record {b: 2.0, c: 3.0}
+r["g/b"]          # NumericArray 2.0, labelled "g/b"
+r["g"]["b"]       # the same node
+"g" in r          # True
 ```
 
-**Its outputs and its spec.**
-The record offers its children, `a` and `g`, as the figure of § 3.5 draws.
+**Outputs and spec.**
 
 ```python
 from probpipe import OutputSpec, Record
 
-draw = Record({"a": 1.0, "g": {"c": 2.0, "e": 3.0}})
-draw.spec                        # RecordSpec(a=NumericArraySpec(()), g=RecordSpec(c=..., e=...))
-OutputSpec(draw.spec).outputs    # {a: NumericArraySpec(()), g: RecordSpec(c=..., e=...)}
-draw.output("g")                 # Record {c: 2.0, e: 3.0}, the same as draw["g"]
+r = Record({"a": 1.0, "g": {"b": 2.0, "c": 3.0}})
+r.spec                        # RecordSpec(a=NumericArraySpec(()), g=RecordSpec(b=..., c=...))
+OutputSpec(r.spec).outputs    # {a: NumericArraySpec(()), g: RecordSpec(b=..., c=...)}
+r.output("g")                 # r["g"]
 ```
 
-![The record r with the outputs a and g on its left edge, and the fields c and e drawn as a tree below g.](../figures/record-parts.svg)
+![The record r with the outputs a and g; g holds b and c.](../figures/record-parts.svg)
+*Figure: the record `r` offers its children `a` and `g`.*
 
-**Several paths, and removing.**
-A list of paths keeps each chosen node at its own path, in the record's order, and removing is its complement.
+**Several paths, and removal.**
 
 ```python
 from probpipe import Record
 
-draw = Record({"a": 1.0, "g": {"c": 2.0, "e": 3.0}})
-draw["a", "g/c"]     # Record {a, g: {c}}, labelled "(a, g/c)"
-draw["g/e", "a"]     # Record {a, g: {e}}: the record's order, not the order given
-draw[["g"]]          # Record {g: {c, e}}: a list of one path gives a record that holds the node
-draw.without("g/e")  # Record {a, g: {c}}, the complement of draw["a", "g/c"]
-draw.without("g/c", "g/e")   # Record {a}: the emptied group goes
+r = Record({"a": 1.0, "g": {"b": 2.0, "c": 3.0}})
+r["a", "g/b"]           # Record {a, g: {b}}, labelled "(a, g/b)"
+r["g/c", "a"]           # Record {a, g: {c}}: the record's order
+r[["g"]]                # Record {g: {b, c}}
+r.without("g/c")        # Record {a, g: {b}}, the complement of r["a", "g/b"]
+r.without("g/b", "g/c") # Record {a}
 ```
 
-**A record type, indexed.**
-A `RecordSpec` takes the same paths as the records it types, and gives their types.
+**A record type.**
 
 ```python
 from probpipe import RecordSpec
 
-spec = RecordSpec(a=(), g=RecordSpec(c=(), e=()))
-spec["g"]                  # RecordSpec(c=NumericArraySpec(()), e=NumericArraySpec(()))
-spec["g/c"]                # NumericArraySpec(())
-spec[["a", "g/c"]]         # RecordSpec(a=NumericArraySpec(()), g=RecordSpec(c=NumericArraySpec(())))
-"g/c" in spec              # True
-spec.without("g/c", "g/e") # RecordSpec(a=NumericArraySpec(()))
+s = RecordSpec(a=(), g=RecordSpec(b=(), c=()))
+s["g/b"]              # NumericArraySpec(())
+s[["a", "g/b"]]       # RecordSpec(a=..., g=RecordSpec(b=...))
+s.without("g/b", "g/c")   # RecordSpec(a=...)
 ```
 
-**A field that holds a law.**
-The paths of a record continue into a term that a field holds, while its fields are only its own.
+**A field holding a law.**
 
 ```python
 from probpipe import Normal, Record
 
-post = Normal("mu", 0.0, 1.0) & Normal("tau", 1.0, 1.0)   # a law over {mu, tau}
-holder = Record({"n": 3.0, "G": post})
-holder.keys()          # ("n", "G"): the fields
-holder["G"]            # the law post
-holder["G/mu"]         # the law of mu, post["mu"]
-holder["G"]["mu"]      # the same law
-holder["n", "G/mu"]    # Record {n, G}, whose field G holds post[["mu"]]
-"G/mu" in holder       # True
+d = Normal("mu", 0.0, 1.0) & Normal("sigma", 1.0, 1.0)   # a law over {mu, sigma}
+r = Record({"x": 3.0, "g": d})
+r.keys()          # ("x", "g")
+r["g/mu"]         # d["mu"], the law of mu
+r["x", "g/mu"]    # Record {x, g}, whose g holds d[["mu"]]
 ```
 
-**Renaming and moving.**
-A rename gives the node at a path a new path, which can move it to another group.
+**Renaming.**
 
 ```python
 from probpipe import Record
 
-draw = Record({"a": 1.0, "g": {"c": 2.0, "e": 3.0}})
-draw.rename({"g/c": "g/k"})   # Record {a, g: {k, e}}: renamed in place
-draw.rename({"g/c": "c"})     # Record {a, g: {e}, c}: c moves to the top level, appended last
-draw.rename(a="b")            # Record {b, g: {c, e}}
+r = Record({"a": 1.0, "g": {"b": 2.0, "c": 3.0}})
+r.rename({"g/b": "g/z"})   # Record {a, g: {z, c}}
+r.rename({"g/b": "b"})     # Record {a, g: {c}, b}: moved, appended last
 ```
 
-**Merging two records.**
-Records merge by top-level name, so a group that both records have is refused.
+**Merging.**
 
 ```python
 from probpipe import Record
 
-r1 = Record({"a": 1.0})
-r2 = Record({"b": 2.0, "g": {"c": 3.0}})
-r1 & r2       # Record {a: 1.0, b: 2.0, g: {c: 3.0}}
-r2 & r1       # Record {b, g: {c}, a}: the same fields, in the other order
+x = Record({"a": 1.0})
+y = Record({"b": 2.0, "g": {"c": 3.0}})
+x & y        # Record {a, b, g: {c}}
+y & x        # Record {b, g: {c}, a}
 
-Record({"g": {"c": 1.0}}) & Record({"g": {"e": 2.0}})
-# ValueError: g is an output of both records; rename one, or merge the two groups first
+Record({"g": {"b": 1.0}}) & Record({"g": {"c": 2.0}})
+# ValueError: g is an output of both records; rename one, or merge the groups first
 ```
 
-![The merge of the records r1 = {a} and r2 = {b, g: {c}}: the result offers a, then b and g.](../figures/merge-records.svg)
+![The merge of r1 = {a} and r2 = {b, g: {c}}.](../figures/merge-records.svg)
+*Figure: two records merge side by side.*
 
-**Passing fields to a function.**
-`select` serves keyword arguments, so it keys each entry by the last name of its path.
+**Keyword arguments.**
 
 ```python
 from probpipe import Record
 
-draw = Record({"a": 1.0, "g": {"c": 2.0, "e": 3.0}})
-draw.select("a", "g/c")    # {"a": ..., "c": ...}
-draw.select(x="g/c")       # {"x": ...}
-
-hier_draw = Record({"s1": {"theta": 0.1}, "s2": {"theta": 0.2}})
-hier_draw.select("s1/theta", "s2/theta")
-# ValueError: s1/theta and s2/theta both have the last name theta; name one with a keyword
+r = Record({"g1": {"theta": 0.1}, "g2": {"theta": 0.2}, "a": 1.0})
+r.select("a", "g1/theta")      # {"a": ..., "theta": ...}
+r.select(t2="g2/theta")        # {"t2": ...}
+r.select("g1/theta", "g2/theta")
+# ValueError: g1/theta and g2/theta share the last name theta; name one with a keyword
 ```
 
 <details>
 <summary>Technical note: the errors of records</summary>
 
-| Call, for `draw = Record({"a": 1.0, "g": {"c": 2.0, "e": 3.0}}, label="draw")` | Error | Reason |
-| --- | --- | --- |
-| `draw["x"]` | `KeyError`: "'x' is not a path of 'draw'; its paths: ['a', 'g', 'g/c', 'g/e']" | the path does not exist |
-| `draw["g", "g/c"]` | `ValueError`: "'g/c' is inside 'g'; pick one" | a path inside another would hold one value twice |
-| `draw["a", "a"]` | `ValueError` | the same path twice |
-| `draw[[]]`, `draw[()]` | `ValueError` | no paths at all |
-| `draw["a", 0]` | `TypeError`: "a path and a position cannot be mixed in one []" | a record has no positions |
-| `draw.without(("a", "g/e"))` | `TypeError`: pass the paths as separate arguments | `without` takes one path per argument |
-| `draw.without("a", "g")` | `ValueError` | nothing would be left |
-| `draw.rename({"a": "g"})` | `ValueError` | the target collides with an existing node (II.6) |
-| `draw & {"b": 2.0}` | `TypeError` | a plain mapping is not a record |
-| `Record({"g": {"c": 1.0}}) & Record({"g": {"e": 2.0}})` | `ValueError` | condition 3 of § 5.2: `g` is an output of both |
+For `r = Record({"a": 1.0, "g": {"b": 2.0, "c": 3.0}}, label="r")`:
+
+| Call | Error |
+| --- | --- |
+| `r["z"]` | `KeyError`: "'z' is not a path of 'r'; its paths: ['a', 'g', 'g/b', 'g/c']" |
+| `r["g", "g/b"]` | `ValueError`: "'g/b' is inside 'g'; pick one" |
+| `r["a", "a"]`, `r[[]]` | `ValueError` |
+| `r["a", 0]` | `TypeError`: "a path and a position cannot be mixed in one []" |
+| `r.without(("a", "g/c"))` | `TypeError`: pass the paths as separate arguments |
+| `r.without("a", "g")` | `ValueError`: nothing would remain |
+| `r.rename({"a": "g"})` | `ValueError`: collision (II.6) |
+| `r & {"z": 2.0}` | `TypeError`: not a record |
 
 </details>

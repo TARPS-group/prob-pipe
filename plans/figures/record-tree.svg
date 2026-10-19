@@ -1,23 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="238" height="206" viewBox="0 0 238 206" role="img">
-  <title>The record {a: 1.0, g: {c: 2.0, e: 3.0}} as a tree</title>
+  <title>The record {a: 1.0, g: {b: 2.0, c: 3.0}} as a tree</title>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
       <path d="M 0 1 L 9 5 L 0 9 z" fill="#424a53"/>
     </marker>
+    <marker id="arrow-fault" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#cf222e"/>
+    </marker>
   </defs>
   <rect x="0.5" y="0.5" width="237" height="205" rx="12" fill="#ffffff" stroke="#d0d7de"/>
   <g transform="translate(62.8,18.0)">
-    <rect x="0.0" y="0.0" width="112.0" height="124.0" rx="8" fill="#eef6ff" stroke="#0969da" stroke-width="1.6"/>
-    <rect x="10.0" y="7.0" width="43.4" height="17.0" rx="8.5" fill="#0969da" stroke="#0969da" stroke-width="1"/>
-    <text x="31.7" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">value</text>
-    <text x="61.4" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">r</text>
+    <rect x="0.0" y="0.0" width="112.0" height="124.0" rx="8" fill="#eef6ff" stroke="#0550ae" stroke-width="1.6"/>
+    <rect x="10.0" y="7.0" width="49.3" height="17.0" rx="8.5" fill="#0550ae" stroke="#0550ae" stroke-width="1"/>
+    <text x="34.6" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">record</text>
+    <text x="67.3" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">r</text>
     <text x="12.0" y="45.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">a</text>
     <text x="12.0" y="67.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">g</text>
-    <text x="28.0" y="89.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">c</text>
-    <text x="28.0" y="111.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">e</text>
+    <text x="28.0" y="89.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">b</text>
+    <text x="28.0" y="111.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">c</text>
     <path d="M 16.0,73.0 L 16.0,85.0 L 25.0,85.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
     <path d="M 16.0,73.0 L 16.0,107.0 L 25.0,107.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
-    <text x="56.0" y="148.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">paths: a, g, g/c, g/e</text>
-    <text x="56.0" y="166.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">fields: a, g/c, g/e · group: g</text>
+    <text x="56.0" y="148.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">paths: a, g, g/b, g/c</text>
+    <text x="56.0" y="166.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">fields: a, g/b, g/c · group: g</text>
   </g>
 </svg>

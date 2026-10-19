@@ -4,12 +4,12 @@ Run ``python3 plans/figures/make_figures.py`` from the repository root. It write
 one ``.svg`` file per figure next to this module, and needs only the standard
 library.
 
-The visual language, which ``legend.svg`` states for the reader:
+The visual language, which the legend figures state for the reader:
 
-- data flows right to left, as a merge ``a & b`` and a density ``p(y | mu)`` are
-  written, so a term's outputs are ports on its left edge and its inputs are
-  ports on its right edge;
-- a term is a rounded box whose badge names its kind;
+- data flows from right to left, as a density ``p(y | mu)`` is written, so an
+  object's outputs are ports on its left edge and its inputs are ports on its
+  right edge;
+- an object is a rounded box whose badge names its kind;
 - an optional input is a hollow port;
 - an output at the root, a base value offered whole under one name, has its name
   outside the box;
@@ -18,11 +18,13 @@ The visual language, which ``legend.svg`` states for the reader:
 - a merge draws its two operands side by side as written, wires each output of
   the right operand into the left operand's input of the same name, fans one
   port of the result out to an input both operands share, and draws the result
-  as a dashed boundary with the result's ports on its edges.
+  as a dashed boundary with the result's ports on its edges;
+- an invalid merge has a red boundary and a red cross, and the ports, wires, or
+  operand at fault are red.
 
 Every figure is drawn on a light panel with dark text, so it reads the same on
 GitHub's light and dark themes. Each figure is declared at the bottom of this
-module as data (terms, ports, and parts), and the layout functions place it.
+module as data (objects, ports, and parts), and the layout functions place it.
 """
 
 from __future__ import annotations
@@ -33,16 +35,17 @@ from xml.sax.saxutils import escape
 
 FIGURE_DIR = Path(__file__).resolve().parent
 
-# Colours: dark ink on a white panel, one hue per kind.
+# Colours: dark ink on a white panel, one hue per kind, and red for a fault.
 PANEL_FILL = "#ffffff"
 PANEL_STROKE = "#d0d7de"
 INK = "#1f2328"
 MUTED = "#59636e"
 WIRE = "#424a53"
 BOUNDARY = "#6e7781"
+FAULT = "#cf222e"
 KIND_COLOURS = {  # kind: (stroke and badge, box fill)
     "value": ("#0969da", "#eef6ff"),
-    "record": ("#0969da", "#eef6ff"),
+    "record": ("#0550ae", "#eef6ff"),
     "law": ("#8250df", "#f6f0ff"),
     "kernel": ("#bf3989", "#fff0f7"),
     "function": ("#1a7f37", "#eefbf1"),
@@ -53,7 +56,7 @@ MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monosp
 SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
 
 ROW = 22  # the height of one port row
-HEADER = 30  # the height of a box's header, which holds the badge and the title
+HEADER = 30  # the height of a box's header, which holds the badge and the name
 PORT_RADIUS = 4.5
 PANEL_PADDING = 18
 
@@ -70,29 +73,44 @@ def text_width(text: str, size: float = 13, mono: bool = True) -> float:
 
 @dataclass
 class Part:
-    """A node of a value: a field, or a group with children."""
+    """A node of a value: a field, or a group with children.
+
+    ``label`` is the text drawn, such as ``"x: (3,)"``, when it differs from the
+    name that wires match on.
+    """
 
     name: str
     children: list[Part] = field(default_factory=list)
+    label: str | None = None
+
+    @property
+    def text(self) -> str:
+        return self.label or self.name
 
 
 @dataclass
 class Port:
-    """An input of a term."""
+    """An input of an object."""
 
     name: str
     optional: bool = False
+    label: str | None = None
+
+    @property
+    def text(self) -> str:
+        return self.label or self.name
 
 
 @dataclass
-class Term:
-    """A term as a figure draws it.
+class Obj:
+    """An object as a figure draws it.
 
-    ``outputs`` are the top-level parts the term offers, each drawn with a port
+    ``outputs`` are the top-level parts the object offers, each drawn with a port
     and with its own parts as a tree below it. ``root_output`` is the name of an
     output at the root, a base value offered whole, drawn outside the box.
     ``body`` holds muted lines of explanation inside the box, and ``levels``
-    makes the term a batch, drawn as a stack of boxes.
+    makes the object a batch, drawn as a stack of boxes. ``faults`` names the
+    ports drawn red, and ``faulty`` draws the whole box red.
     """
 
     name: str
@@ -103,6 +121,8 @@ class Term:
     body: list[str] = field(default_factory=list)
     levels: str | None = None
     show_ports: bool = True  # False draws the parts as a bare tree, before outputs are introduced
+    faults: set[str] = field(default_factory=set)
+    faulty: bool = False
 
     def output_names(self) -> list[str]:
         if self.root_output is not None:
@@ -122,7 +142,7 @@ class Canvas:
         self.min_x = self.min_y = float("inf")
         self.max_x = self.max_y = float("-inf")
 
-    def _extend(self, x0: float, y0: float, x1: float, y1: float) -> None:
+    def extend(self, x0: float, y0: float, x1: float, y1: float) -> None:
         self.min_x = min(self.min_x, x0, x1)
         self.min_y = min(self.min_y, y0, y1)
         self.max_x = max(self.max_x, x0, x1)
@@ -134,14 +154,14 @@ class Canvas:
             f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{h:.1f}" rx="{rx}" '
             f'fill="{fill}" stroke="{stroke}" stroke-width="{width}"{dash_attr}/>'
         )
-        self._extend(x, y, x + w, y + h)
+        self.extend(x, y, x + w, y + h)
 
     def circle(self, x, y, r, *, fill, stroke, width=1.6):
         self.elements.append(
             f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="{fill}" stroke="{stroke}" '
             f'stroke-width="{width}"/>'
         )
-        self._extend(x - r, y - r, x + r, y + r)
+        self.extend(x - r, y - r, x + r, y + r)
 
     def line(self, points, *, stroke=WIRE, width=1.5, arrow=False, dash=None):
         """Draw a polyline through ``points``, with an arrowhead at its end."""
@@ -149,14 +169,15 @@ class Canvas:
         self.path(d, points, stroke=stroke, width=width, arrow=arrow, dash=dash)
 
     def path(self, d, extent_points, *, stroke=WIRE, width=1.5, arrow=False, dash=None):
-        marker = ' marker-end="url(#arrow)"' if arrow else ""
+        marker_id = "arrow-fault" if stroke == FAULT else "arrow"
+        marker = f' marker-end="url(#{marker_id})"' if arrow else ""
         dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
         self.elements.append(
             f'<path d="{d}" fill="none" stroke="{stroke}" stroke-width="{width}" '
             f'stroke-linejoin="round" stroke-linecap="round"{dash_attr}{marker}/>'
         )
         for x, y in extent_points:
-            self._extend(x, y, x, y)
+            self.extend(x, y, x, y)
 
     def text(
         self,
@@ -180,7 +201,15 @@ class Canvas:
         )
         width = text_width(content, size, mono)
         x0 = {"start": x, "middle": x - width / 2, "end": x - width}[anchor]
-        self._extend(x0, y - size, x0 + width, y + size * 0.3)
+        self.extend(x0, y - size, x0 + width, y + size * 0.3)
+
+    def cross(self, x, y):
+        """Draw the red cross that marks an invalid merge, centred at (x, y)."""
+        self.circle(x, y, 10, fill=FAULT, stroke=FAULT, width=1)
+        for dx in (-1, 1):
+            self.line(
+                [(x - 4.5, y - 4.5 * dx), (x + 4.5, y + 4.5 * dx)], stroke="#ffffff", width=2.2
+            )
 
     def render(self) -> str:
         pad = PANEL_PADDING
@@ -188,16 +217,18 @@ class Canvas:
         height = self.max_y - self.min_y + 2 * pad
         dx, dy = pad - self.min_x, pad - self.min_y
         body = "\n    ".join(self.elements)
+        markers = "".join(
+            f'    <marker id="{marker_id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" '
+            'markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">\n'
+            f'      <path d="M 0 1 L 9 5 L 0 9 z" fill="{colour}"/>\n'
+            "    </marker>\n"
+            for marker_id, colour in (("arrow", WIRE), ("arrow-fault", FAULT))
+        )
         return (
             f'<svg xmlns="http://www.w3.org/2000/svg" width="{width:.0f}" height="{height:.0f}" '
             f'viewBox="0 0 {width:.0f} {height:.0f}" role="img">\n'
             f"  <title>{escape(self.title)}</title>\n"
-            "  <defs>\n"
-            '    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" '
-            'markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">\n'
-            f'      <path d="M 0 1 L 9 5 L 0 9 z" fill="{WIRE}"/>\n'
-            "    </marker>\n"
-            "  </defs>\n"
+            f"  <defs>\n{markers}  </defs>\n"
             f'  <rect x="0.5" y="0.5" width="{width - 1:.0f}" height="{height - 1:.0f}" rx="12" '
             f'fill="{PANEL_FILL}" stroke="{PANEL_STROKE}"/>\n'
             f'  <g transform="translate({dx:.1f},{dy:.1f})">\n    {body}\n  </g>\n'
@@ -206,15 +237,15 @@ class Canvas:
 
 
 # ----------------------------------------------------------------------------
-# Drawing one term
+# Drawing one object
 # ----------------------------------------------------------------------------
 
 
 @dataclass
-class PlacedTerm:
-    """A term drawn at a position, with the heights of its ports."""
+class Placed:
+    """An object drawn at a position, with the heights of its ports."""
 
-    term: Term
+    obj: Obj
     x: float
     y: float
     w: float
@@ -261,46 +292,60 @@ def draw_badge(canvas: Canvas, x: float, y: float, kind: str) -> float:
     return w
 
 
-def term_size(term: Term) -> tuple[float, float]:
-    rows = _rows_of(term.outputs)
+def _side_widths(obj: Obj) -> tuple[float, float]:
+    rows = _rows_of(obj.outputs)
     left_w = 10.0
     if rows:
-        left_w = max(12 + depth * 16 + text_width(part.name) for depth, part in rows) + 12
-    right_w = (max(text_width(port.name) for port in term.inputs) + 24) if term.inputs else 0.0
-    body_w = (
-        (max(text_width(line, 12, mono=False) for line in term.body) + 20) if term.body else 0.0
-    )
-    header_w = 10 + badge_width(term.kind) + 8 + text_width(term.name, 13.5) + 14
+        left_w = max(12 + depth * 16 + text_width(part.text) for depth, part in rows) + 12
+    right_w = (max(text_width(port.text) for port in obj.inputs) + 24) if obj.inputs else 0.0
+    return left_w, right_w
+
+
+def obj_size(obj: Obj) -> tuple[float, float]:
+    left_w, right_w = _side_widths(obj)
+    body_w = (max(text_width(line, 12, mono=False) for line in obj.body) + 20) if obj.body else 0.0
+    header_w = 10 + badge_width(obj.kind) + 8 + text_width(obj.name, 13.5) + 14
     w = max(header_w, left_w + body_w + right_w, 112)
-    n_rows = max(len(rows), 1 if term.root_output else 0, len(term.inputs), len(term.body), 1)
-    if term.levels:
+    rows = _rows_of(obj.outputs)
+    n_rows = max(len(rows), 1 if obj.root_output else 0, len(obj.inputs), len(obj.body), 1)
+    if obj.levels:
         n_rows += 1
     return w, HEADER + n_rows * ROW + 6
 
 
-def draw_term(canvas: Canvas, term: Term, x: float, y: float) -> PlacedTerm:
-    stroke, fill = KIND_COLOURS[term.kind]
-    w, h = term_size(term)
-    if term.levels:  # a batch: two offset boxes behind the front one
+def draw_obj(canvas: Canvas, obj: Obj, x: float, y: float) -> Placed:
+    stroke, fill = KIND_COLOURS[obj.kind]
+    w, h = obj_size(obj)
+    if obj.levels:  # a batch: two offset boxes behind the front one
         for offset in (10, 5):
             canvas.rect(x + offset, y - offset, w, h, fill=fill, stroke=stroke, width=1.2)
-    canvas.rect(x, y, w, h, fill=fill, stroke=stroke, width=1.6)
-    badge_w = draw_badge(canvas, x + 10, y + 7, term.kind)
-    canvas.text(x + 10 + badge_w + 8, y + 20, term.name, size=13.5, weight="bold")
+    canvas.rect(
+        x,
+        y,
+        w,
+        h,
+        fill=fill,
+        stroke=FAULT if obj.faulty else stroke,
+        width=2.6 if obj.faulty else 1.6,
+    )
+    badge_w = draw_badge(canvas, x + 10, y + 7, obj.kind)
+    canvas.text(x + 10 + badge_w + 8, y + 20, obj.name, size=13.5, weight="bold")
 
-    def row_y(index: int) -> float:
+    def row_y(index: float) -> float:
         return y + HEADER + index * ROW + ROW / 2
 
     output_y: dict[str, float] = {}
-    rows = _rows_of(term.outputs)
-    if term.root_output is not None:
-        output_y[term.root_output] = row_y(0)
-        canvas.text(x - 11, row_y(0) - 6, term.root_output, anchor="end", weight="bold")
+    rows = _rows_of(obj.outputs)
+    if obj.root_output is not None:
+        output_y[obj.root_output] = row_y(0)
+        colour = FAULT if obj.root_output in obj.faults else INK
+        canvas.text(x - 11, row_y(0) - 6, obj.root_output, anchor="end", weight="bold", fill=colour)
     row_of_part = {}
     for index, (depth, part) in enumerate(rows):
         row_of_part[id(part)] = index
         text_x = x + 12 + depth * 16
-        canvas.text(text_x, row_y(index) + 4.5, part.name, fill=INK if depth == 0 else MUTED)
+        colour = FAULT if part.name in obj.faults and depth == 0 else (INK if depth == 0 else MUTED)
+        canvas.text(text_x, row_y(index) + 4.5, part.text, fill=colour)
         if depth == 0:
             output_y[part.name] = row_y(index)
     for depth, part in rows:  # the tree's connectors
@@ -315,18 +360,16 @@ def draw_term(canvas: Canvas, term: Term, x: float, y: float) -> PlacedTerm:
             )
 
     input_y: dict[str, float] = {}
-    for index, port in enumerate(term.inputs):
+    for index, port in enumerate(obj.inputs):
         input_y[port.name] = row_y(index)
-        canvas.text(x + w - 12, row_y(index) + 4.5, port.name, anchor="end")
+        colour = FAULT if port.name in obj.faults else INK
+        canvas.text(x + w - 12, row_y(index) + 4.5, port.text, anchor="end", fill=colour)
 
-    if term.body:
-        left_w = 10.0
-        if rows:
-            left_w = max(12 + depth * 16 + text_width(part.name) for depth, part in rows) + 12
-        right_w = (max(text_width(port.name) for port in term.inputs) + 24) if term.inputs else 0.0
+    if obj.body:
+        left_w, right_w = _side_widths(obj)
         centre = x + left_w + (w - left_w - right_w) / 2
-        first = (max(len(rows), len(term.inputs), len(term.body)) - len(term.body)) / 2
-        for index, line in enumerate(term.body):
+        first = (max(len(rows), len(obj.inputs), len(obj.body)) - len(obj.body)) / 2
+        for index, line in enumerate(obj.body):
             canvas.text(
                 centre,
                 row_y(first + index) + 4.5,
@@ -337,33 +380,40 @@ def draw_term(canvas: Canvas, term: Term, x: float, y: float) -> PlacedTerm:
                 fill=MUTED,
                 italic=True,
             )
-    if term.levels:
-        canvas.text(x + 12, y + h - 10, f"levels: {term.levels}", size=11.5, mono=False, fill=MUTED)
+    if obj.levels:
+        canvas.text(x + 12, y + h - 10, f"levels: {obj.levels}", size=11.5, mono=False, fill=MUTED)
 
-    for port_y in output_y.values():
-        if term.show_ports:
-            canvas.circle(x, port_y, PORT_RADIUS, fill=stroke, stroke=stroke)
-    for port in term.inputs:
+    if obj.show_ports:
+        for name, port_y in output_y.items():
+            colour = FAULT if name in obj.faults else stroke
+            canvas.circle(x, port_y, PORT_RADIUS, fill=colour, stroke=colour)
+    for port in obj.inputs:
+        colour = FAULT if port.name in obj.faults else stroke
         canvas.circle(
             x + w,
             input_y[port.name],
             PORT_RADIUS,
-            fill=PANEL_FILL if port.optional else stroke,
-            stroke=stroke,
+            fill=PANEL_FILL if port.optional else colour,
+            stroke=colour,
         )
-    return PlacedTerm(term, x, y, w, h, output_y, input_y)
+    return Placed(obj, x, y, w, h, output_y, input_y)
 
 
 # ----------------------------------------------------------------------------
-# Figures: one term, a row of terms, and a merge
+# Figures: one object, a row of objects, and a merge
 # ----------------------------------------------------------------------------
 
 
-def single_term_figure(
-    title: str, term: Term, *, caption: list[str] = (), annotate_sides: bool = False
-) -> Canvas:
+def caption_lines(canvas: Canvas, centre: float, top: float, lines: list[str]) -> None:
+    for index, line in enumerate(lines):
+        canvas.text(
+            centre, top + index * 18, line, size=12, mono=False, anchor="middle", fill=MUTED
+        )
+
+
+def single_figure(title: str, obj: Obj, *, notes: list[str] = (), annotate_sides=False) -> Canvas:
     canvas = Canvas(title)
-    placed = draw_term(canvas, term, 0, 0)
+    placed = draw_obj(canvas, obj, 0, 0)
     if annotate_sides:
         canvas.text(
             -6,
@@ -384,51 +434,39 @@ def single_term_figure(
             fill=MUTED,
             italic=True,
         )
-    for index, line in enumerate(caption):
-        canvas.text(
-            placed.w / 2,
-            placed.bottom + 24 + index * 18,
-            line,
-            size=12,
-            mono=False,
-            anchor="middle",
-            fill=MUTED,
-        )
+    caption_lines(canvas, placed.w / 2, placed.bottom + 24, list(notes))
     return canvas
 
 
-def row_figure(title: str, panels: list[tuple[Term, list[str]]], *, gap: float = 70) -> Canvas:
-    """Draw several terms side by side, each with a caption below it."""
+def row_figure(title: str, panels: list[tuple[Obj, list[str]]], *, gap: float = 70) -> Canvas:
+    """Draw several objects side by side, each with a short note below it."""
     canvas = Canvas(title)
     x = 0.0
-    tops = []
-    for term, caption in panels:
-        w, _ = term_size(term)
-        lead = text_width(term.root_output) + 16 if term.root_output else 0
-        caption_w = max((text_width(line, 12, mono=False) for line in caption), default=0)
-        cell_w = max(w + lead, caption_w)
-        box_x = x + lead + (cell_w - w - lead) / 2
-        tops.append((term, box_x, caption, x, cell_w))
+    cells = []
+    for obj, notes in panels:
+        w, _ = obj_size(obj)
+        lead = text_width(obj.root_output) + 16 if obj.root_output else 0
+        notes_w = max((text_width(line, 12, mono=False) for line in notes), default=0)
+        cell_w = max(w + lead, notes_w)
+        cells.append((obj, x + lead + (cell_w - w - lead) / 2, notes, x, cell_w))
         x += cell_w + gap
-    tallest = max(term_size(term)[1] for term, *_ in tops)
-    for term, box_x, caption, cell_x, cell_w in tops:
-        placed = draw_term(canvas, term, box_x, 0)
-        for index, line in enumerate(caption):
-            canvas.text(
-                cell_x + cell_w / 2,
-                tallest + 26 + index * 18,
-                line,
-                size=12,
-                mono=False,
-                anchor="middle",
-                fill=MUTED,
-            )
-        del placed
+    tallest = max(obj_size(obj)[1] for obj, *_ in cells)
+    for obj, box_x, notes, cell_x, cell_w in cells:
+        draw_obj(canvas, obj, box_x, 0)
+        caption_lines(canvas, cell_x + cell_w / 2, tallest + 26, notes)
     return canvas
 
 
 def merge_figure(
-    title: str, left: Term, right: Term, *, result_name: str, result_kind: str
+    title: str,
+    left: Obj,
+    right: Obj,
+    *,
+    result_name: str,
+    result_kind: str,
+    invalid: bool = False,
+    fault_wires: set[str] = frozenset(),
+    fault_results: set[str] = frozenset(),
 ) -> Canvas:
     """Draw ``left & right``: the operands as written, their wires, and the result.
 
@@ -436,6 +474,8 @@ def merge_figure(
     of ``left`` that is not fed and that ``right`` also takes is shared, and one
     port of the result fans out to both. The result offers ``left``'s outputs,
     then ``right``'s; it takes ``left``'s remaining inputs, then ``right``'s.
+    ``invalid`` marks the merge as refused, and ``fault_wires`` and
+    ``fault_results`` name the wires and result ports drawn red.
     """
     canvas = Canvas(title)
     right_outputs = right.output_names()
@@ -451,8 +491,11 @@ def merge_figure(
                 p.optional for p in right.inputs if p.name == port.name
             )
 
-    w_left, _ = term_size(left)
-    w_right, _ = term_size(right)
+    def wire_colour(name: str) -> str:
+        return FAULT if name in fault_wires else WIRE
+
+    w_left, _ = obj_size(left)
+    w_right, _ = obj_size(right)
     result_outputs = left.output_names() + right_outputs
     label_room = max((text_width(name) for name in result_outputs), default=0)
 
@@ -467,16 +510,18 @@ def merge_figure(
     right_x = left_x + w_left + gap
     boundary_right = right_x + w_right + 26 + 10 * max(len(shared), 1)
 
-    placed_left = draw_term(canvas, left, left_x, box_top)
-    placed_right = draw_term(canvas, right, right_x, box_top)
+    placed_left = draw_obj(canvas, left, left_x, box_top)
+    placed_right = draw_obj(canvas, right, right_x, box_top)
     lowest = max(placed_left.bottom, placed_right.bottom)
 
     def boundary_port(x: float, y: float, name: str, side: str, optional: bool = False) -> None:
-        canvas.circle(x, y, PORT_RADIUS, fill=PANEL_FILL if optional else BOUNDARY, stroke=BOUNDARY)
+        colour = FAULT if name in fault_results else BOUNDARY
+        canvas.circle(x, y, PORT_RADIUS, fill=PANEL_FILL if optional else colour, stroke=colour)
+        text_colour = FAULT if name in fault_results else INK
         if side == "left":
-            canvas.text(x - 10, y + 4.5, name, anchor="end", weight="bold")
+            canvas.text(x - 10, y + 4.5, name, anchor="end", weight="bold", fill=text_colour)
         else:
-            canvas.text(x + 10, y + 4.5, name, weight="bold")
+            canvas.text(x + 10, y + 4.5, name, weight="bold", fill=text_colour)
 
     # The left operand's outputs leave straight through the result's left edge.
     for name in left.output_names():
@@ -509,6 +554,7 @@ def merge_figure(
                 f"M {lane_x:.1f},{y_port:.1f} C {lane_x - 40:.1f},{y_port:.1f} "
                 f"{target_x + 40:.1f},{y_in:.1f} {target_x:.1f},{y_in:.1f}",
                 [(lane_x, y_port), (target_x, y_in)],
+                stroke=wire_colour(name),
                 width=2.2,
                 arrow=True,
             )
@@ -520,6 +566,7 @@ def merge_figure(
         y_band = boundary_top + 16 + 22 * k
         y_in = placed_left.input_y[port.name]
         lane_x = placed_left.right + 30 + 11 * k
+        colour = wire_colour(port.name)
         canvas.line(
             [
                 (boundary_right - PORT_RADIUS - 2, y_band),
@@ -527,6 +574,7 @@ def merge_figure(
                 (lane_x, y_in),
                 (placed_left.right + PORT_RADIUS + 2, y_in),
             ],
+            stroke=colour,
             arrow=True,
         )
         boundary_port(boundary_right, y_band, port.name, "right", optional_of[port.name])
@@ -539,15 +587,17 @@ def merge_figure(
                     (fan_x, y_right),
                     (placed_right.right + PORT_RADIUS + 2, y_right),
                 ],
+                stroke=colour,
                 arrow=True,
             )
-            canvas.circle(fan_x, y_band, 3, fill=WIRE, stroke=WIRE, width=1)
+            canvas.circle(fan_x, y_band, 3, fill=colour, stroke=colour, width=1)
 
     # The right operand's other inputs enter straight through the right edge.
     for port in right_remaining:
         y = placed_right.input_y[port.name]
         canvas.line(
             [(boundary_right - PORT_RADIUS - 2, y), (placed_right.right + PORT_RADIUS + 2, y)],
+            stroke=wire_colour(port.name),
             arrow=True,
         )
         boundary_port(boundary_right, y, port.name, "right", port.optional)
@@ -561,193 +611,212 @@ def merge_figure(
         boundary_right - boundary_left,
         boundary_bottom - boundary_top,
         rx=14,
-        stroke=BOUNDARY,
-        width=1.5,
+        stroke=FAULT if invalid else BOUNDARY,
+        width=2.2 if invalid else 1.5,
         dash="6 4",
     )
     badge_w = draw_badge(canvas, boundary_left + 4, boundary_top - 27, result_kind)
-    canvas.text(
-        boundary_left + 4 + badge_w + 8, boundary_top - 14, result_name, size=13.5, weight="bold"
-    )
-    canvas._extend(boundary_left - label_room - 12, boundary_top, boundary_left, boundary_top)
+    name_x = boundary_left + 4 + badge_w + 8
+    canvas.text(name_x, boundary_top - 14, result_name, size=13.5, weight="bold")
+    if invalid:
+        cross_x = name_x + text_width(result_name, 13.5) + 18
+        canvas.cross(cross_x, boundary_top - 18)
+        canvas.text(
+            cross_x + 16,
+            boundary_top - 14,
+            "refused",
+            size=12.5,
+            mono=False,
+            fill=FAULT,
+            weight="bold",
+        )
+    canvas.extend(boundary_left - label_room - 12, boundary_top, boundary_left, boundary_top)
     return canvas
 
 
 # ----------------------------------------------------------------------------
-# The legend
+# The legends
 # ----------------------------------------------------------------------------
 
 
-def legend_figure(*, terms: bool = True, merges: bool = True) -> Canvas:
-    """Draw the legend: the conventions for terms, for merges, or both."""
-    title = {
-        (True, True): "Legend of the figures",
-        (True, False): "How a figure draws a term",
-        (False, True): "How a figure draws a merge",
-    }[(terms, merges)]
-    canvas = Canvas(title)
-    text_x = 330
-    y = 0.0
+class Legend:
+    """Rows of a glyph on the left and its explanation on the right."""
 
-    def explain(lines: list[str], top: float, height: float) -> None:
+    TEXT_X = 330
+
+    def __init__(self, title: str) -> None:
+        self.canvas = Canvas(title)
+        self.y = 0.0
+
+    def explain(self, lines: list[str], top: float, height: float) -> None:
         first = top + height / 2 - (len(lines) - 1) * 9 + 4.5
         for index, line in enumerate(lines):
-            canvas.text(text_x, first + index * 18, line, size=13, mono=False)
+            self.canvas.text(self.TEXT_X, first + index * 18, line, size=13, mono=False)
 
-    if not terms:
-        return _legend_merge_rows(canvas, y, explain)
+    def object_rows(self) -> None:
+        canvas = self.canvas
+        y = self.y
+        canvas.line([(250, y + 16), (40, y + 16)], width=2.2, arrow=True)
+        canvas.text(
+            250,
+            y + 36,
+            "inputs enter",
+            size=11.5,
+            mono=False,
+            anchor="end",
+            fill=MUTED,
+            italic=True,
+        )
+        canvas.text(40, y + 36, "outputs leave", size=11.5, mono=False, fill=MUTED, italic=True)
+        self.explain(
+            [
+                "Data flows from right to left, as a density",
+                "p(y | mu) is written: produced, then received.",
+            ],
+            y,
+            40,
+        )
+        y += 64
 
-    # Row 1: the direction of flow.
-    canvas.line([(250, y + 16), (40, y + 16)], width=2.2, arrow=True)
-    canvas.text(
-        250, y + 36, "inputs enter", size=11.5, mono=False, anchor="end", fill=MUTED, italic=True
-    )
-    canvas.text(40, y + 36, "outputs leave", size=11.5, mono=False, fill=MUTED, italic=True)
-    explain(
-        [
-            "Data flows from right to left, as a density",
-            "p(y | mu) is written: produced, then received.",
-        ],
-        y,
-        40,
-    )
-    y += 64
+        draw_obj(canvas, Obj("d", "law"), 40, y)
+        self.explain(["An object is a rounded box.", "Its badge names its kind."], y, 38)
+        y += 72
+        x = 40.0
+        for kind in ("value", "record", "law", "kernel", "function", "batch"):
+            x += draw_badge(canvas, x, y, kind) + 6
+        self.explain(
+            ["The kinds: base values, records, laws,", "kernels, functions, and batches."],
+            y - 10,
+            38,
+        )
+        y += 50
 
-    # Row 2: a term and its kind.
-    draw_term(canvas, Term("prior", "law"), 40, y)
-    explain(["A term is a rounded box. Its badge names its kind."], y, 38)
-    y += 72
-    x = 40.0
-    for kind in ("value", "law", "kernel", "function", "batch"):
-        x += draw_badge(canvas, x, y, kind) + 8
-    explain(["The kinds of term: values, laws, kernels,", "functions, and batches."], y - 10, 38)
-    y += 50
+        placed = draw_obj(canvas, Obj("r", "record", outputs=[Part("a"), Part("b")]), 40, y)
+        self.explain(
+            ["An output is a port on the left edge,", "labelled inside the box."], y, placed.h
+        )
+        y += placed.h + 22
 
-    # Row 3: outputs.
-    placed = draw_term(canvas, Term("r", "value", outputs=[Part("a"), Part("b")]), 40, y)
-    explain(
-        ["An output is a port on the left edge,", "labelled inside the box with its name."],
-        y,
-        placed.h,
-    )
-    y += placed.h + 22
+        placed = draw_obj(
+            canvas, Obj("k", "kernel", root_output="y", body=["a draw is an array"]), 70, y
+        )
+        self.explain(
+            [
+                "An output at the root offers a base value",
+                "whole; its name stands outside the box.",
+            ],
+            y,
+            placed.h,
+        )
+        y += placed.h + 22
 
-    # Row 4: an output at the root.
-    placed = draw_term(
-        canvas, Term("k", "kernel", root_output="y", body=["a draw is an array"]), 70, y
-    )
-    explain(
-        ["An output at the root offers a base value whole.", "Its name stands outside the box."],
-        y,
-        placed.h,
-    )
-    y += placed.h + 22
+        placed = draw_obj(
+            canvas, Obj("k", "kernel", inputs=[Port("mu"), Port("sigma", optional=True)]), 40, y
+        )
+        self.explain(
+            ["An input is a port on the right edge.", "A hollow port is an optional input."],
+            y,
+            placed.h,
+        )
+        y += placed.h + 22
 
-    # Row 5: inputs.
-    placed = draw_term(
-        canvas, Term("k", "kernel", inputs=[Port("mu"), Port("s", optional=True)]), 40, y
-    )
-    explain(
-        ["An input is a port on the right edge.", "A hollow port is an optional input."],
-        y,
-        placed.h,
-    )
-    y += placed.h + 22
+        placed = draw_obj(
+            canvas,
+            Obj("r", "record", outputs=[Part("a"), Part("g", [Part("b"), Part("c")])]),
+            40,
+            y,
+        )
+        self.explain(
+            [
+                "The parts of a value are a tree inside the",
+                "box: the field a, and the group g holding",
+                "the fields b and c.",
+            ],
+            y,
+            placed.h,
+        )
+        y += placed.h + 30
 
-    # Row 6: parts.
-    placed = draw_term(
-        canvas, Term("r", "value", outputs=[Part("a"), Part("g", [Part("c"), Part("e")])]), 40, y
-    )
-    explain(
-        [
-            "The parts of a value are a tree inside the box:",
-            "here the field a and the group g, which holds",
-            "the fields c and e.",
-        ],
-        y,
-        placed.h,
-    )
-    y += placed.h + 30
+        placed = draw_obj(
+            canvas,
+            Obj("draws", "batch", outputs=[Part("mu"), Part("sigma")], levels="sample"),
+            40,
+            y,
+        )
+        self.explain(
+            ["A batch is a stack of boxes,", "with its levels at the bottom."], y, placed.h
+        )
+        self.y = y + placed.h + 26
 
-    # Row 7: a batch.
-    placed = draw_term(
-        canvas, Term("draws", "batch", outputs=[Part("mu"), Part("tau")], levels="sample"), 40, y
-    )
-    explain(["A batch is a stack of boxes.", "Its levels are listed at the bottom."], y, placed.h)
-    y += placed.h + 26
+    def merge_rows(self) -> None:
+        canvas = self.canvas
+        y = self.y
+        a = draw_obj(canvas, Obj("a", "kernel", inputs=[Port("x")]), 20, y)
+        b = draw_obj(canvas, Obj("b", "law", outputs=[Part("x")]), 200, y)
+        yy = a.input_y["x"]
+        canvas.line(
+            [(b.x - PORT_RADIUS, yy), (a.right + PORT_RADIUS + 2, yy)], width=2.2, arrow=True
+        )
+        self.explain(
+            ["In a & b, a wire runs from an output of b", "to the input of a with the same name."],
+            y,
+            a.h,
+        )
+        y += a.h + 26
 
-    if not merges:
-        return canvas
-    return _legend_merge_rows(canvas, y, explain)
+        stroke, fill = KIND_COLOURS["kernel"]
+        canvas.rect(20, y, 270, 64, rx=14, stroke=BOUNDARY, width=1.5, dash="6 4")
+        for box_x in (40, 170):
+            canvas.rect(box_x, y + 10, 70, 44, rx=8, fill=fill, stroke=stroke, width=1.6)
+            canvas.circle(box_x + 70, y + 32, PORT_RADIUS, fill=stroke, stroke=stroke)
+        canvas.line(
+            [
+                (290 - PORT_RADIUS - 2, y + 12),
+                (130, y + 12),
+                (130, y + 32),
+                (110 + PORT_RADIUS + 2, y + 32),
+            ],
+            arrow=True,
+        )
+        canvas.line([(258, y + 12), (258, y + 32), (240 + PORT_RADIUS + 2, y + 32)], arrow=True)
+        canvas.circle(258, y + 12, 3, fill=WIRE, stroke=WIRE, width=1)
+        canvas.circle(290, y + 12, PORT_RADIUS, fill=BOUNDARY, stroke=BOUNDARY)
+        self.explain(
+            [
+                "The result is a dashed boundary with its",
+                "ports on its edges. A port that fans out",
+                "to both operands is a shared input.",
+            ],
+            y,
+            64,
+        )
+        y += 90
+
+        canvas.rect(20, y, 270, 40, rx=14, stroke=FAULT, width=2.2, dash="6 4")
+        canvas.cross(46, y + 20)
+        canvas.text(66, y + 24, "refused", size=12.5, mono=False, fill=FAULT, weight="bold")
+        canvas.circle(150, y + 20, PORT_RADIUS, fill=FAULT, stroke=FAULT)
+        canvas.text(160, y + 24.5, "the fault", fill=FAULT)
+        self.explain(
+            ["A refused merge has a red boundary and a", "red cross; what breaks the rule is red."],
+            y,
+            40,
+        )
+        self.y = y + 40
 
 
-def _legend_merge_rows(canvas: Canvas, y: float, explain) -> Canvas:
-    # Row 8: feeding.
-    a = draw_term(canvas, Term("a", "kernel", inputs=[Port("x")]), 20, y)
-    b = draw_term(canvas, Term("b", "law", outputs=[Part("x")]), 200, y)
-    yy = a.input_y["x"]
-    canvas.line([(b.x - PORT_RADIUS, yy), (a.right + PORT_RADIUS + 2, yy)], width=2.2, arrow=True)
-    explain(
-        [
-            "In a & b, an output of b feeds the input of a",
-            "with the same name: a wire runs from the",
-            "output to the input.",
-        ],
-        y,
-        a.h,
-    )
-    y += a.h + 26
-
-    # Row 9: a merge result and a shared input.
-    canvas.rect(20, y, 270, 64, rx=14, stroke=BOUNDARY, width=1.5, dash="6 4")
-    canvas.rect(
-        40,
-        y + 10,
-        70,
-        44,
-        rx=8,
-        fill=KIND_COLOURS["kernel"][1],
-        stroke=KIND_COLOURS["kernel"][0],
-        width=1.6,
-    )
-    canvas.rect(
-        170,
-        y + 10,
-        70,
-        44,
-        rx=8,
-        fill=KIND_COLOURS["kernel"][1],
-        stroke=KIND_COLOURS["kernel"][0],
-        width=1.6,
-    )
-    canvas.circle(
-        110, y + 32, PORT_RADIUS, fill=KIND_COLOURS["kernel"][0], stroke=KIND_COLOURS["kernel"][0]
-    )
-    canvas.circle(
-        240, y + 32, PORT_RADIUS, fill=KIND_COLOURS["kernel"][0], stroke=KIND_COLOURS["kernel"][0]
-    )
-    canvas.line(
-        [
-            (290 - PORT_RADIUS - 2, y + 12),
-            (130, y + 12),
-            (130, y + 32),
-            (110 + PORT_RADIUS + 2, y + 32),
-        ],
-        arrow=True,
-    )
-    canvas.line([(258, y + 12), (258, y + 32), (240 + PORT_RADIUS + 2, y + 32)], arrow=True)
-    canvas.circle(258, y + 12, 3, fill=WIRE, stroke=WIRE, width=1)
-    canvas.circle(290, y + 12, PORT_RADIUS, fill=BOUNDARY, stroke=BOUNDARY)
-    explain(
-        [
-            "The result of a merge is a dashed boundary,",
-            "with the result's ports on its edges. One port",
-            "that fans out to both operands is a shared input.",
-        ],
-        y,
-        64,
-    )
-    return canvas
+def legend_figure(*, objects: bool = True, merges: bool = True) -> Canvas:
+    title = {
+        (True, True): "Legend of the figures",
+        (True, False): "How a figure draws an object",
+        (False, True): "How a figure draws a merge",
+    }[(objects, merges)]
+    legend = Legend(title)
+    if objects:
+        legend.object_rows()
+    if merges:
+        legend.merge_rows()
+    return legend.canvas
 
 
 # ----------------------------------------------------------------------------
@@ -755,55 +824,50 @@ def _legend_merge_rows(canvas: Canvas, y: float, explain) -> Canvas:
 # ----------------------------------------------------------------------------
 
 
-def lik() -> Term:
-    return Term("lik", "kernel", root_output="y", inputs=[Port("mu")], body=["a draw is an array"])
-
-
-def prior() -> Term:
-    return Term("prior", "law", outputs=[Part("mu"), Part("tau")])
+def opt_kernel(name: str = "a", faults: set[str] = frozenset()) -> Obj:
+    """A kernel a(y | mu, sigma) whose sigma is optional."""
+    return Obj(
+        name,
+        "kernel",
+        root_output="y",
+        inputs=[Port("mu"), Port("sigma", optional=True)],
+        faults=set(faults),
+    )
 
 
 def figures() -> dict[str, Canvas]:
+    group = [Part("a"), Part("g", [Part("b"), Part("c")])]
     return {
         "legend": legend_figure(),
-        "legend-terms": legend_figure(merges=False),
-        "legend-merge": legend_figure(terms=False),
-        "record-tree": single_term_figure(
-            "The record {a: 1.0, g: {c: 2.0, e: 3.0}} as a tree",
-            Term(
-                "r",
-                "value",
-                outputs=[Part("a"), Part("g", [Part("c"), Part("e")])],
-                show_ports=False,
-            ),
-            caption=["paths: a, g, g/c, g/e", "fields: a, g/c, g/e · group: g"],
+        "legend-objects": legend_figure(merges=False),
+        "legend-merge": legend_figure(objects=False),
+        "record-tree": single_figure(
+            "The record {a: 1.0, g: {b: 2.0, c: 3.0}} as a tree",
+            Obj("r", "record", outputs=group, show_ports=False),
+            notes=["paths: a, g, g/b, g/c", "fields: a, g/b, g/c · group: g"],
         ),
-        "signature": single_term_figure(
-            "The signature of the kernel lik_opt: the output y, and the inputs mu and s",
-            Term(
-                "lik_opt",
+        "record-parts": single_figure(
+            "The record {a, g: {b, c}} and its outputs",
+            Obj("r", "record", outputs=group),
+            notes=["its outputs are its children, a and g"],
+        ),
+        "signature": single_figure(
+            "The signature of the kernel k(y | mu, sigma), whose sigma is optional",
+            Obj(
+                "k",
                 "kernel",
                 root_output="y",
-                inputs=[Port("mu"), Port("s", optional=True)],
+                inputs=[Port("mu"), Port("sigma", optional=True)],
                 body=["a draw is an array"],
             ),
-            caption=[
-                "lik_opt(y | mu, s): its draw y is an array offered under the name y;",
-                "it takes mu, and s is optional",
-            ],
             annotate_sides=True,
         ),
-        "record-parts": single_term_figure(
-            "The record {a, g: {c, e}} and its parts",
-            Term("r", "value", outputs=[Part("a"), Part("g", [Part("c"), Part("e")])]),
-            caption=["its outputs are a and g, its children"],
-        ),
         "output-naming": row_figure(
-            "Three ways a term offers what it produces",
+            "Three ways an object offers what it produces",
             [
                 (
-                    Term(
-                        "lik",
+                    Obj(
+                        "k",
                         "kernel",
                         root_output="y",
                         inputs=[Port("mu")],
@@ -812,46 +876,120 @@ def figures() -> dict[str, Canvas]:
                     ["a base value: offered whole,", "under a name outside it"],
                 ),
                 (
-                    Term("params_prior", "law", outputs=[Part("beta"), Part("sigma")]),
-                    ["a record: offers its parts,", "beta and sigma"],
+                    Obj("d", "law", outputs=[Part("mu"), Part("sigma")]),
+                    ["a record: offers its children"],
                 ),
                 (
-                    Term(
-                        "params_prior",
-                        "law",
-                        outputs=[Part("params", [Part("beta"), Part("sigma")])],
-                    ),
-                    ["the record wrapped under params:", "one output, params"],
+                    Obj("d", "law", outputs=[Part("params", [Part("mu"), Part("sigma")])]),
+                    ["the record wrapped under params:", "one output"],
                 ),
             ],
         ),
         "merge-general": merge_figure(
             "The merge a & b of two kernels",
-            Term("a", "kernel", outputs=[Part("u"), Part("v")], inputs=[Port("x"), Port("w")]),
-            Term("b", "kernel", outputs=[Part("x"), Part("z")], inputs=[Port("w"), Port("q")]),
+            Obj("a", "kernel", outputs=[Part("u"), Part("v")], inputs=[Port("x"), Port("w")]),
+            Obj("b", "kernel", outputs=[Part("x"), Part("z")], inputs=[Port("w"), Port("q")]),
             result_name="a & b",
             result_kind="kernel",
         ),
         "merge-kernel-law": merge_figure(
             "The merge lik & prior of a likelihood and a prior",
-            lik(),
-            prior(),
+            Obj("lik", "kernel", root_output="y", inputs=[Port("mu")], body=["a draw is an array"]),
+            Obj("prior", "law", outputs=[Part("mu"), Part("tau")]),
             result_name="lik & prior",
             result_kind="law",
         ),
         "merge-shared-input": merge_figure(
-            "The merge lik_nee & lik_lai of two kernels that share the input theta",
-            Term("lik_nee", "kernel", root_output="nee", inputs=[Port("theta")]),
-            Term("lik_lai", "kernel", root_output="lai", inputs=[Port("theta")]),
-            result_name="lik_nee & lik_lai",
+            "The merge a & b of two kernels that share the input theta",
+            Obj("a", "kernel", root_output="x", inputs=[Port("theta")]),
+            Obj("b", "kernel", root_output="y", inputs=[Port("theta")]),
+            result_name="a & b",
             result_kind="kernel",
+        ),
+        "merge-optional-open": merge_figure(
+            "An optional input that stays open in the result",
+            opt_kernel(),
+            Obj("b", "kernel", root_output="mu", inputs=[Port("theta")]),
+            result_name="a & b",
+            result_kind="kernel",
+        ),
+        "merge-optional-fed": merge_figure(
+            "An optional input that the right operand feeds",
+            opt_kernel(),
+            Obj("b", "law", outputs=[Part("mu"), Part("sigma")]),
+            result_name="a & b",
+            result_kind="law",
         ),
         "merge-records": merge_figure(
             "The merge of two records",
-            Term("r1", "value", outputs=[Part("a")]),
-            Term("r2", "value", outputs=[Part("b"), Part("g", [Part("c")])]),
+            Obj("r1", "record", outputs=[Part("a")]),
+            Obj("r2", "record", outputs=[Part("b"), Part("g", [Part("c")])]),
             result_name="r1 & r2",
-            result_kind="value",
+            result_kind="record",
+        ),
+        "merge-invalid-output": merge_figure(
+            "Refused: x is an output of both operands",
+            Obj("a", "law", outputs=[Part("x"), Part("y")], faults={"x"}),
+            Obj("b", "law", outputs=[Part("x"), Part("z")], faults={"x"}),
+            result_name="a & b",
+            result_kind="law",
+            invalid=True,
+            fault_results={"x"},
+        ),
+        "merge-invalid-order": merge_figure(
+            "Refused: the right operand takes x, which the left operand outputs",
+            Obj("a", "law", outputs=[Part("x")], faults={"x"}),
+            Obj("b", "kernel", root_output="y", inputs=[Port("x")], faults={"x"}),
+            result_name="a & b",
+            result_kind="kernel",
+            invalid=True,
+            fault_results={"x"},
+            fault_wires={"x"},
+        ),
+        "merge-invalid-conform": merge_figure(
+            "Refused: the output x of shape (4,) does not conform to the input x of shape (3,)",
+            Obj("a", "kernel", root_output="y", inputs=[Port("x", label="x: (3,)")], faults={"x"}),
+            Obj("b", "law", root_output="x", body=["x: (4,)"], faults={"x"}),
+            result_name="a & b",
+            result_kind="law",
+            invalid=True,
+            fault_wires={"x"},
+        ),
+        "merge-invalid-unify": merge_figure(
+            "Refused: the shared input theta has shapes (2,) and (3,), which do not unify",
+            Obj(
+                "a",
+                "kernel",
+                root_output="x",
+                inputs=[Port("theta", label="theta: (2,)")],
+                faults={"theta"},
+            ),
+            Obj(
+                "b",
+                "kernel",
+                root_output="y",
+                inputs=[Port("theta", label="theta: (3,)")],
+                faults={"theta"},
+            ),
+            result_name="a & b",
+            result_kind="kernel",
+            invalid=True,
+            fault_wires={"theta"},
+            fault_results={"theta"},
+        ),
+        "merge-invalid-law": merge_figure(
+            "Refused: the right operand produces a law, which a record cannot hold unnamed",
+            Obj("a", "function", root_output="y", inputs=[Port("theta")]),
+            Obj(
+                "b",
+                "function",
+                inputs=[Port("data")],
+                body=["returns a law", "no outputs"],
+                faulty=True,
+            ),
+            result_name="a & b",
+            result_kind="function",
+            invalid=True,
         ),
     }
 
