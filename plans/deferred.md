@@ -10,30 +10,30 @@ Postponed work leaves the current behaviour unchanged (README directive 8).
 
 | Work | Source |
 |---|---|
-| Grammar B for random measures, random functions and Gaussian processes, bootstrap laws, empirical laws of laws, and minibatched targets, each wrapping its draws under the name its constructor takes; then the refusal of the interim whole form, and the private event default goes (step G2) | `declarations-and-addressing-io.md` § 6.15; gaps D4 |
-| Paths through every kind, `Function[]`, the accessor `t.component(c)`, and views at held fields with no wrap (step G3) | `declarations-and-addressing-io.md` § 4.2, § 6.15 |
-| `condition_on`'s result with the event spec `d.event_spec.without(*fixed)`, `law.without`, and paths into a record input of an `InputSpec` (step G4) | `declarations-and-addressing-io.md` § 5.5, § 4.5, § 5.10, § 6.15 |
-| `[]` on batches of laws, on batches of functions, and on kernels (step G5) | `declarations-and-addressing-io.md` § 5.6, § 5.8, § 6.15 |
-| The rename of "slot" and "component" to "input" and "output" in `design/`, the glossary, and the code, with `components` → `outputs`, `component=` → `output_name=`, and `t.component(c)` → `t.output(c)`, in one announced PR right after the workshop, with the private names and the docs page that `declarations-and-addressing-io.md` § 6.4 lists (`_exposed_outputs`, `_output_name` for `_component_name`, `_outputs_of`, `_callable_output_name`, `_root_output_name` for S2a's helper `_root_component_name`, `_ByOutput` for `_ByComponent`, `docs/api/input_and_output_specs.md`), the words "input declaration", "output declaration", and "event declaration", and `execution-layer.md`'s terms built on "declaration" (step R in README § Steps); its order against G3 is pending the maintainer's decision N16 in `decisions.md` | `declarations-and-addressing-io.md` § 8.2, § 6.15, § 6.20 Q1 |
-| `&` on `Function`, where functions feed as point-mass kernels, and on batches other than `RecordBatch`, element by element | `declarations-and-addressing-io.md` § 5.7, § 6.16 |
-| `without` on a `Function`, a `ConditionalDistribution`, a batch of laws, and through a law held in a record field, so I10 holds for every kind | `declarations-and-addressing-io.md` § 3, § 8 (row T30) |
-| `&` on `DistributionSpec`, `ConditionalDistributionSpec`, `FunctionSpec`, and `BatchSpec`, and `InputSpec.rename`, so a function that builds a model declares its output | `declarations-and-addressing-io.md` § 6.16 |
-| A lifting rule inside a merge, so an input that expects a value can be fed a law- or function-valued output | `declarations-and-addressing-io.md` § 2.21, § 6.16 item 4 |
-| Aligning the levels of two batches by name, with broadcasting, in a batch merge | `declarations-and-addressing-io.md` § 5.8, § 6.16 item 2, § 6.5.1 (VI.11) |
+| Grammar B for random measures, random functions and Gaussian processes, bootstrap laws, empirical laws of laws, and minibatched targets, each wrapping its draws under the name its constructor takes; then the refusal of the interim whole form, and the private event default goes (step G2) | `declarations-and-addressing-io.md` B.6; gaps D4 |
+| Paths through every kind, `Function[]`, the accessor `t.component(c)`, and views at held fields with no wrap (step G3) | `declarations-and-addressing-io.md` § 4.1, B.6 |
+| `condition_on`'s result with the event spec `d.event_spec.without(*fixed)`, `law.without`, and paths into a record input of an `InputSpec` (step G4) | `declarations-and-addressing-io.md` § 6.2, § 15, § 4.3, § 10, B.6 |
+| `[]` on batches of laws, on batches of functions, and on kernels (step G5) | `declarations-and-addressing-io.md` § 6.3, § 16, § 6.5, § 18, B.6 |
+| The rename of "slot" and "component" to "input" and "output" in `design/`, the glossary, and the code, with `components` → `outputs`, `component=` → `output_name=`, and `t.component(c)` → `t.output(c)`, in one announced PR right after the workshop, with the private names and the docs page that `declarations-and-addressing-io.md` C.2 lists (`_exposed_outputs`, `_output_name` for `_component_name`, `_outputs_of`, `_callable_output_name`, `_root_output_name` for S2a's helper `_root_component_name`, `_ByOutput` for `_ByComponent`, `docs/api/input_and_output_specs.md`), the words "input declaration", "output declaration", and "event declaration", and `execution-layer.md`'s terms built on "declaration" (step R in README § Steps); its order against G3 is pending the maintainer's decision N16 in `decisions.md` | `declarations-and-addressing-io.md` B.2, B.6, D.2 Q1 |
+| `&` on `Function`, where functions feed as point-mass kernels, and on batches other than `RecordBatch`, element by element | `declarations-and-addressing-io.md` § 6.4, § 17, B.6 |
+| `without` on a `Function`, a `ConditionalDistribution`, a batch of laws, and through a law held in a record field, so I10 holds for every kind | `declarations-and-addressing-io.md` § 7.1, B.4 (row T30) |
+| `&` on `DistributionSpec`, `ConditionalDistributionSpec`, `FunctionSpec`, and `BatchSpec`, and `InputSpec.rename`, so a function that builds a model declares its output | `declarations-and-addressing-io.md` B.6 |
+| A lifting rule inside a merge, so an input that expects a value can be fed a law- or function-valued output | `declarations-and-addressing-io.md` § 5.6, B.6 item 4 |
+| Aligning the levels of two batches by name, with broadcasting, in a batch merge | `declarations-and-addressing-io.md` § 6.5, § 18, B.6 item 2, B.3 (VI.11) |
 | The requester restores each input's output spec from the stored input structure (O4, option 1), once #506 lets a body ask for tracked terms | `declarations-and-addressing-io.md` O4 |
 
 From the inputs and outputs plan (`inputs-and-outputs.md` Appendix C.4), merged into `declarations-and-addressing-io.md` on 2026-10-18:
 
 | Work | Source |
 |---|---|
-| The point-mass reading of merges across categories: a record as the law of one draw, and a function as the kernel whose laws are point masses, so `lik & Record({"mu": 0.3})` and `f & d` have a meaning | `declarations-and-addressing-io.md` § 2.16 |
-| Refusing a merge of two views of one parent, or returning their joint view, since today `hier[["s1"]] & hier[["s2"]]` is the product of the marginals | `declarations-and-addressing-io.md` § 2.21 |
-| A merge that sorts the flattened factors topologically, so a kernel can be added between two merged operands | `declarations-and-addressing-io.md` § 6.22, item 25; `inputs-and-outputs.md` Appendix D, item 18 |
-| The joint's spec for a shared input becomes the unification `U` instead of the first operand's spec; one test asserts today's choice | `declarations-and-addressing-io.md` § 2.14, § 2.18, § 6.20 Q4(d) |
-| A bug: `condition_on` of a joint kernel ignores an optional input that a merge feeds, as in `condition_on(lik_opt * s_prior, {"mu": 0.0})`; S3's rename carries it unchanged | `declarations-and-addressing-io.md` § 2.20; `inputs-and-outputs.md` fact 34 |
+| The point-mass reading of merges across categories: a record as the law of one draw, and a function as the kernel whose laws are point masses, so `lik & Record({"mu": 0.3})` and `f & d` have a meaning | `declarations-and-addressing-io.md` § 5.3 |
+| Refusing a merge of two views of one parent, or returning their joint view, since today `hier[["s1"]] & hier[["s2"]]` is the product of the marginals | `declarations-and-addressing-io.md` § 5.6 |
+| A merge that sorts the flattened factors topologically, so a kernel can be added between two merged operands | `declarations-and-addressing-io.md` E, item 25; `inputs-and-outputs.md` Appendix D, item 18 |
+| The joint's spec for a shared input becomes the unification `U` instead of the first operand's spec; one test asserts today's choice | `declarations-and-addressing-io.md` § 2.1, § 5.3, D.2 Q4(d) |
+| A bug: `condition_on` of a joint kernel ignores an optional input that a merge feeds, as in `condition_on(lik_opt * s_prior, {"mu": 0.0})`; S3's rename carries it unchanged | `declarations-and-addressing-io.md` § 5.5, C.3; `inputs-and-outputs.md` fact 34 |
 | Two different dimension names at one axis become one dimension, which changes II.1 and `_unify_specs` | `inputs-and-outputs.md` Appendix D, item 14 |
-| The long-term rule for optional inputs across merges; recommended: a merge that leaves optional inputs shows them, as a kernel whose inputs are all optional | `declarations-and-addressing-io.md` § 4.16, § 6.20 Q4(b) |
-| The dimension scopes of merge results: store a scope on every result, input specs and functions included, with `with_dim_names` renaming stored names, or substitute and forget everywhere | `declarations-and-addressing-io.md` § 4.17, § 6.20 Q6 |
+| The long-term rule for optional inputs across merges; recommended: a merge that leaves optional inputs shows them, as a kernel whose inputs are all optional | `declarations-and-addressing-io.md` § 5.7, D.2 Q4(b) |
+| The dimension scopes of merge results: store a scope on every result, input specs and functions included, with `with_dim_names` renaming stored names, or substitute and forget everywhere | `declarations-and-addressing-io.md` § 5.7, D.2 Q6 |
 
 ### The execution layer
 
