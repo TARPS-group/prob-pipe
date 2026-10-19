@@ -529,8 +529,7 @@ def _described_scope(call_context: _CallContext) -> str:
     sections = ", ".join(f"config.{name}" for name in call_context.config_blocks)
     if call_context.call_depth == 0:
         return f"a block of {sections}" if sections else "the settings outside every call"
-    call = f"the call of {call_context.function_label!r}"
-    return f"{call} inside a block of {sections}" if sections else call
+    return f"the call of {call_context.function_label!r}"
 
 
 def _out_of_order_exit_message(
