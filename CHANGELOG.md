@@ -9,13 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
-- **`ConversionInfo.samples` is renamed `source_is_sampled`.** It is `True`
-  when executing the conversion draws from the source, which is a
-  workflow-owned random event, so the result depends on the workflow seed, and
-  `False` when the result is a deterministic function of the source and the
-  converter options.
-  Replace `info.samples` with `info.source_is_sampled`, and pass
-  `source_is_sampled=` where a converter's `check` passed `samples=`.
+- **`ConversionInfo.samples` is renamed `claims_random_events`.** It is `True`
+  when executing the conversion claims a workflow-owned random event, such as a
+  draw from the source, so the result depends on the workflow seed, and `False`
+  when the result is a deterministic function of the source and the converter
+  options. Replace `info.samples` with `info.claims_random_events`, and pass
+  `claims_random_events=` where a converter's `check` passed `samples=`.
 - **`raw` is a property on every term.** Replace `x.raw()` with `x.raw`, and
   search your code for `.raw(` to find the calls. The `raw` of a `Function`,
   an `Operation`, or a `Bijector` is a callable, so an old `f.raw()` calls the

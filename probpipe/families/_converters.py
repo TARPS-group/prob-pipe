@@ -819,7 +819,7 @@ _CLOSED_FORM = {
 }
 
 
-def _fit_source_is_sampled(law: Distribution | None, needs: frozenset[str]) -> bool:
+def _fit_claims_random_events(law: Distribution | None, needs: frozenset[str]) -> bool:
     """Whether a fit reading *needs* takes draws: a statistic *law* has in no closed form.
 
     A SciPy frozen distribution without a family, whose *law* is ``None``, has
@@ -953,7 +953,7 @@ class _MomentFit:
     declaration: OutputSpec
     label: str | None
     parameters: Callable[[_Statistics, dict[str, Any]], dict[str, Any]]
-    source_is_sampled: bool
+    claims_random_events: bool
 
 
 class _MomentMatching(Converter):
@@ -1040,14 +1040,16 @@ class _MomentMatching(Converter):
             return reason
         if target_type in _COUNTED:
             _total_count(options, target_type)
-        source_is_sampled = _fit_source_is_sampled(law, needs)
-        if source_is_sampled:
+        claims_random_events = _fit_claims_random_events(law, needs)
+        if claims_random_events:
             if law is not None and not isinstance(law, SupportsSampling):
                 return (
                     f"{name!r} has no closed-form moments for the fit and does not support sampling"
                 )
             _sample_count(options)
-        return _MomentFit(law, declaration, _kept_label(source, law), parameters, source_is_sampled)
+        return _MomentFit(
+            law, declaration, _kept_label(source, law), parameters, claims_random_events
+        )
 
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
         """Promise the family *target_type* over the source's declaration, without fitting it.
@@ -1106,7 +1108,7 @@ class _MomentMatching(Converter):
             target_spec=DistributionSpec(promised),
             target_class=target_type,
             capabilities=_class_claims(target_type),
-            source_is_sampled=planned.source_is_sampled,
+            claims_random_events=planned.claims_random_events,
         )
 
     def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
@@ -1140,7 +1142,9 @@ class _MomentMatching(Converter):
         if isinstance(planned, str):
             raise TypeError(planned)
         law = planned.law
-        draws = _draws(source, law, _sample_count(options)) if planned.source_is_sampled else None
+        draws = (
+            _draws(source, law, _sample_count(options)) if planned.claims_random_events else None
+        )
         (component,) = planned.declaration.components
         result = target_type(
             component,
@@ -1257,7 +1261,7 @@ class _EmpiricalDraws(Converter):
             target_spec=DistributionSpec(declaration),
             target_class=EmpiricalDistribution,
             capabilities=claims,
-            source_is_sampled=True,
+            claims_random_events=True,
         )
 
     def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
@@ -1346,10 +1350,10 @@ class _KDESmoothing(Converter):
                 f"a KDE needs numeric draws, but {_label(source, law, declaration)!r} draws "
                 f"{type(declaration.spec).__name__} values"
             )
-        source_is_sampled = not isinstance(law, EmpiricalDistribution)
-        if source_is_sampled:
+        claims_random_events = not isinstance(law, EmpiricalDistribution)
+        if claims_random_events:
             _sample_count(options)
-        return law, declaration, source_is_sampled
+        return law, declaration, claims_random_events
 
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
         """Promise the kernel density estimate of the source, over its declaration.
@@ -1381,13 +1385,13 @@ class _KDESmoothing(Converter):
         planned = self._planned(source, options)
         if isinstance(planned, str):
             return ConversionInfo(False, description=planned)
-        _, declaration, source_is_sampled = planned
+        _, declaration, claims_random_events = planned
         return ConversionInfo(
             True,
             target_spec=DistributionSpec(declaration),
             target_class=KDEDistribution,
             capabilities=_class_claims(KDEDistribution),
-            source_is_sampled=source_is_sampled,
+            claims_random_events=claims_random_events,
         )
 
     def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
@@ -1420,11 +1424,11 @@ class _KDESmoothing(Converter):
         planned = self._planned(source, options)
         if isinstance(planned, str):
             raise TypeError(planned)
-        law, declaration, source_is_sampled = planned
+        law, declaration, claims_random_events = planned
         name = _label(source, law, declaration)
         label = _kept_label(source, law)
         bandwidth = options.get("bandwidth")
-        if not source_is_sampled:
+        if not claims_random_events:
             return KDEDistribution(
                 _smoothed_atoms(name, law._rows, declaration.spec),
                 bandwidth,

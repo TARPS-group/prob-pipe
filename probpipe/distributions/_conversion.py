@@ -86,7 +86,7 @@ class ConversionInfo(MethodInfo):
 
     A converter's ``check`` returns one, and the registry's ``check`` returns
     one in every state. A feasible report promises the declaration the result
-    carries and states whether executing the conversion draws from the source,
+    carries and states whether executing the conversion claims a random event,
     and the registry's report also states whether the conversion is exact; an
     infeasible report leaves the promise at its defaults, which promise
     nothing.
@@ -104,18 +104,19 @@ class ConversionInfo(MethodInfo):
         The representation class of the result, when known.
     capabilities : tuple of type
         The capability protocols guaranteed on the result.
-    source_is_sampled : bool
-        ``True`` when executing the conversion draws from the source, which is
-        a workflow-owned random event (V.8), so the result depends on the
-        workflow scope's seed. ``False`` when the conversion makes no draw, so
-        its result is a deterministic function of the source and the converter
-        options. ``check`` decides it without drawing, and a report that selects
-        no converter states ``False``.
+    claims_random_events : bool
+        ``True`` when executing the conversion claims at least one
+        workflow-owned random event (V.8), so its result depends on the
+        workflow scope's seed; a shipped converter claims one when it draws
+        from the source. ``False`` when it claims none, so its result is a
+        deterministic function of the source and the converter options.
+        ``check`` decides it without drawing, and a report that selects no
+        converter states ``False``.
 
     Raises
     ------
     TypeError
-        If ``source_is_sampled`` is not a ``bool``, or on a condition
+        If ``claims_random_events`` is not a ``bool``, or on a condition
         :class:`~probpipe.core._dispatch.Feasibility` rejects.
     ValueError
         If ``method_name`` is set without ``exact``; if ``exact`` is set
@@ -139,13 +140,13 @@ class ConversionInfo(MethodInfo):
     target_spec: DistributionSpec | None = None
     target_class: type | None = None
     capabilities: tuple[type, ...] = ()
-    source_is_sampled: bool = False
+    claims_random_events: bool = False
 
     def __post_init__(self) -> None:
         Feasibility.__post_init__(self)
-        if type(self.source_is_sampled) is not bool:
+        if type(self.claims_random_events) is not bool:
             raise TypeError(
-                f"ConversionInfo's source_is_sampled must be a bool, got {self.source_is_sampled!r}"
+                f"ConversionInfo's claims_random_events must be a bool, got {self.claims_random_events!r}"
             )
         if self.method_name is not None and self.exact is None:
             raise ValueError(
@@ -175,8 +176,8 @@ class ConversionInfo(MethodInfo):
         if self.capabilities:
             names = (capability.__name__ for capability in self.capabilities)
             fields.append(("capabilities", sequence_repr(names)))
-        if self.source_is_sampled:
-            fields.append(("source_is_sampled", "True"))
+        if self.claims_random_events:
+            fields.append(("claims_random_events", "True"))
         return fields
 
 
@@ -202,7 +203,7 @@ class Converter(BinaryDispatchMethod):
 
         It never samples, fits, or evaluates a density, and it reports as
         pending whatever it cannot settle without the source's values. The
-        report states the promise and ``source_is_sampled`` and leaves
+        report states the promise and ``claims_random_events`` and leaves
         ``method_name`` and ``exact`` unset, which the registry sets from the
         registration.
         """
