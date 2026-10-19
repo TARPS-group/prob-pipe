@@ -928,6 +928,82 @@ def figures() -> dict[str, Canvas]:
             result_name="r1 & r2",
             result_kind="record",
         ),
+        "held-field": single_figure(
+            "A record whose field g holds a law over {mu, sigma}",
+            Obj(
+                "r",
+                "record",
+                outputs=[Part("x"), Part("g", [Part("mu"), Part("sigma")], label="g: law d")],
+            ),
+            notes=["paths: x, g, g/mu, g/sigma", "fields: x, g · leaf paths: x, g/mu, g/sigma"],
+        ),
+        "select-one": row_figure(
+            "A law, its selection at one path, and its selection at a list of one path",
+            [
+                (
+                    Obj("d", "law", outputs=[Part("a"), Part("g", [Part("b"), Part("c")])]),
+                    ["a law over {a, g: {b, c}}"],
+                ),
+                (
+                    Obj("d[g]", "law", outputs=[Part("b"), Part("c")]),
+                    ["one path: the node g;", "draws {b, c}"],
+                ),
+                (
+                    Obj("d[[g]]", "law", outputs=[Part("g", [Part("b"), Part("c")])]),
+                    ["a list of one path:", "draws {g: {b, c}}"],
+                ),
+                (
+                    Obj("d[g/b]", "law", root_output="b", body=["a draw is an array"]),
+                    ["a base node: offered", "under its last name"],
+                ),
+            ],
+            gap=50,
+        ),
+        "law-of-laws": row_figure(
+            "A law whose draws are laws, unwrapped and wrapped",
+            [
+                (
+                    Obj("d", "law", body=["a draw is a law", "no outputs"]),
+                    ["draws laws: offers nothing"],
+                ),
+                (
+                    Obj("d", "law", outputs=[Part("params", label="params: a law")]),
+                    ["draws {params: law}:", "one output, params"],
+                ),
+            ],
+        ),
+        "function-outputs": row_figure(
+            "A function into records and its selection at one output",
+            [
+                (
+                    Obj("f", "function", outputs=[Part("y"), Part("z")], inputs=[Port("x")]),
+                    ["f maps x to {y, z}:", "it offers y and z"],
+                ),
+                (
+                    Obj(
+                        "f[y]",
+                        "function",
+                        root_output="y",
+                        inputs=[Port("x")],
+                        body=["returns an array"],
+                    ),
+                    ["f[y] maps x to f(x)'s y;", "the same input"],
+                ),
+            ],
+        ),
+        "batch-columns": row_figure(
+            "A batch of draws and its column at mu",
+            [
+                (
+                    Obj("b", "batch", outputs=[Part("mu"), Part("sigma")], levels="sample"),
+                    ["100 draws of a law", "over {mu, sigma}"],
+                ),
+                (
+                    Obj("b[mu]", "batch", root_output="mu", body=["arrays"], levels="sample"),
+                    ["its column at mu:", "one output at the root"],
+                ),
+            ],
+        ),
         "merge-invalid-output": merge_figure(
             "Refused: x is an output of both operands",
             Obj("a", "law", outputs=[Part("x"), Part("y")], faults={"x"}),

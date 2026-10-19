@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="798" height="208" viewBox="0 0 798 208" role="img">
+  <title>A law, its selection at one path, and its selection at a list of one path</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#424a53"/>
+    </marker>
+    <marker id="arrow-fault" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#cf222e"/>
+    </marker>
+  </defs>
+  <rect x="0.5" y="0.5" width="797" height="207" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <g transform="translate(18.0,18.0)">
+    <rect x="28.0" y="0.0" width="112.0" height="124.0" rx="8" fill="#f6f0ff" stroke="#8250df" stroke-width="1.6"/>
+    <rect x="38.0" y="7.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
+    <text x="53.8" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
+    <text x="77.6" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">d</text>
+    <text x="40.0" y="45.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">a</text>
+    <text x="40.0" y="67.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">g</text>
+    <text x="56.0" y="89.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">b</text>
+    <text x="56.0" y="111.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">c</text>
+    <path d="M 44.0,73.0 L 44.0,85.0 L 53.0,85.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M 44.0,73.0 L 44.0,107.0 L 53.0,107.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="28.0" cy="41.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <circle cx="28.0" cy="63.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <text x="84.0" y="150.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">a law over {a, g: {b, c}}</text>
+    <rect x="232.6" y="0.0" width="112.0" height="80.0" rx="8" fill="#f6f0ff" stroke="#8250df" stroke-width="1.6"/>
+    <rect x="242.6" y="7.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
+    <text x="258.4" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
+    <text x="282.2" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">d[g]</text>
+    <text x="244.6" y="45.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">b</text>
+    <text x="244.6" y="67.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">c</text>
+    <circle cx="232.6" cy="41.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <circle cx="232.6" cy="63.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <text x="288.6" y="150.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">one path: the node g;</text>
+    <text x="288.6" y="168.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">draws {b, c}</text>
+    <rect x="416.4" y="0.0" width="113.0" height="102.0" rx="8" fill="#f6f0ff" stroke="#8250df" stroke-width="1.6"/>
+    <rect x="426.4" y="7.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
+    <text x="442.3" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
+    <text x="466.1" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">d[[g]]</text>
+    <text x="428.4" y="45.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">g</text>
+    <text x="444.4" y="67.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">b</text>
+    <text x="444.4" y="89.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">c</text>
+    <path d="M 432.4,51.0 L 432.4,63.0 L 441.4,63.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M 432.4,51.0 L 432.4,85.0 L 441.4,85.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="416.4" cy="41.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <text x="473.0" y="150.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">a list of one path:</text>
+    <text x="473.0" y="168.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">draws {g: {b, c}}</text>
+    <rect x="610.7" y="0.0" width="151.0" height="58.0" rx="8" fill="#f6f0ff" stroke="#8250df" stroke-width="1.6"/>
+    <rect x="620.7" y="7.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
+    <text x="636.5" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
+    <text x="660.4" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">d[g/b]</text>
+    <text x="599.7" y="35.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="end">b</text>
+    <text x="691.2" y="45.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle" font-style="italic">a draw is an array</text>
+    <circle cx="610.7" cy="41.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <text x="674.2" y="150.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">a base node: offered</text>
+    <text x="674.2" y="168.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">under its last name</text>
+  </g>
+</svg>
