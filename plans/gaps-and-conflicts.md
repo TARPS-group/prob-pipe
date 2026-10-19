@@ -277,7 +277,7 @@ Timing: option 1. The size and the open rulings make option 2 a risk to everythi
 
 **Status:** ✅ settled 2026-10-17.
 1. Grammar B, not B′.
-2. A view of a field that holds a law or a function wraps, keeping the field's name, so #571's event rule stands unchanged. *Reversed 2026-10-18 (provisional, inputs and outputs Q2): no view wraps, and the event rule is removed (`declarations-and-addressing-io.md` § 21.5).*
+2. A view of a field that holds a law or a function wraps, keeping the field's name, so #571's event rule stands unchanged. *Reversed 2026-10-18 (provisional, inputs and outputs Q2): no view wraps, and the event rule is removed (`declarations-and-addressing-io.md` § 7.5).*
 3. The body of a function with a wrapped output returns the record, and the declaration checks it. A pending type filled with a spec that has parts raises.
 4. Grammar B for the kinds the workshop uses merges before it (step G1). Random measures, random functions, and Gaussian processes do not appear in the workshop, so they wait until after it (step G2).
 
