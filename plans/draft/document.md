@@ -64,14 +64,14 @@ Citations such as II.6 and D1 name sections and principles of [`design/`](../../
 9. [Term specs](#9-term-specs)
 10. [`InputSpec`](#10-inputspec)
 11. [`OutputSpec`](#11-outputspec)
-12. [Indexing in code](#12-indexing-in-code)
-13. [Merging in code](#13-merging-in-code)
+12. [Indexing in code: `[]`, `in`, `without`, and `rename`](#12-indexing-in-code--in-without-and-rename)
+13. [Merging in code: `&`](#13-merging-in-code-)
 14. [Records: `Record` and `RecordSpec`](#14-records-record-and-recordspec)
-15. [Laws](#15-laws)
-16. [Kernels](#16-kernels)
-17. [Functions](#17-functions)
-18. [Batches](#18-batches)
-19. [Errors and messages](#19-errors-and-messages)
+15. [Laws: `Distribution` and `MarginalView`](#15-laws-distribution-and-marginalview)
+16. [Kernels: `ConditionalDistribution`](#16-kernels-conditionaldistribution)
+17. [Functions: `Function`](#17-functions-function)
+18. [Batches: `Batch` and `BatchSpec`](#18-batches-batch-and-batchspec)
+19. [Errors and their messages](#19-errors-and-their-messages)
 20. [Symbolic dimensions in code](#20-symbolic-dimensions-in-code)
 
 **Appendices**
@@ -1032,6 +1032,1098 @@ jhuggins's Rocq model proves I1 for laws, draws, and batches, and I2, I4, I5, an
 
 ---
 
+# Part II: The design in code
+
+## 8. Reading Part II
+
+> [!IMPORTANT]
+> **Definition (tracked term, term spec).** A *tracked term* is the code form of an object: an instance of a class such as `Record` or `Distribution`, which ProbPipe tracks through every operation.
+> A *term spec* is the code form of a type: an instance of a subclass of `TermSpec`.
+> A tracked term's type is its `spec`.
+
+| Part I | Tracked term | Term spec |
+| --- | --- | --- |
+| base value | `NumericArray`, `Opaque` | `NumericArraySpec`, `OpaqueSpec` |
+| record | `Record`, `NumericRecord` | `RecordSpec`, `NumericRecordSpec` |
+| law | `Distribution` | `DistributionSpec` |
+| kernel | `ConditionalDistribution` | `ConditionalDistributionSpec` |
+| function | `Function` | `FunctionSpec` |
+| batch | `NumericArrayBatch`, `RecordBatch`, `DistributionBatch`, … | `BatchSpec` |
+
+| Part I | Code |
+| --- | --- |
+| input spec, output spec | `InputSpec`, `OutputSpec` |
+| a law's or kernel's event spec | `event_spec` |
+| a function's output spec, input spec | `output_spec`, `input_spec` |
+| a kernel's input spec | `given_spec` |
+| a batch's element type | `element_spec` |
+| `x[p]`, `x[[p, q]]` | `x["p"]`; `x["p", "q"]` or `x[["p", "q"]]` |
+| `x without p` | `x.without("p")` |
+| rename | `x.rename({"old": "new"})` |
+| `a & b` | `a & b` |
+| the object at output `c` | `x.output("c")` |
+
+This document writes the final names.
+Until one rename after the workshop, the code spells some of them as it does today:
+
+| Final name | Until the rename |
+| --- | --- |
+| input, optional input, a kernel's input | slot, optional slot, given slot |
+| output, the output at the root | component, the component at the root |
+| input spec, output spec, event spec (in prose) | input declaration, output declaration, event declaration |
+| `O.outputs` | `O.components` |
+| `x.output(c)` | `x.component(c)` |
+| `output_name=` | `component=` |
+
+The class names `InputSpec` and `OutputSpec` and the attributes `input_spec`, `output_spec`, `given_spec`, `event_spec`, and `element_spec` are final.
+Appendix B gives the steps.
+
+Examples import from `probpipe` and use generic names; each builds what it uses.
+
+![The full legend: objects, their ports and parts, batches, merges, shared inputs, and refused merges.](../figures/legend.svg)
+*Figure: the legend of every figure, for reference.*
+
+## 9. Term specs
+
+```python
+class TermSpec(ABC):
+    """The type of a tracked term (§ 2.3); it validates values and carries dimension names."""
+
+    def is_valid(self, value: Any) -> bool: ...
+    @property
+    def free_dims(self) -> frozenset[str]: ...      # the unbound dimension names
+    def with_dim_sizes(self, **sizes: int) -> Self: ...
+    def with_dim_names(self, **names: str) -> Self: ...
+
+class NumericArraySpec(TermSpec):
+    """An array type: a shape whose sizes are ints or dimension names, and optionally a dtype and a support."""
+    def __init__(self, shape, dtype=None, support=None) -> None: ...
+
+class OpaqueSpec(TermSpec):
+    """An opaque type: optionally a Python type and metadata."""
+    def __init__(self, type: type | None = None, meta: Any = None) -> None: ...
+
+class DistributionSpec(TermSpec):
+    """A law type: the event spec, the output spec of one draw (§ 3.4)."""
+    event_spec: OutputSpec
+
+class ConditionalDistributionSpec(TermSpec):
+    """A kernel type: its input spec and its event spec."""
+    given_spec: InputSpec
+    event_spec: OutputSpec
+
+class FunctionSpec(TermSpec):
+    """A function type: its input spec and output spec, either of which may be None (unknown)."""
+    input_spec: InputSpec | None
+    output_spec: OutputSpec | None
+```
+
+`RecordSpec` is in § 14 and `BatchSpec` in § 18.
+A term spec of a law, kernel, function, or batch has no `[]` of its own: select from the output spec it holds, as `d.spec.event_spec["mu"]`.
+
+> [!NOTE]
+> **The size shorthand.** Wherever an input, a `RecordSpec` field, or the keyword form of `OutputSpec` takes a type, a tuple of sizes is the `NumericArraySpec` of that shape, with no dtype or support: `InputSpec(x=())`, `RecordSpec(x=("n",))`, `OutputSpec(y=(3,))`. A bare int, as `x=3`, is refused.
+
+## 10. `InputSpec`
+
+### 10.1 API
+
+```python
+class InputSpec(Mapping[str, TermSpec]):
+    """An object's inputs: each input's name and type, in order, and which are optional (§ 3.4).
+
+    It holds no defaults. Equality ignores order.
+    """
+
+    def __init__(self, inputs: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec
+                 | None = None, /, **inputs_by_name: TermSpec | tuple) -> None:
+        """Read the inputs from one source.
+
+        An InputSpec is taken as it is; a mapping by its entries; a RecordSpec by its
+        children; an OutputSpec by its outputs, each typed by its output's type: the
+        inputs those outputs would feed. Every input read from a mapping, a RecordSpec,
+        or an OutputSpec is required. InputSpec(R) == InputSpec(OutputSpec(R)).
+
+        Raises:
+            ValueError: A name is not a Python identifier.
+            TypeError: The OutputSpec has a type hole, the source is of another class,
+                or both a source and keywords are given.
+        """
+
+    @property
+    def required(self) -> tuple[str, ...]: ...
+    @property
+    def optional(self) -> frozenset[str]: ...
+    def with_optional(self, *names: str) -> InputSpec: ...
+
+    def __getitem__(self, names: str | Sequence[str], /) -> TermSpec | InputSpec:
+        """An input's type, or the InputSpec of a list of inputs.
+
+        A list keeps this spec's order, and optional inputs stay optional. A path into
+        a record input, as "g/b", gives the type there; in a list, it gives the input
+        holding the cut-down record, which becomes required.
+
+        Raises:
+            KeyError: A name is not an input.
+            ValueError: The path reader refuses the argument (§ 12).
+        """
+
+    def __contains__(self, name: object, /) -> bool:
+        """Whether name is a str naming an input, or a path into a record input; False for a list."""
+
+    def get(self, name: str, default: TermSpec | None = None, /) -> TermSpec | None:
+        """self[name] when name in self, else default."""
+
+    def without(self, *names: str) -> InputSpec:
+        """The other inputs, optional ones staying optional; may leave none.
+
+        A path into a record input leaves the rest of that record, and the input
+        becomes required.
+
+        Raises:
+            KeyError: A name is not an input.
+        """
+
+    def __and__(self, other: InputSpec, /) -> InputSpec:
+        """The inputs of both, in order of first appearance (§ 5.2, technical note).
+
+        A shared input has the unification of its types and is optional only if
+        optional in both; dimension bindings are not kept.
+
+        Raises:
+            TypeError: other is not an InputSpec.
+            ValueError: Two types do not unify, or a dimension name binds two sizes.
+        """
+
+    def rename(self, renames: Mapping[str, str] | None = None, /,
+               **keyword_renames: str) -> InputSpec:
+        """Rename inputs, by II.6's rules restricted to names."""
+```
+
+### 10.2 Who reads inputs this way
+
+`conditional_distribution(fn, given_spec=...)`, `ConditionalDistributionSpec(given_spec, ...)`, and `Function(fn, input_spec=...)` read their argument through the `InputSpec` constructor.
+`conditional_distribution` and `Function` then mark optional each input whose parameter has a default, and refuse an optional input whose parameter has none.
+
+### 10.3 Examples
+
+```python
+from probpipe import InputSpec, Normal, OutputSpec, RecordSpec
+
+InputSpec(mu=(), sigma=()).with_optional("sigma")   # mu required, sigma optional
+d = Normal("mu", 0.0, 1.0) & Normal("sigma", 1.0, 1.0)
+InputSpec(d.event_spec)                             # InputSpec(mu=..., sigma=...)
+InputSpec(RecordSpec(g=RecordSpec(a=(), b=()), x=()))   # two inputs: g, a record, and x
+InputSpec(OutputSpec(d.spec))                       # InputSpec(): a produced law offers nothing
+
+i = InputSpec(x=(), y=(), z=())
+i[["x", "z"]]                                       # InputSpec(x=..., z=...)
+i.without("y")                                      # InputSpec(x=..., z=...)
+i.without("w")                                      # KeyError
+InputSpec(theta=("n",), x=()) & InputSpec(theta=(3,), y=())
+# InputSpec(theta=NumericArraySpec((3,)), x=..., y=...): theta unifies, n is bound to 3
+```
+
+<details>
+<summary>Technical note: the messages for common mistakes</summary>
+
+The recommended idiom is `given_spec=d.event_spec`, cut down with `[...]`, `without`, and `&`.
+1. **An input the function does not take**, for `conditional_distribution(fn, given_spec=d.event_spec)` where `fn` takes `mu`: "given_spec of 'fn' declares 'sigma', which the function does not take (it takes mu); leave it out with event_spec.without('sigma'), or pick the inputs with event_spec[['mu']]".
+2. **A group's parts where the function takes the group**, for `given_spec=d.event_spec["g"]` and `fn(g)`: "given_spec of 'fn' declares a and b, the parts of the group g; to declare the input g, index with a list: event_spec[['g']]".
+3. **A law or its type as the source:** "given_spec takes an InputSpec, a mapping, a RecordSpec, or an OutputSpec, not a Distribution; for the outputs of a law, pass law.event_spec".
+4. **An input spec merged with an output spec:** "cannot merge an InputSpec with an OutputSpec; to read an output spec as the inputs it feeds, write InputSpec(output_spec)".
+
+</details>
+
+## 11. `OutputSpec`
+
+### 11.1 API
+
+```python
+class OutputSpec:
+    """The type of an object's produced object, and the name of its output at the root
+    when that type is a base type (§ 3.4). Not a Mapping, and not iterable.
+    """
+
+    @overload
+    def __init__(self, term_spec: TermSpec, /) -> None:
+        """The positional form, for any type that is not a base type.
+
+        Raises:
+            TypeError: A base type, which needs a name.
+            ValueError: An empty RecordSpec.
+        """
+    @overload
+    def __init__(self, **named_output: TermSpec | tuple | None) -> None:
+        """The keyword form: one keyword, the name of the output at the root, over a base
+        type, a size tuple, or None for a type hole.
+
+        Raises:
+            TypeError: A type that is not a base type: "params would name a record; give
+                OutputSpec(RecordSpec(...)) to offer its fields, or wrap it:
+                OutputSpec(RecordSpec(params=...))", and likewise for a law.
+        """
+
+    @property
+    def term_spec(self) -> TermSpec | None:
+        """The produced object's type; None only while a type hole is pending."""
+
+    @property
+    def outputs(self) -> Mapping[str, TermSpec | None]:
+        """Each output's name and type, in order, by the naming rule (§ 3.3)."""
+
+    def __getitem__(self, paths: str | Sequence[str], /) -> OutputSpec:
+        """The output spec at a path or a list of paths (§ 4.4).
+
+        Raises:
+            KeyError: A str that is not a path, the name of the output at the root included.
+            ValueError: The path reader refuses the argument (§ 12).
+        """
+
+    def __contains__(self, path: object, /) -> bool:
+        """Whether path is a str and self[path] succeeds."""
+
+    def __iter__(self) -> NoReturn:
+        """Raises TypeError: "an output spec is indexed by path and is not iterable;
+        list its outputs with .outputs"."""
+
+    def without(self, *paths: str) -> OutputSpec:
+        """The other nodes, each at its path (§ 4.3).
+
+        Raises:
+            KeyError: A path is not a path of self.
+            ValueError: Nothing would remain.
+        """
+
+    def __and__(self, other: OutputSpec, /) -> OutputSpec:
+        """The outputs of both, side by side, self's first (§ 5.2, technical note).
+
+        Raises:
+            TypeError: other is not an OutputSpec, or either produces something a
+                record cannot hold, or has a type hole.
+            ValueError: A name is in both, or a dimension name binds two sizes.
+        """
+
+    def with_term_spec(self, term_spec: TermSpec, /) -> OutputSpec:
+        """Fill a type hole, or complete the stated type with the produced one (II.2)."""
+
+    def rename(self, renames: Mapping[str, str] | None = None, /,
+               **keyword_renames: str) -> OutputSpec:
+        """Rename or move nodes by path, or rename the output at the root (§ 4.5)."""
+
+    @classmethod
+    def default(cls, term_spec: TermSpec, *, output_name: str) -> OutputSpec:
+        """The output spec for a produced object of type term_spec given no output spec:
+        the keyword form under output_name for a base type; for a batch whose elements
+        carry only the default name element, that batch with its elements named
+        output_name; the positional form otherwise (§ 17).
+        """
+```
+
+Equality: the same type and, for an output at the root, the same name; order-sensitive; an `OutputSpec` equals only another `OutputSpec`, and the hash agrees.
+Code outside `core/_specs.py` reads the form through one private helper, `_root_output_name(O)`, which returns the name of the output at the root, or `None`.
+
+### 11.2 Type holes
+
+`OutputSpec(mean=None)` names an output whose type is filled later by `with_term_spec`:
+1. filled with a base type, it stays named `mean`;
+2. filled with a batch whose elements carry only the default name `element`, it names the elements `mean`;
+3. filled with any other type, it raises `TypeError`, asking for a declared record.
+
+### 11.3 Examples
+
+```python
+from probpipe import Normal, NumericArraySpec, OutputSpec, RecordSpec
+
+d = Normal("mu", 0.0, 1.0) & Normal("sigma", 1.0, 1.0)
+O = d.event_spec                 # OutputSpec(RecordSpec(mu=..., sigma=...))
+list(O.outputs)                  # ["mu", "sigma"]
+O.outputs["sigma"]               # NumericArraySpec(()): the output's type
+O["sigma"]                       # OutputSpec(sigma=NumericArraySpec(())): the output spec at a path
+"sigma" in O                     # True
+O.term_spec                      # RecordSpec(mu=..., sigma=...)
+
+P = OutputSpec(RecordSpec(a=(), g=RecordSpec(b=(), c=())))
+P["g/b"]                         # OutputSpec(b=...)
+P["g"]                           # OutputSpec(RecordSpec(b=..., c=...)): offers b and c
+P[["g"]]                         # OutputSpec(RecordSpec(g=RecordSpec(b=..., c=...)))
+P.without("g/c")                 # OutputSpec(RecordSpec(a=..., g=RecordSpec(b=...)))
+OutputSpec(x=()) & P             # OutputSpec(RecordSpec(x=..., a=..., g=...))
+OutputSpec(x=())["x"]            # KeyError: x names the value at the root
+OutputSpec(x=())[["x"]]          # OutputSpec(RecordSpec(x=...))
+OutputSpec(params=RecordSpec(mu=()))   # TypeError: params would name a record; ...
+OutputSpec(mean=None).with_term_spec(NumericArraySpec(()))   # OutputSpec(mean=...)
+```
+
+## 12. Indexing in code: `[]`, `in`, `without`, and `rename`
+
+### 12.1 The path reader
+
+One reader parses what `[]` is given, for every class:
+1. a `str` is one path (a `str` subclass is converted);
+2. a list or tuple of `str` is a list of paths, so `x["a", "g/b"]` and `x[["a", "g/b"]]` agree;
+3. an `int`, anything with `__index__`, a `slice`, or a tuple of these is a position, on batches only.
+
+`bool`, `None`, and `...` raise `TypeError`.
+Every argument that takes one path, such as `without(*paths)` or `at_path(*segments)`, is checked by the same reader.
+
+| Argument | Error | Message or reason |
+| --- | --- | --- |
+| `x[""]`, `x["g//b"]`, `x["/a"]` | `ValueError` | an empty path or segment |
+| `x[[]]`, `x[()]` | `ValueError` | no paths, on a batch too |
+| `x["a", "a"]` | `ValueError` | the same path twice |
+| `x["g", "g/b"]` | `ValueError` | "'g/b' is inside 'g'; pick one" |
+| `x["a", 0]` | `TypeError` | "a path and a position cannot be mixed in one []" |
+| `b[[0, 2]]`, `b[np.array([0, 2])]` | `TypeError` | "a list of positions is not supported; index one position or a slice" |
+| `x[{"a"}]`, `x[iter(["a"])]` | `TypeError` | a set has no order, an iterator is read once |
+| `x["z"]` | `KeyError` | "'z' is not a path of 'x'; its paths: [...]" |
+
+When a missing path comes from a tuple whose `/`-joined form is a path, the message adds "a tuple is a list of paths; for the nested path write 'g/b'".
+
+### 12.2 `[]` and `in` on each class
+
+| Class | `x[s]` |
+| --- | --- |
+| `Record` | the node itself; for a list, the record of the chosen nodes |
+| `Distribution` | a `MarginalView` (§ 15) |
+| `ConditionalDistribution` | the kernel whose law at each input is the view there |
+| `Function` | the function `w ↦ x(w)[s]` |
+| batches | by position, an element or a sub-batch; by path, the batch of the elements' nodes |
+| `RecordSpec`, `OutputSpec`, `InputSpec` | a type, an output spec, or a type and an input spec (§§ 10, 11, 14) |
+| `NumericArray` | NumPy's indexing of its entries |
+| `Opaque` | none |
+
+`p in x` is true exactly when `p` is a `str` and `x[p]` succeeds, on every class but `NumericArray`, which keeps NumPy's `in`.
+A record's and an input spec's `keys()` still list fields and inputs only.
+On a batch, `in` tests paths, never elements.
+
+### 12.3 Operations that take paths
+
+| Argument | Takes |
+| --- | --- |
+| `x[...]`, `marginal(d, ...)`, `O[...]` | one path or a list; a list may name the output at the root |
+| `without(*paths)`, `select(*paths)`, `at_path(*segments)`, `is_field(path)` | one path per argument |
+| keys of `rename` | paths, and the name of the output at the root |
+| keys of `condition_on(d, given)` | paths of `d`'s event; for a kernel, input names, each optionally followed by a path into a record input |
+
+`rename` exists on every class that renames, `NamedTree` and its families, `OutputSpec`, `Distribution`, `ConditionalDistribution`, and batches; `with_level_names` and `with_dim_names` keep their names.
+
+## 13. Merging in code: `&`
+
+| Family | Classes | Result |
+| --- | --- | --- |
+| records | `Record`, `NumericRecord`, `RecordSpec`, `NamedTree` | the same class |
+| laws and kernels | `Distribution`, `ConditionalDistribution` | `FactoredDistribution`, or `FactoredConditionalDistribution` when a required input remains |
+| functions | `Function` | `Function` |
+| batches | two batches over equal levels | a batch over the same levels |
+| input specs | `InputSpec` | `InputSpec` |
+| output specs | `OutputSpec` | `OutputSpec` |
+| types | `DistributionSpec`, `ConditionalDistributionSpec`, `FunctionSpec`, `BatchSpec` | the type of the merged object |
+
+`&` returns `NotImplemented` for an operand of another family, so Python raises `TypeError`; on two `NumericArray`s it is NumPy's elementwise `&`, not a merge.
+`*` keeps its arithmetic meanings and does not merge.
+The result's label joins the operands' labels with `·`.
+
+| Condition (§ 5.2) | Error | Message |
+| --- | --- | --- |
+| 1. one family | `TypeError`; `ValueError` for unequal levels | for `InputSpec & OutputSpec`, message 4 of § 10 |
+| 2. recordable produced objects | `TypeError` | names the type hole or missing spec, or says to wrap the output under a name |
+| 3. one source per output | `ValueError` | names the output and both operands; for two selections of one law, adds "both are views of one law; for their joint law index once, as d['g1', 'g2']" |
+| 4. order | `ValueError` | "write b & a: b takes x, which a outputs, and in a & b only b's outputs feed a's inputs" |
+| 5. separate sides | `ValueError` | says to rename one |
+| 6. fed types conform | `ValueError` | names both types |
+| 7. shared types unify | `ValueError` | names both types |
+| 8. one dimension scope | `ValueError` | names the dimension and both sizes; suggests `with_dim_names`, or, when only a kept scope holds the name, names that operand |
+
+## 14. Records: `Record` and `RecordSpec`
+
+A record is represented by the tracked term `Record`, and a record type by the term spec `RecordSpec` (§ 8).
+Both share the tree interface of `NamedTree` (II.6); only members this design defines or changes are shown.
+
+### 14.1 API
+
+```python
+class RecordSpec(NamedTree[TermSpec], TermSpec):
+    """The type of a record: a tree of names whose fields hold term specs.
+
+    Its paths are those of the records it types (§ 1.2); indexing it gives the
+    type of the same part of those records.
+    """
+
+    def __init__(self, field_specs: Mapping[str, TermSpec | Mapping | tuple] | None = None, /,
+                 **fields: TermSpec | Mapping | tuple) -> None:
+        """Build the type from its children.
+
+        A tuple of sizes is the array type of that shape, with no dtype or support;
+        a mapping is a group; the positional mapping also takes paths as keys.
+
+        Raises:
+            TypeError: A field is None, a pending type; an opaque field is OpaqueSpec().
+        """
+
+    def __getitem__(self, paths: str | Sequence[str], /) -> TermSpec:
+        """The type at a path, or the RecordSpec of the nodes at a list of paths.
+
+        A list keeps each node at its own path, in this spec's order.
+
+        Raises:
+            KeyError: A path is not a path of this spec.
+            ValueError: The path reader refuses the argument (§ 12).
+        """
+
+    def __contains__(self, path: object, /) -> bool:
+        """Whether path is a str and self[path] succeeds."""
+
+    def keys(self) -> tuple[str, ...]:
+        """The field paths in canonical order; groups are not listed."""
+
+    def without(self, *paths: str) -> RecordSpec:
+        """This type without the nodes at paths; an emptied group goes too.
+
+        Raises:
+            KeyError: A path is not a path of this spec.
+            ValueError: Nothing would remain, a path repeats, or one path is inside another.
+        """
+
+    def rename(self, renames: Mapping[str, str] | None = None, /,
+               **keyword_renames: str) -> RecordSpec:
+        """Rename or move nodes by path, by II.6's rules (§ 4.5)."""
+
+    def __and__(self, other: RecordSpec, /) -> RecordSpec:
+        """Both types' children, this one's first (§ 5.2).
+
+        Raises:
+            TypeError: other is not a RecordSpec.
+            ValueError: A top-level name is in both, or a dimension name binds two sizes.
+        """
+
+
+class Record(NamedTree[Any], TrackedTerm):
+    """A tree of named values.
+
+    A record is its own produced object, so its outputs are its children; its
+    output spec, OutputSpec(record.spec), is derived, and an empty record has none.
+    """
+
+    def __init__(self, fields: Mapping[str, Any], /, *, label: str | None = None) -> None:
+        """Build a record from a nested mapping, in which a mapping is a group.
+
+        A field may hold any tracked term, such as a law; paths continue into it (§ 2.4).
+        """
+
+    @property
+    def spec(self) -> RecordSpec:
+        """The record's type, with every dimension name bound."""
+
+    def __getitem__(self, paths: str | Sequence[str], /) -> Any:
+        """The node at a path, or the record of the nodes at a list of paths.
+
+        One path gives the node: a field's value as a tracked term, a group as a
+        Record, or the term a field holds; a path continues into that term, so
+        r["g/mu"] is r["g"]["mu"]. A list keeps each node at its own path, in
+        this record's order, labelled by its paths, as "(a, g/b)".
+
+        Raises:
+            KeyError: A path is not a path of this record; the message lists its paths.
+            ValueError: The path reader refuses the argument (§ 12).
+        """
+
+    def __contains__(self, path: object, /) -> bool:
+        """Whether path is a str and self[path] succeeds, groups included."""
+
+    def keys(self) -> tuple[str, ...]:
+        """The field paths in canonical order; groups are not listed."""
+
+    def at_path(self, *segments: str) -> Any:
+        """self["/".join(segments)]; [] is preferred."""
+
+    def output(self, output_name: str, /) -> Any:
+        """The child output_name (§ 4.6).
+
+        Raises:
+            KeyError: output_name is not a child.
+        """
+
+    def without(self, *paths: str) -> Record:
+        """This record without the nodes at paths; an emptied group, or a held term
+        whose every leaf path is removed, goes too.
+
+        Raises:
+            KeyError: A path is not a path of this record.
+            ValueError: Nothing would remain, a path repeats, or one path is inside another.
+        """
+
+    def rename(self, renames: Mapping[str, str] | None = None, /,
+               **keyword_renames: str) -> Record:
+        """Rename or move nodes by path, by II.6's rules (§ 4.5)."""
+
+    def select(self, *paths: str, **remap: str) -> dict[str, Any]:
+        """The nodes at paths, keyed by last name, for keyword arguments; select(x="g/b") is {"x": ...}.
+
+        Raises:
+            ValueError: Two paths share a last name.
+        """
+
+    def __and__(self, other: Record, /) -> Record:
+        """Both records' fields, this one's first (§ 5.4).
+
+        Raises:
+            TypeError: other is not a Record.
+            ValueError: A top-level name is in both, a group included.
+        """
+```
+
+### 14.2 Examples
+
+**Parts.** Paths name every node; `keys()` lists only fields.
+
+```python
+from probpipe import Record
+
+r = Record({"a": 1.0, "g": {"b": 2.0, "c": 3.0}}, label="r")
+r.keys()          # ("a", "g/b", "g/c")
+r["g"]            # Record {b: 2.0, c: 3.0}
+r["g/b"]          # NumericArray 2.0, labelled "g/b"
+r["g"]["b"]       # the same node
+"g" in r          # True
+```
+
+**Outputs and spec.**
+
+```python
+from probpipe import OutputSpec, Record
+
+r = Record({"a": 1.0, "g": {"b": 2.0, "c": 3.0}})
+r.spec                        # RecordSpec(a=NumericArraySpec(()), g=RecordSpec(b=..., c=...))
+OutputSpec(r.spec).outputs    # {a: NumericArraySpec(()), g: RecordSpec(b=..., c=...)}
+r.output("g")                 # r["g"]
+```
+
+![The record r with the outputs a and g; g holds b and c.](../figures/record-parts.svg)
+*Figure: the record `r` offers its children `a` and `g`.*
+
+**Several paths, and removal.**
+
+```python
+from probpipe import Record
+
+r = Record({"a": 1.0, "g": {"b": 2.0, "c": 3.0}})
+r["a", "g/b"]           # Record {a, g: {b}}, labelled "(a, g/b)"
+r["g/c", "a"]           # Record {a, g: {c}}: the record's order
+r[["g"]]                # Record {g: {b, c}}
+r.without("g/c")        # Record {a, g: {b}}, the complement of r["a", "g/b"]
+r.without("g/b", "g/c") # Record {a}
+```
+
+**A record type.**
+
+```python
+from probpipe import RecordSpec
+
+s = RecordSpec(a=(), g=RecordSpec(b=(), c=()))
+s["g/b"]              # NumericArraySpec(())
+s[["a", "g/b"]]       # RecordSpec(a=..., g=RecordSpec(b=...))
+s.without("g/b", "g/c")   # RecordSpec(a=...)
+```
+
+**A field holding a law.**
+
+```python
+from probpipe import Normal, Record
+
+d = Normal("mu", 0.0, 1.0) & Normal("sigma", 1.0, 1.0)   # a law over {mu, sigma}
+r = Record({"x": 3.0, "g": d})
+r.keys()          # ("x", "g")
+r["g/mu"]         # d["mu"], the law of mu
+r["x", "g/mu"]    # Record {x, g}, whose g holds d[["mu"]]
+```
+
+**Renaming.**
+
+```python
+from probpipe import Record
+
+r = Record({"a": 1.0, "g": {"b": 2.0, "c": 3.0}})
+r.rename({"g/b": "g/z"})   # Record {a, g: {z, c}}
+r.rename({"g/b": "b"})     # Record {a, g: {c}, b}: moved, appended last
+```
+
+**Merging.**
+
+```python
+from probpipe import Record
+
+x = Record({"a": 1.0})
+y = Record({"b": 2.0, "g": {"c": 3.0}})
+x & y        # Record {a, b, g: {c}}
+y & x        # Record {b, g: {c}, a}
+
+Record({"g": {"b": 1.0}}) & Record({"g": {"c": 2.0}})
+# ValueError: g is an output of both records; rename one, or merge the groups first
+```
+
+![The merge of r1 = {a} and r2 = {b, g: {c}}.](../figures/merge-records.svg)
+*Figure: two records merge side by side.*
+
+**Keyword arguments.**
+
+```python
+from probpipe import Record
+
+r = Record({"g1": {"theta": 0.1}, "g2": {"theta": 0.2}, "a": 1.0})
+r.select("a", "g1/theta")      # {"a": ..., "theta": ...}
+r.select(t2="g2/theta")        # {"t2": ...}
+r.select("g1/theta", "g2/theta")
+# ValueError: g1/theta and g2/theta share the last name theta; name one with a keyword
+```
+
+<details>
+<summary>Technical note: the errors of records</summary>
+
+For `r = Record({"a": 1.0, "g": {"b": 2.0, "c": 3.0}}, label="r")`:
+
+| Call | Error |
+| --- | --- |
+| `r["z"]` | `KeyError`: "'z' is not a path of 'r'; its paths: ['a', 'g', 'g/b', 'g/c']" |
+| `r["g", "g/b"]` | `ValueError`: "'g/b' is inside 'g'; pick one" |
+| `r["a", "a"]`, `r[[]]` | `ValueError` |
+| `r["a", 0]` | `TypeError`: "a path and a position cannot be mixed in one []" |
+| `r.without(("a", "g/c"))` | `TypeError`: pass the paths as separate arguments |
+| `r.without("a", "g")` | `ValueError`: nothing would remain |
+| `r.rename({"a": "g"})` | `ValueError`: collision (II.6) |
+| `r & {"z": 2.0}` | `TypeError`: not a record |
+
+</details>
+
+## 15. Laws: `Distribution` and `MarginalView`
+
+### 15.1 API
+
+```python
+class Distribution(TrackedTerm):
+    """A law (§ 6.2). Its spec is a DistributionSpec, and it takes no inputs."""
+
+    @property
+    def event_spec(self) -> OutputSpec:
+        """The output spec of one draw; its outputs are the law's outputs."""
+
+    def __getitem__(self, paths: str | Sequence[str], /) -> MarginalView:
+        """The view at a path or a list of paths: the marginal law there (§ 4.1, § 4.2),
+        whose event_spec is self.event_spec[paths].
+
+        Raises:
+            KeyError: A str that is not a path, the name of the output at the root
+                included, which output reads.
+        """
+
+    def output(self, output_name: str, /) -> Distribution:
+        """self[output_name], or self for the output at the root (§ 4.6).
+
+        Raises:
+            KeyError: output_name is not an output.
+        """
+
+    def without(self, *paths: str) -> MarginalView:
+        """The view over every node but those at paths (§ 4.3)."""
+
+    def rename(self, renames: Mapping[str, str] | None = None, /,
+               **keyword_renames: str) -> Distribution:
+        """The same law, its nodes renamed or moved by path, or its root output renamed (§ 4.5)."""
+
+    def __and__(self, other: Distribution | ConditionalDistribution, /
+                ) -> Distribution | ConditionalDistribution:
+        """The merge of § 5.2, read over both operands' factors.
+
+        Returns NotImplemented for an operand that is neither a law nor a kernel.
+        """
+
+
+class MarginalView(Distribution):
+    """The marginal law of its parent at its paths, which keeps a reference to the parent.
+
+    It equals marginal(parent, paths), which is detached (I7).
+    """
+
+    @property
+    def parent(self) -> Distribution: ...
+    @property
+    def path(self) -> str | tuple[str, ...]: ...
+
+
+def marginal(d: Distribution, paths: str | Sequence[str]) -> Distribution:
+    """The marginal law of d at a path or a list of paths, detached from d; it takes what d[...] takes."""
+```
+
+A family takes the name of its output at the root first, as `Normal("mu", 0.0, 1.0)`; a family whose draws are laws, functions, or batches wraps each draw in a record under that name, as a random measure constructed under `params` draws `{params: law}`.
+
+### 15.2 Examples
+
+**Outputs, views, and marginals.**
+
+```python
+from probpipe import Normal, marginal
+
+d = (Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0) & Normal("c", 0.0, 1.0)).rename(
+    {"b": "g/b", "c": "g/c"})                      # a law over {a, g: {b, c}}
+list(d.event_spec.outputs)       # ["a", "g"]
+d["g"]                           # a MarginalView offering b and c; draws {b, c}
+d[["g"]]                         # offering g; draws {g: {b, c}}
+d["g/b"]                         # offering b at the root; draws arrays
+d["g"]["b"]                      # the same law as d["g/b"]
+d["a", "g/b"]                    # offering a and g; draws {a, g: {b}}
+marginal(d, ["a", "g/b"])        # the same law, detached
+d.without("g/c")                 # the same law as d["a", "g/b"]
+
+x = Normal("x", 0.0, 1.0)
+x.output("x")                    # x itself: its output x is at the root
+x["x"]                           # KeyError: x names the draw at the root, not a path
+x[["x"]]                         # the law over {x}
+```
+
+**A law whose draws are laws.**
+
+```python
+from probpipe import Normal, OutputSpec, RecordSpec, distribution
+
+law = Normal("mu", 0.0, 1.0)
+unnamed = distribution(sample=lambda key: Normal("mu", 0.0, 1.0),
+                       event_spec=OutputSpec(law.spec))      # offers nothing
+named = distribution(sample=lambda key: {"params": Normal("mu", 0.0, 1.0)},
+                     event_spec=OutputSpec(RecordSpec(params=law.spec)))
+list(named.event_spec.outputs)   # ["params"]
+named["params"]                  # a law whose draws are laws, offering nothing
+unnamed & Normal("x", 0.0, 1.0)  # TypeError: the left operand produces a law; wrap it under a name
+```
+
+**Conditioning, scoring, and summaries.**
+
+```python
+from probpipe import Normal, condition_on, log_prob, mean, sample
+
+d = Normal("mu", 0.0, 1.0) & Normal("sigma", 1.0, 1.0)
+condition_on(d, {"mu": 0.1})      # a law over {sigma}, whatever route computes it
+m = mean(d)                       # Record {mu, sigma}: the means, at the law's paths
+m["mu"]                           # the mean of mu
+log_prob(d, m)                    # the score at the mean
+condition_on(d, sample(d[["mu"]]))   # fixes mu and nothing else (I8)
+```
+
+Conditioning at a nested path takes the path, as `condition_on(e, {"g/b": 0.5})`; to condition on a whole group, name it, as `{"g": value}`.
+A summary's spec is derived from the event's, so the floating mean of a law over integers is refused where its integer event is required.
+
+## 16. Kernels: `ConditionalDistribution`
+
+### 16.1 API
+
+```python
+class ConditionalDistribution(TrackedTerm):
+    """A kernel (§ 6.3). Its spec is a ConditionalDistributionSpec, and it has at least one input."""
+
+    @property
+    def given_spec(self) -> InputSpec:
+        """Its input spec, named for what it is conditioned on."""
+
+    @property
+    def event_spec(self) -> OutputSpec:
+        """The output spec of one draw, at one value of its inputs."""
+
+    def __getitem__(self, paths: str | Sequence[str], /) -> ConditionalDistribution:
+        """The kernel whose law at each input value is the view at paths there (§ 4.1);
+        its given_spec is self.given_spec."""
+
+    def output(self, output_name: str, /) -> ConditionalDistribution: ...
+    def without(self, *paths: str) -> ConditionalDistribution: ...
+    def rename(self, renames=None, /, **keyword_renames) -> ConditionalDistribution:
+        """Rename inputs and outputs alike (III.9)."""
+    def __and__(self, other, /) -> Distribution | ConditionalDistribution: ...
+
+
+def conditional_distribution(fn: Callable[..., Distribution], /, *, given_spec, label=None
+                             ) -> ConditionalDistribution:
+    """The kernel whose law at each value of its inputs is fn's return value.
+
+    given_spec is read through the InputSpec constructor (§ 10); a parameter of fn with a
+    default is an optional input.
+    """
+```
+
+No name is both an input and an output of a kernel; the constructor refuses one.
+
+### 16.2 Examples
+
+```python
+from probpipe import Normal, conditional_distribution, condition_on
+
+def law_of_y(mu, sigma=1.0):
+    return Normal("y", mu, sigma)
+
+k = conditional_distribution(law_of_y, given_spec={"mu": (), "sigma": ()})
+k.given_spec                      # InputSpec(mu=..., sigma=...).with_optional("sigma")
+k.event_spec                      # OutputSpec(y=NumericArraySpec(())): y at the root
+k.output("y")                     # k itself
+condition_on(k, {"mu": 0.3})      # Normal("y", 0.3, 1.0): sigma at its default
+```
+
+**Declaring inputs from output specs.**
+A kernel's inputs are read from the outputs of the objects that will feed it:
+
+```python
+from probpipe import Normal, conditional_distribution
+
+d = Normal("mu", 0.0, 1.0) & Normal("sigma", 1.0, 1.0) & Normal("tau", 1.0, 1.0)
+e = conditional_distribution(lambda tau: Normal("z", 0.0, tau), given_spec=d.event_spec["tau"])
+
+def law_of_y(mu, sigma, z):
+    return Normal("y", mu + z, sigma)
+
+k = conditional_distribution(law_of_y, given_spec=d.event_spec.without("tau") & e.event_spec)
+list(k.given_spec)                # ["mu", "sigma", "z"]
+model = k & e & d                 # a law: z, then mu, sigma, and tau are fed
+list(model.event_spec.outputs)    # ["y", "z", "mu", "sigma", "tau"]
+e & k                             # ValueError: k takes z, which e outputs; write k & e
+```
+
+## 17. Functions: `Function`
+
+### 17.1 API
+
+```python
+class Function(TrackedTerm):
+    """A tracked callable (§ 6.4). Its spec is a FunctionSpec."""
+
+    def __init__(self, fn: Callable, /, *, input_spec=None,
+                 output_spec: OutputSpec | TermSpec | None = None, **rest) -> None:
+        """input_spec is read through the InputSpec constructor (§ 10); a parameter with a
+        default is optional, and marking optional a parameter without one raises ValueError.
+        A bare TermSpec as output_spec reads as OutputSpec.default(term_spec, output_name=
+        the callable's name).
+        """
+
+    @property
+    def input_spec(self) -> InputSpec | None: ...
+    @property
+    def output_spec(self) -> OutputSpec | None: ...
+
+    def __getitem__(self, paths: str | Sequence[str], /) -> Function:
+        """The function w -> self(w)[paths], with the same inputs. Without an output_spec,
+        paths are checked when the selected function is called."""
+
+    def output(self, output_name: str, /) -> Function: ...
+
+    def __and__(self, other: Function, /) -> Function:
+        """The merge of § 5.4, functions read as kernels of point masses.
+
+        Raises:
+            TypeError: An operand has no input_spec, no output_spec, or a type hole.
+        """
+```
+
+### 17.2 Defaults by kind
+
+A function's return value is described by `OutputSpec.default` when no output spec is given, with the callable's name as the default output name (never its label):
+
+| Return type | Output spec |
+| --- | --- |
+| a base type | the keyword form under the callable's name |
+| a record type | positional: the record's children |
+| a batch whose elements carry only the default name `element` | positional, its elements named by the callable |
+| a law, a kernel, a function, or another batch | positional: a law or kernel offers nothing, a function or batch its outputs |
+
+A bare `output_spec` reads the same way.
+The body builds any record itself: ProbPipe never wraps a function's return value.
+
+**Lifting.** A function applied to a law where it expects a value builds its own law of the results.
+When the function returns a base value or a record, that law's event spec is the function's output spec; when it returns a law, a kernel, a function, or a batch, the lifted law draws records `{name: result}` under the callable's name, and with `include_inputs=True` adds each lifted argument under its parameter's name.
+
+### 17.3 Examples
+
+```python
+from probpipe import Function, Normal, OutputSpec, RecordSpec
+
+f = Function(lambda x: {"y": 2 * x, "z": x + 1},
+             input_spec={"x": ()}, output_spec=OutputSpec(RecordSpec(y=(), z=())))
+list(f.output_spec.outputs)       # ["y", "z"]
+f["y"]                            # the function x -> f(x)["y"]
+f["y"](1.0) == f(1.0)["y"]        # I13
+
+d = Normal("mu", 0.0, 1.0) & Normal("sigma", 1.0, 1.0)
+h = Function(lambda data: d, input_spec={"data": ("n",)}, output_spec=d.spec)   # returns a law
+h.output_spec.outputs             # {}: a produced law offers nothing
+h["mu"]                           # the function data -> h(data)["mu"]
+h_named = Function(lambda data: {"params": d}, input_spec={"data": ("n",)},
+                   output_spec=OutputSpec(RecordSpec(params=d.spec)))
+h_named.output_spec["params"]     # OutputSpec(d.spec)
+
+g = Function(lambda data: f, output_spec=OutputSpec(f.spec))   # returns a function
+list(g.output_spec.outputs)       # ["y", "z"]: the returned function's outputs
+
+def law_of_y(x):
+    return Normal("y", x, 1.0)
+Function(law_of_y)(Normal("x", 0.0, 1.0)).event_spec
+# OutputSpec(RecordSpec(law_of_y=DistributionSpec(...))): draws {law_of_y: law}
+```
+
+**Merging functions.**
+
+```python
+import jax.numpy as jnp
+from probpipe import Function, OutputSpec
+
+m = Function(lambda data: jnp.mean(data), input_spec={"data": ("n",)}, output_spec=OutputSpec(mu=()))
+s = Function(lambda data: jnp.std(data), input_spec={"data": ("n",)}, output_spec=OutputSpec(sigma=()))
+z = Function(lambda data, mu, sigma: (data - mu) / sigma,
+             input_spec={"data": ("n",), "mu": (), "sigma": ()}, output_spec=OutputSpec(z=("n",)))
+(m & s)(data=jnp.arange(5.0))     # Record {mu, sigma}: data is shared
+(z & (m & s))(data=jnp.arange(5.0))   # Record {z, mu, sigma}: mu and sigma are fed
+h & m                             # TypeError: h produces a law; return {"params": law} to merge it
+```
+
+## 18. Batches: `Batch` and `BatchSpec`
+
+### 18.1 API
+
+```python
+class BatchSpec(TermSpec):
+    """A batch type: the element type and the levels."""
+
+    def __init__(self, element: TermSpec | OutputSpec, levels=None, /, **level_shapes) -> None:
+        """element is the elements' type, or an OutputSpec that names base elements
+        (keyword form) or gives any other element positionally; a bare base type gets
+        the name element."""
+
+    @property
+    def element_spec(self) -> OutputSpec:
+        """The output spec of one element (§ 6.5): the keyword form under a base element's
+        name; the positional form over any other element's type. Its term_spec is the
+        element's type."""
+
+
+class Batch(TrackedTerm):
+    @property
+    def element_spec(self) -> OutputSpec:
+        """self.spec.element_spec."""
+
+    def __getitem__(self, key):
+        """A position gives an element or a sub-batch; a path or a list of paths gives the
+        batch, over the same levels, of the elements' nodes (§ 4.1)."""
+
+    def output(self, output_name: str, /) -> Batch:
+        """The column at output_name, or self for the elements' output at the root."""
+
+    def __and__(self, other: Batch, /) -> Batch:
+        """The merge of the elements, position by position (§ 5.4).
+
+        Raises:
+            ValueError: The levels differ.
+            TypeError: The elements are of two families.
+        """
+```
+
+A batch's own output spec is `OutputSpec(b.spec)`: its columns for elements that are records or functions, one output at the root for base elements, and nothing for laws or kernels.
+A `DistributionBatch`'s `event_spec` is `element_spec.term_spec.event_spec`.
+
+### 18.2 Where `element_spec` comes from
+
+1. A batch an operation produces stores its maker's output spec of one element: a law's event spec for draws, a function's output spec for a sweep.
+2. A batch built from bare values gets the default: records and other objects positional, base elements named `element`.
+3. A column of a batch of records follows § 4.4: `b["a"]` stores `OutputSpec(a=...)`, a group's column the record type of the group.
+
+### 18.3 Names out of equality, hashing, and JAX
+
+A batch's base-element name stays out of its equality, its hash, its fingerprint, and the static data of its JAX pytree.
+`BatchSpec` keeps the name and compares it, and every one of those places uses a name-free canonical form of the spec instead, recursively through records, laws, and functions that hold a batch.
+
+<details>
+<summary>Technical note: why, and what it costs</summary>
+
+JAX compares a pytree's static data to decide whether two values share a structure, which decides whether `jit` reuses a compiled program and whether the branches of `lax.cond` may return the batch.
+With the name in the static data, draws of `x` and of `y` would be different structures: `jax.tree_util.tree_map(jnp.subtract, x, y)` would raise, and `jit` would recompile for each name.
+A name kept in static data that compares without it would be worse, since JAX rebuilds a cached program's output from the first call's static data, so a later call under another name would come back with the first name.
+
+The cost is that a base element's name does not survive a raw JAX transform: `jax.jit(lambda b: b)(x)` returns a batch offering `element`.
+A record element's names are stored in its `RecordSpec`, so they survive.
+ProbPipe's own operations restore names at their results.
+
+</details>
+
+### 18.4 Examples
+
+```python
+import jax, jax.numpy as jnp
+from probpipe import Normal, NumericArrayBatch, sample
+
+x = sample(Normal("x", 0.0, 1.0), sample_shape=4)
+x.element_spec                   # OutputSpec(x=NumericArraySpec(...))
+x.element_spec.term_spec         # NumericArraySpec(...)
+x.output("x")                    # x itself
+x["x"]                           # KeyError: 'x' names the elements of this batch as a whole,
+                                 # not a path inside them; the batch already holds x's values
+x[["x"]]                         # a batch of records {x}
+x.rename(x="y").element_spec     # OutputSpec(y=...)
+NumericArrayBatch(jnp.arange(4.0), "draw").element_spec   # OutputSpec(element=...)
+
+d = (Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)).rename({"b": "g/b"})
+b = sample(d, sample_shape=100)   # a RecordBatch over the level sample
+b["g/b"]                          # the column: a batch of arrays
+b[3]["g"] == b["g"][3]            # I4
+y = sample(Normal("y", 0.0, 1.0), sample_shape=4)
+x & y                             # a batch of 4 records {x, y}
+jax.tree_util.tree_map(jnp.subtract, x, y)   # works: names are not static data
+```
+
+## 19. Errors and their messages
+
+Every message follows `STYLE_GUIDE.md` §9.3 and names the fix.
+
+| Operation | Error | Section |
+| --- | --- | --- |
+| a malformed path or position | `ValueError` or `TypeError`, by the reader's table | § 12.1 |
+| a path that does not exist | `KeyError` listing the paths | § 12.1 |
+| the name of the output at the root given to `[]` | `KeyError` pointing to `output` | §§ 11, 15, 18 |
+| an `InputSpec` source of another class, or a type hole | `TypeError` | § 10 |
+| an input name that is not an identifier | `ValueError` | § 10 |
+| a declared input the function does not take, or a group's parts where it takes the group | `TypeError` naming the fix | § 10.3 |
+| the keyword form of `OutputSpec` over a type that is not a base type | `TypeError` naming the wrap | § 11 |
+| iterating an `OutputSpec` | `TypeError` pointing to `.outputs` | § 11 |
+| removing everything | `ValueError` | §§ 11, 14 |
+| a path or input given to `without` that is not present | `KeyError` | §§ 10, 11, 14 |
+| a merge that breaks a condition | by condition | § 13 |
+| `select` with two paths of one last name | `ValueError` | § 14 |
+| filling a type hole with a type that is not a base type | `TypeError` | § 11.2 |
+
+<details>
+<summary>Technical note: behaviours of the code outside the invariants</summary>
+
+| Case | What happens | Why |
+| --- | --- | --- |
+| `&` on arrays | two draws of `Normal("x", ...)` and `Normal("y", ...)` combine by NumPy's `&`, which refuses floats, while the laws merge into a law over `{x, y}` | a base value carries no name, and NumPy keeps its `&` |
+| `&` on records and arrays | records merge by name, `NumericArray`s combine elementwise | a record is a tree of named values |
+| a batch of arrays through raw JAX | comes back offering `element` | names stay out of the pytree (§ 18.3) |
+| the list form at the root | `Normal("x", ...)[["x"]]` succeeds, while a draw is an array that NumPy indexes | an extra rule at the top level (§ 4.2) |
+| Python's mapping rule | `"g" in r` is true while `"g"` is not in `r.keys()` | `keys()` lists fields, and `in` follows `[]` |
+
+</details>
+
+## 20. Symbolic dimensions in code
+
+Selection and removal keep dimension names, in the scope of the object they came from; binding a size commutes with selecting.
+
+```python
+from probpipe import OutputSpec, RecordSpec
+
+O = OutputSpec(RecordSpec(x=("n", "m"), w=("m",)))
+O["w"]                            # OutputSpec(w=NumericArraySpec(("m",)))
+O["w"].term_spec.free_dims        # frozenset({"m"})
+O.with_dim_sizes(m=3)["w"] == O["w"].with_dim_sizes(m=3)   # True
+O["x"] & O["w"]                   # one dimension m again
+```
+
+A merged law or kernel keeps the sizes its merge bound, and a later merge starts from both operands' kept sizes; merged input specs, output specs, record specs, and functions apply the sizes and keep nothing (§ 5.6, technical note).
+`with_dim_names` renames names in types, not in a kept scope, so a merge refused over a kept size is fixed by merging the parts in another order.
+A view applies `with_dim_sizes` and `with_dim_names` to its parent.
+
+---
+
 ## A. Open questions and issues
 
 The rest of this appendix is drafted in [`appendices.md`](appendices.md); this running list is merged into it.
@@ -1050,3 +2142,5 @@ Each item gives the reading the text adopts.
 8. **Whether a law type and a kernel type merge.** Source § 2.16 says "two of one of these". *Reading:* they merge, as laws and kernels do (§ 5.2).
 9. **Renaming a law's output onto an input its factors still take.** A law's rename does not rename the remaining inputs of its factors (§ 5.6), so renaming an output of `a & c` to `sigma` would put `sigma` on both sides, against I15; the source does not say what happens. *Reading:* refused, since I15 keeps sides separate.
 10. **Unifying kernel and function types.** Unification requires their input types to be equal (§ 3.4, technical note), while a shared input elsewhere takes the unification of its types; the source gives no reason for the difference. *Reading:* equal, as stated.
+11. **Variadic parameters.** The source reads a function's inputs from its parameters, and its optional inputs from their defaults, but does not say how `*args` and `**kwargs` count. *Reading:* only named parameters are inputs.
+12. **The path of a view built by removal.** `MarginalView.path` records a view's paths, and `d.without(...)` returns a view, but the source does not say what path it records. *Reading:* the paths of the nodes it keeps, so it equals the view at that list.
