@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="526" height="230" viewBox="0 0 526 230" role="img">
+  <title>A law over {a, g: {c, e}}: its parts, its produced object, and its outputs</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#424a53"/>
+    </marker>
+    <marker id="arrow-fault" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#cf222e"/>
+    </marker>
+  </defs>
+  <rect x="0.5" y="0.5" width="525" height="229" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <g transform="translate(56.8,22.0)">
+    <rect x="0.0" y="0.0" width="130.7" height="124.0" rx="8" fill="#eef6ff" stroke="#0550ae" stroke-width="1.6"/>
+    <rect x="10.0" y="7.0" width="49.3" height="17.0" rx="8.5" fill="#0550ae" stroke="#0550ae" stroke-width="1"/>
+    <text x="34.6" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">record</text>
+    <text x="67.3" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">a draw</text>
+    <text x="12.0" y="45.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">a: 0.4</text>
+    <text x="12.0" y="67.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">g</text>
+    <text x="28.0" y="89.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">c: 1.2</text>
+    <text x="28.0" y="111.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">e: -0.3</text>
+    <path d="M 16.0,73.0 L 16.0,85.0 L 25.0,85.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M 16.0,73.0 L 16.0,107.0 L 25.0,107.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <rect x="280.7" y="0.0" width="112.0" height="124.0" rx="8" fill="#f6f0ff" stroke="#8250df" stroke-width="1.6"/>
+    <rect x="290.7" y="7.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
+    <text x="306.5" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
+    <text x="330.3" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">d</text>
+    <text x="292.7" y="45.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">a</text>
+    <text x="292.7" y="67.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">g</text>
+    <text x="308.7" y="89.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">c</text>
+    <text x="308.7" y="111.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">e</text>
+    <path d="M 296.7,73.0 L 296.7,85.0 L 305.7,85.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M 296.7,73.0 L 296.7,107.0 L 305.7,107.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="280.7" cy="41.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <circle cx="280.7" cy="63.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <path d="M 278.7,15.0 L 134.7,15.0" fill="none" stroke="#424a53" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+    <text x="205.7" y="8.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle" font-style="italic">produces</text>
+    <text x="268.7" y="56.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="end" font-style="italic">outputs</text>
+    <text x="65.3" y="150.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">its produced object: a draw,</text>
+    <text x="65.3" y="168.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">a record of type {a, g: {c, e}}</text>
+    <text x="336.7" y="150.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">paths: a, g, g/c, g/e</text>
+    <text x="336.7" y="168.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">parts: d[a], d[g], d[g/c], d[g/e]</text>
+    <text x="336.7" y="186.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">outputs: a and g, on the left edge</text>
+  </g>
+</svg>

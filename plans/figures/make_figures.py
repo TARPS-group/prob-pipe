@@ -880,12 +880,84 @@ def opt_kernel(name: str = "a", faults: set[str] = frozenset()) -> Obj:
     )
 
 
+def structure_figure() -> Canvas:
+    """Draw the overview of Part I: a law, its parts, its produced object, and its outputs.
+
+    The produced object stands to the left of the law, since data flows from
+    right to left, and a dashed arrow from the law's header marks what it
+    produces.
+    """
+    canvas = Canvas("A law over {a, g: {c, e}}: its parts, its produced object, and its outputs")
+    draw = Obj(
+        "a draw",
+        "record",
+        outputs=[
+            Part("a", label="a: 0.4"),
+            Part("g", [Part("c", label="c: 1.2"), Part("e", label="e: -0.3")]),
+        ],
+        show_ports=False,
+    )
+    law = Obj("d", "law", outputs=[Part("a"), Part("g", [Part("c"), Part("e")])])
+    draw_w, draw_h = obj_size(draw)
+    law_w, law_h = obj_size(law)
+    gap = 150
+    law_x = draw_w + gap
+    placed_draw = draw_obj(canvas, draw, 0, 0)
+    placed_law = draw_obj(canvas, law, law_x, 0)
+    arrow_y = HEADER / 2
+    canvas.line(
+        [(law_x - 2, arrow_y), (placed_draw.right + 4, arrow_y)],
+        width=1.6,
+        arrow=True,
+        dash="5 4",
+    )
+    canvas.text(
+        placed_draw.right + gap / 2,
+        arrow_y - 7,
+        "produces",
+        size=12,
+        mono=False,
+        anchor="middle",
+        fill=MUTED,
+        italic=True,
+    )
+    canvas.text(  # the output ports' names are inside the box, as in every figure
+        law_x - 12,
+        (placed_law.output_y["a"] + placed_law.output_y["g"]) / 2 + 4.5,
+        "outputs",
+        size=12,
+        mono=False,
+        anchor="end",
+        fill=MUTED,
+        italic=True,
+    )
+    top = max(draw_h, law_h) + 26
+    caption_lines(
+        canvas,
+        placed_draw.w / 2,
+        top,
+        ["its produced object: a draw,", "a record of type {a, g: {c, e}}"],
+    )
+    caption_lines(
+        canvas,
+        law_x + law_w / 2,
+        top,
+        [
+            "paths: a, g, g/c, g/e",
+            "parts: d[a], d[g], d[g/c], d[g/e]",
+            "outputs: a and g, on the left edge",
+        ],
+    )
+    return canvas
+
+
 def figures() -> dict[str, Canvas]:
     group = [Part("a"), Part("g", [Part("b"), Part("c")])]
     return {
         "legend": legend_figure(),
         "legend-objects": legend_figure(merges=False),
         "legend-merge": legend_figure(objects=False),
+        "object-structure": structure_figure(),
         "record-tree": single_figure(
             "The record {a: 1.0, g: {b: 2.0, c: 3.0}} as a tree",
             Obj("r", "record", outputs=group, show_ports=False),
