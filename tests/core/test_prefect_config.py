@@ -361,23 +361,27 @@ class TestEffectiveWorkflowKind:
             is WorkflowKind.OFF
         )
 
-    def test_a_call_runs_under_the_mode_the_property_reports(self, monkeypatch):
+    def test_a_call_runs_under_the_mode_its_resolved_control_selects(self, monkeypatch):
+        """A call selects its mode as the property does, from the call's resolved control."""
         from probpipe import Function
+        from probpipe.functions import _function as engine
 
-        calls = []
+        selected_from = []
 
-        def resolve(instance):
-            calls.append(instance)
+        def orchestration_mode(workflow_kind_control):
+            selected_from.append(workflow_kind_control)
             return WorkflowKind.OFF
 
-        monkeypatch.setattr(Function, "effective_workflow_kind", property(resolve))
+        monkeypatch.setattr(engine, "_orchestration_mode", orchestration_mode)
         wf = Function(
             lambda x: x + 1,
             dispatch="sequential",
             label="increment",
+            workflow_kind=WorkflowKind.TASK,
         )
+        assert wf.effective_workflow_kind is WorkflowKind.OFF
         assert float(wf(2)) == 3
-        assert calls and all(instance is wf for instance in calls)
+        assert selected_from and all(control is WorkflowKind.TASK for control in selected_from)
 
 
 # ---------------------------------------------------------------------------

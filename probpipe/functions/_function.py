@@ -253,12 +253,34 @@ def _orchestration_mode(workflow_kind_control: WorkflowKind) -> WorkflowKind:
 
 
 def _make_execution_config(
-    function: Function,
+    function_label: str,
+    resolved_controls: Mapping[str, Any],
     *,
     mode: _execution.WorkflowExecutionMode | None = None,
 ) -> _execution.WorkflowExecutionConfig:
-    """Build resolved execution metadata for row-wise dispatch of the running call of *function*."""
-    resolved_controls = current_call_context().resolved_controls
+    """Build resolved execution metadata for row-wise dispatch of a call under *resolved_controls*.
+
+    Parameters
+    ----------
+    function_label : str
+        The label of the called ``Function``, which names the execution.
+    resolved_controls : Mapping of str to Any
+        The call's resolved controls, whose ``workflow_kind``, ``dispatch``,
+        and ``max_workers`` select the mode.
+    mode : str or None, optional
+        The mode to use, or ``None`` to select it from *resolved_controls*.
+
+    Returns
+    -------
+    WorkflowExecutionConfig
+        The execution metadata.
+
+    Warns
+    -----
+    UserWarning
+        If the mode is a Prefect mode while ``dispatch="thread"`` or
+        ``max_workers`` is set, which configure only local thread dispatch.
+    """
     if mode is None:
         match _orchestration_mode(resolved_controls["workflow_kind"]):
             case WorkflowKind.TASK:
@@ -285,7 +307,7 @@ def _make_execution_config(
     return _execution.WorkflowExecutionConfig(
         mode=mode,
         max_workers=resolved_controls["max_workers"] if mode == "thread" else None,
-        name=function._label,
+        name=function_label,
         prefect_task_runner=(config.prefect.resolve_task_runner() if is_prefect else None),
     )
 
@@ -947,7 +969,9 @@ def _run_call(
             logical_unit=logical_unit,
             include_inputs=include_inputs,
             get_key=get_key,
-            make_execution_config=partial(_make_execution_config, function),
+            make_execution_config=partial(
+                _make_execution_config, function._label, resolved_controls
+            ),
             requested_dispatch=resolved_controls["dispatch"],
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=require_jax_traceable,
@@ -1019,7 +1043,9 @@ def _run_call(
             values=argument_values,
             plan=broadcast_plan,
             stochastic_plan=stochastic_plan,
-            make_execution_config=partial(_make_execution_config, function),
+            make_execution_config=partial(
+                _make_execution_config, function._label, resolved_controls
+            ),
             requested_dispatch=resolved_controls["dispatch"],
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=require_jax_traceable,
@@ -1044,7 +1070,7 @@ def _run_call(
     # Known harmless duplication: the distribution-broadcast module builds
     # the same request shape. A later execution cleanup can centralize this
     # without reintroducing private facade wrappers.
-    execution = _make_execution_config(function)
+    execution = _make_execution_config(function._label, resolved_controls)
     request = _execution.WorkflowExecutionRequest(
         func=invoke_point,
         work_items=_execution.make_managed_work_items(

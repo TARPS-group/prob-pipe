@@ -2662,7 +2662,8 @@ class TestFunctionExecutionConfig:
 
         assert (
             node_mod._make_execution_config(
-                wf,
+                wf.label,
+                wf.options,
             ).mode
             == "thread"
         )
@@ -2671,7 +2672,8 @@ class TestFunctionExecutionConfig:
         wf = Function(add_one, label="add_one", dispatch="thread", max_workers=3)
 
         execution = node_mod._make_execution_config(
-            wf,
+            wf.label,
+            wf.options,
         )
 
         assert execution.mode == "thread"
@@ -2681,7 +2683,8 @@ class TestFunctionExecutionConfig:
         wf = Function(add_one, label="add_one", dispatch="thread", max_workers=True)
 
         execution = node_mod._make_execution_config(
-            wf,
+            wf.label,
+            wf.options,
         )
 
         assert execution.mode == "thread"
@@ -2692,7 +2695,8 @@ class TestFunctionExecutionConfig:
             wf = Function(add_one, label="add_one", dispatch="auto", max_workers=3)
 
         execution = node_mod._make_execution_config(
-            wf,
+            wf.label,
+            wf.options,
         )
 
         assert execution.mode == "sequential"
@@ -2718,7 +2722,8 @@ class TestFunctionExecutionConfig:
             wf = Function(add_one, label="add_one", dispatch="sequential", max_workers=3)
 
         execution = node_mod._make_execution_config(
-            wf,
+            wf.label,
+            wf.options,
         )
 
         assert execution.mode == "sequential"
@@ -2739,7 +2744,8 @@ class TestFunctionExecutionConfig:
 
         with pytest.warns(UserWarning, match="do not control Prefect scheduling"):
             execution = node_mod._make_execution_config(
-                wf,
+                wf.label,
+                wf.options,
             )
 
         assert execution.mode == "prefect_task"
@@ -2764,7 +2770,8 @@ class TestFunctionExecutionConfig:
 
         with pytest.warns(UserWarning, match="do not control Prefect scheduling"):
             execution = node_mod._make_execution_config(
-                wf,
+                wf.label,
+                wf.options,
             )
 
         assert execution.mode == "prefect_flow"
@@ -2781,7 +2788,8 @@ class TestFunctionExecutionConfig:
             )
 
         execution = node_mod._make_execution_config(
-            wf,
+            wf.label,
+            wf.options,
         )
 
         assert execution.mode == "sequential"
