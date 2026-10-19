@@ -550,9 +550,9 @@ class TestEditTemplateThreading:
             {"physics": 9.0, "physics/mass": 5.0},  # ancestor listed first
             {"physics/mass": 5.0, "physics": 9.0},  # descendant listed first
         ):
-            with pytest.raises(ValueError, match="the path 'physics/mass' is inside 'physics'"):
+            with pytest.raises(ValueError, match="'physics/mass' is inside 'physics'; pick one"):
                 r.replace(updates)
-        with pytest.raises(ValueError, match="the path 'physics/mass' is inside 'physics'"):
+        with pytest.raises(ValueError, match="'physics/mass' is inside 'physics'; pick one"):
             r.event_template.replace(
                 {"physics": NumericArraySpec((2,)), "physics/mass": NumericArraySpec((5,))}
             )

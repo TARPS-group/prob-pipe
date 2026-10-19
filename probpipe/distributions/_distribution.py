@@ -976,7 +976,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         offers the node whole under the path's last name. A list or a tuple of
         paths gives the view whose event exposes the record that keeps each node
         at its own path, in this law's order, so ``grouped["a", "g/c"]`` draws
-        records ``{a, g: {c}}``.
+        records ``{a, g: {c}}``. A tuple is a list of paths; a nested path is
+        written with ``/``.
 
         Parameters
         ----------

@@ -221,8 +221,9 @@ the caller wrote.
 The `/` character is reserved as the path separator, and
 `named_tree._PATH_SEP` is the one definition of it: code that splits or
 joins a path imports it. Field names may not contain `/` (raises
-`ValueError` at construction). A path is always a `str`; a list or a
-tuple of `str` is a list of paths. `[]` takes either, and one reader,
+`ValueError` at construction). A path is always a `str`, and a tuple is
+a list of paths; a nested path is written with `/`. `[]` takes a path or
+a list or tuple of paths, and one reader,
 `_as_paths` in `probpipe/core/_shapes.py`, parses it and owns every
 error message:
 

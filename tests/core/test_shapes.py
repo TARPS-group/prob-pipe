@@ -258,8 +258,8 @@ class TestPaths:
             pytest.param([], "it names no paths", id="empty-list"),
             pytest.param((), "it names no paths", id="empty-tuple"),
             pytest.param(("a", "a"), "it names the path 'a' twice", id="repeated"),
-            pytest.param(("g", "g/c"), "the path 'g/c' is inside 'g'", id="nested"),
-            pytest.param(("g/c", "g"), "the path 'g/c' is inside 'g'", id="nested-reversed"),
+            pytest.param(("g", "g/c"), "'g/c' is inside 'g'; pick one", id="nested"),
+            pytest.param(("g/c", "g"), "'g/c' is inside 'g'; pick one", id="nested-reversed"),
         ],
     )
     def test_refuses_malformed_paths_with_value_error(self, arg, match):
@@ -283,9 +283,9 @@ class TestPaths:
             _as_paths(arg, action="index R by")
 
     def test_names_the_positions_for_a_caller_that_takes_them(self):
-        with pytest.raises(TypeError, match="it mixes paths with positions"):
+        with pytest.raises(TypeError, match=r"a path and a position cannot be mixed in one \[\]"):
             _as_paths(("a", 0), action="index B by", positions=True)
-        with pytest.raises(TypeError, match="positions cannot be given as a list"):
+        with pytest.raises(TypeError, match="a list of positions is not supported"):
             _as_paths([0, 2], action="index B by", positions=True)
         with pytest.raises(TypeError, match="a path, a list of paths, or a position"):
             _as_paths({"a"}, action="index B by", positions=True)
@@ -334,7 +334,7 @@ class TestPathArguments:
         ("arguments", "match"),
         [
             (("a", "a"), "it names the path 'a' twice"),
-            (("g", "g/c"), "the path 'g/c' is inside 'g'"),
+            (("g", "g/c"), "'g/c' is inside 'g'; pick one"),
             (("g//c",), "has an empty name"),
         ],
     )

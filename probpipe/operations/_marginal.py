@@ -64,9 +64,12 @@ def _read_marginal_paths(event_spec: OutputSpec, label: str, paths: Any) -> str 
         names a path twice, or holds a path inside another.
     """
     read = _as_paths(paths, action=f"take the marginal of {label!r} at")
+    listed = read if isinstance(read, tuple) else ()
     for path in _path_tuple(read):
         if not _has_path(event_spec, path):
-            raise ApplicabilityError(f"marginal: {_not_an_event_path(event_spec, label, path)}")
+            raise ApplicabilityError(
+                f"marginal: {_not_an_event_path(event_spec, label, path, listed)}"
+            )
     return read if isinstance(read, str) else _in_event_order(event_spec, read)
 
 

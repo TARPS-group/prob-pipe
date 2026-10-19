@@ -783,7 +783,7 @@ class TestIndexing:
         ("key", "match"),
         [
             (("y", "y"), "names the path 'y' twice"),
-            (("model", "model/theta"), "the path 'model/theta' is inside 'model'"),
+            (("model", "model/theta"), "'model/theta' is inside 'model'; pick one"),
         ],
     )
     def test_a_repeated_or_nested_path_raises_value_error(self, key, match):
@@ -1040,7 +1040,7 @@ class TestGuards:
         view = FieldView(_MarginalLaw("parent", _EVENT), "model/theta")
         report = _capability_guard(view, "_marginal", path)
         assert report.feasible is False
-        assert "is not an event path of 'parent'" in report.description
+        assert "is not a path of 'parent'" in report.description
 
     def test_the_marginal_guard_admits_paths_that_share_a_last_name(self):
         twins = RecordSpec(g=RecordSpec(a=RecordSpec(x=()), b=RecordSpec(x=())))

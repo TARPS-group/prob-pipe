@@ -848,6 +848,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         """
         return {key: self[path] for key, path in _keyed_paths(paths, mapping).items()}
 
+    def _path_owner(self) -> str:
+        """How a message names this record: its label."""
+        return repr(self.label)
+
     def _at_paths(self, paths: tuple[str, ...]) -> Record:
         """This record cut down to the nodes at *paths*, labeled by the paths in its order."""
         ordered = self._ordered_paths(paths)

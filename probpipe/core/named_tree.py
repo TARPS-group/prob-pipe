@@ -20,8 +20,14 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from types import MappingProxyType
 from typing import Any, Self, cast
 
-from .._messages import unknown_names
-from ._shapes import PathsLike, _as_joined_path, _as_path, _as_path_arguments, _as_paths
+from ._shapes import (
+    PathsLike,
+    _as_joined_path,
+    _as_path,
+    _as_path_arguments,
+    _as_paths,
+    _missing_path,
+)
 
 __all__ = ["NamedTree"]
 
@@ -533,6 +539,11 @@ class NamedTree[L]:
     def __getitem__(self, key: PathsLike) -> L | Self:
         """The node at a path, or this tree cut down to the nodes at a list of paths.
 
+        A tuple is a list of paths; a nested path is written with ``/``, so
+        ``x["g/c"]`` is the node ``c`` inside the group ``g``, while
+        ``x["g", "c"]`` is the tree cut down to the top-level nodes ``g`` and
+        ``c``.
+
         Parameters
         ----------
         key : str, or list or tuple of str
@@ -564,7 +575,7 @@ class NamedTree[L]:
             # runtime ``type`` a checker cannot use to narrow the ``L | Self`` union.
             return self._present(paths, cast(L, node))
         for path in paths:
-            self._existing_node_at(path)
+            self._existing_node_at(path, requested=paths)
         return self._at_paths(paths)
 
     def __contains__(self, key: object) -> bool:
@@ -647,6 +658,8 @@ class NamedTree[L]:
             obj.at_path("physics", "mass")
             obj["physics/mass"]
 
+        ``obj[path]`` is the recommended form; ``at_path`` reads the same node.
+
         Parameters
         ----------
         *segments : str
@@ -698,13 +711,16 @@ class NamedTree[L]:
             node = node._tree[name]
         return node
 
-    def _existing_node_at(self, path: str) -> L | Self:
+    def _existing_node_at(self, path: str, *, requested: tuple[str, ...] = ()) -> L | Self:
         """The stored node at *path*, with a ``KeyError`` that lists the paths this tree has.
 
         Parameters
         ----------
         path : str
             A path, which the caller has read.
+        requested : tuple of str
+            The list of paths that holds *path*, which the message reads, or
+            ``()`` for one path.
 
         Returns
         -------
@@ -719,7 +735,18 @@ class NamedTree[L]:
         try:
             return self._node_at(path)
         except KeyError:
-            raise KeyError(unknown_names("path", [path], self._node_paths())) from None
+            raise KeyError(
+                _missing_path(
+                    path,
+                    owner=self._path_owner(),
+                    available=self._node_paths(),
+                    requested=requested,
+                )
+            ) from None
+
+    def _path_owner(self) -> str:
+        """How a message names this tree: ``"this RecordSpec"``, or a labeled value's label."""
+        return f"this {type(self).__name__}"
 
     @property
     def children(self) -> Mapping[str, L | Self]:

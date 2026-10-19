@@ -334,7 +334,7 @@ class TestFieldAccess:
             {"a": np.array([1.0, 2.0])},
             label="r",
         )
-        with pytest.raises(KeyError, match="unknown path 'a/b'"):
+        with pytest.raises(KeyError, match="'a/b' is not a path of 'r'"):
             v["a/b"]
         # __contains__ swallows the same case to False.
         assert "a/b" not in v

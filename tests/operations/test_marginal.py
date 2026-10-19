@@ -64,7 +64,7 @@ class TestMarginal:
 
     def test_a_path_the_law_lacks_raises_applicability_error(self):
         with pytest.raises(
-            ApplicabilityError, match="'c' is not an event path of 'law'; its paths: \\['a', 'b'\\]"
+            ApplicabilityError, match="'c' is not a path of 'law'; its paths: \\['a', 'b'\\]"
         ):
             marginal(Marginalizing("law"), "c")
 
@@ -77,7 +77,7 @@ class TestMarginal:
         [
             pytest.param([], "it names no paths", id="empty"),
             pytest.param(("a", "a"), "names the path 'a' twice", id="repeated"),
-            pytest.param(("x", "x/a"), "the path 'x/a' is inside 'x'", id="nested"),
+            pytest.param(("x", "x/a"), "'x/a' is inside 'x'; pick one", id="nested"),
             pytest.param("x//a", "has an empty name", id="empty-name"),
         ],
     )

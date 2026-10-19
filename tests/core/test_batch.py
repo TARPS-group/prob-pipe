@@ -1422,15 +1422,17 @@ class TestIndexingDispatchesOnTheKeyType:
     """
 
     def test_a_path_reaches_the_elements_rather_than_an_axis(self, flat):
-        with pytest.raises(KeyError, match="its elements have no paths"):
+        with pytest.raises(KeyError, match="it names no path inside the elements"):
             flat["x"]
 
     def test_a_list_of_paths_reaches_the_elements_too(self, flat):
-        with pytest.raises(KeyError, match=r"by \('outer', 'a'\): its elements have no paths"):
+        with pytest.raises(
+            KeyError, match=r"by \('outer', 'a'\): it names no path inside the elements"
+        ):
             flat["outer", "a"]
 
-    def test_the_refusal_says_where_the_axes_are_addressed(self, flat):
-        with pytest.raises(KeyError, match=r"or at_levels\(\) to index by level name"):
+    def test_the_refusal_says_the_batch_holds_the_values(self, flat):
+        with pytest.raises(KeyError, match=r"the batch already holds their values"):
             flat["x"]
 
     def test_a_batch_whose_elements_have_fields_answers_a_path(self):
@@ -1446,13 +1448,13 @@ class TestIndexingDispatchesOnTheKeyType:
         assert fields[:, 1].label == "b[draw=1]"
 
     def test_a_tuple_mixing_paths_and_positions_addresses_neither(self, nested):
-        with pytest.raises(TypeError, match="mixes paths with positions"):
+        with pytest.raises(TypeError, match=r"a path and a position cannot be mixed in one \[\]"):
             nested[0, "x"]
 
     def test_a_mixed_tuple_is_blamed_on_the_mix_and_not_on_the_count(self, flat):
         # One axis and two entries, so a complaint about arity would fire first
         # and blame the count rather than the path that indexes no axis.
-        with pytest.raises(TypeError, match="mixes paths with positions"):
+        with pytest.raises(TypeError, match=r"a path and a position cannot be mixed in one \[\]"):
             flat[0, "x"]
 
     def test_an_empty_tuple_names_no_paths(self, nested):
@@ -1461,7 +1463,7 @@ class TestIndexingDispatchesOnTheKeyType:
             nested[()]
 
     def test_a_list_of_positions_is_refused(self, flat):
-        with pytest.raises(TypeError, match="positions cannot be given as a list"):
+        with pytest.raises(TypeError, match="a list of positions is not supported"):
             flat[[0, 2]]
 
     @pytest.mark.parametrize(
@@ -1682,7 +1684,9 @@ class TestTheTwoWaysOfIndexingCompose:
 
     def test_a_mixed_tuple_is_refused_whichever_comes_first(self, fields):
         for key in [(0, "value"), ("value", 0)]:
-            with pytest.raises(TypeError, match="mixes paths with positions"):
+            with pytest.raises(
+                TypeError, match=r"a path and a position cannot be mixed in one \[\]"
+            ):
                 fields[key]
 
 

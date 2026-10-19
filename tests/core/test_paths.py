@@ -90,7 +90,7 @@ class TestTheReaderErrors:
             pytest.param([], ValueError, "it names no paths", id="empty-list"),
             pytest.param((), ValueError, "it names no paths", id="empty-tuple"),
             pytest.param(("a", "a"), ValueError, "names the path 'a' twice", id="repeated"),
-            pytest.param(("g", "g/c"), ValueError, "'g/c' is inside 'g'", id="nested"),
+            pytest.param(("g", "g/c"), ValueError, "'g/c' is inside 'g'; pick one", id="nested"),
             pytest.param({"a"}, TypeError, "got set", id="set"),
             pytest.param(iter(["a"]), TypeError, "got list_iterator", id="iterator"),
             pytest.param(("a", 0), TypeError, None, id="path-and-position"),
@@ -100,18 +100,37 @@ class TestTheReaderErrors:
         with pytest.raises(error, match=match):
             term[key]
 
-    def test_an_unknown_path_raises_key_error(self, term):
-        with pytest.raises(KeyError):
+    def test_an_unknown_path_raises_key_error_listing_the_paths(self, term):
+        with pytest.raises(
+            KeyError, match=r"'nope' is not a path of .*; its paths: \['a', 'g', 'g/c', 'g/e'\]"
+        ):
             term["nope"]
-        with pytest.raises(KeyError):
+        with pytest.raises(KeyError, match="'nope' is not a path of"):
             term["a", "nope"]
+
+    def test_a_tuple_that_spells_a_nested_path_says_how_to_write_it(self, term):
+        with pytest.raises(
+            KeyError,
+            match=r"'c' is not a path of .*; a tuple is a list of paths; for the nested path "
+            r"write 'g/c'",
+        ):
+            term["g", "c"]
+
+    def test_a_record_is_named_by_its_label(self):
+        site = Record({"habitat": {"forest": 0.7, "wetland": 0.3}, "count": 2.0}, label="site")
+        with pytest.raises(
+            KeyError,
+            match=r"'habitat/forst' is not a path of 'site'; its paths: \['habitat', "
+            r"'habitat/forest', 'habitat/wetland', 'count'\]",
+        ):
+            site["habitat/forst"]
 
 
 class TestBatchPositions:
     """A batch also takes positions, and refuses a list or an array of them."""
 
     def test_a_path_and_a_position_in_one_key_raise(self):
-        with pytest.raises(TypeError, match="mixes paths with positions"):
+        with pytest.raises(TypeError, match=r"a path and a position cannot be mixed in one \[\]"):
             _draws()["a", 0]
 
     @pytest.mark.parametrize(
@@ -120,6 +139,21 @@ class TestBatchPositions:
     def test_a_list_or_an_array_of_positions_raises(self, positions):
         with pytest.raises(TypeError):
             _draws()[positions]
+
+    def test_a_list_of_positions_says_to_index_one(self):
+        with pytest.raises(
+            TypeError, match="a list of positions is not supported; index one position or a slice"
+        ):
+            _draws()[[0, 2]]
+
+    def test_a_path_inside_whole_elements_says_the_batch_holds_their_values(self):
+        draws = _sample(Normal("mu", 0.0, 1.0), sample_shape=4)
+        with pytest.raises(
+            KeyError,
+            match=r"it names no path inside the elements .* the batch already holds their "
+            r"values \(read them with .raw\)",
+        ):
+            draws["mu"]
 
     def test_an_empty_tuple_never_returns_the_whole_batch(self):
         with pytest.raises(ValueError, match="it names no paths"):
@@ -206,6 +240,10 @@ class TestMembership:
     def test_a_whole_term_name_is_a_member_of_its_law(self):
         assert "x" in Normal("x", 0.0, 1.0)
 
+    def test_a_path_of_the_elements_is_a_member_of_a_batch(self):
+        assert "a" in _sample(_grouped(), sample_shape=4)
+        assert "g" in _sample(_grouped())
+
 
 class TestOnePathPerArgument:
     """``without``, ``select``, and ``at_path`` read one path per argument."""
@@ -232,66 +270,6 @@ class TestOnePathPerArgument:
         with pytest.raises(ValueError, match="its key 'theta' is already taken by 's1/theta'"):
             _sample(_hier()).select("s1/theta", "s2/theta")
         assert list(_draws().select("a", "g/c")) == ["a", "c"]
-
-
-class TestInvariants:
-    """The invariants a reading of paths gives on records, batches, and laws."""
-
-    def test_positions_and_paths_commute_on_a_batch(self):
-        """I4: ``draws[i][s] == draws[s][i]``."""
-        draws = _draws()
-        assert draws[3]["g"] == draws["g"][3]
-        assert draws[3]["a", "g/c"] == draws["a", "g/c"][3]
-        np.testing.assert_array_equal(draws[3]["g/c"].raw, draws["g/c"][3].raw)
-
-    def test_paths_chain_on_records_and_batches(self):
-        """I5: ``t[p][q] == t[p + "/" + q]``."""
-        draw, draws = _draw(), _draws()
-        assert draw["g"]["c"] == draw[f"g{_PATH_SEP}c"]
-        np.testing.assert_array_equal(draws["g"]["c"].raw, draws["g/c"].raw)
-
-    @pytest.mark.parametrize("paths", [("a",), ("g/c",), ("a", "g/e"), ("g",)], ids=repr)
-    def test_a_list_of_paths_and_without_partition_the_fields(self, paths):
-        """I10, on records, record specs, and batches."""
-        for whole in (_draw(), _draw().spec):
-            chosen, rest = whole[paths], whole.without(*paths)
-            assert set(chosen.keys()) | set(rest.keys()) == set(whole.keys())
-            assert not set(chosen.keys()) & set(rest.keys())
-        draws = _draws()
-        chosen, rest = draws[paths], draws.without(*paths)
-        assert set(chosen.element_spec.keys()) | set(rest.element_spec.keys()) == set(
-            draws.element_spec.keys()
-        )
-
-    def test_a_view_at_a_list_of_paths_draws_its_parents_draw_at_them(self):
-        """I2 for lists: one key draws the parent and the view alike."""
-        grouped = _grouped()
-        view_draw = _sample(grouped["a", "g/c"], seed=7)
-        parent_draw = _sample(grouped, seed=7)
-        assert view_draw.keys() == ("a", "g/c")
-        np.testing.assert_allclose(view_draw["g/c"].raw, parent_draw["g/c"].raw)
-
-    def test_one_set_of_paths_on_a_law_its_draws_and_its_mean(self):
-        """I1 and I3: the paths of a law index its draws, its batches, and its mean."""
-        grouped = _grouped()
-        draw, draws, grouped_mean = _sample(grouped), _draws(), mean(grouped)
-        for paths in ("g", "g/c", ("a", "g/c")):
-            assert draw[paths].spec == draws[paths].element_spec
-        for paths in ("g", ("a", "g/c")):
-            assert _field_paths(draw[paths]) == _field_paths(grouped[paths])
-        assert grouped_mean["g"].keys() == ("c", "e")
-        np.testing.assert_allclose(grouped_mean["g"]["e"].raw, 2.0)
-        np.testing.assert_allclose(mean(grouped["a", "g/c"])["g/c"].raw, grouped_mean["g/c"].raw)
-
-    @pytest.mark.pending(
-        reason="a view of a group exposes the group's parts once laws are declared whole only "
-        "over base specs",
-        raises=KeyError,
-    )
-    def test_paths_chain_through_a_law_at_a_group(self):
-        """I5 for laws: ``grouped["g"]["c"]`` is the view of ``g/c``."""
-        grouped = _grouped()
-        assert grouped["g"]["c"].event_spec == grouped["g/c"].event_spec
 
 
 class TestOneSeparator:

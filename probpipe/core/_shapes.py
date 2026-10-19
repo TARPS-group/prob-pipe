@@ -402,12 +402,11 @@ def _as_paths(arg: Any, *, action: str, positions: bool = False) -> str | tuple[
         if positions and any(_is_position(entry) for entry in arg):
             if all(_is_position(entry) for entry in arg):
                 raise TypeError(
-                    f"cannot {action} {arg!r}: positions cannot be given as a list; give one "
-                    f"integer or slice per axis, as batch[0, 1:3]"
+                    f"cannot {action} {arg!r}: a list of positions is not supported; index one "
+                    f"position or a slice"
                 )
             raise TypeError(
-                f"cannot {action} {arg!r}: it mixes paths with positions; index the positions "
-                f"and the paths in separate steps"
+                f"cannot {action} {arg!r}: a path and a position cannot be mixed in one []"
             )
         for entry in arg:
             if not isinstance(entry, str):
@@ -567,6 +566,42 @@ def _as_joined_path(segments: tuple[Any, ...], *, action: str) -> str:
     )
 
 
+def _missing_path(
+    path: str, *, owner: str, available: Iterable[str], requested: tuple[str, ...] = ()
+) -> str:
+    """The message for *path*, which is not a path of *owner*, listing the paths it has.
+
+    When *path* comes from a list of paths whose ``/``-joined form is a path of
+    *owner*, as ``site["habitat", "forest"]`` on a record with the path
+    ``habitat/forest``, the message adds that a tuple is a list of paths and
+    gives the nested path.
+
+    Parameters
+    ----------
+    path : str
+        The path that was not found.
+    owner : str
+        The term the message names, such as ``"'site'"``.
+    available : iterable of str
+        The paths *owner* has, in its canonical order.
+    requested : tuple of str
+        The list of paths that held *path*, or ``()`` for one path.
+
+    Returns
+    -------
+    str
+        The message.
+    """
+    from .named_tree import _PATH_SEP
+
+    paths = list(available)
+    message = f"{path!r} is not a path of {owner}; its paths: {paths}"
+    joined = _PATH_SEP.join(requested)
+    if len(requested) > 1 and joined in paths:
+        message += f"; a tuple is a list of paths; for the nested path write {joined!r}"
+    return message
+
+
 def _is_position(entry: Any) -> bool:
     """Whether *entry* indexes one batch axis: an integer that is not a ``bool``, or a slice."""
     return isinstance(entry, slice) or (not isinstance(entry, str) and _as_int(entry) is not None)
@@ -632,6 +667,5 @@ def _check_distinct_paths(paths: tuple[str, ...], *, action: str, given: Any) ->
         for inner in paths:
             if inner.startswith(outer + _PATH_SEP):
                 raise ValueError(
-                    f"cannot {action} {given!r}: the path {inner!r} is inside {outer!r}; give "
-                    f"one of them"
+                    f"cannot {action} {given!r}: {inner!r} is inside {outer!r}; pick one"
                 )

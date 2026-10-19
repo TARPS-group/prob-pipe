@@ -374,7 +374,7 @@ class TestLeafKeyedFieldColumns:
         np.testing.assert_array_equal(np.asarray(batch["b"]["c"]), np.asarray([1.0, 1.0]))
 
     def test_an_unknown_path_names_the_paths_there_are(self):
-        with pytest.raises(KeyError, match=r"unknown path 'nope'; available paths"):
+        with pytest.raises(KeyError, match=r"'nope' is not a path of 'batch'; its paths"):
             nested_batch()["nope"]
 
 
@@ -1338,7 +1338,7 @@ class TestSelect:
         assert tuple(selected["value"].event_template.keys()) == ("m",)
 
     def test_an_unknown_path_raises(self):
-        with pytest.raises(KeyError, match=r"unknown path 'nope'; available paths"):
+        with pytest.raises(KeyError, match=r"'nope' is not a path of 'batch'; its paths"):
             nested_batch().select("nope")
 
 

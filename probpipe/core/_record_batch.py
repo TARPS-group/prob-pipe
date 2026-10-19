@@ -57,7 +57,7 @@ from ._kinds import batch_class_for_spec
 from ._object_batch import _from_iterable, _frozen_object_column, _is_object_array
 from ._opaque_batch import OpaqueBatch
 from ._repr import format_levels, format_names, public_class_name, type_name
-from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
+from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names, _missing_path
 from ._spec_base import OpaqueSpec, _opaque_spec_of
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec, TermSpec
 from .named_tree import _PATH_SEP, _keyed_paths, _paths_label, _unflatten_paths
@@ -419,6 +419,9 @@ class RecordBatch(Batch[Record]):
             If a path is not a path of the elements, naming the paths they have.
         """
         template = self.event_template
+        requested = paths if isinstance(paths, tuple) else ()
+        for path in requested or (paths,):
+            self._check_path(path, requested=requested)
         if isinstance(paths, tuple):
             cut = template[paths]
             return self._view_over(
@@ -434,6 +437,32 @@ class RecordBatch(Batch[Record]):
     def _has_path(self, path: str) -> bool:
         """Whether *path* is the path of a field or a group of the elements."""
         return path in self.event_template
+
+    def _check_path(self, path: str, *, requested: tuple[str, ...] = ()) -> None:
+        """Check that *path* is a path of the elements.
+
+        Parameters
+        ----------
+        path : str
+            A path, which the caller has read.
+        requested : tuple of str
+            The list of paths that holds *path*, which the message reads, or
+            ``()`` for one path.
+
+        Raises
+        ------
+        KeyError
+            If *path* is not a path of the elements, naming the paths they have.
+        """
+        if path not in self.event_template:
+            raise KeyError(
+                _missing_path(
+                    path,
+                    owner=repr(self.label),
+                    available=self.event_template._node_paths(),
+                    requested=requested,
+                )
+            )
 
     # -- field access -------------------------------------------------------
 
@@ -647,6 +676,7 @@ class RecordBatch(Batch[Record]):
         KeyError
             If *path* is not a path of the elements.
         """
+        self._check_path(path)
         if path in self._columns:
             return self._single_field_view(path)
         return self._field_view(path, cast(RecordSpec, self.event_template[path]))

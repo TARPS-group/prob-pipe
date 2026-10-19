@@ -14,7 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one way: `"g/c"` is one path, and `["a", "g/c"]` or `("a", "g/c")` a list of
   paths. A tuple was one nested path on records and batches before, so
   replace `record["g", "c"]` with `record["g/c"]`, and `at_path(("g", "c"))`
-  with `at_path("g", "c")`.
+  with `at_path("g", "c")`. The same call can return something else without
+  raising: for `site = Record({"habitat": {"forest": 0.7, "wetland": 0.3},
+  "forest": 2.0})`, `site["habitat", "forest"]` was the nested value `0.7`
+  and is now the record `{habitat: {forest, wetland}, forest}`. A missing
+  path from a tuple whose `/`-joined form is a path says so and gives the
+  nested path.
   - One path gives the node there, a group included: `record["g"]` is the
     group's record, and `spec["g"]` its `RecordSpec`, where both raised
     `KeyError` before. `at_path` still gives any node.

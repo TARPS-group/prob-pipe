@@ -31,7 +31,7 @@ from ..core._object_batch import _is_object_array
 from ..core._record_batch import RecordBatch, _batch_over, _stacked_batches
 from ..core._record_spec import RecordSpec
 from ..core._repr import WIDTH, call_repr, format_names, mapping_repr
-from ..core._shapes import PathsLike, _as_paths
+from ..core._shapes import PathsLike, _as_paths, _missing_path
 from ..core._spec_base import NumericSpec, TermSpec
 from ..core._specs import InputSpec, OutputSpec, _components_record
 from ..core.named_tree import _PATH_SEP, _unflatten_paths
@@ -854,7 +854,7 @@ def _ordered_request(
     paths = tuple(path)
     for each in paths:
         if not _has_path(law.event_spec, each):
-            raise KeyError(_not_an_event_path(law.event_spec, law.label, each))
+            raise KeyError(_not_an_event_path(law.event_spec, law.label, each, paths))
     return _in_event_order(law.event_spec, paths)
 
 
@@ -1154,7 +1154,8 @@ class FieldView(Distribution):
         requested = _path_tuple(request)
         for path in requested:
             if not _has_path(self.event_spec, path):
-                raise KeyError(_not_an_event_path(self.event_spec, self.label, path))
+                listed = requested if isinstance(request, tuple) else ()
+                raise KeyError(_not_an_event_path(self.event_spec, self.label, path, listed))
         if isinstance(self._path, str):
             component = cast(str, _whole_term_component(self.event_spec))
             parent_paths = tuple(self._path + path[len(component) :] for path in requested)
@@ -1805,16 +1806,20 @@ def _regrouped_path(path: str, owner: str) -> str:
     )
 
 
-def _not_an_event_path(declaration: OutputSpec, label: str, path: str) -> str:
+def _not_an_event_path(
+    declaration: OutputSpec, label: str, path: str, requested: tuple[str, ...] = ()
+) -> str:
     """The message that *path* is not an event path of the law *label* declared by *declaration*.
 
-    The message lists the paths the law has.
+    The message lists the paths the law has, as
+    :func:`~probpipe.core._shapes._missing_path` words it for every term, and
+    *requested* is the list of paths that held *path*, or ``()`` for one path.
     """
     try:
         paths = list(_components_record(declaration)._node_paths())
     except TypeError:
         paths = list(declaration.components)
-    return f"{path!r} is not an event path of {label!r}; its paths: {paths}"
+    return _missing_path(path, owner=repr(label), available=paths, requested=requested)
 
 
 def _read_view_path(parent: Distribution, path: Any) -> str | tuple[str, ...]:
@@ -1843,9 +1848,10 @@ def _read_view_path(parent: Distribution, path: Any) -> str | tuple[str, ...]:
         names a path twice, or holds a path inside another.
     """
     paths = _as_paths(path, action=f"index {parent.label!r} by")
+    listed = paths if isinstance(paths, tuple) else ()
     for each in _path_tuple(paths):
         if not _has_path(parent.event_spec, each):
-            raise KeyError(_not_an_event_path(parent.event_spec, parent.label, each))
+            raise KeyError(_not_an_event_path(parent.event_spec, parent.label, each, listed))
     return paths if isinstance(paths, str) else _in_event_order(parent.event_spec, paths)
 
 

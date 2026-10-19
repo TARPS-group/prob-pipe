@@ -796,7 +796,8 @@ class Batch[E](TrackedTerm, ABC):
 
         By **path**, ``batch["x"]`` addresses the node at the path ``x`` of every
         element, and a list or a tuple of paths, as ``batch["a", "g/c"]``, the
-        elements cut down to those nodes. A batch whose elements are records
+        elements cut down to those nodes. A tuple is a list of paths; a nested
+        path is written with ``/``. A batch whose elements are records
         answers; a batch whose elements are arrays or opaque values has no
         paths.
 
@@ -1048,8 +1049,9 @@ class Batch[E](TrackedTerm, ABC):
         owner = public_class_name(type(self))
         if isinstance(self.element_spec, NumericArraySpec | OpaqueSpec):
             raise KeyError(
-                f"cannot index {owner} by {paths!r}: its elements have no paths. Use integers "
-                f"or slices for the batch axes, or at_levels() to index by level name"
+                f"cannot index {owner} by {paths!r}: it names no path inside the elements of "
+                f"{self.label!r}, since each element is one whole value; the batch already holds "
+                f"their values (read them with .raw)"
             )
         raise TypeError(
             f"cannot index {owner} by {paths!r}: a batch of this kind is indexed by position "
