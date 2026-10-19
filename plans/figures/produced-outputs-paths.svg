@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="773" height="248" viewBox="0 0 773 248" role="img">
+  <title>Four laws: their produced types, outputs, and paths</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#424a53"/>
+    </marker>
+    <marker id="arrow-fault" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#cf222e"/>
+    </marker>
+  </defs>
+  <rect x="0.5" y="0.5" width="772" height="247" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <g transform="translate(18.0,18.0)">
+    <rect x="27.2" y="0.0" width="151.0" height="58.0" rx="8" fill="#f6f0ff" stroke="#8250df" stroke-width="1.6"/>
+    <rect x="37.2" y="7.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
+    <text x="53.0" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
+    <text x="76.8" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">d1</text>
+    <text x="16.2" y="35.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="end">x</text>
+    <text x="107.7" y="45.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle" font-style="italic">a draw is an array</text>
+    <circle cx="27.2" cy="41.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <text x="90.7" y="172.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">over an array x:</text>
+    <text x="90.7" y="190.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">one output, x, at the root;</text>
+    <text x="90.7" y="208.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">no paths</text>
+    <rect x="229.9" y="0.0" width="112.0" height="80.0" rx="8" fill="#f6f0ff" stroke="#8250df" stroke-width="1.6"/>
+    <rect x="239.9" y="7.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
+    <text x="255.7" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
+    <text x="279.6" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">d2</text>
+    <text x="241.9" y="45.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">mu</text>
+    <text x="241.9" y="67.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">sigma</text>
+    <circle cx="229.9" cy="41.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <circle cx="229.9" cy="63.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <text x="285.9" y="172.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">over {mu, sigma}:</text>
+    <text x="285.9" y="190.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">outputs mu, sigma;</text>
+    <text x="285.9" y="208.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">paths mu, sigma</text>
+    <rect x="401.6" y="0.0" width="112.0" height="124.0" rx="8" fill="#f6f0ff" stroke="#8250df" stroke-width="1.6"/>
+    <rect x="411.6" y="7.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
+    <text x="427.4" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
+    <text x="451.2" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">d3</text>
+    <text x="413.6" y="45.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">a</text>
+    <text x="413.6" y="67.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">g</text>
+    <text x="429.6" y="89.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">c</text>
+    <text x="429.6" y="111.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">e</text>
+    <path d="M 417.6,73.0 L 417.6,85.0 L 426.6,85.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M 417.6,73.0 L 417.6,107.0 L 426.6,107.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="401.6" cy="41.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <circle cx="401.6" cy="63.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <text x="457.6" y="172.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">over {a, g: {c, e}}:</text>
+    <text x="457.6" y="190.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">outputs a, g;</text>
+    <text x="457.6" y="208.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">paths a, g, g/c, g/e</text>
+    <rect x="596.8" y="0.0" width="112.0" height="146.0" rx="8" fill="#f6f0ff" stroke="#8250df" stroke-width="1.6"/>
+    <rect x="606.8" y="7.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
+    <text x="622.6" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
+    <text x="646.4" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">d4</text>
+    <text x="608.8" y="45.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">params</text>
+    <text x="624.8" y="67.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">a</text>
+    <text x="624.8" y="89.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">g</text>
+    <text x="640.8" y="111.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">c</text>
+    <text x="640.8" y="133.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">e</text>
+    <path d="M 612.8,51.0 L 612.8,63.0 L 621.8,63.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M 612.8,51.0 L 612.8,85.0 L 621.8,85.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M 628.8,95.0 L 628.8,107.0 L 637.8,107.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M 628.8,95.0 L 628.8,129.0 L 637.8,129.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="596.8" cy="41.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <text x="652.8" y="172.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">d3's record wrapped:</text>
+    <text x="652.8" y="190.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">one output, params;</text>
+    <text x="652.8" y="208.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">every path starts params/</text>
+  </g>
+</svg>

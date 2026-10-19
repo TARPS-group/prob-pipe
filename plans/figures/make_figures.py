@@ -122,6 +122,7 @@ class Obj:
     body: list[str] = field(default_factory=list)
     levels: str | None = None
     show_ports: bool = True  # False draws the parts as a bare tree, before outputs are introduced
+    paths_only: bool = False  # True mutes every part: paths that are not outputs
     faults: set[str] = field(default_factory=set)
     faulty: bool = False
 
@@ -350,6 +351,8 @@ def draw_obj(canvas: Canvas, obj: Obj, x: float, y: float) -> Placed:
         row_of_part[id(part)] = index
         text_x = x + 12 + depth * 16
         colour = FAULT if part.name in obj.faults and depth == 0 else (INK if depth == 0 else MUTED)
+        if obj.paths_only:
+            colour = MUTED
         canvas.text(text_x, row_y(index) + 4.5, part.text, fill=colour)
         if depth == 0:
             output_y[part.name] = row_y(index)
@@ -924,6 +927,82 @@ def figures() -> dict[str, Canvas]:
                 (
                     Obj("d", "law", outputs=[Part("params", [Part("mu"), Part("sigma")])]),
                     ["the record wrapped under params:", "one output"],
+                ),
+            ],
+        ),
+        "produced-outputs-paths": row_figure(
+            "Four laws: their produced types, outputs, and paths",
+            [
+                (
+                    Obj("d1", "law", root_output="x", body=["a draw is an array"]),
+                    ["over an array x:", "one output, x, at the root;", "no paths"],
+                ),
+                (
+                    Obj("d2", "law", outputs=[Part("mu"), Part("sigma")]),
+                    ["over {mu, sigma}:", "outputs mu, sigma;", "paths mu, sigma"],
+                ),
+                (
+                    Obj("d3", "law", outputs=[Part("a"), Part("g", [Part("c"), Part("e")])]),
+                    ["over {a, g: {c, e}}:", "outputs a, g;", "paths a, g, g/c, g/e"],
+                ),
+                (
+                    Obj(
+                        "d4",
+                        "law",
+                        outputs=[Part("params", [Part("a"), Part("g", [Part("c"), Part("e")])])],
+                    ),
+                    ["d3's record wrapped:", "one output, params;", "every path starts params/"],
+                ),
+            ],
+            gap=44,
+        ),
+        "batch-functions": row_figure(
+            "A batch of functions: its inputs and its outputs",
+            [
+                (
+                    Obj("f_j", "function", outputs=[Part("y"), Part("z")], inputs=[Port("x")]),
+                    ["one element: f_j maps x to {y, z}", "and offers y and z"],
+                ),
+                (
+                    Obj(
+                        "fs",
+                        "batch",
+                        outputs=[Part("y"), Part("z")],
+                        inputs=[Port("x")],
+                        body=["elements:", "functions"],
+                        levels="j",
+                    ),
+                    [
+                        "the batch: input x, bound once",
+                        "for every element; outputs y, z,",
+                        "each a batch of functions",
+                    ],
+                ),
+            ],
+        ),
+        "batch-kernels": row_figure(
+            "A batch of kernels: its inputs, and no outputs",
+            [
+                (
+                    Obj("k_j", "kernel", outputs=[Part("y"), Part("w")], inputs=[Port("mu")]),
+                    ["one element: k_j draws {y, w}", "given mu, and offers y and w"],
+                ),
+                (
+                    Obj(
+                        "ks",
+                        "batch",
+                        outputs=[Part("y"), Part("w")],
+                        inputs=[Port("mu")],
+                        body=["elements: kernels", "no outputs"],
+                        levels="j",
+                        show_ports=False,
+                        paths_only=True,
+                    ),
+                    [
+                        "the batch: input mu, bound once",
+                        "for every element; no outputs",
+                        "(rule 5); paths y and w",
+                    ],
                 ),
             ],
         ),
