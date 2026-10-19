@@ -103,7 +103,7 @@ class ConversionInfo(MethodInfo):
         The representation class of the result, when known.
     capabilities : tuple of type
         The capability protocols guaranteed on the result.
-    draws_from_source : bool
+    source_is_sampled : bool
         ``True`` when executing the conversion draws from the source, which is
         a workflow-owned random event (V.8), so the result depends on the
         workflow scope's seed. ``False`` when the conversion makes no draw, so
@@ -114,7 +114,7 @@ class ConversionInfo(MethodInfo):
     Raises
     ------
     TypeError
-        If ``draws_from_source`` is not a ``bool``, or on a condition
+        If ``source_is_sampled`` is not a ``bool``, or on a condition
         :class:`~probpipe.core._dispatch.Feasibility` rejects.
     ValueError
         If ``method_name`` is set without ``exact``; if ``exact`` is set
@@ -135,13 +135,13 @@ class ConversionInfo(MethodInfo):
     target_spec: DistributionSpec | None = None
     target_class: type | None = None
     capabilities: tuple[type, ...] = ()
-    draws_from_source: bool = False
+    source_is_sampled: bool = False
 
     def __post_init__(self) -> None:
         Feasibility.__post_init__(self)
-        if type(self.draws_from_source) is not bool:
+        if type(self.source_is_sampled) is not bool:
             raise TypeError(
-                f"ConversionInfo's draws_from_source must be a bool, got {self.draws_from_source!r}"
+                f"ConversionInfo's source_is_sampled must be a bool, got {self.source_is_sampled!r}"
             )
         if self.method_name is not None and self.exact is None:
             raise ValueError(
@@ -168,8 +168,8 @@ class ConversionInfo(MethodInfo):
         if self.capabilities:
             names = (capability.__name__ for capability in self.capabilities)
             fields.append(("capabilities", sequence_repr(names)))
-        if self.draws_from_source:
-            fields.append(("draws_from_source", "True"))
+        if self.source_is_sampled:
+            fields.append(("source_is_sampled", "True"))
         return fields
 
 
@@ -195,7 +195,7 @@ class Converter(BinaryDispatchMethod):
 
         It never samples, fits, or evaluates a density, and it reports as
         pending whatever it cannot settle without the source's values. The
-        report states the promise and ``draws_from_source`` and leaves
+        report states the promise and ``source_is_sampled`` and leaves
         ``method_name`` and ``exact`` unset, which the registry sets from the
         registration.
         """

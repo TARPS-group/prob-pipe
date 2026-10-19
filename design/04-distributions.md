@@ -123,7 +123,7 @@ A distribution may have more than one representation, and an operation or a back
 
 **Converter options.** The registry passes a call's converter options as keywords to the `check` of each converter it tries and to the `execute` of the one it selects, such as `num_samples` for a converter that draws, `check_support`, or the `event_spec` that declares a backend object's event, which carries no declaration of its own. A converter reads the options it names, and its `execute` refuses any other, so a misspelled option fails rather than being ignored, and so does an option that only another converter reads; a call that passes one converter's options therefore names that converter with `method`. The parameter's `conversions` control supplies the options at normalization (V.4).
 
-**Drawing from the source.** A report's `draws_from_source` is `True` when executing the conversion draws from the source, which is a workflow-owned random event (V.8), so the result depends on the workflow scope's seed. It is `False` when the conversion makes no draw, so its result is a deterministic function of the source and the converter options. `check` decides it without drawing, and a report that selects no converter states `False`. Exactness is a separate declaration: the empirical law of a law's draws is approximate and draws, while a moment fit from closed-form moments is approximate and does not draw.
+**Sampling the source.** A report's `source_is_sampled` is `True` when executing the conversion draws from the source, which is a workflow-owned random event (V.8), so the result depends on the workflow scope's seed. It is `False` when the conversion makes no draw, so its result is a deterministic function of the source and the converter options. `check` decides it without drawing, and a report that selects no converter states `False`. Exactness is a separate declaration: the empirical law of a law's draws is approximate and draws, while a moment fit from closed-form moments is approximate and does not draw.
 
 ```python
 @dataclass(frozen=True)
@@ -131,7 +131,7 @@ class ConversionInfo(MethodInfo):
     target_spec: DistributionSpec | None = None   # None unless feasible
     target_class: type | None = None
     capabilities: tuple[type, ...] = ()           # capabilities guaranteed on the result
-    draws_from_source: bool = False               # executing it makes a workflow-owned draw from the source
+    source_is_sampled: bool = False               # executing it makes a workflow-owned draw from the source
     # pending requirements are inherited from Feasibility; a converter leaves method_name and exact
     # unset, and the registry sets both from the registration
 

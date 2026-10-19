@@ -9,12 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
-- **`ConversionInfo.samples` is renamed `draws_from_source`.** It is `True`
+- **`ConversionInfo.samples` is renamed `source_is_sampled`.** It is `True`
   when executing the conversion draws from the source, a workflow-owned random
   event, so the result depends on the workflow seed, and `False` when the
   result is a deterministic function of the source and the converter options.
-  Replace `info.samples` with `info.draws_from_source`, and pass
-  `draws_from_source=` where a converter's `check` passed `samples=`.
+  Replace `info.samples` with `info.source_is_sampled`, and pass
+  `source_is_sampled=` where a converter's `check` passed `samples=`.
 - **A converter's `check` states only its promise.** It leaves
   `method_name` and `exact` unset on the `ConversionInfo` it returns, and the
   converter registry sets both from the registration. A converter that still

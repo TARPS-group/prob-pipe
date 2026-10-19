@@ -246,11 +246,11 @@ class TestConversionInfo:
     def test_adds_the_promise_and_whether_the_conversion_draws_from_the_source(self):
         inherited = {field.name for field in fields(MethodInfo)}
         added = [field.name for field in fields(ConversionInfo) if field.name not in inherited]
-        assert added == ["target_spec", "target_class", "capabilities", "draws_from_source"]
+        assert added == ["target_spec", "target_class", "capabilities", "source_is_sampled"]
 
-    def test_draws_from_source_must_be_a_bool(self):
-        with pytest.raises(TypeError, match="draws_from_source must be a bool, got 1"):
-            ConversionInfo(feasible=False, draws_from_source=1)
+    def test_source_is_sampled_must_be_a_bool(self):
+        with pytest.raises(TypeError, match="source_is_sampled must be a bool, got 1"):
+            ConversionInfo(feasible=False, source_is_sampled=1)
 
     def test_a_report_selecting_no_converter_is_an_exact_one(self):
         """A source that already satisfies the target needs no converter, and is exact."""
@@ -915,7 +915,7 @@ class TestConvert:
         assert registry.convert(source, Target, method="copy") is source
         info = registry.check(source, Target)
         assert info.feasible is True
-        assert (info.method_name, info.exact, info.draws_from_source) == (None, True, False)
+        assert (info.method_name, info.exact, info.source_is_sampled) == (None, True, False)
         assert info.target_spec == source.spec and info.target_class is Target
         assert copier.check_calls == [] and copier.execute_calls == []
 
