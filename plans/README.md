@@ -199,6 +199,7 @@ When this PR merges, its session creates the tracking issue with these rows, and
 3. Check that every dependency of the step has merged: `gh pr view <number> --json state,mergedAt` for each. If exactly one is open but not merged, stack on it as § Branches and PRs allows; if more than one is open, stop and report which.
 4. `git fetch origin`, then create the step's branch, named as the step tables say, from `origin/dev/overhaul`, or from the dependency's branch when stacking. The session's worktree may have started on another branch, such as `main`; never base a step on it.
 5. Read the code the step changes, and the code that already does anything similar (directive 5).
+6. **A session the maintainer opened from a handoff chip** first returns an implementation plan to him and waits for his approval before writing code: what the step will change, file by file, the order of the work, the tests and demonstration, and any question for him. **A session another agent started automatically**, which usually runs while the maintainer is away and has a well-scoped task, skips this and proceeds; it reports its plan and its choices in the PR body, which the maintainer reviews when he is back.
 
 ## Ending a session
 
@@ -243,7 +244,10 @@ Repository: <absolute path of the main checkout>. Work in the fresh worktree thi
 5. Context from each dependency:
    - <step, PR link>: what it delivered; what it found that this step needs to know;
      the decisions it recorded; what it left open.
-6. Do the step as its plan section describes. Ask the maintainer whenever
+6. Before writing code, analyze the step and return an implementation plan to the
+   maintainer (what changes, file by file; the order of work; the tests and demonstration;
+   your questions), then wait for his approval (plans/README.md § Starting a session, item 6).
+   Then do the step as its plan section describes. Ask the maintainer whenever
    plans/README.md § When to stop and ask applies, without waiting unless the question
    blocks the step. The PR body's "Fit with the plan" section names <the plan sections>.
 7. Finish as plans/README.md § Ending a session describes, including the handoffs.
