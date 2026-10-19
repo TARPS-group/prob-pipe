@@ -64,7 +64,7 @@ Citations such as II.6 and D1 name sections and principles of [`design/`](../../
 
 **[Part II: The design in code](#part-ii-the-design-in-code)**
 
-8. [Reading Part II](#8-reading-part-ii)
+8. [Objects as tracked terms, and the code's names](#8-objects-as-tracked-terms-and-the-codes-names)
 9. [Term specs](#9-term-specs)
 10. [`InputSpec`](#10-inputspec)
 11. [`OutputSpec`](#11-outputspec)
@@ -156,7 +156,7 @@ A field may hold a law or any other object; § 2.3 continues paths into it.
 > 4. a *law type*: its *event type*, the type of the objects the law is a distribution over; every law has one, whether or not it can be sampled;
 > 5. a *kernel type*: for each value it conditions on, a name, a type, and whether it may be omitted; and its event type;
 > 6. a *function type*: the same for each argument, and the type of its return value; either side may be unknown;
-> 7. a *batch type*: the type of its elements, and its levels.
+> 7. a *batch type*: its *element type*, the type of one element together with the name a batch of base values gives its elements (§ 6.5), and its levels.
 >
 > Array and opaque types are *base types*. A *law over* `T` is a law whose event type is `T`, as a law over `{mu, sigma}`.
 
@@ -286,7 +286,7 @@ An object receives values at its inputs and offers what it produces at its outpu
 > [!NOTE]
 > **Consequence** (of the definitions and § 1.1).
 > 1. Kernels and functions have inputs, and so does a batch of them, whose inputs are its elements', supplied to every element by one binding.
-> 2. Base values, records, and laws have none; a record whose field holds a kernel has no inputs, since the kernel is the field's value. A law built by merging can still keep inputs its parts take (§ 5.2).
+> 2. Base values, records, and laws have none; a record whose field holds a kernel has no inputs, since the kernel is the field's value. A law built by merging can still have factor inputs, which its factors take and which a binding does not see (§ 5.2).
 > 3. An input of record type is one input, supplied with one record.
 
 Take the kernel that draws `y ~ Normal(mu, sigma)`, with `sigma` optional and default 1.
@@ -588,7 +588,7 @@ $$p(y, \mu, \tau) = p(y \mid \mu)\, p(\mu, \tau)$$
 
 where `\mu` and `\tau` are the names `mu` and `tau`.
 The kernel `lik(y | mu)` draws `y ~ Normal(mu, 1)`, and the law `prior(mu, tau)` draws `mu ~ Normal(0, 5)` and `tau ~ Normal(1, 1)`.
-The merge `lik & prior` is the joint law over `{y, mu, tau}`, built by matching the name `mu`; `lik` and `prior` are its parts.
+The merge `lik & prior` is the joint law over `{y, mu, tau}`, built by matching the name `mu`; `lik` and `prior` are its operands.
 Merge also puts records side by side, combines functions by name, and combines input specs or output specs.
 It reads right to left, as the density does: in `a & b`, `b` may supply inputs of `a`, never the reverse.
 
@@ -741,9 +741,9 @@ Each element is one operand, typed by the elements' type, and the conditions are
 </details>
 
 <details>
-<summary>Technical note: conditioning a merged law in closed form</summary>
+<summary>Technical note: binding and conditioning in closed form</summary>
 
-The law of a merge is computed this way on the sampling and scoring routes. Conditioning computed in closed form does not yet follow it: conditioning `a & e`, for `a(y | mu, sigma)` and a law `e(sigma)`, on `mu = 0` draws `y` with `sigma` at its default although `e` feeds `sigma`. This is a bug under this definition, recorded for later work (Appendix C.3).
+Binding or conditioning a merged law in closed form must follow this definition, using the values that later operands feed; Appendix C.3 records where the code does not.
 
 </details>
 
@@ -803,7 +803,7 @@ Associativity does not depend on the rule, and the rule does not let every acycl
 > 2. **Paths kept:** every path of an operand is a path of `a & b` with the same type, once dimension names are bound; a root output `n` becomes the path `n`.
 > 3. **Specs:** the output spec of `a & b` is the merge of the operands' output specs, and its factor inputs the merge of `a`'s without the fed ones and `b`'s, after binding dimension names; the type of `a & b` is the merge of the operands' types when no operand's factors take a factor input its input spec does not state.
 > 4. **Associative when both groupings are valid**, for laws, kernels, records, record types, output specs, and batches of records or base values.
-> 5. **Commutative up to order:** when neither operand feeds the other, `a & b` and `b & a` are valid together and have the same law or value, with outputs in another order and equal input specs.
+> 5. **Commutative up to order:** when neither operand feeds the other, `a & b` and `b & a` are valid together and have the same law or value, with outputs in another order, and equal input specs once a shared input carries the unification.
 > 6. **Sampling commutes** for laws that do not feed each other and draw records, when `a & b` is valid: a draw of `a & b` is distributed as a draw of `a` merged with a draw of `b`.
 > 7. **Renaming commutes** under the conditions below.
 > 8. **Labels are not read;** the result's label joins the operands' with `·`.
@@ -842,7 +842,7 @@ For `M = a & c`, with `a(y | mu, sigma)`, `sigma` optional with default 1, and a
    | `M` with `y` renamed to `w/y` | yes | `e` |
    | `a & c & t`, for a law `t(tau)`, conditioned on `tau` in closed form | yes | `e` |
    | `M` conditioned on observed `y` | no: a law of stored draws | — |
-   | `a & t2`, for a law `t2(z)`, conditioned on `mu` | no: `a` is bound | the default 1 |
+   | `a & t2`, for a law `t2(z)`, with `mu` bound | no: `a` is bound | the default 1 |
    | a law regrouped so that `a` is inside a grouped sub-joint | no: the sub-joint is one factor | the default 1 |
 
 6. The merge of types can be valid where the merge of objects is refused: `e`'s type and `M`'s type merge, while `e & M` breaks condition 4.
@@ -1010,8 +1010,8 @@ For a batch `b` of 4 draws of a law whose draws are arrays named `x`: `b` offers
 | I8 | **Draws of a list condition back:** conditioning `d` on a draw of `d[[ps]]` fixes the nodes at `ps` and nothing else | chosen (§ 4.7) |
 | I9 | **One path gives the node, a list a record holding it**, the output at the root included | chosen (§ 4.2) |
 | I10 | **A list and removal partition** the leaf paths of a record, a record type, a batch of records, an output spec, or a law, and the inputs of an input spec | § 4.3, § 4.4 |
-| I11 | **Conditioning removes what it fixes**, however it is computed; a kernel's bound inputs leave its input spec | chosen (§ 4.7) |
-| I12 | **The object at an output:** output `c`'s type is the type of the produced object of the object at `c` | § 3.4, § 4.6 |
+| I11 | **Conditioning removes what it fixes**, however it is computed; a kernel's bound inputs, and the bound parts of a record input, leave its input spec | chosen (§ 4.7) |
+| I12 | **The object at an output:** output `c`'s type is the type of the produced object of the object at `c`; for a record or a batch, which produce themselves, the type of the object at `c` itself | § 3.4, § 4.6 |
 | I13 | **Selecting commutes with producing:** `f[s](w)` is `f(w)` at `s`; `k[s]` at `w` is the law of a draw's node at `s` | § 4.1 |
 | I14 | **Selecting keeps inputs** | § 4.1 |
 | I15 | **Sides are separate:** no name is both a factor input and an output of a kernel, a law, or a merge | chosen for kernels (§ 6.3); conditions 4 and 5 for merges |
@@ -1452,7 +1452,7 @@ On a batch, `in` tests paths, never elements.
 | --- | --- |
 | `x[...]`, `marginal(d, ...)`, `O[...]` | one path or a list; a list may name the output at the root |
 | `without(*paths)`, `select(*paths)`, `at_path(*segments)`, `is_field(path)` | one path per argument |
-| keys of `rename` | paths, and the name of the output at the root |
+| keys of `rename` | paths, the name of the output at the root, and input names (kernels, functions, input specs) |
 | keys of `condition_on(d, given)` | paths of `d`'s event; for a kernel, input names, each optionally followed by a path into a record input |
 
 Inputs are flat names, so `InputSpec[name]` gives a type; outputs are places in a produced object, so `OutputSpec[path]` gives the output spec there.
@@ -2252,9 +2252,9 @@ Each item gives the reading the text adopts.
 4. **Removal on batches of functions or kernels** is not defined (source § 4.5), though such batches are selected by path. *Reading:* not defined.
 5. **Paths of an opaque value.** I18 covers "every object other than an array", while an opaque value has no selection. *Reading:* no string is a path of an opaque value.
 6. **A record node inside a law that a field holds.** The source defines a field as "named through records only" and gives a group no such clause. *Reading:* such a node is neither a field nor a group of the outer record; removal drops a field holding an object when all its leaf paths are removed (§ 4.3).
-7. **The word for IV.2's "unmet".** The source has S0 write "unfed" into `design/`; this text says "remaining inputs". *Reading:* Appendix B keeps the source's instruction, pending this question.
+7. **The word for IV.2's "unmet".** The source has S0 write "unfed" into `design/`; this text says "factor inputs" (A.1). *Reading:* Appendix B keeps the source's instruction, pending this question.
 8. **Whether a law type and a kernel type merge.** Source § 2.16 says "two of one of these". *Reading:* they merge, as laws and kernels do (§ 5.3).
-9. **Renaming a law's output onto an input its factors still take.** A law's rename does not rename the remaining inputs of its factors (§ 5.7), so renaming an output of `a & c` to `sigma` would put `sigma` on both sides, against I15; the source does not say what happens. *Reading:* refused, since I15 keeps sides separate.
+9. **Renaming a law's output onto an input its factors still take.** A law's rename does not rename its factor inputs (§ 5.7), so renaming an output of `a & c` to `sigma` would put `sigma` on both sides, against I15; the source does not say what happens. *Reading:* refused, since I15 keeps sides separate.
 10. **Unifying kernel and function types.** Unification requires their input types to be equal (§ 2.1, technical note), while a shared input elsewhere takes the unification of its types; the source gives no reason for the difference. *Reading:* equal, as stated.
 11. **Variadic parameters.** The source reads a function's inputs from its parameters, and its optional inputs from their defaults, but does not say how `*args` and `**kwargs` count. *Reading:* only named parameters are inputs.
 12. **The path of a view built by removal.** `MarginalView.path` records a view's paths, and `d.without(...)` returns a view, but the source does not say what path it records. *Reading:* the paths of the nodes it keeps, so it equals the view at that list.
@@ -2363,7 +2363,7 @@ S0 writes every row below in today's words; the steps that deliver the code remo
 | III.9 Kernels | no `[]`; `given_spec` sources stated locally | points to II.2; states the `[]` exception and `k[s]` as the target |
 | III.10 Batches of laws | silent on `[]` | `laws[s]` is the batch of views; `event_spec` is `element_spec.term_spec.event_spec` |
 | IV.1 Joints | a "packaged sub-joint" declares a group as one whole object | a grouped sub-joint wraps its group, its draws carry the group's level, and it stays one factor; the joint's event uses `&` |
-| IV.2, retitled "Merging distributions" | `*`; "produced slots"; "Packing the joint"; "unmet"; associativity "rests on" the order rule; "matched specs that do not unify" | `&` with § 5.3's definition, conditions, result, and value; flattening kept, with its consequences; conformance for a fed input, unification for a shared one; "unfed" for "unmet"; "The joint's event"; the rationale of § 5.5; `*` scales and `&` merges; "merge" for `&` throughout |
+| IV.2, retitled "Merging distributions" | `*`; "produced slots"; "Packing the joint"; "unmet"; associativity "rests on" the order rule; "matched specs that do not unify" | `&` with § 5.3's definition, conditions, result, and value; flattening kept, with its consequences; conformance for a fed input, unification for a shared one; "unfed" for "unmet"; "The joint's event"; the rationale of § 5.6; `*` scales and `&` merges; "merge" for `&` throughout |
 | IV.4 Laws from functions | `given_spec` sources stated locally; "unifies" | points to II.2; "conforms" |
 | V.5, V.6 Lifting and planning | atoms and outputs named whole; any non-record bare type read whole; "unifies" | defaults by kind: a lifted law of laws wraps its draws under the callable's output name, a sweep's batch is positional through its element spec; the bare-type reading; "conforms" |
 | VI.0 The operation model | "selection commutes with a coordinatewise summary"; the slot "unifies" | "indexing commutes with a coordinatewise summary"; "conforms" |
@@ -2443,7 +2443,7 @@ m["G"]["mu"]         # KeyError: paths do not chain at the name (T16)
 
 | # | Until S2b | Applies to | From | Why |
 | --- | --- | --- | --- | --- |
-| T1 | A produced law or kernel offers the fields of one draw, typed by one draw's values: `OutputSpec(law_spec).components` is `{mu: NumericArraySpec(()), tau: ...}`. A merge accepts such an operand: for a law `ll` whose draws are laws, declared positionally, `ll & Normal("z", 0.0, 1.0)` builds, and sampling it raises `ResultSchemaError` | output specs positional over a law or kernel type; merges of laws and kernels | — | today's reading (fact 11); S2b gives a produced law or kernel no outputs, and condition 2 of § 5.2 refuses it |
+| T1 | A produced law or kernel offers the fields of one draw, typed by one draw's values: `OutputSpec(law_spec).components` is `{mu: NumericArraySpec(()), tau: ...}`. A merge accepts such an operand: for a law `ll` whose draws are laws, declared positionally, `ll & Normal("z", 0.0, 1.0)` builds, and sampling it raises `ResultSchemaError` | output specs positional over a law or kernel type; merges of laws and kernels | — | today's reading (fact 11); S2b gives a produced law or kernel no outputs, and condition 2 of § 5.3 refuses it |
 | T2 | `merge` on records is deep: `Record({"g": {"b": 1.0}}).merge(Record({"g": {"c": 2.0}}))` is `{g: {b, c}}` | `NamedTree`, `Record`, `RecordSpec`, `RecordBatch` | — | today's rule (fact 5); S2b makes it shallow, so S3's `&` is a rename |
 
 #### Rules that end at S3
@@ -2466,7 +2466,7 @@ For a law `d` over `{a, g: {b, c}}` whose group `g` is one factor:
 | --- | --- | --- | --- | --- |
 | T5 | A view or marginal at one path to a group is an interim whole form named by the group: `d["g"].event_spec` is `OutputSpec(g=RecordSpec(b=..., c=...))`, so the view is indexed by `g/b` while its draws are indexed by `b`; `d["g"]["b"]` raises `KeyError`; `marginal(d, "g")` is the factor holding `g`. I2, I5, I6, and I7 fail for groups. From S2b, `d.event_spec["g"]` offers `b` and `c` while `d["g"]` offers `g`, since S2b's switch of `_view_declaration` to `O[s]` leaves out one path to a group | views and marginals of laws at a group; `_view_declaration` | — (S2b for `O[s]`) | today's behaviour; G1a changes what a view offers, which users see |
 | T6 | A group's column and the law's view of the group disagree: `sample(d, sample_shape=4)["g"].element_spec` offers `b` and `c`, while `d["g"].event_spec` offers `g` | a batch of draws and its law | S4 | S4 and G1a are separate on purpose |
-| T7 | A grouped sub-joint's event is an interim whole form: `d`'s factor `F` declares `OutputSpec(g=NumericRecordSpec(b=..., c=...))` (fact 23), and `factor(d, "g")` draws `{b, c}`. `_flattened` keeps it one factor by testing that its event has an output at the root (`distributions/_factored.py:300`; written with `_root_component_name` from S2a). I17 and § 5.6's paths-kept property fail: in `Normal("z", 0.0, 1.0) & F`, `F.event_spec["g"]` is `F.event_spec`, while the merge's `["g"]` is the group | the factor of a law that holds a group | — | G1a wraps the group and keeps it one factor by a structural test |
+| T7 | A grouped sub-joint's event is an interim whole form: `d`'s factor `F` declares `OutputSpec(g=NumericRecordSpec(b=..., c=...))` (fact 23), and `factor(d, "g")` draws `{b, c}`. `_flattened` keeps it one factor by testing that its event has an output at the root (`distributions/_factored.py:300`; written with `_root_component_name` from S2a). I17 and § 5.7's paths-kept property fail: in `Normal("z", 0.0, 1.0) & F`, `F.event_spec["g"]` is `F.event_spec`, while the merge's `["g"]` is the group | the factor of a law that holds a group | — | G1a wraps the group and keeps it one factor by a structural test |
 | T8 | The library's laws declared in an interim whole form over a record keep it: an approximate posterior's undeclared event (`_posterior_declaration`, `make_posterior` in `inference/_approximate_distribution.py`) and `_marginal` in `distributions/_empirical.py` | those sites | — | G1a makes them positional or wrapped (pending N31) |
 | T9 | Two views of one parent merge as whole objects named after their groups: for `h` over `{g1: {theta}, g2: {theta}, mu}`, `h["g1"] & h["g2"]` builds and offers `g1` and `g2`, and condition 3 has no message for views of one parent | merges of two views of one law | — | once G1a makes both offer `theta`, condition 3 refuses it, pointing to `h["g1", "g2"]` |
 
