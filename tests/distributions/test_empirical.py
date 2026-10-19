@@ -740,17 +740,19 @@ class TestMarginals:
         assert marginal.event_spec == OutputSpec(label=OpaqueSpec())
         assert marginal._sample(jax.random.PRNGKey(0)) in set(_LABELS)
 
-    def test_a_selection_of_paths_is_an_exposed_record_that_keeps_the_rows(self):
+    def test_a_list_of_paths_keeps_each_node_at_its_path_and_keeps_the_rows(self):
         law = EmpiricalDistribution(_mixed_atoms(), label="m")
-        marginal = law._marginal(("label", "g/v"))
+        marginal = law._marginal(("g/v", "label"))
         assert marginal.label == "m"
-        assert marginal.event_spec == OutputSpec(RecordSpec(label=OpaqueSpec(), v=(2,)))
+        assert marginal.event_spec == OutputSpec(
+            RecordSpec(label=OpaqueSpec(), g=RecordSpec(v=(2,)))
+        )
         rows = {(label, *np.asarray(v)) for label, v in zip(_LABELS, _V)}
         for key in jax.random.split(jax.random.PRNGKey(0), 10):
             draw = marginal._sample(key)
-            assert (draw["label"], *np.asarray(draw["v"])) in rows
+            assert (draw["label"], *np.asarray(draw["g"]["v"])) in rows
 
-    def test_a_selection_whose_paths_share_a_final_segment_raises(self):
+    def test_paths_that_share_a_last_name_keep_their_groups(self):
         spec = RecordSpec(p=RecordSpec(x=()), q=RecordSpec(x=()))
         atoms = NumericRecordBatch(
             {"p/x": _A, "q/x": _U},
@@ -759,9 +761,10 @@ class TestMarginals:
             label="rows",
         )
         law = EmpiricalDistribution(atoms, label="m")
-        with pytest.raises(ValueError, match="more than one path ends in 'x'"):
-            law._marginal(("p/x", "q/x"))
-        assert _capability_guard(law, "_marginal", ("p/x", "q/x")).feasible is False
+        marginal = law._marginal(("q/x", "p/x"))
+        assert marginal.event_spec.spec == spec
+        assert jnp.allclose(marginal._mean()["q"]["x"], jnp.mean(_U))
+        assert _capability_guard(law, "_marginal", ("p/x", "q/x")).feasible is True
 
     def test_a_path_that_is_not_an_event_path_raises_and_is_rejected(self):
         law = _record_law()
@@ -804,8 +807,9 @@ class TestMarginals:
             label="x·y",
         )
         law = EmpiricalDistribution(atoms, label="post")
-        assert law._marginal(("a", "b")).atoms.label == "(x·y)[('a', 'b')]"
-        assert _record_law()._marginal(("a", "b")).atoms.label == "rows[('a', 'b')]"
+        # The atoms keep the law's order, b before a.
+        assert law._marginal(("a", "b")).atoms.label == "(x·y)[('b', 'a')]"
+        assert _record_law()._marginal(("a", "b")).atoms.label == "rows[('b', 'a')]"
 
     def test_the_marginal_of_a_posterior_keeps_its_fixed_paths(self):
         law = _record_law()

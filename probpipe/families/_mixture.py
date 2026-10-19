@@ -24,6 +24,7 @@ from ..core._repr import _MAX_SHOWN_ENTRIES, format_value, sequence_repr
 from ..core._spec_base import NumericArraySpec, TermSpec
 from ..core._specs import OutputSpec
 from ..core.constraints import _known_equal
+from ..core.named_tree import _PATH_SEP, _unflatten_paths
 from ..distributions._capabilities import (
     SupportsCovariance,
     SupportsLogProb,
@@ -40,7 +41,7 @@ from ..distributions._distribution import (
     _constructor_label,
     _record_default_expression,
 )
-from ..distributions._factored import _raw_record
+from ..distributions._views import _raw_leaves
 from ..linalg import DenseLinOp, LinOp
 from ..operations import _moments
 
@@ -56,24 +57,6 @@ __all__ = ["MixtureDistribution"]
 # ---------------------------------------------------------------------------
 
 
-def _leaves(value: Any, spec: Any) -> list[Array]:
-    """The array leaves of *value*, a raw value of the event *spec*, in the declaration's order.
-
-    An array value is its one leaf, and a record value, a ``Record`` or the
-    nested mapping of its leaves, has the leaves of its record's paths.
-    """
-    if not isinstance(spec, RecordSpec):
-        return [jnp.asarray(value)]
-    raw = _raw_record(value)
-    leaves = []
-    for path in spec:
-        leaf = raw
-        for segment in path.split("/"):
-            leaf = leaf[segment]
-        leaves.append(jnp.asarray(leaf))
-    return leaves
-
-
 def _combined(values: Sequence[Any], spec: Any, combine: Callable[..., Array]) -> Any:
     """The raw value whose leaves are *combine* of the components' leaves at each path.
 
@@ -81,18 +64,11 @@ def _combined(values: Sequence[Any], spec: Any, combine: Callable[..., Array]) -
     event, and a ``Record`` or the nested mapping of its leaves for a record
     event, which the result returns as the nested mapping.
     """
-    columns = zip(*(_leaves(value, spec) for value in values), strict=True)
+    columns = zip(*(_raw_leaves(value, spec) for value in values), strict=True)
     combined = [combine(*column) for column in columns]
     if not isinstance(spec, RecordSpec):
         return combined[0]
-    nested: dict[str, Any] = {}
-    for path, leaf in zip(spec, combined, strict=True):
-        *groups, field = path.split("/")
-        node = nested
-        for group in groups:
-            node = node.setdefault(group, {})
-        node[field] = leaf
-    return nested
+    return _unflatten_paths(dict(zip(spec, combined, strict=True)))
 
 
 def _weighted_sum(weights: Array) -> Callable[..., Array]:
@@ -108,7 +84,7 @@ def _weighted_sum(weights: Array) -> Callable[..., Array]:
 
 def _flat(value: Any, spec: Any) -> Array:
     """The flat coordinates of one raw value of *spec*: its leaves raveled and concatenated."""
-    return jnp.concatenate([jnp.ravel(leaf) for leaf in _leaves(value, spec)])
+    return jnp.concatenate([jnp.ravel(leaf) for leaf in _raw_leaves(value, spec)])
 
 
 # ---------------------------------------------------------------------------
@@ -367,7 +343,7 @@ def _first_mismatch(
         and tuple(left.children) == tuple(right.children)
     ):
         for name, child in left.children.items():
-            found = _first_mismatch(child, right.children[name], f"{path}/{name}")
+            found = _first_mismatch(child, right.children[name], f"{path}{_PATH_SEP}{name}")
             if found is not None:
                 return found
     return path, left, right

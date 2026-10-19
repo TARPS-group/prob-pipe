@@ -60,7 +60,7 @@ from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
 from ..core._specs import InputSpec, NumericRecordSpec, OutputSpec
 from ..core.config import ProvenanceMode, WorkflowKind, prefect_config
-from ..core.named_tree import _unflatten_paths
+from ..core.named_tree import _PATH_SEP, _unflatten_paths
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
@@ -1149,7 +1149,7 @@ def _jax_traceability_error(
                     for path in components:
                         dtype = dtypes.get(path)
                         if dtype is None:
-                            dtype = dtypes.get(path.split("/", 1)[0])
+                            dtype = dtypes.get(path.split(_PATH_SEP, 1)[0])
                         if dtype is None:
                             dtype = _stored_dtype(root, path)
                         columns[path] = jax.ShapeDtypeStruct(

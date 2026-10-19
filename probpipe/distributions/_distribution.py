@@ -25,9 +25,11 @@ from ..core._expression import _GENERIC_LAW_SYMBOL, Named, Signature
 from ..core._immutable import transient_memo
 from ..core._record_spec import RecordSpec
 from ..core._repr import call_repr, format_names, public_class_name, term_repr, type_name
+from ..core._shapes import PathsLike, _as_paths
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
-from ..core._specs import OutputSpec
+from ..core._specs import OutputSpec, _components_record
 from ..core.constraints import _known_equal
+from ..core.named_tree import _PATH_SEP
 from ..core.provenance import Provenance
 from ..core.tracked import Annotated, TrackedTerm, _as_raw_form, _is_raw_form, _TrackedTermMeta
 from ._capabilities import _check_guards
@@ -236,25 +238,6 @@ def _record_default_expression(term: Any) -> None:
         object.__setattr__(term, "_default_expression", term._expression)
 
 
-#: The message for a selection of field paths that names none.
-_EMPTY_SELECTION = "select at least one field path; got an empty tuple"
-
-
-def _shared_final_names(paths: tuple[str, ...] | list[str]) -> str:
-    """The message that two of the selected *paths* end in the same name.
-
-    The selected fields are named by the last part of each path, so two such
-    paths would give the result two fields of one name.
-    """
-    finals = [path.rsplit("/", 1)[-1] for path in paths]
-    shared = sorted({final for final in finals if finals.count(final) > 1})
-    names = repr(shared[0]) if len(shared) == 1 else str(shared)
-    return (
-        f"cannot select {list(paths)} together: more than one path ends in {names}, which "
-        f"would give the result two fields of the same name"
-    )
-
-
 def _no_free_dims(term: Any, unbound: set[str], free: set[str] | frozenset[str]) -> str:
     """The message that *term* has no free dimensions *unbound* to bind, with those it has."""
     return (
@@ -396,7 +379,7 @@ def _array_leaves(declaration: OutputSpec) -> dict[str, NumericArraySpec]:
             leaves[path] = spec
         elif isinstance(spec, RecordSpec):
             for child, child_spec in spec.children.items():
-                visit(f"{path}/{child}", child_spec)
+                visit(f"{path}{_PATH_SEP}{child}", child_spec)
 
     for component, spec in declaration.components.items():
         visit(component, spec)
@@ -982,20 +965,23 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     # a law iterable through it.
     __iter__ = None
 
-    def __getitem__(self, key: str | tuple[str, ...]) -> Distribution:
-        """The law itself at a whole term's component, or the field view at another event path.
+    def __getitem__(self, key: PathsLike) -> Distribution:
+        """The law itself at a whole term's component, or the field view at a path or a list of paths.
 
         A whole-term law is itself under its component, so ``d[name]`` returns
         ``d``; the component is fixed at construction, so after ``with_label`` the
         law is still addressed by it. Any other event path, a field of an exposed
         record or a path below a whole record's component, gives the
-        ``FieldView`` of the node there, which holds a reference to this law, and
-        a tuple of paths gives the view of their selection.
+        ``FieldView`` of the node there, which holds a reference to this law and
+        offers the node whole under the path's last name. A list or a tuple of
+        paths gives the view whose event exposes the record that keeps each node
+        at its own path, in this law's order, so ``grouped["a", "g/c"]`` draws
+        records ``{a, g: {c}}``.
 
         Parameters
         ----------
-        key : str or tuple of str
-            An event path, which starts with a component, or a tuple of event
+        key : str, or list or tuple of str
+            An event path, which starts with a component, or a list of event
             paths to view jointly.
 
         Returns
@@ -1006,27 +992,29 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Raises
         ------
         KeyError
-            If *key* is not an event path of this law, or names one that is not.
+            If a path is not an event path of this law.
         TypeError
-            If *key* is neither a string nor a tuple of strings.
+            If *key* is neither a string nor a list or tuple of strings.
         ValueError
-            If *key* is an empty tuple, or two selected paths share their final
-            segment.
+            If a path is empty or has an empty name, or a list of paths is
+            empty, names a path twice, or holds a path inside another.
         """
-        if isinstance(key, str) and key == _whole_term_component(self.event_spec):
+        paths = _as_paths(key, action=f"index {self.label!r} by")
+        if paths == _whole_term_component(self.event_spec):
             return self
         if _field_view_factory is None:
             raise RuntimeError("the field view is not installed; import probpipe")
+        return _field_view_factory(self, paths)
+
+    def __contains__(self, key: object) -> bool:
+        """Whether *key* is a ``str`` and ``self[key]`` gives a law: an event path, or a whole term's component."""
+        if not isinstance(key, str):
+            return False
         try:
-            return _field_view_factory(self, key)
-        except KeyError as error:
-            requested = key if isinstance(key, tuple) else (key,)
-            if len(error.args) == 1 and error.args[0] in requested:
-                raise KeyError(
-                    f"{error.args[0]!r} is not an event path of {self.label!r}; its fields: "
-                    f"{list(self.event_spec.components)}"
-                ) from None
-            raise
+            paths = _components_record(self.event_spec)
+        except TypeError:
+            return False
+        return key in paths
 
     # -- composition ------------------------------------------------------------
 
@@ -1433,7 +1421,10 @@ def _unify_declarations(
         )
     # A whole term's spec is bound under its component's path, as a record field's is.
     _unify_specs(
-        expected.spec, actual.spec, bindings, path if wanted is None else f"{path}/{wanted}"
+        expected.spec,
+        actual.spec,
+        bindings,
+        path if wanted is None else f"{path}{_PATH_SEP}{wanted}",
     )
 
 

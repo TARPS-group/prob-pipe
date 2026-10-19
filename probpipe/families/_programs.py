@@ -1418,7 +1418,7 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
                 {
                     name: data._raw_column(name)
                     for name in self._observed_names
-                    if name in data.event_template
+                    if data.event_template.is_field(name)
                 }
             )
         if isinstance(data, Record):

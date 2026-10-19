@@ -126,10 +126,11 @@ class TestFieldViews:
 
         assert captured.root is root
         assert captured.record_path == ()
-        expected = ("field-selection", ("base", ("root",)), ("paths", ("y", "x")))
+        # The view keeps its parent's order, whatever the order of the list.
+        expected = ("field-selection", ("base", ("root",)), ("paths", ("x", "y")))
         assert captured.descendant_descriptor == expected
         projected = captured.evaluator(draw)
-        assert list(projected) == ["y", "x"]
+        assert list(projected) == ["x", "y"]
         np.testing.assert_array_equal(projected["x"], draw["x"])
 
     def test_the_golden_selection_descriptor_and_digest_are_hard_coded(self):
@@ -139,13 +140,13 @@ class TestFieldViews:
         expected = (
             "stochastic-descendant",
             ("base_source_slot", 0),
-            ("graph", ("field-selection", ("base", ("root",)), ("paths", ("y", "x")))),
+            ("graph", ("field-selection", ("base", ("root",)), ("paths", ("x", "y")))),
         )
 
         assert descriptor == expected
         assert (
             _descendants.descriptor_digest(expected[2][1])
-            == "fe5bb6d2c5f7cf14bdf47c0b33291a61adee065d46cf1455f22684b79ad530a2"
+            == "766d78ca6712e8264348986add19c817bdbe6692e1466e1672de9df80671c5f2"
         )
 
     @pytest.mark.parametrize("cycle_kind", ["self", "pair"])

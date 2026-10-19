@@ -204,15 +204,15 @@ class TestEmpiricalRecords:
                     _at(group_mean, leaf), _at(parent_mean, f"{path}/{leaf}"), rtol=1e-6
                 )
 
-    def test_the_marginal_of_a_selection_exposes_a_record_of_its_final_segments(self):
+    def test_the_marginal_at_a_list_of_paths_keeps_each_node_at_its_path(self):
         law = _law("deep", "two-levels")
-        selection = marginal(law, ("model/theta/mu", "y"))
-        assert selection.event_spec == OutputSpec(
-            RecordSpec(mu=SCHEMAS["deep"].at_path("model", "theta", "mu"), y=SCHEMAS["deep"]["y"])
-        )
+        selection = marginal(law, ("y", "model/theta/mu"))
+        assert selection.event_spec == OutputSpec(SCHEMAS["deep"][["model/theta/mu", "y"]])
         parent_mean = mean.using(raw=True)(law)
         selected_mean = mean.using(raw=True)(selection)
-        np.testing.assert_allclose(_at(selected_mean, "mu"), _at(parent_mean, "model/theta/mu"))
+        np.testing.assert_allclose(
+            _at(selected_mean, "model/theta/mu"), _at(parent_mean, "model/theta/mu")
+        )
         np.testing.assert_allclose(_at(selected_mean, "y"), _at(parent_mean, "y"))
 
 
@@ -445,14 +445,12 @@ class TestNestedViews:
 
 
 class TestSelections:
-    def test_a_selection_exposes_a_record_of_its_final_segments_in_order(self):
+    def test_a_list_of_paths_keeps_each_node_at_its_path_in_the_parents_order(self):
         view = FieldView(_correlated(), ("groups/theta", "population/mu"))
         assert view.event_spec == OutputSpec(
-            RecordSpec(
-                theta=SCHEMAS["two-groups"].at_path("groups", "theta"),
-                mu=SCHEMAS["two-groups"].at_path("population", "mu"),
-            )
+            SCHEMAS["two-groups"][["population/mu", "groups/theta"]]
         )
+        assert view.event_spec.spec.keys() == ("population/mu", "groups/theta")
 
     def test_a_selection_co_samples_its_nodes(self):
         law = _correlated()
@@ -460,23 +458,25 @@ class TestSelections:
         with workflow_run(seed=13):
             draws = _raw_record(sample(view, sample_shape=(DRAWS,)))
         expected = _atom_correlation(law, "population/mu", "groups/theta")
-        _assert_correlation(draws["mu"], np.asarray(draws["theta"])[:, 0], expected)
+        _assert_correlation(
+            draws["population"]["mu"], np.asarray(draws["groups"]["theta"])[:, 0], expected
+        )
 
     def test_the_moments_of_a_selection_are_the_parents_at_its_nodes(self):
         law = _correlated()
         view = FieldView(law, ("population/mu", "groups/theta"))
         parent = mean.using(raw=True)(law)
         selected = mean.using(raw=True)(view)
-        np.testing.assert_allclose(_at(selected, "mu"), _at(parent, "population/mu"))
-        np.testing.assert_allclose(_at(selected, "theta"), _at(parent, "groups/theta"))
+        np.testing.assert_allclose(_at(selected, "population/mu"), _at(parent, "population/mu"))
+        np.testing.assert_allclose(_at(selected, "groups/theta"), _at(parent, "groups/theta"))
 
-    def test_the_covariance_of_a_selection_is_the_parents_block_in_selection_order(self):
+    def test_the_covariance_of_a_list_view_is_the_parents_block_in_the_parents_order(self):
         law = _correlated()
         view = FieldView(law, ("groups/theta", "population/mu"))
         parent = cov.using(raw=True)(law)
         parent = np.asarray(parent.to_dense() if hasattr(parent, "to_dense") else parent)
-        # The parent's flat layout is (mu, tau, theta[0:4]); the selection's is (theta, mu).
-        order = [2, 3, 4, 5, 0]
+        # The parent's flat layout is (mu, tau, theta[0:4]); the view's is (mu, theta).
+        order = [0, 2, 3, 4, 5]
         selected = cov.using(raw=True)(view)
         selected = np.asarray(selected.to_dense() if hasattr(selected, "to_dense") else selected)
         np.testing.assert_allclose(selected, parent[np.ix_(order, order)], rtol=1e-5, atol=1e-6)

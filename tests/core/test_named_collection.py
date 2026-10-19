@@ -550,9 +550,9 @@ class TestEditTemplateThreading:
             {"physics": 9.0, "physics/mass": 5.0},  # ancestor listed first
             {"physics/mass": 5.0, "physics": 9.0},  # descendant listed first
         ):
-            with pytest.raises(ValueError, match="got both 'physics' and the path 'physics/mass'"):
+            with pytest.raises(ValueError, match="the path 'physics/mass' is inside 'physics'"):
                 r.replace(updates)
-        with pytest.raises(ValueError, match="overlap"):
+        with pytest.raises(ValueError, match="the path 'physics/mass' is inside 'physics'"):
             r.event_template.replace(
                 {"physics": NumericArraySpec((2,)), "physics/mass": NumericArraySpec((5,))}
             )
@@ -608,11 +608,19 @@ class TestBoundaryRules:
         assert len(r) == 3
         assert list(r) == ["physics/force", "physics/mass", "obs"]
 
-    def test_membership_and_indexing_coincide_leaf_only(self, r):
+    def test_membership_and_indexing_coincide(self, r):
         assert "physics/force" in r and "obs" in r
-        assert "physics" not in r  # subtree is not a member
+        assert "physics" in r  # a group is a member, as r["physics"] works
+        assert r["physics"] is r.at_path("physics")
+        assert r.keys() == ("physics/force", "physics/mass", "obs")  # keys() lists fields only
+        assert "nope" not in r
+        assert ("physics", "force") not in r  # a tuple is a list of paths, not a path
         with pytest.raises(KeyError):
-            r["physics"]  # subtree is not indexable
+            r["nope"]
+
+    def test_is_field_takes_one_path(self, r):
+        with pytest.raises(TypeError, match="a path must be a str"):
+            r.is_field(("physics", "force"))
 
     def test_at_path_and_children(self, r):
         assert isinstance(r.at_path("physics"), Record)
@@ -620,10 +628,10 @@ class TestBoundaryRules:
         assert tuple(r.children) == ("physics", "obs")
         assert isinstance(r.children["physics"], Record)  # children includes subtrees
 
-    def test_is_field_equals_membership(self, r):
+    def test_is_field_tells_a_field_from_a_group(self, r):
         assert r.is_field("physics/force") is True
         assert r.is_field("physics") is False
-        assert r.is_field("physics/force") == ("physics/force" in r)
+        assert r.is_field("nope") is False
 
     def test_map_preserves_class_and_reinfers_template(self):
         # map on a NumericRecord returns a NumericRecord, nested children

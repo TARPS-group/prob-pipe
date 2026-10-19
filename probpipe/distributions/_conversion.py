@@ -43,6 +43,7 @@ from ..core._record_spec import RecordSpec
 from ..core._repr import public_class_name, sequence_repr
 from ..core._spec_base import NumericArraySpec, TermSpec, _unify_array_shape
 from ..core._specs import OutputSpec
+from ..core.named_tree import _PATH_SEP
 from ..core.provenance import Provenance
 from ..core.tracked import TrackedTerm
 from ._capabilities import (
@@ -293,7 +294,7 @@ def _term_difference(
             )
         for name, child in expected.children.items():
             difference = _term_difference(
-                child, actual.children[name], f"{path}/{name}", sides, dtypes
+                child, actual.children[name], f"{path}{_PATH_SEP}{name}", sides, dtypes
             )
             if difference is not None:
                 return difference

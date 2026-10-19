@@ -242,10 +242,13 @@ class SupportsMarginals(Protocol):
     """A distribution that returns the detached marginal of a field or field group.
 
     ``_marginal(path)`` returns a standalone ``Distribution`` over the node at
-    ``path``, an event path of this law, with no reference back to it. A path
-    that names an interior node selects the group of fields under it, and a
-    tuple of paths selects several nodes, returned as an exposed record of
-    them. The marginal is labeled as the ``marginal`` operation labels it, so
+    ``path``, an event path of this law, with no reference back to it. One path,
+    a ``str``, gives the node whole under a component named by the path's last
+    name, and a path that names a group gives the group of fields under it. A
+    tuple of paths, which names at least one path, no path twice, and no path
+    inside another, gives a law whose event exposes the record that keeps each
+    node at its own path, in this law's canonical order whatever the order of
+    the tuple. The marginal is labeled as the ``marginal`` operation labels it, so
     a law without factors gives its marginals its own label. Support may
     depend on the path, so a class whose marginal is exact only at some paths
     defines the guard ``_marginal_guard(path)``.
@@ -364,7 +367,11 @@ class SupportsConditionalExpectation(Protocol):
 
 @runtime_checkable
 class SupportsConditionalMarginals(Protocol):
-    """A kernel with the detached marginal of ``K(given, ·)`` at an event path."""
+    """A kernel with the detached marginal of ``K(given, ·)`` at an event path.
+
+    The path argument follows :class:`SupportsMarginals`: one path, or a tuple
+    of paths that keeps each node at its own path.
+    """
 
     def _conditional_marginal(
         self, given: Record | Mapping[str, Any], path: str | tuple[str, ...]

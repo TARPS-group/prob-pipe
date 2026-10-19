@@ -270,8 +270,10 @@ class MomentLaw(
 class MarginalLaw(Law, SupportsMarginals):
     """A law whose marginal is exact at the paths it lists, and rejected at any other.
 
-    It records each path it marginalizes, and the marginal is a law over the
-    node under a component named by the path's final segment.
+    It records each path it marginalizes. The marginal at one path is a law
+    over the node under a component named by the path's last name, and the
+    marginal at a list of paths, exact when each is listed, is a law over the
+    record that keeps each node at its path.
     """
 
     def __init__(self, label: str, event_spec: OutputSpec, *, exact: tuple[str, ...] = ()) -> None:
@@ -284,13 +286,19 @@ class MarginalLaw(Law, SupportsMarginals):
 
     def _marginal(self, path):
         self.marginalized.append(path)
+        if isinstance(path, tuple):
+            return Law(
+                OutputSpec(RecordSpec({each: SCALAR for each in path})),
+                label=self.label,
+            )
         return Law(
             OutputSpec(**{path.rsplit("/", 1)[-1]: SCALAR}),
             label=path,
         )
 
     def _marginal_guard(self, path):
-        if path in self.exact:
+        paths = path if isinstance(path, tuple) else (path,)
+        if all(each in self.exact for each in paths):
             return Feasibility(True)
         return Feasibility(False, f"{self.label!r} has no exact marginal at {path!r}")
 
@@ -1034,20 +1042,40 @@ class TestMarginalValues:
         assert marginal.event_spec.exposes_record
         assert list(marginal.event_spec.components) == ["a", "c"]
 
-    def test_a_selection_marginal_follows_the_order_of_its_paths(self):
+    def test_a_marginal_at_a_list_of_paths_follows_the_joint_order(self):
         joint = Normal("x", 0.0, 1.0) * Normal("z", 5.0, 2.0)
         marginal = joint._marginal(("z", "x"))
-        assert list(marginal.event_spec.components) == ["z", "x"]
+        assert list(marginal.event_spec.components) == ["x", "z"]
         assert marginal.event_spec == FieldView(joint, ("z", "x")).event_spec
-        assert list(marginal._mean()) == ["z", "x"]
-        assert jnp.allclose(marginal._cov().to_dense(), jnp.diag(jnp.array([4.0, 1.0])))
+        assert list(marginal._mean()) == ["x", "z"]
+        assert jnp.allclose(marginal._cov().to_dense(), jnp.diag(jnp.array([1.0, 4.0])))
         value = {"z": jnp.asarray(4.0), "x": jnp.asarray(0.2)}
         expected = norm.logpdf(4.0, 5.0, 2.0) + norm.logpdf(0.2, 0.0, 1.0)
         assert jnp.allclose(marginal._log_prob(value), expected)
 
-    def test_a_sub_joint_selected_against_its_factor_order_follows_the_paths(self):
+    def test_a_marginal_at_paths_in_two_groups_keeps_both_groups(self):
+        joint = Normal("t1", 0.0, 1.0) * Normal("t2", 0.0, 2.0) * Normal("mu", 0.0, 1.0)
+        hier = joint.with_path_names({"t1": "s1/theta", "t2": "s2/theta"})
+        marginal = hier._marginal(("s2/theta", "s1/theta"))
+        real = Normal("x", 0.0, 1.0).event_spec.spec
+        assert marginal.event_spec.spec == RecordSpec(
+            s1=RecordSpec(theta=real), s2=RecordSpec(theta=real)
+        )
+        variance = marginal._variance()
+        assert jnp.allclose(variance["s1"]["theta"], 1.0)
+        assert jnp.allclose(variance["s2"]["theta"], 4.0)
+
+    def test_a_marginal_inside_a_packaged_factor_keeps_the_factor_group(self):
+        joint = Normal("a", 0.0, 1.0) * Normal("c", 0.0, 3.0) * Normal("e", 0.0, 1.0)
+        grouped = joint.with_path_names({"c": "g/c", "e": "g/e"})
+        marginal = grouped._marginal(("a", "g/c"))
+        real = Normal("x", 0.0, 1.0).event_spec.spec
+        assert marginal.event_spec.spec == RecordSpec(a=real, g=RecordSpec(c=real))
+        assert jnp.allclose(marginal._variance()["g"]["c"], 9.0)
+
+    def test_a_sub_joint_selected_against_its_factor_order_keeps_the_factor_order(self):
         marginal = (_likelihood() * _prior())._marginal(("beta", "y"))
-        assert list(marginal.event_spec.components) == ["beta", "y"]
+        assert list(marginal.event_spec.components) == ["y", "beta"]
 
     def test_the_marginal_inside_one_factor_is_that_factor_marginal(self):
         pair = _pair(law=MarginalLaw, exact=("a",))
@@ -1061,20 +1089,19 @@ class TestMarginalValues:
         assert (marginal.label, _is_named(marginal)) == ("u·w", False)
         assert marginal.notation == "u(a)·w(c)"
 
-    def test_whole_factors_selected_out_of_factor_order_form_a_product_in_that_order(self):
+    def test_whole_factors_named_out_of_factor_order_form_a_product_in_factor_order(self):
         joint = (_law("u", "a") * _law("v", "b") * _law("w", "c")).with_label("model")
         marginal = joint._marginal(("c", "a"))
         assert isinstance(marginal, FactoredDistribution)
-        assert [factor.label for factor in marginal.factors] == ["w", "u"]
-        assert list(marginal.event_spec.components) == ["c", "a"]
-        assert marginal.notation == "w(c)·u(a)"
+        assert [factor.label for factor in marginal.factors] == ["u", "w"]
+        assert list(marginal.event_spec.components) == ["a", "c"]
+        assert marginal.notation == "u(a)·w(c)"
 
-    def test_a_dependent_pair_selected_producer_first_keeps_the_factor_order_and_reorders(self):
-        """No product lists ``beta`` before the kernel that conditions on it."""
+    def test_a_dependent_pair_named_producer_first_keeps_the_factor_order(self):
         joint = (_likelihood() * _prior()).with_label("model")
         marginal = joint._marginal(("beta", "y"))
-        assert list(marginal.event_spec.components) == ["beta", "y"]
-        assert marginal.notation == "(lik·prior)(beta, y)"
+        assert list(marginal.event_spec.components) == ["y", "beta"]
+        assert marginal.notation == "lik(y | beta)·prior(beta)"
 
     @pytest.mark.parametrize(
         ("path", "label"),
@@ -1095,7 +1122,7 @@ class TestMarginalValues:
         params = MarginalLaw("p", OutputSpec(params=RecordSpec(u=SCALAR)), exact=("params/u",))
         joint = (_likelihood() * _prior() * record * params).with_label("model")
         assert joint._marginal(path).label == label
-        assert marginal_operation._derived_label({"d": joint, "field": path}) == label
+        assert marginal_operation._derived_label({"d": joint, "paths": path}) == label
         assert FieldView(joint, path).label == label
 
     def test_a_selection_of_one_whole_term_is_an_exposed_record(self):

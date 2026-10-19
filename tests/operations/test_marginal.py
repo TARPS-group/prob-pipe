@@ -52,19 +52,38 @@ class TestMarginal:
         result = marginal.check(Marginalizing("law"), ("a", "b")).result
         assert result == OutputSpec(DistributionSpec(OutputSpec(RecordSpec(a=REAL, b=REAL))))
 
-    def test_two_paths_ending_in_the_same_segment_raise(self):
-        with pytest.raises(ApplicabilityError, match="more than one path ends in 'a'"):
-            marginal.check(_Nested("n"), ("x/a", "y/a"))
+    def test_two_paths_ending_in_the_same_name_keep_their_paths(self):
+        result = marginal.check(_Nested("n"), ["y/a", "x/a"]).result
+        assert result == OutputSpec(
+            DistributionSpec(OutputSpec(RecordSpec(x=RecordSpec(a=REAL), y=RecordSpec(a=REAL))))
+        )
+
+    def test_a_list_and_a_tuple_of_paths_declare_alike(self):
+        law = Marginalizing("law")
+        assert marginal.check(law, ["b", "a"]).result == marginal.check(law, ("a", "b")).result
 
     def test_a_path_the_law_lacks_raises_applicability_error(self):
         with pytest.raises(
-            ApplicabilityError, match="'c' is not an event path of the law; its fields"
+            ApplicabilityError, match="'c' is not an event path of 'law'; its paths: \\['a', 'b'\\]"
         ):
             marginal(Marginalizing("law"), "c")
 
-    def test_a_path_that_is_not_a_string_raises_applicability_error(self):
-        with pytest.raises(ApplicabilityError, match="field must be a path string"):
+    def test_a_path_that_is_not_a_string_raises_type_error(self):
+        with pytest.raises(TypeError, match="give a path or a list of paths, got int"):
             marginal(Marginalizing("law"), 3)
+
+    @pytest.mark.parametrize(
+        ("paths", "match"),
+        [
+            pytest.param([], "it names no paths", id="empty"),
+            pytest.param(("a", "a"), "names the path 'a' twice", id="repeated"),
+            pytest.param(("x", "x/a"), "the path 'x/a' is inside 'x'", id="nested"),
+            pytest.param("x//a", "has an empty name", id="empty-name"),
+        ],
+    )
+    def test_malformed_paths_raise_value_error(self, paths, match):
+        with pytest.raises(ValueError, match=match):
+            marginal.check(_Nested("n"), paths)
 
     def test_a_rejecting_guard_and_no_sampling_raise_resolution_error(self):
         with pytest.raises(ResolutionError, match="the marginal is exact at the field a"):
@@ -94,16 +113,16 @@ class TestMarginal:
     def test_a_marginal_that_is_several_factors_joins_their_labels(self):
         joint = Gaussian("a").with_label("first") * Gaussian("b").with_label("second")
         joint = (joint * Gaussian("c")).with_label("model")
-        assert marginal._derived_label({"d": joint, "field": ("a", "b")}) == "first·second"
+        assert marginal._derived_label({"d": joint, "paths": ("a", "b")}) == "first·second"
 
     @pytest.mark.parametrize(
-        "field",
+        "paths",
         [pytest.param("y", id="a-consumer"), pytest.param(("y",), id="a-tuple-of-one")],
     )
-    def test_a_marginal_that_integrates_a_factor_out_keeps_the_joint_label(self, field):
+    def test_a_marginal_that_integrates_a_factor_out_keeps_the_joint_label(self, paths):
         """The prior predictive integrates the prior out, so it describes the whole model."""
         joint = (Kernel("y", ("beta",)) * Gaussian("beta")).with_label("model")
-        assert marginal._derived_label({"d": joint, "field": field}) == "model"
+        assert marginal._derived_label({"d": joint, "paths": paths}) == "model"
 
     def test_the_marginal_of_a_law_without_factors_keeps_its_label(self):
         assert marginal(Marginalizing("law"), "a").label == "law"
@@ -132,18 +151,17 @@ class TestTheMarginalsNotation:
         joint = (Gaussian("a") * Gaussian("b") * Gaussian("c")).with_label("model")
         assert marginal(joint, ("a", "b")).notation == "a(a)·b(b)"
 
-    def test_factors_selected_out_of_factor_order_read_in_the_selection_order(self):
+    def test_factors_named_out_of_factor_order_read_in_the_joint_order(self):
         joint = (Gaussian("a") * Gaussian("b") * Gaussian("c")).with_label("model")
-        result = marginal(joint, ("b", "a"))
-        assert (result.label, result.notation) == ("b·a", "b(b)·a(a)")
-        assert list(result.event_spec.components) == ["b", "a"]
+        result = marginal(joint, ["b", "a"])
+        assert (result.label, result.notation) == ("a·b", "a(a)·b(b)")
+        assert list(result.event_spec.components) == ["a", "b"]
 
-    def test_a_dependent_pair_selected_producer_first_reads_by_the_joined_label(self):
-        """No product lists ``beta`` before the kernel that conditions on it."""
+    def test_a_dependent_pair_named_producer_first_reads_in_the_joint_order(self):
         joint = (Kernel("y", ("beta",)) * Gaussian("beta")).with_label("model")
         result = marginal(joint, ("beta", "y"))
-        assert list(result.event_spec.components) == ["beta", "y"]
-        assert result.notation == "(y·beta)(beta, y)"
+        assert list(result.event_spec.components) == ["y", "beta"]
+        assert result.notation == "y(y | beta)·beta(beta)"
 
     def test_a_marginal_of_a_conditioned_joint_keeps_its_fixed_paths(self):
         joint = (Gaussian("a") * Gaussian("b") * Gaussian("c")).with_label("model")

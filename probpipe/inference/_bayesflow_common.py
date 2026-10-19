@@ -28,11 +28,13 @@ import numpy as np
 
 from .._messages import unknown_names
 from ..core._specs import _components_record
+from ..core.named_tree import _PATH_SEP
 from ..core.record import Record
 from ..custom_types import Array, PRNGKey
 from ..distributions._capabilities import SupportsConditionalSampling
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution, NumericDistribution
+from ..distributions._views import _extract
 from ._inference_utils import refuse_seed_keywords
 
 if TYPE_CHECKING:
@@ -238,10 +240,7 @@ def _leaf_draws(draws: Any, leaf: str) -> Any:
     if isinstance(draws, Record):
         return draws._raw_at(leaf)
     if isinstance(draws, Mapping):
-        node = draws
-        for part in leaf.split("/"):
-            node = node[part]
-        return node
+        return _extract(draws, tuple(leaf.split(_PATH_SEP)))
     return draws
 
 

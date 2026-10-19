@@ -527,7 +527,7 @@ class TestMakePosteriorRecordTarget:
         ) * Normal("s", 0.0, 1.0)
         chain = jax.random.normal(jax.random.PRNGKey(0), (40, 3))
         post = make_posterior([chain], parents=(prior,), method="test", event_spec=prior.event_spec)
-        assert post["params/a"].event_spec.spec == prior.event_spec.spec.at_path(("params", "a"))
+        assert post["params/a"].event_spec.spec == prior.event_spec.spec["params/a"]
         assert convert(post, KDEDistribution).event_spec == prior.event_spec
 
     def test_a_nested_target_keeps_its_groups(self):

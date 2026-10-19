@@ -60,7 +60,7 @@ from ._repr import format_levels, format_names, public_class_name, type_name
 from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._spec_base import OpaqueSpec, _opaque_spec_of
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec, TermSpec
-from .named_tree import _PATH_SEP, _unflatten_paths
+from .named_tree import _PATH_SEP, _keyed_paths, _paths_label, _unflatten_paths
 from .provenance import Provenance
 from .record import (
     Record,
@@ -390,41 +390,50 @@ class RecordBatch(Batch[Record]):
         view._init_batch(spec, label=label)
         return view
 
-    def _at_fields(self, path: tuple[str, ...]) -> Any:
-        """The batched field at *path*, for a named ``[]`` key.
+    def _at_paths(self, paths: str | tuple[str, ...]) -> Any:
+        """The batch of every element's node at a path, or cut down to a list of paths.
 
-        A **key**, which is a path that addresses a field, yields that field's
-        column as the batch form of its kind on this batch's levels, such as a
-        ``NumericArrayBatch`` for an array field and a :class:`FunctionBatch` or
-        an :class:`OpaqueBatch` otherwise. Inside a JAX trace, an array field's
-        column is the stored array. A path that addresses an **interior node**
-        yields the sub-batch over the columns beneath it, which is a view over
-        the same storage with the same axis levels.
+        A path to a **field** yields that field's column as the batch form of
+        its kind on this batch's levels, such as a ``NumericArrayBatch`` for an
+        array field and a :class:`FunctionBatch` or an :class:`OpaqueBatch`
+        otherwise. Inside a JAX trace, an array field's column is the stored
+        array. A path to a **group** yields the batch of the group's records. A
+        list of paths yields the batch of the elements cut down to those nodes,
+        each at its own path and in the elements' order, labeled by the paths.
+        Either batch of records is a view over the same storage with the same
+        levels.
 
         Parameters
         ----------
-        path : tuple of str
-            The names along the path, one per segment.
+        paths : str or tuple of str
+            One path, or a list of paths, as ``[]`` read them.
 
         Returns
         -------
         Any
-            The field's column, or the sub-batch view under an interior node.
+            The field's column, or a batch of records.
 
         Raises
         ------
         KeyError
-            If *path* addresses neither a field nor an interior node, naming the
-            fields this batch does have.
+            If a path is not a path of the elements, naming the paths they have.
         """
-        joined = _PATH_SEP.join(path)
         template = self.event_template
-        if joined in self._columns:
-            return self._column_as_batch(joined)
-        prefix = joined + _PATH_SEP
-        if any(key.startswith(prefix) for key in self._columns):
-            return self._field_view(joined, template.at_path(joined))
-        raise KeyError(unknown_names("field", [joined], template.keys()))
+        if isinstance(paths, tuple):
+            cut = template[paths]
+            return self._view_over(
+                {key: self._columns[key] for key in cut},
+                cut,
+                label=_paths_label(template._ordered_paths(paths)),
+            )
+        if paths in self._columns:
+            return self._column_as_batch(paths)
+        node = template[paths]
+        return self._field_view(paths, cast(RecordSpec, node))
+
+    def _has_path(self, path: str) -> bool:
+        """Whether *path* is the path of a field or a group of the elements."""
+        return path in self.event_template
 
     # -- field access -------------------------------------------------------
 
@@ -529,13 +538,23 @@ class RecordBatch(Batch[Record]):
             )
         )
 
-    def _field_view(self, path: str, template: RecordSpec) -> Self:
-        """A sub-batch over the columns under *path*, as a view.
+    def _view_over(self, columns: dict[str, Any], template: RecordSpec, *, label: str) -> Self:
+        """A batch of records over *columns*, whose elements *template* declares, as a view.
 
-        *template* is the element structure the view presents, which is this
-        batch's own template at *path*. The columns are re-keyed relative to
-        *path*, so the view reads as a batch of the sub-records rather than of
-        their parents.
+        The view shares this batch's storage and levels, and inherits its
+        provenance.
+        """
+        view = object.__new__(self._view_class(template))
+        object.__setattr__(view, "_columns", columns)
+        view._init_batch(self.spec._replace(element_spec=template), label=label)
+        return self._inherit_provenance(view)
+
+    def _field_view(self, path: str, template: RecordSpec) -> Self:
+        """The batch of the group's records at *path*, as a view labeled *path*.
+
+        *template* is this batch's own template at *path*. The columns are
+        re-keyed relative to *path*, so the view reads as a batch of the group's
+        records rather than of their parents.
         """
         prefix = path + _PATH_SEP
         columns = {
@@ -543,62 +562,57 @@ class RecordBatch(Batch[Record]):
             for key, column in self._columns.items()
             if key.startswith(prefix)
         }
-        view = object.__new__(self._view_class(template))
-        object.__setattr__(view, "_columns", columns)
-        view._init_batch(
-            self.spec._replace(element_spec=template),
-            label=path,
-        )
-        return self._inherit_provenance(view)
+        return self._view_over(columns, template, label=path)
 
     def _single_field_view(self, key: str) -> Self:
-        """A one-column sub-batch presenting *key* alone, as a view.
+        """A one-column sub-batch presenting the field *key* alone, as a view.
 
         What :meth:`select` hands back. Unlike ``self[key]``, which yields the
         column, this stays a ``RecordBatch``: it carries this batch's levels, so
         an operation aligning operands by level name lines it up with its
         siblings and with the batch it came from.
         """
-        element_spec = RecordSpec({key: self.event_template[key]})
-        view = object.__new__(self._view_class(element_spec))
-        object.__setattr__(view, "_columns", {key: self._columns[key]})
-        view._init_batch(
-            self.spec._replace(element_spec=element_spec),
+        return self._view_over(
+            {key: self._columns[key]},
+            RecordSpec({key: self.event_template[key]}),
             label=key,
         )
-        return self._inherit_provenance(view)
 
     def select(self, *paths: str, **mapping: str) -> dict[str, Self]:
-        """Batch views of the named parts, ready to splat into a call.
+        """Batch views of the nodes at *paths*, keyed for splatting into a call.
 
-        The batch counterpart of :meth:`~probpipe.Record.select`, and it resolves
-        a path the same way: a **key** reaching a field gives a single-field view,
-        and a **partial path** gives the sub-batch under it. Each entry is a
-        ``RecordBatch`` view rather than a bare array, so splatting the result
-        into a ``Function`` call carries the level names an operation aligns
-        operands by. Keywords remap, as on a record: ``select(x="r")`` keys the
-        view of ``r`` under ``"x"``.
+        The batch counterpart of :meth:`~probpipe.Record.select`, keyed the same
+        way: a positional path is keyed by its last name, so ``select("a",
+        "g/c")`` has the keys ``"a"`` and ``"c"``, and a keyword names the key,
+        so ``select(x="g/c")`` keys the view of ``g/c`` under ``"x"``. A path to
+        a field gives a one-field view, and a path to a group the batch of the
+        group's records. Each entry is a ``RecordBatch`` view rather than a bare
+        array, so splatting the result into a ``Function`` call carries the
+        level names an operation aligns operands by.
 
         Parameters
         ----------
         *paths : str
-            Paths to select, each keyed by itself in the result.
+            Paths to select, each keyed by its last name in the result.
         **mapping : str
             Paths to select, each keyed by its keyword in the result.
 
         Returns
         -------
         dict of str to RecordBatch
-            One view per selected path, at this batch's levels.
+            One view per path, at this batch's levels, the positional paths first.
 
         Raises
         ------
         KeyError
-            If a path addresses neither a field nor an interior node.
+            If a path is not a path of the elements.
+        TypeError
+            If a path is not a string.
+        ValueError
+            If a path is empty or has an empty name, or two entries would take
+            the same key, as ``select("s1/theta", "s2/theta")`` would.
         """
-        selected = {path: path for path in paths}
-        selected.update(mapping)
-        return {argument: self._view_at(path) for argument, path in selected.items()}
+        return {key: self._view_at(path) for key, path in _keyed_paths(paths, mapping).items()}
 
     def select_all(self) -> dict[str, Self]:
         """Every **top-level** part as a batch view, keyed by its own name.
@@ -612,19 +626,30 @@ class RecordBatch(Batch[Record]):
         return self.select(*self.event_template.children)
 
     def _view_at(self, path: str) -> Self:
-        """A batch view of the field or subtree at *path*.
+        """A batch view of the field or the group at *path*.
 
         The single-field case is not ``self[path]``, which yields the values: a
         view keeps the levels, which is what an operation aligns by.
+
+        Parameters
+        ----------
+        path : str
+            A path of the elements.
+
+        Returns
+        -------
+        Self
+            A one-field batch of records for a field, and the batch of the
+            group's records for a group.
+
+        Raises
+        ------
+        KeyError
+            If *path* is not a path of the elements.
         """
         if path in self._columns:
             return self._single_field_view(path)
-        template = self.event_template
-        prefix = path + _PATH_SEP
-        if any(key.startswith(prefix) for key in self._columns):
-            node = cast(RecordSpec, template.at_path(path))
-            return self._field_view(path, node)
-        raise KeyError(unknown_names("field", [path], template.keys()))
+        return self._field_view(path, cast(RecordSpec, self.event_template[path]))
 
     # -- structural transforms ----------------------------------------------
     #

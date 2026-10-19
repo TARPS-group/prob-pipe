@@ -89,7 +89,9 @@ _PROSE = {
 }
 
 #: Declarations the implementation does not match yet, with the change each awaits.
-_PENDING: dict[str, str] = {}
+_PENDING: dict[str, str] = {
+    "marginal": "VI.8 names the parameter field; the code names it paths, as the design will",
+}
 
 #: Names the package exports that Part VI does not declare, with where each is declared.
 _DECLARED_ELSEWHERE = {

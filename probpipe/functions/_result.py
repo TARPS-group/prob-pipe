@@ -35,6 +35,7 @@ from ..core._record_spec import _reshaped_template
 from ..core._repr import type_name
 from ..core._spec_base import _full_array_shape_or_none, _known_type, _unify_specs
 from ..core._specs import NumericArraySpec, OpaqueSpec, OutputSpec, RecordSpec
+from ..core.named_tree import _PATH_SEP
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
@@ -705,7 +706,7 @@ def _with_stored_dtypes(spec: Any, store: Any, *, fill: bool, path: str = "") ->
         return RecordSpec(
             {
                 key: _with_stored_dtypes(
-                    child, store, fill=fill, path=f"{path}/{key}" if path else key
+                    child, store, fill=fill, path=f"{path}{_PATH_SEP}{key}" if path else key
                 )
                 for key, child in spec.children.items()
             }

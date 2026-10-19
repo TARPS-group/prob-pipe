@@ -1,4 +1,4 @@
-"""The reading of shape, name-list, and axis-count arguments in ``core/_shapes.py``."""
+"""The reading of shape, name-list, axis-count, and path arguments in ``core/_shapes.py``."""
 
 from __future__ import annotations
 
@@ -9,8 +9,13 @@ import pytest
 from probpipe.core._shapes import (
     _as_axis_counts,
     _as_dim,
+    _as_joined_path,
     _as_levels,
     _as_names,
+    _as_path,
+    _as_path_arguments,
+    _as_paths,
+    _as_positions,
     _as_shape,
 )
 
@@ -219,3 +224,142 @@ class TestLevels:
     def test_refuses_malformed_levels(self, levels, keywords, error, match):
         with pytest.raises(error, match=match):
             _as_levels(levels, keywords, what="B")
+
+
+class TestPaths:
+    """A ``str`` is one path, and a list or a tuple of ``str`` is a list of paths."""
+
+    @pytest.mark.parametrize(
+        ("arg", "expected"),
+        [
+            ("a", "a"),
+            ("g/c", "g/c"),
+            (np.str_("g/c"), "g/c"),
+            (["a", "g/c"], ("a", "g/c")),
+            (("g/c", "a"), ("g/c", "a")),
+            (("a",), ("a",)),
+            ([np.str_("a")], ("a",)),
+        ],
+        ids=["name", "path", "numpy-str", "list", "tuple", "tuple-of-one", "list-of-numpy-str"],
+    )
+    def test_reads_one_path_or_a_list_of_paths(self, arg, expected):
+        read = _as_paths(arg, action="index R by")
+        assert read == expected
+        assert type(read) is type(expected)
+        assert all(type(path) is str for path in (read if isinstance(read, tuple) else (read,)))
+
+    @pytest.mark.parametrize(
+        ("arg", "match"),
+        [
+            pytest.param("", "the path '' has an empty name", id="empty"),
+            pytest.param("g//c", "the path 'g//c' has an empty name", id="empty-name"),
+            pytest.param("/a", "the path '/a' has an empty name", id="leading-separator"),
+            pytest.param("a/", "the path 'a/' has an empty name", id="trailing-separator"),
+            pytest.param([], "it names no paths", id="empty-list"),
+            pytest.param((), "it names no paths", id="empty-tuple"),
+            pytest.param(("a", "a"), "it names the path 'a' twice", id="repeated"),
+            pytest.param(("g", "g/c"), "the path 'g/c' is inside 'g'", id="nested"),
+            pytest.param(("g/c", "g"), "the path 'g/c' is inside 'g'", id="nested-reversed"),
+        ],
+    )
+    def test_refuses_malformed_paths_with_value_error(self, arg, match):
+        with pytest.raises(ValueError, match=f"cannot index R by .*{match}"):
+            _as_paths(arg, action="index R by")
+
+    @pytest.mark.parametrize(
+        ("arg", "match"),
+        [
+            pytest.param({"a"}, "got set", id="set"),
+            pytest.param(iter(["a"]), "got list_iterator", id="iterator"),
+            pytest.param(None, "got NoneType", id="none"),
+            pytest.param(True, "got bool", id="bool"),
+            pytest.param(..., "got ellipsis", id="ellipsis"),
+            pytest.param(0, "got int", id="position"),
+            pytest.param(("a", 0), "a path must be a str, got int 0", id="list-holding-a-position"),
+        ],
+    )
+    def test_refuses_what_is_not_paths_with_type_error(self, arg, match):
+        with pytest.raises(TypeError, match=match):
+            _as_paths(arg, action="index R by")
+
+    def test_names_the_positions_for_a_caller_that_takes_them(self):
+        with pytest.raises(TypeError, match="it mixes paths with positions"):
+            _as_paths(("a", 0), action="index B by", positions=True)
+        with pytest.raises(TypeError, match="positions cannot be given as a list"):
+            _as_paths([0, 2], action="index B by", positions=True)
+        with pytest.raises(TypeError, match="a path, a list of paths, or a position"):
+            _as_paths({"a"}, action="index B by", positions=True)
+
+
+class TestPositions:
+    """An integer, a slice, or a non-empty tuple of indexers is a position of a batch."""
+
+    @pytest.mark.parametrize(
+        ("arg", "expected"),
+        [
+            (3, (3,)),
+            (slice(0, 2), (slice(0, 2),)),
+            ((1, slice(None)), (1, slice(None))),
+            (np.int64(2), (np.int64(2),)),
+            (None, (None,)),
+            (1.5, (1.5,)),
+        ],
+        ids=["int", "slice", "tuple", "numpy-int", "none", "float"],
+    )
+    def test_reads_anything_that_is_not_paths_as_one_indexer_per_axis(self, arg, expected):
+        # The batch checks each indexer against its axis, so it refuses None and 1.5.
+        assert _as_positions(arg) == expected
+
+    @pytest.mark.parametrize(
+        "arg",
+        ["a", ["a"], [0, 2], (), ("a", 0), {"a"}, iter([0])],
+        ids=["path", "list-of-paths", "list-of-positions", "empty", "mixed", "set", "iterator"],
+    )
+    def test_leaves_paths_and_refused_iterables_to_the_path_reader(self, arg):
+        assert _as_positions(arg) is None
+
+
+class TestPathArguments:
+    """Paths given one per argument follow the rules of a list of paths, apart from being empty."""
+
+    def test_reads_each_argument_as_one_path(self):
+        assert _as_path_arguments(("a", "g/c"), action="call without() with") == ("a", "g/c")
+        assert _as_path_arguments((), action="call without() with") == ()
+
+    def test_refuses_a_tuple_and_says_how_to_pass_the_paths(self):
+        with pytest.raises(TypeError, match="give each path as a separate argument"):
+            _as_path_arguments((("a", "g/e"),), action="call without() with")
+
+    @pytest.mark.parametrize(
+        ("arguments", "match"),
+        [
+            (("a", "a"), "it names the path 'a' twice"),
+            (("g", "g/c"), "the path 'g/c' is inside 'g'"),
+            (("g//c",), "has an empty name"),
+        ],
+    )
+    def test_refuses_what_a_list_of_paths_refuses(self, arguments, match):
+        with pytest.raises(ValueError, match=match):
+            _as_path_arguments(arguments, action="call without() with")
+
+    def test_one_path_argument_refuses_a_tuple(self):
+        assert _as_path("g/c", action="rename") == "g/c"
+        with pytest.raises(TypeError, match="a path must be a str, got tuple"):
+            _as_path(("g", "c"), action="rename")
+
+
+class TestJoinedPath:
+    """Separate segments, each a name or a path, spell one path joined with ``/``."""
+
+    @pytest.mark.parametrize("segments", [("g", "c"), ("g/c",)])
+    def test_joins_the_segments(self, segments):
+        assert _as_joined_path(segments, action="call at_path() with") == "g/c"
+
+    def test_refuses_a_tuple_of_segments(self):
+        with pytest.raises(TypeError, match="give each segment as a separate argument"):
+            _as_joined_path((("g", "c"),), action="call at_path() with")
+
+    @pytest.mark.parametrize(("segments", "match"), [((), "no path"), (("g", ""), "empty name")])
+    def test_refuses_no_segment_and_an_empty_name(self, segments, match):
+        with pytest.raises(ValueError, match=match):
+            _as_joined_path(segments, action="call at_path() with")

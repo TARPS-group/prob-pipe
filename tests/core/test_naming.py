@@ -724,7 +724,7 @@ class TestTheLabelsOfResults:
 
     def test_the_prior_predictive_keeps_the_models_label(self):
         """``marginal(model, "y")`` integrates ``mu`` out, which no route of this model does."""
-        expression = marginal._derived_expression({"d": _model(), "field": "y"})
+        expression = marginal._derived_expression({"d": _model(), "paths": "y"})
         assert expression.render_notation(Signature(("y",))) == "model(y)"
 
 

@@ -248,7 +248,7 @@ class InputSpec(Mapping[str, TermSpec]):
             )
         bindings: dict[str, int] = {}
         for name, spec in self._slots.items():
-            spec._bind_dims_from_value(value[name], bindings, f"InputSpec/{name}")
+            spec._bind_dims_from_value(value[name], bindings, f"InputSpec{_PATH_SEP}{name}")
         return self._substitute_dims(bindings)
 
     def bind_dims_from_spec(self, other: InputSpec) -> InputSpec:
@@ -263,7 +263,7 @@ class InputSpec(Mapping[str, TermSpec]):
             )
         bindings: dict[str, int] = {}
         for name, spec in self._slots.items():
-            _unify_specs(spec, other[name], bindings, f"InputSpec/{name}")
+            _unify_specs(spec, other[name], bindings, f"InputSpec{_PATH_SEP}{name}")
         return self._substitute_dims(bindings)
 
 

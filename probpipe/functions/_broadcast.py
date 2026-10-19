@@ -42,7 +42,7 @@ from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec
 from ..core._specs import OutputSpec
 from ..core.config import WorkflowKind, prefect_config
-from ..core.named_tree import _unflatten_paths
+from ..core.named_tree import _PATH_SEP, _unflatten_paths
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
@@ -604,7 +604,9 @@ def _batch_columns(atoms: Batch) -> dict[str, Any]:
 
 def _prefixed(prefix: str, columns: Mapping[str, Any]) -> dict[str, Any]:
     """*columns* keyed under *prefix*, an unnamed column taking *prefix* itself."""
-    return {f"{prefix}/{path}" if path else prefix: column for path, column in columns.items()}
+    return {
+        f"{prefix}{_PATH_SEP}{path}" if path else prefix: column for path, column in columns.items()
+    }
 
 
 def _validate_n_broadcast_samples(n_broadcast_samples: int) -> None:

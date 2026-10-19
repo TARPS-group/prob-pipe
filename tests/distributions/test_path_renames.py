@@ -527,13 +527,12 @@ class TestRenamedLawPaths:
         renamed = _GuardedMeanLaw().with_path_names(y="obs")
         assert _capability_guard(renamed, "_mean") == _GuardedMeanLaw.REJECTED
 
-    def test_the_marginal_guard_rejects_paths_whose_final_segments_collide(self):
+    def test_the_marginal_at_paths_that_share_a_last_name_keeps_both(self):
         renamed = _grouped_selection().with_path_names({"b/y": "b/x"})
-        report = _capability_guard(renamed, "_marginal", ("a/x", "b/x"))
-        assert report.feasible is False
-        assert "more than one path ends in 'x'" in report.description
-        with pytest.raises(ValueError, match="more than one path ends in 'x'"):
-            renamed._marginal(("a/x", "b/x"))
+        assert _capability_guard(renamed, "_marginal", ("b/x", "a/x")) == Feasibility(True)
+        marginal = renamed._marginal(("b/x", "a/x"))
+        assert list(marginal.event_spec.components) == list(renamed.event_spec.components)
+        assert marginal.event_spec.spec["b"].keys() == ("x",)
 
 
 class TestRenamedLawMoves:

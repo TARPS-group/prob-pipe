@@ -150,8 +150,8 @@ def _parent(*protocols: type, event_spec: OutputSpec = _EVENT) -> Distribution:
 class _UnguardedMarginalLaw(_Law, SupportsMarginals):
     """A law whose marginal at any path is a standard normal and has no guard.
 
-    The marginal at a tuple of paths is the product of standard normals named by
-    their final segments. Each path whose marginal is requested is recorded in
+    The marginal at a list of paths is the product of standard normals, one at
+    each path. Each path whose marginal is requested is recorded in
     ``marginal_calls``. With ``scores=False`` the marginal at a path is a law
     with no density instead. The law reports that its marginals claim the
     density when they score, or as ``reports`` states; each path whose report
@@ -179,10 +179,14 @@ class _UnguardedMarginalLaw(_Law, SupportsMarginals):
     def _marginal(self, path: str | tuple[str, ...]) -> Distribution:
         self.marginal_calls.append(path)
         if not isinstance(path, str):
-            components = [each.rsplit("/", 1)[-1] for each in path]
-            return FactoredDistribution(
-                [Normal(c, 0.0, 1.0) for c in components],
+            # Each normal moves out of the group "nodes", so each takes its path in
+            # the order of *path*, which is this law's order.
+            product = FactoredDistribution(
+                [Normal(f"node{index}", 0.0, 1.0) for index in range(len(path))],
                 label="marginal",
+            ).with_path_names({f"node{index}": f"nodes/node{index}" for index in range(len(path))})
+            return product.with_path_names(
+                {f"nodes/node{index}": each for index, each in enumerate(path)}
             )
         component = path.rsplit("/", 1)[-1]
         if self.scores:
@@ -586,15 +590,18 @@ class TestDeclaration:
         assert bound.parent.event_spec == parent.event_spec.with_dim_sizes(n=3)
 
 
+_MALFORMED_PATHS = [
+    pytest.param("", id="empty"),
+    pytest.param("/model", id="leading-separator"),
+    pytest.param("model/", id="trailing-separator"),
+    pytest.param("model//theta", id="empty-segment"),
+]
+
 _NOT_EVENT_PATHS = [
-    pytest.param(_EVENT, "", id="empty"),
     pytest.param(_EVENT, "z", id="unknown-component"),
     pytest.param(_EVENT, "theta", id="field-without-its-component"),
     pytest.param(_EVENT, "model/phi", id="unknown-field"),
     pytest.param(_EVENT, "y/0", id="below-a-leaf"),
-    pytest.param(_EVENT, "/model", id="leading-separator"),
-    pytest.param(_EVENT, "model/", id="trailing-separator"),
-    pytest.param(_EVENT, "model//theta", id="empty-segment"),
     pytest.param(_WHOLE, "beta", id="whole-term-field-without-its-component"),
     pytest.param(_WHOLE, "parameters/beta/0", id="below-a-whole-term-leaf"),
     pytest.param(OutputSpec(x=NumericArraySpec((3,))), "x/0", id="below-a-whole-array"),
@@ -606,6 +613,11 @@ class TestPaths:
     def test_a_path_that_is_not_an_event_path_raises_key_error(self, event_spec, path):
         with pytest.raises(KeyError):
             FieldView(_Law("parent", event_spec), path)
+
+    @pytest.mark.parametrize("path", _MALFORMED_PATHS)
+    def test_a_malformed_path_raises_value_error_before_any_lookup(self, path):
+        with pytest.raises(ValueError, match="has an empty name"):
+            FieldView(_Law("parent", _EVENT), path)
 
     @pytest.mark.parametrize(
         "make",
@@ -667,12 +679,16 @@ class TestIndexing:
         joined = FieldView(parent, "model")["model/theta/mu"]
         assert type(joined) is type(FieldView(parent, "model/theta/mu"))
 
-    @pytest.mark.parametrize(
-        "key", ["theta", "model/", "", "model/phi", "y", "model//theta", "model/theta/mu/0"]
-    )
+    @pytest.mark.parametrize("key", ["theta", "model/phi", "y", "model/theta/mu/0"])
     def test_a_key_that_is_not_an_event_path_of_the_view_raises_key_error(self, key):
         view = FieldView(_Law("parent", _EVENT), "model")
         with pytest.raises(KeyError):
+            view[key]
+
+    @pytest.mark.parametrize("key", ["model/", "", "model//theta"])
+    def test_a_malformed_key_raises_value_error(self, key):
+        view = FieldView(_Law("parent", _EVENT), "model")
+        with pytest.raises(ValueError, match="has an empty name"):
             view[key]
 
     def test_a_view_renamed_by_label_is_still_addressed_by_its_component(self):
@@ -685,63 +701,98 @@ class TestIndexing:
         with pytest.raises(KeyError):
             view["y"]
 
-    def test_a_selection_of_several_paths_exposes_a_record_of_them_in_order(self):
+    def test_a_list_of_paths_of_a_view_keeps_the_paths_of_the_view(self):
         view = FieldView(_Law("parent", _EVENT), "model/theta")
         selection = view[("theta/tau", "theta/mu")]
         assert selection.event_spec.exposes_record
-        assert list(selection.event_spec.components) == ["tau", "mu"]
-        assert selection.event_spec.spec == RecordSpec(tau=(2,), mu=_REAL)
+        assert list(selection.event_spec.components) == ["theta"]
+        # The view's order, whatever the order of the list.
+        assert selection.event_spec.spec == RecordSpec(theta=RecordSpec(mu=_REAL, tau=(2,)))
 
-    def test_a_selection_whose_final_segments_collide_raises_value_error(self):
+    def test_a_list_of_paths_whose_last_names_collide_keeps_both(self):
         twins = RecordSpec(g=RecordSpec(a=RecordSpec(x=()), b=RecordSpec(x=())))
         view = FieldView(_Law("parent", OutputSpec(twins)), "g")
-        with pytest.raises(ValueError):
-            view[("g/a/x", "g/b/x")]
+        selection = view[("g/a/x", "g/b/x")]
+        assert selection.event_spec.spec == twins
 
-    def test_a_selection_keeps_its_parent_label_and_reads_its_parent_at_them(self):
+    def test_a_list_of_paths_reads_its_parent_at_them_under_the_view_label(self):
         parent = _Law("parent", _EVENT)
-        selection = FieldView(parent, "model/theta")[("theta/tau", "theta/mu")]
+        selection = FieldView(parent, ("y", "model/theta/tau", "model/theta/mu"))
         assert selection.parent is parent
-        assert selection.path == ("model/theta/tau", "model/theta/mu")
+        assert selection.path == ("model/theta/mu", "model/theta/tau", "y")  # the parent's order
         assert selection.label == "parent"
+        assert selection.event_spec == OutputSpec(
+            RecordSpec(model=RecordSpec(theta=RecordSpec(mu=_REAL, tau=(2,))), y=(3,))
+        )
 
-    def test_a_selection_of_one_path_exposes_a_record_of_one_field(self):
+    def test_a_list_of_one_path_exposes_a_record_of_one_field(self):
         selection = FieldView(_Law("parent", _EVENT), ("model/theta",))
-        assert selection.event_spec == OutputSpec(RecordSpec(theta=RecordSpec(mu=_REAL, tau=(2,))))
+        assert selection.event_spec == OutputSpec(
+            RecordSpec(model=RecordSpec(theta=RecordSpec(mu=_REAL, tau=(2,))))
+        )
+        assert FieldView(_Law("parent", _EVENT), ["model/theta"]).event_spec == (
+            selection.event_spec
+        )
 
     @pytest.mark.parametrize(
         ("key", "path"),
         [
-            ("theta/mu", "model/theta/mu"),
-            ("theta", "model/theta"),
-            (("theta/tau", "y"), ("model/theta/tau", "y")),
+            ("model/theta/mu", "model/theta/mu"),
+            ("model/theta", "model/theta"),
+            (("model/theta/tau", "y"), ("model/theta/tau", "y")),
         ],
     )
-    def test_a_key_of_a_selection_is_the_parent_view_at_the_node_path(self, key, path):
+    def test_a_key_of_a_list_view_is_the_parent_view_at_the_same_path(self, key, path):
         parent = _Law("parent", _EVENT)
         view = FieldView(parent, ("model/theta", "y"))[key]
         assert view.parent is parent
         assert view.path == path
 
-    @pytest.mark.parametrize("key", [("theta/mu", 3), ("theta/phi",), 3])
-    def test_a_key_that_is_not_a_selection_of_view_paths_raises_key_error(self, key):
+    def test_a_group_the_list_cut_down_is_a_view_of_the_list_view(self):
+        parent = _Law("parent", _EVENT)
+        selection = FieldView(parent, ("model/theta/mu", "y"))
+        group = selection["model"]
+        assert group.parent is selection
+        assert group.event_spec == OutputSpec(model=RecordSpec(theta=RecordSpec(mu=_REAL)))
+
+    @pytest.mark.parametrize("key", [("theta/phi",), "theta/phi"])
+    def test_a_key_that_is_not_a_path_of_the_view_raises_key_error(self, key):
         view = FieldView(_Law("parent", _EVENT), "model/theta")
         with pytest.raises(KeyError):
             view[key]
 
-    def test_an_empty_selection_raises_value_error(self):
+    @pytest.mark.parametrize("key", [("theta/mu", 3), 3])
+    def test_a_key_that_holds_a_position_raises_type_error(self, key):
+        view = FieldView(_Law("parent", _EVENT), "model/theta")
+        with pytest.raises(TypeError):
+            view[key]
+
+    def test_an_empty_list_of_paths_raises_value_error(self):
         """An empty tuple is malformed rather than an unknown path."""
         parent = _Law("parent", _EVENT)
-        with pytest.raises(ValueError, match="select at least one field path"):
+        with pytest.raises(ValueError, match="it names no paths"):
             FieldView(parent, ())
-        with pytest.raises(ValueError, match="select at least one field path"):
+        with pytest.raises(ValueError, match="it names no paths"):
             parent[()]
-        with pytest.raises(ValueError, match="select at least one field path"):
+        with pytest.raises(ValueError, match="it names no paths"):
+            parent[[]]
+        with pytest.raises(ValueError, match="it names no paths"):
             FieldView(parent, "model/theta")[()]
 
-    @pytest.mark.parametrize("path", [["y"], ("y", 0), 0])
-    def test_a_path_that_is_neither_a_string_nor_a_tuple_of_them_raises_type_error(self, path):
-        with pytest.raises((TypeError, AttributeError)):
+    @pytest.mark.parametrize(
+        ("key", "match"),
+        [
+            (("y", "y"), "names the path 'y' twice"),
+            (("model", "model/theta"), "the path 'model/theta' is inside 'model'"),
+        ],
+    )
+    def test_a_repeated_or_nested_path_raises_value_error(self, key, match):
+        with pytest.raises(ValueError, match=match):
+            _Law("parent", _EVENT)[key]
+
+    @pytest.mark.parametrize("path", [("y", 0), 0, {"y"}, None])
+    def test_a_path_that_is_neither_a_string_nor_a_list_of_them_raises_type_error(self, path):
+        with pytest.raises(TypeError):
             FieldView(_Law("parent", _EVENT), path)
 
     def test_indexing_an_exposed_record_returns_a_field_view(self):
@@ -989,13 +1040,12 @@ class TestGuards:
         view = FieldView(_MarginalLaw("parent", _EVENT), "model/theta")
         report = _capability_guard(view, "_marginal", path)
         assert report.feasible is False
-        assert "not an event path of the view" in report.description
+        assert "is not an event path of 'parent'" in report.description
 
-    def test_the_marginal_guard_rejects_paths_that_share_a_final_segment(self):
+    def test_the_marginal_guard_admits_paths_that_share_a_last_name(self):
         twins = RecordSpec(g=RecordSpec(a=RecordSpec(x=()), b=RecordSpec(x=())))
         view = FieldView(_MarginalLaw("parent", OutputSpec(twins)), "g")
-        assert _capability_guard(view, "_marginal", ("g/a/x", "g/b/x")).feasible is False
-        assert _capability_guard(view, "_marginal", ()).feasible is False
+        assert _capability_guard(view, "_marginal", ("g/a/x", "g/b/x")).feasible is True
 
     def test_the_density_guard_of_a_selection_is_the_parent_marginal_guard_at_its_paths(self):
         rejected = Feasibility(False, "the pair has no closed form")
@@ -1177,7 +1227,7 @@ class TestDerivedBehavior:
         parent = Normal("a", 0.0, 1.0) * Normal("b", 2.0, 3.0) * Normal("c", 0.0, 1.0)
         draws = FieldView(parent, ("c", "b"))._sample(key, (3,))
         parent_draws = parent._sample(key, (3,))
-        assert isinstance(draws, dict) and list(draws) == ["c", "b"]
+        assert isinstance(draws, dict) and list(draws) == ["b", "c"]  # the parent's order
         assert jnp.array_equal(draws["c"], parent_draws["c"])
         assert jnp.array_equal(draws["b"], parent_draws["b"])
 
@@ -1327,9 +1377,9 @@ class TestNotation:
     def test_a_view_of_a_nested_path_reads_by_the_final_segment(self):
         assert FieldView(_Law("parent", _EVENT), "model/theta").notation == "parent(theta)"
 
-    def test_a_selection_reads_by_its_components_in_order(self):
+    def test_a_list_of_paths_reads_by_its_components_in_the_parent_order(self):
         view = FieldView(_Law("parent", _EVENT), ("y", "model/theta"))
-        assert view.notation == "parent(y, theta)"
+        assert view.notation == "parent(model, y)"
 
     def test_a_view_of_an_unlabeled_product_groups_its_label(self):
         assert _dependent_joint()["y"].notation == "(likelihood·beta)(y)"
@@ -1378,7 +1428,7 @@ class TestNotation:
         ("paths", "label", "notation"),
         [
             pytest.param(("a", "b"), "a·b", "a(a)·b(b)", id="declaration-order"),
-            pytest.param(("b", "a"), "b·a", "b(b)·a(a)", id="selection-order"),
+            pytest.param(("b", "a"), "a·b", "a(a)·b(b)", id="another-order"),
         ],
     )
     def test_a_view_of_several_whole_factors_displays_factor_by_factor(
@@ -1393,8 +1443,8 @@ class TestNotation:
         assert (view.label, view.notation) == (detached.label, detached.notation)
         assert (view.label, view.notation) == (label, notation)
 
-    def test_a_selection_no_product_can_order_displays_by_its_joined_label(self):
-        """``lik`` conditions on ``mu``, so no product lists ``prior`` first."""
+    def test_a_list_of_dependent_factors_displays_in_the_joint_order(self):
+        """``lik`` conditions on ``mu``, and the joint lists ``lik`` first."""
         model = (
             _Kernel(
                 {"mu": _REAL},
@@ -1405,7 +1455,7 @@ class TestNotation:
         ).with_label("model")
         view, detached = model[("mu", "y")], marginal(model, ("mu", "y"))
         assert (view.label, view.notation) == (detached.label, detached.notation)
-        assert view.notation == "(lik·prior)(mu, y)"
+        assert view.notation == "lik(y | mu)·prior(mu)"
 
     def test_a_view_at_part_of_a_factor_keeps_its_parents_label(self):
         atoms = NumericRecordBatch(
@@ -1517,86 +1567,101 @@ class TestTheRawFormOfAView:
 
 
 class TestSelections:
-    """A selection's capabilities read the parent at every selected node, in order."""
+    """A view at a list of paths reads the parent at every node, each node at its own path."""
 
     _PATHS = ("y", "model/theta")
 
-    def test_a_selection_co_samples_the_mapping_of_its_nodes(self, key):
+    def test_a_list_view_co_samples_the_nested_mapping_of_its_nodes(self, key):
         parent = _NumericLaw("parent")
         draw = parent._sample(key)
         selected = FieldView(parent, self._PATHS)._sample(key)
-        assert isinstance(selected, dict) and isinstance(selected["theta"], dict)
-        assert list(selected) == ["y", "theta"]
+        assert isinstance(selected, dict) and isinstance(selected["model"]["theta"], dict)
+        assert list(selected) == ["model", "y"]  # the parent's order
         assert jnp.array_equal(selected["y"], draw["y"])
-        assert jnp.array_equal(selected["theta"]["tau"], draw["model/theta/tau"])
+        assert jnp.array_equal(selected["model"]["theta"]["tau"], draw["model/theta/tau"])
 
     def test_the_declaration_admits_a_selection_draw(self, key):
         selection = FieldView(_NumericLaw("parent"), self._PATHS)
         assert selection.event_spec.spec.is_valid(selection._sample(key))
 
-    def test_a_batched_selection_draw_is_the_mapping_of_the_parent_columns(self, key):
+    def test_a_batched_list_view_draw_is_the_nested_mapping_of_the_parent_columns(self, key):
         parent = _NumericLaw("parent")
         draws = FieldView(parent, self._PATHS)._sample(key, (4,))
         parent_draws = parent._sample(key, (4,))
         assert isinstance(draws, dict)
-        assert list(draws) == ["y", "theta"] and list(draws["theta"]) == ["mu", "tau"]
-        assert jnp.array_equal(draws["theta"]["mu"], parent_draws["model/theta/mu"])
+        assert list(draws) == ["model", "y"]
+        assert list(draws["model"]["theta"]) == ["mu", "tau"]
+        assert jnp.array_equal(draws["model"]["theta"]["mu"], parent_draws["model/theta/mu"])
         assert jnp.array_equal(draws["y"], parent_draws["y"])
 
-    def test_the_moments_of_a_selection_are_mappings_of_the_parent_moments(self):
+    def test_the_moments_of_a_list_view_are_nested_mappings_of_the_parent_moments(self):
         selection = FieldView(_NumericLaw("parent"), self._PATHS)
         mean, variance = selection._mean(), selection._variance()
         assert isinstance(mean, dict) and isinstance(variance, dict)
         assert jnp.allclose(mean["y"], jnp.array([3.0, 4.0, 5.0]))
-        assert jnp.allclose(mean["theta"]["tau"], jnp.array([1.0, 2.0]))
-        assert jnp.allclose(variance["theta"]["mu"], _FLAT_COV[0, 0])
+        assert jnp.allclose(mean["model"]["theta"]["tau"], jnp.array([1.0, 2.0]))
+        assert jnp.allclose(variance["model"]["theta"]["mu"], _FLAT_COV[0, 0])
 
-    def test_the_covariance_of_a_selection_keeps_the_selection_order(self):
+    def test_the_covariance_of_a_list_view_follows_the_parent_order(self):
         cov = FieldView(_NumericLaw("parent"), ("y", "model/theta/mu"))._cov()
-        index = jnp.array([3, 4, 5, 0])
+        index = jnp.array([0, 3, 4, 5])
         assert cov.shape == (4, 4)
         assert jnp.allclose(cov.to_dense(), _FLAT_COV[index][:, index])
 
-    def test_the_quantiles_of_a_selection_are_the_mapping_of_its_nodes_in_order(self):
+    def test_the_quantiles_of_a_list_view_keep_each_node_at_its_path(self):
         levels = jnp.array([0.25, 0.5])
         quantiles = FieldView(_NumericLaw("parent"), ("y", "model/theta/mu"))._quantile(levels)
-        assert list(quantiles) == ["y", "mu"]
+        assert list(quantiles) == ["model", "y"]
         assert jnp.allclose(quantiles["y"], levels[:, None] + jnp.array([3.0, 4.0, 5.0]))
-        assert jnp.allclose(quantiles["mu"], levels)
+        assert jnp.allclose(quantiles["model"]["theta"]["mu"], levels)
 
     def test_the_expectation_of_a_selection_integrates_the_record_of_its_nodes(self):
         selection = FieldView(_FiniteLaw("parent"), ("b", "a"))
         expectation = selection._expectation(lambda record: record["b"] - record["a"])
         assert jnp.allclose(expectation, 0.25 * (1.0 - 0.0) + 0.75 * (3.0 - 1.0))
 
-    def test_the_density_of_a_selection_is_the_parent_marginal_density_at_its_paths(self):
+    def test_the_density_of_a_list_view_is_the_parent_marginal_density_at_its_paths(self):
         parent = _UnguardedMarginalLaw("parent", OutputSpec(RecordSpec(a=_REAL, b=_REAL)))
         density = FieldView(parent, ("b", "a"))._log_prob({"b": 0.5, "a": -1.0})
         standard = Normal("x", 0.0, 1.0)
-        assert parent.marginal_calls == [("b", "a")]
+        assert parent.marginal_calls == [("a", "b")]
         assert jnp.allclose(density, standard._log_prob(0.5) + standard._log_prob(-1.0))
 
-    def test_the_marginal_at_a_selection_path_is_the_parent_marginal_at_the_node_path(self):
+    def test_the_marginal_at_a_path_of_a_list_view_is_the_parent_marginal_there(self):
         parent = _UnguardedMarginalLaw("parent", _EVENT)
-        marginal = FieldView(parent, self._PATHS)._marginal("theta/mu")
+        marginal = FieldView(parent, self._PATHS)._marginal("model/theta/mu")
         assert parent.marginal_calls == ["model/theta/mu"]
         assert list(marginal.event_spec.components) == ["mu"]
 
-    def test_the_marginal_at_several_selection_paths_is_the_parent_marginal_at_theirs(self):
+    def test_the_marginal_at_paths_of_a_list_view_is_the_parent_marginal_at_them(self):
         parent = _UnguardedMarginalLaw("parent", _EVENT)
-        marginal = FieldView(parent, self._PATHS)._marginal(("theta/mu", "y"))
+        marginal = FieldView(parent, self._PATHS)._marginal(("y", "model/theta/mu"))
         assert parent.marginal_calls == [("model/theta/mu", "y")]
-        assert list(marginal.event_spec.components) == ["mu", "y"]
+        assert list(marginal.event_spec.components) == ["model", "y"]
 
-    def test_conditioning_a_selection_drops_a_node_the_given_covers(self):
+    def test_the_marginal_at_a_group_the_list_cut_down_takes_the_group(self):
+        joint = Normal("a", 0.0, 1.0) * Normal("c", 0.0, 1.0) * Normal("e", 0.0, 2.0)
+        grouped = joint.with_path_names({"c": "g/c", "e": "g/e"})
+        group = FieldView(grouped, ("a", "g/e"))._marginal("g")
+        assert group.event_spec == OutputSpec(g=RecordSpec(e=_REAL))
+        assert jnp.allclose(group._variance()["e"], 4.0)
+
+    def test_conditioning_a_list_view_drops_a_node_the_given_covers(self):
         parent = _ConditioningLaw("parent", _EVENT)
         conditioned = FieldView(parent, ("model/theta/tau", "y"))._condition_on(
-            {"tau": jnp.zeros(2)}
+            {"model/theta/tau": jnp.zeros(2)}
         )
         assert [set(given) for given in parent.given_calls] == [{"model/theta/tau"}]
         assert isinstance(conditioned, FieldView)
         assert conditioned.path == ("y",)
         assert conditioned.event_spec == OutputSpec(RecordSpec(y=(3,)))
+
+    def test_conditioning_at_a_group_the_list_cut_down_conditions_its_selected_paths(self):
+        parent = _ConditioningLaw("parent", _EVENT)
+        FieldView(parent, ("model/theta/tau", "y"))._condition_on(
+            {"model": {"theta": {"tau": jnp.zeros(2)}}}
+        )
+        assert [set(given) for given in parent.given_calls] == [{"model/theta/tau"}]
 
     def test_a_selection_round_trips_through_pickle(self):
         selection = FieldView(_product(), ("b", "a"))

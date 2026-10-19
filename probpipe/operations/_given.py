@@ -10,6 +10,7 @@ import numpy as np
 from ..core._dispatch import Feasibility
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec, OpaqueSpec, TermSpec, _unify_specs
+from ..core.named_tree import _PATH_SEP
 from ..core.record import Record
 from ..distributions._capabilities import (
     _CONDITIONAL_TWINS,
@@ -44,7 +45,9 @@ def _bind_given_dims_from_spec(
         if expected.children.keys() != actual.children.keys():
             _unify_specs(expected, actual, bindings, path)
         for name, spec in expected.children.items():
-            _bind_given_dims_from_spec(spec, actual.children[name], bindings, f"{path}/{name}")
+            _bind_given_dims_from_spec(
+                spec, actual.children[name], bindings, f"{path}{_PATH_SEP}{name}"
+            )
         return
     _unify_specs(expected, actual, bindings, path)
 
@@ -57,7 +60,9 @@ def _bind_given_dims_from_value(
         children = value.children if isinstance(value, Record) else value
         if isinstance(children, Mapping) and expected.children.keys() == children.keys():
             for name, spec in expected.children.items():
-                _bind_given_dims_from_value(spec, children[name], bindings, f"{path}/{name}")
+                _bind_given_dims_from_value(
+                    spec, children[name], bindings, f"{path}{_PATH_SEP}{name}"
+                )
             return
     if isinstance(expected, NumericArraySpec) and isinstance(value, (list, tuple)):
         value = np.asarray(value)
@@ -162,11 +167,11 @@ class _GivenLaw(Distribution):
             for name, value in values.items():
                 if isinstance(value, StandIn):
                     _bind_given_dims_from_spec(
-                        kernel.given_spec[name], value.spec, bindings, f"given/{name}"
+                        kernel.given_spec[name], value.spec, bindings, f"given{_PATH_SEP}{name}"
                     )
                 else:
                     _bind_given_dims_from_value(
-                        kernel.given_spec[name], value, bindings, f"given/{name}"
+                        kernel.given_spec[name], value, bindings, f"given{_PATH_SEP}{name}"
                     )
         except (TypeError, ValueError) as error:
             raise ApplicabilityError(f"given for {kernel.label!r}: {error}") from None

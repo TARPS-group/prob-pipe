@@ -723,14 +723,16 @@ class TestTheLabelFirstFormIsRefusedWithAHint:
             FunctionBatch("ab", "m")
 
 
-class TestFieldKeys:
-    def test_these_elements_have_no_fields(self, functions):
-        with pytest.raises(TypeError, match="its elements have no named fields"):
+class TestPaths:
+    def test_a_batch_of_functions_is_indexed_by_position_only(self, functions):
+        with pytest.raises(TypeError, match="indexed by position only"):
             functions["anything"]
 
-    def test_the_message_names_the_concrete_class(self, labels):
-        with pytest.raises(TypeError, match="cannot index OpaqueBatch by"):
+    def test_opaque_elements_have_no_paths(self, labels):
+        with pytest.raises(KeyError, match="cannot index OpaqueBatch by 'anything'"):
             labels["anything"]
+        assert "anything" not in labels
+        assert "north" not in labels  # membership never tests the elements
 
 
 class TestRoundTrips:

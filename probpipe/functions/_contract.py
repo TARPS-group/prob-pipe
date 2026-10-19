@@ -7,6 +7,7 @@ from typing import Any
 
 from ..core._spec_base import _unify_specs
 from ..core._specs import InputSpec, TermSpec
+from ..core.named_tree import _PATH_SEP
 from ._call import ApplicabilityError
 
 
@@ -74,7 +75,7 @@ def _bind_planned_function_inputs(
     bindings: dict[str, int] = {}
     try:
         for name, expected in input_spec.items():
-            path = f"{context}/{name}"
+            path = f"{context}{_PATH_SEP}{name}"
             if name in lifted_names:
                 actual = _lifted_element_spec(
                     values[name], expected=expected, function_name=function_name, name=name

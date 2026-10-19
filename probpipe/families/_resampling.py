@@ -45,7 +45,7 @@ from ..core._repr import format_value, type_name
 from ..core._spec_base import NumericArraySpec, TermSpec
 from ..core._specs import OutputSpec, _check_component_name
 from ..core.constraints import real
-from ..core.named_tree import _unflatten_paths
+from ..core.named_tree import _PATH_SEP, _unflatten_paths
 from ..distributions._capabilities import (
     SupportsCovariance,
     SupportsLogProb,
@@ -77,8 +77,6 @@ __all__ = [
     "KDEDistribution",
     "SmoothingKernel",
 ]
-
-_PATH_SEP = "/"
 
 
 class _BankNames(NamedTuple):

@@ -55,9 +55,17 @@ from ._array_backend import (
 from ._expression import Named
 from ._record_spec import _unify_record_spec_with_value
 from ._repr import format_names, public_class_name, term_repr, type_name
+from ._shapes import _as_path_arguments
 from ._spec_base import OpaqueSpec, _full_array_shape_or_none
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
-from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_paths
+from .named_tree import (
+    _PATH_SEP,
+    NamedTree,
+    _check_no_path_sep,
+    _keyed_paths,
+    _paths_label,
+    _unflatten_paths,
+)
 from .provenance import Provenance
 from .tracked import (
     _NO_DESCRIPTION,
@@ -207,12 +215,11 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     **A named collection of values.** A ``Record`` is a
     :class:`~probpipe.core.named_tree.NamedTree`, so it inherits a
     mapping/dictionary-like interface over the fields it stores: a field is accessed as
-    ``record["a"]``, and a nested field as ``record["a/b/c"]`` or
-    ``record["a", "b", "c"]``. In effect a record behaves like an ordered ``dict`` keyed
-    by the unique ``/``-path to each field — ``len(record)`` is the number of fields,
-    ``"a/b/c" in record`` tests membership, and ``record.keys()`` / ``record.values()``
-    / ``record.items()`` iterate the paths / field values / pairs. The canonical field
-    order is depth-first in insertion order. An empty record requires an explicit root label. ::
+    ``record["a"]``, and a nested field by its path, ``record["a/b/c"]``.
+    ``len(record)`` is the number of fields, and ``record.keys()`` /
+    ``record.values()`` / ``record.items()`` iterate the paths / field values / pairs.
+    The canonical field order is depth-first in insertion order. An empty record
+    requires an explicit root label. ::
 
         r = Record(
             {
@@ -225,28 +232,29 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             label="r",
         )
         r["x"]  # 1.5
-        r["y/a"]  # 0.0   — a nested leaf, by /-path ...
-        r["y", "a"]  # 0.0   — ... or by tuple
+        r["y/a"]  # 0.0   — a nested leaf, by its path
         len(r)  # 3
-        "y/a" in r  # True
         list(r.keys())  # ['x', 'y/a', 'y/b']
 
     **Tree structure.** A ``Record`` can equally be viewed as a tree, with the fields at
-    its leaves. The *only* allowed internal node is a nested ``Record``; every
-    other value is interpreted as a leaf. Names are unique within each node, so
-    every field has a unique ``/``-path. The structure of a field
-    ``record[key]`` is described by the matching spec
-    ``record.event_template[key]``. Any node — leaf or interior — is reachable
-    with ``record.at_path(path)``, which returns a field for a leaf path and a
-    sub-``Record`` for an interior one. Plain indexing ``record[key]`` is
-    reserved for fields and raises if *key* points to an interior node (use
-    :meth:`at_path` for that); :attr:`children` gives the one-level
-    ``name -> child`` view. ::
+    its leaves. The *only* allowed internal node is a nested ``Record``, a
+    **group**; every other value is interpreted as a leaf. Names are unique within
+    each node, so every node has a unique ``/``-path. The structure of the node
+    ``record[path]`` is described by the matching spec
+    ``record.event_template[path]``. ``[]`` takes a path or a list of paths: one
+    path gives the node there, a field's value or a group's record, and a list or
+    a tuple of paths gives the record cut down to those nodes, each at its own
+    path and in this record's order, labeled by the paths. ``p in record`` is true
+    when ``record[p]`` gives a node, so it holds for a group, which ``keys()``
+    does not list. :attr:`children` gives the one-level ``name -> child``
+    view. ::
 
-        r.at_path("y")    # Record(a=0.0, b=2.0)  — interior node
-        r.at_path("y/a")  # 0.0                   — leaf
+        r["y"]            # Record(a=0.0, b=2.0)  — a group
+        r["y"]["a"]       # 0.0, the same node as r["y/a"]
+        r["x", "y/b"]     # Record {x, y: {b}}, labeled "(x, y/b)"
+        r[["y"]]          # Record {y: {a, b}}: a list of one path keeps the name
+        "y" in r          # True
         dict(r.children)  # {'x': 1.5, 'y': Record(a=0.0, b=2.0)}
-        r["y"]            # KeyError: 'y' is a subtree — use at_path()
 
     **Structure encoded by the event template.** :attr:`event_template` always reflects
     the structure of the stored value. Because a :class:`RecordSpec` is itself a
@@ -259,8 +267,8 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         # NumericRecordSpec(x=(), y=NumericRecordSpec(a=(), b=()))
         r.event_template["y/a"]  # NumericArraySpec(shape=())  — the spec for r["y/a"]
 
-        # A record's subtree and its template's subtree stay in lock-step:
-        r.at_path("y").event_template == r.event_template.at_path("y")  # True
+        # A record's group and its template's group stay in lock-step:
+        r["y"].event_template == r.event_template["y"]  # True
 
         # Each field value maps to a value spec by type:
         Record(
@@ -802,14 +810,14 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     # -- Selection ----------------------------------------------------------
 
-    def select(self, *fields: str, **mapping: str) -> dict[str, _FieldValue]:
-        """Select fields into a plain ``dict``, for splatting into function calls.
+    def select(self, *paths: str, **mapping: str) -> dict[str, _FieldValue]:
+        """The nodes at *paths* in a plain ``dict``, keyed for splatting into a call.
 
-        Positional arguments use the field path as the key (identity mapping);
-        keyword arguments remap (``select(x="r")`` → ``{"x": self["r"]}``). Each
-        argument is resolved with :meth:`at_path`, so a key reaches a leaf value
-        and a partial path reaches a subtree. Returns a value-only ``dict``; it is
-        not a ``Record`` and carries no schema.
+        A positional path is keyed by its last name, so ``select("a", "g/c")``
+        gives ``{"a": self["a"], "c": self["g/c"]}``, and a keyword names the
+        key, so ``select(x="g/c")`` gives ``{"x": self["g/c"]}``. A path to a
+        group gives the group's record. The result is a value-only ``dict``,
+        not a ``Record``, and carries no schema.
 
         Usage::
 
@@ -818,27 +826,32 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
         Parameters
         ----------
-        *fields : str
-            Paths to select, each keyed by itself in the result.
+        *paths : str
+            Paths to select, each keyed by its last name in the result.
         **mapping : str
             Paths to select, each keyed by its keyword in the result.
 
         Returns
         -------
         dict of str to Any
-            The field or subtree at each path, with the positional selections first.
+            The node at each path, the positional paths first.
 
         Raises
         ------
         KeyError
-            If a requested path is not present.
+            If a path is not a path of this record.
+        TypeError
+            If a path is not a string.
+        ValueError
+            If a path is empty or has an empty name, or two entries would take
+            the same key, as ``select("s1/theta", "s2/theta")`` would.
         """
-        result: dict[str, _FieldValue] = {}
-        for f in fields:
-            result[f] = self.at_path(f)
-        for arg_name, field_path in mapping.items():
-            result[arg_name] = self.at_path(field_path)
-        return result
+        return {key: self[path] for key, path in _keyed_paths(paths, mapping).items()}
+
+    def _at_paths(self, paths: tuple[str, ...]) -> Record:
+        """This record cut down to the nodes at *paths*, labeled by the paths in its order."""
+        ordered = self._ordered_paths(paths)
+        return super()._at_paths(paths)._with_label(_paths_label(ordered))
 
     def select_all(self) -> dict[str, _FieldValue]:
         """Return every top-level field as a ``dict``, for splatting into a call.
@@ -882,21 +895,41 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         )
 
     def without(self, *paths: str) -> Record:
-        """Return a new Record without the fields/subtrees at *paths*.
+        """Return a new Record without the fields and groups at *paths*.
 
         The structural contract is :meth:`NamedTree.without`. Surviving fields
         keep their order and their authoritative specs; an untouched child is
-        reused verbatim (class and metadata preserved), and a subtree a path
+        reused verbatim (class and metadata preserved), and a group a path
         reaches into is edited recursively. Dropping every leaf under a child
         prunes that child entirely.
+
+        Parameters
+        ----------
+        *paths : str
+            One path per argument.
+
+        Returns
+        -------
+        Record
+            The record without those nodes, under this record's label.
+
+        Raises
+        ------
+        KeyError
+            If a path is not a path of this record.
+        TypeError
+            If a path is not a string, such as a tuple of paths.
+        ValueError
+            If a path is empty or has an empty name, the paths name a path
+            twice or a path inside another, or every field would be removed.
         """
-        norms = [self._norm_path(p) for p in paths]
-        for p in norms:
-            self._node_at(p)  # KeyError if the path does not exist
-        full_drops = {p for p in norms if _PATH_SEP not in p}
+        paths = _as_path_arguments(paths, action="call without() with")
+        for path in paths:
+            self._existing_node_at(path)
+        full_drops = {path for path in paths if _PATH_SEP not in path}
         sub_drops: dict[str, list[str]] = {}
-        for p in norms:
-            head, sep, rest = p.partition(_PATH_SEP)
+        for path in paths:
+            head, sep, rest = path.partition(_PATH_SEP)
             if sep:
                 sub_drops.setdefault(head, []).append(rest)
 
@@ -910,7 +943,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 new_children[name] = child
                 specs[name] = self._child_spec(name, child)
                 continue
-            # ``at_path`` above guarantees ``child`` is an interior Record here.
+            # The path check above guarantees ``child`` is a group here.
             remaining = [
                 k
                 for k in child
@@ -975,22 +1008,12 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         resolved = self._resolve_replace_updates(_updates, updates)
         if not resolved:
             return self
-        norms = {self._norm_path(p): v for p, v in resolved.items()}
-        for p in norms:
-            self.at_path(p)  # KeyError if the path does not exist
-        full_updates = {p: v for p, v in norms.items() if _PATH_SEP not in p}
+        full_updates = {path: value for path, value in resolved.items() if _PATH_SEP not in path}
         sub_updates: dict[str, dict[str, Any]] = {}
-        for p, v in norms.items():
-            head, sep, rest = p.partition(_PATH_SEP)
+        for path, value in resolved.items():
+            head, sep, rest = path.partition(_PATH_SEP)
             if sep:
-                sub_updates.setdefault(head, {})[rest] = v
-        overlap = sorted(set(full_updates) & set(sub_updates))
-        if overlap:
-            inner = f"{overlap[0]}{_PATH_SEP}{next(iter(sub_updates[overlap[0]]))}"
-            raise ValueError(
-                f"replace() got both {overlap[0]!r} and the path {inner!r} inside it; "
-                f"update {overlap[0]!r} only once"
-            )
+                sub_updates.setdefault(head, {})[rest] = value
 
         new_children: dict[str, Any] = {}
         specs: dict[str, Any] = {}
@@ -1000,7 +1023,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 new_children[name] = value
                 specs[name] = self._spec_of(value)
             elif name in sub_updates:
-                # ``at_path`` above guarantees ``child`` is an interior Record.
+                # The path check above guarantees ``child`` is a group.
                 edited = child.replace(sub_updates[name])
                 new_children[name] = edited
                 specs[name] = edited.event_template

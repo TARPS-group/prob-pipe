@@ -298,9 +298,29 @@ class TestLeafKeyedFieldColumns:
         np.testing.assert_array_equal(np.asarray(batch["outer/a"]), np.asarray([0.0, 1.0, 2.0]))
         np.testing.assert_array_equal(np.asarray(batch["outer/b"]), np.asarray([0.0, 2.0, 4.0]))
 
-    def test_a_tuple_path_reaches_the_same_column(self):
+    def test_a_tuple_of_paths_cuts_every_element_down(self):
         batch = nested_batch()
-        np.testing.assert_array_equal(np.asarray(batch["outer", "a"]), np.asarray(batch["outer/a"]))
+        cut = batch["m", "outer/a"]
+        assert isinstance(cut, NumericRecordBatch)
+        assert tuple(cut.event_template.keys()) == ("outer/a", "m")  # the elements' order
+        assert cut.label == "(outer/a, m)"
+        assert cut.level_names == batch.level_names
+        np.testing.assert_array_equal(np.asarray(cut["outer/a"]), np.asarray(batch["outer/a"]))
+
+    def test_a_list_of_one_group_keeps_its_name(self):
+        batch = nested_batch()
+        assert tuple(batch[["outer"]].event_template.keys()) == ("outer/a", "outer/b")
+
+    def test_positions_and_paths_commute(self):
+        batch = nested_batch()
+        assert batch[1]["outer"] == batch["outer"][1]
+        assert batch[1]["outer/a", "m"] == batch["outer/a", "m"][1]
+
+    def test_membership_tests_the_elements_paths(self):
+        batch = nested_batch()
+        assert "outer" in batch and "outer/a" in batch and "m" in batch
+        assert "nope" not in batch
+        assert ("outer", "a") not in batch
 
     def test_an_interior_path_yields_a_sub_batch(self):
         batch = nested_batch()
@@ -353,8 +373,8 @@ class TestLeafKeyedFieldColumns:
         np.testing.assert_array_equal(np.asarray(batch["a"]["c"]), np.asarray([0.0, 0.0]))
         np.testing.assert_array_equal(np.asarray(batch["b"]["c"]), np.asarray([1.0, 1.0]))
 
-    def test_an_unknown_path_names_the_fields_there_are(self):
-        with pytest.raises(KeyError, match=r"unknown field 'nope'; available fields"):
+    def test_an_unknown_path_names_the_paths_there_are(self):
+        with pytest.raises(KeyError, match=r"unknown path 'nope'; available paths"):
             nested_batch()["nope"]
 
 
@@ -831,7 +851,7 @@ class TestProvenance:
         assert batch[0:2].provenance is batch.provenance
         assert batch["site"].provenance is batch.provenance  # an OpaqueBatch column
         assert batch["outer"].provenance is batch.provenance  # a sub-batch view
-        assert batch.select("outer/a")["outer/a"].provenance is batch.provenance
+        assert batch.select("outer/a")["a"].provenance is batch.provenance
 
 
 class TestPlainRecordBatch:
@@ -1299,10 +1319,18 @@ class TestSelect:
         assert tuple(selected["outer"].event_template.keys()) == ("a", "b")
         assert tuple(selected["m"].event_template.keys()) == ("m",)
 
-    def test_select_reaches_a_leaf_or_a_subtree_by_path(self):
+    def test_select_reaches_a_field_or_a_group_keyed_by_its_last_name(self):
         batch = nested_batch()
-        assert tuple(batch.select("outer/a")["outer/a"].event_template.keys()) == ("outer/a",)
+        assert tuple(batch.select("outer/a")["a"].event_template.keys()) == ("outer/a",)
         assert tuple(batch.select("outer")["outer"].event_template.keys()) == ("a", "b")
+
+    def test_two_paths_with_one_last_name_raise(self):
+        batch = NumericRecordBatch(
+            {"s1/theta": jnp.zeros(3), "s2/theta": jnp.ones(3)}, "draw", label="hier"
+        )
+        with pytest.raises(ValueError, match="its key 'theta' is already taken by 's1/theta'"):
+            batch.select("s1/theta", "s2/theta")
+        assert set(batch.select("s1/theta", other="s2/theta")) == {"theta", "other"}
 
     def test_keywords_remap(self):
         selected = nested_batch().select(value="m")
@@ -1310,7 +1338,7 @@ class TestSelect:
         assert tuple(selected["value"].event_template.keys()) == ("m",)
 
     def test_an_unknown_path_raises(self):
-        with pytest.raises(KeyError, match=r"unknown field 'nope'; available fields"):
+        with pytest.raises(KeyError, match=r"unknown path 'nope'; available paths"):
             nested_batch().select("nope")
 
 
