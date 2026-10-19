@@ -320,7 +320,7 @@ def _marginal_expression_at(law: Distribution, paths: str | tuple[str, ...]) -> 
     owner, listed_paths = law, requested
     if isinstance(law, FieldView):
         parent_paths = tuple(law._parent_path(selected_path) for selected_path in requested)
-        if parent_paths == _path_tuple(law.paths):
+        if parent_paths == _path_tuple(law.path):
             return law._expression
         if None not in parent_paths:
             owner, listed_paths = law.parent, cast("tuple[str, ...]", parent_paths)

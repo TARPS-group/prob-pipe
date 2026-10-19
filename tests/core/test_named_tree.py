@@ -234,7 +234,9 @@ class TestWithPathNames:
         ids=["record", "spec", "batch", "declaration"],
     )
     def test_a_missing_key_names_the_paths_the_tree_has(self, record, tree):
-        with pytest.raises(KeyError, match=r"the paths are \['x', 'g', 'g/mu', 'g/sigma'\]"):
+        with pytest.raises(
+            KeyError, match=r"'mu' is not a path of .*; its paths: \['x', 'g', 'g/mu', 'g/sigma'\]"
+        ):
             tree(record).with_path_names(mu="loc")
 
     def test_sibling_collision_raises(self, record):

@@ -1050,7 +1050,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     # a law iterable through it.
     __iter__ = None
 
-    def __getitem__(self, paths: PathsLike) -> Distribution:
+    def __getitem__(self, key: PathsLike) -> Distribution:
         """The law itself at a whole term's component, or the field view at a path or a list of paths.
 
         A whole-term law is itself under its component, so ``d[name]`` returns
@@ -1066,7 +1066,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
         Parameters
         ----------
-        paths : str, or list or tuple of str
+        key : str, or list or tuple of str
             An event path, which starts with a component, or a list of event
             paths to view jointly.
 
@@ -1080,13 +1080,13 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         KeyError
             If a path is not an event path of this law.
         TypeError
-            If *paths* is neither a string nor a list or tuple of strings.
+            If *key* is neither a string nor a list or tuple of strings.
         ValueError
             If a path is empty or has an empty name, or a list of paths is
             empty, names a path twice, or holds a path inside another.
         """
         read_paths = _read_event_paths(
-            self.event_spec, self.label, paths, action=f"index {self.label!r} by"
+            self.event_spec, self.label, key, action=f"index {self.label!r} by"
         )
         if read_paths == _whole_term_component(self.event_spec):
             return self

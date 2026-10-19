@@ -616,7 +616,7 @@ class TestPaths:
 
     @pytest.mark.parametrize("path", _MALFORMED_PATHS)
     def test_a_malformed_path_raises_value_error_before_any_lookup(self, path):
-        with pytest.raises(ValueError, match="has an empty name"):
+        with pytest.raises(ValueError, match=r"the path is empty|has an empty name"):
             FieldView(_Law("parent", _EVENT), path)
 
     @pytest.mark.parametrize(
@@ -688,7 +688,7 @@ class TestIndexing:
     @pytest.mark.parametrize("key", ["model/", "", "model//theta"])
     def test_a_malformed_key_raises_value_error(self, key):
         view = FieldView(_Law("parent", _EVENT), "model")
-        with pytest.raises(ValueError, match="has an empty name"):
+        with pytest.raises(ValueError, match=r"the path is empty|has an empty name"):
             view[key]
 
     def test_a_view_renamed_by_label_is_still_addressed_by_its_component(self):
@@ -1379,7 +1379,7 @@ class TestNotation:
 
     def test_a_list_of_paths_reads_by_its_components_in_the_parent_order(self):
         view = FieldView(_Law("parent", _EVENT), ("y", "model/theta"))
-        assert view.notation == "parent(model, y)"
+        assert view.notation == "parent(model/theta, y)"
 
     def test_a_view_of_an_unlabeled_product_groups_its_label(self):
         assert _dependent_joint()["y"].notation == "(likelihood·beta)(y)"

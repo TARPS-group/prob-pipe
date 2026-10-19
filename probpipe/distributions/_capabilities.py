@@ -260,7 +260,7 @@ class SupportsMarginals(Protocol):
     claims itself.
     """
 
-    def _marginal(self, paths: str | tuple[str, ...]) -> Distribution: ...
+    def _marginal(self, path: str | tuple[str, ...]) -> Distribution: ...
 
 
 # ---------------------------------------------------------------------------
@@ -374,7 +374,7 @@ class SupportsConditionalMarginals(Protocol):
     """
 
     def _conditional_marginal(
-        self, given: Record | Mapping[str, Any], paths: str | tuple[str, ...]
+        self, given: Record | Mapping[str, Any], path: str | tuple[str, ...]
     ) -> Distribution: ...
 
 
