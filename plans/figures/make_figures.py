@@ -681,15 +681,16 @@ class Legend:
         draw_obj(canvas, Obj("d", "law"), 40, y)
         self.explain(["An object is a rounded box.", "Its badge names its kind."], y, 38)
         y += 72
-        x = 40.0
-        for kind in ("value", "record", "law", "kernel", "function", "batch"):
-            x += draw_badge(canvas, x, y, kind) + 6
+        for row, kinds in enumerate((("value", "record", "law"), ("kernel", "function", "batch"))):
+            x = 40.0
+            for kind in kinds:  # two rows, so the badges stay clear of the explanation
+                x += draw_badge(canvas, x, y + 24 * row, kind) + 8
         self.explain(
             ["The kinds: base values, records, laws,", "kernels, functions, and batches."],
-            y - 10,
-            38,
+            y,
+            41,
         )
-        y += 50
+        y += 68
 
         placed = draw_obj(canvas, Obj("r", "record", outputs=[Part("a"), Part("b")]), 40, y)
         self.explain(
