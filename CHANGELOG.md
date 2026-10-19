@@ -27,9 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside it dispatches to worker threads or Prefect workers, and to no other
   thread. An unknown section or setting raises `TypeError` naming the known
   ones, and a value is checked as an assignment checks it. Blocks close in the
-  reverse order of opening: a block that exits while a call or a block opened
-  inside it is still open, as when a generator holds the block open, raises
-  `RuntimeError`.
+  reverse order of opening. A block that a generator holds open can break that
+  order in two ways, and each raises `RuntimeError`: a block closed while a call
+  opened inside it still runs keeps applying until the call ends, and a call or
+  a block that ends while a block opened inside it is still open closes that
+  block with it. Either way no closed block applies afterwards.
 - **`n_broadcast_samples` is split into `max_evaluations` and `num_samples`.**
   `max_evaluations` is the maximum number of times a call lifted over laws
   evaluates its function, 256 by default. The lift enumerates the empirical

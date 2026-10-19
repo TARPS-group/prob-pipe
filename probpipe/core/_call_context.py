@@ -47,8 +47,9 @@ _EXACT_ONLY_BELOW: Mapping[str, Any] = MappingProxyType(
 class _CallContext:
     """The per-call state that the code a call runs reads, wherever it runs.
 
-    One value of this class is in effect in each thread, held by the context
-    variable ``_CALL_CONTEXT``; :func:`current_call_context` returns it.
+    One value of this class is in effect in each thread, held by the innermost
+    open scope that installed it, which the context variable
+    ``_INSTALLED_SCOPE`` holds; :func:`current_call_context` returns it.
     Outside every call and ``config`` block it is the default context, with
     every field at its default.
 
@@ -84,9 +85,10 @@ class _CallContext:
     - The dataclass is frozen, and its mappings are read-only. Its one mutable
       part, ``num_samples_used``, is a separate object that guards its contents
       with its own lock, so deriving or copying a context never copies it.
-    - Installing a context and exiting its scope always restore the previous
-      context, an error included; a scope that exits while another scope it
-      encloses is still open raises.
+    - Exiting a scope always restores the context of the innermost scope still
+      open below it, an error included, so no closed scope's state stays
+      behind; a scope that exits while a scope opened inside it is still open
+      raises after the context is restored (:func:`_under_call_context`).
 
     Attributes
     ----------
@@ -250,15 +252,17 @@ class _CallContext:
 #: The context in effect outside every call and ``config`` block.
 _DEFAULT_CALL_CONTEXT = _CallContext()
 
-#: The call context in effect in the running thread.
-_CALL_CONTEXT: ContextVar[_CallContext] = ContextVar(
-    "probpipe_call_context", default=_DEFAULT_CALL_CONTEXT
+#: The innermost open scope that installed a call context in the running
+#: thread, or ``None`` outside every scope.
+_INSTALLED_SCOPE: ContextVar[_InstalledScope | None] = ContextVar(
+    "probpipe_call_context", default=None
 )
 
 
 def current_call_context() -> _CallContext:
     """The call context in effect in the running thread: the default context outside every call and block."""
-    return _CALL_CONTEXT.get()
+    installed_scope = _INSTALLED_SCOPE.get()
+    return _DEFAULT_CALL_CONTEXT if installed_scope is None else installed_scope.call_context
 
 
 @contextmanager
@@ -266,7 +270,20 @@ def _under_call_context(call_context: _CallContext) -> Iterator[_CallContext]:
     """A scope in which *call_context* is the call context in effect.
 
     It is the one function that installs a call context. On exit, an error
-    included, the context in effect before the scope applies again.
+    included, the context of the innermost scope that is still open below it
+    applies again, so no state of a closed scope stays behind.
+
+    A scope that exits while a scope opened inside it is still open, as when a
+    generator holds a ``config`` block open, exits out of order. The context is
+    restored first, by one of two rules, and then the exit raises:
+
+    - when a call is still open inside the scope, the code that closes the
+      scope runs inside that call, so the call keeps its context, the values
+      of the closed scope included, and when the call ends the context of the
+      innermost scope still open below the closed one applies;
+    - otherwise the scopes still open inside it are closed with it, and the
+      context of the innermost scope still open below it applies. A scope
+      closed this way later exits without effect.
 
     Parameters
     ----------
@@ -281,19 +298,15 @@ def _under_call_context(call_context: _CallContext) -> Iterator[_CallContext]:
     Raises
     ------
     RuntimeError
-        On exit, if the context in effect is not *call_context*: a scope opened
-        inside this one, such as a ``config`` block that a generator holds open,
-        is still open. The scope then restores nothing, so it never discards
-        the context of the scope still open.
+        On exit, after the context is restored, if a scope opened inside this
+        one is still open, naming both scopes.
     """
-    reset_token = _CALL_CONTEXT.set(call_context)
+    installed_scope = _InstalledScope(call_context, _INSTALLED_SCOPE.get())
+    _INSTALLED_SCOPE.set(installed_scope)
     try:
         yield call_context
     finally:
-        context_in_effect = _CALL_CONTEXT.get()
-        if context_in_effect is not call_context:
-            raise RuntimeError(_out_of_order_exit_message(call_context, context_in_effect))
-        _CALL_CONTEXT.reset(reset_token)
+        _close_installed_scope(installed_scope)
 
 
 @contextmanager
@@ -493,51 +506,164 @@ class _ReadOnlyMappingContents(dict):
     """The contents of a read-only mapping, as a pickled call context holds them."""
 
 
-def _picklable(value: Any) -> Any:
-    """*value* with every read-only mapping in it, nested ones included, as plain dict contents."""
-    if isinstance(value, MappingProxyType):
-        return _ReadOnlyMappingContents({key: _picklable(entry) for key, entry in value.items()})
-    if type(value) is dict:
-        return {key: _picklable(entry) for key, entry in value.items()}
-    if type(value) in (list, tuple):
-        return type(value)(_picklable(entry) for entry in value)
-    return value
-
-
-def _restored_from_picklable(value: Any) -> Any:
-    """*value*, which :func:`_picklable` made, with its read-only mappings restored."""
-    if isinstance(value, _ReadOnlyMappingContents):
-        return MappingProxyType(
-            {key: _restored_from_picklable(entry) for key, entry in value.items()}
+def _picklable(context_field_value: Any) -> Any:
+    """*context_field_value* with every read-only mapping in it, nested ones included, as plain dict contents."""
+    if isinstance(context_field_value, MappingProxyType):
+        return _ReadOnlyMappingContents(
+            {key: _picklable(nested_value) for key, nested_value in context_field_value.items()}
         )
-    if type(value) is dict:
-        return {key: _restored_from_picklable(entry) for key, entry in value.items()}
-    if type(value) in (list, tuple):
-        return type(value)(_restored_from_picklable(entry) for entry in value)
-    return value
+    if type(context_field_value) is dict:
+        return {key: _picklable(nested_value) for key, nested_value in context_field_value.items()}
+    if type(context_field_value) in (list, tuple):
+        return type(context_field_value)(
+            _picklable(nested_value) for nested_value in context_field_value
+        )
+    return context_field_value
+
+
+def _restored_from_picklable(context_field_value: Any) -> Any:
+    """*context_field_value*, which :func:`_picklable` made, with its read-only mappings restored."""
+    if isinstance(context_field_value, _ReadOnlyMappingContents):
+        return MappingProxyType(
+            {
+                key: _restored_from_picklable(nested_value)
+                for key, nested_value in context_field_value.items()
+            }
+        )
+    if type(context_field_value) is dict:
+        return {
+            key: _restored_from_picklable(nested_value)
+            for key, nested_value in context_field_value.items()
+        }
+    if type(context_field_value) in (list, tuple):
+        return type(context_field_value)(
+            _restored_from_picklable(nested_value) for nested_value in context_field_value
+        )
+    return context_field_value
 
 
 def _unpickled_call_context(field_values: Mapping[str, Any]) -> _CallContext:
     """The call context that :meth:`_CallContext.__reduce__` pickled as *field_values*."""
     return _CallContext(
-        **{name: _restored_from_picklable(value) for name, value in field_values.items()}
+        **{
+            field_name: _restored_from_picklable(context_field_value)
+            for field_name, context_field_value in field_values.items()
+        }
     )
 
 
-def _described_scope(call_context: _CallContext) -> str:
-    """*call_context* in a user's words, for an error message."""
-    sections = ", ".join(f"config.{name}" for name in call_context.config_blocks)
-    if call_context.call_depth == 0:
-        return f"a block of {sections}" if sections else "the settings outside every call"
-    return f"the call of {call_context.function_label!r}"
+class _InstalledScope:
+    """One open scope that installed a call context, linked to the scope it was opened in.
+
+    The scopes of a thread form a chain from the innermost open scope, which
+    ``_INSTALLED_SCOPE`` holds, to the outermost. A scope that is closed out of
+    order is marked closed and skipped when a context is restored.
+
+    Parameters
+    ----------
+    call_context : _CallContext
+        The context the scope installed.
+    enclosing_scope : _InstalledScope or None
+        The scope in effect when this one opened, or ``None`` outside every
+        scope.
+    """
+
+    __slots__ = ("call_context", "enclosing_scope", "is_closed")
+
+    def __init__(self, call_context: _CallContext, enclosing_scope: _InstalledScope | None) -> None:
+        self.call_context = call_context
+        self.enclosing_scope = enclosing_scope
+        self.is_closed = False
+
+    def opens_call(self) -> bool:
+        """Whether the scope is the scope of a call: its context is one call deeper."""
+        return self.call_context.call_depth > _context_of(self.enclosing_scope).call_depth
 
 
-def _out_of_order_exit_message(
-    exiting_context: _CallContext, context_in_effect: _CallContext
+def _context_of(installed_scope: _InstalledScope | None) -> _CallContext:
+    """The context *installed_scope* installed, or the default context for ``None``."""
+    return _DEFAULT_CALL_CONTEXT if installed_scope is None else installed_scope.call_context
+
+
+def _innermost_open_scope(installed_scope: _InstalledScope | None) -> _InstalledScope | None:
+    """*installed_scope*, or the innermost scope below it that is still open."""
+    while installed_scope is not None and installed_scope.is_closed:
+        installed_scope = installed_scope.enclosing_scope
+    return installed_scope
+
+
+def _close_installed_scope(closing_scope: _InstalledScope) -> None:
+    """Close *closing_scope* and restore the context, raising after it if the scope closed out of order."""
+    if closing_scope.is_closed:
+        # An enclosing scope closed it out of order already, and raised then.
+        return
+    closing_scope.is_closed = True
+    innermost_scope = _INSTALLED_SCOPE.get()
+    scopes_still_open_inside: list[_InstalledScope] = []
+    scope = innermost_scope
+    while scope is not None and scope is not closing_scope:
+        if not scope.is_closed:
+            scopes_still_open_inside.append(scope)
+        scope = scope.enclosing_scope
+    if scope is None:
+        # The scope is not in this thread's chain, which a carrier's copy of a
+        # context can cause; nothing of this thread's chain is its to restore.
+        return
+    if not scopes_still_open_inside:
+        _INSTALLED_SCOPE.set(_innermost_open_scope(closing_scope.enclosing_scope))
+        return
+    open_calls_inside = [scope for scope in scopes_still_open_inside if scope.opens_call()]
+    if open_calls_inside:
+        # The scope is closed from inside a call opened within it, which keeps
+        # its context until it ends.
+        raise RuntimeError(
+            _closed_around_an_open_call_message(closing_scope, open_calls_inside[-1])
+        )
+    for scope in scopes_still_open_inside:
+        scope.is_closed = True
+    _INSTALLED_SCOPE.set(_innermost_open_scope(closing_scope.enclosing_scope))
+    raise RuntimeError(
+        _closed_with_open_scopes_message(closing_scope, scopes_still_open_inside[-1])
+    )
+
+
+def _described_scope(installed_scope: _InstalledScope) -> str:
+    """The scope *installed_scope* in a user's words, for an error message."""
+    call_context = installed_scope.call_context
+    enclosing_context = _context_of(installed_scope.enclosing_scope)
+    if (
+        installed_scope.opens_call()
+        or call_context.config_blocks == enclosing_context.config_blocks
+    ):
+        if call_context.function_label is None:
+            return "a scope of the settings"
+        return f"the call of {call_context.function_label!r}"
+    added_sections = [
+        f"config.{section_name}"
+        for section_name, section_values in call_context.config_blocks.items()
+        if enclosing_context.config_blocks.get(section_name) != section_values
+    ]
+    return f"a block of {', '.join(added_sections)}"
+
+
+def _closed_around_an_open_call_message(
+    closing_scope: _InstalledScope, open_call_scope: _InstalledScope
 ) -> str:
-    """The message for a scope that exits while a scope it encloses is still open."""
+    """The message for a scope closed while a call opened inside it still runs."""
     return (
-        f"cannot close {_described_scope(exiting_context)} while "
-        f"{_described_scope(context_in_effect)}, opened inside it, is still open. Close each "
-        "with block, and each generator that holds one open, before the scope around it ends"
+        f"cannot close {_described_scope(closing_scope)} while "
+        f"{_described_scope(open_call_scope)}, opened inside it, is still running, so its values "
+        "apply until that call ends. Close each with block, and each generator that holds one "
+        "open, in the reverse order of opening"
+    )
+
+
+def _closed_with_open_scopes_message(
+    closing_scope: _InstalledScope, open_scope: _InstalledScope
+) -> str:
+    """The message for a scope that ends while a scope opened inside it is still open."""
+    return (
+        f"{_described_scope(closing_scope)} ended while {_described_scope(open_scope)}, opened "
+        "inside it, was still open, so that scope was closed with it. Close each with block, and "
+        "each generator that holds one open, before the scope around it ends"
     )

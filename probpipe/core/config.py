@@ -75,12 +75,14 @@ class _Section:
             return section_block[setting_name]
         return getattr(self, f"_{setting_name}")
 
-    def _checked_block_values(self, settings: Mapping[str, Any], caller: str) -> dict[str, Any]:
-        """*settings* checked as an assignment checks them, for the block *caller* opens.
+    def _checked_block_values(
+        self, block_settings: Mapping[str, Any], caller: str
+    ) -> dict[str, Any]:
+        """*block_settings* checked as an assignment checks them, for the block *caller* opens.
 
         Parameters
         ----------
-        settings : Mapping of str to Any
+        block_settings : Mapping of str to Any
             The temporary values, keyed by setting name.
         caller : str
             The call that opens the block, which the error messages open with.
@@ -98,10 +100,17 @@ class _Section:
         ValueError
             As the setting's assignment raises.
         """
-        unknown = [name for name in settings if name not in self._checks]
-        if unknown:
-            raise TypeError(f"{caller}: {unknown_names('setting', unknown, self._checks)}")
-        return {name: self._checks[name](value, name) for name, value in settings.items()}
+        unknown_setting_names = [
+            setting_name for setting_name in block_settings if setting_name not in self._checks
+        ]
+        if unknown_setting_names:
+            raise TypeError(
+                f"{caller}: {unknown_names('setting', unknown_setting_names, self._checks)}"
+            )
+        return {
+            setting_name: self._checks[setting_name](setting_value, setting_name)
+            for setting_name, setting_value in block_settings.items()
+        }
 
     def using(self, **settings: Any) -> AbstractContextManager[Self]:
         """A block in which *settings* replace the section's values, as ``with section.using(...):``.
@@ -109,7 +118,9 @@ class _Section:
         The block's values apply to every read inside it, by the calls a
         ``Function`` dispatches to worker threads or Prefect workers included,
         and the previous values apply again when it exits, an error included.
-        Blocks nest, and an inner block's value wins. A view's own control,
+        Blocks nest, and an inner block's value wins. Blocks close in the
+        reverse order of opening, and :class:`Config` states what happens when
+        a generator that holds a block open breaks that order. A view's own control,
         which ``f.using(...)`` sets, wins over a block, which wins over the
         session's value. ``f.using(...)`` returns a reusable configured copy of ``f``,
         while ``using`` here returns a context manager.
@@ -131,6 +142,8 @@ class _Section:
             a value has the wrong type, as an assignment raises.
         ValueError
             If a value is inadmissible, as an assignment raises.
+        RuntimeError
+            On exit, if the block closes out of order, as :class:`Config` states.
         """
         checked_block_values = self._checked_block_values(settings, f"config.{self._name}.using()")
         return _config_block({self._name: checked_block_values}, yields=self)
@@ -764,10 +777,17 @@ class Config:
     workers, and not in another thread. Assigning a setting inside a block sets
     the session's value, which applies once the block exits, and
     :meth:`reset` inside a block restores the session's values while the block
-    still applies. Blocks close in the reverse order of opening: a block that
-    exits while a call or a block opened inside it is still open, as when a
-    generator holds the block open, raises ``RuntimeError`` and restores
-    nothing. A call resolves its settings when it opens. ProbPipe code
+    still applies. Blocks close in the reverse order of opening, and a block
+    held open by a generator can break that order in two ways, each of which
+    raises ``RuntimeError``:
+
+    - a block closed while a call opened inside it still runs, as when that
+      call closes the generator, keeps applying until the call ends;
+    - a call or a block that ends while a block opened inside it is still
+      open, as when the generator outlives it, closes that block with it.
+
+    Either way no closed block applies afterwards. A call resolves its settings
+    when it opens. ProbPipe code
     inside a user's own ``jax.jit`` keeps the values in effect while JAX traced
     it.
     """
@@ -828,6 +848,8 @@ class Config:
             given anything but a mapping, or as a section's ``using`` raises.
         ValueError
             As a section's ``using`` raises.
+        RuntimeError
+            On exit, if the block closes out of order, as the class docstring states.
         """
         unknown = [name for name in sections if name not in self._sections]
         if unknown:

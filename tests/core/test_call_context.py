@@ -133,8 +133,9 @@ class TestCallsOpenAContext:
             inner.check(x)
             return (inner.using(num_samples=5).apply(x), inner.apply(x))
 
-        assert outer.using(num_samples=7, raw=True)(1.0) == (5, 1024)
-        assert read_by_check == [5, 1024]
+        session_num_samples = config.sampling.num_samples
+        assert outer.using(num_samples=7, raw=True)(1.0) == (5, session_num_samples)
+        assert read_by_check == [5, session_num_samples]
 
     def test_the_context_is_restored_after_a_call_raises(self):
         @function
@@ -155,53 +156,108 @@ class TestCallsOpenAContext:
         ):
             raise ValueError("inside the block")
         assert current_call_context().is_default()
-        assert config.sampling.num_samples == 1024
 
 
 class TestScopesExitInOrder:
-    def test_a_block_held_open_by_a_generator_and_closed_inside_a_call_raises(self):
-        # The block that fails to close stays installed, so the test runs in a
-        # copied context that keeps it from the other tests.
-        contextvars.copy_context().run(self._close_a_held_open_block_inside_a_call)
+    """Every exit restores the context of the innermost scope still open, whatever the order."""
+
+    @pytest.fixture
+    def copied_context(self):
+        """A copy of the context, so a failing test cannot leave a scope installed for the others."""
+        return contextvars.copy_context()
+
+    def test_a_block_held_open_by_a_generator_and_closed_inside_a_call_raises(self, copied_context):
+        copied_context.run(self._close_a_held_open_block_inside_a_call)
 
     @staticmethod
     def _close_a_held_open_block_inside_a_call():
+        session_num_samples = config.sampling.num_samples
         held_open = _held_open_block()
         next(held_open)
         closed_inside = []
 
         @function
         def closes_the_block(x):
-            with pytest.raises(
-                RuntimeError, match=r"cannot close a block of config\.sampling"
-            ) as error:
+            with pytest.raises(RuntimeError) as error:
                 held_open.close()
             closed_inside.append(str(error.value))
+            # The call keeps its context, the closed block's values included.
             assert current_call_context().function_label == "closes_the_block"
+            assert config.sampling.num_samples == 7
             return x
 
         closes_the_block(1.0)
-        assert "the call of 'closes_the_block'" in closed_inside[0]
-        assert "is still open" in closed_inside[0]
-        # The block that failed to close restored nothing, so it still applies.
-        assert config.sampling.num_samples == 7
+        assert closed_inside[0].startswith(
+            "cannot close a block of config.sampling while the call of 'closes_the_block', "
+            "opened inside it, is still running"
+        )
+        # Once the call ends, nothing of the closed block applies.
+        assert current_call_context().is_default()
+        assert config.sampling.num_samples == session_num_samples
 
-    def test_a_scope_that_exits_before_one_it_encloses_discards_nothing(self):
-        contextvars.copy_context().run(self._exit_an_enclosing_scope_first)
+    def test_a_block_held_open_past_the_end_of_its_call_is_closed_with_it(self, copied_context):
+        copied_context.run(self._leave_a_block_open_past_its_call)
 
     @staticmethod
-    def _exit_an_enclosing_scope_first():
-        outer_context = current_call_context().with_config_block({"notation": {"max_depth": 3}})
-        outer_scope = _under_call_context(outer_context)
-        outer_scope.__enter__()
-        inner_context = outer_context.with_fresh_num_samples_used()
-        inner_scope = _under_call_context(inner_context)
-        inner_scope.__enter__()
-        with pytest.raises(RuntimeError, match=r"cannot close a block of config\.notation"):
-            outer_scope.__exit__(None, None, None)
-        assert current_call_context() is inner_context
-        inner_scope.__exit__(None, None, None)
-        assert current_call_context() is outer_context
+    def _leave_a_block_open_past_its_call():
+        session_num_samples = config.sampling.num_samples
+        holders = []
+
+        @function
+        def leaves_the_block_open(x):
+            held_open = _held_open_block()
+            next(held_open)
+            holders.append(held_open)
+            return x
+
+        with pytest.raises(RuntimeError) as error:
+            leaves_the_block_open(1.0)
+        assert str(error.value).startswith(
+            "the call of 'leaves_the_block_open' ended while a block of config.sampling, "
+            "opened inside it, was still open, so that scope was closed with it"
+        )
+        # The call's context and the block's are gone, and a later call is a root call.
+        assert current_call_context().is_default()
+        assert current_call_context().call_depth == 0
+        assert config.sampling.num_samples == session_num_samples
+        holders[0].close()
+        assert current_call_context().is_default()
+        root_seen = []
+
+        @function
+        def reports_its_depth(x):
+            root_seen.append(
+                (current_call_context().call_depth, current_call_context().is_root_call())
+            )
+            return x
+
+        reports_its_depth(1.0)
+        assert root_seen == [(1, True)]
+
+    def test_an_outer_block_that_exits_before_an_inner_one_closes_both(self, copied_context):
+        copied_context.run(self._exit_an_outer_block_first)
+
+    @staticmethod
+    def _exit_an_outer_block_first():
+        with pytest.raises(RuntimeError) as error, config.notation.using(max_depth=3):
+            held_open = _held_open_block()
+            next(held_open)
+        assert str(error.value).startswith(
+            "a block of config.notation ended while a block of config.sampling, opened inside "
+            "it, was still open"
+        )
+        assert current_call_context().is_default()
+        # The inner block was closed with the outer one, so its own exit changes nothing.
+        held_open.close()
+        assert current_call_context().is_default()
+
+    def test_scopes_that_exit_in_order_raise_nothing(self, copied_context):
+        def nested_scopes():
+            with config.notation.using(max_depth=3), config.sampling.using(num_samples=7):
+                assert current_call_context().config_blocks["sampling"]["num_samples"] == 7
+            return current_call_context()
+
+        assert copied_context.run(nested_scopes).is_default()
 
 
 class TestNumSamplesUsed:

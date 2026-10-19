@@ -569,42 +569,42 @@ def _expressed(term: Any, expression: Expression | None) -> Any:
     return clone
 
 
-def _recorded_route_result(term: Any, value: TrackedTerm) -> TrackedTerm:
-    """The route's result *value* as the call's record names it among its parents.
+def _route_result_as_provenance_parent(term: Any, route_value: TrackedTerm) -> TrackedTerm:
+    """The route's result *route_value* as the call's provenance names it among its parents.
 
-    *term* is *value* after the result boundary gave it the call's expression,
-    on a copy that keeps *value*'s record, so the parent reads under the
-    result's label, as ``model`` for a posterior of ``model``, where it read
-    under the label the route chose, such as an inference method's
-    ``posterior``. A *term* that carries another record, or none, leaves
-    *value* as the parent.
+    *term* is *route_value* after the result boundary gave it the call's
+    expression, on a copy that keeps *route_value*'s provenance, so the parent
+    reads under the result's label, as ``model`` for a posterior of ``model``,
+    where it read under the label the route chose, such as an inference
+    method's ``posterior``. A *term* that carries another provenance, or none,
+    leaves *route_value* as the parent.
     """
-    if isinstance(term, TrackedTerm) and term.provenance is value.provenance:
+    if isinstance(term, TrackedTerm) and term.provenance is route_value.provenance:
         return term
-    return value
+    return route_value
 
 
-def _keeping_route_record(term: Any, value: Any) -> Any:
-    """*term*, the declared form of a route's result *value*, with the record *value* carries.
+def _keeping_route_provenance(term: Any, route_value: Any) -> Any:
+    """*term*, the declared form of a route's result *route_value*, with the provenance *route_value* carries.
 
     A route whose result records how it was produced, as an inference
-    method's posterior names the method, passes that record on to the term,
-    so each point of a lifted call keeps it.
+    method's posterior names the method, passes that provenance on to the
+    term, so each point of a lifted call keeps it.
     """
     if (
         isinstance(term, TrackedTerm)
-        and isinstance(value, TrackedTerm)
-        and term is not value
+        and isinstance(route_value, TrackedTerm)
+        and term is not route_value
         and term.provenance is None
-        and value.provenance is not None
+        and route_value.provenance is not None
     ):
-        term.with_provenance(value.provenance)
+        term.with_provenance(route_value.provenance)
     return term
 
 
 def _realized_point(
     function: Function,
-    values: Mapping[str, Any],
+    argument_values: Mapping[str, Any],
     controls: Mapping[str, Any],
     candidates: tuple[Any, ...],
     *,
@@ -622,7 +622,7 @@ def _realized_point(
     ----------
     function : Function
         The Function realized by routes, which plans the point.
-    values : Mapping of str to Any
+    argument_values : Mapping of str to Any
         The point's arguments, by parameter name.
     controls : Mapping of str to Any
         The call's resolved controls, which planning and selection read.
@@ -631,7 +631,7 @@ def _realized_point(
     explicit_parameter_names : frozenset of str or None
         The parameters the call's arguments and the Function's construction
         ``bind`` values bind, which the result's expression shows; ``None``
-        shows every argument in *values*.
+        shows every argument in *argument_values*.
     kind_error : type of Exception
         The error for a wrong overall return kind, passed to ``declared_term``.
 
@@ -650,14 +650,14 @@ def _realized_point(
     ResultKindError, ResultSchemaError
         If the result violates the declaration, using *kind_error* for its kind.
     """
-    route_inputs, result_declaration, _ = function._plan_route_inputs(values, controls)
+    route_inputs, result_declaration, _ = function._plan_route_inputs(argument_values, controls)
     candidate, report = _resolution.selected(
         function.label, controls, candidates, route_inputs, result_declaration
     )
     route_value, _ = _resolution.settled(candidate.run(route_inputs, result_declaration, report))
-    label, expression = _result_identity(function, values, explicit_parameter_names)
+    label, expression = _result_identity(function, argument_values, explicit_parameter_names)
     term = _result.declared_term(route_value, result_declaration, label, kind_error=kind_error)
-    return _expressed(_keeping_route_record(term, route_value), expression)
+    return _expressed(_keeping_route_provenance(term, route_value), expression)
 
 
 def _run_call(
@@ -718,7 +718,9 @@ def _run_call(
         # A Function's routes take the method control, so a lifted call selects
         # its evaluation rule by rank.
         rule_method = None if candidates is not None else resolved_controls["method"]
-        route = _resolve_route(function, argument_values, broadcast_plan, rule_method)
+        route = _resolve_route(
+            function, argument_values, broadcast_plan, rule_method, resolved_controls
+        )
     stochastic_plan = _plan.build_stochastic_plan(
         argument_values,
         broadcast_plan,
@@ -773,18 +775,18 @@ def _run_call(
     provenance_inputs: dict[str, Any] = {}
     seen_parent_ids = {id(function)}
     for ref in _binding.iter_input_refs(function._signature_info, argument_values):
-        value = _binding.input_ref_value(argument_values, ref)
-        if isinstance(value, TrackedTerm) and id(value) not in seen_parent_ids:
-            seen_parent_ids.add(id(value))
-            provenance_parents.append(value)
-        elif not isinstance(value, TrackedTerm):
-            provenance_inputs[ref.label] = value
+        argument_value = _binding.input_ref_value(argument_values, ref)
+        if isinstance(argument_value, TrackedTerm) and id(argument_value) not in seen_parent_ids:
+            seen_parent_ids.add(id(argument_value))
+            provenance_parents.append(argument_value)
+        elif not isinstance(argument_value, TrackedTerm):
+            provenance_inputs[ref.label] = argument_value
 
-    # The selected route's result, when it carries a record of its own, which the
-    # call's record keeps as a parent under the call's expression.
-    route_records: list[TrackedTerm] = []
-    # The exactness the selected route settled when it ran, which the record
-    # takes in place of the one its check reported.
+    # The selected route's result, when it carries a provenance of its own, which
+    # the call's provenance keeps as a parent under the call's expression.
+    route_provenance_parents: list[TrackedTerm] = []
+    # The exactness the selected route settled when it ran, which the call's
+    # provenance takes in place of the one its check reported.
     settled_exactness: list[bool | None] = []
 
     def invoke_point(**point_values: Any) -> Any:
@@ -803,7 +805,9 @@ def _run_call(
                 and route_value.provenance is not None
                 and id(route_value) not in seen_parent_ids
             ):
-                route_records.append(_recorded_route_result(term, route_value))
+                route_provenance_parents.append(
+                    _route_result_as_provenance_parent(term, route_value)
+                )
             return term
         if candidates is not None:
             return _realized_point(
@@ -907,6 +911,7 @@ def _run_call(
                 function,
                 dispatch_values,
                 broadcast_args,
+                resolved_controls=resolved_controls,
                 jax_supported=jax_supported,
                 func=invoke_point,
                 stochastic_plan=stochastic_plan,
@@ -916,6 +921,7 @@ def _run_call(
                 function,
                 dispatch_values,
                 broadcast_args,
+                resolved_controls=resolved_controls,
                 jax_supported=True,
                 func=invoke_point,
                 stochastic_plan=stochastic_plan,
@@ -1094,7 +1100,7 @@ def _run_call(
     controls, diagnostics = _recipe.provenance_recipe_fields(None)
     provenance = Provenance.create(
         f"workflow.{name}",
-        parents=[*provenance_parents, *route_records],
+        parents=[*provenance_parents, *route_provenance_parents],
         metadata={"func": name, **route.metadata},
         inputs=provenance_inputs,
         controls=controls,
@@ -1406,20 +1412,21 @@ def _require_jax_traceable(
 
 def _resolve_dispatch(
     function: Function,
-    values: dict[str, Any],
+    argument_values: dict[str, Any],
     broadcast_args: list[_binding.FunctionInputRef],
     *,
+    resolved_controls: Mapping[str, Any],
     jax_supported: bool = True,
     func: Callable[..., Any],
     stochastic_plan: _plan.StochasticPlan | None,
 ) -> str:
-    """Resolve the dispatch strategy, caching JAX traceability detection.
+    """Resolve the dispatch strategy of a call under *resolved_controls*, caching JAX traceability detection.
 
     Returns ``"jax"``, ``"sequential"``, or ``"thread"``. This is
     independent of orchestration (``workflow_kind``), which wraps
     whichever strategy is chosen.
     """
-    requested_dispatch = current_call_context().resolved_controls["dispatch"]
+    requested_dispatch = resolved_controls["dispatch"]
     if requested_dispatch != "auto":
         return requested_dispatch
 
@@ -1428,7 +1435,7 @@ def _resolve_dispatch(
 
     if (
         _jax_traceability_error(
-            function, values, broadcast_args, func=func, stochastic_plan=stochastic_plan
+            function, argument_values, broadcast_args, func=func, stochastic_plan=stochastic_plan
         )
         is None
     ):
@@ -1501,9 +1508,10 @@ _PLANNED = "the route of the converted call"
 
 def _resolve_route(
     function: Function,
-    values: Mapping[str, Any],
+    argument_values: Mapping[str, Any],
     broadcast_plan: _plan.BroadcastPlan,
     rule_method: str | None,
+    resolved_controls: Mapping[str, Any],
 ) -> _Route:
     """Select the route that realizes the call (step 6).
 
@@ -1518,7 +1526,7 @@ def _resolve_route(
     ----------
     function : Function
         The function whose call the route realizes.
-    values : Mapping of str to Any
+    argument_values : Mapping of str to Any
         The call's admitted arguments, by parameter name.
     broadcast_plan : BroadcastPlan
         The call's lift, whose regime and first lifted argument the selection
@@ -1526,6 +1534,9 @@ def _resolve_route(
     rule_method : str or None
         The evaluation rule the ``method`` control names, or ``None`` to select
         the first feasible rule by rank.
+    resolved_controls : Mapping of str to Any
+        The call's resolved controls, which the rules receive and whose
+        ``exact_only`` excludes the approximate ones.
 
     Returns
     -------
@@ -1539,7 +1550,9 @@ def _resolve_route(
         If ``method`` names no route, or no rule is feasible under the controls,
         naming each rule tried and what it lacked.
     """
-    info, route = _route_report(function, values, broadcast_plan, rule_method)
+    info, route = _route_report(
+        function, argument_values, broadcast_plan, rule_method, resolved_controls
+    )
     if route is None:
         if broadcast_plan.regime == "none":
             raise ResolutionError(info.description)
@@ -1547,8 +1560,7 @@ def _resolve_route(
         detail = (
             f"pending: {', '.join(info.pending)}" if info.feasible is None else info.description
         )
-        exact_only = current_call_context().resolved_controls["exact_only"]
-        restriction = " (exact_only=True)" if exact_only else ""
+        restriction = " (exact_only=True)" if resolved_controls["exact_only"] else ""
         raise ResolutionError(
             f"{function.label}: no evaluation rule applies to a call over {ref.label!r}"
             f"{restriction}. {detail}"
@@ -1558,16 +1570,17 @@ def _resolve_route(
 
 def _route_report(
     function: Function,
-    values: Mapping[str, Any],
+    argument_values: Mapping[str, Any],
     broadcast_plan: _plan.BroadcastPlan,
     rule_method: str | None,
+    resolved_controls: Mapping[str, Any],
 ) -> tuple[MethodInfo, _Route | None]:
     """The report of the route that realizes the call, and the route when it is selected.
 
     The report probes without executing, as :func:`_resolve_route` states the
-    selection; the route is ``None`` unless the report is feasible.
+    selection, under the call's *resolved_controls*; the route is ``None``
+    unless the report is feasible.
     """
-    resolved_controls = current_call_context().resolved_controls
     method, exact_only = rule_method, resolved_controls["exact_only"]
     if broadcast_plan.regime == "none":
         if method is not None:
@@ -1579,10 +1592,12 @@ def _route_report(
             ), None
         return MethodInfo(True, method_name=_BODY, exact=True), _Route(_BODY, True)
     ref = (broadcast_plan.array_args or broadcast_plan.dist_args)[0]
-    operand = _binding.input_ref_value(values, ref)
+    operand = _binding.input_ref_value(argument_values, ref)
     parameter = ref.parameter_name
     variadic = ref.subscript is not None
-    fixed_args = {name: value for name, value in values.items() if variadic or name != parameter}
+    fixed_args = {
+        name: value for name, value in argument_values.items() if variadic or name != parameter
+    }
     controls = dict(resolved_controls)
     registry = _rules.evaluation_rule_registry
     info = registry.check(
@@ -1652,29 +1667,37 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         bind=function._bind,
         function_name=function._label,
     )
-    values, conversions, waiting = _normalization.plan_distribution_values(
+    argument_values, conversions, waiting = _normalization.plan_distribution_values(
         values=bound,
         signature_info=function._signature_info,
         conversions=resolved_controls["conversions"],
     )
     _call.admit_arguments(
         function._signature_info,
-        values,
+        argument_values,
         input_spec=function.input_spec,
         function_name=function._label,
         roles=function._roles,
     )
     broadcast_plan = _plan.build_broadcast_plan(
-        values=values, signature_info=function._signature_info, roles=function._roles
+        values=argument_values, signature_info=function._signature_info, roles=function._roles
     )
-    candidates = function._route_candidates(resolved_controls, values)
+    candidates = function._route_candidates(resolved_controls, argument_values)
     if candidates is not None:
-        return _check_routes(function, values, broadcast_plan, candidates, conversions, waiting)
+        return _check_routes(
+            function,
+            argument_values,
+            broadcast_plan,
+            candidates,
+            conversions,
+            waiting,
+            resolved_controls,
+        )
     lifted_refs = (*broadcast_plan.array_args, *broadcast_plan.dist_args)
     _, bindings = _bind_planned_function_inputs(
         function_name=function._label,
         input_spec=function.input_spec,
-        values=values,
+        values=argument_values,
         lifted_names={ref.parameter_name for ref in lifted_refs},
     )
     result = (
@@ -1698,7 +1721,9 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
             lifted=lifted,
             conversions=MappingProxyType(conversions),
         )
-    info, _ = _route_report(function, values, broadcast_plan, resolved_controls["method"])
+    info, _ = _route_report(
+        function, argument_values, broadcast_plan, resolved_controls["method"], resolved_controls
+    )
     return CallReport(
         routes=(info,),
         selected=None if info.feasible is None else info,
@@ -1711,13 +1736,14 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
 
 def _check_routes(
     function: Function,
-    values: Mapping[str, Any],
+    argument_values: Mapping[str, Any],
     broadcast_plan: _plan.BroadcastPlan,
     candidates: tuple[Any, ...],
     conversions: Mapping[str, Any],
     waiting: tuple[str, ...],
+    resolved_controls: Mapping[str, Any],
 ) -> CallReport:
-    """The check of a call that a Function's routes realize at each of its points.
+    """The check of a call that a Function's routes realize at each of its points, under *resolved_controls*.
 
     A lifted call first needs an evaluation rule, selected by rank since the
     ``method`` control names a route; its points are then checked as the
@@ -1734,7 +1760,7 @@ def _check_routes(
             routes=(pending,), lifted=lifted, conversions=MappingProxyType(dict(conversions))
         )
     if broadcast_plan.regime != "none":
-        info, _ = _route_report(function, values, broadcast_plan, None)
+        info, _ = _route_report(function, argument_values, broadcast_plan, None, resolved_controls)
         if info.feasible is not True:
             return CallReport(
                 routes=(info,),
@@ -1744,14 +1770,14 @@ def _check_routes(
             )
     token = _call._CHECKING.set(True)
     try:
-        point = _resolution.check_points(
-            function, values, current_call_context().resolved_controls, candidates, broadcast_plan
+        points_report = _resolution.check_points(
+            function, argument_values, resolved_controls, candidates, broadcast_plan
         )
     finally:
         _call._CHECKING.reset(token)
-    _plan.require_empty_sweep_output(broadcast_plan, point.result)
+    _plan.require_empty_sweep_output(broadcast_plan, points_report.result)
     return _resolution.call_report(
-        point, lifted=lifted, conversions=conversions, candidates=candidates
+        points_report, lifted=lifted, conversions=conversions, candidates=candidates
     )
 
 
