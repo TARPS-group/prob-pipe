@@ -36,7 +36,7 @@ from ..core._record_batch import RecordBatch, _batch_class_for
 from ..core._record_spec import NumericRecordSpec, RecordSpec
 from ..core._repr import format_value
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
-from ..core._specs import OutputSpec, _components_record
+from ..core._specs import OutputSpec
 from ..core.named_tree import _PATH_SEP, _unflatten_paths
 from ..linalg import DenseLinOp
 from ._capabilities import (
@@ -53,6 +53,7 @@ from ._distribution import (
     DEFAULT_LABEL,
     Distribution,
     _constructor_label,
+    _read_event_paths,
     _whole_term_component,
     _whole_term_event,
 )
@@ -778,8 +779,8 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
 
     # -- marginals --------------------------------------------------------------
 
-    def _marginal(self, path: str | tuple[str, ...]) -> EmpiricalDistribution:
-        """The empirical law of the atoms projected onto *path*, under the same weights.
+    def _marginal(self, paths: str | tuple[str, ...]) -> EmpiricalDistribution:
+        """The empirical law of the atoms projected onto *paths*, under the same weights.
 
         A single event path yields the leaf or group at that path whole, under
         a component named by the path's last name. A list of event paths yields
@@ -790,7 +791,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
 
         Parameters
         ----------
-        path : str or tuple of str
+        paths : str or tuple of str
             An event path of this law, or a list of event paths to select
             jointly, as :func:`~probpipe.core._shapes._as_paths` reads them.
 
@@ -806,8 +807,8 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         TypeError
             If a path is not a string.
         """
-        requested_nodes = self._requested_nodes(path)
-        if isinstance(path, str):
+        requested_nodes = self._requested_nodes(paths)
+        if isinstance(paths, str):
             ((requested, segments, node),) = requested_nodes
             atoms = self._projection(segments, node)
             declaration = OutputSpec(**{requested.rsplit(_PATH_SEP, 1)[-1]: node})
@@ -816,23 +817,23 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
             declaration = OutputSpec(atoms.element_spec)
         return EmpiricalDistribution(atoms, self._w, label=self.label, event_spec=declaration)
 
-    def _marginal_guard(self, path: str | tuple[str, ...]) -> Feasibility | bool:
-        """Whether *path* is an event path, or a list of them.
+    def _marginal_guard(self, paths: str | tuple[str, ...]) -> Feasibility | bool:
+        """Whether *paths* is an event path, or a list of them.
 
         The marginal is exact at every such path.
         """
         try:
-            self._requested_nodes(path)
-        except (KeyError, TypeError) as error:
+            self._requested_nodes(paths)
+        except (KeyError, TypeError, ValueError) as error:
             return Feasibility(False, str(error.args[0]) if error.args else repr(error))
         return True
 
-    def _requested_nodes(self, path: str | tuple[str, ...]) -> tuple[_RequestedNode, ...]:
+    def _requested_nodes(self, paths: str | tuple[str, ...]) -> tuple[_RequestedNode, ...]:
         """Each requested event path with its segments within one atom and its node's spec.
 
         Parameters
         ----------
-        path : str or tuple of str
+        paths : str or tuple of str
             An event path of this law, or a list of event paths to select
             jointly.
 
@@ -849,31 +850,25 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
             If a path is not an event path of this law.
         TypeError
             If a path is not a string.
+        ValueError
+            If a path is malformed, or a list of paths names a path twice or a
+            path inside another.
         """
-        paths = (path,) if isinstance(path, str) else tuple(path)
+        read_paths = _read_event_paths(
+            self.event_spec, self.label, paths, action=f"take the marginal of {self.label!r} at"
+        )
         component = _whole_term_component(self.event_spec)
         requested_nodes = []
-        for requested in paths:
-            if not isinstance(requested, str):
-                raise TypeError(f"a field path must be a string; got {type(requested).__name__}")
-            try:
-                node = _node_at(self.event_spec, requested)
-            except KeyError:
-                raise KeyError(
-                    f"{requested!r} is not an event path of {self.label!r}; its fields: "
-                    f"{list(self.event_spec.components)}"
-                ) from None
+        for requested in read_paths if isinstance(read_paths, tuple) else (read_paths,):
             segments = tuple(requested.split(_PATH_SEP))
             requested_nodes.append(
-                (requested, segments if component is None else segments[1:], node)
+                (
+                    requested,
+                    segments if component is None else segments[1:],
+                    _node_at(self.event_spec, requested),
+                )
             )
-        if isinstance(path, str):
-            return tuple(requested_nodes)
-        rank = {
-            node_path: index
-            for index, node_path in enumerate(_components_record(self.event_spec)._node_paths())
-        }
-        return tuple(sorted(requested_nodes, key=lambda entry: rank[entry[0]]))
+        return tuple(requested_nodes)
 
     def _projection(self, segments: tuple[str, ...], node: TermSpec) -> Batch:
         """The atoms projected onto the node at *segments* within one atom, in its batch form."""

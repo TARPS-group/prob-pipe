@@ -84,7 +84,7 @@ class TestTheReaderErrors:
     @pytest.mark.parametrize(
         ("key", "error", "match"),
         [
-            pytest.param("", ValueError, "has an empty name", id="empty-path"),
+            pytest.param("", ValueError, "the path is empty", id="empty-path"),
             pytest.param("g//c", ValueError, "has an empty name", id="empty-name"),
             pytest.param("/a", ValueError, "has an empty name", id="leading-separator"),
             pytest.param([], ValueError, "it names no paths", id="empty-list"),
@@ -93,7 +93,12 @@ class TestTheReaderErrors:
             pytest.param(("g", "g/c"), ValueError, "'g/c' is inside 'g'; pick one", id="nested"),
             pytest.param({"a"}, TypeError, "got set", id="set"),
             pytest.param(iter(["a"]), TypeError, "got list_iterator", id="iterator"),
-            pytest.param(("a", 0), TypeError, None, id="path-and-position"),
+            pytest.param(
+                ("a", 0),
+                TypeError,
+                r"a path and a position cannot be mixed in one \[\]",
+                id="path-and-position",
+            ),
         ],
     )
     def test_a_malformed_key_raises_before_any_lookup(self, term, key, error, match):
@@ -201,6 +206,20 @@ class TestOnePathOrAList:
         x = Normal("x", 0.0, 1.0)
         assert x[["x"]].event_spec.spec == RecordSpec(x=x.event_spec.spec)
         assert x["x"] is x
+
+
+class TestLabels:
+    """A term indexed by several paths is labeled by its paths, in the term's order."""
+
+    def test_a_law_and_its_marginal_at_a_list_of_paths_read_by_their_paths(self):
+        grouped = _grouped()
+        view, detached = grouped["g/c", "a"], marginal(grouped, ["g/c", "a"])
+        assert view.notation == detached.notation == "(Normal·Normal·Normal)(a, g/c)"
+        assert _sample(view).label == "(a, g/c) ~ Normal·Normal·Normal"
+        assert _sample(detached).label == "(a, g/c) ~ Normal·Normal·Normal"
+
+    def test_one_path_still_reads_by_its_last_name(self):
+        assert _grouped()["g/c"].notation == "(Normal·Normal·Normal)(c)"
 
 
 class TestMarginal:

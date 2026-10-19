@@ -783,7 +783,7 @@ class Batch[E](TrackedTerm, ABC):
         """Iterate the leading batch axis, yielding views."""
         return (self[index] for index in range(len(self)))
 
-    def __getitem__(self, key: Any) -> Any:
+    def __getitem__(self, paths_or_positions: Any) -> Any:
         """Index the batch axes by position, or every element by path.
 
         By **position**, a single indexer addresses the leading axis and a tuple
@@ -803,7 +803,7 @@ class Batch[E](TrackedTerm, ABC):
 
         Parameters
         ----------
-        key : int, slice, str, list, or tuple
+        paths_or_positions : int, slice, str, list, or tuple
             An integer, a slice, or a tuple of them addresses the batch axes; a
             string is one path, and a list or a tuple of strings a list of paths.
 
@@ -822,7 +822,7 @@ class Batch[E](TrackedTerm, ABC):
             If a path is not a path of the elements, which holds for every path
             of a batch whose elements are arrays or opaque values.
         TypeError
-            If *key* is neither a position nor paths, such as ``None``, a
+            If *paths_or_positions* is neither a position nor paths, such as ``None``, a
             ``bool``, ``...``, a set, or an array; if it mixes paths with
             positions; or if it is a list of positions.
         ValueError
@@ -838,16 +838,21 @@ class Batch[E](TrackedTerm, ABC):
         :meth:`_at_paths`. ``None`` is not a position: it spells a whole axis in
         :meth:`at_levels` alone, where a keyword cannot take a ``:`` literal.
         """
-        positions = _as_positions(key)
+        positions = _as_positions(paths_or_positions)
         if positions is not None:
             return self._at_axes(positions)
         return self._at_paths(
-            _as_paths(key, action=f"index {public_class_name(type(self))} by", positions=True)
+            _as_paths(
+                paths_or_positions,
+                action=f"index {public_class_name(type(self))} by",
+                positions=True,
+            ),
+            tuple_given=isinstance(paths_or_positions, tuple),
         )
 
-    def __contains__(self, key: object) -> bool:
-        """Whether *key* is a ``str`` and a path of the elements; an element is never tested."""
-        return isinstance(key, str) and self._has_path(key)
+    def __contains__(self, path: object) -> bool:
+        """Whether *path* is a ``str`` and a path of the elements; an element is never tested."""
+        return isinstance(path, str) and self._has_path(path)
 
     def at_levels(self, /, **levels: LevelIndexer) -> E | Self:
         """Index by named level, returning an element or a sub-batch view.
@@ -1019,7 +1024,7 @@ class Batch[E](TrackedTerm, ABC):
             return produced
         return produced.with_provenance(self._provenance)
 
-    def _at_paths(self, paths: str | tuple[str, ...]) -> Any:
+    def _at_paths(self, paths: str | tuple[str, ...], *, tuple_given: bool = False) -> Any:
         """The batch of every element's node at a path, or cut down to a list of paths.
 
         A batch whose elements have paths answers this. By default, elements
@@ -1032,12 +1037,15 @@ class Batch[E](TrackedTerm, ABC):
         ----------
         paths : str or tuple of str
             One path, or a list of paths, as ``[]`` read them.
+        tuple_given : bool
+            Whether ``[]`` was given the list of paths as a tuple, which a
+            missing path's message reads.
 
         Returns
         -------
         Any
-            Nothing by default, which raises; a subclass returns the batch of
-            the elements' nodes.
+            The batch of the elements' nodes, from a subclass whose elements
+            have paths.
 
         Raises
         ------
@@ -1046,15 +1054,15 @@ class Batch[E](TrackedTerm, ABC):
         TypeError
             By default, for any other elements.
         """
-        owner = public_class_name(type(self))
+        class_name = public_class_name(type(self))
         if isinstance(self.element_spec, NumericArraySpec | OpaqueSpec):
             raise KeyError(
-                f"cannot index {owner} by {paths!r}: it names no path inside the elements of "
+                f"cannot index {class_name} by {paths!r}: it names no path inside the elements of "
                 f"{self.label!r}, since each element is one whole value; the batch already holds "
                 f"their values (read them with .raw)"
             )
         raise TypeError(
-            f"cannot index {owner} by {paths!r}: a batch of this kind is indexed by position "
+            f"cannot index {class_name} by {paths!r}: a batch of this kind is indexed by position "
             f"only. Index one element by position first, or use at_levels() to index by level "
             f"name"
         )

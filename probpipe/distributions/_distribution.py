@@ -25,7 +25,7 @@ from ..core._expression import _GENERIC_LAW_SYMBOL, Named, Signature
 from ..core._immutable import transient_memo
 from ..core._record_spec import RecordSpec
 from ..core._repr import call_repr, format_names, public_class_name, term_repr, type_name
-from ..core._shapes import PathsLike, _as_paths
+from ..core._shapes import PathsLike, _as_paths, _missing_path
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import OutputSpec, _components_record
 from ..core.constraints import _known_equal
@@ -236,6 +236,91 @@ def _record_default_expression(term: Any) -> None:
     """
     if getattr(term, "_uses_default_label", False):
         object.__setattr__(term, "_default_expression", term._expression)
+
+
+def _is_event_path(declaration: OutputSpec, path: Any) -> bool:
+    """Whether *path* is a ``str`` and an event path of a law declared by *declaration*.
+
+    The event paths are the paths of the record of the declaration's
+    components, so a whole term's component is one of them.
+    """
+    if not isinstance(path, str):
+        return False
+    try:
+        paths = _components_record(declaration)
+    except TypeError:
+        return False
+    return path in paths
+
+
+def _not_an_event_path(
+    declaration: OutputSpec, label: str, path: str, requested: tuple[str, ...] = ()
+) -> str:
+    """The message that *path* is not an event path of the law *label* declared by *declaration*.
+
+    The message lists the law's paths, as
+    :func:`~probpipe.core._shapes._missing_path` words it for every term, and
+    *requested* is the tuple of paths that held *path*, or ``()``.
+    """
+    try:
+        paths = list(_components_record(declaration)._node_paths())
+    except TypeError:
+        paths = list(declaration.components)
+    return _missing_path(path, owner=repr(label), available=paths, requested=requested)
+
+
+def _read_event_paths(
+    declaration: OutputSpec,
+    label: str,
+    paths: Any,
+    *,
+    action: str,
+    tuple_given: bool | None = None,
+) -> str | tuple[str, ...]:
+    """*paths*, read as event paths of the law *label* declared by *declaration*.
+
+    One path is returned as it is, and a list of paths in the event's
+    canonical order, whatever order it was given in.
+
+    Parameters
+    ----------
+    declaration : OutputSpec
+        The law's event declaration.
+    label : str
+        The law's label, which the messages name.
+    paths : Any
+        One path, or a list or tuple of paths, as the caller gave them.
+    action : str
+        What the caller was asked to do, which the reader's messages complete.
+    tuple_given : bool or None
+        Whether the caller was given its list of paths as a tuple, which a
+        missing path's message reads; ``None`` reads it from *paths*.
+
+    Returns
+    -------
+    str or tuple of str
+        The one path, or the list of paths in canonical order.
+
+    Raises
+    ------
+    KeyError
+        If a path is not an event path of the law.
+    TypeError
+        If *paths* is neither a string nor a list or tuple of strings.
+    ValueError
+        If a path is empty or has an empty name, or a list of paths is empty,
+        names a path twice, or holds a path inside another.
+    """
+    read_paths = _as_paths(paths, action=action)
+    listed = read_paths if isinstance(read_paths, tuple) else (read_paths,)
+    hinted = isinstance(paths, tuple) if tuple_given is None else tuple_given
+    for path in listed:
+        if not _is_event_path(declaration, path):
+            requested = listed if hinted and isinstance(read_paths, tuple) else ()
+            raise KeyError(_not_an_event_path(declaration, label, path, requested))
+    if isinstance(read_paths, str):
+        return read_paths
+    return _components_record(declaration)._ordered_paths(read_paths)
 
 
 def _no_free_dims(term: Any, unbound: set[str], free: set[str] | frozenset[str]) -> str:
@@ -965,7 +1050,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     # a law iterable through it.
     __iter__ = None
 
-    def __getitem__(self, key: PathsLike) -> Distribution:
+    def __getitem__(self, paths: PathsLike) -> Distribution:
         """The law itself at a whole term's component, or the field view at a path or a list of paths.
 
         A whole-term law is itself under its component, so ``d[name]`` returns
@@ -981,7 +1066,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
         Parameters
         ----------
-        key : str, or list or tuple of str
+        paths : str, or list or tuple of str
             An event path, which starts with a component, or a list of event
             paths to view jointly.
 
@@ -995,27 +1080,23 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         KeyError
             If a path is not an event path of this law.
         TypeError
-            If *key* is neither a string nor a list or tuple of strings.
+            If *paths* is neither a string nor a list or tuple of strings.
         ValueError
             If a path is empty or has an empty name, or a list of paths is
             empty, names a path twice, or holds a path inside another.
         """
-        paths = _as_paths(key, action=f"index {self.label!r} by")
-        if paths == _whole_term_component(self.event_spec):
+        read_paths = _read_event_paths(
+            self.event_spec, self.label, paths, action=f"index {self.label!r} by"
+        )
+        if read_paths == _whole_term_component(self.event_spec):
             return self
         if _field_view_factory is None:
             raise RuntimeError("the field view is not installed; import probpipe")
-        return _field_view_factory(self, paths)
+        return _field_view_factory(self, read_paths)
 
-    def __contains__(self, key: object) -> bool:
-        """Whether *key* is a ``str`` and ``self[key]`` gives a law: an event path, or a whole term's component."""
-        if not isinstance(key, str):
-            return False
-        try:
-            paths = _components_record(self.event_spec)
-        except TypeError:
-            return False
-        return key in paths
+    def __contains__(self, path: object) -> bool:
+        """Whether *path* is a ``str`` and ``self[path]`` gives a law: an event path, or a whole term's component."""
+        return _is_event_path(self.event_spec, path)
 
     # -- composition ------------------------------------------------------------
 

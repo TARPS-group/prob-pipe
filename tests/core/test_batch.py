@@ -122,7 +122,7 @@ class _FieldBatch(_ListBatch):
 
     __slots__ = ()
 
-    def _at_paths(self, paths):
+    def _at_paths(self, paths, *, tuple_given=False):
         if paths != "value":
             raise KeyError(f"{paths!r} is not a field of these elements")
         return tuple(self._store)

@@ -387,8 +387,8 @@ def _as_paths(arg: Any, *, action: str, positions: bool = False) -> str | tuple[
     TypeError
         If *arg* is neither a string nor a list or a tuple, such as a set, an
         iterator, ``None``, a ``bool``, or ``...``; if an entry of the list is
-        not a string; or, for a caller that takes positions, if *arg* mixes
-        paths with positions, or is a list of positions.
+        not a string, or a path is mixed with a position; or, for a caller that
+        takes positions, if *arg* is a list of positions.
     ValueError
         If a path is empty or has an empty name, as ``"g//c"`` and ``"/a"``
         do, the list is empty, or it names a path twice or a path inside
@@ -399,14 +399,15 @@ def _as_paths(arg: Any, *, action: str, positions: bool = False) -> str | tuple[
     if isinstance(arg, (list, tuple)):
         if not arg:
             raise ValueError(f"cannot {action} {arg!r}: it names no paths; give at least one path")
-        if positions and any(_is_position(entry) for entry in arg):
-            if all(_is_position(entry) for entry in arg):
-                raise TypeError(
-                    f"cannot {action} {arg!r}: a list of positions is not supported; index one "
-                    f"position or a slice"
-                )
+        holds_position = any(_is_position(entry) for entry in arg)
+        if holds_position and any(isinstance(entry, str) for entry in arg):
             raise TypeError(
                 f"cannot {action} {arg!r}: a path and a position cannot be mixed in one []"
+            )
+        if positions and holds_position and all(_is_position(entry) for entry in arg):
+            raise TypeError(
+                f"cannot {action} {arg!r}: a list of positions is not supported; index one "
+                f"position or a slice"
             )
         for entry in arg:
             if not isinstance(entry, str):
@@ -507,18 +508,19 @@ def _as_path_arguments(arguments: tuple[Any, ...], *, action: str) -> tuple[str,
         If a path is empty or has an empty name, or the arguments name a path
         twice or a path inside another.
     """
-    shown = arguments[0] if len(arguments) == 1 else arguments
+    shown_arguments = arguments[0] if len(arguments) == 1 else arguments
     for argument in arguments:
         if not isinstance(argument, str):
             hint = "; give each path as a separate argument" if isinstance(argument, tuple) else ""
             raise TypeError(
-                f"cannot {action} {shown!r}: a path must be a str, got {type_name(argument)} "
+                f"cannot {action} {shown_arguments!r}: a path must be a str, got "
+                f"{type_name(argument)} "
                 f"{argument!r}{hint}"
             )
     paths = tuple(
-        _checked_path(str(argument), action=action, given=shown) for argument in arguments
+        _checked_path(str(argument), action=action, given=shown_arguments) for argument in arguments
     )
-    _check_distinct_paths(paths, action=action, given=shown)
+    _check_distinct_paths(paths, action=action, given=shown_arguments)
     return paths
 
 
@@ -549,20 +551,22 @@ def _as_joined_path(segments: tuple[Any, ...], *, action: str) -> str:
     """
     from .named_tree import _PATH_SEP
 
-    shown = segments[0] if len(segments) == 1 else segments
+    shown_segments = segments[0] if len(segments) == 1 else segments
     for segment in segments:
         if not isinstance(segment, str):
             hint = (
                 "; give each segment as a separate argument" if isinstance(segment, tuple) else ""
             )
             raise TypeError(
-                f"cannot {action} {shown!r}: a path segment must be a str, got "
+                f"cannot {action} {shown_segments!r}: a path segment must be a str, got "
                 f"{type_name(segment)} {segment!r}{hint}"
             )
     if not segments:
         raise ValueError(f"cannot {action} no path: give at least one path segment")
     return _checked_path(
-        _PATH_SEP.join(str(segment) for segment in segments), action=action, given=shown
+        _PATH_SEP.join(str(segment) for segment in segments),
+        action=action,
+        given=shown_segments,
     )
 
 
@@ -631,6 +635,8 @@ def _checked_path(path: str, *, action: str, given: Any) -> str:
     """
     from .named_tree import _PATH_SEP
 
+    if not path:
+        raise ValueError(f"cannot {action} {given!r}: the path is empty")
     if "" in path.split(_PATH_SEP):
         raise ValueError(
             f"cannot {action} {given!r}: the path {path!r} has an empty name; a path joins "

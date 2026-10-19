@@ -536,7 +536,7 @@ class NamedTree[L]:
         """``(key, field_object)`` pairs, in canonical order (materialised)."""
         return tuple((key, self._present(key, leaf)) for key, leaf in self._walk_leaves())
 
-    def __getitem__(self, key: PathsLike) -> L | Self:
+    def __getitem__(self, paths: PathsLike) -> L | Self:
         """The node at a path, or this tree cut down to the nodes at a list of paths.
 
         A tuple is a list of paths; a nested path is written with ``/``, so
@@ -546,7 +546,7 @@ class NamedTree[L]:
 
         Parameters
         ----------
-        key : str, or list or tuple of str
+        paths : str, or list or tuple of str
             One path, which gives the node there, or a list of paths, which
             gives a tree of the same family holding each of those nodes at its
             own path, in this tree's canonical order.
@@ -561,34 +561,35 @@ class NamedTree[L]:
         KeyError
             If a path is not a path of this tree.
         TypeError
-            If *key* is neither a string nor a list or tuple of strings.
+            If *paths* is neither a string nor a list or tuple of strings.
         ValueError
             If a path is empty or has an empty name, or a list of paths is
             empty, names a path twice, or holds a path inside another.
         """
-        paths = _as_paths(key, action=f"index {type(self).__name__} by")
-        if isinstance(paths, str):
-            node = self._existing_node_at(paths)
+        read_paths = _as_paths(paths, action=f"index {type(self).__name__} by")
+        if isinstance(read_paths, str):
+            node = self._existing_node_at(read_paths)
             if isinstance(node, self._node_type()):
                 return node
             # Past the node-type guard the value is a leaf; ``_node_type()`` is a
             # runtime ``type`` a checker cannot use to narrow the ``L | Self`` union.
-            return self._present(paths, cast(L, node))
-        for path in paths:
-            self._existing_node_at(path, requested=paths)
-        return self._at_paths(paths)
+            return self._present(read_paths, cast(L, node))
+        tuple_given = read_paths if isinstance(paths, tuple) else ()
+        for path in read_paths:
+            self._existing_node_at(path, requested=tuple_given)
+        return self._cut_to(read_paths)
 
-    def __contains__(self, key: object) -> bool:
-        """Whether *key* is a ``str`` and a path of this tree, of a field or of a group."""
-        if not isinstance(key, str):
+    def __contains__(self, path: object) -> bool:
+        """Whether *path* is a ``str`` and a path of this tree, of a field or of a group."""
+        if not isinstance(path, str):
             return False
         try:
-            self._node_at(key)
+            self._node_at(path)
         except KeyError:
             return False
         return True
 
-    def _at_paths(self, paths: tuple[str, ...]) -> Self:
+    def _cut_to(self, paths: tuple[str, ...]) -> Self:
         """This tree cut down to the nodes at *paths*, each at its own path, in canonical order.
 
         Every node that is neither at nor above a path of *paths* is removed,
@@ -719,8 +720,8 @@ class NamedTree[L]:
         path : str
             A path, which the caller has read.
         requested : tuple of str
-            The list of paths that holds *path*, which the message reads, or
-            ``()`` for one path.
+            The tuple of paths that holds *path*, which the message reads, or
+            ``()`` for one path or a list of paths.
 
         Returns
         -------
@@ -1160,14 +1161,8 @@ class NamedTree[L]:
                         f"new path {new!r} for {old!r} has an empty segment "
                         f"(no leading, trailing, or doubled {_PATH_SEP!r})"
                     )
-                resolved = _as_path(old, action="rename")
-                try:
-                    self._node_at(resolved)
-                except KeyError:
-                    raise KeyError(
-                        f"with_path_names(): {resolved!r} is not a path in this tree; the paths "
-                        f"are {list(self._node_paths())}"
-                    ) from None
+                resolved = _as_path(old, action="call with_path_names() with")
+                self._existing_node_at(resolved)
                 if resolved in pairs:
                     raise ValueError(f"with_path_names(): {resolved!r} is renamed more than once")
                 pairs[resolved] = new

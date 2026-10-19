@@ -260,7 +260,7 @@ class SupportsMarginals(Protocol):
     claims itself.
     """
 
-    def _marginal(self, path: str | tuple[str, ...]) -> Distribution: ...
+    def _marginal(self, paths: str | tuple[str, ...]) -> Distribution: ...
 
 
 # ---------------------------------------------------------------------------
@@ -374,7 +374,7 @@ class SupportsConditionalMarginals(Protocol):
     """
 
     def _conditional_marginal(
-        self, given: Record | Mapping[str, Any], path: str | tuple[str, ...]
+        self, given: Record | Mapping[str, Any], paths: str | tuple[str, ...]
     ) -> Distribution: ...
 
 
@@ -417,8 +417,8 @@ def _kernel_claims(kernel: Any) -> frozenset[type]:
     )
 
 
-def _marginal_claims(law: Any, path: str | tuple[str, ...]) -> frozenset[type]:
-    """The capabilities *law*'s exact marginal at *path* claims, as *law* reports them.
+def _marginal_claims(law: Any, paths: str | tuple[str, ...]) -> frozenset[type]:
+    """The capabilities *law*'s exact marginal at *paths* claims, as *law* reports them.
 
     A law that defines ``_marginal_capabilities(path)`` reports them from its
     declarations, and the marginals of any other law claim what the law claims
@@ -427,7 +427,7 @@ def _marginal_claims(law: Any, path: str | tuple[str, ...]) -> frozenset[type]:
     report = getattr(law, "_marginal_capabilities", None)
     if report is None:
         return _claims(law)
-    return frozenset(report(path))
+    return frozenset(report(paths))
 
 
 # ---------------------------------------------------------------------------

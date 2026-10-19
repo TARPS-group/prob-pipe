@@ -251,7 +251,7 @@ class TestPaths:
     @pytest.mark.parametrize(
         ("arg", "match"),
         [
-            pytest.param("", "the path '' has an empty name", id="empty"),
+            pytest.param("", "the path is empty", id="empty"),
             pytest.param("g//c", "the path 'g//c' has an empty name", id="empty-name"),
             pytest.param("/a", "the path '/a' has an empty name", id="leading-separator"),
             pytest.param("a/", "the path 'a/' has an empty name", id="trailing-separator"),
@@ -275,7 +275,11 @@ class TestPaths:
             pytest.param(True, "got bool", id="bool"),
             pytest.param(..., "got ellipsis", id="ellipsis"),
             pytest.param(0, "got int", id="position"),
-            pytest.param(("a", 0), "a path must be a str, got int 0", id="list-holding-a-position"),
+            pytest.param(
+                ("a", 0),
+                r"a path and a position cannot be mixed in one \[\]",
+                id="list-holding-a-position",
+            ),
         ],
     )
     def test_refuses_what_is_not_paths_with_type_error(self, arg, match):

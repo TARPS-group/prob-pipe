@@ -852,10 +852,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         """How a message names this record: its label."""
         return repr(self.label)
 
-    def _at_paths(self, paths: tuple[str, ...]) -> Record:
+    def _cut_to(self, paths: tuple[str, ...]) -> Record:
         """This record cut down to the nodes at *paths*, labeled by the paths in its order."""
         ordered = self._ordered_paths(paths)
-        return super()._at_paths(paths)._with_label(_paths_label(ordered))
+        return super()._cut_to(paths)._with_label(_paths_label(ordered))
 
     def select_all(self) -> dict[str, _FieldValue]:
         """Return every top-level field as a ``dict``, for splatting into a call.

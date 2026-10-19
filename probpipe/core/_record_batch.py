@@ -57,7 +57,14 @@ from ._kinds import batch_class_for_spec
 from ._object_batch import _from_iterable, _frozen_object_column, _is_object_array
 from ._opaque_batch import OpaqueBatch
 from ._repr import format_levels, format_names, public_class_name, type_name
-from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names, _missing_path
+from ._shapes import (
+    AxisCountsLike,
+    NamesLike,
+    _as_axis_counts,
+    _as_names,
+    _as_path_arguments,
+    _missing_path,
+)
 from ._spec_base import OpaqueSpec, _opaque_spec_of
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec, TermSpec
 from .named_tree import _PATH_SEP, _keyed_paths, _paths_label, _unflatten_paths
@@ -390,7 +397,7 @@ class RecordBatch(Batch[Record]):
         view._init_batch(spec, label=label)
         return view
 
-    def _at_paths(self, paths: str | tuple[str, ...]) -> Any:
+    def _at_paths(self, paths: str | tuple[str, ...], *, tuple_given: bool = False) -> Any:
         """The batch of every element's node at a path, or cut down to a list of paths.
 
         A path to a **field** yields that field's column as the batch form of
@@ -407,6 +414,9 @@ class RecordBatch(Batch[Record]):
         ----------
         paths : str or tuple of str
             One path, or a list of paths, as ``[]`` read them.
+        tuple_given : bool
+            Whether ``[]`` was given the list of paths as a tuple, which a
+            missing path's message reads.
 
         Returns
         -------
@@ -419,9 +429,9 @@ class RecordBatch(Batch[Record]):
             If a path is not a path of the elements, naming the paths they have.
         """
         template = self.event_template
-        requested = paths if isinstance(paths, tuple) else ()
-        for path in requested or (paths,):
-            self._check_path(path, requested=requested)
+        listed = paths if isinstance(paths, tuple) else (paths,)
+        for path in listed:
+            self._check_path(path, requested=listed if tuple_given else ())
         if isinstance(paths, tuple):
             cut = template[paths]
             return self._view_over(
@@ -446,8 +456,8 @@ class RecordBatch(Batch[Record]):
         path : str
             A path, which the caller has read.
         requested : tuple of str
-            The list of paths that holds *path*, which the message reads, or
-            ``()`` for one path.
+            The tuple of paths that holds *path*, which the message reads, or
+            ``()`` for one path or a list of paths.
 
         Raises
         ------
@@ -752,7 +762,10 @@ class RecordBatch(Batch[Record]):
             If every field would be dropped — a batch of records with no fields
             is not a value.
         """
-        kept = self.event_template.without(*paths)
+        read_paths = _as_path_arguments(paths, action="call without() with")
+        for path in read_paths:
+            self._check_path(path)
+        kept = self.event_template.without(*read_paths)
         return self._rebuilt({path: self._columns[path] for path in kept}, kept)
 
     def replace(self, _updates: Mapping[str, Any] | None = None, /, **updates: Any) -> Self:

@@ -337,3 +337,27 @@ def test_i22_a_merge_reads_no_label():
     assert relabeled.event_spec == plain.event_spec
     assert relabeled.label != plain.label
     np.testing.assert_allclose(variance(relabeled)["b"].raw, variance(plain)["b"].raw)
+
+
+@pytest.mark.pending(reason="G1a: a view of a group offers the group's parts", raises=TypeError)
+def test_i6_a_view_of_a_group_agrees_with_its_parents_output_spec():
+    grouped = _grouped()
+    assert grouped["g"].event_spec == grouped.event_spec["g"]
+
+
+@pytest.mark.pending(reason="G3: lists of paths continue into a held law", raises=KeyError)
+def test_i9_a_list_of_paths_through_a_held_law():
+    record_with_law = Record({"n": 3.0, "G": _prior()}, label="record_with_law")
+    assert record_with_law[["G/mu"]].keys() == ("G",)
+
+
+@pytest.mark.pending(reason="G5: [] on a kernel", raises=TypeError)
+def test_i13_indexing_commutes_with_a_kernel():
+    lik = _lik()
+    assert lik["y"].event_spec == lik.event_spec
+
+
+@pytest.mark.pending(reason="G3: in follows paths through a held law", raises=AssertionError)
+def test_i18_membership_through_a_held_law():
+    record_with_law = Record({"n": 3.0, "G": _prior()}, label="record_with_law")
+    assert "G/mu" in record_with_law

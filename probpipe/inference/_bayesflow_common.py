@@ -34,7 +34,7 @@ from ..custom_types import Array, PRNGKey
 from ..distributions._capabilities import SupportsConditionalSampling
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution, NumericDistribution
-from ..distributions._views import _extract
+from ..distributions._factored import _extract
 from ._inference_utils import refuse_seed_keywords
 
 if TYPE_CHECKING:

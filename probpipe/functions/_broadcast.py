@@ -1291,7 +1291,7 @@ def batch_field(spec: Any, prefix: str = "") -> tuple[str, tuple[str, ...]] | No
         path = f"{prefix}{name}"
         if isinstance(child, BatchSpec):
             return path, tuple(child.level_names)
-        held = batch_field(child, f"{path}/")
+        held = batch_field(child, f"{path}{_PATH_SEP}")
         if held is not None:
             return held
     return None

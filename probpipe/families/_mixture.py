@@ -41,7 +41,7 @@ from ..distributions._distribution import (
     _constructor_label,
     _record_default_expression,
 )
-from ..distributions._views import _raw_leaves
+from ..distributions._factored import _raw_leaves
 from ..linalg import DenseLinOp, LinOp
 from ..operations import _moments
 

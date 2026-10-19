@@ -36,8 +36,7 @@ from ..custom_types import Array, ArrayLike
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution, _array_leaves
 from ..distributions._empirical import EmpiricalDistribution, _coordinates
-from ..distributions._factored import _raw_record
-from ..distributions._views import _raw_leaves
+from ..distributions._factored import _raw_leaves, _raw_record
 from ..functions import _context
 from ..operations._condition import condition_on
 from ..operations._sample import sample

@@ -12,7 +12,7 @@ from typing import Any
 
 from ..core._dispatch import Feasibility
 from ..core._expression import Expression
-from ..core._shapes import PathsLike, _as_paths
+from ..core._shapes import PathsLike
 from ..core._specs import OutputSpec
 from ..distributions._capabilities import SupportsMarginals, _capability_guard
 from ..distributions._conditional import ConditionalDistributionSpec
@@ -20,16 +20,10 @@ from ..distributions._distribution import (
     Distribution,
     DistributionSpec,
     _detached_term,
+    _read_event_paths,
 )
 from ..distributions._factored import SupportsFactors
-from ..distributions._views import (
-    _has_path,
-    _in_event_order,
-    _marginal_expression_at,
-    _not_an_event_path,
-    _path_tuple,
-    _view_declaration,
-)
+from ..distributions._views import _marginal_expression_at, _view_declaration
 from ..functions._call import ApplicabilityError
 from ._operation import BoundCall, _install_expression_rule, operation
 
@@ -63,14 +57,12 @@ def _read_marginal_paths(event_spec: OutputSpec, label: str, paths: Any) -> str 
         If a path is empty or has an empty name, or a list of paths is empty,
         names a path twice, or holds a path inside another.
     """
-    read = _as_paths(paths, action=f"take the marginal of {label!r} at")
-    listed = read if isinstance(read, tuple) else ()
-    for path in _path_tuple(read):
-        if not _has_path(event_spec, path):
-            raise ApplicabilityError(
-                f"marginal: {_not_an_event_path(event_spec, label, path, listed)}"
-            )
-    return read if isinstance(read, str) else _in_event_order(event_spec, read)
+    try:
+        return _read_event_paths(
+            event_spec, label, paths, action=f"take the marginal of {label!r} at"
+        )
+    except KeyError as error:
+        raise ApplicabilityError(f"marginal: {error.args[0]}") from None
 
 
 def _marginal_result(d: DistributionSpec, paths: Any) -> OutputSpec:
