@@ -63,10 +63,18 @@ _OTHER_PACKAGES = frozenset(
     }
 )
 
+_AWAITS_MERGE_OPERATOR = "laws and kernels merge with & and rename with rename, where they use * and with_path_names"
+_AWAITS_MARGINAL_VIEW = "the view a law's [] returns is the class FieldView, which III.7 names MarginalView"
+
 #: Declarations the implementation does not match yet, with the change each awaits.
 _PENDING: dict[str, str] = {
     "Converter": "check and execute take the converter options as keywords, as V.4 forwards them",
     "ConverterRegistry": "convert takes the converter options as keywords, as V.4 forwards them",
+    "Distribution": (
+        f"{_AWAITS_MERGE_OPERATOR}; [] names its parameter paths, and in tests a law's paths"
+    ),
+    "MarginalView": _AWAITS_MARGINAL_VIEW,
+    "__and__": _AWAITS_MERGE_OPERATOR,
 }
 
 
@@ -82,8 +90,8 @@ def _tool():
 
 
 def _resolve(name: str):
-    if name == "__mul__":
-        return _distribution.Distribution.__mul__
+    if name == "__and__":
+        return getattr(_distribution.Distribution, "__and__", None)
     for module in _MODULES:
         if hasattr(module, name):
             return getattr(module, name)
@@ -117,19 +125,23 @@ class TestDeclarationsAreImplemented:
         findings = _tool().check([declaration], _resolve)
         assert not findings, "; ".join(f"{f.name} {f.problem}" for f in findings)
 
-    def test_a_kernel_composes_by_the_declared_signature(self):
+    @pytest.mark.pending(reason=_AWAITS_MERGE_OPERATOR, raises=AssertionError)
+    def test_a_kernel_merges_by_the_declared_signature(self):
         tool = _tool()
-        (declaration,) = [d for d in tool.declarations(["IV.2"]) if _declared_name(d) == "__mul__"]
+        (declaration,) = [d for d in tool.declarations(["IV.2"]) if _declared_name(d) == "__and__"]
         findings = tool.check(
             [declaration],
             lambda name: (
-                _conditional.ConditionalDistribution.__mul__ if name == "__mul__" else None
+                getattr(_conditional.ConditionalDistribution, "__and__", None)
+                if name == "__and__"
+                else None
             ),
         )
         assert not findings, findings
 
 
 class TestExportsAreDeclared:
+    @pytest.mark.pending(reason=_AWAITS_MARGINAL_VIEW, raises=AssertionError)
     def test_every_exported_distribution_kind_is_declared_or_derived_by_rule(self):
         """A public name the reference does not declare, or derive by its closure rule, is drift."""
         tool = _tool()
