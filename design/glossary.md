@@ -12,7 +12,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **conversion**: a change of a distribution's representation that preserves its law, up to the recorded fidelity, and its event declaration; a converter is the registered method that carries one out (IV.3).
 - **declaration**: static information an object states before any computation, such as a spec, a claimed capability, or a method's exactness (II.7). In particular, an `InputSpec` declares a map-like kind's input slots, an `OutputSpec` declares the components of one produced term, and a law's event declaration is the `OutputSpec` of a draw (II.2, III.7).
 - **derived operation**: an operation defined by an identity over other operations, such as `prob = exp ∘ log_prob` or `expectation(d, f) = mean(pushforward(d, f))` (VI.0, VI.4, VI.5).
-- **description**: the expression a term derives at construction, from its declared fields, its callable's name, or its operands, which its label renders when the caller gives no alias. A term that JAX rebuilds from its leaves has none and displays `<no description>` (II.4).
+- **description**: the expression a term derives at construction, from its declared fields, its callable's name, or its operands, which its label renders when the caller gives no alias. A term that JAX rebuilds from its leaves has none and displays `<no description>` (II.4). A registry and each of its entries carry a different `description`, the one line the registry catalog shows (II.7).
 - **element**: one object of a batch, at one position of its batch axes (II.5). The scalar values of an array are its entries.
 - **evaluation rule**: a method of the evaluation-rule registry, which realizes a map applied to a distribution or a batch, such as a closed-form rule, an integration rule, or the sampling lift (V.7).
 - **event**: one value of a distribution's space, such as a draw or a stored datum, typed by the law's event declaration (III.5, III.7). A workflow-owned random event is one draw's occurrence in a workflow scope (V.8).
@@ -39,7 +39,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **path**: a `/`-joined sequence of names that addresses one node of a named tree, either a field or an interior node (II.6); II.2 fixes the paths of a declaration. The occurrence path of a random event is its call's position in the workflow (V.8).
 - **provenance**: the record of how a tracked term was produced, which holds its operation, its tracked parents, its resolved controls, and its plain inputs (II.4).
 - **pushforward**: the law `f♯d` of `f(X)` for `X ~ d`, which the operation `pushforward(d, f)` computes by passing the map draws of `d` whatever its annotation; the direct call `f(d)` is a pushforward when the map's parameter takes draws (V.5, VI.1).
-- **raw form**: the representation layer's presentation of a value, detached from the workflow, such as a backing array or a wrapped callable; `raw()` returns it (Part I, II.4).
+- **raw form**: the representation layer's presentation of a value, detached from the workflow, such as a backing array or a wrapped callable; it is a term's `raw` (Part I, II.4).
 - **registry**: an extensible set of registered entries, discoverable through the registry catalog; a dispatch registry selects one of its methods for a call (II.7).
 - **route**: one implementation of an operation, with a `check`, an `execute`, and an exact flag, from a structural, capability, registry, or fallback source (VI.0).
 - **schema**: a `RecordSpec` read as the structure of one structured value, such as a draw or a stored datum (III.5).
@@ -76,3 +76,4 @@ The canonical name of a recurring concept is the name that its parameters, attri
 | a field key within a tree, or the name assigned to a field | `field_name` or `key` |
 | the attributes an immutable class keeps out of its state round-trip, such as a memo | `_transient_state` |
 | the attributes an immutable class restores into a container of their own, such as a store written in place | `_decoupled_state` |
+| the one line the registry catalog shows for a registry or an entry, such as a dispatch method (II.7) | `description` |

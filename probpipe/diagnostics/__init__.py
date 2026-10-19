@@ -79,6 +79,14 @@ __all__ += [
 ]
 
 
+# ── Summary tables ───────────────────────────────────────────────────────
+from ._summary import summarize
+
+__all__ += [
+    "summarize",
+]
+
+
 # ── Predictive checks ────────────────────────────────────────────────────
 from ._ppc_spc import add_ppc
 

@@ -560,12 +560,12 @@ class TestMakePosteriorRecordTarget:
         from probpipe import variance as op_variance
 
         m = op_mean(post)
-        assert m.fields == ("mean(params)", "mean(scale)")
-        assert jnp.shape(m["mean(params)/a"]) == ()
-        assert jnp.shape(m["mean(scale)"]) == ()
+        assert m.fields == ("params", "scale")
+        assert jnp.shape(m["params/a"]) == ()
+        assert jnp.shape(m["scale"]) == ()
         v = op_variance(post)
-        assert v.fields == ("variance(params)", "variance(scale)")
-        assert jnp.shape(v["variance(params)/b"]) == ()
+        assert v.fields == ("params", "scale")
+        assert jnp.shape(v["params/b"]) == ()
         # ``draws()`` walks the full template, nesting included.
         draws = flat_draws(post)
         assert tuple(draws.event_template.children) == expected_fields
@@ -1248,8 +1248,8 @@ class TestEndToEndValuesPipeline:
         # Posterior var  = sigma_prior^2 * sigma_lik^2 / (sigma_lik^2 + sigma_prior^2)
         #                = 10/11 ≈ 0.909
         draws = flat_draws(posterior)
-        post_mean = np.asarray(draws["params"].raw().mean(axis=0))
-        post_std = np.asarray(draws["params"].raw().std(axis=0))
+        post_mean = np.asarray(draws["params"].raw.mean(axis=0))
+        post_std = np.asarray(draws["params"].raw.std(axis=0))
         analytical_mean = np.array([10 / 11, 20 / 11])
         analytical_std = np.sqrt(10 / 11)
         # Observed across four workflow seeds: max |mean error| 0.003-0.038,
@@ -1267,7 +1267,7 @@ class TestEndToEndValuesPipeline:
         draws = flat_draws(posterior)
         np.testing.assert_allclose(
             np.asarray(view._mean()),
-            np.asarray(draws["params"].raw().mean(axis=0)),
+            np.asarray(draws["params"].raw.mean(axis=0)),
             atol=1e-5,
         )
         # Analytical check: view._mean() near analytical posterior mean.
@@ -1343,7 +1343,7 @@ class TestEndToEndValuesPipeline:
         # Per-field views
         view_a = post["a"]
         assert isinstance(view_a, FieldView)
-        np.testing.assert_allclose(float(view_a._mean()), float(draws["a"].raw().mean()), atol=1e-5)
+        np.testing.assert_allclose(float(view_a._mean()), float(draws["a"].raw.mean()), atol=1e-5)
 
     def test_workflow_mixed_posterior_and_independent(self, posterior):
         """Workflow with both posterior views and an independent distribution."""

@@ -138,7 +138,7 @@ class TestRoundTrip:
         log-Jacobian is that of the map onto them."""
         bijector = bijector_for(simplex)
         z = jnp.array([0.3, -0.2, 0.9])
-        jacobian = jax.jacfwd(lambda u: bijector.raw()(u)[:-1])(z)
+        jacobian = jax.jacfwd(lambda u: bijector.raw(u)[:-1])(z)
         expected = jnp.log(jnp.abs(jnp.linalg.det(jacobian)))
         np.testing.assert_allclose(bijector._log_det_jacobian(z), expected, rtol=1e-5)
         backend = bijector._bijector

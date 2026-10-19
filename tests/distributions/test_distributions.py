@@ -239,7 +239,7 @@ class TestEmpiricalDistribution:
     def test_1d_input_scalar_event(self):
         ed = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="x")
         assert ed.event_shape == ()
-        assert ed.atoms.values.shape == (3,)
+        assert ed.atoms.raw.shape == (3,)
 
     def test_multidim_event_shape(self):
         samples = jnp.ones((5, 3))

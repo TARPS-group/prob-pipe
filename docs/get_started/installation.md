@@ -25,8 +25,10 @@ Until it is, install the tutorials' set of extras through `probpipe-core`, as th
 To install the minimal set, run this in a code cell:
 
 ```text
-%pip install "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
+%pip install "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul" "pymc>=6.2"
 ```
+
+Colab comes with PyMC 5, which does not work with the ArviZ 1.x that ProbPipe requires, so the command also upgrades PyMC.
 
 To install the set the tutorials use, run this instead:
 
@@ -117,8 +119,8 @@ with workflow_run(seed=0):
 
 print("ProbPipe version:", probpipe.__version__)
 print("number of draws:", draws.shape[0])
-print("mean of the draws:", round(float(jnp.mean(draws.values)), 2))
-print("standard deviation of the draws:", round(float(jnp.std(draws.values)), 2))
+print("mean of the draws:", round(float(jnp.mean(draws.raw)), 2))
+print("standard deviation of the draws:", round(float(jnp.std(draws.raw)), 2))
 ```
 
 It prints:

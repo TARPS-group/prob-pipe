@@ -407,7 +407,7 @@ def _raw_form_named(value: Any, hint: Any) -> Any:
         # A class that refuses an instance check, as a protocol that is not
         # runtime checkable does, names no raw form.
         return value
-    raw = value.raw()
+    raw = value.raw
     return raw if isinstance(raw, classes) else value
 
 

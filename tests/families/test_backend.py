@@ -205,7 +205,7 @@ class TestTheAdapter:
         assert bool(jnp.all(jnp.diff(quantiles, axis=0) >= 0))
 
     def test_raw_is_the_backend_distribution(self):
-        assert isinstance(F.Normal("x", 0.0, 1.0).raw(), tfd.Normal)
+        assert isinstance(F.Normal("x", 0.0, 1.0).raw, tfd.Normal)
 
     def test_the_adapter_claims_the_quantile(self):
         law = F.Normal("x", 0.0, 1.0)
@@ -334,7 +334,7 @@ class TestTheSeparateLawsForm:
         with _allow_batched_tfp_init():
             law = F.Normal("x", jnp.zeros(5), 1.0)
         assert law.event_shape == ()
-        assert tuple(law.raw().batch_shape) == (5,)
+        assert tuple(law.raw.batch_shape) == (5,)
         assert law._log_prob(jnp.zeros(5)).shape == (5,)
 
     def test_the_form_is_scoped_to_the_block(self):
@@ -406,7 +406,7 @@ class TestRecordedArguments:
 
         with pytest.raises(ValueError, match="read-only"):
             loc[0] = 5.0
-        np.testing.assert_array_equal(pickle.loads(pickle.dumps(law)).raw().mean(), [0.0, 1.0, 2.0])
+        np.testing.assert_array_equal(pickle.loads(pickle.dumps(law)).raw.mean(), [0.0, 1.0, 2.0])
 
 
 class TestPickling:
@@ -431,7 +431,7 @@ class TestPickling:
             law = F.Normal("x", jnp.zeros(3), 1.0)
         copied = _COPIES[how](law)
         assert copied.event_shape == ()
-        assert tuple(copied.raw().batch_shape) == (3,)
+        assert tuple(copied.raw.batch_shape) == (3,)
 
 
 class _NumpyNormal(tfd.Normal):
@@ -471,10 +471,10 @@ class TestCompiledCalls:
         # last float32 digit. Observed across 4 seeds and every family: at most 5.7e-7
         # absolute and 7e-7 relative away from zero.
         np.testing.assert_allclose(
-            draws, law.raw().sample(seed=key, sample_shape=(16,)), rtol=2e-6, atol=2e-6
+            draws, law.raw.sample(seed=key, sample_shape=(16,)), rtol=2e-6, atol=2e-6
         )
         np.testing.assert_allclose(
-            law._log_prob(draws), law.raw().log_prob(draws), rtol=2e-6, atol=2e-6
+            law._log_prob(draws), law.raw.log_prob(draws), rtol=2e-6, atol=2e-6
         )
         assert _ran_compiled(law)
 
@@ -483,7 +483,7 @@ class TestCompiledCalls:
         law = _families()[name]
         q = jnp.array([0.05, 0.5, 0.95])
         # The tolerance of the draws above, which the quantiles meet.
-        np.testing.assert_allclose(law._quantile(q), law.raw().quantile(q), rtol=2e-6, atol=2e-6)
+        np.testing.assert_allclose(law._quantile(q), law.raw.quantile(q), rtol=2e-6, atol=2e-6)
         assert _ran_compiled(law)
 
     @pytest.mark.parametrize("family", [F.Beta, F.Gamma])
@@ -598,7 +598,7 @@ class TestCompiledCalls:
         # The boolean mask needs concrete values, so the first call's attempt raises
         # NonConcreteBooleanIndexError, an IndexError, and the second call skips it.
         assert len(attempts) == 1
-        np.testing.assert_array_equal(draws, law.raw().sample(seed=key, sample_shape=(4,)))
+        np.testing.assert_array_equal(draws, law.raw.sample(seed=key, sample_shape=(4,)))
 
     def test_an_error_the_eager_call_raises_too_propagates_and_keeps_the_program(self, monkeypatch):
         calls = []

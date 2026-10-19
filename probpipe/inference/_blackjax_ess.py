@@ -308,6 +308,10 @@ class BlackJAXESSMethod(InferenceMethod):
     _method_options = ("init", "num_chains", "num_results", "num_warmup")
 
     @property
+    def description(self) -> str:
+        return "Elliptical slice sampling through BlackJAX, for a Gaussian prior."
+
+    @property
     def name(self) -> str:
         return "blackjax_elliptical_slice"
 

@@ -45,19 +45,19 @@ class TestARecordFieldIsAViewOfItsKind:
 
         assert isinstance(view, NumericArray) and view.label == "effect"
         assert view.spec == record.spec["effect"]
-        assert view.raw() is record.raw("effect")
+        assert view.raw is record["effect"].raw
 
     def test_an_opaque_field_is_an_opaque_under_its_key(self):
         view = _mixed()["label"]
 
         assert isinstance(view, Opaque) and view.label == "label"
-        assert view.raw() == "A"
+        assert view.raw == "A"
 
     def test_a_callable_field_is_a_function_under_its_key(self):
         view = _mixed()["model"]
 
         assert isinstance(view, Function) and view.label == "model"
-        assert view.raw() is _square
+        assert view.raw is _square
 
     def test_a_stored_law_is_a_copy_under_its_key(self):
         law = Normal("theta", 0.0, 1.0, label="prior")
@@ -172,13 +172,13 @@ class TestABatchColumnIsTheBatchOfItsKind:
         assert isinstance(column, NumericArrayBatch)
         assert column.label == "x" and column.level_names == ("draw",)
         assert column.element_spec == NumericArraySpec((2,))
-        assert column.raw() is batch._raw_column("x")
+        assert column.raw is batch._raw_column("x")
 
     def test_an_opaque_column_is_an_opaque_batch(self, batch):
         column = batch["tag"]
 
         assert isinstance(column, OpaqueBatch)
-        assert [element.raw() for element in column] == ["a", "b", "c"]
+        assert [element.raw for element in column] == ["a", "b", "c"]
 
     def test_a_traced_column_is_the_traced_array(self):
         batch = NumericRecordBatch(
@@ -197,6 +197,6 @@ class TestAMomentReadsTheSameWay:
     def test_a_record_mean_gives_views_of_its_fields(self):
         moment = mean(Normal("a", 0.0, 1.0) * Normal("b", 2.0, 1.0))
 
-        field = moment["mean(b)"]
-        assert isinstance(field, NumericArray) and field.label == "mean(b)"
+        field = moment["b"]
+        assert isinstance(field, NumericArray) and field.label == "b"
         assert float(field) == pytest.approx(2.0)

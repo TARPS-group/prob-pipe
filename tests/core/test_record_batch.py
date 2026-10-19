@@ -368,7 +368,7 @@ class TestColumnBatchForms:
         batch = nested_batch()
         column = batch["m"]
         assert isinstance(column, NumericArrayBatch)
-        assert column.raw() is batch._columns["m"]
+        assert column.raw is batch._columns["m"]
         assert column.level_names == batch.level_names
 
     def test_a_callable_field_yields_a_function_batch(self):
@@ -397,7 +397,7 @@ class TestColumnBatchForms:
         )
         column = batch["site"]
         assert isinstance(column, OpaqueBatch)
-        assert column[0].value == "north"
+        assert column[0].raw == "north"
         assert column.level_names == ("row",)
 
     def test_a_field_with_no_batch_form_is_refused_at_construction(self):
@@ -845,7 +845,7 @@ class TestPlainRecordBatch:
             label="design",
         )
         assert type(batch[0]) is Record
-        assert [element.raw("site") for element in batch] == ["north", "south"]
+        assert [element["site"].raw for element in batch] == ["north", "south"]
 
     def test_it_has_no_flat_layout(self):
         batch = RecordBatch(
@@ -1248,7 +1248,7 @@ class TestLevels:
             batch._columns["site"][0] = "MUTATED"
         # Nor can the caller's own handle reach in after construction.
         column[0] = "MUTATED"
-        assert batch["site"][0].value == "a"
+        assert batch["site"][0].raw == "a"
 
     def test_a_slice_keeps_the_level_and_its_values(self):
         batch = nested_batch(4)
@@ -1624,9 +1624,9 @@ class TestStack:
         ]
         batch = RecordBatch.stack(records, level_name="draw")
         assert isinstance(batch["tag"], OpaqueBatch)
-        assert batch["tag"][1].value == 1
-        assert batch[0].raw("tag") == 0
-        assert not isinstance(batch[0].raw("tag"), jnp.ndarray)
+        assert batch["tag"][1].raw == 1
+        assert batch[0]["tag"].raw == 0
+        assert not isinstance(batch[0]["tag"].raw, jnp.ndarray)
 
     def test_stack_refuses_an_empty_list(self):
         with pytest.raises(ValueError, match="at least one record"):
@@ -1655,7 +1655,7 @@ class TestStack:
         ]
         batch = RecordBatch.stack(records, level_name="row")
         assert isinstance(batch["site"], OpaqueBatch)
-        assert batch["site"][1].value == "south"
+        assert batch["site"][1].raw == "south"
 
     def test_stack_converts_a_leaf_by_its_registered_backend(self, clean_registry):
         """Stacking goes through ``_to_jax_array``, the one conversion every
@@ -1821,14 +1821,27 @@ class TestEqualityAndCopying:
         with pytest.raises(TypeError):
             hash(nested_batch())
 
-    def test_repr_reports_the_levels_without_reading_a_column(self):
+    def test_repr_reports_the_levels_then_each_column(self):
+        batch = NumericRecordBatch(
+            {"x": jnp.zeros((2, 3))},
+            ("chain", "draw"),
+            element_spec=RecordSpec(x=()),
+            label="post",
+        )
+        assert repr(batch) == (
+            "NumericRecordBatch('post', levels={'chain': 2, 'draw': 3})\n"
+            "  x   [[0. 0. 0.]\n"
+            "       [0. 0. 0.]]"
+        )
+
+    def test_the_summary_in_another_repr_reports_the_levels_without_reading_a_column(self):
         batch = NumericRecordBatch(
             {"x": jnp.zeros((4, 100))},
             ("chain", "draw"),
             element_spec=RecordSpec(x=()),
             label="post",
         )
-        assert repr(batch) == (
+        assert batch._repr_summary() == (
             "NumericRecordBatch('post', levels={'chain': 4, 'draw': 100}, fields=('x',))"
         )
 
@@ -2243,4 +2256,4 @@ class TestARebuiltBatchComputes:
         assert rebuilt.label == _NO_DESCRIPTION
         assert rebuilt.spec == value.spec
         result = jax.jit(lambda x: x)(rebuilt)
-        np.testing.assert_array_equal(result["temperature"].raw(), value["temperature"].raw())
+        np.testing.assert_array_equal(result["temperature"].raw, value["temperature"].raw)

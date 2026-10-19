@@ -91,7 +91,7 @@ def _product(*names: str):
 def _means(post) -> dict[str, np.ndarray]:
     """The mean of each of the posterior's components, keyed by the component."""
     m = mean(post)
-    return {f: np.asarray(m[f"mean({f})"]).reshape(-1) for f in post.event_spec.components}
+    return {f: np.asarray(m[f]).reshape(-1) for f in post.event_spec.components}
 
 
 class TestPyABCCheck:
@@ -206,7 +206,7 @@ class TestPyABCWeightsAndDraws:
                 method_options={"n_particles": 200, "max_populations": 4},
             )(_model(_product("theta")), _observed(2.0))
         draws = np.asarray(flat_draws(post)["theta"]).reshape(-1)
-        weighted = float(np.asarray(mean(post)["mean(theta)"]).reshape(-1)[0])
+        weighted = float(np.asarray(mean(post)["theta"]).reshape(-1)[0])
         assert weighted != pytest.approx(float(draws.mean()), abs=1e-6)
 
     def test_reproducible_across_calls(self):
@@ -434,7 +434,7 @@ class TestPyABCDistributionBacking:
     def test_rvs_gives_the_coordinates_of_a_prior_draw(self):
         prior = Beta("p", 2.0, 3.0)  # mean 0.4
         pd = PyABCDistribution(prior, jax.random.PRNGKey(0))
-        onto_support = bijector_for(prior.event_spec.spec.support).raw()
+        onto_support = bijector_for(prior.event_spec.spec.support).raw
         coordinates = jnp.array([pd.rvs()["p0"] for _ in range(2000)])
         draws = np.asarray(jax.vmap(onto_support)(coordinates))
         assert draws.mean() == pytest.approx(0.4, abs=0.03)

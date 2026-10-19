@@ -14,9 +14,13 @@ the component's view, and the other components together, so a dependent joint's
 root factors keep their closed forms. ``cov`` couples components and has no
 such route.
 
-A moment of the event's kind keeps the event's packaging and derives its
-term specs, support included, and it names each component for the moment, so
-the mean of a law over ``mu`` and ``tau`` holds ``mean(mu)`` and ``mean(tau)``.
+A moment of the event's kind keeps the event's components and packaging and
+derives its term specs, support included, so the mean of a law over ``mu`` and
+``tau`` is a record whose fields are ``mu`` and ``tau``. Selection therefore
+commutes with a summary: for a law whose event exposes a record, the part of
+``mean(d)`` at an event path ``p`` and ``mean(d[p])`` have one estimand, and
+they are equal where both take exact routes. ``cov`` is declared under the
+component ``cov``.
 A moment of ``d`` is labeled by the moment of a draw of ``d``, as
 ``𝔼[(mu, tau) ~ d]``, ``𝕍[...]``, ``√𝕍[...]``, ``ℂ[...]``, or ``ℚ[...]``, and
 the law of a function lifted over laws contributes its notation in place of the
@@ -49,7 +53,7 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from math import prod
-from typing import Any, cast
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -230,62 +234,18 @@ def _array_leaves(spec: TermSpec) -> list[NumericArraySpec]:
     return []
 
 
-def _summary_name(summary: str, components: Any) -> str:
-    """The component a summary of *components* takes, the summary's call on them, as ``cov(mu, tau)``."""
-    return f"{summary}({', '.join(components)})"
-
-
-def _named_record(record: RecordSpec, summary: str) -> RecordSpec:
-    """*record* with each immediate field named for *summary*, as ``mean(mu)``."""
-    return record.with_path_names(
-        {name: _summary_name(summary, [name]) for name in record.children}
-    )
-
-
-def _summary_declaration(declaration: OutputSpec, summary: str, term: TermSpec) -> OutputSpec:
+def _summary_declaration(declaration: OutputSpec, term: TermSpec) -> OutputSpec:
     """The declaration of a summary of each component of *declaration*, whose type is *term*.
 
-    Each component is named for the summary, as ``mean(theta)``, in the
-    declaration's packaging. A summary whose type is a law, as the mean of a law
-    over laws is, exposes that law's event, since a law takes its event's
-    components.
+    The summary takes the declaration's components and packaging, so the mean
+    of a law over ``mu`` and ``tau`` is a record whose fields are ``mu`` and
+    ``tau``, and the mean of a law over ``theta`` is declared under ``theta``.
+    A summary whose type is a law, as the mean of a law over laws is, exposes
+    that law's event, since a law takes its event's components.
     """
     if isinstance(term, DistributionSpec):
         return OutputSpec(term)
-    if declaration.exposes_record:
-        return OutputSpec(_named_record(cast(RecordSpec, term), summary))
-    ((name, _),) = declaration.components.items()
-    return OutputSpec(**{_summary_name(summary, [name]): term})
-
-
-def _named_value(value: Any, summary: str, declaration: OutputSpec) -> Any:
-    """*value*, a summary of each component of *declaration*, with its fields named for *summary*.
-
-    A route returns the summary keyed by the law's components, as a record, a
-    batch of records, or a mapping. An exposed record's components are the
-    value's fields, which take the summary's names, and any other value is
-    returned as it is.
-    """
-    if not declaration.exposes_record:
-        return value
-    if isinstance(value, (Record, RecordBatch)):
-        names = value.children if isinstance(value, Record) else value.element_spec.children
-        return value.with_path_names({name: _summary_name(summary, [name]) for name in names})
-    if isinstance(value, Mapping):
-        return {_summary_name(summary, [name]): field for name, field in value.items()}
-    return value
-
-
-def _summary_route(
-    summary: str, execute: Callable[[BoundCall, OutputSpec | None], Any]
-) -> Callable[[BoundCall, OutputSpec | None], Any]:
-    """*execute*, whose value is keyed by the law's components, with its fields named for *summary*."""
-
-    def named(call: BoundCall, result: OutputSpec | None) -> Any:
-        return _named_value(execute(call, result), summary, call.operands["d"].event_spec)
-
-    named.__doc__ = execute.__doc__
-    return named
+    return declaration._with_spec(term)
 
 
 def _capability(method: str) -> Callable[[BoundCall, OutputSpec | None], Any]:
@@ -300,27 +260,26 @@ def _capability(method: str) -> Callable[[BoundCall, OutputSpec | None], Any]:
 
 
 def _mean_result(d: DistributionSpec) -> OutputSpec:
-    """A value of the event's kind, each component named ``mean(...)`` in the event's packaging.
+    """A value of the event's kind, under the event's components and in its packaging.
 
     Its term specs are those of an average: floating, on the hull of the
     event's support, so the mean of a Bernoulli event lies in the unit interval.
     """
-    return _summary_declaration(d.event_spec, "mean", _mean_term(d.event_spec.spec))
+    return _summary_declaration(d.event_spec, _mean_term(d.event_spec.spec))
 
 
 def _variance_result(d: DistributionSpec) -> OutputSpec:
-    """A value of the event's kind with non-negative floating leaves, each component named ``variance(...)``."""
-    return _summary_declaration(d.event_spec, "variance", _variance_term(d.event_spec.spec))
+    """A value of the event's kind with non-negative floating leaves, under the event's components."""
+    return _summary_declaration(d.event_spec, _variance_term(d.event_spec.spec))
 
 
 def _cov_result(d: DistributionSpec) -> OutputSpec | None:
-    """The dense covariance of the flattened draw, a ``(size, size)`` array under ``cov(...)``.
+    """The dense covariance of the flattened draw, a ``(size, size)`` array under the component ``cov``.
 
-    The component names every component of the event, as ``cov(mu, tau)``. The
-    size is the number of the event's coordinates; an event with free
+    The size is the number of the event's coordinates; an event with free
     dimensions leaves it to the returned value.
     """
-    name = _summary_name("cov", d.event_spec.components)
+    name = "cov"
     leaves = _array_leaves(d.event_spec.spec)
     if any(leaf.free_dims for leaf in leaves):
         return OutputSpec(**{name: None})
@@ -345,9 +304,8 @@ def _quantile_result(d: DistributionSpec, q: TermSpec) -> OutputSpec:
     Returns
     -------
     OutputSpec
-        The event's declaration in its packaging, with the event's shapes and
-        each component ``x`` named ``quantile(x)``. Plural levels give its batch
-        form.
+        The event's declaration, with its components, packaging, and shapes.
+        Plural levels give its batch form.
 
     Raises
     ------
@@ -361,7 +319,7 @@ def _quantile_result(d: DistributionSpec, q: TermSpec) -> OutputSpec:
         raise ApplicabilityError(
             f"quantile: q must be a number or an array of numbers; got {name}{hint}"
         )
-    element = _summary_declaration(d.event_spec, "quantile", _quantile_term(d.event_spec.spec))
+    element = _summary_declaration(d.event_spec, _quantile_term(d.event_spec.spec))
     if not q.shape:
         return element
     return element._with_spec(BatchSpec(element.spec, quantile=q.shape))
@@ -370,12 +328,12 @@ def _quantile_result(d: DistributionSpec, q: TermSpec) -> OutputSpec:
 def _expectation_result(f: TermSpec) -> OutputSpec | None:
     """The mean of the integrand's output declaration, as ``mean(pushforward(d, f))`` declares it.
 
-    Each of the integrand's components is named ``mean(...)``, with an average's
-    term specs. An integrand that declares no output leaves the declaration to
-    the returned value.
+    It takes the integrand's components and packaging, with an average's term
+    specs. An integrand that declares no output leaves the declaration to the
+    returned value.
     """
     if isinstance(f, FunctionSpec) and f.output_spec is not None and f.output_spec.spec is not None:
-        return _summary_declaration(f.output_spec, "mean", _mean_term(f.output_spec.spec))
+        return _summary_declaration(f.output_spec, _mean_term(f.output_spec.spec))
     return None
 
 
@@ -480,7 +438,7 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
         if isinstance(draws, (RecordBatch, Mapping)):
             raw = _raw_record(draws)
         else:
-            raw = jnp.asarray(draws.raw() if isinstance(draws, Batch) else draws)
+            raw = jnp.asarray(draws.raw if isinstance(draws, Batch) else draws)
         level = name
         while level in _flat_batch_spec(event).level_names:
             level += "_"
@@ -521,15 +479,11 @@ def _mc_mean(call: BoundCall, result: OutputSpec | None) -> Any:
     Monte Carlo estimate of the mean measure.
     """
     if _is_numeric(call.operands["d"].event_spec.spec):
-        return _named_value(
-            _empirical_of(call, _monte_carlo_draws(call, "mean"))._mean(),
-            "mean",
-            call.operands["d"].event_spec,
-        )
+        return _empirical_of(call, _monte_carlo_draws(call, "mean"))._mean()
     if _mixture_factory is None:
         raise RuntimeError("the mixture family is not installed; import probpipe")
     draws = _monte_carlo_draws(call, "mean")
-    stored = draws.raw() if isinstance(draws, Batch) else draws
+    stored = draws.raw if isinstance(draws, Batch) else draws
     laws = list(np.asarray(stored, dtype=object).reshape(-1))
     return _mixture_factory(laws, jnp.full(len(laws), 1.0 / len(laws)), label=_call_label(call))
 
@@ -540,11 +494,7 @@ def _mc_variance(call: BoundCall, result: OutputSpec | None) -> Any:
     Each coordinate's variance is the mean squared deviation of the draws from
     their mean, dividing by the number of draws.
     """
-    return _named_value(
-        _empirical_of(call, _monte_carlo_draws(call, "variance"))._variance(),
-        "variance",
-        call.operands["d"].event_spec,
-    )
+    return _empirical_of(call, _monte_carlo_draws(call, "variance"))._variance()
 
 
 def _dense(covariance: Any) -> Any:
@@ -601,9 +551,7 @@ def _mc_quantile(call: BoundCall, result: OutputSpec | None) -> Any:
     levels = _check_levels(call.operands["q"])
     draws = _monte_carlo_draws(call, "quantile")
     quantiles = _empirical_of(call, draws)._quantile(levels)
-    return _record_batch(
-        _named_value(quantiles, "quantile", call.operands["d"].event_spec), call, result
-    )
+    return _record_batch(quantiles, call, result)
 
 
 # ---------------------------------------------------------------------------
@@ -616,16 +564,15 @@ def _view(d: Distribution, components: tuple[str, ...]) -> Distribution:
     return d[components[0]] if len(components) == 1 else d[components]
 
 
-def _block_values(view: Distribution, value: Any, summary: str) -> dict[str, Any]:
+def _block_values(view: Distribution, value: Any) -> dict[str, Any]:
     """The raw *value* of a summary of *view*, keyed by the components of the view's event.
 
-    A view that exposes a record returns the summary keyed by its components'
-    summary names, as ``mean(mu)``, and a view of one whole term returns that
-    term's summary.
+    A view that exposes a record returns the summary keyed by its components,
+    and a view of one whole term returns that term's summary.
     """
     declaration = view.event_spec
     if declaration.exposes_record:
-        return {name: value[_summary_name(summary, [name])] for name in declaration.components}
+        return {name: value[name] for name in declaration.components}
     ((name, _),) = declaration.components.items()
     return {name: value}
 
@@ -685,7 +632,7 @@ class _ByComponent(_DelegatingRoute):
     Parameters
     ----------
     summary : str
-        The summary's name, as each component of its result is named:
+        The operation's name, which the route's error messages give:
         ``"mean"``, ``"variance"``, or ``"quantile"``.
     """
 
@@ -894,9 +841,9 @@ class _ByComponent(_DelegatingRoute):
         Returns
         -------
         Any
-            The summary keyed by the law's components, each named for the
-            summary, as a term whose provenance records each block's
-            components, route, and exactness; under ``raw``, its raw form.
+            The summary keyed by the law's components, as a term whose
+            provenance records each block's components, route, and exactness;
+            under ``raw``, its raw form.
 
         Raises
         ------
@@ -917,14 +864,14 @@ class _ByComponent(_DelegatingRoute):
         records = []
         for block in partition.blocks:
             value, route, exactness = self._run_block(call, block, exact_only)
-            values.update(_block_values(block.view, value, self.summary))
+            values.update(_block_values(block.view, value))
             records.append(
                 {"components": list(block.components), "route": route, "exact": exactness}
             )
         assembled = {c: values[c] for c in d.event_spec.components}
         # A quantile at several levels is a batch of records, which
         # ``_record_batch`` assembles; any other value passes through it.
-        value = _record_batch(_named_value(assembled, self.summary, d.event_spec), call, result)
+        value = _record_batch(assembled, call, result)
         return _assembled(
             value,
             call,
@@ -987,7 +934,7 @@ mean.capability_route(
     protocol=SupportsMean,
     method="_mean",
     exact=True,
-    execute=_summary_route("mean", _capability("_mean")),
+    execute=_capability("_mean"),
 )
 mean.register_route(_ByComponent("mean"))
 mean.fallback_route("monte_carlo", check=_can_average, execute=_mc_mean, exact=False)
@@ -1036,7 +983,7 @@ variance.capability_route(
     protocol=SupportsVariance,
     method="_variance",
     exact=True,
-    execute=_summary_route("variance", _capability("_variance")),
+    execute=_capability("_variance"),
 )
 variance.register_route(_ByComponent("variance"))
 variance.fallback_route(
@@ -1045,18 +992,19 @@ variance.fallback_route(
 
 
 def _standard_deviation_result(d: DistributionSpec) -> OutputSpec:
-    """A value of the event's kind with non-negative floating leaves, each component named ``standard_deviation(...)``."""
-    return _summary_declaration(
-        d.event_spec, "standard_deviation", _variance_term(d.event_spec.spec)
-    )
+    """A value of the event's kind with non-negative floating leaves, under the event's components."""
+    return _summary_declaration(d.event_spec, _variance_term(d.event_spec.spec))
 
 
 def _root(value: Any) -> Any:
     """The square root of each coordinate of *value*: of each array leaf, or of a function's values.
 
-    A function's square root takes the function's parameters, where its
-    signature can be read.
+    A mapping's square root is the mapping of its fields' square roots, under
+    the same keys. A function's square root takes the function's parameters,
+    where its signature can be read.
     """
+    if isinstance(value, Mapping):
+        return {name: _root(field) for name, field in value.items()}
     if callable(value):
 
         def root(*args: Any, **kwargs: Any) -> Any:
@@ -1067,23 +1015,6 @@ def _root(value: Any) -> Any:
             root.__signature__ = inspect.signature(value)  # type: ignore[attr-defined]
         return root
     return jax.tree.map(jnp.sqrt, value)
-
-
-def _square_root(variance_value: Any, declaration: OutputSpec) -> Any:
-    """The standard deviation of a law whose event is *declaration*, from its raw variance.
-
-    Each coordinate's standard deviation is the square root of its variance.
-    The variance of an exposed record is keyed by its components' variance
-    names, as ``variance(mu)``, and the result by their standard deviation
-    names, as ``standard_deviation(mu)``.
-    """
-    if declaration.exposes_record and isinstance(variance_value, Mapping):
-        by_component = {
-            name: _root(variance_value[_summary_name("variance", [name])])
-            for name in declaration.components
-        }
-        return _named_value(by_component, "standard_deviation", declaration)
-    return _root(variance_value)
 
 
 def _variance_applies(d: Any) -> Any:
@@ -1118,8 +1049,8 @@ def standard_deviation(d: Distribution):
     -------
     TrackedTerm
         The standard deviation at the law's declared event kind, with
-        non-negative leaves, labeled ``√𝕍[(mu, tau) ~ d]``, each component
-        named ``standard_deviation(...)``.
+        non-negative leaves under the event's components, labeled
+        ``√𝕍[(mu, tau) ~ d]``.
 
     Raises
     ------
@@ -1132,7 +1063,7 @@ def standard_deviation(d: Distribution):
     MathematicalDomainError
         If the variance of *d* is known to be undefined, as a Cauchy law's is.
     """
-    return _square_root(variance.using(raw=True)(d), d.event_spec)
+    return _root(variance.using(raw=True)(d))
 
 
 @operation(result=_cov_result, conditions=(_numeric_event,))
@@ -1228,9 +1159,7 @@ def _closed_form_quantile(call: BoundCall, result: OutputSpec | None) -> Any:
     records.
     """
     quantiles = call.operands["d"]._quantile(_check_levels(call.operands["q"]))
-    return _record_batch(
-        _named_value(quantiles, "quantile", call.operands["d"].event_spec), call, result
-    )
+    return _record_batch(quantiles, call, result)
 
 
 quantile.capability_route(
@@ -1293,7 +1222,7 @@ class _PushforwardMean(_EvaluationRules):
         averaged = mean(law)
         steps = (_recorded_exactness(law), _recorded_exactness(averaged))
         exact = False if False in steps else (True if steps == (True, True) else None)
-        return RouteOutcome(averaged.raw(), exact)
+        return RouteOutcome(averaged.raw, exact)
 
 
 def _recorded_exactness(term: Any) -> bool | None:
@@ -1368,7 +1297,7 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
     fixed = dict(call.operands.get("fixed_args") or {})
     parameter = _bound_parameter(f, fixed, subject="expectation")
     operation = isinstance(f, Operation)
-    body = f if operation else f.raw()
+    body = f if operation else f.raw
     constants = {**({} if operation else f._bind), **fixed}
     if constants:
         constants = dict(presented_arguments(f._signature_info, constants))
@@ -1392,10 +1321,8 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
 
 
 def _closed_form_expectation(call: BoundCall, result: OutputSpec | None) -> Any:
-    """``d._expectation(f)``, each component of the integrand's output named ``mean(...)``."""
-    value = call.operands["d"]._expectation(_integrand(call))
-    declared = _as_function(call.operands["f"], subject="expectation").output_spec
-    return value if declared is None else _named_value(value, "mean", declared)
+    """``d._expectation(f)``, under the components of the integrand's output."""
+    return call.operands["d"]._expectation(_integrand(call))
 
 
 expectation.capability_route(

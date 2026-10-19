@@ -677,9 +677,7 @@ class TestCallerJaxTrace:
             second = lifted(Normal("z", 0.0, 1.0))
 
         assert first.num_atoms == 8
-        np.testing.assert_array_equal(
-            np.asarray(first.atoms.values), np.asarray(second.atoms.values)
-        )
+        np.testing.assert_array_equal(np.asarray(first.atoms.raw), np.asarray(second.atoms.raw))
 
     def test_an_inference_method_that_jits_its_chains_draws(self):
         prior = Normal("mu", 0.0, 1.0)
@@ -691,7 +689,7 @@ class TestCallerJaxTrace:
         with workflow_run(seed=3):
             posterior = likelihood(_normal_model(prior), {"y": jnp.zeros(4)})
 
-        assert np.all(np.isfinite(np.asarray(mean(posterior)["mean(mu)"])))
+        assert np.all(np.isfinite(np.asarray(mean(posterior)["mu"])))
 
     def test_a_deterministic_operation_runs_under_the_callers_jit(self):
         def body(loc):

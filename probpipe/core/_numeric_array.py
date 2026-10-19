@@ -24,7 +24,14 @@ from ._array_backend import (
 )
 from ._expression import Expression, Operator, constant
 from ._numeric import Numeric
-from ._repr import BINARY_SYMBOLS, format_dtype, term_repr
+from ._repr import (
+    BINARY_SYMBOLS,
+    VALUE_INDENT,
+    format_dtype,
+    format_entries,
+    summary_with_values,
+    term_repr,
+)
 from ._specs import NumericArraySpec
 from .provenance import Provenance
 from .tracked import (
@@ -55,7 +62,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         lazy or disk-backed value stays lazy. Python numeric scalars, including
         subclasses, are normalised to a 0-d ``jax.Array``; NumPy scalars retain
         their native form and dtype. A NumPy array is marked read-only in place,
-        so a write through the caller's handle or through :meth:`raw` raises
+        so a write through the caller's handle or through :attr:`raw` raises
         ``ValueError``.
     label : str
         The value's required semantic name. A value carries no fields to describe it,
@@ -79,7 +86,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     -----
     Construction validates native arrays and NumPy scalars against metadata
     alone, deferring JAX conversion to :meth:`as_jax`. NumPy scalars retain their
-    original precision in :attr:`value` and ``np.asarray(value)``. JAX conversion
+    original precision in :attr:`raw` and ``np.asarray(value)``. JAX conversion
     follows its x64 configuration and can round or overflow; ``float(value)``
     also goes through :meth:`as_jax`.
 
@@ -114,6 +121,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     (3,)
     >>> value + 1
     NumericArray('draw + 1', shape=(3,), dtype=float32)
+      [1. 2. 3.]
     """
 
     __slots__ = (
@@ -183,12 +191,8 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     # -- what it holds ------------------------------------------------------
 
     @property
-    def value(self) -> Any:
-        """The stored value, in the form it was given. Untracked."""
-        return self._value
-
     def raw(self) -> Any:
-        """The stored array, in the form it was given, as :attr:`value` holds it."""
+        """The stored array, in the form it was given. Untracked."""
         return self._value
 
     def as_jax(self) -> Any:
@@ -314,18 +318,34 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         return len(self._value)
 
     def __str__(self) -> str:
-        """The stored value's string, as ``print`` and an f-string show the array."""
-        return str(self._value)
+        """The stored value's entries as NumPy prints them, as ``print`` shows the array.
+
+        Inside a JAX trace, where the value is a tracer, ``str()`` is the
+        repr's summary.
+        """
+        values = format_entries(self._value)
+        return self._repr_summary() if values is None else values
 
     def __format__(self, format_spec: str) -> str:
         """The stored value formatted by *format_spec*, as ``f"{x:.2f}"`` formats a scalar."""
         return format(self._value, format_spec)
 
     def __repr__(self) -> str:
+        """A summary of the label, the shape, the dtype, and any support, then the entries below it.
+
+        Each line of the entries is indented by two spaces, as a record's lines
+        are. NumPy's printing formats the entries, so ``np.set_printoptions`` sets
+        their precision and shortens a large array with ``...``, and only the
+        entries shown are read from the device. Inside a JAX trace, where the
+        value is a tracer, the repr is the summary alone.
+        """
+        return summary_with_values(self._repr_summary(), format_entries(self._value, VALUE_INDENT))
+
+    def _repr_summary(self) -> str:
         """The label, then the declared shape and dtype, and the support when one is declared.
 
-        A declaration with an open dtype shows the stored value's dtype. The repr
-        reads the spec and the value's metadata alone.
+        A declaration with an open dtype shows the stored value's dtype. The
+        summary reads the spec and the value's metadata alone.
         """
         spec = self._spec
         dtype = spec.dtype if spec.dtype is not None else self.dtype

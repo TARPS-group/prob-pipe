@@ -2,7 +2,7 @@
 
 ``TFPDistribution`` implements the capability set on raw arrays over a wrapped
 backend distribution, and every parametric family is a thin constructor over
-it. It is the only class that knows the backend exists, and its ``raw()`` is
+it. It is the only class that knows the backend exists, and its ``raw`` is
 the wrapped backend distribution.
 
 Every family samples and has a normalized density. Beyond those, a family
@@ -426,6 +426,7 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
         """
         return None
 
+    @property
     def raw(self) -> tfd.Distribution:
         """The wrapped backend distribution."""
         return self._tfp_dist

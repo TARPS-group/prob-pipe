@@ -538,4 +538,4 @@ def test_any_map_preserves_shared_input_output_dimensions(dispatch, output_size)
     else:
         result = op(law, fn)
         assert result.event_spec.spec.shape == (2,)
-        assert jnp.array_equal(mean(result).raw(), jnp.ones(2))
+        assert jnp.array_equal(mean(result).raw, jnp.ones(2))

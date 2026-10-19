@@ -701,7 +701,7 @@ class TestNotation:
     @pytest.mark.parametrize(
         "copy",
         [
-            pytest.param(lambda k: k.raw(), id="raw"),
+            pytest.param(lambda k: k.raw, id="raw"),
             pytest.param(lambda k: _detached_term(k), id="detached"),
             pytest.param(lambda k: k.with_label("glm2"), id="with_label"),
             pytest.param(lambda k: k.with_dim_sizes(n=3), id="with_dim_sizes"),
