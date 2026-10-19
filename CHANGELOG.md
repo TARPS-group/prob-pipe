@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`ConversionInfo.samples` is renamed `claims_random_events`.** It is `True`
+  when executing the conversion claims a workflow-owned random event, such as a
+  draw from the source, so the result depends on the workflow seed, and `False`
+  when the result is a deterministic function of the source and the converter
+  options. Replace `info.samples` with `info.claims_random_events`, and pass
+  `claims_random_events=` where a converter's `check` passed `samples=`.
 - **`raw` is a property on every term.** Replace `x.raw()` with `x.raw`, and
   search your code for `.raw(` to find the calls. The `raw` of a `Function`,
   an `Operation`, or a `Bijector` is a callable, so an old `f.raw()` calls the
@@ -2597,6 +2603,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A converter's `check` states only its promise.** It leaves `method_name`
+  and `exact` unset on the `ConversionInfo` it returns, and the converter
+  registry sets both from the registration. A converter that passes both still
+  works, since the registry replaces them.
 - **A parametric family and a joint's conditional factors reuse their
   compiled code across calls.** A family samples, scores, and takes quantiles
   through compiled programs that a later call with the same parameter shapes

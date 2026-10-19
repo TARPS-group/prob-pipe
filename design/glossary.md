@@ -76,4 +76,5 @@ The canonical name of a recurring concept is the name that its parameters, attri
 | a field key within a tree, or the name assigned to a field | `field_name` or `key` |
 | the attributes an immutable class keeps out of its state round-trip, such as a memo | `_transient_state` |
 | the attributes an immutable class restores into a container of their own, such as a store written in place | `_decoupled_state` |
+| whether executing a planned step claims at least one workflow-owned random event, so that its result depends on the workflow seed (V.8) | `claims_random_events` |
 | the one line the registry catalog shows for a registry or an entry, such as a dispatch method (II.7) | `description` |
