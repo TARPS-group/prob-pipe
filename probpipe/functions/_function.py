@@ -12,7 +12,7 @@ The engine runs the call stack of design Part V on every call of a Function:
 5. plan: the input declarations unify and the output declaration binds the
    shared dimensions (:func:`._contract._bind_planned_function_inputs`), or, for
    a Function realized by routes, each point's result rule runs
-   (``Function._plan_point``);
+   (``Function._plan_route_inputs``);
 6. resolve: a lifted call resolves through the evaluation-rule registry
    (:mod:`._rules`), and each point runs the body or the route selected among
    the Function's routes (:mod:`._resolution`);
@@ -33,7 +33,7 @@ from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field, replace
 from functools import partial
 from types import MappingProxyType
-from typing import Any, overload
+from typing import Any, cast, overload
 
 import jax
 import jax.numpy as jnp
@@ -46,6 +46,7 @@ except ImportError:
     task = flow = None
 
 from ..core._batch import Batch, BatchSpec, _flat_batch_spec
+from ..core._call_context import _NumSamplesUsed, current_call_context
 from ..core._dispatch import MethodInfo, ResolutionError
 from ..core._expression import (
     Applied,
@@ -72,8 +73,6 @@ from ..values._function_base import (
     Function,
     _bind_function_inputs,
     _FunctionInvocationContext,
-    _MonteCarloRecord,
-    _recording_monte_carlo,
     _refuse_unknown_controls,
     _ResultKindMismatch,
     _validate_function_output,
@@ -310,14 +309,15 @@ def _call_function_in_context(
     # one, selects and runs its routes as any call does.
     token = _call._CHECKING.set(False)
     try:
-        with _recording_monte_carlo(function.options["num_samples"]) as record:
-            return _run_call(function, args, call_inputs, record)
+        return _run_call(function, args, call_inputs)
     finally:
         _call._CHECKING.reset(token)
 
 
 def _result_expression(
-    function: Function, values: Mapping[str, Any], passed: frozenset[str] | None = None
+    function: Function,
+    values: Mapping[str, Any],
+    explicit_parameter_names: frozenset[str] | None = None,
 ) -> Expression | None:
     """The expression of the result of a call of *function* on the arguments *values* (II.4).
 
@@ -334,23 +334,27 @@ def _result_expression(
         return Named(function.output_label)
     return AppliedValue(
         function.label,
-        _value_arguments(function, values, frozenset(values) if passed is None else passed),
+        _value_arguments(
+            function,
+            values,
+            frozenset(values) if explicit_parameter_names is None else explicit_parameter_names,
+        ),
     )
 
 
 def _value_arguments(
-    function: Function, values: Mapping[str, Any], passed: frozenset[str]
+    function: Function, values: Mapping[str, Any], explicit_parameter_names: frozenset[str]
 ) -> tuple[Expression, ...]:
     """Arguments in parameter order, using declared slot names for unnamed arrays."""
     arguments = (
-        _argument_expression(_binding.input_ref_value(values, ref), ref, passed)
+        _argument_expression(_binding.input_ref_value(values, ref), ref, explicit_parameter_names)
         for ref in _binding.iter_input_refs(function._signature_info, values)
     )
     return tuple(argument for argument in arguments if argument is not None)
 
 
 def _argument_expression(
-    value: Any, ref: _binding.FunctionInputRef, passed: frozenset[str]
+    value: Any, ref: _binding.FunctionInputRef, explicit_parameter_names: frozenset[str]
 ) -> Expression | None:
     """How a call's expression shows the argument *value* at *ref*, or ``None`` to omit it.
 
@@ -361,16 +365,18 @@ def _argument_expression(
     """
     if isinstance(value, TrackedTerm):
         return value._embedded_expression()
-    if ref.subscript is not None or ref.parameter_name in passed:
+    if ref.subscript is not None or ref.parameter_name in explicit_parameter_names:
         return constant(value) if _is_scalar(value) else Named(ref.label)
     return None
 
 
 def _result_identity(
-    function: Function, values: Mapping[str, Any], passed: frozenset[str] | None = None
+    function: Function,
+    values: Mapping[str, Any],
+    explicit_parameter_names: frozenset[str] | None = None,
 ) -> tuple[str, Expression | None]:
     """Build the result expression once and derive its presentation label."""
-    expression = _result_expression(function, values, passed)
+    expression = _result_expression(function, values, explicit_parameter_names)
     if hasattr(function, "_result_label"):
         return function._result_label(values, expression), expression
     return expression.render_label(), expression
@@ -382,7 +388,7 @@ def _lifted_expression(
     plan: _plan.StochasticPlan,
     call_values: Mapping[str, Any] | None = None,
     *,
-    passed: frozenset[str],
+    explicit_parameter_names: frozenset[str],
 ) -> Applied:
     """The expression of the law of *function* lifted over the laws among *values* (II.4).
 
@@ -409,7 +415,7 @@ def _lifted_expression(
     call_values : Mapping of str to Any or None, optional
         The arguments of the sweep *values* is a row of. An argument whose row
         value is not the call's is a row of a swept batch.
-    passed : frozenset of str
+    explicit_parameter_names : frozenset of str
         The parameters the caller's arguments bind, together with those the
         Function's construction ``bind`` values bind.
 
@@ -423,15 +429,15 @@ def _lifted_expression(
         for group in plan.source_groups
         for consumer in group.consumers
     }
-    drawn: set[int] = set()
+    drawn_argument_indices: set[int] = set()
     arguments: list[Expression] = []
     for ref in _binding.iter_input_refs(function._signature_info, values):
         value = _binding.input_ref_value(values, ref)
         index = group_of.get(ref)
         if index is not None:
-            if index in drawn:
+            if index in drawn_argument_indices:
                 continue
-            drawn.add(index)
+            drawn_argument_indices.add(index)
             consumers = plan.source_groups[index].consumers
             if len(consumers) == 1:
                 arguments.append(draw_of(value))
@@ -446,7 +452,7 @@ def _lifted_expression(
             )
         elif _is_swept_scalar(value, ref, call_values):
             arguments.append(constant(value.raw() if isinstance(value, TrackedTerm) else value))
-        elif (argument := _argument_expression(value, ref, passed)) is not None:
+        elif (argument := _argument_expression(value, ref, explicit_parameter_names)) is not None:
             arguments.append(argument)
     return Applied(function.output_label, tuple(arguments))
 
@@ -456,17 +462,19 @@ def _swept_expression(
     values: Mapping[str, Any],
     expression: Expression | None,
     plan: _plan.StochasticPlan | None,
-    passed: frozenset[str],
+    explicit_parameter_names: frozenset[str],
 ) -> Any:
     """The expression of a sweep's batch: the lifted call for a sweep of broadcasts, as ``f(mu ~ d, tau)``.
 
     A sweep without a law keeps the call's *expression*, and ``None`` keeps
-    the expression of the aggregate. *passed* names the parameters the
+    the expression of the aggregate. *explicit_parameter_names* names the parameters the
     caller's arguments and the construction ``bind`` values bind, which the
     lifted call shows.
     """
     if plan is not None:
-        return _lifted_expression(function, values, plan, passed=passed)
+        return _lifted_expression(
+            function, values, plan, explicit_parameter_names=explicit_parameter_names
+        )
     return _result.KEEP_EXPRESSION if expression is None else expression
 
 
@@ -565,7 +573,7 @@ def _realized_point(
     controls: Mapping[str, Any],
     candidates: tuple[Any, ...],
     *,
-    passed: frozenset[str] | None = None,
+    explicit_parameter_names: frozenset[str] | None = None,
     kind_error: type[Exception] = _result.ResultKindError,
 ) -> Any:
     """One point of a call realized by the route selected among *candidates*, as a term.
@@ -585,7 +593,7 @@ def _realized_point(
         The call's resolved controls, which planning and selection read.
     candidates : tuple
         The Function's routes, in selection order.
-    passed : frozenset of str or None
+    explicit_parameter_names : frozenset of str or None
         The parameters the call's arguments and the Function's construction
         ``bind`` values bind, which the result's expression shows; ``None``
         shows every argument in *values*.
@@ -607,21 +615,25 @@ def _realized_point(
     ResultKindError, ResultSchemaError
         If the result violates the declaration, using *kind_error* for its kind.
     """
-    point, result, _ = function._plan_point(values, controls)
-    candidate, report = _resolution.selected(function.label, controls, candidates, point, result)
-    value, _ = _resolution.settled(candidate.run(point, result, report))
-    label, expression = _result_identity(function, values, passed)
-    term = _result.declared_term(value, result, label, kind_error=kind_error)
-    return _expressed(_keeping_route_record(term, value), expression)
+    route_inputs, result_declaration, _ = function._plan_route_inputs(values, controls)
+    candidate, report = _resolution.selected(
+        function.label, controls, candidates, route_inputs, result_declaration
+    )
+    route_value, _ = _resolution.settled(candidate.run(route_inputs, result_declaration, report))
+    label, expression = _result_identity(function, values, explicit_parameter_names)
+    term = _result.declared_term(route_value, result_declaration, label, kind_error=kind_error)
+    return _expressed(_keeping_route_record(term, route_value), expression)
 
 
 def _run_call(
     function: Function,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
-    record: _MonteCarloRecord,
 ) -> Any:
-    values = _call.resolve_function_call(
+    call_context = current_call_context()
+    resolved_controls = call_context.resolved_controls
+    num_samples_used = cast(_NumSamplesUsed, call_context.num_samples_used)
+    argument_values = _call.resolve_function_call(
         function._signature_info,
         args,
         call_inputs,
@@ -629,52 +641,53 @@ def _run_call(
         function_name=function._label,
     )
 
-    values = _normalization.normalize_distribution_values(
-        values=values,
+    argument_values = _normalization.normalize_distribution_values(
+        values=argument_values,
         signature_info=function._signature_info,
-        conversions=function.options["conversions"],
+        conversions=resolved_controls["conversions"],
     )
     _call.admit_arguments(
         function._signature_info,
-        values,
+        argument_values,
         input_spec=function.input_spec,
         function_name=function._label,
         roles=function._roles,
     )
     broadcast_plan = _plan.build_broadcast_plan(
-        values=values,
+        values=argument_values,
         signature_info=function._signature_info,
         roles=function._roles,
     )
-    passed = frozenset(function.signature.bind_partial(*args, **call_inputs).arguments) | frozenset(
-        function._bind
-    )
-    label, expression = _result_identity(function, values, passed)
-    controls = function.options
-    candidates = function._route_candidates(controls, values)
+    explicit_parameter_names = frozenset(
+        function.signature.bind_partial(*args, **call_inputs).arguments
+    ) | frozenset(function._bind)
+    label, expression = _result_identity(function, argument_values, explicit_parameter_names)
+    candidates = function._route_candidates(resolved_controls, argument_values)
     selection: tuple[Any, OutputSpec | None, Any, Any] | None = None
     if candidates is not None and broadcast_plan.regime == "none":
         # The routes realize the one point, so the selection is the call's route.
-        point, result, _ = function._plan_point(values, controls)
-        candidate, report = _resolution.selected(
-            function.label, controls, candidates, point, result
+        route_inputs, result_declaration, _ = function._plan_route_inputs(
+            argument_values, resolved_controls
         )
-        selection = (point, result, candidate, report)
+        candidate, report = _resolution.selected(
+            function.label, resolved_controls, candidates, route_inputs, result_declaration
+        )
+        selection = (route_inputs, result_declaration, candidate, report)
         route = _Route(
             candidate.route_name,
             candidate.exactness(report),
             method=candidate.method_of(report),
         )
-        record.collects_calls = candidate.collects_calls
+        num_samples_used.collects_calls = candidate.collects_calls
     else:
         # A Function's routes take the method control, so a lifted call selects
         # its evaluation rule by rank.
-        rule_method = None if candidates is not None else controls["method"]
-        route = _resolve_route(function, values, broadcast_plan, rule_method)
+        rule_method = None if candidates is not None else resolved_controls["method"]
+        route = _resolve_route(function, argument_values, broadcast_plan, rule_method)
     stochastic_plan = _plan.build_stochastic_plan(
-        values,
+        argument_values,
         broadcast_plan,
-        function.options["max_evaluations"],
+        resolved_controls["max_evaluations"],
         enumerate_every_group=route.name != "sampling_lift",
     )
     stochastic_sample_shape = None if stochastic_plan is None else stochastic_plan.sample_shape
@@ -694,14 +707,14 @@ def _run_call(
 
     workflow_kind = function.effective_workflow_kind
     _broker._record_active_requested_execution(
-        function.options["dispatch"],
+        resolved_controls["dispatch"],
         workflow_kind.value,
     )
     _replay._validate_active_plan(_recipe.serialize_stochastic_plan(stochastic_plan))
     _, invocation_bindings = _bind_planned_function_inputs(
         function_name=function._label,
         input_spec=function.input_spec,
-        values=values,
+        values=argument_values,
         lifted_names={
             ref.parameter_name for ref in (*broadcast_plan.dist_args, *broadcast_plan.array_args)
         },
@@ -715,7 +728,7 @@ def _run_call(
         # A Function realized by routes declares its result at each point, so the
         # lifted call declares what one point declares.
         concrete_output_spec = _resolution.lifted_declaration(
-            function, values, controls, broadcast_plan
+            function, argument_values, resolved_controls, broadcast_plan
         )
     _plan.require_empty_sweep_output(broadcast_plan, concrete_output_spec)
     concrete_output_template = (
@@ -724,8 +737,8 @@ def _run_call(
     provenance_parents: list[TrackedTerm] = [function]
     provenance_inputs: dict[str, Any] = {}
     seen_parent_ids = {id(function)}
-    for ref in _binding.iter_input_refs(function._signature_info, values):
-        value = _binding.input_ref_value(values, ref)
+    for ref in _binding.iter_input_refs(function._signature_info, argument_values):
+        value = _binding.input_ref_value(argument_values, ref)
         if isinstance(value, TrackedTerm) and id(value) not in seen_parent_ids:
             seen_parent_ids.add(id(value))
             provenance_parents.append(value)
@@ -741,20 +754,30 @@ def _run_call(
 
     def invoke_point(**point_values: Any) -> Any:
         if selection is not None:
-            point, result, candidate, report = selection
-            value, exact = _resolution.settled(candidate.run(point, result, report))
+            route_inputs, result_declaration, candidate, report = selection
+            route_value, exact = _resolution.settled(
+                candidate.run(route_inputs, result_declaration, report)
+            )
             if exact is not None:
                 settled_exactness.append(exact)
-            term = _expressed(_result.declared_term(value, result, label), expression)
+            term = _expressed(
+                _result.declared_term(route_value, result_declaration, label), expression
+            )
             if (
-                isinstance(value, TrackedTerm)
-                and value.provenance is not None
-                and id(value) not in seen_parent_ids
+                isinstance(route_value, TrackedTerm)
+                and route_value.provenance is not None
+                and id(route_value) not in seen_parent_ids
             ):
-                route_records.append(_recorded_route_result(term, value))
+                route_records.append(_recorded_route_result(term, route_value))
             return term
         if candidates is not None:
-            return _realized_point(function, point_values, controls, candidates, passed=passed)
+            return _realized_point(
+                function,
+                point_values,
+                resolved_controls,
+                candidates,
+                explicit_parameter_names=explicit_parameter_names,
+            )
         try:
             _, point_bindings = _bind_function_inputs(
                 function_name=function._label,
@@ -797,7 +820,7 @@ def _run_call(
     dynamic_refs = tuple(
         ref
         for ref in broadcast_plan.array_args
-        if isinstance(_binding.input_ref_value(values, ref).element_spec, NumericSpec)
+        if isinstance(_binding.input_ref_value(argument_values, ref).element_spec, NumericSpec)
     )
     cache_traceability = broadcast_plan.regime != "nested" or len(dynamic_refs) == len(
         broadcast_plan.array_args
@@ -842,9 +865,9 @@ def _run_call(
         jax_supported: bool = True,
     ) -> str:
         nonlocal resolved_dispatch, cache_traceability
-        if function.options["dispatch"] == "auto" and jax_supported:
+        if resolved_controls["dispatch"] == "auto" and jax_supported:
             prepare_shared_probe(dispatch_values, broadcast_args)
-        if function.options["dispatch"] != "auto" or not jax_supported or not cache_traceability:
+        if resolved_controls["dispatch"] != "auto" or not jax_supported or not cache_traceability:
             return _resolve_dispatch(
                 function,
                 dispatch_values,
@@ -892,16 +915,16 @@ def _run_call(
         row_values: dict[str, Any],
         plan: _plan.StochasticPlan,
         logical_unit: _plan.LogicalUnit,
-        include_inputs: bool = function.options["include_inputs"],
+        include_inputs: bool = resolved_controls["include_inputs"],
         record_recipe: bool = True,
         route_metadata: Mapping[str, Any] = route.metadata,
     ):
         output_spec, output_template = concrete_output_spec, concrete_output_template
-        if output_spec is None and candidates is not None and row_values is not values:
+        if output_spec is None and candidates is not None and row_values is not argument_values:
             # A row of a sweep binds its element itself, which may declare what the
             # element's declaration alone left open.
             output_spec = _resolution.lifted_declaration(
-                function, row_values, controls, broadcast_plan
+                function, row_values, resolved_controls, broadcast_plan
             )
             output_template = None if output_spec is None else _output_record_spec(output_spec)
         return _broadcast.execute_distribution_broadcast(
@@ -912,13 +935,19 @@ def _run_call(
             include_inputs=include_inputs,
             get_key=get_key,
             make_execution_config=partial(_make_execution_config, function),
-            requested_dispatch=function.options["dispatch"],
+            requested_dispatch=resolved_controls["dispatch"],
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=require_jax_traceable,
             function_name=function._label,
             output_label=function.output_label,
             output_component=function._output_component,
-            output_expression=_lifted_expression(function, row_values, plan, values, passed=passed),
+            output_expression=_lifted_expression(
+                function,
+                row_values,
+                plan,
+                argument_values,
+                explicit_parameter_names=explicit_parameter_names,
+            ),
             output_spec=output_spec,
             workflow_kind=workflow_kind,
             output_template=output_template,
@@ -932,7 +961,12 @@ def _run_call(
         lifted = (
             expression
             if stochastic_plan is None
-            else _lifted_expression(function, values, stochastic_plan, passed=passed)
+            else _lifted_expression(
+                function,
+                argument_values,
+                stochastic_plan,
+                explicit_parameter_names=explicit_parameter_names,
+            )
         )
         return _run_registered_rule(
             function, route, provenance_parents, provenance_inputs, label, lifted
@@ -941,7 +975,7 @@ def _run_call(
         if stochastic_plan is None:  # pragma: no cover - planner contract guard
             raise RuntimeError("distribution broadcast is missing its stochastic plan")
         return execute_distribution_broadcast(
-            row_values=values,
+            row_values=argument_values,
             plan=stochastic_plan,
             logical_unit=stochastic_plan.logical_units[0],
         )
@@ -969,21 +1003,21 @@ def _run_call(
 
         return _sweep.execute_sweep(
             func=invoke_point,
-            values=values,
+            values=argument_values,
             plan=broadcast_plan,
             stochastic_plan=stochastic_plan,
             make_execution_config=partial(_make_execution_config, function),
-            requested_dispatch=function.options["dispatch"],
+            requested_dispatch=resolved_controls["dispatch"],
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=require_jax_traceable,
             distribution_broadcast=distribution_broadcast,
             function_name=function._label,
             output_label=label,
             output_expression=_swept_expression(
-                function, values, expression, stochastic_plan, passed
+                function, argument_values, expression, stochastic_plan, explicit_parameter_names
             ),
             output_spec=concrete_output_spec,
-            include_inputs=function.options["include_inputs"],
+            include_inputs=resolved_controls["include_inputs"],
             output_template=concrete_output_template,
             provenance_parents=provenance_parents,
             provenance_inputs=provenance_inputs,
@@ -1001,7 +1035,7 @@ def _run_call(
     request = _execution.WorkflowExecutionRequest(
         func=invoke_point,
         work_items=_execution.make_managed_work_items(
-            [values],
+            [argument_values],
             unit_segments=(_execution.point_unit_segment(),),
         ),
         execution=execution,
@@ -1015,8 +1049,8 @@ def _run_call(
     if settled_exactness:
         exact = False if False in settled_exactness else (True if all(settled_exactness) else None)
         route = replace(route, exact=exact)
-    if record.recorded is not None:
-        route = replace(route, num_samples=record.recorded)
+    if num_samples_used.provenance_num_samples is not None:
+        route = replace(route, num_samples=num_samples_used.provenance_num_samples)
     name = function._label
     controls, diagnostics = _recipe.provenance_recipe_fields(None)
     provenance = Provenance.create(
@@ -1393,7 +1427,7 @@ class _Route:
         The resolved controls the rule received.
     num_samples : int, tuple of int, or None
         The number of Monte Carlo draws the route took, as
-        :attr:`~probpipe.values._function_base._MonteCarloRecord.recorded` gives
+        :attr:`~probpipe.core._call_context._NumSamplesUsed.provenance_num_samples` gives
         it, or ``None`` when it took none.
     """
 
@@ -1568,6 +1602,7 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         If a conversion has no converter, or the ``method`` control names no
         route of a Function realized by routes.
     """
+    resolved_controls = current_call_context().resolved_controls
     bound = _call.resolve_function_call(
         function._signature_info,
         args,
@@ -1578,7 +1613,7 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
     values, conversions, waiting = _normalization.plan_distribution_values(
         values=bound,
         signature_info=function._signature_info,
-        conversions=function.options["conversions"],
+        conversions=resolved_controls["conversions"],
     )
     _call.admit_arguments(
         function._signature_info,
@@ -1590,7 +1625,7 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
     broadcast_plan = _plan.build_broadcast_plan(
         values=values, signature_info=function._signature_info, roles=function._roles
     )
-    candidates = function._route_candidates(function.options, values)
+    candidates = function._route_candidates(resolved_controls, values)
     if candidates is not None:
         return _check_routes(function, values, broadcast_plan, candidates, conversions, waiting)
     lifted_refs = (*broadcast_plan.array_args, *broadcast_plan.dist_args)
@@ -1621,7 +1656,7 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
             lifted=lifted,
             conversions=MappingProxyType(conversions),
         )
-    info, _ = _route_report(function, values, broadcast_plan, function.options["method"])
+    info, _ = _route_report(function, values, broadcast_plan, resolved_controls["method"])
     return CallReport(
         routes=(info,),
         selected=None if info.feasible is None else info,
@@ -1668,7 +1703,7 @@ def _check_routes(
     token = _call._CHECKING.set(True)
     try:
         point = _resolution.check_points(
-            function, values, function.options, candidates, broadcast_plan
+            function, values, current_call_context().resolved_controls, candidates, broadcast_plan
         )
     finally:
         _call._CHECKING.reset(token)
@@ -1751,9 +1786,10 @@ class _CallEngine:
 
     def __call__(self, function: Function, /, *args: Any, **kwargs: Any) -> Any:
         result = _call_function(function, args, kwargs)
-        if not function.options["raw"]:
+        resolved_controls = current_call_context().resolved_controls
+        if not resolved_controls["raw"]:
             return result
-        if function._route_candidates(function.options) is not None:
+        if function._route_candidates(resolved_controls) is not None:
             return _result.raw_form(result)
         return _result._detach(result)
 
@@ -1773,7 +1809,8 @@ class _CallEngine:
         admits each argument by its role, with no lifting, runs the route
         selected for the point, and returns the result's raw form.
         """
-        candidates = function._route_candidates(function.options, values)
+        resolved_controls = current_call_context().resolved_controls
+        candidates = function._route_candidates(resolved_controls, values)
         if candidates is None:
             arguments = _call.presented_arguments(function._signature_info, values)
             return function._implementation.invoke(
@@ -1789,7 +1826,7 @@ class _CallEngine:
         token = _call._CHECKING.set(False)
         try:
             term = _realized_point(
-                function, values, function.options, candidates, kind_error=_ResultKindMismatch
+                function, values, resolved_controls, candidates, kind_error=_ResultKindMismatch
             )
         finally:
             _call._CHECKING.reset(token)

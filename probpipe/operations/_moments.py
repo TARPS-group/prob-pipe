@@ -59,6 +59,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._batch import Batch, BatchSpec, _flat_batch_spec
+from ..core._call_context import _collecting_num_samples_used, _note_num_samples_used
 from ..core._dispatch import (
     Feasibility,
     MathematicalDomainError,
@@ -103,7 +104,6 @@ from ..functions._call import ApplicabilityError, presented_arguments
 from ..functions._resolution import PointReport, RouteOutcome, check_point, selected, settled
 from ..functions._result import SAMPLE_LEVEL
 from ..values import FunctionSpec
-from ..values._function_base import _note_monte_carlo, _recording_monte_carlo
 from ._operation import (
     BoundCall,
     Operation,
@@ -455,7 +455,7 @@ def _can_average_squares(call: BoundCall, result: OutputSpec | None) -> Feasibil
 def _monte_carlo_draws(call: BoundCall, operation_kind: str) -> Any:
     """``num_samples`` workflow-owned draws of the law, the draw axis leading.
 
-    The count is noted in the call's record, so the call's provenance records it.
+    The count is noted as a ``num_samples`` the call used, so the call's provenance records it.
     """
     count = call.controls["num_samples"]
     draws = _workflow_draws(
@@ -464,7 +464,7 @@ def _monte_carlo_draws(call: BoundCall, operation_kind: str) -> Any:
         operation_kind=operation_kind,
         execution_mode="monte_carlo",
     )
-    _note_monte_carlo(count)
+    _note_num_samples_used(count)
     return draws
 
 
@@ -864,34 +864,38 @@ class _ByComponent(_DelegatingRoute):
         )
 
     def _run_block(self, call: BoundCall, block: _Block, exact_only: bool) -> tuple[Any, dict]:
-        """The raw summary of *block*, with the record of how it was computed.
+        """The raw summary of *block*, with the metadata of how it was computed.
 
         The block is resolved and run as the operation runs a call on its view,
-        inside this call, so its draws are this call's own. The record names
-        the block's components, the route that computed it, that route's
+        inside this call, so its draws count toward this call's. The metadata
+        names the block's components, the route that computed it, that route's
         exactness, and, when the route drew Monte Carlo samples, their number
         as ``num_samples``.
         """
         operation = call.operation
         controls = self._controls(call, exact_only)
-        point, declared, _ = operation._plan_point(self._values(call, block.view), controls)
+        route_inputs, result_declaration, _ = operation._plan_route_inputs(
+            self._values(call, block.view), controls
+        )
         candidates = operation._route_candidates(controls)
-        candidate, report = selected(operation.label, controls, candidates, point, declared)
-        with _recording_monte_carlo(controls["num_samples"]) as drawn:
-            value, settled_exactness = settled(candidate.run(point, declared, report))
+        candidate, report = selected(
+            operation.label, controls, candidates, route_inputs, result_declaration
+        )
+        with _collecting_num_samples_used("always") as block_num_samples_used:
+            block_value, settled_exactness = settled(
+                candidate.run(route_inputs, result_declaration, report)
+            )
         exactness = (
             candidate.exactness(report) if settled_exactness is None else settled_exactness
         ) is True
-        record: dict[str, Any] = {
+        block_metadata: dict[str, Any] = {
             "components": list(block.components),
             "route": candidate.route_name,
             "exact": exactness,
         }
-        if drawn.recorded is not None:
-            record["num_samples"] = drawn.recorded
-            for count in drawn.counts:
-                _note_monte_carlo(count)
-        return value, record
+        if block_num_samples_used.provenance_num_samples is not None:
+            block_metadata["num_samples"] = block_num_samples_used.provenance_num_samples
+        return block_value, block_metadata
 
     def probe(
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
@@ -938,22 +942,24 @@ class _ByComponent(_DelegatingRoute):
                 f"{call.operation.label}: route {self.name!r} does not apply: "
                 f"{partition.report.description}"
             )
-        values: dict[str, Any] = {}
-        records = []
+        component_values: dict[str, Any] = {}
+        blocks_metadata = []
         for block in partition.blocks:
-            value, record = self._run_block(call, block, exact_only)
-            values.update(_block_values(block.view, value, self.summary))
-            records.append(record)
-        assembled = {c: values[c] for c in d.event_spec.components}
+            block_value, block_metadata = self._run_block(call, block, exact_only)
+            component_values.update(_block_values(block.view, block_value, self.summary))
+            blocks_metadata.append(block_metadata)
+        assembled = {c: component_values[c] for c in d.event_spec.components}
         # A quantile at several levels is a batch of records, which
         # ``_record_batch`` assembles; any other value passes through it.
-        value = _record_batch(_named_value(assembled, self.summary, d.event_spec), call, result)
+        summary_value = _record_batch(
+            _named_value(assembled, self.summary, d.event_spec), call, result
+        )
         return _assembled(
-            value,
+            summary_value,
             call,
             result,
             parents=[d],
-            metadata={"route": self.name, "blocks": records},
+            metadata={"route": self.name, "blocks": blocks_metadata},
         )
 
 
@@ -1330,7 +1336,7 @@ class _PushforwardMean(_EvaluationRules):
         law = super().run(call, result, method=method, exact_only=exact_only)
         provenance = getattr(law, "provenance", None)
         if provenance is not None and provenance.metadata.get("route") == "sampling_lift":
-            _note_monte_carlo(call.controls["num_samples"])
+            _note_num_samples_used(call.controls["num_samples"])
         averaged = mean(law)
         steps = (_recorded_exactness(law), _recorded_exactness(averaged))
         exact = False if False in steps else (True if steps == (True, True) else None)

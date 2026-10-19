@@ -7,6 +7,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **atom**: one point of an empirical law's finite support, held with its weight in the event type's batch form (VII.2).
 - **batch**: an indexed collection of separate objects of one element type, with its axes grouped into named levels (II.5). A kind's batch form is its batch class, such as `RecordBatch` for records (II.1).
 - **broadcast**: the lift of a function over a distribution argument, whose result is the pushforward law of the function's output (V.5).
+- **call context**: the per-call state that the code a call runs reads wherever it runs, such as the active `config.using` blocks, the controls a derived operation's identity passes down, and the call's resolved controls. Each call of a `Function` opens a child of the call context in effect, and a `config` block derives a changed copy (V.2).
 - **capability**: an underscore implementation of an operation, such as `_sample` or `_inverse`, that a class claims for its instances by implementing the capability's protocol (III.8, III.3).
 - **component**: a named part of the interface that an `OutputSpec` declares for one produced term, which is the whole term under one name or each field of an exposed record (II.2). The components of a `MixtureDistribution` are its component laws (VII.3).
 - **conversion**: a change of a distribution's representation that preserves its law, up to the recorded fidelity, and its event declaration; a converter is the registered method that carries one out (IV.3).

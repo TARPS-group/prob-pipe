@@ -37,6 +37,7 @@ probpipe/
 │   ├── _dispatch.py           #   dispatch methods and registries, Feasibility, MethodInfo, ResolutionError, MathematicalDomainError (II.7)
 │   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.7)
 │   ├── _compilation.py        #   compiled_or_eager: a compiled call that falls back to the eager call
+│   ├── _call_context.py       #   the call context: the per-call state a call carries into its workers (V.2)
 │   └── _config.py             #   library configuration
 ├── values/                    # the value layer (III.1–III.6; LinOp, III.4, is in linalg/)
 │   ├── _numeric_array.py      #   NumericArray (III.1)

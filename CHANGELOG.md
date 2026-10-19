@@ -26,7 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   block, which wins over the session's value. A block applies to the work that a call
   inside it dispatches to worker threads or Prefect workers, and to no other
   thread. An unknown section or setting raises `TypeError` naming the known
-  ones, and a value is checked as an assignment checks it.
+  ones, and a value is checked as an assignment checks it. Blocks close in the
+  reverse order of opening: a block that exits while a call or a block opened
+  inside it is still open, as when a generator holds the block open, raises
+  `RuntimeError`.
 - **`n_broadcast_samples` is split into `max_evaluations` and `num_samples`.**
   `max_evaluations` is the maximum number of times a call lifted over laws
   evaluates its function, 256 by default. The lift enumerates the empirical
@@ -2532,6 +2535,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`apply` and `check` inside a call use their own `num_samples`.** The
+  routes that `f.apply(...)` runs, or that `f.check(...)` probes, inside
+  another call read the `num_samples` that `f`'s own controls, a
+  `config.using` block, or the session give, as `f(...)` does, so a converter
+  that draws takes that count. They read the enclosing call's count before.
 - **A parametric family and a joint's conditional factors reuse their
   compiled code across calls.** A family samples, scores, and takes quantiles
   through compiled programs that a later call with the same parameter shapes
