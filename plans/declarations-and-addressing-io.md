@@ -357,7 +357,7 @@ So an object's *outputs* are the named values it makes available to other object
 Three requirements decide what they are:
 1. **Outputs match inputs.** An input is a flat name that receives one whole value (§ 3.1), so an output is a flat name with one value: outputs are at one level, never at a path such as `g/c`.
 2. **Nothing is lost.** When objects are combined into one, as `prior` and `lik` make a model over `{y, mu, sigma}`, each keeps only its outputs, so its outputs must together determine everything it produces: the model's `{mu, sigma}` must still be distributed as a draw of `prior`.
-3. **Each name has one place.** A value with paths (§ 2.3) must not also carry a name outside it, or it would have two sets of paths: a law whose draws are `{mu, sigma}`, named `params` from outside, would have the path `params/mu` while its draws have the path `mu`. A name may stand outside a value only when the value has no paths.
+3. **Each name has one place.** Only a base value is named from outside. A value of any other kind has, or can have, names inside it, so a name outside it would give it a second set of paths: a law whose draws are `{mu, sigma}`, named `params` from outside, would have the path `params/mu` while its draws have the path `mu`. Whether an object is named from outside depends on its kind alone, so its type fixes its outputs.
 
 > [!IMPORTANT]
 > **Definition (output, output value).** An *output* of an object is a name under which the object makes one value, its *output value*, available to other objects.
@@ -366,10 +366,10 @@ Three requirements decide what they are:
 > | Case | Produced object | Outputs | Output value | Why |
 > | --- | --- | --- | --- | --- |
 > | 1 | a record | one per child, under the child's name | the child | the children are at one level (1), determine the record (2), and carry their own names (3) |
-> | 2 | a base value | one, under a name the object states; this output is *at the root* | the whole value | a base value has no names inside, so it needs a name outside, and it has no paths, so (3) allows one |
+> | 2 | a base value | one, under a name the object states; this output is *at the root* | the whole value | a base value has no names inside, so it needs a name outside, and it is the one kind (3) allows to have one |
 > | 3 | a function | the outputs of its return value | for each output, the function that maps an argument to that output value of the return value | a function whose return value is a record is determined by these functions (2) |
 > | 4 | a batch | the outputs of its elements | for each output, the batch of the elements' output values; for a child, its column (§ 2.3) | a batch of records is determined by its columns (2) |
-> | 5 | a law or kernel that is itself produced: a function's return value, a draw, or an element of a batch | none | — | over a record it has paths, so it takes no name outside (3), and its marginals do not determine it, so its children cannot stand in for it (2); over a base value it is treated alike, so that only a base value is ever named from outside |
+> | 5 | a law or kernel that is itself produced: a function's return value, a draw, or an element of a batch | none | — | it is not a base value, so it takes no name outside (3); and its marginals do not determine it, so its children cannot stand in for it (2). To pass one on, wrap it |
 
 The cases read a law's or kernel's draw, since that is what it produces: a law over `{mu, sigma}` has the outputs `mu` and `sigma` (case 1), whose output values are the draw's children, and a law over an array has one output at the root (case 2).
 Case 5 concerns a law that something else produces, such as a law a function returns.
@@ -3050,7 +3050,7 @@ The items below were found while applying the maintainer's decisions of 2026-10-
 25. **"No factor inputs" for a kernel.** The decision says that every operation other than merge and rename gives a result with no factor inputs. A kernel that is its own factor has its inputs as factor inputs (§ 5.2, rule 1), and a selection keeps them (I14). *Reading:* such a result has no factor inputs beyond its inputs: none for a law, its inputs for a kernel.
 26. **The step that delivers the rule of § 5.2.** S3 is mechanical, and B.5 rule 4 lets a mechanical step change only names; G4 already rewrites every route of `condition_on` and adds `law.without`, so it takes the rule, with the marginal's product of factors in `operations/_marginal.py` (T32). *Reading:* G4; the maintainer may move it.
 27. **A law's root name and equality.** A law type holds its event type (§ 2.1), so the root name of a law over a base value, like a batch's element name, is stated by its event spec, not its type; § 2.4 does not say whether `Normal("x", 0, 1)` and `Normal("y", 0, 1)` are equal laws. *Reading:* not stated; the text makes no claim either way.
-28. **A produced law over a base value.** Requirement 3 of § 3.2 lets a name stand outside a value that has no paths, which a law over an array satisfies, yet case 5 gives every produced law or kernel no outputs. *Reading:* case 5 as stated, the stricter rule that only a base value is named from outside (Appendix E, item 1); the rewrite of § 3.2 states the requirement and the case side by side and changes no rule.
+28. **A produced law over a base value.** *Settled 2026-10-19.* An earlier wording of requirement 3 of § 3.2 ("a name may stand outside a value only when the value has no paths") would have let a name stand outside a produced law over an array, against case 5. Requirement 3 now says that only a base value is named from outside, decided by kind alone, as grammar B (not B′) decided on 2026-10-17; case 5 follows from it. No rule changed.
 
 ## B. Implementation plan and sequencing
 
