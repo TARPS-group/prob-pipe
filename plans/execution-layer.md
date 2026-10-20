@@ -1630,7 +1630,7 @@ A `Function` keeps only its own explicit controls, so later work on a term runs 
 
 **CC8. Closing always restores, and only what it installed.**
 A call context, a block, and an installed evaluation context each restore the previous context on exit, an error included, on every thread.
-On exit, `_under_call_context` checks that the current value is the one it installed, and raises an error naming both scopes when it is not, so a scope that exits out of order, such as a block held open by a generator and closed inside a call, fails loudly instead of discarding the call's context (e08).
+On exit, `_under_call_context` checks that the current value is the one it installed. When it is not, it first restores the call context, that of the innermost scope still open below it, and then raises an error naming both scopes, so a scope that exits out of order, such as a block held open by a generator and closed inside a call, fails loudly instead of discarding the call's context (e08).
 
 #### Definitions
 
