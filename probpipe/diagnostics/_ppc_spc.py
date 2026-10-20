@@ -42,8 +42,8 @@ import xarray as xr
 
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
-from ..functions import _broker, _context
-from ..functions._broker import _PROBPIPE_DISTRIBUTION_PROVIDER_ABI
+from ..functions import _context, _evaluation_keys
+from ..functions._evaluation_keys import _PROBPIPE_DISTRIBUTION_PROVIDER_ABI
 from ..validation._predictive_check import (
     _observed_event,
     _planned_statistics,
@@ -262,7 +262,7 @@ def _ppc_op(
     results: dict[str, dict[str, Any]] = {}
     replicated_stats_by_fn: dict[str, np.ndarray | None] = {}
 
-    with _broker._managed_stochastic_scope():
+    with _evaluation_keys._operation_stochastic_scope():
         # One event draws the replications that every test statistic reads.
         effect_key = _claim_ppc_key(
             source_index=0,

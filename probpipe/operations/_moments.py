@@ -39,9 +39,9 @@ evaluation-rule registry serves both operations. The route spends the call's
 one evaluation of the integrand.
 
 ``standard_deviation(d)`` is the derived operation ``sqrt(variance(d))``, taken
-coordinate by coordinate. Its one route is the body route of its identity, so
+coordinate by coordinate. Its one route is the body route of its formula, so
 the call takes the routes of ``variance``, ``by_component`` included, and the
-identity passes the call's ``exact_only``, ``max_evaluations``, and
+derived route passes the call's ``exact_only``, ``max_evaluations``, and
 ``num_samples`` to ``variance``.
 
 The draws of every Monte Carlo route are workflow-owned random events, and
@@ -125,7 +125,7 @@ from ._pushforward import (
     _bound_parameter,
     _call_at,
     _EvaluationRules,
-    _integrand_conditions,
+    _integrand_applicability_checks,
     _output_label,
     pushforward,
 )
@@ -966,7 +966,7 @@ mean.register_route(_ByComponent("mean"))
 mean.fallback_route("monte_carlo", check=_can_average, execute=_mc_mean, exact=False)
 
 
-@operation(result=_variance_result, conditions=(_event_typed_variance,))
+@operation(result=_variance_result, applicability_checks=(_event_typed_variance,))
 def variance(d: Distribution):
     """The variance of ``X ~ d``, a value shaped like one draw.
 
@@ -1050,8 +1050,8 @@ def _variance_applies(d: Any) -> Any:
 
 @operation(
     result=_standard_deviation_result,
-    conditions=(_event_typed_variance,),
-    identity_check=_variance_applies,
+    applicability_checks=(_event_typed_variance,),
+    derived_route_check=_variance_applies,
 )
 def standard_deviation(d: Distribution):
     """The standard deviation ``sqrt(variance(d))`` of ``X ~ d``, a value shaped like one draw.
@@ -1093,7 +1093,7 @@ def standard_deviation(d: Distribution):
     return _root(variance.using(raw=True)(d))
 
 
-@operation(result=_cov_result, conditions=(_numeric_event,))
+@operation(result=_cov_result, applicability_checks=(_numeric_event,))
 def cov(d: Distribution):
     """The covariance of the flattened draw of ``X ~ d``, a ``(size, size)`` array.
 
@@ -1139,7 +1139,7 @@ cov.capability_route(
 cov.fallback_route("monte_carlo", check=_can_sample, execute=_mc_cov, exact=False)
 
 
-@operation(result=_quantile_result, conditions=(_numeric_event,))
+@operation(result=_quantile_result, applicability_checks=(_numeric_event,))
 def quantile(d: Distribution, q: Any):
     """The per-coordinate quantiles of ``X ~ d`` at the levels *q*.
 
@@ -1202,12 +1202,12 @@ quantile.fallback_route("monte_carlo", check=_can_sample, execute=_mc_quantile, 
 
 
 class _PushforwardMean(_EvaluationRules):
-    """The identity of ``expectation``: a rule of ``pushforward`` builds the law ``f♯d``, and ``mean`` averages it.
+    """The derived route of ``expectation``: a rule of ``pushforward`` builds the law ``f♯d``, and ``mean`` averages it.
 
     The route runs ``pushforward``'s route and then ``mean`` on the law it
     returns, so its method names are the evaluation rules'. The engine runs both
-    steps in the scope of an identity (VI.0). The route ranks once, as an
-    identity: among the approximate routes, and under ``exact_only`` among the
+    steps in the scope of a derived route (VI.0). The route ranks once, as a
+    derived route: among the approximate routes, and under ``exact_only`` among the
     exact ones, with the rule and the mean both restricted to exact routes. The
     mean's route is chosen only once the law exists, so without ``exact_only``
     the probe reports the rule's exactness when it is approximate and leaves it
@@ -1278,8 +1278,8 @@ def _recorded_exactness(term: Any) -> bool | None:
 @operation(
     result=_expectation_result,
     roles={"f": (FunctionSpec,)},
-    conditions=_integrand_conditions("expectation"),
-    identity_route=_PushforwardMean(),
+    applicability_checks=_integrand_applicability_checks("expectation"),
+    derived_route=_PushforwardMean(),
 )
 def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = None):
     """The expectation ``𝔼[f(X)]`` for ``X ~ d``, defined as ``mean(pushforward(d, f))``.

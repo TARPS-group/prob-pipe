@@ -459,7 +459,7 @@ def simulation_based_calibration(
     >>> result.ranks.shape
     (100, 1)
     >>> result.coverage((0.5, 0.9))
-    {0.5: array([0.53]), 0.9: array([0.87])}
+    {0.5: array([0.47]), 0.9: array([0.95])}
     """
     _context._assert_workflow_admission()
     num_simulations = _validate_positive_int("num_simulations", num_simulations)

@@ -237,11 +237,11 @@ def run_seed(method: str) -> Array:
     Array
         A JAX PRNG key.
     """
-    from ..functions import _broker
+    from ..functions import _evaluation_keys
 
-    return _broker._resolve_automatic_key(
+    return _evaluation_keys._resolve_automatic_key(
         None,
-        _broker._singleton_effect_plan(
+        _evaluation_keys._singleton_effect_plan(
             operation_kind="inference",
             execution_mode="sampled",
             sample_shape=None,

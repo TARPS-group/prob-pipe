@@ -28,7 +28,7 @@ from ..distributions._batches import DistributionBatch
 from ..distributions._conversion import converter_registry
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution, _batch_form
-from ..functions import _broker, function
+from ..functions import _evaluation_keys, function
 from ..values import Function
 from .provenance import Provenance
 
@@ -254,9 +254,9 @@ def with_resampling(
             ess_ratio = ess / n
 
             if ess_ratio < ess_threshold:
-                key = _broker._resolve_automatic_key(
+                key = _evaluation_keys._resolve_automatic_key(
                     None,
-                    _broker._singleton_effect_plan(
+                    _evaluation_keys._singleton_effect_plan(
                         operation_kind="resample",
                         execution_mode="sampled",
                         sample_shape=(n,),

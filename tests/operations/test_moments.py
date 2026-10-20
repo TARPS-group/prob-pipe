@@ -374,14 +374,14 @@ class TestStandardDeviation:
         assert result.spec == NumericArraySpec((), jnp.float32, non_negative)
         assert _value(result) == 2.0
         metadata = result.provenance.metadata
-        assert (metadata["route"], metadata["exact"]) == ("identity", True)
+        assert (metadata["route"], metadata["exact"]) == ("derived", True)
 
     def test_check_takes_the_exactness_of_the_route_variance_selects(self):
         report = standard_deviation.check(Gaussian("g"))
-        assert (report.route, report.exact) == ("identity", True)
+        assert (report.route, report.exact) == ("derived", True)
         assert report.result == OutputSpec(**{"g": NumericArraySpec((), jnp.float32, non_negative)})
         report = standard_deviation.check(Sampler("s"))
-        assert (report.route, report.exact) == ("identity", False)
+        assert (report.route, report.exact) == ("derived", False)
 
     def test_a_record_law_has_a_record_with_a_field_per_component(self):
         result = standard_deviation(Gaussian("mu", 0.0, 2.0) * Gaussian("tau", 1.0, 3.0))
@@ -1122,7 +1122,7 @@ class TestExpectation:
 
     def test_the_routes_are_the_closed_form_then_the_pushforward_mean(self):
         summary = expectation.summary()
-        assert (summary.is_derived, summary.identity) == (
+        assert (summary.is_derived, summary.formula) == (
             True,
             "mean(pushforward(d, f, fixed_args))",
         )
@@ -1413,7 +1413,7 @@ class TestTheExactnessOfBothSteps:
         assert qualified.check(_atoms(), lambda x: x).method == "sampling_lift"
 
     def test_the_body_and_the_route_agree_on_an_exact_case(self):
-        """pushforward_mean replaces the generic route, so the body, which states the identity, never runs."""
+        """pushforward_mean replaces the generic route, so the body, which states the formula, never runs."""
 
         def scaled(x, a):
             return a * x * x
@@ -1456,7 +1456,7 @@ class TestTheDrawCount:
     def test_the_standard_deviation_records_the_session_num_samples_of_its_variance(self):
         config.sampling.num_samples = 17
         estimate = standard_deviation(Sampler("s"))
-        assert estimate.provenance.metadata["route"] == "identity"
+        assert estimate.provenance.metadata["route"] == "derived"
         assert estimate.provenance.metadata["num_samples"] == 17
 
     def test_the_standard_deviation_of_a_dependent_joint_records_its_draws(self):
@@ -1501,7 +1501,7 @@ class TestTheDrawCount:
         assert shapes == [(13,)] * 7
 
     def test_a_lifts_num_samples_does_not_reach_a_summary_in_its_body(self):
-        """A body's summary reads the session's ``num_samples``, as a call outside an identity does."""
+        """A body's summary reads the session's ``num_samples``, as a call outside a derived route does."""
         config.sampling.num_samples = 17
         shapes: list[tuple[int, ...]] = []
 
