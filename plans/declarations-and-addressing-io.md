@@ -179,7 +179,7 @@ A field may hold a law or any other object; § 2.3 continues paths into it.
 > 4. a *law type* holds the law's *event type*, which is the type of the objects the law is a distribution over; every law has an event type, whether or not it can be sampled;
 > 5. a *kernel type* holds, for each value the kernel conditions on, a name, a type, and whether that value may be omitted; and it holds the kernel's event type;
 > 6. a *function type* holds the same three things for each argument of the function, and the function's *return type*, which is the type of its return value; the arguments or the return type may be unknown;
-> 7. a *batch type* holds the batch's *element type* and its levels; the element type is the type of one element, together with the name a batch of base values gives its elements (§ 6.5).
+> 7. a *batch type* holds the batch's *element type*, which is the type of one element, and its levels. The name a batch of base values gives its elements is not part of its type: it belongs to the batch's element spec (§ 6.5), which merges, outputs, and renames read.
 >
 > Array and opaque types are *base types*. A *law over* `T` is a law whose event type is `T`, as a law over `{mu, sigma}`.
 
@@ -212,7 +212,7 @@ A field may hold a law or any other object; § 2.3 continues paths into it.
 
 > [!NOTE]
 > **Consequence** (of the rules by kind).
-> 1. A type conforms to the unification of `A` and `B` exactly when it conforms to both, unless two unbound dimension names meet at one axis among the three.
+> 1. Where the unification of `A` and `B` exists, a type conforms to it exactly when it conforms to both, unless two unbound dimension names meet at one axis among the three. For array types over the standard NumPy dtypes, a type that conforms to both also implies that the unification exists, so dtypes alone never make one grouping of a merge valid and the other refused (§ 5.7). Kernel and function types differ: their unification requires equal input types, while conformance is contravariant in inputs, so two of them can have a type that conforms to both and no unification.
 > 2. Unification is symmetric, and associative where it exists.
 > 3. A type given by sizes alone sets no dtype or support, so it conforms to and unifies with any type of its shape.
 
@@ -222,10 +222,10 @@ A field may hold a law or any other object; § 2.3 continues paths into it.
 `A` conforms to `B`, in one dimension scope, when:
 1. **arrays:** the ranks are equal, each axis agrees by the scope rule, and when both set a dtype, `A`'s casts into `B`'s by NumPy's same-kind rule; supports are not compared (III.5);
 2. **opaque values:** `B`'s Python type is unset or a superclass of `A`'s, and `B`'s metadata is unset or equal to `A`'s (III.2);
-3. **records:** the same child names, each child of `A` conforming to `B`'s;
+3. **records:** the same child names, each child of `A` conforming to `B`'s; whether the names must also be in the same order is open (Appendix A.2, item 21);
 4. **laws:** `A`'s event type conforms to `B`'s;
 5. **kernels and functions:** the same names of conditioning values or arguments; each of `B`'s types for these conforms to `A`'s type of the same name, and one that may be omitted in `B` may be omitted in `A`; `A`'s event or return type conforms to `B`'s; a side `B` leaves unknown admits any, and a side only `A` leaves unknown does not conform;
-6. **batches:** the same levels, and `A`'s element type conforms to `B`'s.
+6. **batches:** the same levels, and `A`'s element type conforms to `B`'s; the elements' name is not compared (§ 6.5).
 
 </details>
 
@@ -234,10 +234,10 @@ A field may hold a law or any other object; § 2.3 continues paths into it.
 
 1. **arrays:** equal ranks, each axis agreeing; a dtype only one sets, or, when both set one, the dtype of the type that conforms to the other, the narrower by NumPy's safe cast when each conforms to the other, and no unification when neither conforms; a support only when both set the same one, and none otherwise;
 2. **opaque values:** equal Python types, or one unset, and likewise the metadata; the unification takes the known type and the set metadata (III.2);
-3. **records:** the same child names, child by child;
+3. **records:** the same child names, child by child, with the same open question of order (Appendix A.2, item 21);
 4. **laws:** the unification of the event types;
 5. **kernels and functions:** the same names, with equal types and the same may-be-omitted flags, and the unification of the event or return types; a side one leaves unknown takes the other's type;
-6. **batches:** the same levels, and the unification of the element types.
+6. **batches:** the same levels, and the unification of the element types; the elements' name is not compared (§ 6.5).
 
 Any other pair, such as an array type with a record type, does not unify.
 
@@ -306,9 +306,9 @@ Only a record type has named children; every other kind takes its paths from the
 > [!IMPORTANT]
 > **Definition (equal).** Two values are *equal* when they have the same type and equal entries.
 > Two laws, kernels, or functions are equal when they have equal types and the same distribution or map.
-> Two batches are equal when they have the same levels, element types equal apart from the name a batch of base values gives its elements (§ 6.5), and equal elements.
+> Two batches are equal when they have the same levels, equal element types, and equal elements.
 
-The name of a batch of base values describes the batch, as a label does, so it stays out of equality; a law's names belong to its event type, which merges read (§ 5).
+The name a batch of base values gives its elements is not part of its type (§ 2.1), so equality does not compare it. Unlike a label, it is read: merges, outputs, and renames take it from the batch's element spec (§ 6.5), so equal batches can merge differently (§ 7.2).
 
 ## 3. Inputs and outputs
 
@@ -327,8 +327,8 @@ An object receives values at its inputs and offers what it produces at its outpu
 
 > [!NOTE]
 > **Consequence** (of the definitions and § 1.1).
-> 1. Kernels and functions have inputs, and so does a batch of them: the batch's inputs are its elements' inputs, and one binding supplies them to every element.
-> 2. Base values, records, and laws have none; a record whose field holds a kernel has no inputs, since the kernel is the field's value. A law built by merging can still have factor inputs, which its factors take and which a binding does not see (§ 5.2).
+> 1. A kernel has at least one input (§ 6.3), and a function has its arguments, which may be none; a batch of either has its elements' inputs, and one binding supplies them to every element.
+> 2. Base values, records, and laws have none, so an object with no inputs is a value, a law, a function with no arguments, or a batch of these; a record whose field holds a kernel has no inputs, since the kernel is the field's value. A law built by merging can still have factor inputs, which its factors take and which a binding does not see (§ 5.2).
 > 3. An input of record type is one input, supplied with one record.
 
 Take the kernel that draws `y ~ Normal(mu, sigma)`, with `sigma` optional and default 1.
@@ -390,7 +390,7 @@ A law's produced object is a draw, so a law offers its draws' outputs.
 | a batch of laws | nothing | 4, 5 |
 
 > [!NOTE]
-> **Consequence** (of the naming rule).
+> **Consequence** (of the naming rule; proved in the formal model of Appendix D.1).
 > 1. Only a base value is ever named from outside.
 > 2. An object offers either one output at the root, and then has no paths, or outputs whose names are all top-level paths; never both.
 > 3. The name of an output at the root is not a path, since nothing is below it; every other output's name is its own path. So an object's outputs, its paths, and its draws' paths use one set of names.
@@ -443,7 +443,7 @@ Four laws show the difference.
 > [!IMPORTANT]
 > **Definition (input spec, output spec).**
 > 1. An object's *input spec* lists its inputs in the order of its arguments: names, types, and which are optional. It holds no defaults. Two input specs are equal when they list the same inputs, types, and optional inputs, in any order.
-> 2. An object's *output spec* states the type of its produced object and, when that type is a base type, the name of the output at the root; for a batch type, the element type carries the elements' name (§ 6.5). An output spec never states an empty record type.
+> 2. An object's *output spec* states the type of its produced object and, when that type is a base type, the name of the output at the root; for a batch type, the batch's element spec carries the elements' name (§ 6.5). An output spec never states an empty record type.
 > 3. A law's or kernel's output spec is its *event spec*.
 > 4. A *type hole* is the pending type of an output spec that names its output at the root before the type is known, as a function's output can be named before its first call; the object fills it once it knows the type.
 > 5. The *record of outputs* of a produced base value `v` offered under `n` is the record `{n: v}`; a produced record is its own record of outputs. It builds the value of a merge (§ 5.5).
@@ -462,14 +462,16 @@ A law over `{mu, sigma}` has an event spec stating the record type `{mu, sigma}`
 
 Output order is the field order of the record of outputs, which fixes a numeric record's flat layout, so output specs listing the same outputs in two orders are unequal.
 An output spec naming a base value `n` and one whose type is `{n: …}` offer the same output and are unequal.
+Two output specs over batches whose elements carry different names offer different outputs and are unequal, although the two batch types are equal (§ 6.5).
 
 </details>
 
 <details>
 <summary>Technical note: conformance and unification of output specs</summary>
 
-`A` conforms to `B` when they state the same root name, if any, and `A`'s type conforms to `B`'s; a type hole in `B` admits any type.
-Two output specs unify likewise, and a type hole takes the other's type.
+`A` conforms to `B` when they state the same root name, if any, and `A`'s type conforms to `B`'s; the name a batch type's elements carry is not compared (§ 6.5).
+A type hole in `B` admits only what can fill it (§ 11.2): a base type, or a batch type whose elements are base values.
+Two output specs unify likewise; a type hole takes the other's type when it admits that type, and otherwise they do not unify.
 
 </details>
 
@@ -650,7 +652,7 @@ II.6 states the rules: every key is resolved against the original tree, so swaps
 > [!NOTE]
 > **Consequence** (of the definition and § 3.5).
 > 1. The type of output `c` is the produced type of the object at `c`. For a record or a batch, which produce themselves, that is the object's own type, so for `{x: 3.0, g: d}` the output `g` has `d`'s type.
-> 2. An object whose produced object is a law offers no outputs, so it has no object at an output.
+> 2. An object whose produced object is a law or a kernel offers no outputs, and neither does a batch of laws or of kernels (§ 3.3, rules 4 and 5); such an object has no object at an output.
 
 For a law `d` whose draws are arrays named `x`, the object at `x` is `d`; for a law `e` over `{a, g: {b, c}}`, the object at `g` is `e[g]`; for a batch of 4 draws of `d`, the object at `x` is the batch.
 
@@ -682,27 +684,33 @@ It reads right to left, as the density does: in `a & b`, `b` may supply inputs o
 A law built by merging keeps the laws and kernels it was built from, and a later merge reads them.
 
 > [!IMPORTANT]
-> **Definition (factor).** The *factors* of a law or kernel are the laws and kernels a merge built it from: a merge keeps its operands' factors, `a`'s first, and some operations keep them too, namely a marginal law computed over several factors, a rename, and conditioning computed in closed form.
-> Any other law or kernel, a selection included, is its own one factor.
+> **Definition (factor).** The *factors* of a law or kernel are the laws and kernels a merge built it from.
+> Only two operations keep factors: a **merge** keeps its operands' factors, `a`'s first, and a **rename** keeps the factors of the law or kernel it renames, each renamed.
+> Every other law or kernel is its own one factor, including the result of a selection, a marginal, conditioning, or any other operation that computes a new law or kernel.
 > A *grouped sub-joint*, the factor a rename creates when it gathers outputs of several factors under one group, is one factor.
 
 > [!IMPORTANT]
 > **Definition (factor inputs).** The *factor inputs* of a law or kernel are the inputs, required or optional, that its factors take and that no other factor of it supplies, in order of first appearance:
 > 1. for a kernel that is its own factor, its inputs;
-> 2. for a law of a distribution family, such as `Normal`, none;
-> 3. for a law built by merging, the optional inputs its factors left at their defaults;
+> 2. for a law that is its own factor, none: the optional inputs of what it was computed from are fixed at their defaults;
+> 3. for a law built by merging or renaming, the optional inputs its factors left at their defaults;
 > 4. for a grouped sub-joint, its own inputs when it is a kernel, and none when it is a law.
 >
 > A record, a function, or a type is one factor, and its factor inputs are its inputs.
 
 > [!NOTE]
-> **Consequence** (of the definitions). A law takes no inputs, yet it can have factor inputs: they are not offered to a binding, but a later merge can feed or share them (§ 5.3). The kernels among a law's factors also fix which merges are valid.
+> **Consequence** (of the definitions).
+> 1. A law takes no inputs, yet it can have factor inputs: they are not offered to a binding, but a later merge can feed or share them (§ 5.3). The kernels among a law's factors also fix which merges are valid.
+> 2. **Factor inputs follow the operation, not the method.** Only a merge or a rename gives a law factor inputs beyond its inputs; every other operation gives a result whose factor inputs are its inputs, none for a law. A result never depends on which method or route computed it (C3).
+> 3. **A view and a marginal of one joint merge the same way**, since both are one factor: they are one law (I7) and behave as one in every merge.
+> 4. **Equal laws built by different merges can merge differently**, since a merge reads factors (§ 5.7).
 
 ![The law a & c, with outputs y and mu, the note "factors: a, c", and a dashed port sigma on its right edge.](figures/factor-inputs.svg)
 *Figure: for the kernel `a(y | mu, sigma)` with `sigma` optional (default 1) and a law `c(mu)`, the law `a & c` has no inputs and one factor input, `sigma`, drawn dashed.*
 
 A later merge supplies such an input as it supplies any other: merging `a & c` with a law `e(sigma)`, where `sigma ~ Normal(100, 0.001)`, gives `y` a scale near 100, the same law as `a & (c & e)` (figure in § 5.4).
-Keeping factors is what makes the two groupings agree; its consequences, such as equal laws that merge differently, are in § 5.7.
+Keeping factors is what makes the two groupings agree.
+The marginal of `a & c` at `[y, mu]`, by contrast, is one factor with `sigma` fixed at 1, so merging it with `e` leaves `y`'s scale at 1, as merging the selection does; § 5.7 lists each operation.
 
 ### 5.3 Merge: outputs side by side, inputs fed from the right
 
@@ -779,7 +787,8 @@ An optional factor input that the other operand does not feed stays an optional 
 ![The merge (a & c) & e: e's output sigma feeds the dashed factor input sigma of a & c.](figures/merge-factor-input.svg)
 *Figure: `(a & c) & e` feeds the factor input `sigma` of `a & c` (§ 5.2); `y`'s scale then follows `e`.*
 
-The kind follows the required factor inputs that remain, so a merge that leaves only optional ones is a law, sampled with them at their defaults, while a kernel whose inputs are all optional stays a kernel on its own (IV.2).
+For laws and kernels, the kind follows the required factor inputs that remain, so a merge that leaves only optional ones is a law, sampled with them at their defaults, while a kernel whose inputs are all optional stays a kernel on its own (IV.2).
+A merge of functions keeps every input that remains, optional ones included (§ 5.5).
 
 <details>
 <summary>Technical note: a shared optional input that a binding omits</summary>
@@ -813,8 +822,16 @@ For `lik & prior`, this is the product of § 5.1.
 > [!TIP]
 > To merge two records `x` and `y` that share `g`, merge the groups first: `(x without g) & (y without g) & {g: x[g] & y[g]}`.
 
-**Functions.** A function is a kernel of point masses, so `(a & b)(u)` is `a`'s record of outputs at `u_a` and the fed values, followed by `b`'s at `u_b`.
+**Functions.** A merge keeps both operands' outputs and feeds each output of `b` to `a`'s input of the same name; for functions, the result is the function that returns both results.
+
+> [!IMPORTANT]
+> **Definition (function of a merge).** For functions `a` and `b`, `(a & b)(u)` is `a`'s record of outputs at `u_a` and the values `b` feeds, followed by `b`'s record of outputs at `u_b`.
+> Its inputs are the factor inputs of § 5.3, optional ones included: a function's inputs are its parameters, and functions have no split between a law and a kernel that would hide them.
+
 For `a(mu | data)` returning the mean and `b(sigma | data)` the standard deviation, `a & b` takes `data` once and returns `{mu, sigma}`.
+
+> [!TIP]
+> A function is like a kernel whose laws are point masses, and its merge mirrors the law of a merge. The likeness motivates the rule and is not exact: a merged law hides the optional inputs its factors leave at their defaults, while a merged function keeps them as inputs.
 
 **Batches.** Over equal levels, element by element; a base element is read as its record of outputs, so 3 draws of `x` and 3 draws of `y` merge into 3 records `{x, y}`.
 
@@ -829,6 +846,7 @@ Each element is one operand, typed by the elements' type, and the conditions are
 <summary>Technical note: binding and conditioning in closed form</summary>
 
 Binding or conditioning a merged law in closed form must follow this definition, using the values that later operands feed; Appendix C.3 records where the code does not.
+Whatever the route, the result is one factor, with any optional input that remains fixed at its default (§ 5.2).
 
 </details>
 
@@ -897,6 +915,7 @@ Associativity does not depend on the rule, and the rule does not let every acycl
 <summary>Technical note: when two groupings differ in validity</summary>
 
 `(a & b) & c` and `a & (b & c)` check different pairs: a name that both `a` and `b` take and `c` outputs, whose types in `a` and `b` do not unify while `c`'s conforms to each; or two unbound dimension names at one axis that one grouping binds first.
+The first case needs two types with a type that conforms to both and no unification (§ 2.1). Array types give none over the standard NumPy dtypes, since when neither of two dtypes casts to the other no dtype casts to both ([`inputs-and-outputs.md`](inputs-and-outputs.md), fact 38). Opaque types and kernel- or function-typed inputs can: two opaque types unify only when equal or one is unset, while conformance accepts a subclass, and two kernel or function types unify only with equal input types, while conformance is contravariant in inputs.
 Input specs and functions keep no dimension sizes, so for `J1 = {x: (n,)}`, `J2 = {x: (3,), y: (n,)}`, and `J3 = {z: (n,)}`, `(J1 & J2) & J3` leaves `z: (n,)` and `J1 & (J2 & J3)` gives `z: (3,)`.
 Batches of laws can fail associativity, since each element is one factor.
 
@@ -918,16 +937,17 @@ For `M = a & c`, with `a(y | mu, sigma)`, `sigma` optional with default 1, and a
 2. For a kernel `k(w | sigma)`, `M & k` shares `sigma`, now required; condition 7 checks a type no spec of `M` shows.
 3. For an unrelated kernel `k(w | v)`, `M & k` is a kernel that gains the optional input `sigma`.
 4. `M` and `a1 & c`, for a kernel `a1(y | mu)` equal to `a` at `sigma = 1`, are equal laws that merge differently with `e`.
-5. Whether a result keeps `a` as a factor, and so `sigma`, depends on the operation:
+5. Only a merge or a rename keeps `a` as a factor, and so `sigma` (§ 5.2); the method or route that computes a result does not matter:
 
    | Law built from `M` | Keeps `a` as a factor | Merged with `e`, `y`'s scale follows |
    | --- | --- | --- |
-   | the selection `M[[y, mu]]` | no: a selection is one factor | the default 1 |
-   | the marginal law of `M` at `[y, mu]`, computed over factors | yes | `e` |
-   | `M` with `y` renamed to `w/y` | yes | `e` |
-   | `a & c & t`, for a law `t(tau)`, conditioned on `tau` in closed form | yes | `e` |
-   | `M` conditioned on observed `y` | no: a law of stored draws | — |
-   | `a & t2`, for a law `t2(z)`, with `mu` bound | no: `a` is bound | the default 1 |
+   | `M & t`, for a law `t(tau)` | yes: a merge | `e` |
+   | `M` with `y` renamed to `w/y` | yes: a rename | `e` |
+   | the selection `M[[y, mu]]` | no: one factor | the default 1 |
+   | the marginal law of `M` at `[y, mu]`, however computed | no: one factor | the default 1 |
+   | `a & c & t` conditioned on `tau`, in closed form or not | no: one factor | the default 1 |
+   | `M` conditioned on observed `y` | no: one factor | — |
+   | `a & t2`, for a law `t2(z)`, with `mu` bound | no: one factor | the default 1 |
    | a law regrouped so that `a` is inside a grouped sub-joint | no: the sub-joint is one factor | the default 1 |
 
 6. The merge of types can be valid where the merge of objects is refused: `e`'s type and `M`'s type merge, while `e & M` breaks condition 4.
@@ -1041,7 +1061,7 @@ So the kernel offers its draws' outputs, and the function offers nothing (§ 3.3
 > 4. **A function that returns a law** offers nothing; to name the law, it returns `{params: law}`.
 > 5. **A function that returns a function** offers that function's outputs.
 > 6. **Selecting** `f[p]` maps `w` to `f(w)` at `p`, with the same inputs.
-> 7. **Merge:** functions merge as kernels whose laws are point masses, and must state their inputs and return type (§ 5.3).
+> 7. **Merge:** two functions merge into the function returning both results, `b`'s outputs feeding `a`'s inputs and every remaining input kept, optional ones included; both must state their inputs and return type (§ 5.3, § 5.5).
 
 ![The function f from x to {y, z}, offering y and z, and f[y].](figures/function-outputs.svg)
 *Figure: a function into records offers its output functions.*
@@ -1061,17 +1081,18 @@ It has no paths known before it is called, so `f[p]` is checked when the selecte
 ### 6.5 Batches
 
 > [!IMPORTANT]
-> **Definition (element type).** A batch's *element type* is the output spec of one element. It holds the element's type and, for a base element, the elements' name, which is also the name of the batch's output at the root.
+> **Definition (element spec).** A batch's *element spec* is the output spec of one element (§ 3.5): the element type (§ 2.1) and, for base elements, the elements' name, which is also the name of the batch's output at the root.
 > A batch an operation produces takes the name its maker gives; a batch built from bare base values names them `element`.
-> The name is not compared by conformance or equality (§ 2.4).
+> The name belongs to the element spec, not to the batch's type: conformance, unification, and equality ignore it (§ 2.1, § 2.4), while merges, outputs, and renames read it.
 
 > [!NOTE]
 > **Consequence** (of §§ 2 to 5, for batches).
 > 1. **Produces** itself; its **paths** are its element type's paths, and its **parts** are its columns (§ 2.3, § 4.1).
-> 2. **Positions** along its levels select an element or a smaller batch, a second way of selecting that gives no part; positions and paths commute (§ 4.1).
-> 3. **Inputs:** its elements' inputs, supplied to every element by one binding.
-> 4. **Outputs:** the outputs each element offers as a produced object, as columns (§ 3.3, rule 4): a batch of records offers its elements' children, a batch of functions its elements' outputs, each as a batch of functions, a batch of base values offers one output at the root, and a batch of laws or of kernels offers nothing.
-> 5. **Merge:** two batches over equal levels merge element by element (§ 5.5).
+> 2. **Equal batches can merge differently:** two batches of the same 4 arrays, one naming them `x` and one `y`, are equal, yet merged with a batch of 4 values named `z` they give the records `{x, z}` and `{y, z}`.
+> 3. **Positions** along its levels select an element or a smaller batch, a second way of selecting that gives no part; positions and paths commute (§ 4.1).
+> 4. **Inputs:** its elements' inputs, supplied to every element by one binding.
+> 5. **Outputs:** the outputs each element offers as a produced object, as columns (§ 3.3, rule 4): a batch of records offers its elements' children, a batch of functions its elements' outputs, each as a batch of functions, a batch of base values offers one output at the root, and a batch of laws or of kernels offers nothing.
+> 6. **Merge:** two batches over equal levels merge element by element (§ 5.5).
 
 ![A batch b of draws over {mu, sigma}, and its column b[mu], which offers mu at the root.](figures/batch-columns.svg)
 *Figure: a batch of 100 draws of a law over `{mu, sigma}`, and its column at `mu`.*
@@ -1086,24 +1107,24 @@ For a batch `b` of 4 draws of a law whose draws are arrays named `x`: `b` offers
 
 | # | Invariant | Follows from, or chosen |
 | --- | --- | --- |
-| I1 | **One set of paths:** a path or list valid on `d` is valid on its draws, on each element of a batch of its draws, on its mean, and on its event spec | § 2.3 |
-| I2 | **Selecting commutes with sampling:** a draw of `d[s]` is distributed as a draw of `d` at `s`, at every path | § 4.1 |
+| I1 | **One set of paths:** a path or list valid on `d` is valid on its draws, on each element of a batch of its draws, on its mean, and on its event spec | § 2.3; proved (D.1) |
+| I2 | **Selecting commutes with sampling:** a draw of `d[s]` is distributed as a draw of `d` at `s`, at every path | § 4.1; proved (D.1) |
 | I3 | **Selecting commutes with summaries:** the mean of `d` at `s` and the mean of `d[s]` estimate one quantity, equal when computed in closed form; likewise variance, standard deviation, and quantiles | I2, § 6.2 |
-| I4 | **Positions and paths commute** on a batch | § 2.3, § 4.1 |
-| I5 | **Paths chain:** `x[p][q]` is `x[p/q]`, through fields that hold objects | § 2.3, § 4.1 |
-| I6 | **Output specs agree:** for a law, kernel, function, or batch, the output spec of `x[s]` is `x`'s output spec at `s`; for a record, `x[s]`'s type is the type at `s` | § 4.4 |
-| I7 | **A selection and the marginal law are one law** | chosen (VI.8) |
+| I4 | **Positions and paths commute** on a batch | § 2.3, § 4.1; proved (D.1) |
+| I5 | **Paths chain:** `x[p][q]` is `x[p/q]`, through fields that hold objects | § 2.3, § 4.1; proved (D.1) |
+| I6 | **Output specs agree:** for a law, kernel, function, or batch, the output spec of `x[s]` is `x`'s output spec at `s`; for a record, `x[s]`'s type is the type at `s` | § 4.4; proved (D.1) |
+| I7 | **A selection and the marginal law are one law**, and each is one factor in a merge | chosen (VI.8); § 5.2 |
 | I8 | **Draws of a list condition back:** conditioning `d` on a draw of `d[[ps]]` fixes the nodes at `ps` and nothing else | chosen (§ 4.7) |
-| I9 | **One path gives the node, a list a record holding it**, the output at the root included | chosen (§ 4.2) |
-| I10 | **A list and removal partition** the leaf paths of a record, a record type, a batch of records, an output spec, or a law, and the inputs of an input spec | § 4.3, § 4.4 |
+| I9 | **One path gives the node, a list a record holding it**, the output at the root included | chosen (§ 4.2); proved (D.1) |
+| I10 | **A list and removal partition** the leaf paths of a record, a record type, a batch of records, an output spec, or a law, and the inputs of an input spec | § 4.3, § 4.4; proved (D.1) |
 | I11 | **Conditioning removes what it fixes**, however it is computed; a kernel's bound inputs, and the bound nodes of a record input, leave its input spec | chosen (§ 4.7) |
-| I12 | **The object at an output:** output `c`'s type is the produced type of the object at `c`, which for a record or a batch is that object's own type | § 3.5, § 4.6 |
-| I13 | **Selecting commutes with producing:** `f[s](w)` is `f(w)` at `s`; `k[s]` at `w` is the law of a draw's node at `s` | § 4.1 |
-| I14 | **Selecting keeps inputs** | § 4.1 |
+| I12 | **The object at an output:** output `c`'s type is the produced type of the object at `c`, which for a record or a batch is that object's own type; an object producing a law or kernel, and a batch of laws or kernels, has no output | § 3.5, § 4.6; proved (D.1) |
+| I13 | **Selecting commutes with producing:** `f[s](w)` is `f(w)` at `s`; `k[s]` at `w` is the law of a draw's node at `s` | § 4.1; proved for one path (D.1) |
+| I14 | **Selecting keeps inputs** | § 4.1; proved (D.1) |
 | I15 | **Sides are separate:** no name is both a factor input and an output of a kernel, a law, or a merge | chosen for kernels (§ 6.3); conditions 4 and 5 for merges |
 | I16 | **The specs of a merge:** the output spec of `a & b` is the merge of the output specs, and its factor inputs are `a`'s factor inputs, without the fed ones, merged with `b`'s factor inputs, after binding dimension names; the type of `a & b` is the merge of the types when no operand's factors take a factor input its input spec does not state | § 5.3 |
-| I17 | **A merge keeps paths**; an output at the root moves to the path of its name | § 5.3 |
-| I18 | **Paths agree with selection:** a string is a path of `x` exactly when `x[s]` is defined; rename keys are those paths, the root name, and input names | chosen (§ 4.5) |
+| I17 | **A merge keeps paths**; an output at the root moves to the path of its name | § 5.3; proved (D.1) |
+| I18 | **Paths agree with selection:** a string is a path of `x` exactly when `x[s]` is defined; rename keys are those paths, the root name, and input names | chosen (§ 4.5); proved (D.1) |
 | I19 | **Merge is associative when both groupings are valid**, under § 5.7's conditions | § 5.3, verified (Appendix D.5) |
 | I20 | **Sampling commutes with merge** for laws that do not feed each other and draw records, when `a & b` is valid | § 5.5 |
 | I21 | **Renaming commutes with merge**, under § 5.7's conditions | § 5.3, verified (Appendix D.5) |
@@ -1114,7 +1135,7 @@ For a batch `b` of 4 draws of a law whose draws are arrays named `x`: `b` offers
 
 I2, I4, I5, I6, and I13 hold by construction, since they restate a definition; their tests check the implementation against it.
 I2, I5, I6, and I9 hold with no exception at fields that hold objects, since no selection wraps.
-An external formal model (Appendix D.1) proves I1 for laws, draws, and batches, and I2, I4, I5, and I10 for every kind it models, with the facts behind I17 and I21; it does not model dimension names or optional inputs, so I19's conditions are this design's.
+An external formal model (Appendix D.1) proves I1 for laws, draws, and batches; I2, I4, I5, and I10 for every kind it models; I6, I9, I12, I13 for one path, I14, I17, and I18; the consequences of the naming rule (§ 3.3); and the fact behind I21. It does not model dimension names or optional inputs, so I19's conditions are this design's.
 
 </details>
 
@@ -1125,7 +1146,7 @@ An external formal model (Appendix D.1) proves I1 for laws, draws, and batches, 
 > 1. summaries computed by sampling, and results that are not one value per field;
 > 2. labels, which no operation reads;
 > 3. the list form at the root, an extra rule for the name of the output at the root;
-> 4. merges reading factors and kept dimension sizes, so equal laws can merge differently, and some groupings differ in validity or result.
+> 4. merges reading factors, kept dimension sizes, and batch element names, so equal laws built by different merges can merge differently, equal batches can merge differently, and some groupings differ in validity or result.
 
 <details>
 <summary>Technical note: the cases outside the invariants</summary>
@@ -1141,8 +1162,8 @@ An external formal model (Appendix D.1) proves I1 for laws, draws, and batches, 
 | A shared optional input omitted | each factor takes its own default | defaults belong to objects (§ 5.4) |
 | A kernel whose inputs are all optional | merged with a law, it gives a law at the defaults, though it asks for its inputs alone | the kind follows the required factor inputs left (§ 5.4) |
 | Two selections of one law | `d[[g1]] & d[[g2]]` is the product of the marginals | a selection is one factor (§ 5.6) |
-| A selection and a marginal of one joint (I7) | they can merge differently when a factor has a factor input | merge reads factors (§ 5.7) |
-| Factor inputs | a later merge can feed or share them; equal laws can merge differently | merge reads factors (§ 5.2, § 5.7) |
+| Factor inputs | a later merge can feed or share them; equal laws built by different merges can merge differently | merge reads factors, which only merge and rename keep (§ 5.2, § 5.7) |
+| Batch element names | equal batches of base values named `x` and `y` merge into records `{x, …}` and `{y, …}` | the name belongs to the element spec, not to the type (§ 6.5) |
 | Merges of types and of objects (I16) | a type merge can be valid where the object merge is refused | a type states no factor inputs beyond its inputs (§ 5.7) |
 | Associativity of validity (I19) | one grouping can be refused and the other valid | they check different pairs (§ 5.7) |
 | Batches of laws (I19) | the two groupings of three batches can give different laws | each element is one factor (§ 5.5) |
@@ -1179,7 +1200,7 @@ An external formal model (Appendix D.1) proves I1 for laws, draws, and batches, 
 | a law's or kernel's event spec | `event_spec` |
 | a function's output spec, input spec | `output_spec`, `input_spec` |
 | a kernel's input spec | `given_spec`, named for what the kernel is conditioned on (III.9) |
-| a batch's element type | `element_spec` |
+| a batch's element spec; its element type | `element_spec`; `element_spec.term_spec` |
 | `x[p]`, `x[[p, q]]` | `x["p"]`; `x["p", "q"]` or `x[["p", "q"]]` |
 | `x without p` | `x.without("p")` |
 | rename | `x.rename({"old": "new"})` |
@@ -1463,6 +1484,8 @@ Code outside `core/_specs.py` reads the form through one private helper, `_root_
 1. filled with a base type, it stays named `mean`;
 2. filled with a batch whose elements carry only the default name `element`, it names the elements `mean`;
 3. filled with any other type, it raises `TypeError`, asking for a declared record.
+
+In conformance and unification a type hole admits only what can fill it: a base type, or a batch type of base elements (§ 3.5).
 
 ### 11.3 Examples
 
@@ -1893,7 +1916,10 @@ class MarginalView(Distribution):
 
 
 def marginal(d: Distribution, paths: str | Sequence[str]) -> Distribution:
-    """The marginal law of d at a path or a list of paths, detached from d; it takes what d[...] takes."""
+    """The marginal law of d at a path or a list of paths, detached from d; it takes what d[...] takes.
+
+    However it is computed, it is one factor in a merge, as the view is (§ 5.2).
+    """
 ```
 
 A distribution family takes the name of its output at the root first, as `Normal("mu", 0.0, 1.0)`; a family whose draws are laws, functions, or batches wraps each draw in a record under that name, so a random measure, a law whose draws are laws, constructed under `params` draws `{params: law}`.
@@ -2067,7 +2093,8 @@ class Function(TrackedTerm):
         """Rename inputs and outputs alike (§ 4.5; Appendix A.2)."""
 
     def __and__(self, other: Function, /) -> Function:
-        """The merge of § 5.5, functions read as kernels of point masses.
+        """The merge of § 5.5: the function returning both results, other's outputs
+        feeding self's inputs, every remaining input kept, optional ones included.
 
         Raises:
             TypeError: An operand has no input_spec, no output_spec, or a type hole.
@@ -2143,7 +2170,12 @@ h & m                             # TypeError: h produces a law; return {"params
 
 ```python
 class BatchSpec(TermSpec):
-    """A batch type, which holds the element type and the levels."""
+    """A batch type: the element type and the levels (§ 2.1).
+
+    It also carries the batch's element spec (§ 6.5), whose base-element name is not
+    part of the type: conformance and unification ignore it, and so do a batch's
+    equality, hashing, fingerprint, and JAX pytree (§ 18.3).
+    """
 
     def __init__(self, element: TermSpec | OutputSpec, levels=None, /, **level_shapes) -> None:
         """element is the elements' type, or an OutputSpec that names base elements
@@ -2170,7 +2202,11 @@ class Batch(TrackedTerm):
         batch, over the same levels, of the elements' nodes (§ 4.1)."""
 
     def output(self, output_name: str, /) -> Batch:
-        """The column at output_name, or self for the elements' output at the root."""
+        """The column at output_name, or self for the elements' output at the root (§ 4.6).
+
+        Raises:
+            KeyError: output_name is not an output; a batch of laws or of kernels has none.
+        """
 
     def __and__(self, other: Batch, /) -> Batch:
         """The merge of the elements, position by position (§ 5.5).
@@ -2195,8 +2231,9 @@ A `DistributionBatch`'s and a `ConditionalDistributionBatch`'s `event_spec` is `
 
 ### 18.3 Names out of equality, hashing, and JAX
 
-A batch's base-element name stays out of its equality, its hash, its fingerprint (the content hash caching uses), and the static data of its JAX pytree.
-`BatchSpec` keeps the name and compares it, and every one of those places uses a name-free canonical form of the spec instead, recursively through records, laws, and functions that hold a batch.
+A batch's base-element name belongs to its element spec, not to its type (§ 6.5).
+So it stays out of the conformance and unification of batch types (`_unify_specs`), and out of a batch's equality, its hash, its fingerprint (the content hash caching uses), and the static data of its JAX pytree; merges, `OutputSpec(b.spec).outputs`, and `rename` read it from `element_spec`.
+`BatchSpec` carries the element spec, so it keeps the name and its own `==` compares it (O3; Appendix A.2, item 23); every place listed above uses a name-free canonical form of the spec instead, recursively through records, laws, and functions that hold a batch.
 
 <details>
 <summary>Technical note: why, and what it costs</summary>
@@ -2307,9 +2344,10 @@ Alternatives are "open inputs" and "pending inputs"; the text commits to "factor
 
 **Questions deferred to after the workshop.**
 Each has a rule for the time before it, stated in Appendix B.
-1. **Visible optional inputs** (Q4(b), option 3): whether a merge of laws and kernels that leaves only optional inputs gives an object that shows them, as a kernel all of whose inputs are optional, with `sample` and `log_prob` at their defaults. Until then a merge reads its operands' factor inputs (§ 5.2).
+1. **Visible optional inputs** (Q4(b), option 3). A merge of laws and kernels that leaves optional inputs would give an object that states them: a kernel all of whose inputs are optional, sampled and scored at their defaults. Factor inputs would disappear, every input an object takes would be in its input spec, and the point-mass reading of functions (§ 5.5) would become exact, since merged laws and merged functions would both keep optional inputs as inputs. *Costs:* every model with an optional parameter changes kind, from a law to a kernel; conditioning, sampling, and inference must accept a kernel whose inputs are all optional. *Recommendation:* decide after the workshop. Until then § 5.2 holds: only merge and rename keep factors.
 2. **The type of a shared input** (Q4(d)): the target is decided, the unification of the two types (§ 5.3); only its timing is deferred (T29).
 3. **Dimension scopes of merge results** (Q6): store a scope on every merge result, input specs and functions included, or substitute and forget everywhere, laws and kernels included. The decision leans to storing, with `with_dim_names` renaming stored names too. Until then laws and kernels store their scope and the other kinds forget theirs (§ 5.7).
+4. **The unification of kernel and function types as a true meet.** § 2.1 unifies two kernel or function types only when their input types are equal, so two types that one type conforms to can lack a unification (§ 2.1, consequence 1). A true meet would take, for each input, the widest type both inputs accept, that is, the narrowest type to which both input types conform, since conformance is contravariant in inputs; and for the event or return type, the unification. It needs a join of types, which § 2.1 does not define. *Recommendation:* decide after the workshop. Until then unification requires equal input types.
 
 **Pending items of [`decisions.md`](decisions.md) that concern this design.**
 Each item gives the background, the options, and a recommendation.
@@ -2342,7 +2380,7 @@ Each item gives the reading the text adopts.
 7. **The word for IV.2's "unmet".** The source has S0 write "unfed" into `design/`; this text says "factor inputs" (A.1). *Reading:* Appendix B keeps the source's instruction, pending this question.
 8. **Whether a law type and a kernel type merge.** Source § 2.16 says "two of one of these". *Reading:* they merge, as laws and kernels do (§ 5.3).
 9. **Renaming a law's output onto an input its factors still take.** A law's rename does not rename its factor inputs (§ 5.7), so renaming an output of `a & c` to `sigma` would put `sigma` on both sides, against I15; the source does not say what happens. *Reading:* refused, since I15 keeps sides separate.
-10. **Unifying kernel and function types.** Unification requires their input types to be equal (§ 2.1, technical note), while a shared input elsewhere takes the unification of its types; the source gives no reason for the difference. *Reading:* equal, as stated.
+10. **Unifying kernel and function types.** Unification requires their input types to be equal (§ 2.1, technical note), while a shared input elsewhere takes the unification of its types; the source gives no reason for the difference. *Reading:* equal, as stated; A.1 item 4 asks whether to replace it with a true meet after the workshop.
 11. **Variadic parameters.** The source reads a function's inputs from its parameters, and its optional inputs from their defaults, but does not say how `*args` and `**kwargs` count. *Reading:* only named parameters are inputs.
 12. **The path of a view built by removal.** `MarginalView.path` records a view's paths, and `d.without(...)` returns a view, but the source does not say what path it records. *Reading:* the paths of the nodes it keeps, so it equals the view at that list.
 13. **The paths `params_prior["beta"]` takes today.** The source says in one place that a merge moved `params_prior["beta"]` to `joint["params/beta"]`, and in another that `params_prior["beta"]` raises `KeyError` today. Appendix D.1 states the change about the paths of the draws instead, which both places agree on.
@@ -2354,9 +2392,19 @@ Each item gives the reading the text adopts.
 19. **The outputs of a batch of kernels.** The maintainer's review asked for a figure of a batch of kernels offering its draws' outputs elementwise, while rules 4 and 5 of § 3.3 give a batch of laws or of kernels no outputs; its paths still reach its elements' draws (§ 3.7). *Reading:* no outputs, as the rules state, and the figure of § 3.7 draws it so; offering the draws' outputs would change rule 5 for the elements of a batch.
 20. **What a part is.** The source and the first rewrite define a part of a record as a node below its root, and an object's parts as the nodes at its paths, which leaves a law's parts unclear. The maintainer's review defines a part of `x` as the selection `x[p]` at a path `p` of `x` (§ 4.1): a law's parts are its marginal laws, a batch's are its columns, and positions along a batch's levels select without giving parts. *Reading:* the review's definition; no rule changes, since each rule that said "part" reads a path, a node, or a child, and now says so.
 
+The items below were found while applying the maintainer's decisions of 2026-10-19.
+
+21. **Field order in record conformance and unification.** Output-spec equality and a numeric record's flat layout keep field order (§ 3.5), but today's code compares a record's child names as a set in conformance and admission: `RecordSpec._bind_dims_from_spec` and `_bind_dims_from_value` (`core/_record_spec.py`) test `self._tree.keys() != other.keys()`, which ignores order, while `RecordSpec.__eq__` and `__hash__` keep it; `_unify_specs` checks records only through that test, and `with_term_spec` completes a record field by field through it. So `RecordSpec(x=..., y=...)` and `RecordSpec(y=..., x=...)` are unequal, yet each conforms to the other, and a mapping `{y, x}` is admitted by `{x, y}`. *Options:* (a) conformance and unification require the same child names in the same order, agreeing with equality and the flat layout, so a reordered record type neither conforms nor unifies; (b) order is ignored, as the code does, the unification taking one operand's order and values being read by name. *Reading:* undecided; § 2.1 says "the same child names" and points here.
+22. **A rename that regroups.** The rule of § 5.2 says a rename keeps factors, while a rename that gathers outputs of several factors under one group makes them one grouped sub-joint, whose factor inputs are none for a law, as G1a's done-condition requires. *Reading:* both hold: a rename keeps each factor it does not gather, and the gathered factors become one factor, as IV.1 keeps a grouped sub-joint one factor.
+23. **`BatchSpec`'s own equality.** The element name is not part of a batch's type (§ 2.1, § 6.5), yet `BatchSpec`, the code form of that type, carries the element spec, and O3 has its `==` compare the name, so that static data never holds a name that compares equal without it (§ 18.3). *Reading:* O3 stands: the type of Part I is `BatchSpec`'s name-free canonical form, which conformance, unification, a batch's equality, hashing, fingerprints, and pytrees use; output specs over batches whose elements carry different names are unequal, since they offer different outputs (§ 3.5). The alternative, a `BatchSpec.__eq__` that ignores the name, is O3's rejected option.
+24. **What a type hole admits.** A type hole admits only what can fill it: a base type or a batch of raw values. Conformance does not compare a batch's element name, while filling a hole with a batch requires its elements to carry only the default name `element` (§ 11.2, O2). *Reading:* in conformance and unification a hole admits any batch type of base elements; filling then refuses a batch whose elements a maker named.
+25. **"No factor inputs" for a kernel.** The decision says that every operation other than merge and rename gives a result with no factor inputs. A kernel that is its own factor has its inputs as factor inputs (§ 5.2, rule 1), and a selection keeps them (I14). *Reading:* such a result has no factor inputs beyond its inputs: none for a law, its inputs for a kernel.
+26. **The step that delivers the rule of § 5.2.** S3 is mechanical, and B.5 rule 4 lets a mechanical step change only names; G4 already rewrites every route of `condition_on` and adds `law.without`, so it takes the rule, with the marginal's product of factors in `operations/_marginal.py` (T32). *Reading:* G4; the maintainer may move it.
+27. **A law's root name and equality.** A law type holds its event type (§ 2.1), so the root name of a law over a base value, like a batch's element name, is stated by its event spec, not its type; § 2.4 does not say whether `Normal("x", 0, 1)` and `Normal("y", 0, 1)` are equal laws. *Reading:* not stated; the text makes no claim either way.
+
 ## B. Implementation plan and sequencing
 
-**Key.** Step codes S0 to S4, G1a to G5, and R (the rename) are this design's steps, and E0 to E6, P0b, PV, and PL the execution plan's, listed in [`README.md`](README.md) § Steps; T1 to T31 are the transition rules of B.4; N1 to N32 are the pending items of [`decisions.md`](decisions.md); O1 to O16, R1 to R6, and Q1 to Q6 are the decision records of Appendix D.2; "fact N" is fact N of [`inputs-and-outputs.md`](inputs-and-outputs.md), Appendix E.
+**Key.** Step codes S0 to S4, G1a to G5, and R (the rename) are this design's steps, and E0 to E6, P0b, PV, and PL the execution plan's, listed in [`README.md`](README.md) § Steps; T1 to T32 are the transition rules of B.4; N1 to N32 are the pending items of [`decisions.md`](decisions.md); O1 to O16, R1 to R6, and Q1 to Q6 are the decision records of Appendix D.2; "fact N" is fact N of [`inputs-and-outputs.md`](inputs-and-outputs.md), Appendix E.
 
 Each step is one PR into `dev/overhaul`.
 [`README.md`](README.md) § Steps owns the order of the steps, their dependencies, their branches, and the cut; this appendix owns what each step delivers and its done-condition.
@@ -2386,7 +2434,7 @@ No kind reimplements a generic rule: two implementations of one rule drift apart
 | G1b | The naming rule for outputs: functions returning laws or functions, lifted laws, one `OutputSpec.default`, a bare `output_spec` | G1a, E5 | before; cut third |
 | G2 | The remaining families wrap their draws; then the interim whole form is refused | G1b, G3 | after |
 | G3 | Paths through every kind; `Function[]`; the accessor of the object at an output; `[]` stops reading the root name | G1a | after |
-| G4 | `condition_on` removes what it fixes; `law.without`; paths into a record input | G1a | after |
+| G4 | `condition_on` removes what it fixes; `law.without`; paths into a record input; only merge and rename keep factors | G1a | after |
 | G5 | `[]` on kernels and on batches of laws and of functions | G3 | after |
 | R | **Announced.** The rename to "input", "output", and the "spec" words | the workshop | after |
 
@@ -2449,7 +2497,7 @@ S0 writes every row below in today's words; the steps that deliver the code remo
 | II.1 Term specs | the size shorthand is a `RecordSpec` field's alone; "binding by unification" | the shorthand once, for every place an input or the keyword form takes a type; "conforms" for the directional check |
 | II.2 Declarations | the keyword form names any type; `spec`, `components`, `exposes_record`, `with_spec`; "packaging"; "map-like kind"; a whole object's paths start with its name; a function returning a law shown as `OutputSpec(posterior=DistributionSpec(...))`; a law's outputs typed by one draw | §§ 2 and 3 of this design: the produced object, inputs and input specs, outputs and output specs in two forms, the interim whole form until G2, type holes; the naming rule; `OutputSpec[]`, `term_spec`, `with_term_spec`, `components` (until R), `in`, `without`, `rename`, `&`; a produced law or kernel offers nothing; the four sources of inputs; `InputSpec[]` with a list of names, `&`, `without`, `rename`; one `OutputSpec.default`; a returned law is positional or wrapped; "completes" for II.2's completion |
 | II.4 Labels and views | positions are a "selection" | the label `(a, g/b)` of a value picked by several paths; "positions" |
-| II.5 `Batch` | a tuple is one path; `()` is the whole batch; a raw batch keeps a bare element type; a name returns a whole element's batch; `Batch.components` | indexed by its elements' paths; always holds `element_spec`, an output spec whose `term_spec` is the element's type; outputs are columns; raw defaults; `BatchSpec` compares names while equality, hashing, fingerprints, and pytrees use the name-free spec; `()` and lists of positions raise; `in` tests paths; `t.component(c)` reads the output at the root; no `Batch.components` |
+| II.5 `Batch` | a tuple is one path; `()` is the whole batch; a raw batch keeps a bare element type; a name returns a whole element's batch; `Batch.components` | indexed by its elements' paths; always holds `element_spec`, an output spec whose `term_spec` is the element's type; outputs are columns, none for a batch of laws or kernels; raw defaults; the element name belongs to `element_spec`, not the type, so conformance and unification ignore it; `BatchSpec` compares names while equality, hashing, fingerprints, and pytrees use the name-free spec; `()` and lists of positions raise; `in` tests paths; `t.component(c)` reads the output at the root; no `Batch.components` |
 | II.6 `NamedTree` | a path may be a tuple; `[]` raises on a group; `in` tests fields; a key is a field's path; `without(path)` | § 1.2's definitions, how `[]` reads paths, `in`; `[]` returns groups; paths continue into a held object; a list keeps its paths in the tree's order; `without(*paths)`; `rename`; `&` is shallow |
 | III.3 `Function` | output names default to the callable's name for any non-record; no `[]` | `OutputSpec.default` by kind and the reading of a bare `output_spec`; `input_spec` takes the four sources, with O9's rule; `f[s]` |
 | III.5 `Record` | `select` names entries by full path; `merge` is deep | `[]` names groups and held objects; `select` flattens to last names; `&`, shallow |
@@ -2578,7 +2626,7 @@ For a law `d` over `{a, g: {b, c}}` whose group `g` is one factor:
 | # | Until G2 | Applies to | From | Why |
 | --- | --- | --- | --- | --- |
 | T12 | The keyword form accepts a type that is not a base type and builds an interim whole form: `OutputSpec(params=RecordSpec(mu=(), sigma=()))` and `OutputSpec(f=FunctionSpec(...))` build, and users and tests can still write them | `OutputSpec(n=T)` for `T` not a base type | — | the G2 families use the form, so refusing it first would break them, and exempting them would be bridging code; G2 refuses it last |
-| T13 | Filling a type hole with a type that is not a base type, other than a batch whose element has only the default name (O2), gives an interim whole form instead of raising `TypeError` | `with_term_spec` on a type hole | — | this refusal is the refusal of the form, so it comes with G2 |
+| T13 | A type hole admits any type: filling it with a type that is not a base type, other than a batch whose element has only the default name (O2), gives an interim whole form instead of raising `TypeError` | `with_term_spec` on a type hole | — | this refusal is the refusal of the form, so it comes with G2 |
 | T14 | The G2 families declare their events in an interim whole form through the private event default (`_whole_term_event`, the event reading of `distribution`, `_agreed_event_spec`, `_event_repr_parts`), which keeps today's rule: the keyword form under the default name for a law, function, or batch. A user-built empirical law of laws keeps it too, so `rm.event_spec["G"]` is `rm.event_spec` | the G2 families; the private event default | — | G2 moves each family to a wrap under its constructor's name, then the default goes, so it changes once |
 | T15 | A merge accepts an interim whole form and stores its produced object whole as the field of its name: condition 2 passes it, and so does `O & P` on output specs. `Normal("z", 0.0, 1.0) & gp`, for a Gaussian process `gp`, and `m & Normal("x", 0.0, 1.0)`, for `m` declared `OutputSpec(G=law_spec)`, merge as today (fact 27) | merges of laws, kernels, and output specs | — | it keeps today's merges of the G2 families working |
 | T16 | The guarantee that only a base value is named from outside (§ 3.3), I17, and § 5.7's paths-kept property fail for an interim whole form, and I5 fails at its name, after G3 as before: `m["G"]` is `m`, so `m["G"]["mu"]` raises `KeyError` while `m["G/mu"]` is the view at `mu` | every interim whole form (T5, T7, T8, T11 to T14, T19) | — | today's reading; ends at G2, and at G1a for the grouped sub-joint |
@@ -2599,6 +2647,7 @@ For a law `d` over `{a, g: {b, c}}` whose group `g` is one factor:
 | --- | --- | --- | --- | --- |
 | T22 | A record input receives one value whole: no binding fills a node of it, and `InputSpec[]`, `in`, and `without` take input names only. For a kernel `kg(y \| g)` whose input `g` takes `{b, c}`, `kg.given_spec["g/b"]` raises `KeyError` and `"g/b" in kg.given_spec` is false | record inputs; `InputSpec` | — | partial binding of a record input (III.9) and paths into it come together |
 | T23 | A law has no `without`: `p.without("tau")` raises `AttributeError`. `condition_on` keeps today's result: its event spec depends on the route, as `condition_on(p, {"mu": 0.1})` gives `OutputSpec(tau=...)` on the exact Gaussian route, and a nested path raises `ResolutionError`. I8, I10 on laws, and I11 do not hold | laws; `condition_on` | — | today's behaviour |
+| T32 | Which results keep factors depends on the route. A marginal over the whole events of several factors is the product of those factors (`_marginal_expression` in `operations/_marginal.py`), and the slice route of `condition_on` returns the `FactoredDistribution` of the factors it keeps (`_slice` in `operations/_condition.py`), so each keeps its factors' optional inputs and a later merge can feed them; a view is one factor, and other routes give one factor. For `M = a & c` with `a(y \| mu, sigma)`, `sigma` optional, and a law `e(sigma)`: `marginal(M, ["y", "mu"]) & e` gives `y` a spread near `e`'s, while `M[["y", "mu"]] & e` keeps it near 1 (fact 41) | marginals and conditioning of merged laws | — | G4 rewrites every conditioning route; until then today's results stand |
 
 #### Rules that end at G5
 
@@ -2649,7 +2698,7 @@ While T29 holds, the shared input carries the first operand's type, so the two i
 | I4 Positions and paths commute | S1 |
 | I5 Paths chain | S1 for records and batches; G1a for laws; G3 across kinds |
 | I6 Output specs agree | S2b for the paths S1 supports; G1a for groups; G3 at held fields; S4 for batches; G3 for a batch's output at the root; G5 for kernels |
-| I7 A view and a marginal are one law | S1 for lists; G1a for groups |
+| I7 A view and a marginal are one law | S1 for lists; G1a for groups; G4 for merging as one factor (T32) |
 | I8 Draws of a list condition back | G4 |
 | I9 One path gives the node, a list a record | S1; S4 for a batch's output at the root; G3 at held fields |
 | I10 A list and `without` partition | S1 for records, record specs, and batches; S2b for output and input specs; G4 for laws; after the workshop at paths through a held object |
@@ -2906,10 +2955,11 @@ A grouped sub-joint's outputs, `{g}`, differ from its factors', `{b, c}`, so it 
 
 #### G4: conditioning and removal on laws
 
-*Delivers:* `condition_on` gives the event spec `d.event_spec.without(*fixed)` on every route, with nested paths route by route (§ 15); `law.without` (§ 4.3); paths into a record input in `InputSpec.__getitem__`, `__contains__`, and `without` (§ 10).
-*Transition rules:* ends T22, T23. *Invariants:* I8, I10 on laws, I11.
-*Files:* `operations/_condition.py`, the families' conditioning routes, `distributions/_views.py`, `core/_specs.py`.
-*Done when:* the property tests of I8, I10, and I11 pass, the Gaussian route included; for `kg(y | g)` with `g` of type `{b, c}`, `kg.given_spec["g/b"]` is `NumericArraySpec(())`, and `kg.given_spec.without("g/b")` leaves `g` holding `{c}`, required.
+*Delivers:* `condition_on` gives the event spec `d.event_spec.without(*fixed)` on every route, with nested paths route by route (§ 15); `law.without` (§ 4.3); paths into a record input in `InputSpec.__getitem__`, `__contains__`, and `without` (§ 10); the rule of § 5.2 that only merge and rename keep factors, so a marginal and every route of `condition_on` give one factor, with any optional input that remains fixed at its default.
+*Transition rules:* ends T22, T23, T32. *Invariants:* I8, I10 on laws, I11; I7 for merging.
+*Files:* `operations/_condition.py` (`_slice` among the routes), the families' conditioning routes, `operations/_marginal.py` (`_marginal_expression`), `distributions/_views.py`, `core/_specs.py`.
+*Done when:* the property tests of I8, I10, and I11 pass, the Gaussian route included; for `kg(y | g)` with `g` of type `{b, c}`, `kg.given_spec["g/b"]` is `NumericArraySpec(())`, and `kg.given_spec.without("g/b")` leaves `g` holding `{c}`, required; for `M = a & c` and `e` as in T32, `marginal(M, ["y", "mu"]) & e`, `M[["y", "mu"]] & e`, and `condition_on(a & c & t, {"tau": 1.0}) & e`, for a law `t(tau)`, each keep `y`'s spread near 1, on every route; and `M.rename({"y": "w/y"}) & e` still gives a spread near `e`'s.
+The `condition_on` bug of C.3 (fact 34) is a separate item of `deferred.md`: there a merge feeds the optional input inside the law, so it does not remain, and the rule of § 5.2 does not apply to it.
 
 #### G5: kernels and batches of laws
 
@@ -2930,7 +2980,7 @@ It is mechanical apart from judging each word's sense; at `6f8859fc` it covers `
 #### The work after the workshop
 
 These pieces of the design merge after the workshop (`deferred.md`), and end T27 to T30; T31 ends when the rest of #506 merges.
-1. **`&` on functions:** functions feed as point-mass kernels, with complete specs (§ 5.5, § 17).
+1. **`&` on functions:** the function returning both results, `b`'s outputs feeding `a`'s inputs and every remaining input kept, with complete specs (§ 5.5, § 17).
 2. **`&` on batches other than `RecordBatch`:** element by element over equal levels, two batches of arrays giving a batch of records; aligning other levels by name, with broadcasting, comes later still.
 3. **`&` on the types of laws, kernels, functions, and batches, with `InputSpec.rename`:** a function that builds a model declares its output before it runs. The model is wrapped, since a merge refuses a produced law and the keyword form refuses one:
 
@@ -3061,13 +3111,14 @@ For a law `d` over `{a, g: {b, c}}` and its draw `x = sample(d)`:
 | a view at a held field | a whole object named by the field | positional, no wrap | G3 |
 | `Function[]` | `TypeError` | `f[s]` | G3 |
 | `condition_on` | event spec depends on the route; nested paths raise | `d.event_spec.without(*fixed)` on every route; nested paths work | G4 |
+| which results keep factors | depends on the route: a marginal over whole factors and `condition_on`'s slice route keep them, so a later merge can feed their optional inputs; a view does not (T32) | only merge and rename keep factors; every other result fixes its factors' optional inputs at their defaults (§ 5.2) | G4 |
 | `law.without` | `AttributeError` | a view without those nodes | G4 |
 | a kernel's `[]`, a batch of laws' `[]` | `TypeError` | views | G5 |
 | a shared input's type in a merge | the first operand's (fact 8) | the unification | after the workshop |
 | `&` on two batches of arrays | `TypeError` (fact 44) | a batch of records | after the workshop |
 | `&` on functions | none | functions feed | after the workshop |
 | disjoint sides of a `Function` | not checked: `Function(lambda x: x, input_spec={"x": ...}, output_spec=OutputSpec(x=None))` builds | a merge refuses such an operand (condition 5) | S3 |
-| `condition_on` of a merged law, in closed form | draws `y` with an optional input at its default although a later operand feeds it (fact 34): `condition_on(a & e, {"mu": 0.0})` for `a(y \| mu, sigma)` and a law `e(sigma)` | follows § 5.5: the fed value is used | a bug, recorded in `deferred.md`; S3's rename carries it unchanged |
+| `condition_on` of a merged law, in closed form | draws `y` with an optional input at its default although a later operand feeds it (fact 34): `condition_on(a & e, {"mu": 0.0})` for `a(y \| mu, sigma)` and a law `e(sigma)` | follows § 5.5: the fed value is used | a bug, recorded in `deferred.md`; S3's rename carries it unchanged, and G4's factor rule does not fix it, since the fed input does not remain |
 
 ### C.4 The problems that motivate the design
 
@@ -3176,7 +3227,7 @@ Under grammar A an interim whole form moves under its name in a merge, so every 
 Under grammar B this cannot happen, since only a base value, which has no paths below its root, is named from outside.
 
 jhuggins's doc models types, output specs, and paths in Rocq.
-It proves I1 for laws, draws, and batches, and I2, I4, I5, and I10 for every kind it models; `graft_identity_B` (a merge keeps every path of an operand except the root, behind I17); `dmerge_rename` (`&` commutes with renaming every name at once, behind I21); and `no_ambiguous_key_B` (a root name never collides with a path).
+It proves I1 for laws, draws, and batches; I2, I4, I5, and I10 for every kind it models; I6, I9, I12, I13 for one path, I14, I17, and I18; and the consequences of the naming rule (§ 3.3). Its lemmas include `graft_identity` (a merge keeps every path of an operand except the root, behind I17), `dmerge_rename` (`&` commutes with renaming every name at once, behind I21), and `no_ambiguous_key` (a root name never collides with a path).
 Some results about values hold in a model where laws are point masses.
 It does not model dimension names, optional inputs, renames by path, or paths inside inputs, so I19's conditions are this design's own.
 
@@ -3189,7 +3240,7 @@ It does not model dimension names, optional inputs, renames by path, or paths in
 | Q1. The words, and when they change | all in S2a; all after the workshop in one PR; keep "slot" and "component" | after the workshop: it keeps directives 7 and 11 at every merge and keeps about 4,500 lines of judgement off the critical path |
 | Q2. (i) The event rule and the view wrap; (ii) the outputs of a produced law | (i) drop or keep; (ii) none or marginals | (i) drop: a law of laws is legal, views at held fields are positional, I2, I5, I6, I9 hold there; cost: a law of laws is named only by a list or by its maker's wrap. (ii) none: offering marginals would let a step receive them separately and lose their dependence (D1); cost: `fit.output("mu")` goes, 3 tests change |
 | Q3. (i) `OutputSpec` indexing; (ii) `InputSpec &`'s operands | (i) by paths, a `Mapping` with `project`, or `project` renamed; (ii) two input specs or any source | (i) by paths: `[]` keeps one meaning and `in` agrees with it; (ii) two input specs, so each side's `&` stays on its side |
-| Q4. Merge rules | (a) shallow, mixed, or deep; (b) today's factors, IV.2 strictly, or visible optional inputs; (c) functions feed or refuse; (d) unification after the workshop or in S2b | (a) shallow, batches of arrays merging as records; (b) today's factors before the workshop, visible optional inputs to decide after; (c) feed, by D2; (d) after, keeping S2b to its content |
+| Q4. Merge rules | (a) shallow, mixed, or deep; (b) today's factors, IV.2 strictly, or visible optional inputs; (c) functions feed or refuse; (d) unification after the workshop or in S2b | (a) shallow, batches of arrays merging as records; (b) factors kept, refined on 2026-10-19 so that only merge and rename keep them (§ 5.2), visible optional inputs to decide after; (c) feed, since a function's inputs are its parameters (§ 5.5); (d) after, keeping S2b to its content |
 | Q5. The output at the root | `[]` takes paths only from G3, with `t.output(c)`; `[]` reads the name forever; no accessor | the first: `[]` keeps one meaning and I5 no exception |
 | Q6. Dimension scopes of merge results | store everywhere, or substitute and forget everywhere | after the workshop, leaning to store |
 
@@ -3286,7 +3337,7 @@ Its Appendix A proves the merge properties of § 5.7, its Appendix D records the
 
 The merge made four calls of its own, covered by the acceptance:
 1. `element_spec` is the output spec of one element as an object, so `element_spec.term_spec` equals today's `element_spec` for every element, a batch of laws included; the proposal's `element_output_spec` was each element's own output spec, for a batch of laws the laws' event spec. The proposal was revised to agree.
-2. Conformance and unification of batches compare the elements' types, not a base element's name.
+2. A base element's name belongs to the batch's element spec, not to its type: conformance, unification, equality, hashing, and the JAX pytree ignore it, while merge, outputs, and rename read it from the element spec (as decided 2026-10-17; restated 2026-10-19).
 3. The interim-form probe gained a row for G3, a view at a held field.
 4. The proposal's proofs, alternatives, and facts are cited, not copied.
 
@@ -3353,7 +3404,7 @@ The decision "a function with a wrapped output returns the record itself; ProbPi
 
 ### F.1 Status
 
-- **Design:** the merged plan of 2026-10-18, provisional until the maintainer's final read of the inputs and outputs proposal (N12). This document rewrites it, as it stood at commit `8af5bd11`, with every rule unchanged.
+- **Design:** the merged plan of 2026-10-18, provisional until the maintainer's final read of the inputs and outputs proposal (N12). This document rewrites it, as it stood at commit `8af5bd11`, with every rule unchanged, and then applies the maintainer's decisions of 2026-10-19 (F.2; [`decisions.md`](decisions.md)).
 - **Precedence:** where the inputs and outputs proposal and the original plan disagreed, the proposal won (D.6); every other decision of [`decisions.md`](decisions.md) binds this design. The adversarial review of 2026-10-18 was applied; the items it left are A.1's pending entries.
 - **Ownership:** [`README.md`](README.md) § Steps owns the order, dependencies, and cut of the steps; Appendix B owns their content and done-conditions.
 - **Evidence:** code references name functions, and `file:line` citations are at `6f8859fc`; "Today" results were run at `a703f15e`, or at `6f8859fc` where the proposal added them; the sweep of B.7 ran at `638f56bc`; the `element_spec` counts are at `9bf48ae0`. "Fact N" is fact N of the proposal's Appendix E. "The tour" is the notebook `review/overhaul_tour.ipynb`.
@@ -3373,3 +3424,4 @@ The decision "a function with a wrapped output returns the record itself; ProbPi
 | 2026-10-19 | The plan is reorganized into the maintainer's outline (`8af5bd11`); the maintainer finds it hard to assess, and this rewrite begins from an approved outline, style sample, and figures (`6b738dbb`, `605179b4`), with the design held fixed |
 | 2026-10-19 | This rewrite replaces the reorganized text of `declarations-and-addressing-io.md` at `8af5bd11`, with the design unchanged, and keeps the file name until N32 decides it; `declarations-and-addressing.md` and the tag `plans-before-io` stay for recovery |
 | 2026-10-19 | Clarity fixes after the maintainer's first review: the produced type, outputs at one level only, § 3.4's worked comparison of outputs and paths, figures of batches of functions and of kernels, B.0's implementation principle, and a sweep of constructions that read as identities; the design is unchanged, and A.2 item 19 records the one question raised |
+| 2026-10-19 | Revised after a colleague's review, with the maintainer's decisions: only merge and rename keep factors (§ 5.2; G4, T32); functions feed on their own justification (§ 5.5); a batch's element name belongs to its element spec, not its type (§ 2.1, § 6.5); unification "where it exists" and a true meet as an open question (A.1); a type hole admits only what can fill it (§ 3.5); the formal model's wider coverage (D.1); field order in record conformance left open (A.2 item 21); A.2 items 21 to 27 |
