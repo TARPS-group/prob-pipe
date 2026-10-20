@@ -1572,6 +1572,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opened inside it still runs keeps applying until the call ends, and a call or
   a block that ends while a block opened inside it is still open closes that
   block with it. Either way no closed block applies afterwards.
+- **A derived operation is computed by its formula, through its derived route.**
+  The formula of a derived operation is the equation that defines it, such as
+  `prob = exp ∘ log_prob`. Its derived route runs the formula and is registered
+  under the name `derived`. `@operation` takes `derived_route_check=`, the
+  derived route's own feasibility check, and `derived_route=`, and an
+  operation and its summary hold the formula as `formula`. The names with
+  `identity` are removed, with no alias. `@operation(conditions=...)` is
+  renamed `@operation(applicability_checks=...)`: these checks apply to every
+  call, read the operands' declarations, and raise `ApplicabilityError`. A call's
+  provenance and check report name the route `derived`, so code that reads the
+  route sees a new value: `standard_deviation(d).provenance.metadata["route"]`
+  was `"identity"` and is now `"derived"`. Migrate each use as follows:
+  - `@operation(identity_check=check)` becomes `@operation(derived_route_check=check)`;
+  - `@operation(conditions=checks)` becomes `@operation(applicability_checks=checks)`;
+  - `@operation(identity_route=route)` becomes `@operation(derived_route=route)`;
+  - `op.identity` and `op.summary().identity` become `op.formula` and
+    `op.summary().formula`;
+  - `op.using(method="identity")` becomes `op.using(method="derived")`;
+  - a check of `metadata["route"] == "identity"` becomes
+    `metadata["route"] == "derived"`.
+- **Seeded draws made inside a ProbPipe call change once.** The key of a
+  workflow-owned draw made inside a call is derived from strings that name
+  the call's evaluation point, and these strings now say "evaluation point"
+  where they said "managed". The same code at the same seed therefore draws
+  other values: a `sample`, a Monte Carlo summary, and a draw in a function's
+  body all change, while the draws a lift makes of its input laws do not. A
+  replay record written before this change is refused, so record the result
+  again to replay it. The same call before and after:
+
+  ```python
+  with workflow_run(seed=7):
+      draws = sample(Normal("x", 0.0, 1.0), 3)
+  # before: [-0.523403, 1.038044, -1.069435]
+  # after:  [0.80094, 0.327328, -0.465379]
+  ```
 
 ### Added
 

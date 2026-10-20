@@ -198,7 +198,10 @@ class TestExecuteSweep:
 
         def fake_execute_many(request):
             seen["request"] = request
-            return [request.func(**item.call_values()) for item in request.work_items]
+            return [
+                request.func(**evaluation_point.call_arguments())
+                for evaluation_point in request.evaluation_points
+            ]
 
         monkeypatch.setattr(
             _sweep._execution,
@@ -222,7 +225,10 @@ class TestExecuteSweep:
         request = seen["request"]
         assert request.execution is execution
         assert request.func is double
-        assert [float(item.call_values()["p"]["x"]) for item in request.work_items] == [
+        assert [
+            float(evaluation_point.call_arguments()["p"]["x"])
+            for evaluation_point in request.evaluation_points
+        ] == [
             0.0,
             1.0,
             2.0,

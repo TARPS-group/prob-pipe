@@ -51,6 +51,6 @@ def mixture(K: ConditionalDistribution, mixing: Distribution):
     Raises
     ------
     ResolutionError
-        If neither the identity nor a direct route applies.
+        If neither the formula nor a direct route applies.
     """
     return pushforward(K * mixing, _kernel_output_projection(K))

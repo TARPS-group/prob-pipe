@@ -38,8 +38,8 @@ from probpipe import (
     sample,
     workflow_run,
 )
-from probpipe.functions import _broker, _callable, _recipe, _replay
-from probpipe.functions._managed import ManagedEffectClaim, sweep_unit_segment
+from probpipe.functions import _callable, _evaluation_keys, _recipe, _replay
+from probpipe.functions._evaluation_keys import StochasticEffectClaim, sweep_cell_point_segment
 from tests.functions import (
     _alias_replay_fixtures,
     _postponed_alias_replay_fixtures,
@@ -275,7 +275,7 @@ class TestWorkflowRecipeRecording:
             for group in _replay_controls(result)["plan"]["canonical_fields"]["source_groups"]
         ] == ["exact", "sampled"]
 
-    def test_nested_sweep_recipe_contains_every_canonical_unit(self):
+    def test_nested_sweep_recipe_contains_every_canonical_evaluation_point(self):
         workflow = Function(
             _add,
             label="_add",
@@ -296,14 +296,14 @@ class TestWorkflowRecipeRecording:
             ["cell", 1],
         ]
 
-    def test_recipe_sorts_reverse_inserted_managed_effects_canonically(self):
+    def test_recipe_sorts_reverse_inserted_effect_claims_canonically(self):
         occurrence_path = (("invocation", 0),)
 
         def effect(index):
-            return ManagedEffectClaim(
+            return StochasticEffectClaim(
                 occurrence_path=(
                     *occurrence_path,
-                    sweep_unit_segment((index,)),
+                    sweep_cell_point_segment((index,)),
                     ("child", 0),
                 ),
                 occurrence_kind="operation",
@@ -316,7 +316,7 @@ class TestWorkflowRecipeRecording:
                 provider_abi="probpipe.distribution/v1",
             )
 
-        snapshot = _broker._BrokerRecipeSnapshot(
+        snapshot = _evaluation_keys._BrokerRecipeSnapshot(
             root_words=(0, 17),
             occurrence_path=occurrence_path,
             rng_origin={
@@ -337,7 +337,7 @@ class TestWorkflowRecipeRecording:
         )
 
         with patch.object(
-            _broker,
+            _evaluation_keys,
             "_snapshot_active_recipe_state",
             return_value=snapshot,
         ):
@@ -350,7 +350,7 @@ class TestWorkflowRecipeRecording:
 
     def test_recipe_refuses_effects_without_a_callable_anchor(self):
         occurrence_path = (("invocation", 0),)
-        effect = ManagedEffectClaim(
+        effect = StochasticEffectClaim(
             occurrence_path=occurrence_path,
             occurrence_kind="invocation",
             stochastic_source_id=("source-group", 0),
@@ -361,7 +361,7 @@ class TestWorkflowRecipeRecording:
             sampling_abi="probpipe.distribution_sampling/v1",
             provider_abi="probpipe.distribution/v1",
         )
-        snapshot = _broker._BrokerRecipeSnapshot(
+        snapshot = _evaluation_keys._BrokerRecipeSnapshot(
             root_words=(0, 17),
             occurrence_path=occurrence_path,
             rng_origin={
@@ -378,7 +378,7 @@ class TestWorkflowRecipeRecording:
 
         with (
             patch.object(
-                _broker,
+                _evaluation_keys,
                 "_snapshot_active_recipe_state",
                 return_value=snapshot,
             ),

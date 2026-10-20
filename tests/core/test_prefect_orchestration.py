@@ -20,7 +20,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import probpipe.functions._broker as broker_mod
+import probpipe.functions._evaluation_keys as evaluation_keys_mod
 from probpipe import (
     Distribution,
     DistributionBatch,
@@ -114,9 +114,9 @@ _PREFECT_RETRY_KEY_WORDS: list[tuple[int, int]] = []
 
 
 def _claim_key_and_fail_once():
-    key = broker_mod._resolve_automatic_key(
+    key = evaluation_keys_mod._resolve_automatic_key(
         None,
-        broker_mod._singleton_effect_plan(
+        evaluation_keys_mod._singleton_effect_plan(
             operation_kind="prefect-retry-conformance",
             execution_mode="sampled",
             sample_shape=(),
@@ -270,7 +270,7 @@ class TestPrefectRngConformance:
         for result in results[1:]:
             np.testing.assert_array_equal(result, results[0])
 
-    def test_rootless_task_coordinates_nested_managed_thread(self):
+    def test_rootless_task_coordinates_a_nested_thread_evaluation_point(self):
         local = Function(
             _call_threaded_draw,
             workflow_kind=WorkflowKind.OFF,
@@ -581,7 +581,7 @@ class TestPrefectImportGuard:
 
 
 # ---------------------------------------------------------------------------
-# Controls a derived operation's identity passes to a Prefect constituent
+# Controls a derived route passes to a Prefect constituent
 # ---------------------------------------------------------------------------
 
 
@@ -591,7 +591,7 @@ def _mean_of_law(law: Distribution) -> Any:
 
 
 class TestInheritedControlsInPrefectTasks:
-    """Prefect's in-process task runner keeps the controls a derived operation's identity passes down.
+    """Prefect's in-process task runner keeps the controls a derived route passes down.
 
     A worker that receives the work function serialized is covered in
     ``tests/operations/test_operation.py``.
@@ -603,7 +603,7 @@ class TestInheritedControlsInPrefectTasks:
         ).using(raw=True)
 
         @operation(
-            result=lambda d: None, registry=OperationRegistry(), identity_check=lambda d: True
+            result=lambda d: None, registry=OperationRegistry(), derived_route_check=lambda d: True
         )
         def summed_means(d: Distribution):
             """The sum of the means of two copies of *d*."""

@@ -68,7 +68,7 @@ class _Conversion(Operation):
     """
 
     def __init__(self, declaration: Callable[..., Any]) -> None:
-        super().__init__(declaration, result=_convert_result, conditions=(_is_target,))
+        super().__init__(declaration, result=_convert_result, applicability_checks=(_is_target,))
 
     def _plan(self, call: BoundCall) -> tuple[OutputSpec | None, tuple[str, ...]]:
         """The result rule's declaration, with each support open under ``check_support=False``.

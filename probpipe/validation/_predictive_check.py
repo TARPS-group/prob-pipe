@@ -18,7 +18,7 @@ from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution, _batch_form
 from ..distributions._factored import FactoredConditionalDistribution, _event_of, _raw_record
 from ..functions import function
-from ..functions._broker import _PROBPIPE_DISTRIBUTION_PROVIDER_ABI
+from ..functions._evaluation_keys import _PROBPIPE_DISTRIBUTION_PROVIDER_ABI
 from ._workflow_rng import _claim_validation_key, _validate_positive_int
 
 __all__ = ["predictive_check"]

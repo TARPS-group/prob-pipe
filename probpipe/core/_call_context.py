@@ -2,8 +2,8 @@
 
 A ProbPipe call runs code in the calling thread and in the workers it
 dispatches to. That code reads the same per-call state, such as the active
-``config.using`` blocks and the controls a derived operation's identity passes
-down, from one frozen value, the call context, held by one context variable.
+``config.using`` blocks and the controls a derived route passes down, from
+one frozen value, the call context, held by one context variable.
 
 Provides:
   - :class:`_CallContext`, the call context, and :func:`current_call_context`,
@@ -64,7 +64,7 @@ class _CallContext:
       it for the extent of the call and restores the previous context when the
       call ends, an error included.
     - A ``config`` block derives a changed copy with :meth:`with_config_block`,
-      and the scope of a derived operation's identity one with
+      and the scope of a derived route one with
       :meth:`with_passed_controls`; neither opens a call.
     - A worker runs each piece of work it is given under the
       :meth:`evaluation_context` of the call that dispatched it, with a
@@ -100,8 +100,8 @@ class _CallContext:
         The values of the active ``config.using`` blocks, by section name and
         then setting name, the innermost block's value winning.
     passed_controls : Mapping[str, Any] or None
-        The controls that an enclosing derived operation's identity passes to
-        the calls it makes directly: ``exact_only``, and ``max_evaluations`` and
+        The controls that an enclosing derived route passes to the calls
+        its formula makes directly: ``exact_only``, and ``max_evaluations`` and
         ``num_samples``, each ``None`` when it is not passed. ``None`` where no
         controls are passed. A child call keeps only a passed ``exact_only``.
     call_depth : int
@@ -202,7 +202,7 @@ class _CallContext:
 
         The child keeps this context's ``config`` blocks, keeps a passed
         ``exact_only`` and drops the passed counts, so the counts apply only to
-        the calls an identity makes directly, and is one call deeper. A
+        the calls a formula makes directly, and is one call deeper. A
         ``__call__`` and an ``apply`` keep this context's ``num_samples_used``,
         which :func:`_open_call_context` replaces with a new one for a
         ``__call__``, and a ``check`` has none, since it draws nothing. A root
@@ -351,9 +351,9 @@ def _open_call_context(
 
     A ``__call__`` notes its Monte Carlo draws in a ``num_samples_used`` of its
     own, which passes to the enclosing call's when the call succeeds and the
-    enclosing call collects calls, as a call realized by a derived operation's
-    identity does. An ``apply`` notes its draws in the enclosing call's, and a
-    ``check`` notes none.
+    enclosing call collects calls, as a derived route's call does. An
+    ``apply`` notes its draws in the enclosing call's, and a ``check`` notes
+    none.
 
     Parameters
     ----------
@@ -377,7 +377,7 @@ class _NumSamplesUsed:
     A route that estimates a value from draws notes their number here, through
     :func:`_note_num_samples_used`. It differs from the ``num_samples``
     control, which says how many draws an estimate should take: a call that ran
-    no Monte Carlo estimate notes none, and the calls an identity makes may use
+    no Monte Carlo estimate notes none, and the calls a formula makes may use
     their own counts.
 
     Only :meth:`_CallContext.with_fresh_num_samples_used` creates one, and only
@@ -390,8 +390,8 @@ class _NumSamplesUsed:
     ----------
     collects_calls : bool
         Whether the calls made directly within the call merge their numbers
-        into this one, which holds for a call realized by a derived operation's
-        identity, so its provenance reports the draws of the calls it made. The
+        into this one, which holds for a derived route's call, so its
+        provenance reports the draws of the calls it made. The
         engine sets it when it selects the call's route, and a scope inside the
         call takes the call's value when it opens.
     """
@@ -522,7 +522,7 @@ def _carrying_call_context(work_function: Callable[..., Any]) -> Callable[..., A
     A worker thread starts without the calling thread's context, and a worker
     process without the calling process's, so without the carrier a body run in
     a worker would read the session's settings in place of an active ``config``
-    block, lose an ``exact_only`` an identity passes, and note its Monte Carlo
+    block, lose an ``exact_only`` a derived route passes, and note its Monte Carlo
     draws nowhere. In the default context *work_function* is returned as it is.
     """
     current_context = current_call_context()

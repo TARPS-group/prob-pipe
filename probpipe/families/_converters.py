@@ -64,7 +64,7 @@ from ..distributions._distribution import (
     _whole_term_event,
 )
 from ..distributions._empirical import EmpiricalDistribution, _batch_form
-from ..functions import _broker
+from ..functions import _evaluation_keys
 from ..functions._result import SAMPLE_LEVEL
 from ..operations._operation import _workflow_draws
 from ._backend import TFPDistribution
@@ -454,9 +454,9 @@ def _draws(source: Any, law: Distribution | None, count: int) -> Any:
     _note_num_samples_used(count)
     if law is not None:
         return _workflow_draws(law, (count,), operation_kind="convert", execution_mode="sampled")
-    key = _broker._resolve_automatic_key(
+    key = _evaluation_keys._resolve_automatic_key(
         None,
-        _broker._singleton_effect_plan(
+        _evaluation_keys._singleton_effect_plan(
             operation_kind="convert",
             execution_mode="sampled",
             sample_shape=(count,),

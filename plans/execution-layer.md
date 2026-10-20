@@ -246,7 +246,7 @@ Simulation-based calibration (`_calibration.py:504-521`) also runs `condition_on
 
 ### 2.3 Facts #580 does not mention
 
-1. **A closed execution contract exists.** `functions/_execution_contract.py` versions pairs of an *evaluator* (`rowwise`, `jax_vmap`) and a *transport* (`local_inline`, `local_thread`, `prefect_task`, `prefect_flow`), and accepts only a fixed set of pairs. Replay records `requested_dispatch` (`functions/_replay.py:305`). A pluggable executor must replace this closed set (6.8).
+1. **A closed execution contract exists.** The execution contract in `functions/_execution.py` versions pairs of an *evaluator* (`rowwise`, `jax_vmap`) and a *transport* (`local_inline`, `local_thread`, `prefect_task`, `prefect_flow`), and accepts only a fixed set of pairs. Replay records `requested_dispatch` (`functions/_replay.py:305`). A pluggable executor must replace this closed set (6.8).
 2. **`compiled_or_eager` swallows run-time errors.** `core/_compilation.py:22-71` catches any exception from the compiled JAX program and runs the eager form instead. #580 §8 says a JAX program that compiles and then fails while running must raise, so the two disagree (6.10).
 3. **Copies made by `using` do not share compiled JAX programs.** `Function.using` makes a shallow copy (`values/_function_base.py:1235`), and #556 stores JAX programs in a memo that a copy does not share. A program store on the `Function` would therefore recompile on every `f.using(...)(x)` (6.10).
 4. **A kernel's construction test reads more than its event spec.** `conditional_distribution` also reads which conditional capabilities the kernel has and their **guards**, the conditions under which sampling or scoring is valid (`_conditional.py:1347-1351`, IV.4). Skipping the test when `event_spec` is given, as #580 §1 proposes, would leave the capabilities unknown. Section 6.9 keeps the test and makes it work for opaque code.
@@ -608,7 +608,7 @@ The call context's terms, such as *call context*, *evaluation context*, *call to
 **Words this design avoids.**
 - **backend** already means an array backend (II.3), a family's library (`families/_backend.py`), an inference library (method names `{backend}_{algorithm}`, STYLE_GUIDE §1.7), a JAX program handle (VI.6), and JAX itself (V.11).
 - **dispatch** keeps only its II.7 meaning, because the dispatch mode of V.9 is removed.
-- **evaluator** and **transport** name today's execution contract (`functions/_execution_contract.py`), which this design retires. Sending a chunk to another process is called **shipping** here.
+- **evaluator** and **transport** name today's execution contract (in `functions/_execution.py`), which this design retires. Sending a chunk to another process is called **shipping** here.
 - **cache** alone is ambiguous: JAX's compilation cache, the program store, Prefect's task cache, and V.8's result cache are four different things.
 - **event** means the event of a distribution, as in `event_spec`. V.8 derives each random key from the identity of a "random event", and this design does not name that identity: it says "the evaluation point's random key". V.8 and #554 use "random event" throughout, and whether to rename it there is part of Q16.
 - **key** here means a random key, as in V.8. A mapping's keys are the other sense, a collision Python's dictionaries make natural, so where the two could be confused this design writes *random key* (decided 2026-10-16).
@@ -1592,7 +1592,7 @@ The four overlap or conflict in seven places:
 | 3 | #587 lets a setting read while tracing keep its trace-time value. A program store that reuses one compiled JAX program across calls then leaks one call's setting into the next. | ✅ `v03`; ✅ `v09` item 4 |
 | 4 | The call's resolved `num_samples` has two homes: the `Function`'s options and `_MonteCarloRecord.num_samples`. | #586 code |
 | 5 | The provenance mode has two homes: the workflow frame copies it when a `workflow_run` opens, and #587's block sets it. Inside an open `workflow_run`, a `config.provenance.using(mode=OFF)` block reads OFF but provenance is still recorded. | ✅ `v09` item 1 |
-| 6 | The requested execution (`requested_dispatch`, `requested_workflow_kind`) is kept on the key broker, which owns randomness, and replay reads it from there. | `functions/_broker.py:1216-1246` |
+| 6 | The requested execution (`requested_dispatch`, `requested_workflow_kind`) is kept on the key broker, which owns randomness, and replay reads it from there. | the broker in `functions/_evaluation_keys.py` |
 | 7 | #587's text says a plain `contextvars.copy_context` would not carry the blocks into a Prefect task. Prefect's thread runner does copy the submitting context. The real reasons to carry explicitly are process runners, which need pickling, and the workflow frame, which a copy would also carry. | ✅ `v10`, ✅ `v12` |
 
 The call context replaces the three variables and the plan's separate token structure with one value.

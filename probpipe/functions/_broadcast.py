@@ -52,10 +52,10 @@ from ..distributions._factored import _raw_record
 from ..values._binding import FunctionInputRef, input_ref_value, replace_input_refs
 from ..values._function_base import _NAMELESS_COMPONENT, _validate_stacked_output
 from . import _execution, _plan, _recipe
-from ._broker import _record_active_execution_contract
 from ._call import ApplicabilityError
 from ._context import _workflow_jax_runtime_guard
-from ._execution_contract import (
+from ._evaluation_keys import _record_active_execution_contract
+from ._execution import (
     make_execution_contract,
     supports_execution_contract,
     transport_for_execution_mode,
@@ -993,10 +993,10 @@ def _broadcast_enumerate(
 
     request = _execution.WorkflowExecutionRequest(
         func=func,
-        work_items=_execution.make_managed_work_items(
+        evaluation_points=_execution.issue_evaluation_points(
             call_value_list,
-            unit_segments=tuple(
-                _execution.lifted_evaluation_unit_segment(
+            point_segments=tuple(
+                _execution.lifted_evaluation_point_segment(
                     logical_unit.logical_unit_id,
                     index,
                 )
@@ -1126,10 +1126,10 @@ def _broadcast_sample(
 
     request = _execution.WorkflowExecutionRequest(
         func=func,
-        work_items=_execution.make_managed_work_items(
+        evaluation_points=_execution.issue_evaluation_points(
             call_value_list,
-            unit_segments=tuple(
-                _execution.lifted_evaluation_unit_segment(
+            point_segments=tuple(
+                _execution.lifted_evaluation_point_segment(
                     logical_unit.logical_unit_id,
                     index,
                 )

@@ -707,7 +707,7 @@ _DEFAULTED_BY_NONE = frozenset(
     {"max_evaluations", "num_samples", "max_workers", "method", "conversions", "method_options"}
 )
 
-#: The two count controls, which a derived operation's identity passes down.
+#: The two count controls, which a derived route passes down.
 _PASSED_COUNT_CONTROLS = ("max_evaluations", "num_samples")
 
 
@@ -717,8 +717,8 @@ def _passing_controls_to_formula_calls(
 ) -> Iterator[None]:
     """A scope whose Function calls take *exact_only*, *max_evaluations*, and *num_samples*.
 
-    The scope of a derived operation's identity passes these controls to the
-    calls the identity makes directly, as the call context's
+    The scope of a derived route passes these controls to the
+    calls the formula makes directly, as the call context's
     ``passed_controls``, and :meth:`Function._inheriting` states how a call
     takes them. A scope that passes none of them leaves the context as it is.
     """
@@ -740,7 +740,7 @@ def _in_child_call_context(
     """A decorator that runs the Function method *entry_method_name* in a call context of its own.
 
     The call runs on the view that :meth:`Function._inheriting` returns when
-    an enclosing identity passes controls, and it opens the child context that
+    an enclosing derived route passes controls, and it opens the child context that
     :meth:`~probpipe.core._call_context._CallContext.child_for_call` derives,
     which holds the view's resolved controls, for the extent of the call. A
     root call also takes the snapshot of the session's values that the work it
@@ -905,9 +905,9 @@ class Function(TrackedTerm, Annotated):
         - ``raw`` (bool): whether a call returns its result detached from the
           workflow, False by default.
 
-        A call inside a derived operation's identity also takes the
+        A call inside a derived operation's formula also takes the
         ``exact_only``, ``max_evaluations``, and ``num_samples`` that the
-        identity passes down (VI.0).
+        derived route passes down (VI.0).
 
     Raises
     ------
@@ -1217,7 +1217,7 @@ class Function(TrackedTerm, Annotated):
         return clone
 
     def _inheriting(self, passed_controls: Mapping[str, Any]) -> Self:
-        """This view under the controls a derived operation's identity passes down.
+        """This view under the controls a derived route passes down.
 
         An inherited ``exact_only`` applies whatever this view sets, and an
         inherited ``max_evaluations`` or ``num_samples`` applies unless this
@@ -1291,7 +1291,7 @@ class Function(TrackedTerm, Annotated):
             If an argument does not bind to the signature.
         ApplicabilityError
             If an argument's kind is not one its parameter accepts, an
-            applicability condition fails, or the declarations conflict, as the
+            applicability check fails, or the declarations conflict, as the
             call raises.
         ValueError
             If an empty sweep lacks a concrete output declaration after input
@@ -1428,7 +1428,7 @@ class Function(TrackedTerm, Annotated):
         batch passed where a value is expected lifts the call over it: a law is
         broadcast and a batch is swept (V.5). The controls come from the
         construction and :meth:`using`, together with those that a
-        derived operation's identity passes down (VI.0), and the call's
+        derived route passes down (VI.0), and the call's
         keywords bind to the wrapped callable. Swept batches align by level name:
         within each matching level, shapes align from the right and size-one
         axes broadcast independently of other levels. The sweep carries each

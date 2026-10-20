@@ -227,7 +227,7 @@ def _factor_expression(d: Any, component_name: str) -> Expression:
 
 @operation(
     result=_factor_result,
-    conditions=(_names_a_component,),
+    applicability_checks=(_names_a_component,),
     roles={"d": (DistributionSpec, ConditionalDistributionSpec)},
 )
 def factor(d: Distribution, component_name: str):
