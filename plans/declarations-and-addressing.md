@@ -1638,10 +1638,10 @@ InputSpec(theta=("n",), x=()) & InputSpec(theta=(3,), y=())
 <summary>Technical note: the messages for common mistakes</summary>
 
 The recommended idiom is `given_spec=d.event_spec`, cut down with `[...]`, `without`, and `&`.
-1. **An input the function does not take**, for `conditional_distribution(fn, given_spec=d.event_spec)` where `fn` takes `mu`: "given_spec of 'fn' declares 'sigma', which the function does not take (it takes mu); leave it out with event_spec.without('sigma'), or pick the inputs with event_spec[['mu']]".
-2. **A group's parts where the function takes the group**, for `given_spec=d.event_spec["g"]` and `fn(g)`: "given_spec of 'fn' declares a and b, the fields of the group g; to declare the input g, index with a list: event_spec[['g']]".
-3. **A law or its type as the source:** "given_spec takes an InputSpec, a mapping, a RecordSpec, or an OutputSpec, not a Distribution; for the outputs of a law, pass law.event_spec", with "DistributionSpec" for a law's type.
-4. **An input spec merged with an output spec:** "cannot merge an InputSpec with an OutputSpec; to read an output spec as the inputs it feeds, write InputSpec(output_spec)".
+1. **An input the function does not take**, for `conditional_distribution(fn, given_spec=d.event_spec)` where `fn` takes `mu`: "given_spec declares sigma, but fn takes only mu. Pass event_spec.without('sigma') or event_spec[['mu']]".
+2. **A group's parts where the function takes the group**, for `given_spec=d.event_spec["g"]` and `fn(g)`: "given_spec declares the fields a and b of the group g, but fn takes g itself. Pass event_spec[['g']]".
+3. **A law or its type as the source:** "given_spec cannot be a Distribution. Pass its event_spec to declare the inputs its outputs supply", with "DistributionSpec" for a law's type.
+4. **An input spec merged with an output spec:** "cannot merge an InputSpec with an OutputSpec. Convert the output spec first, as InputSpec(output_spec)".
 
 </details>
 
@@ -1685,10 +1685,12 @@ class OutputSpec:
     ------
     TypeError
         If the positional form is given a single array or opaque spec, which
-        needs a name; or if the keyword form is given any other spec: "params
-        would name a record; give OutputSpec(RecordSpec(...)) for its fields as
-        outputs, or wrap it: OutputSpec(RecordSpec(params=...))", and likewise for
-        a distribution.
+        needs a name; or if the keyword form is given any other spec, as for
+        OutputSpec(params=RecordSpec(mu=(), sigma=())): "cannot use the keyword
+        params for a RecordSpec: a keyword of OutputSpec must name a single array
+        or opaque value. Write OutputSpec(RecordSpec(mu=..., sigma=...)) for the
+        outputs mu and sigma, or OutputSpec(RecordSpec(params=RecordSpec(mu=...,
+        sigma=...))) for one output params", and likewise for a distribution.
     ValueError
         If the positional form is given an empty RecordSpec.
 
@@ -1741,8 +1743,8 @@ class OutputSpec:
         """Whether *path* is a string and ``self[path]`` succeeds."""
 
     def __iter__(self) -> NoReturn:
-        """Not supported: raises TypeError, "an output spec is indexed by path and
-        is not iterable; list its outputs with .outputs"."""
+        """Not supported: raises TypeError, "cannot iterate over an OutputSpec.
+        Iterate over its outputs instead, as list(spec.outputs)"."""
 
     def without(self, *paths: str) -> OutputSpec:
         """This OutputSpec without the values at some paths.
@@ -1888,7 +1890,7 @@ P.without("g/c")                 # OutputSpec(RecordSpec(a=..., g=RecordSpec(b=.
 OutputSpec(x=()) & P             # OutputSpec(RecordSpec(x=..., a=..., g=...))
 OutputSpec(x=())["x"]            # KeyError: x names the value at the root
 OutputSpec(x=())[["x"]]          # OutputSpec(RecordSpec(x=...))
-OutputSpec(params=RecordSpec(mu=()))   # TypeError: params would name a record; ...
+OutputSpec(params=RecordSpec(mu=()))   # TypeError: cannot use the keyword params for a RecordSpec: ...
 OutputSpec(mean=None).with_term_spec(NumericArraySpec(()))   # OutputSpec(mean=...)
 ```
 
@@ -1902,20 +1904,20 @@ One reader parses what `[]` is given, for every class:
 3. an `int`, anything with `__index__`, a `slice`, or a tuple of these is a position, on batches only.
 
 `bool`, `None`, and `...` raise `TypeError`.
-Every argument that takes one path, such as `without(*paths)` or `Record.at_path(*segments)` (§ 14), is checked by the same reader, so `at_path(("g", "b"))` raises `TypeError`: "unpack the tuple, at_path(*segments)".
+Every argument that takes one path, such as `without(*paths)` or `Record.at_path(*segments)` (§ 14), is checked by the same reader, so `at_path(("g", "b"))` raises `TypeError`: "at_path takes each segment as a separate argument, got a tuple. Write at_path(*segments)".
 
 | Argument | Error | Message or reason |
 | --- | --- | --- |
 | `x[""]`, `x["g//b"]`, `x["/a"]` | `ValueError` | an empty path or segment |
 | `x[[]]`, `x[()]` | `ValueError` | no paths, on a batch too |
 | `x["a", "a"]` | `ValueError` | the same path twice |
-| `x["g", "g/b"]` | `ValueError` | "'g/b' is inside 'g'; pick one" |
-| `x["a", 0]` | `TypeError` | "a path and a position cannot be mixed in one []" |
-| `b[[0, 2]]`, `b[np.array([0, 2])]` | `TypeError` | "a list of positions is not supported; index one position or a slice" |
+| `x["g", "g/b"]` | `ValueError` | "cannot select both 'g' and 'g/b', since 'g/b' is inside 'g'. Keep one of them" |
+| `x["a", 0]` | `TypeError` | "cannot mix a path and a position in one [], got ('a', 0). Index the position and the path separately, as b[0]['a']" |
+| `b[[0, 2]]`, `b[np.array([0, 2])]` | `TypeError` | "cannot index a batch by a list of positions, got [0, 2]. Index one position or a slice" |
 | `x[{"a"}]`, `x[iter(["a"])]` | `TypeError` | a set has no order, an iterator is read once |
-| `x["z"]` | `KeyError` | "'z' is not a path of 'x'; its paths: [...]" |
+| `x["z"]` | `KeyError` | "unknown path 'z' in 'x'; available paths: [...]" |
 
-When a missing path comes from a tuple whose `/`-joined form is a path, the message adds "a tuple is a list of paths; for the nested path write 'g/b'".
+When a missing path comes from a tuple whose `/`-joined form is a path, the message adds "To select the nested path, write 'g/b'".
 
 ### 12.2 `[]` and `in` on each class
 
@@ -1969,8 +1971,8 @@ The result's label joins the operands' labels with `·`.
 | --- | --- | --- |
 | 1. one merge category | `TypeError`; `ValueError` for unequal levels | for `InputSpec & OutputSpec`, message 4 of § 10 |
 | 2. base or record value types | `TypeError` | names the spec that is missing or whose type is not known yet, or says to wrap the output under a name |
-| 3. one source per output | `ValueError` | names the output and both operands; for two selections of one law, adds "both are views of one law; for their joint law index once, as d['g1', 'g2']; merging two views treats them as independent" |
-| 4. order | `ValueError` | "write b & a: b takes x, which a outputs, and in a & b only b's outputs feed a's inputs" |
+| 3. one source per output | `ValueError` | names the output and both operands; for two selections of one law, adds "Both are views of one distribution, which a merge treats as independent. For their joint distribution, index once, as d['g1', 'g2']" |
+| 4. order | `ValueError` | for `p & k`: "cannot merge p & k: k takes mu, which p outputs. Write k & p" |
 | 5. inputs and outputs disjoint | `ValueError` | says to rename one |
 | 6. fed types conform | `ValueError` | names both types |
 | 7. shared types unify | `ValueError` | names both types |
@@ -2337,7 +2339,7 @@ x & y        # Record {a, b, g: {c}}
 y & x        # Record {b, g: {c}, a}
 
 Record({"g": {"b": 1.0}}) & Record({"g": {"c": 2.0}})
-# ValueError: g is an output of both records; rename one, or merge the groups first
+# ValueError: cannot merge the records: both have g. Rename one, or merge the groups first
 ```
 
 ![The merge of r1 = {a} and r2 = {b, g: {c}}.](figures/merge-records.svg)
@@ -2352,7 +2354,7 @@ r = Record({"g1": {"theta": 0.1}, "g2": {"theta": 0.2}, "a": 1.0})
 r.select("a", "g1/theta")      # {"a": ..., "theta": ...}
 r.select(t2="g2/theta")        # {"t2": ...}
 r.select("g1/theta", "g2/theta")
-# ValueError: g1/theta and g2/theta share the last name theta; name one with a keyword
+# ValueError: cannot select g1/theta and g2/theta together, since both would be named theta. Name one with a keyword, as select(t2='g2/theta')
 ```
 
 `RecordBatch.select` keys each path by its last name the same way; each entry it returns is a batch with one column.
@@ -2364,10 +2366,10 @@ For `r = Record({"a": 1.0, "g": {"b": 2.0, "c": 3.0}}, label="r")`:
 
 | Call | Error |
 | --- | --- |
-| `r["z"]` | `KeyError`: "'z' is not a path of 'r'; its paths: ['a', 'g', 'g/b', 'g/c']" |
-| `r["g", "g/b"]` | `ValueError`: "'g/b' is inside 'g'; pick one" |
+| `r["z"]` | `KeyError`: "unknown path 'z' in 'r'; available paths: ['a', 'g', 'g/b', 'g/c']" |
+| `r["g", "g/b"]` | `ValueError`: "cannot select both 'g' and 'g/b', since 'g/b' is inside 'g'. Keep one of them" |
 | `r["a", "a"]`, `r[[]]` | `ValueError` |
-| `r["a", 0]` | `TypeError`: "a path and a position cannot be mixed in one []" |
+| `r["a", 0]` | `TypeError`: "cannot mix a path and a position in one [], got ('a', 0). Index the position and the path separately, as b[0]['a']" |
 | `r.without(("a", "g/c"))` | `TypeError`: pass the paths as separate arguments |
 | `r.without("a", "g")` | `ValueError`: nothing would remain |
 | `r.rename({"a": "g"})` | `ValueError`: collision (II.6) |
@@ -2549,7 +2551,7 @@ def marginal(d: Distribution, paths: str | Sequence[str]) -> Distribution:
 2. **`[]`** is the marginal law (§ 4.1, § 4.2); the view's event spec is `self.event_spec[paths]` (I6). **`output`** returns the object at an output (§ 4.6). **`without`** is removal (§ 4.3); **`rename`** follows § 4.5 and keeps factors (§ 5.2).
 3. **`&`** is the merge of § 5.3, read over both operands' factors (§ 5.2): "an input `a` still takes" is a factor input of `a`. It returns `NotImplemented` for an operand that is neither a law nor a kernel, so Python raises `TypeError`. "An operand over distributions, functions, or batches" breaks condition 2.
 4. A view and `marginal(d, paths)` are one law (I7), and each is one factor in a merge, however it is computed (§ 5.2); two views of one law merge as independent laws (§ 5.6, warning).
-5. **`*`** with an operand that is a law or a kernel raises `TypeError: * does not merge laws; write lik & prior`, and returns `NotImplemented` for any other operand, so a scalar keeps Python's own handling. **`bool()`** raises `TypeError: a law has no truth value; to merge laws write a & b`, as NumPy arrays and pandas frames refuse it, so `lik and prior` raises instead of returning `prior`; a record keeps its length-based truth. Both refusals are permanent contracts, not aliases: neither ever succeeds, and the refusal of `*` reserves it, so a later arithmetic meaning cannot give old code a new one silently (decided 2026-10-20).
+5. **`*`** with an operand that is a law or a kernel raises `TypeError: cannot multiply distributions with *. To merge them, write lik & prior`, and returns `NotImplemented` for any other operand, so a scalar keeps Python's own handling. **`bool()`** raises `TypeError: a distribution has no truth value. To merge distributions, write a & b`, as NumPy arrays and pandas frames refuse it, so `lik and prior` raises instead of returning `prior`; a record keeps its length-based truth. Both refusals are permanent contracts, not aliases: neither ever succeeds, and the refusal of `*` reserves it, so a later arithmetic meaning cannot give old code a new one silently (decided 2026-10-20).
 
 </details>
 
@@ -3061,9 +3063,9 @@ x = sample(Normal("x", 0.0, 1.0), sample_shape=4)
 x.element_spec                   # OutputSpec(x=NumericArraySpec(...))
 x.element_spec.term_spec         # NumericArraySpec(...)
 x.output("x")                    # x itself
-x["x"]                           # KeyError: 'x' names the elements of this batch as a whole,
-                                 # not a path inside them; the batch already holds x's values
-                                 # (read the array with .raw)
+x["x"]                           # KeyError: 'x' is the name of this batch's elements, not a path
+                                 # inside them. Use x.output('x') for the batch, or x.raw for
+                                 # its array
 x[["x"]]                         # a batch of records {x}
 x.rename(x="y").element_spec     # OutputSpec(y=...)
 NumericArrayBatch(jnp.arange(4.0), "sample", label="b").element_spec   # OutputSpec(element=...)
@@ -3693,7 +3695,7 @@ The column typing of a batch's outputs waits for S4b, the `condition_on` bug of 
 - `&` replaces `merge` on `NamedTree`, `Record`, `RecordSpec`, and `RecordBatch`, with S2b-out's shallow rule;
 - `with_path_names` becomes `rename` on every kind, and `STYLE_GUIDE.md` §1.10 says `rename`; `FieldView` becomes `MarginalView`;
 - merge and rename messages say "merge", "&", and "rename";
-- `Distribution.__mul__` and `ConditionalDistribution.__mul__` stay as permanent refusals: with an operand that is a law or a kernel they raise `TypeError: * does not merge laws; write lik & prior`, and with a scalar or any other operand they return `NotImplemented`; `Distribution.__bool__` and `ConditionalDistribution.__bool__` raise `TypeError: a law has no truth value; to merge laws write a & b`, while records keep their length-based truth (§ 15.1, technical note, item 5; decided 2026-10-20).
+- `Distribution.__mul__` and `ConditionalDistribution.__mul__` stay as permanent refusals: with an operand that is a law or a kernel they raise `TypeError: cannot multiply distributions with *. To merge them, write lik & prior`, and with a scalar or any other operand they return `NotImplemented`; `Distribution.__bool__` and `ConditionalDistribution.__bool__` raise `TypeError: a distribution has no truth value. To merge distributions, write a & b`, while records keep their length-based truth (§ 15.1, technical note, item 5; decided 2026-10-20).
 
 The two refusals are the step's only new behaviour: they are written by hand in their own commit, beside the scripted renames, so B.5 rule 4 holds for the script.
 *Transition rules:* ends T3.
@@ -3701,11 +3703,11 @@ The two refusals are the step's only new behaviour: they are written by hand in 
 *Files:* `distributions/_distribution.py`, `_conditional.py`, `_composition.py`, `_views.py`; `operations/_joint.py`; `families/_gaussian.py`; `core/named_tree.py`, `record.py`, `_record_batch.py`, `_specs.py`; every caller: about 400 lines name `with_path_names` and about 260 `FieldView` across `probpipe/`, `tests/`, `docs/`, and `design/`.
 *Demonstration:* `k & p`, and the messages of `p & k`, `k * p`, and `k and p`.
 *Done when:*
-- no `__mul__` merges laws: `k * p` raises `TypeError: * does not merge laws; write lik & prior`, and `p * 2.0` gets `NotImplemented` from `__mul__`, so Python raises its own `TypeError`;
-- `bool(p)`, `bool(k)`, and `k and p` raise `TypeError: a law has no truth value; to merge laws write a & b`, and `bool(Record({}))` is false;
+- no `__mul__` merges laws: `k * p` raises `TypeError: cannot multiply distributions with *. To merge them, write lik & prior`, and `p * 2.0` gets `NotImplemented` from `__mul__`, so Python raises its own `TypeError`;
+- `bool(p)`, `bool(k)`, and `k and p` raise `TypeError: a distribution has no truth value. To merge distributions, write a & b`, and `bool(Record({}))` is false;
 - no code name, docstring, or comment calls `&` or a joint's construction a composition;
 - `probpipe/`, `tests/`, `docs/`, and `design/` contain no `with_path_names`, no `FieldView`, no `.merge(` on a `NamedTree`, `Record`, `RecordSpec`, or `RecordBatch`, and no `*` between two laws or kernels;
-- no message calls a merge a product or a composition, or suggests `*` or `with_path_names`; the order message (condition 4) reads, for `p & k`: "write k & p: k takes mu, which p produces, and in a & b only b's outputs feed a's inputs";
+- no message calls a merge a product or a composition, or suggests `*` or `with_path_names`; the order message (condition 4) reads, for `p & k`: "cannot merge p & k: k takes mu, which p outputs. Write k & p";
 - the User Guide notebooks run, and the full suite passes.
 
 #### S4a: `element_spec` becomes an output spec (announced, mechanical)
@@ -3802,7 +3804,7 @@ A grouped sub-joint's outputs, `{g}`, differ from its factors', `{b, c}`, so it 
 *Done when:*
 - `rm.event_spec == OutputSpec(RecordSpec(G=law_spec))` for a random measure `rm` constructed under the name `G`, and `sample(rm)` is `{G: law}`;
 - a Gaussian process is a law over `{f: function}`; `BootstrapReplicateDistribution("b", ...)` is a law over `{b: batch}`; an empirical law of laws and a minibatched target are laws over records under their constructors' names;
-- `OutputSpec(params=RecordSpec(mu=(), sigma=()))` raises `TypeError`, and `OutputSpec(G=law_spec)` raises with the message for a law: "G would name a law; give OutputSpec(law_spec) for a law with no outputs, or wrap it: OutputSpec(RecordSpec(G=...))";
+- `OutputSpec(params=RecordSpec(mu=(), sigma=()))` raises `TypeError`, and `OutputSpec(G=law_spec)` raises with the message for a law: "cannot use the keyword G for a distribution's spec: a keyword of OutputSpec must name a single array or opaque value. Write OutputSpec(RecordSpec(G=law_spec)) to pass the distribution on under G";
 - `OutputSpec(x=None).with_term_spec(RecordSpec(a=()))` raises;
 - no `_whole_term_event` remains, and the probe is removed.
 
@@ -3893,7 +3895,7 @@ Today `*` merges laws and kernels, as `k * p`.
 `*` is also arithmetic: it multiplies two `NumericArray`s, scales a `LinOp` and a Gaussian random function by a number, and III.5 gives a `NumericRecord` scaling by a number, so `d1 * d2` merges two laws while `sample(d1) * sample(d2)` multiplies two samples.
 `&` reads as "both", and S3 makes it the one merge operator, with no alias for `*`; `*` keeps its arithmetic meanings, and `GaussianRandomFunction.__mul__` keeps only its scaling branch (decided 2026-10-17).
 `&` also replaces `merge` on records, record specs, and record batches, after S2b-out makes that merge shallow.
-`*` between laws and kernels stays a permanent refusal, `TypeError: * does not merge laws; write lik & prior`, and a law or kernel refuses `bool()`, so `lik and prior` raises instead of returning `prior` (decided 2026-10-20; § 15.1).
+`*` between laws and kernels stays a permanent refusal, `TypeError: cannot multiply distributions with *. To merge them, write lik & prior`, and a law or kernel refuses `bool()`, so `lik and prior` raises instead of returning `prior` (decided 2026-10-20; § 15.1).
 "Merge" names what `&` does for every kind; "composition" keeps its meaning of `f ∘ g` and `A B` (decided 2026-10-18).
 
 ### C.2 Renames

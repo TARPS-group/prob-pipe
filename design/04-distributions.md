@@ -94,13 +94,13 @@ A kernel standing alone stays a kernel even when all its inputs are optional (II
 | 1. both operands are laws or kernels | `TypeError`, since `__and__` returns `NotImplemented` | each kind has its own merge: records merge by name (II.6), and batches element by element (VI.11) |
 | 2. each operand's event spec has a base or record `term_spec` | `TypeError`, naming the operand and saying to wrap the values it is over under a name | each operand is rebuilt from fields of the result, and a law over laws, functions, or batches has no outputs (II.2) |
 | 3. `O_a ∩ O_b = ∅` | `ValueError`, naming the output and both operands | one name cannot hold two values |
-| 4. `I_b ∩ O_a = ∅` | `ValueError`: "write b & a: b takes x, which a outputs, and in a & b only b's outputs feed a's inputs" | each operand is fed only by operands to its right, so no name of the result is both an input and an output |
+| 4. `I_b ∩ O_a = ∅` | `ValueError`, as for `p & k`: "cannot merge p & k: k takes mu, which p outputs. Write k & p" | each operand is fed only by operands to its right, so no name of the result is both an input and an output |
 | 5. within each operand, no name is both an input and an output | `ValueError`, saying to rename one | otherwise it is unclear whether the other operand's output of that name feeds it or is fed by it |
 | 6. each output's spec conforms to the spec of the input it feeds (II.1) | `ValueError`, naming both specs | every value fed to an input must conform to its spec |
 | 7. the two specs of an input both take unify (II.1) | `ValueError`, naming both specs | one value supplies both |
 | 8. every spec of both operands, with the dimension sizes earlier merges bound in each, forms one dimension scope (II.1) | `ValueError`, naming the dimension and both sizes, and suggesting `with_dim_names` to rename one apart or, for a size only an earlier merge kept, merging the operands in another order | a dimension name stands for one size |
 
-A merge never lifts: an output that is a law does not feed an input that expects a value, since lifting the receiving kernel over that law would ignore the law's dependence on the kernel's other inputs. Two views of one law merge as independent laws, since each view is one factor: for a law `d` over `{g1: {theta}, g2: {theta}}`, `d[["g1"]] & d[["g2"]]` is the product of the two marginals, and the joint law of both groups is `d["g1", "g2"]`. `d["g1"] & d["g2"]` is refused by condition 3, both having the output `theta`, and its message points to `d["g1", "g2"]`.
+A merge never lifts: an output that is a law does not feed an input that expects a value, since lifting the receiving kernel over that law would ignore the law's dependence on the kernel's other inputs. Two views of one law merge as independent laws, since each view is one factor: for a law `d` over `{g1: {theta}, g2: {theta}}`, `d[["g1"]] & d[["g2"]]` is the product of the two marginals, and the joint law of both groups is `d["g1", "g2"]`. `d["g1"] & d["g2"]` is refused by condition 3, both having the output `theta`, and its message adds "Both are views of one distribution, which a merge treats as independent. For their joint distribution, index once, as d['g1', 'g2']".
 
 **The value.** Sampling `a & b` draws from `b` at its inputs, then from `a` at its own inputs and what `b`'s draw feeds, and its density is the product above. Binding or conditioning a merged law in closed form follows the same definition, using what later operands feed.
 
@@ -113,7 +113,7 @@ A merge never lifts: an output that is a law does not feed an input that expects
 
 Two inputs that are different quantities are renamed apart first, as fields and levels require. Symbolic dimensions follow the same rule: the operands share one dimension scope, so a name two factors both use is one dimension, bound once and required to agree (II.1), and two dimensions that are different quantities are renamed apart first with `with_dim_names`. The joint stores the factors so unified and keeps the sizes its merge bound, so a later merge starts from both operands' kept sizes. The unification is canonical, so derived names and fingerprints are deterministic.
 
-**`*` and truth values.** `*` scales and `&` merges. `*` between two laws, two kernels, or a law and a kernel raises `TypeError: * does not merge laws; write lik & prior`, and returns `NotImplemented` for any other operand, so a scalar keeps Python's own handling and a family that scales, such as a random function, scales. A law or a kernel has no truth value: `bool()` raises `TypeError: a law has no truth value; to merge laws write a & b`, so `lik and prior` raises instead of returning `prior`, while a record keeps its length-based truth. Both refusals are permanent.
+**`*` and truth values.** `*` scales and `&` merges. `*` between two laws, two kernels, or a law and a kernel raises `TypeError: cannot multiply distributions with *. To merge them, write lik & prior`, and returns `NotImplemented` for any other operand, so a scalar keeps Python's own handling and a family that scales, such as a random function, scales. A law or a kernel has no truth value: `bool()` raises `TypeError: a distribution has no truth value. To merge distributions, write a & b`, so `lik and prior` raises instead of returning `prior`, while a record keeps its length-based truth. Both refusals are permanent.
 
 **Labeling the result.** The joint's label joins the operands' current labels with `·`, each grouped by the rules of II.4 so that it reads as one unit. So `lik & prior` is labeled `lik·prior`, `(lik & prior).with_label("posterior") & d` is labeled `posterior·d`, and `lik & d` for a law labeled `my model` is labeled `lik·[my model]`. Labels join associatively: an operand whose label is a product joins as it is, so `(lik & prior) & d` and `lik & (prior & d)` are both labeled `lik·prior·d`. Exchanging independent operands may change the label while preserving the joint law.
 
@@ -126,7 +126,7 @@ A merge determines structure from the names of outputs and inputs alone. Every o
 ```python
 def __and__(self, other: Distribution | ConditionalDistribution) -> FactoredDistribution | FactoredConditionalDistribution: ...
 def __mul__(self, other: object) -> NoReturn: ...   # raises TypeError naming & for a law or a kernel; NotImplemented otherwise
-def __bool__(self) -> NoReturn: ...   # raises TypeError: a law has no truth value
+def __bool__(self) -> NoReturn: ...   # raises TypeError: a distribution has no truth value
 ```
 
 ### Rationale
@@ -210,9 +210,9 @@ def distribution(
 ```
 
 **A kernel from a function.** `conditional_distribution` builds a `ConditionalDistribution` (III.9) from a function of its given values that returns a law. Its call form takes the function and an optional label, as in `conditional_distribution(lambda mu, tau: Normal("y", mu, tau), label="lik", given_spec=...)`, and its decorator form on a `def` takes the same keywords. The kernel's label defaults to the function's `__name__`, and to `ℙ` for a lambda, so the decorator form labels the kernel after the function. Each named parameter of the function is an input, and its spec is its entry in `given_spec` or else its annotation, which must then be a term spec. `given_spec` is read through the `InputSpec` constructor from any of its four sources (II.2), and the idiom is `given_spec=d.event_spec`, cut down with `[...]`, `without`, and `&`, which declares the inputs that the outputs of a law `d` supply. A parameter with a default is an optional input (II.2), which holds a constant of the model, and its default's value declares it when neither does. Construction refuses a mismatch between `given_spec` and the function, each with a message that names the fix:
-1. an input the function does not take raises `TypeError`, as "given_spec of 'fn' declares 'sigma', which the function does not take (it takes mu); leave it out with event_spec.without('sigma'), or pick the inputs with event_spec[['mu']]";
-2. the fields of a group where the function takes the group raise `TypeError`, as "given_spec of 'fn' declares a and b, the fields of the group g; to declare the input g, index with a list: event_spec[['g']]";
-3. a law or its spec given as the source raises `TypeError`, saying to pass the law's `event_spec`;
+1. an input the function does not take raises `TypeError`, as "given_spec declares sigma, but fn takes only mu. Pass event_spec.without('sigma') or event_spec[['mu']]";
+2. the fields of a group where the function takes the group raise `TypeError`, as "given_spec declares the fields a and b of the group g, but fn takes g itself. Pass event_spec[['g']]";
+3. a law or its spec given as the source raises `TypeError`: "given_spec cannot be a Distribution. Pass its event_spec to declare the inputs its outputs supply";
 4. an input marked optional whose parameter has no default raises `ValueError`;
 5. a parameter with no default and no spec raises `TypeError`, whose message gives the `given_spec` entry that declares it.
 

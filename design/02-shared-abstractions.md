@@ -175,7 +175,7 @@ class OutputSpec:
 1. the **keyword form** `OutputSpec(y=spec)` names the output at the root of a base spec, with the size shorthand of II.1, as `OutputSpec(y=(3,))`;
 2. the **positional form** `OutputSpec(term_spec)` takes any other spec.
 
-The positional form refuses a base spec with `TypeError`, since its output needs a name, and refuses an empty `RecordSpec` with `ValueError`, since it would have no outputs to name. The keyword form refuses any other spec with `TypeError` naming the wrap: "params would name a record; give OutputSpec(RecordSpec(...)) for its fields as outputs, or wrap it: OutputSpec(RecordSpec(params=...))", and likewise for a distribution. A name is any non-empty string without `/`, since a merge makes it the name of a field; an output whose name is not an identifier supplies no input.
+The positional form refuses a base spec with `TypeError`, since its output needs a name, and refuses an empty `RecordSpec` with `ValueError`, since it would have no outputs to name. The keyword form refuses any other spec with `TypeError`, as for `OutputSpec(params=RecordSpec(mu=(), sigma=()))`: "cannot use the keyword params for a RecordSpec: a keyword of OutputSpec must name a single array or opaque value. Write OutputSpec(RecordSpec(mu=..., sigma=...)) for the outputs mu and sigma, or OutputSpec(RecordSpec(params=RecordSpec(mu=..., sigma=...))) for one output params". For a distribution's spec it reads "cannot use the keyword G for a distribution's spec: a keyword of OutputSpec must name a single array or opaque value. Write OutputSpec(RecordSpec(G=law_spec)) to pass the distribution on under G". A name is any non-empty string without `/`, since a merge makes it the name of a field; an output whose name is not an identifier supplies no input.
 
 **Operations on output specs.** Paths lead into the value type, so `[]` on an output spec gives the output spec there:
 1. `outputs` maps each output's name to its spec, in order;
@@ -183,7 +183,7 @@ The positional form refuses a base spec with `TypeError`, since its output needs
 3. `O[["a", "g/b"]]` is the positional form over the record of the chosen nodes, each at its own path, in this spec's order; a list may name the output at the root, so `OutputSpec(x=())[["x"]]` is `OutputSpec(RecordSpec(x=...))`;
 4. `path in O` holds exactly when `O[path]` succeeds.
 
-The name of an output at the root alone is not a path, so `OutputSpec(x=())["x"]` raises `KeyError`: `[]` keeps one meaning, and a term's `output("x")` returns the term itself (II.5, III.7). An output spec is not a mapping, and iterating it raises `TypeError` pointing to `outputs`. `without(*paths)` removes the nodes at paths, and a group left empty goes too; removing every node raises `ValueError`. `O & P` merges two output specs: the outputs of `O`, then those of `P`, as one record, where an output at the root `y` becomes the field `y`. It refuses an operand whose spec is unspecified or is not a record or a base spec, and an output name in both, and a dimension name that would take two sizes. `rename` renames or moves nodes by path under II.6's rules, or renames the output at the root, as `{"x": "y"}`; a root name cannot become a nested path, since a base value has no record to hold it. Selection, removal, and the reader of paths are those of II.6, and dimension names keep their scope through selection, so binding a size commutes with selecting.
+The name of an output at the root alone is not a path, so `OutputSpec(x=())["x"]` raises `KeyError`: `[]` keeps one meaning, and a term's `output("x")` returns the term itself (II.5, III.7). An output spec is not a mapping, and iterating it raises `TypeError`: "cannot iterate over an OutputSpec. Iterate over its outputs instead, as list(spec.outputs)". `without(*paths)` removes the nodes at paths, and a group left empty goes too; removing every node raises `ValueError`. `O & P` merges two output specs: the outputs of `O`, then those of `P`, as one record, where an output at the root `y` becomes the field `y`. It refuses an operand whose spec is unspecified or is not a record or a base spec, and an output name in both, and a dimension name that would take two sizes. `rename` renames or moves nodes by path under II.6's rules, or renames the output at the root, as `{"x": "y"}`; a root name cannot become a nested path, since a base value has no record to hold it. Selection, removal, and the reader of paths are those of II.6, and dimension names keep their scope through selection, so binding a size commutes with selecting.
 
 ```python
 O = OutputSpec(RecordSpec(a=(), g=RecordSpec(b=(), c=())))
@@ -624,20 +624,20 @@ The parameter `L` declares the leaf type, which is what `values()`, `[]` at a fi
 2. a list or a tuple of `str` is a **list of paths**, so `x["a", "g/b"]` and `x[["a", "g/b"]]` agree;
 3. an `int`, an object with `__index__`, a `slice`, or a tuple of these is a position, which only a batch takes (II.5).
 
-`bool`, `None`, and `...` raise `TypeError`. Every argument that takes one path, such as each path of `without(*paths)`, `at_path(*segments)`, and `is_field(path)`, is checked by the same reader, so `at_path(("g", "b"))` raises `TypeError` asking for the tuple to be unpacked. The reader refuses a malformed argument before anything is looked up:
+`bool`, `None`, and `...` raise `TypeError`. Every argument that takes one path, such as each path of `without(*paths)`, `at_path(*segments)`, and `is_field(path)`, is checked by the same reader, so `at_path(("g", "b"))` raises `TypeError`: "at_path takes each segment as a separate argument, got a tuple. Write at_path(*segments)". The reader refuses a malformed argument before anything is looked up:
 
 | Argument | Error | Why |
 |---|---|---|
 | `x[""]`, `x["g//b"]`, `x["/a"]` | `ValueError` | an empty path or an empty name within one |
 | `x[[]]`, `x[()]` | `ValueError` | no paths, on a batch too |
 | `x["a", "a"]` | `ValueError` | the same path twice |
-| `x["g", "g/b"]` | `ValueError` | "'g/b' is inside 'g'; pick one" |
-| `x["a", 0]` | `TypeError` | "a path and a position cannot be mixed in one []" |
-| `b[[0, 2]]`, `b[np.array([0, 2])]` | `TypeError` | "a list of positions is not supported; index one position or a slice" |
+| `x["g", "g/b"]` | `ValueError` | "cannot select both 'g' and 'g/b', since 'g/b' is inside 'g'. Keep one of them" |
+| `x["a", 0]` | `TypeError` | "cannot mix a path and a position in one [], got ('a', 0). Index the position and the path separately, as b[0]['a']" |
+| `b[[0, 2]]`, `b[np.array([0, 2])]` | `TypeError` | "cannot index a batch by a list of positions, got [0, 2]. Index one position or a slice" |
 | `x[{"a"}]`, `x[iter(["a"])]` | `TypeError` | a set has no order, and an iterator is read once |
-| `x["z"]` | `KeyError` | "'z' is not a path of 'x'; its paths: [...]" |
+| `x["z"]` | `KeyError` | "unknown path 'z' in 'x'; available paths: [...]" |
 
-When a missing path comes from a tuple whose `/`-joined form is a path, the message adds "a tuple is a list of paths; for the nested path write 'g/b'".
+When a missing path comes from a tuple whose `/`-joined form is a path, the message adds "To select the nested path, write 'g/b'".
 
 **Selection.** One path gives the node there: a field's value, a group as a tree of the same family, or, for a path that passes through a field holding a term, that term's selection at the rest of the path, so `{x: 3.0, g: d}["g/mu"]` is `d["mu"]`. A list of paths gives the tree of the chosen nodes, each at its own path, in the tree's canonical order whatever the order of the list, so `x["g/c", "a"]` is `{a, g: {c}}`. One path and a list of one path differ: `x["g"]` is the group, and `x[["g"]]` is the tree that holds it. A path in a list that passes through a field holding a term cuts that term down to the rest of the path, in its own kind. Paths chain, so `x["g"]["b"]` is `x["g/b"]`. `p in x` holds exactly when `p` is a `str` and `x[p]` succeeds, so `"g" in x` is true for a group `g`, although `"g"` is not among `x.keys()`.
 
