@@ -24,7 +24,9 @@ import jax.numpy as jnp
 
 from .._messages import label_given_first, unknown_names
 from ..core._dispatch import Feasibility
+from ..core._execution_claims import Traceability, probe, spec_stand_in
 from ..core._expression import ELLIPSIS, Signature
+from ..core._immutable import transient_memo
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_default, format_names, public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
@@ -48,6 +50,7 @@ from ._distribution import (
     DEFAULT_LABEL,
     Distribution,
     DistributionSpec,
+    _argument,
     _cached_raw,
     _check_marker_claims,
     _complete_event_spec,
@@ -608,6 +611,42 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         """The kernel's term spec, the one stored source of both declarations."""
         return self._spec
 
+    def _traceability(self) -> Traceability:
+        """Whether JAX can trace this kernel's raw methods: traceable, embeddable, or host-only (V.13).
+
+        The value is derived from the kernel's parts the first time it is read
+        and kept for the kernel's life: a family is traceable, the kernel of a
+        function takes the traceability of the law its function returned when
+        the kernel was built, a kernel built from other kernels or laws takes
+        the meet of theirs, and any other kernel is probed once, as
+        :meth:`_derived_traceability` states.
+
+        Returns
+        -------
+        Traceability
+            The kernel's traceability.
+        """
+        memo = transient_memo(self)
+        if "traceability" not in memo:
+            memo["traceability"] = self._derived_traceability()
+        return memo["traceability"]
+
+    def _derived_traceability(self) -> Traceability:
+        """The traceability of a kernel that states none: its density probed at one given value.
+
+        The density is traced at a stand-in of each required given slot and of
+        one value of the event. A kernel without a density probes its sampler
+        at one key instead, and one whose slots or event have no stand-in is
+        host-only. A subclass whose methods are JAX code, or are built from
+        parts that state their traceability, overrides this.
+
+        Returns
+        -------
+        Traceability
+            ``TRACEABLE`` when the probe traced, and ``HOST_ONLY`` otherwise.
+        """
+        return _probed_kernel_traceability(self)
+
     @property
     def given_spec(self) -> InputSpec:
         """The named slots the kernel conditions on, read from :attr:`spec`."""
@@ -938,7 +977,7 @@ _DERIVED_TWINS: tuple[tuple[type, type, str], ...] = (
 )
 
 
-def _probed_guard(method: str, condition: str) -> Callable[..., Feasibility]:
+def _returned_law_guard(method: str, condition: str) -> Callable[..., Feasibility]:
     """The guard of a derived twin: the report of the law's guard of *method*.
 
     The report is the one the law the function returned at construction gave,
@@ -970,44 +1009,24 @@ def _kernel_unnormalized_log_prob(self: Any, given: Any, value: Any) -> Any:
 _FUNCTION_KERNEL_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
     SupportsConditionalSampling: {
         "_conditional_sample": _kernel_sample,
-        "_conditional_sample_guard": _probed_guard(
+        "_conditional_sample_guard": _returned_law_guard(
             "_sample", "The law the function returns admits the draw, as its guard reports."
         ),
     },
     SupportsConditionalLogProb: {
         "_conditional_log_prob": _kernel_log_prob,
-        "_conditional_log_prob_guard": _probed_guard(
+        "_conditional_log_prob_guard": _returned_law_guard(
             "_log_prob", "The law the function returns admits the density, as its guard reports."
         ),
     },
     SupportsConditionalUnnormalizedLogProb: {
         "_conditional_unnormalized_log_prob": _kernel_unnormalized_log_prob,
-        "_conditional_unnormalized_log_prob_guard": _probed_guard(
+        "_conditional_unnormalized_log_prob_guard": _returned_law_guard(
             "_unnormalized_log_prob",
             "The law the function returns admits the unnormalized density, as its guard reports.",
         ),
     },
 }
-
-
-def _argument(spec: TermSpec, slot: str, value: Any) -> Any:
-    """*value* at the kind its slot *spec* declares, as the function receives it.
-
-    A record slot's value is a ``Record`` and an array slot's an array, as a
-    function's body receives a draw; a value of another kind is passed as it is.
-    """
-    if isinstance(spec, RecordSpec):
-        return (
-            value
-            if isinstance(value, Record)
-            else Record(
-                value,
-                label=slot,
-            )
-        )
-    if isinstance(spec, NumericArraySpec):
-        return jnp.asarray(value)
-    return value
 
 
 def _declared_law(law: Any, event_spec: OutputSpec, label: str) -> Distribution:
@@ -1072,6 +1091,9 @@ class _FunctionKernel(ConditionalDistribution):
     guards : Mapping[str, Feasibility]
         The report of the law's guard of each capability it claims, keyed by
         the capability's method.
+    traceability : Traceability
+        The traceability of the law *fn* returned at construction, which the
+        kernel takes as its own.
     """
 
     _capability_table: ClassVar = _FUNCTION_KERNEL_CAPABILITIES
@@ -1084,6 +1106,7 @@ class _FunctionKernel(ConditionalDistribution):
         given_spec: InputSpec,
         event_spec: OutputSpec,
         guards: Mapping[str, Feasibility],
+        traceability: Traceability,
     ) -> _FunctionKernel:
         claimed = [twin for _, twin, method in _DERIVED_TWINS if method in guards]
         return object.__new__(_capability_subclass(_FunctionKernel, claimed))
@@ -1095,6 +1118,7 @@ class _FunctionKernel(ConditionalDistribution):
         given_spec: InputSpec,
         event_spec: OutputSpec,
         guards: Mapping[str, Feasibility],
+        traceability: Traceability,
     ) -> None:
         super().__init__(
             given_spec,
@@ -1102,9 +1126,14 @@ class _FunctionKernel(ConditionalDistribution):
             label=label,
         )
         object.__setattr__(self, "_fn", fn)
+        object.__setattr__(self, "_traceability_at_construction", traceability)
         object.__setattr__(self, "_slots", given_spec)
         object.__setattr__(self, "_bound", {})
         object.__setattr__(self, "_guards", dict(guards))
+
+    def _derived_traceability(self) -> Traceability:
+        """The traceability of the law the function returned when the kernel was built."""
+        return self._traceability_at_construction
 
     def _given_defaults(self) -> Mapping[str, Any]:
         """The defaults of the function's parameters, which its optional slots take."""
@@ -1232,7 +1261,7 @@ class _FunctionKernel(ConditionalDistribution):
 
 
 @dataclass(frozen=True)
-class _Probe:
+class _AbstractEvaluation:
     """What the law a function returns at stand-ins of its slots declares and claims.
 
     Attributes
@@ -1243,10 +1272,14 @@ class _Probe:
     guards : Mapping[str, Feasibility]
         The report of the law's guard of each derived capability it claims,
         keyed by the capability's method.
+    traceability : Traceability
+        The law's traceability, which the kernel takes as its own, since the
+        function traced to return it.
     """
 
     event_spec: OutputSpec
     guards: Mapping[str, Feasibility]
+    traceability: Traceability
 
 
 def _stand_in(spec: TermSpec, path: str, label: str) -> Any:
@@ -1309,7 +1342,9 @@ def _value_free(spec: TermSpec) -> TermSpec:
     return spec
 
 
-def _probe(label: str, fn: Callable[..., Distribution], slots: InputSpec) -> _Probe:
+def _evaluate_abstractly(
+    label: str, fn: Callable[..., Distribution], slots: InputSpec
+) -> _AbstractEvaluation:
     """The declaration and the guards of the law *fn* returns, evaluated abstractly.
 
     *fn* runs once under ``jax.eval_shape``, with a traced stand-in of each
@@ -1328,7 +1363,7 @@ def _probe(label: str, fn: Callable[..., Distribution], slots: InputSpec) -> _Pr
 
     Returns
     -------
-    _Probe
+    _AbstractEvaluation
         The event declaration of the returned law, and the report of the guard of
         each derived capability it claims.
 
@@ -1351,6 +1386,7 @@ def _probe(label: str, fn: Callable[..., Distribution], slots: InputSpec) -> _Pr
                 f"the function of {label!r} must return a Distribution; got {type(law).__name__}"
             )
         found["event_spec"] = law.event_spec
+        found["traceability"] = law._traceability()
         found["guards"] = {
             method: _capability_guard(law, method)
             for capability, _, method in _DERIVED_TWINS
@@ -1360,7 +1396,11 @@ def _probe(label: str, fn: Callable[..., Distribution], slots: InputSpec) -> _Pr
 
     jax.eval_shape(evaluate, stand_ins)
     declaration = found["event_spec"]
-    return _Probe(declaration._with_spec(_value_free(declaration.spec)), found["guards"])
+    return _AbstractEvaluation(
+        declaration._with_spec(_value_free(declaration.spec)),
+        found["guards"],
+        found["traceability"],
+    )
 
 
 def _slots_of(
@@ -1513,7 +1553,7 @@ def _function_kernel(
     Raises
     ------
     TypeError
-        If *fn* is not callable, or as :func:`_slots_of` and :func:`_probe` raise.
+        If *fn* is not callable, or as :func:`_slots_of` and :func:`_evaluate_abstractly` raise.
     ValueError
         As :func:`_agreed_event_spec` raises.
     """
@@ -1523,13 +1563,20 @@ def _function_kernel(
         name = getattr(fn, "__name__", None)
         label = name if isinstance(name, str) and name.isidentifier() else DEFAULT_LABEL
     slots = _slots_of(label, fn, given_spec)
-    probe = _probe(label, fn, slots)
+    abstract_evaluation = _evaluate_abstractly(label, fn, slots)
     declaration = (
-        probe.event_spec
+        abstract_evaluation.event_spec
         if event_spec is None
-        else _agreed_event_spec(label, event_spec, probe.event_spec)
+        else _agreed_event_spec(label, event_spec, abstract_evaluation.event_spec)
     )
-    return _FunctionKernel(label, fn, slots, declaration, probe.guards)
+    return _FunctionKernel(
+        label,
+        fn,
+        slots,
+        declaration,
+        abstract_evaluation.guards,
+        abstract_evaluation.traceability,
+    )
 
 
 def conditional_distribution(
@@ -1636,3 +1683,43 @@ def conditional_distribution(
         return _function_kernel(label, function, given_spec, event_spec)
 
     return decorate
+
+
+def _probed_kernel_traceability(kernel: ConditionalDistribution) -> Traceability:
+    """*kernel*'s density traced at stand-ins of its required given slots and one event value.
+
+    A kernel without a density traces its sampler at one key instead.
+    """
+    given_spec = kernel.given_spec
+    given_stand_ins = {
+        slot: spec_stand_in(spec)
+        for slot, spec in given_spec.items()
+        if slot not in given_spec.optional
+    }
+    if any(stand_in is None for stand_in in given_stand_ins.values()):
+        return Traceability.HOST_ONLY
+
+    def given_values(stand_ins: Mapping[str, Any]) -> dict[str, Any]:
+        return {slot: _argument(given_spec[slot], slot, value) for slot, value in stand_ins.items()}
+
+    event = kernel.event_spec.spec
+    event_stand_in = spec_stand_in(event)
+    if isinstance(kernel, SupportsConditionalUnnormalizedLogProb) and event_stand_in is not None:
+        probe_result = probe(
+            None,
+            lambda stand_ins: kernel._conditional_unnormalized_log_prob(
+                given_values(stand_ins[0]), _argument(event, kernel.label, stand_ins[1])
+            ),
+            (given_stand_ins, event_stand_in),
+            label=kernel.label,
+        )
+    elif isinstance(kernel, SupportsConditionalSampling):
+        probe_result = probe(
+            None,
+            lambda stand_ins: kernel._conditional_sample(given_values(stand_ins[0]), stand_ins[1]),
+            (given_stand_ins, jax.random.key(0)),
+            label=kernel.label,
+        )
+    else:
+        return Traceability.HOST_ONLY
+    return probe_result.traceability

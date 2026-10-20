@@ -28,7 +28,7 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.distributions import FactoredDistribution
-from probpipe.distributions._capabilities import SupportsSampling
+from probpipe.distributions._capabilities import SupportsSampling, SupportsUnnormalizedLogProb
 from probpipe.distributions._distribution import Distribution
 from probpipe.inference._inference_utils import (
     as_prng_key,
@@ -36,13 +36,13 @@ from probpipe.inference._inference_utils import (
     build_target_log_prob_flat,
     extract_event_spec,
     get_init_state,
-    is_jax_traceable,
     likelihood_flat,
     model_factors,
     observed_target,
     parameter_given,
     posterior_var_order,
     run_chain_scan,
+    traces_in_jax,
     unconstrained_chain,
 )
 from tests._posterior import flat_chains, flat_draws
@@ -259,21 +259,20 @@ class TestRunChainScan:
         np.testing.assert_allclose(np.asarray(positions), expected)
 
 
-class TestIsJaxTraceable:
-    """``is_jax_traceable`` probes whether a fn traces at an init state."""
+class TestTracesInJax:
+    """``traces_in_jax`` reads a target's traceability, which a law without one probes once."""
 
-    def test_traceable_fn(self):
-        init = jnp.array([1.0, 2.0])
-        assert is_jax_traceable(lambda x: jnp.sum(x**2), init) is True
+    def test_a_family_traces(self):
+        assert traces_in_jax(Normal("mu", loc=0.0, scale=1.0)) is True
 
-    def test_non_traceable_fn(self):
-        # ``float(np.asarray(x))`` forces concretisation of a traced value,
-        # which raises during ``make_jaxpr``.
-        def host_side(x):
-            return jnp.asarray(float(np.asarray(x).sum()))
+    def test_a_law_whose_density_converts_to_numpy_does_not_trace(self):
+        class HostDensity(Distribution, SupportsUnnormalizedLogProb):
+            def _unnormalized_log_prob(self, value):
+                # Concretizes a traced value, which fails while JAX traces.
+                return jnp.asarray(-0.5 * float(np.asarray(value) ** 2))
 
-        init = jnp.array([1.0, 2.0])
-        assert is_jax_traceable(host_side, init) is False
+        law = HostDensity(OutputSpec(x=NumericArraySpec(())), label="host")
+        assert traces_in_jax(law) is False
 
 
 class TestModelFactors:

@@ -28,6 +28,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._messages import unknown_names
 from ..core._dispatch import ResolutionError
+from ..core._execution_claims import Traceability
 from ..core._repr import format_value
 from ..core._spec_base import _unify_specs
 from ..core._specs import InputSpec, NumericArraySpec, OutputSpec
@@ -96,6 +97,10 @@ class LinearGaussianConditional(ConditionalDistribution):
     NotImplementedError
         Always, until ``LinOp`` declares its input slot and output type.
     """
+
+    def _derived_traceability(self) -> Traceability:
+        """Traceable: a family's methods are JAX code."""
+        return Traceability.TRACEABLE
 
     def __init__(
         self, component: str, A: LinOp, b: Array, cov: LinOp, *, label: str | None = None

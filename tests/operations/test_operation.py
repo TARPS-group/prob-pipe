@@ -334,6 +334,9 @@ class TestRoles:
         law = Gaussian("g")
         report = shifted.check(law, Gaussian("v", 2.0))
         assert (report.route, report.lifted) == ("shift", ("value",))
+        # check traces one evaluation point, as the call would, to learn whether it traces.
+        assert len(seen) == 1
+        seen.clear()
         with workflow_run(seed=0):
             pushforward = shifted.using(max_evaluations=8, dispatch="sequential")(
                 law, Gaussian("v", 2.0)

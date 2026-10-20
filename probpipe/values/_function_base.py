@@ -31,6 +31,13 @@ from .._messages import label_given_first, unknown_names
 from ..core._array_backend import _is_numeric_leaf
 from ..core._call_context import _open_call_context, _under_call_context, current_call_context
 from ..core._dispatch import Feasibility
+from ..core._execution_claims import (
+    TRACING_ERRORS,
+    ExecutionClaims,
+    ProbeResults,
+    execution_claims,
+    raise_for_false_traceable_claim,
+)
 from ..core._expression import Collapse, Expression, Signature
 from ..core._kinds import term_class_for_spec
 from ..core._numeric_array import _inferred_spec
@@ -855,6 +862,27 @@ class Function(TrackedTerm, Annotated):
         result by the application, as ``f(2.0)``, and a returned law or kernel
         by the function's label, as ``f(y, mu)``. Aliases never affect
         mathematical declarations.
+    traceable : bool or None
+        Whether JAX can trace the callable. ``True`` states that ``jax.jit``
+        and ``jax.vmap`` both succeed for its input shapes: it acts on array
+        inputs only through ``jax.numpy`` and ``lax``, never converts an input
+        to Python or NumPy, never branches in Python on an input's value, and
+        its output shapes depend only on its input shapes. A call then compiles
+        and maps it without testing it first, and a trace that fails raises.
+        ``False`` states that it cannot, so it is never traced or tested, and a
+        lifted call evaluates it one point at a time. ``None``, the default,
+        states nothing: the first lifted call, or the first ``check``, for each
+        structure of its inputs traces it once to find out, which runs its
+        Python up to the first operation that fails on a traced value, and
+        later calls with inputs of the same structure read the stored outcome.
+        A callable with side effects, or one that draws from NumPy's random
+        generators, should claim ``False``.
+    vectorized : bool
+        Whether the callable accepts every array argument with an extra
+        leading axis of evaluation points and returns its outputs stacked on
+        that axis, output row ``i`` depending only on input row ``i``, so that
+        a stack of evaluation points can be evaluated in one call. False by
+        default.
     differentiable : NumericSpec or None
         The differentiability claim: exactly the numeric input values gradients
         propagate through. None makes no claim.
@@ -908,7 +936,8 @@ class Function(TrackedTerm, Annotated):
     ------
     TypeError
         For an invalid name, callable, declaration type, workflow kind, or
-        worker-count type, a control of the wrong type, or a keyword that is
+        worker-count type, a ``traceable`` or ``vectorized`` claim that is not
+        a bool, a control of the wrong type, or a keyword that is
         no control, which the message names; for a label given before the
         callable, as ``Function("g", g)``, or as a second positional argument,
         as ``Function(g, "g")``; and for a callable given as ``fn=`` or
@@ -968,6 +997,13 @@ class Function(TrackedTerm, Annotated):
     _output_label: str | None
     _output_component: str
     _options: Mapping[str, Any]
+    #: The claims the Function stated when it was built (V.13).
+    _execution_claims: ExecutionClaims
+    #: The outcomes of probing the Function, by the input structure of one
+    #: evaluation point and the route it runs. Every copy the Function makes,
+    #: such as a ``using`` view, shares them, since a copy keeps its callable,
+    #: its bindings, and its declarations.
+    _probe_results: ProbeResults
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         # The constructor's arguments are checked here, before ``__init__`` binds
@@ -1002,6 +1038,8 @@ class Function(TrackedTerm, Annotated):
         input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
         output_spec: OutputSpec | TermSpec | None = None,
         output_label: str | None = None,
+        traceable: bool | None = None,
+        vectorized: bool = False,
         differentiable: NumericSpec | None = None,
         bind: Mapping[str, Any] | None = None,
         **controls: Any,
@@ -1022,6 +1060,8 @@ class Function(TrackedTerm, Annotated):
             input_spec=input_spec,
             output_spec=output_spec,
             output_label=output_label,
+            traceable=traceable,
+            vectorized=vectorized,
             differentiable=differentiable,
             metadata_source=fn,
             bind=bind,
@@ -1037,6 +1077,8 @@ class Function(TrackedTerm, Annotated):
         input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
         output_spec: OutputSpec | TermSpec | None = None,
         output_label: str | None = None,
+        traceable: bool | None = None,
+        vectorized: bool = False,
         differentiable: NumericSpec | None = None,
         metadata_source: Any = None,
         bind: Mapping[str, Any] | None = None,
@@ -1051,6 +1093,12 @@ class Function(TrackedTerm, Annotated):
             )
         if not isinstance(label, str) or not label:
             raise TypeError(f"Function requires a non-empty label, got {label!r}")
+        claims = execution_claims(
+            function_name=label,
+            traceable=traceable,
+            vectorized=vectorized,
+            differentiable=differentiable,
+        )
         if output_label is not None and (not isinstance(output_label, str) or not output_label):
             raise TypeError(
                 f"Function output_label must be a non-empty string; got {output_label!r}"
@@ -1087,6 +1135,8 @@ class Function(TrackedTerm, Annotated):
         set_attribute("_output_component", component)
         set_attribute("_options", MappingProxyType(options))
         set_attribute("_bind", MappingProxyType(construction_bindings))
+        set_attribute("_execution_claims", claims)
+        set_attribute("_probe_results", ProbeResults())
         set_attribute("__doc__", getattr(metadata_source, "__doc__", None))
         set_attribute("__name__", label)
         set_attribute("__qualname__", getattr(metadata_source, "__qualname__", label))
@@ -1368,9 +1418,16 @@ class Function(TrackedTerm, Annotated):
         """Realize one point with no lifting, as the installed engine does.
 
         A Function's body runs on *values*; one realized by routes runs the
-        route the engine selects and returns the result's raw form.
+        route the engine selects and returns the result's raw form. A body that
+        claims ``traceable=True`` and fails while JAX traces it raises the
+        error for a false claim, wherever the trace was started.
         """
-        return _invoke_engine(self, values, context)
+        if self._execution_claims.traceable is not True:
+            return _invoke_engine(self, values, context)
+        try:
+            return _invoke_engine(self, values, context)
+        except TRACING_ERRORS as tracing_error:
+            raise_for_false_traceable_claim(self.label, tracing_error)
 
     def _route_candidates(
         self, controls: Mapping[str, Any], values: Mapping[str, Any] | None = None

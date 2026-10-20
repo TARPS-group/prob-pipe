@@ -55,15 +55,16 @@ from ..distributions._empirical import EmpiricalDistribution
 from ..operations._condition import InferenceMethod
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
+    UNTRACEABLE_DENSITY,
     as_prng_key,
     build_mcmc_datatree,
     build_target_log_prob_flat,
-    is_jax_traceable,
     no_density_reason,
     observed_parts,
     parallel_chain_map,
     run_chain_scan,
     run_seed,
+    traces_in_jax,
     unconstrained_chain,
 )
 
@@ -337,18 +338,15 @@ class _BlackJAXMCMCMethod(InferenceMethod):
         return self._method_priority
 
     def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
-        """Whether the target has an unnormalized density that JAX traces at its initial state."""
+        """Whether the target has an unnormalized density that JAX traces."""
         model, observed = observed_parts(target)
         if not isinstance(model, SupportsUnnormalizedLogProb):
             return Feasibility(feasible=False, description=no_density_reason(model))
+        if not traces_in_jax(model):
+            return Feasibility(feasible=False, description=UNTRACEABLE_DENSITY)
         try:
             target_flat, flat_init, _ = build_target_log_prob_flat(model, observed)
-            density, init, _ = unconstrained_chain(target_flat, flat_init, model)
-            if not is_jax_traceable(density, init):
-                return Feasibility(
-                    feasible=False,
-                    description="the log-density is not JAX-traceable",
-                )
+            unconstrained_chain(target_flat, flat_init, model)
         except Exception as e:
             return Feasibility(
                 feasible=False,

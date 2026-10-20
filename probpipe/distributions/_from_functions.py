@@ -20,6 +20,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ..core._execution_claims import (
+    ProbeResults,
+    Traceability,
+    closure_probe_key,
+    probe,
+    spec_stand_in,
+)
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_value
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
@@ -31,8 +38,7 @@ from ._capabilities import (
     SupportsUnnormalizedLogProb,
     _capability_subclass,
 )
-from ._conditional import _argument
-from ._distribution import DEFAULT_LABEL, Distribution, _given_label
+from ._distribution import DEFAULT_LABEL, Distribution, _argument, _given_label
 from ._factored import _each_value, _flatten_draws, _leading_axes, _raw_record
 
 __all__ = ["distribution"]
@@ -220,6 +226,14 @@ class _FunctionLaw(Distribution):
         self._sampler_traces = sampler_traces
         self._density_traces = density_traces
 
+    def _derived_traceability(self) -> Traceability:
+        """Traceable when each function the law was built from traced when it was built."""
+        traces = (self._sampler is None or self._sampler_traces) and (
+            (self._log_density is None and self._unnormalized_log_density is None)
+            or self._density_traces
+        )
+        return Traceability.TRACEABLE if traces else Traceability.HOST_ONLY
+
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The functions the law was built from, by name."""
         functions = {
@@ -235,6 +249,12 @@ class _FunctionLaw(Distribution):
 # ---------------------------------------------------------------------------
 
 
+#: The probe results of the functions laws are built from, keyed by each
+#: function's code and the structure of what it captures, so the law a kernel
+#: builds anew at each given value is probed once (V.13, probe rule 3).
+_FUNCTION_PROBE_RESULTS = ProbeResults(max_entries=1024)
+
+
 def _abstract_spec(draw: Any) -> TermSpec:
     """The spec of an abstract draw: each array's shape and dtype, in its records."""
     if isinstance(draw, Mapping):
@@ -247,9 +267,10 @@ def _sampler_declaration(
 ) -> tuple[OutputSpec, bool]:
     """*declaration* completed from the abstract draw of *sample*, and whether *sample* traces.
 
-    Only a declaration that is numeric or pending is read abstractly. A sampler
-    whose ``jax.eval_shape`` fails does not trace, and *declaration* is
-    returned as it is, as it is for an event that is not numeric.
+    Only a declaration that is numeric or pending is read abstractly, from the
+    probe of *sample* at one key, which closures of one code share. A sampler
+    whose probe fails does not trace, and *declaration* is returned as it is,
+    as it is for an event that is not numeric.
 
     Parameters
     ----------
@@ -275,14 +296,17 @@ def _sampler_declaration(
     """
     if declaration.spec is not None and not isinstance(declaration.spec, NumericSpec):
         return declaration, False
-    try:
-        abstract = jax.eval_shape(
-            lambda key: jax.tree.map(jnp.asarray, _raw_record(sample(key))), jax.random.key(0)
-        )
-    except Exception:
+    probe_result = probe(
+        _FUNCTION_PROBE_RESULTS,
+        lambda key: jax.tree.map(jnp.asarray, _raw_record(sample(key))),
+        jax.random.key(0),
+        label=label,
+        key=("sample", closure_probe_key(sample)),
+    )
+    if not probe_result.traces:
         # The sampler does not trace; a failure of its own raises at a draw.
         return declaration, False
-    spec = _abstract_spec(abstract)
+    spec = _abstract_spec(probe_result.output)
     try:
         return declaration.with_spec(spec), True
     except (TypeError, ValueError) as error:
@@ -339,21 +363,6 @@ def _event_declaration(component: str | None, event_spec: Any) -> OutputSpec:
     )
 
 
-def _stand_in(spec: TermSpec) -> Any:
-    """The abstract stand-in of one value of *spec*, or ``None`` when an array leaf has none.
-
-    An array leaf of fixed shape stands in as its shape and dtype, and a record
-    as the mapping of its fields' stand-ins.
-    """
-    if isinstance(spec, RecordSpec):
-        children = {name: _stand_in(child) for name, child in spec.children.items()}
-        return None if any(child is None for child in children.values()) else children
-    if isinstance(spec, NumericArraySpec) and not spec.free_dims:
-        dtype = spec.dtype if spec.dtype is not None else jnp.result_type(float)
-        return jax.ShapeDtypeStruct(tuple(spec.shape), dtype)
-    return None
-
-
 def _density_traces(
     label: str, name: str, density: Callable[[Any], Array], declaration: OutputSpec
 ) -> bool:
@@ -387,16 +396,20 @@ def _density_traces(
         If *density* traces and returns anything but a real scalar.
     """
     spec = declaration.spec
-    stand_in = _stand_in(spec)
+    stand_in = spec_stand_in(spec)
     if stand_in is None:
         return False
-    try:
-        score = jax.eval_shape(
-            lambda value: jnp.asarray(density(_argument(spec, label, value))), stand_in
-        )
-    except Exception:
+    probe_result = probe(
+        _FUNCTION_PROBE_RESULTS,
+        lambda value: jnp.asarray(density(_argument(spec, label, value))),
+        stand_in,
+        label=label,
+        key=(name, closure_probe_key(density)),
+    )
+    if not probe_result.traces:
         # The density does not trace; a failure of its own raises at a value.
         return False
+    score = probe_result.output
     real = jnp.issubdtype(score.dtype, jnp.floating) or jnp.issubdtype(score.dtype, jnp.integer)
     if score.shape != () or not real:
         raise ValueError(
@@ -449,13 +462,17 @@ def distribution(
     the batch form of the event's kind. A density scores a batch of values
     along its leading axes, with ``jax.vmap`` when it traces.
 
-    Construction draws nothing and scores no value. It evaluates each function
-    that traces abstractly, with ``jax.eval_shape``: the abstract draw of
-    *sample* must unify with *event_spec*, which it completes by filling a
+    Construction draws nothing and scores no value. It traces each function
+    once, without values, to learn whether JAX can trace it: the abstract draw
+    of *sample* must unify with *event_spec*, which it completes by filling a
     pending type and setting a dtype the declaration leaves unset, and each
     density must return a real scalar at a stand-in of one value of the event.
-    A function whose ``jax.eval_shape`` fails does not trace, and construction
-    reads nothing from it.
+    A function that does not trace is read nothing from, and it makes the law
+    run one value at a time. Every law built from the same code with captured
+    values of the same shapes and dtypes, such as the law a kernel builds at
+    each given value, shares that trace, so the trace runs once. A function
+    that draws from NumPy's global random generator is treated as one that
+    does not trace, with a warning.
 
     A kernel of a simulator samples and has no density::
 

@@ -36,6 +36,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..core._array_backend import _read_only
 from ..core._compilation import compiled_or_eager
+from ..core._execution_claims import Traceability
 from ..core._immutable import transient_memo
 from ..core._repr import format_value
 from ..core._specs import NumericArraySpec, OutputSpec
@@ -382,6 +383,10 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
                     setattr(cls, method, implementation)
         if "__init__" in vars(cls):
             cls.__init__ = _recording_arguments(vars(cls)["__init__"])
+
+    def _derived_traceability(self) -> Traceability:
+        """Traceable: a family's methods are JAX code."""
+        return Traceability.TRACEABLE
 
     @_recording_arguments
     def __init__(
