@@ -1009,6 +1009,13 @@ def _register_open_run_provenance_mode_reader(
 def _refuse_changing_the_run_provenance_mode(requested_mode: ProvenanceMode, caller: str) -> None:
     """Raise if *caller* would set *requested_mode* inside a workflow run fixed to another mode.
 
+    Parameters
+    ----------
+    requested_mode : ProvenanceMode
+        The mode that a block, an assignment, or a reset would set.
+    caller : str
+        The block, the assignment, or the reset, which the message opens with.
+
     Raises
     ------
     RuntimeError

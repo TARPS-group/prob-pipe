@@ -1607,6 +1607,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   # before: [-0.523403, 1.038044, -1.069435]
   # after:  [0.80094, 0.327328, -0.465379]
   ```
+- **The provenance mode is fixed for a workflow run.** The outermost
+  `workflow_run` takes the mode in effect when it opens, and a call outside
+  every `workflow_run` takes it when the call opens. Inside the run, a
+  `config.provenance.using` block, a `config.using(provenance=...)` block, an
+  assignment to `config.provenance.mode`, or a `reset` that would set another
+  mode raises `RuntimeError`, naming the run's mode. Before, the block or the
+  assignment was ignored for the run's provenance while
+  `config.provenance.mode` read the new value. One that sets the run's own mode
+  is accepted. Set the mode before the run opens:
+
+  ```python
+  # before: provenance was recorded although the block read OFF
+  with workflow_run(seed=1):
+      with config.provenance.using(mode=ProvenanceMode.OFF):
+          y = f(x)
+  # after: the block raises; set the mode before the run opens
+  with config.provenance.using(mode=ProvenanceMode.OFF), workflow_run(seed=1):
+      y = f(x)
+  ```
+- **The work a call dispatches reads the session's settings as they were when
+  the outermost call opened.** Inside a function's body and the other work a
+  call evaluates, under `dispatch="sequential"` and `"thread"` and in Prefect
+  tasks, a setting that no `using` block sets reads the session's value from a
+  snapshot that the outermost call takes when it opens. Before, a worker read
+  the session's current value. A session assignment made while a call runs
+  therefore reaches none of that call's work, and it applies from the next call
+  on. The `prefect` section is the exception, and is read as it stands. The
+  same call before and after:
+
+  ```python
+  @function(dispatch="thread", max_workers=1)
+  def body(x):
+      if float(x) == 0.0:
+          config.sampling.num_samples = 7
+      return config.sampling.num_samples
+
+  body(NumericArrayBatch(jnp.arange(3.0), "x", label="xs"))
+  # before: [7, 7, 7]
+  # after:  [1024, 1024, 1024]
+  ```
 
 ### Added
 

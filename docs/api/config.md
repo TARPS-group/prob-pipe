@@ -13,6 +13,8 @@ Assigning a setting sets the session's value.
 A `using` block sets temporary values, for one section with `config.sampling.using(num_samples=4096)` or for several with `config.using(sampling={"num_samples": 4096}, notation={"max_depth": 12})`.
 A view's own control, which `f.using(...)` sets, wins over a block, and a block wins over the session's value.
 `f.using(...)` returns a reusable configured copy of `f`, while `config.using(...)` is a context manager.
+The work a call dispatches, such as a function's body run in a worker thread, reads the session's values as they were when the outermost call opened, except those of `config.prefect`, so a session assignment made during a call applies from the next call on.
+The provenance mode is fixed for a `workflow_run`: inside the run, a block, an assignment, or a `reset` that would change it raises `RuntimeError`, so set the mode before the run opens.
 
 ```python
 import probpipe
