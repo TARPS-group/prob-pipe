@@ -11,9 +11,9 @@ The visual language, which the legend figures state for the reader:
   right edge;
 - an object is a rounded box whose badge names its kind;
 - an optional input is a hollow port;
-- an output at the root, which names a base value whole, has its name outside
-  the box;
-- the parts of a value are a tree of fields and groups inside the box;
+- an output at the root, which names a base value, has its name outside the
+  box;
+- the paths of an object are a tree of fields and groups inside the box;
 - a batch is a stack of offset boxes, with its levels at the bottom;
 - a merge draws its two operands side by side as written, wires each output of
   the right operand into the left operand's input of the same name, fans one
@@ -698,7 +698,7 @@ class Legend:
         self.explain(
             [
                 "Data flows from right to left, as a density",
-                "p(y | mu) is written: produced, then received.",
+                "p(y | mu) is written: of y, given mu.",
             ],
             y,
             40,
@@ -730,8 +730,8 @@ class Legend:
         )
         self.explain(
             [
-                "An output at the root names a base value",
-                "whole; its name stands outside the box.",
+                "An output at the root names a base value;",
+                "its name stands outside the box.",
             ],
             y,
             placed.h,
@@ -756,9 +756,9 @@ class Legend:
         )
         self.explain(
             [
-                "The parts of a value are a tree inside the",
-                "box: the field a, and the group g holding",
-                "the fields b and c.",
+                "The paths of an object are a tree inside",
+                "the box: for a record, the field a, and the",
+                "group g holding the fields b and c.",
             ],
             y,
             placed.h,
