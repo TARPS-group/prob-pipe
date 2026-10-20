@@ -3,12 +3,11 @@
 ProbPipe builds statistical workflows from values, laws, kernels, functions, and batches of these.
 This document designs how they fit together:
 1. **Names:** how the parts of a value are named, so that a law, samples from it, and its summaries share one set of names.
-2. **Inputs and outputs:** what each object receives, and the named values it makes available to others.
+2. **Inputs and outputs:** what each object receives, and the names by which other objects refer to its values.
 3. **Selecting:** how a part of any object is picked out, removed, or renamed.
 4. **Merging:** how two objects combine into one by matching names, as a likelihood and a prior combine into a joint model.
 
-The result is that one string means one place everywhere: for a law `d`, the path `g/b` names the same quantity in `d`, in each sample from it, in its mean, in a batch of its samples, and in its type, and a merge matches objects by those same names.
-Appendix C.4 shows the mismatches this removes.
+The result is that one string means one place everywhere: for a law `d`, the path `g/b` names the same quantity in `d`, in each sample from it, in its mean, in a batch of its samples, and in its type, and a merge matches objects by those same names, removing the mismatches that Appendix C.4 lists.
 
 Part I states the ideas without code; the design can be judged from it alone.
 Part II gives the code, class by class.
@@ -21,11 +20,11 @@ Citations such as II.6 and D1 name sections and principles of [`design/`](../des
 
 - [The structure every object has](#the-structure-every-object-has)
 
-1. [Objects, values, and the places inside them](#1-objects-values-and-the-places-inside-them)
+1. [Objects, values, and paths](#1-objects-values-and-paths)
    1. [Objects and their kinds](#11-objects-and-their-kinds)
    2. [Records, paths, nodes, fields, and groups](#12-records-paths-nodes-fields-and-groups)
 2. [Types, value types, and paths](#2-types-value-types-and-paths)
-   1. [Types, and when one admits another](#21-types-and-when-one-admits-another)
+   1. [Types, and when one conforms to another](#21-types-and-when-one-conforms-to-another)
    2. [The value type of an object](#22-the-value-type-of-an-object)
    3. [The paths of every object](#23-the-paths-of-every-object)
    4. [Equality](#24-equality)
@@ -100,25 +99,14 @@ Figures read from right to left; § 3.6 gives their legend, once inputs and outp
 
 ## The structure every object has
 
-Part I rests on three ideas, introduced here informally and defined in the sections the table below lists.
-
-1. **The value type.** Every object has a *value type*, the type of the values it makes available: a law's is its event type, the type of its samples; a kernel's is its event type; a function's is its return type; a batch's is its element type; a record's or a base value's is its own type.
-2. **Paths and parts.** A *path*, such as `g/c`, is the sequence of names that leads from the root of a record to one of its entries. Only record types give names, so the paths of every other type are those of the types it holds, and an object's paths are the paths of its type; they are also the paths of its value type. For a law over `{a, g: {c, e}}`, `g/c` is therefore a path of the law, of each sample from it, of its mean, and of a batch of its samples. A law over a single array has no paths, since its event type has no named entries. Selecting at a path gives a *part*, as `d[g/c]` is the part of the law `d` at `g/c`. A batch is also selected by position along its levels, as `samples[3]`; this is a separate way of selecting, and it gives no part.
-3. **Outputs.** An object's *outputs* are the names under which it makes values available to other objects; they are its connection points. They are read from its value type: a record type gives one output per child, and a base type gives one output, named by the object; § 3.2 gives every case, including the objects that have no outputs. So a law over `{a, g: {c, e}}` has the outputs `a` and `g`; `g/c` is a path of that law and not an output, since it names a node below a child.
+1. **The value type** (§ 2.2). Every object has a *value type*, the type of its values: a law's is its event type, the type of its samples; a kernel's is its event type; a function's is its return type; a batch's is its element type; a record's or a base value's is its own type.
+2. **Paths and parts** (§ 1.2, § 2.3, § 4.1). A *path*, such as `g/c`, is the sequence of names that leads from the root of a record to one of its entries. Only record types give names, so the paths of every other type are those of the types it holds, and an object's paths are the paths of its type; they are also the paths of its value type. For a law over `{a, g: {c, e}}`, `g/c` is therefore a path of the law, of each sample from it, of its mean, and of a batch of its samples. A law over a single array has no paths, since its event type has no named entries. Selecting at a path gives a *part*, as `d[g/c]` is the part of the law `d` at `g/c`. A batch is also selected by position along its levels, as `samples[3]`; this is a separate way of selecting, and it gives no part.
+3. **Outputs** (§ 3.2). An object's *outputs* are names for its values that other objects refer to: when two objects are combined, an input of one receives the value of the output of the same name of the other. They are read from its value type: a record type gives one output per child, and a base type gives one output, named by the object; some objects, such as a function returning a law, have none. So a law over `{a, g: {c, e}}` has the outputs `a` and `g`; `g/c` is a path of that law and not an output, since it names a node below a child.
 
 ![A law d over {a, g: {c, e}}. To its left, a dashed arrow labelled "sample" points to a sample, the record {a: 0.4, g: {c: 1.2, e: -0.3}}, a value of the law's value type. The law's box holds the tree of its paths a, g, g/c, g/e, with output ports a and g on its left edge.](figures/object-structure.svg)
 *Figure: a law `d` over `{a, g: {c, e}}`. Its value type is `{a, g: {c, e}}`, and the figure shows one sample, a record of that type. The tree in its box shows its paths `a`, `g`, `g/c`, and `g/e`, which are also the sample's paths; its parts are its selections at these paths, as `d[g/c]`. Its outputs are `a` and `g`, the ports on its left edge.*
 
-| Idea | Defined in |
-| --- | --- |
-| the value type | § 2.2, after types (§ 2.1) |
-| paths | § 1.2 for records; § 2.3 for every object |
-| outputs | § 3.2, with examples in § 3.3 |
-| the three together | § 3.4 |
-| parts, and positions | § 4.1, once selection is defined |
-| what uses them | selecting (§ 4), merging (§ 5), each kind (§ 6), the invariants (§ 7) |
-
-## 1. Objects, values, and the places inside them
+## 1. Objects, values, and paths
 
 ### 1.1 Objects and their kinds
 
@@ -137,12 +125,12 @@ Part I rests on three ideas, introduced here informally and defined in the secti
 > [!IMPORTANT]
 > **Definition (label).** An object's *label* is a display name, which no operation reads, so relabeling never changes a result.
 
-Examples: the array `2.5`; the string `"abc"`; the law `mu ~ Normal(0, 1)`; the kernel that gives the law `y ~ Normal(mu, 1)` at each value of `mu`; a function from `x` to `{y, z}`; a batch of 100 samples from a law, over the level `sample`.
+The array `2.5` and the string `"abc"` are base values; `mu ~ Normal(0, 1)` is a law; the map that gives the law `y ~ Normal(mu, 1)` at each value of `mu` is a kernel; a map from `x` to `{y, z}` is a function; and 100 samples from a law, over the level `sample`, form a batch.
 
 ### 1.2 Records, paths, nodes, fields, and groups
 
 A workflow refers to the quantities inside its objects by name, such as the `mu` of a model or the group `g` of its parameters.
-These names are the names of the entries of records, since a record is the only kind of value whose entries are named; § 2.3 defines the paths of every other kind through the record types its type holds.
+These names are the names of the entries of records, since a record is the only kind of value whose entries are named; every other kind takes its paths from the record types its type holds (§ 2.3).
 
 > [!IMPORTANT]
 > **Definition (record and its places).**
@@ -163,31 +151,30 @@ These names are the names of the entries of records, since a record is the only 
 > 1. Sibling names are distinct, so a path names at most one node; two groups may reuse a name, as `g1/theta` and `g2/theta`.
 > 2. A base value has no paths, since it has no named entries; an array's entries are indexed by position, which is not a path.
 
-A field may hold a law or any other object; § 2.3 continues paths into it.
+A field may hold a law or any other object, and paths continue into it (§ 2.3).
 
 ## 2. Types, value types, and paths
 
-### 2.1 Types, and when one admits another
+### 2.1 Types, and when one conforms to another
 
-A type describes which objects are allowed, for example as the value of an input, without stating those objects.
-The design reads types wherever it must decide something before any value exists: whether a value may be supplied to an object (§ 3.1), which values an object makes available (§ 2.2), and which paths it has (§ 2.3).
+The design reads types wherever it must decide something before any value exists: whether a value may be supplied to an object (§ 3.1), what type an object's values have (§ 2.2), and which paths it has (§ 2.3).
 
 > [!IMPORTANT]
-> **Definition (type).** A *type* describes a set of objects, the objects it *admits*. Each type is one of the following, and holds what is listed:
-> 1. an *array type* holds a shape, whose sizes are integers or dimension names, and optionally a dtype and a support; it is written by its shape, as `(3,)` or `(n, m)`, with its dtype after it when set;
-> 2. an *opaque type* holds, optionally, a Python type and metadata;
-> 3. a *record type* holds a tree of names, as a record has, with a type at each field;
-> 4. a *law type* holds one type, the law's *event type*, which is the type of the objects the law is a distribution over; every law has an event type;
-> 5. a *kernel type* holds, for each value the kernel conditions on, a name, a type, and whether that value may be omitted; it also holds the kernel's event type;
-> 6. a *function type* holds the same three things for each argument of the function, and the function's *return type*, which is the type of its return value; the arguments or the return type may be unknown;
-> 7. a *batch type* holds the batch's levels and its *element type*, which is the type of one element. The name a batch of base values gives its elements is not part of its type; § 6.5 states where that name is held and which operations read it.
+> **Definition (type).** A *type* describes a set of objects with particular structure.
+> Every type belongs to exactly one kind (§ 1.1), and an object's kind is the kind of its type: the kind classifies the object, and the type describes its particular structure.
+>
+> | Type | Kind | What it holds |
+> | --- | --- | --- |
+> | *array type* | base value | a shape, whose sizes are integers or dimension names, and optionally a dtype and a support; it is written by its shape, as `(3,)` or `(n, m)`, with its dtype after it when set |
+> | *opaque type* | base value | optionally, a Python type and metadata |
+> | *record type* | record | a tree of names, as a record has, with a type at each field |
+> | *law type* | law | the law's *event type*, the type of the objects the law is a distribution over; every law has one |
+> | *kernel type* | kernel | for each value the kernel conditions on, a name, a type, and whether that value may be omitted; and the kernel's event type |
+> | *function type* | function | for each argument, a name, a type, and whether it may be omitted; and the function's *return type*, the type of its return value; the arguments or the return type may be unknown |
+> | *batch type* | batch | the batch's levels, and its *element type*, the type of one element |
 >
 > Array and opaque types are *base types*. A *law over* `T` is a law whose event type is `T`, as a law over `{mu, sigma}`; a *kernel over* `T` is a kernel whose event type is `T`.
-
-> [!IMPORTANT]
-> **Definition (the kind of a type).** Every type belongs to exactly one kind (§ 1.1): an array or opaque type to the base values, a record type to the records, a law type to the laws, a kernel type to the kernels, a function type to the functions, and a batch type to the batches.
-> An object's kind is the kind of its type.
-> The kind classifies the object; the type describes its particular structure, such as a shape and a dtype, a tree of fields, an event type, or the inputs and the return type of a function.
+> The name a batch of base values gives its elements is not part of its type (§ 6.5).
 
 > [!IMPORTANT]
 > **Definition (dimension name, dimension scope).** A *dimension name*, such as `n`, is an array size given by a name.
@@ -195,21 +182,17 @@ The design reads types wherever it must decide something before any value exists
 > Within one scope a name denotes one size: its first occurrence against a size binds it; a later occurrence that disagrees is refused; and two different unbound names at one axis are refused, since nothing says whether they are equal (II.1).
 
 > [!IMPORTANT]
-> **Definition (admits).** An array type admits an array whose shape matches its own, binding its dimension names, and whose dtype casts into its own by NumPy's same-kind rule; a support only describes, and is not checked.
-> An opaque type admits a value of its Python type.
-> A record type admits a record that has the same tree, with the same child names in the same order at each node, and whose fields are admitted by the types at the matching fields; so an admitted record flattens in the declared order.
-> A *raw mapping*, a mapping of names to values that is not yet a record, such as one a function returns or one given for an input, is first laid out in the declared order at each node and then admitted as a record, so its key order never matters.
-> A law, kernel, function, or batch type admits an object of its kind whose type conforms to it (below).
-
-> [!IMPORTANT]
-> **Definition (conforms, unify).** A type `A` *conforms* to a type `B` when an object of type `A` may be used wherever `B` is required: roughly, when `B` admits everything `A` admits, within one dimension scope.
-> Two types *unify* when one type, their *unification*, may be used in place of both: roughly, the type of a value both must admit.
-> The technical notes below give the rules by kind, which are normative.
+> **Definition (conforms, unify).**
+> 1. An object *conforms to* a type when it has the structure the type describes.
+> 2. A type `A` *conforms to* a type `B` when every object that conforms to `A` also conforms to `B`, within one dimension scope.
+> 3. Two types *unify* when one type, their *unification*, conforms to both and may be used in place of both: roughly, the type of the objects that conform to both.
+>
+> The technical notes below state both relations and unification by kind, and are normative.
 
 > [!TIP]
 > Casting decides dtypes. The unification of `int32` and `float32` is `int32`, since every `int32` casts into `float32` but not every `float32` casts into `int32`.
 
-| `A` | `B` | Conforms | Unification |
+| `A` | `B` | `A` conforms to `B` | Unification |
 | --- | --- | --- | --- |
 | `(3,) float32` | `(n,)` | yes, binding `n` to 3 | `(3,) float32` |
 | `() int32` | `() float32` | yes | `() int32` |
@@ -219,20 +202,37 @@ The design reads types wherever it must decide something before any value exists
 | `{x, y}` | `{y, x}` | no: another order | none |
 
 > [!NOTE]
-> **Consequence** (of the rules by kind).
-> 1. Where the unification of `A` and `B` exists, a type conforms to it exactly when it conforms to both, unless two unbound dimension names meet at one axis among the three. For array types over the standard NumPy dtypes, a type that conforms to both also implies that the unification exists, so dtypes alone never make one grouping of a merge valid and the other refused (§ 5.7). Kernel and function types differ: their unification requires equal input types, while conformance is contravariant in inputs, so two of them can have a type that conforms to both and no unification.
-> 2. Unification is symmetric, and associative where it exists.
-> 3. A type given by sizes alone sets no dtype or support, so it conforms to and unifies with any type of its shape.
+> **Consequence** (of the definitions and the rules by kind).
+> 1. **Kernel and function types conform contravariantly in their inputs and covariantly in their event or return types,** as the definition of conformance gives: a kernel that conforms to `A` accepts every value of `A`'s input types, so it accepts every value of `B`'s when `B`'s input types conform to `A`'s; and its laws are over objects of `A`'s event type, which conform to `B`'s event type when `A`'s does. Functions are alike, with arguments and return types.
+> 2. Where the unification of `A` and `B` exists, a type conforms to it exactly when it conforms to both, unless two unbound dimension names meet at one axis among the three. For array types over the standard NumPy dtypes, a type that conforms to both also implies that the unification exists, so dtypes alone never make one grouping of a merge valid and the other refused (§ 5.7). Kernel and function types differ: their unification requires equal input types, while their conformance is contravariant in inputs, so two of them can have a type that conforms to both and no unification.
+> 3. Unification is symmetric, and associative where it exists.
+> 4. A type given by sizes alone sets no dtype or support, so it conforms to and unifies with any type of its shape.
 
 <details>
-<summary>Technical note: the rules of conformance, by kind</summary>
+<summary>Technical note: when an object conforms to a type, by kind</summary>
+
+1. **arrays:** an array conforms to an array type when its shape matches the type's, binding the type's dimension names, and its dtype casts into the type's by NumPy's same-kind rule; a support only describes, and is not checked;
+2. **opaque values:** an opaque value conforms to an opaque type when it is an instance of the type's Python type, or the type sets none;
+3. **records:** a record conforms to a record type when it has the same tree, with the same child names in the same order at each node, and each field conforms to the type at the matching field; so a record that conforms flattens in the declared order;
+4. **raw mappings:** a *raw mapping*, a mapping of names to values that is not yet a record, such as one a function returns or one given for an input, is first laid out in the declared order at each node and then checked as a record, so its key order never matters;
+5. **laws:** a law conforms to a law type when every object it is a distribution over conforms to the type's event type;
+6. **kernels:** a kernel conforms to a kernel type when it has the type's input names, accepts at each input every object that conforms to the type the kernel type gives that input, lets each input be omitted that the kernel type lets be omitted, and gives at each accepted value a law over objects that conform to the event type;
+7. **functions:** a function conforms to a function type when it has the type's argument names, accepts at each argument every object that conforms to the type the function type gives that argument, lets each argument be omitted that the function type lets be omitted, and returns at each accepted value an object that conforms to the return type;
+8. **batches:** a batch conforms to a batch type when it has the same levels and each element conforms to the element type.
+
+For laws, kernels, functions, and batches, the check reads the object's own type: the object conforms when its type conforms to the given type, by the next note.
+
+</details>
+
+<details>
+<summary>Technical note: when a type conforms to another, by kind</summary>
 
 `A` conforms to `B`, in one dimension scope, when:
 1. **arrays:** the ranks are equal, each axis agrees by the scope rule, and when both set a dtype, `A`'s casts into `B`'s by NumPy's same-kind rule; supports are not compared (III.5);
 2. **opaque values:** `B`'s Python type is unset or a superclass of `A`'s, and `B`'s metadata is unset or equal to `A`'s (III.2);
 3. **records:** the same child names in the same order, as the equality of record types requires (§ 5.9), each child of `A` conforming to `B`'s;
 4. **laws:** `A`'s event type conforms to `B`'s;
-5. **kernels and functions:** the same names of conditioning values or arguments; each of `B`'s types for these conforms to `A`'s type of the same name, and one that may be omitted in `B` may be omitted in `A`; `A`'s event or return type conforms to `B`'s; a side `B` leaves unknown admits any, and a side only `A` leaves unknown does not conform;
+5. **kernels and functions:** the same names of conditioning values or arguments; each of `B`'s types for these conforms to `A`'s type of the same name, and one that may be omitted in `B` may be omitted in `A`; `A`'s event or return type conforms to `B`'s; any side conforms to a side `B` leaves unknown, and a side only `A` leaves unknown does not conform;
 6. **batches:** the same levels, and `A`'s element type conforms to `B`'s; the elements' name is not compared (§ 6.5).
 
 </details>
@@ -253,17 +253,15 @@ Any other pair, such as an array type with a record type, does not unify.
 
 ### 2.2 The value type of an object
 
-Objects of every kind make values available to other objects.
-A law yields samples, a kernel yields samples at each value of what it conditions on, a function yields a return value at each value of its arguments, and a batch holds its elements; a record and a base value are values themselves.
-The type of these values decides an object's outputs (§ 3.2) and how two objects merge (§ 5), so the design names it.
+Every object has values of one type: a law yields samples, a kernel yields samples at each value of what it conditions on, a function yields a return value at each value of its arguments, a batch holds its elements, and a record or a base value is its own value.
+That type decides an object's outputs (§ 3.2) and how two objects merge (§ 5).
 
 > [!IMPORTANT]
 > **Definition (value type).** An object's *value type* is: a law's or kernel's event type; a function's return type; a batch's element type; a record's or base value's own type.
 
 So a sample from a law, a function's return value, and an element of a batch all have the object's value type.
 
-A batch's value type is its element type, not its own batch type.
-The two have the same paths (§ 2.3); a batch's outputs are read element by element, and each is typed by the batch type of its column (§ 3.2).
+A batch's value type is its element type, which has the same paths as the batch type (§ 2.3); a batch's outputs are read element by element, and each is typed by the batch type of its column (§ 3.2).
 
 The value type is read from the object's type (§ 2.1) without computing anything.
 A law therefore has a value type whether or not it can be sampled, and a function has one before it is called; only a function whose return type is unknown has none until it is called.
@@ -272,7 +270,6 @@ A law over `{mu, sigma}` has the value type `{mu, sigma}`, and so does a batch o
 ### 2.3 The paths of every object
 
 **Why paths must agree across objects.**
-Objects of different kinds must work together.
 From one law `d` over `{a, g: {c, e}}`, a workflow obtains samples from `d`, batches of samples, the mean of `d`, and the marginal laws of `d`, and it passes each of these to other objects.
 For these objects to work together, a path such as `g/c` must identify the same quantity in all of them.
 Selecting at `g/c` then gives, in each object, what that object holds about the quantity (§ 4.1 defines selection):
@@ -283,7 +280,6 @@ Selecting at `g/c` then gives, in each object, what that object holds about the 
 
 A sample, the mean, and each element of a batch of samples are records of the type `{a, g: {c, e}}`, which is `d`'s event type.
 So the paths of all these objects agree if the paths of a law are the paths of its event type, and the paths of a batch the paths of its element type.
-The definition below does this for every kind: names come only from record types, and a law, a kernel, a function, or a batch takes its paths from the type it holds.
 
 > [!IMPORTANT]
 > **Definition (paths).** The *paths* of a type are:
@@ -322,7 +318,7 @@ For a law `d`, write `sample(d)` for a sample from `d`. Since a sample from `d` 
 ![The record r with the field x and the field g, which holds a law d over mu and sigma.](figures/held-field.svg)
 *Figure: for a law `d` over `{mu, sigma}`, the record `{x: 3.0, g: d}` has the paths `x`, `g`, `g/mu`, `g/sigma`; its fields are `x` and `g`.*
 
-§ 4.1 defines the selection `x[p]` at a path `p` of an object `x` by kind, and calls `x[p]` a *part* of `x`.
+Selecting an object `x` at one of its paths `p` gives `x[p]`, a *part* of `x` (§ 4.1).
 
 ### 2.4 Equality
 
@@ -335,8 +331,8 @@ The name a batch of base values gives its elements is not part of its type (§ 2
 
 ## 3. Inputs and outputs
 
-An object receives values at its inputs and makes values available to other objects at its outputs.
-Inputs and outputs are how objects connect: an output of one object can supply the input of the same name of another, as § 5 defines.
+An object receives values at its inputs, and its outputs name its values for other objects to refer to.
+An output of one object can supply the input of the same name of another (§ 5).
 
 ### 3.1 Inputs
 
@@ -372,42 +368,37 @@ The kernel then has an input `g` of type `{c}`, now required, since a default is
 ### 3.2 Outputs
 
 **What outputs are for.**
-Outputs are the connection points through which objects are joined to one another.
-They are the values an object makes available for other objects to use, as opposed to anything internal to the object, such as the way a law computes its density.
-Combining objects by name, which § 5 defines as merging, is their main use: one object's output supplies another object's input of the same name.
+Outputs give an object's values names that other objects can refer to.
 Take a law `prior` over `{mu, sigma}` and a kernel `lik` that gives a law of `y` at each value of an input `mu`.
-To build a model in which `lik` receives its `mu` from `prior`, ProbPipe must know which value of `prior` is called `mu`.
+When the two are built into a model, by merging them (§ 5), `lik`'s input `mu` is connected to `prior`'s output `mu` by name, so `lik` receives the value that `prior` names `mu`.
 
 **Outputs are read from the value type.**
-What `prior` makes available to other objects are values of its value type (§ 2.2), records `{mu, sigma}`.
-The children of these records already have names, so these names can serve as the names of `prior`'s outputs: `prior` has the outputs `mu` and `sigma`.
-A law over a single array, such as `x ~ Normal(0, 1)`, has a base value type: its values are arrays, which have no named entries, so for them to be available under a name, the law attaches a name from outside them, here `x`.
+The values of `prior` are records `{mu, sigma}`, of its value type (§ 2.2).
+The children of these records already have names, and these names serve as `prior`'s outputs: `prior` has the outputs `mu` and `sigma`.
+A law over a single array, such as `x ~ Normal(0, 1)`, has a base value type: its values are arrays, which have no named entries, so the law attaches a name to them from outside, here `x`.
 
 > [!IMPORTANT]
-> **Definition (output, output value).** An *output* of an object is a name under which the object makes one value, its *output value*, available to other objects.
+> **Definition (output, output value).** An *output* of an object is a name by which other objects refer to one value of the object, its *output value*.
 > An object's outputs name either a value of its value type as a whole, as its one output, or the children of such a value, one output each.
 
-**Three requirements decide which.**
+**Requirements on outputs.**
 
 1. **An output is one name for one value, as an input is.**
    An input is identified by a single name, not a path, and receives one value whole (§ 3.1).
    For an output to supply an input, the output must likewise be a single name with one value.
    So an output is a single name, never a nested path: a law over `{a, g: {c, e}}` can have the outputs `a` and `g`, but `g/c` cannot be an output.
 
-2. **Together, the output values determine what the object makes available.**
-   The output values are all that other objects receive from an object.
-   If they did not determine the values the object makes available, part of these values would not be available to any other object.
-   For example, if a law over `{mu, sigma}` made available only the separate laws of `mu` and of `sigma`, the dependence between `mu` and `sigma` would be lost; instead, the output values of `mu` and `sigma` are the two children of one random variable distributed by the law, so together they keep the joint law.
+2. **Together, the output values determine the object.**
+   Other objects refer to an object only through its outputs.
+   If the output values did not determine the object, no other object could refer to the rest of it.
+   For example, if the output values of a law over `{mu, sigma}` were the separate laws of `mu` and of `sigma`, the dependence between `mu` and `sigma` would be lost; instead, the output values of `mu` and `sigma` are the two children of one random variable distributed by the law, so together they keep the joint law.
 
 3. **Only a base value has a name attached from outside.**
    As § 1.2 describes, a record has named children, and these names can serve as output names.
    A base value (an array or an opaque value) has no children, so a name for it must be attached from outside the value: the object that holds it states the name, as the law `x ~ Normal(0, 1)` states `x`.
    Moreover, we require that only a base value may have a name attached from outside.
    The reason is that a value with named children that also had an attached name would have two names for each child: in a law over `{mu, sigma}` that was also named `params`, the child `mu` would be called `mu` in a sample but `params/mu` in the law, and a selection or a combination by one name would miss the other.
-   The requirement depends on the kind of the value alone, not on whether a particular value has children. A value that is itself a law, such as the return value of a function that returns a law, is never given an attached name, even when it is a law over a single array, whose event type has no children.
-   So whether an object's output is named from outside is decided by the kind of its value type, never by a choice.
-
-The precise rule is stated on types, case by case, and an object's outputs are those of its value type.
+   Whether a value may have a name attached from outside depends on its kind alone, never on whether a particular value has children, and never on a choice. A value that is itself a law, such as the return value of a function that returns a law, is never given an attached name, even when it is a law over a single array, whose event type has no children.
 
 > [!IMPORTANT]
 > **Definition (outputs).** The *outputs* of a type, each with a name and a type, are given by five cases:
@@ -418,7 +409,7 @@ The precise rule is stated on types, case by case, and an object's outputs are t
 > | 2 | a base type | one, typed by the base type and named by the object that holds the value; this output is *at the root* | a base value has no children to supply names, so its one name is attached from outside, which (3) allows for base values only |
 > | 3 | a function type | the outputs of its return type, read pointwise | a function whose return value is a record is determined by the function of each child (2) |
 > | 4 | a batch type | the outputs of its element type, read element by element | a batch of records is determined by the batch of each child (2) |
-> | 5 | a law type or a kernel type | none | a law is not a base value, so no name is attached to it from outside (3); and the laws of its parts do not determine it, so its parts cannot serve as its outputs (2). To make one available, wrap it |
+> | 5 | a law type or a kernel type | none | a law is not a base value, so no name is attached to it from outside (3); and the laws of its parts do not determine it, so its parts cannot serve as its outputs (2). To give one a name, wrap it |
 >
 > An object's *outputs* are the outputs of its value type, with one exception for their types: a batch's element type fixes its outputs' names and element-level types, and each output is typed by the type of its output value, the batch type of its column (below), over the batch's levels with the element-level type as element type, as case 4 gives for the batch's own type.
 
@@ -431,7 +422,7 @@ So a batch of functions from `x` to `{y, z}`, whose value type is a function typ
 
 </details>
 
-To say what an output of a law makes available, regard the law as the distribution of a random variable taking values of its event type, called the law's *random variable*; a sample is one value of it.
+To state the output values of a law, regard the law as the distribution of a random variable taking values of its event type, called the law's *random variable*; a sample is one value of it.
 A kernel has such a random variable at each value of its inputs.
 
 > [!IMPORTANT]
@@ -447,18 +438,18 @@ For a law over `{mu, sigma}`, the outputs are `mu` and `sigma` (case 1), and the
 For a function from `x` to `{y, z}`, the outputs are `y` and `z` (case 1), and the output value of `y` maps each `x` to the `y` of the return value.
 
 > [!NOTE]
-> **Consequence (paths go through a law type, outputs stop at one).** A record whose field `g` holds a law over `{mu, sigma}` has the paths `g/mu` and `g/sigma` (§ 2.3), and its output `g` makes the whole law available.
+> **Consequence (paths go through a law type, outputs stop at one).** A record whose field `g` holds a law over `{mu, sigma}` has the paths `g/mu` and `g/sigma` (§ 2.3), and its output `g` names the whole law.
 > A function that returns a law, or a batch of laws, has no outputs (case 5), because the marginals of a law do not determine it.
 
 > [!IMPORTANT]
-> **Definition (wrap).** To make a value that is not a base value available under one name `n`, the object that holds it *wraps* it: the value becomes the record `{n: value}`, whose one output is `n`.
+> **Definition (wrap).** To give a value that is not a base value one name `n`, the object that holds it *wraps* it: the value becomes the record `{n: value}`, whose one output is `n`.
 
 > [!NOTE]
 > **Consequence** (of the definitions; 3 and 4 are proved in the formal model of Appendix D.1).
-> 1. **Output values determine what the object makes available,** wherever there are outputs: a record is rebuilt from its children, a base value is its one output value, a function or a batch is rebuilt from its output values, and the output values of a law are the children of its one random variable, so together they have the law.
+> 1. **Output values determine the object,** wherever there are outputs: a record is rebuilt from its children, a base value is its one output value, a function or a batch is rebuilt from its output values, and the output values of a law are the children of its one random variable, so together they have the law.
 > 2. **A node below a child is named by a path (§ 2.3), not by an output:** a law over `{a, g: {c, e}}` has the outputs `a` and `g`, while `g/c` and `g/e` are paths only.
 > 3. **An output at the root excludes paths.** An object has either one output at the root, whose name is attached from outside and which has no paths below it, or one output per child of a record type, each named by the child's path; never both.
-> 4. **One set of names.** The name of an output at the root is not a path, since nothing is below it; every other output's name is its own path. So an object's outputs, its paths, and the paths of the values it makes available use one set of names.
+> 4. **One set of names.** The name of an output at the root is not a path, since nothing is below it; every other output's name is its own path. So an object's outputs, its paths, and the paths of its values use one set of names.
 > 5. **Outputs are not chosen.** They are determined by the object's value type, through the five cases. The one exception is the name of a base value's single output, which the object that holds the base value states.
 > 6. **A base value standing alone has no outputs,** such as an array that no law, function, or batch holds: no object attaches a name to it, and a label is not one.
 
@@ -490,7 +481,7 @@ An output named `"n-obs"` therefore supplies no input.
 | a law `d` over `{mu, sigma}` | `{mu, sigma}` | `mu`, `sigma` | the children of its random variable | 1 |
 | a law over `{params: {mu, sigma}}` | `{params: {mu, sigma}}` | `params`; the law and its samples have the path `params/mu` | the child `params` of its random variable | 1 |
 | a function `f` from `x` to `{y, z}` | `{y, z}` | `y`, `z` | the output value of `y` maps `x` to `f(x)`'s `y` | 1 |
-| a function `h` returning a law | a law type | none; to make the law available, `h` returns `{params: law}` | — | 5 |
+| a function `h` returning a law | a law type | none; to name the law, `h` returns `{params: law}` | — | 5 |
 | 100 samples from `d` | `{mu, sigma}` | `mu`, `sigma` | each a batch of 100 values | 1 |
 | 4 samples from a law over an array named `x` | an array type | `x`, at the root | the whole batch | 2 |
 | a batch of laws | a law type | none | — | 5 |
@@ -500,8 +491,7 @@ An output named `"n-obs"` therefore supplies no input.
 
 ### 3.4 Value types, outputs, and paths, side by side
 
-Four laws show the three ideas of the overview together.
-Each law's value type is its event type, and its paths and its outputs are both read from that type.
+For each of the four laws below, the value type is its event type, and its paths and its outputs are both read from that type.
 When that type is a record type, the outputs are the names of its children (§ 3.2, case 1), while the paths also include the paths below the children, such as `g/c` in `{a, g: {c, e}}` (§ 2.3); so the outputs and the paths coincide only when no child is itself a record.
 When that type is a base type, the law has one output at the root and no paths.
 
@@ -520,14 +510,13 @@ Each law also shares its paths with its mean and with a batch of its samples: a 
 
 > [!NOTE]
 > **Consequence** (of the definitions of output and wrap).
-> 1. **Outputs are not chosen** (§ 3.2, consequence 5). They are determined by the law's value type; the one exception is the name of a base value's single output, which the object that holds it states, as `d1` states `x`. So `d3` cannot make its whole record available under one name attached from outside, and the nested paths `g/c` and `g/e` cannot be outputs.
-> 2. **A wrap makes a record available under one name, and changes the value type.** `d4` is a different law from `d3`, since it is a law over `{params: {a, g: {c, e}}}`, not over `{a, g: {c, e}}`; every path of `d4` starts with `params`.
+> 1. **Outputs are not chosen** (§ 3.2, consequence 5). They are determined by the law's value type; the one exception is the name of a base value's single output, which the object that holds it states, as `d1` states `x`. So `d3` cannot give its whole record one name attached from outside, and the nested paths `g/c` and `g/e` cannot be outputs.
+> 2. **A wrap gives a record one name, and changes the value type.** `d4` is a different law from `d3`, since it is a law over `{params: {a, g: {c, e}}}`, not over `{a, g: {c, e}}`; every path of `d4` starts with `params`.
 > 3. **Only outputs connect.** Another object's input `g` can receive the group `g` from `d3`, while an input `c` cannot receive the node at `g/c`, which is not an output; renaming `g/c` to `c` first makes it one (§ 4.5).
 
 ### 3.5 Describing an object's inputs and outputs
 
 A check made before any value exists, as when two objects are combined (§ 5), reads an object's inputs and outputs by their names and types alone.
-This section states what such a description holds, and when two descriptions are equal.
 
 > [!IMPORTANT]
 > **Definition (describing inputs and outputs).**
@@ -541,7 +530,7 @@ This section states what such a description holds, and when two descriptions are
 The kernel `a(y | mu)` has the value type `()` and the output name `y`.
 A law over `{mu, sigma}` has the value type `{mu, sigma}` and no name.
 A function that returns an array under the name `m` can describe its output before its first call, with the name `m` and the type unspecified; the call shows the type.
-§ 6 states what each kind's inputs and outputs are; a batch of base values, for example, holds the name of its output at the root with its element type (§ 6.5).
+A batch of base values holds the name of its output at the root with its element type (§ 6.5).
 
 <details>
 <summary>Technical note: equality and order</summary>
@@ -564,9 +553,9 @@ Two descriptions of outputs unify likewise; when the type of one is unspecified,
 <details>
 <summary>Technical note: an output whose type is unspecified</summary>
 
-1. **Where.** Only the description of an output at the root, as a function's can be before its first call (§ 3.5, definition, item 3).
+1. **Where.** Only the description of an output at the root may leave its type unspecified, as a function's can before its first call (§ 3.5, definition, item 3).
 2. **Completing it.** The object that holds the value completes the type once the value is known. A base type completes it, and the output keeps its name. A batch type whose elements are base values carrying only the default name `element` (§ 6.5) completes it, and the batch's elements take the output's name. Any other type is refused, with a message asking for a record type to be stated instead.
-3. **Conformance and unification.** It admits only a type that could complete it, as the technical note above states.
+3. **Conformance and unification.** Only a type that could complete it conforms to it (technical note on conformance and unification of outputs).
 4. **Reading it as inputs.** Outputs read as inputs give one input per output, typed by the output's type (§ 5.3, technical note), so an output whose type is unspecified is refused there.
 5. **Merging it.** A merge refuses an operand whose value type is unspecified (§ 5.3, condition 2), and the merge of descriptions of outputs refuses such a description.
 
@@ -595,11 +584,10 @@ Figures read from right to left, as a density $p(y \mid \mu)$ does, where `y` is
 | Presence | may be optional | always present | every value of the value type has an output value at every output |
 | Type unspecified | never | only for an output at the root, until the type is known (§ 3.5) | a binding is checked against the input's type |
 | Equality | ignores order | keeps order | binding is by name; output order determines the layout |
-| Empty | an object may take no inputs | outputs are never described by an empty record type; an object whose value type is a law type has no outputs | an empty record describes nothing to make available |
+| Empty | an object may take no inputs | outputs are never described by an empty record type; an object whose value type is a law type has no outputs | an empty record names no value |
 | Batches | the elements' inputs | the outputs of the element type, each output value a column, typed by its batch type; none when the elements are laws or kernels | one binding supplies every element |
 
-A batch of functions and a batch of kernels show both sides at once.
-Each batch's inputs are its elements' inputs, and one binding supplies them to every element.
+A batch of functions or of kernels takes its elements' inputs, and one binding supplies them to every element.
 Its outputs are those of its value type, its element type (§ 3.2): a batch of functions has its elements' outputs (case 3), each output value the batch of the elements' output values, while a batch of kernels has none (case 5).
 
 ![A function f_j from x to {y, z}, with the outputs y and z; beside it the batch fs of such functions over the level j, which takes the input x and has the outputs y and z.](figures/batch-functions.svg)
@@ -812,7 +800,7 @@ A law built by merging keeps the laws and kernels it was built from, and a later
 
 A later merge supplies such an input as it supplies any other: merging `a & c` with a law `e(sigma)`, where `sigma ~ Normal(100, 0.001)`, gives `y` a scale near 100, the same law as `a & (c & e)` (figure in § 5.4).
 Keeping factors is what makes the two groupings agree.
-The marginal of `a & c` at `[y, mu]`, by contrast, is one factor with `sigma` fixed at 1, so merging it with `e` leaves `y`'s scale at 1, as merging the selection does; § 5.7 lists each operation.
+The marginal of `a & c` at `[y, mu]`, by contrast, is one factor with `sigma` fixed at 1, so merging it with `e` leaves `y`'s scale at 1, as merging the selection does (§ 5.7 lists each operation).
 
 ### 5.3 Merge: outputs side by side, inputs fed from the right
 
@@ -908,13 +896,13 @@ For values `u` of the result's factor inputs, let `u_a` be those `a` takes and `
 > **Definition (law of a merge).** At values `u` of its factor inputs, the random variable of `a & b` is the random variable `z` built as follows: `z_b` is a random variable distributed by `b` at `u_b`; given `z_b`, `z_a` is a random variable distributed by `a` at `u_a` and the values `z_b` feeds; and `z` is the record whose fields are `a`'s output values in `z_a`, then `b`'s in `z_b`, each under its output's name. A child keeps its name, and a base value is placed under the name of its single output.
 > So sampling `a & b` samples `b` first, then samples `a` given the values that `b`'s sample feeds.
 
-With densities, where `z_fed` is the fed values:
+Its density, where `z_fed` is the fed values, is:
 
 $$p_{a \& b}(z \mid u) = p_a(z_a \mid u_a, z_{\mathrm{fed}})\; p_b(z_b \mid u_b)$$
 
 For `lik & prior`, this is the product of § 5.1.
 
-**Records.** No inputs, so nothing is fed: `a & b` is `a`'s children followed by `b`'s children.
+**Records.** Records have no inputs, so nothing is fed: `a & b` is `a`'s children followed by `b`'s children.
 
 > [!NOTE]
 > **Consequence** (of condition 3). Records merge by top-level name: two records that both have a group `g` are refused, whatever the groups hold.
@@ -936,7 +924,7 @@ For `a(mu | data)` returning the mean and `b(sigma | data)` the standard deviati
 > [!TIP]
 > A function is like a kernel whose laws are point masses, and its merge mirrors the law of a merge. The likeness motivates the rule and is not exact: a merged law hides the optional inputs its factors leave at their defaults, while a merged function keeps them as inputs.
 
-**Batches.** Over equal levels, element by element; a base element is placed in a record under its output's name, so a batch of 3 values named `x` and a batch of 3 values named `y` merge into a batch of 3 records `{x, y}`.
+**Batches.** Two batches over equal levels merge element by element; a base element is placed in a record under its output's name, so a batch of 3 values named `x` and a batch of 3 values named `y` merge into a batch of 3 records `{x, y}`.
 
 <details>
 <summary>Technical note: batches merge element by element</summary>
@@ -962,7 +950,7 @@ Whatever the route, the result is one factor, with any optional input that remai
 | 3. One source per output | one name cannot hold two values |
 | 4. Order | sides stay separate, and each operand follows those that feed it |
 | 5. Separate sides | fed and shared are then decided by names alone |
-| 6. Fed types conform | the input must admit every value fed to it |
+| 6. Fed types conform | every value fed to an input must conform to its type |
 | 7. Shared types unify | one value supplies both inputs |
 | 8. One dimension scope | a dimension name is one size (II.1) |
 
@@ -1080,8 +1068,8 @@ A kept size can refuse a merge over a name no type shows: if `m1` bound `n = 3` 
 | --- | --- | --- |
 | equality and hashing of record types and of descriptions of outputs (§ 2.4, § 3.5) | counts | it is the layout that a numeric record's flat vector and its JAX tree structure read |
 | conformance and unification of record types (§ 2.1) | counts | otherwise a type would conform to one it does not equal, and unification would need an arbitrary tiebreak |
-| admitting a raw mapping, such as one a function returns or one given for an input (§ 2.1) | laid out in the declared order, then checked | construction at the boundary, so the key order of a user's mapping never matters |
-| admitting a record already built in another order | refused, naming both orders | the record has its own type, which does not conform |
+| checking a raw mapping against a record type, such as one a function returns or one given for an input (§ 2.1) | laid out in the declared order, then checked | construction at the boundary, so the key order of a user's mapping never matters |
+| checking a record already built in another order | refused, naming both orders | the record has its own type, which does not conform |
 | descriptions of inputs (§ 3.5) | does not count | inputs bind by name and have no layout, so an object's inputs do not form a record type |
 | selection at a list of paths (§ 4.2) | the object's own order, whatever the list's | the result is a part of the object, so it keeps the object's layout |
 | merge (§ 5.3) | the left operand's outputs, then the right's | the expression fixes it |
@@ -1089,8 +1077,6 @@ A kept size can refuse a merge over a name no type shows: if `m1` bound `n = 3` 
 | the levels of a batch (§ 2.4, § 5.3) | count | they are axes |
 
 ## 6. The kinds, one by one
-
-Each kind follows §§ 1 to 5; this section states only what is specific to it.
 
 ### 6.1 Base values and records
 
@@ -1178,7 +1164,7 @@ So the kernel has the outputs of its event type, and the function has none (§ 3
 > 1. **Value type:** its return type; its **outputs** are those of its return type, each output value a function (§ 3.2).
 > 2. **Inputs:** its arguments, in their order; an argument with a default is optional.
 > 3. **A function whose return value is a record** is determined by its output values, which are functions, so its outputs lose nothing.
-> 4. **A function that returns a law** has no outputs; to make the law available, it returns `{params: law}`.
+> 4. **A function that returns a law** has no outputs; to give the law a name, it returns `{params: law}`.
 > 5. **A function that returns a function** has that function's outputs.
 > 6. **Selecting** `f[p]` maps `w` to `f(w)` at `p`, with the same inputs.
 > 7. **Merge:** two functions merge into the function returning both results, `b`'s outputs feeding `a`'s inputs and every remaining input kept, optional ones included; both must state their inputs and return type (§ 5.3, § 5.5).
@@ -1263,7 +1249,7 @@ An external formal model (Appendix D.1) proves I1 for laws, samples, and batches
 ### 7.2 Cases the invariants exclude, and why
 
 > [!NOTE]
-> **Consequence** (of §§ 3 to 6). The invariants exclude four kinds of case, listed in full below:
+> **Consequence** (of §§ 3 to 6). The invariants exclude four kinds of case:
 > 1. summaries computed by sampling, and results that are not one value per field;
 > 2. labels, which no operation reads;
 > 3. the list form at the root, an extra rule for the name of the output at the root;
@@ -1442,16 +1428,15 @@ class FunctionSpec(TermSpec):
     output_spec: OutputSpec | None
 ```
 
-These classes are the types of § 2.1: `is_valid` is *admits*, with the same-kind cast of dtypes, a support that is not checked, and a record laid out in the declared order (§ 5.9); `free_dims`, `with_dim_sizes`, and `with_dim_names` act on dimension names, each bound within one dimension scope.
+These classes, with `RecordSpec` (§ 14) and `BatchSpec` (§ 18), are the types of § 2.1: `is_valid` tests whether a value conforms, with the same-kind cast of dtypes, a support that is not checked, and a record laid out in the declared order (§ 5.9); `free_dims`, `with_dim_sizes`, and `with_dim_names` act on dimension names, each bound within one dimension scope.
 The `meta` of an `OpaqueSpec` takes part in conformance and unification (§ 2.1, technical notes).
 A `DistributionSpec` is a law type, which holds the law's event spec (§ 8); a `ConditionalDistributionSpec` a kernel type, which holds the kernel's input spec and event spec; a `FunctionSpec` a function type, whose input spec or output spec may be unknown.
 
-`RecordSpec` is in § 14 and `BatchSpec` in § 18.
 A term spec of a law, kernel, function, or batch has no `[]` of its own: select from the output spec it holds, as `d.spec.event_spec["mu"]`.
 Conformance and unification (§ 2.1) are internal: the private `_unify_specs` in `core/_spec_base.py` checks them, and merges and bindings call it.
 
 > [!NOTE]
-> **Property (admitting a record, § 5.9).** Wherever a value meets a `RecordSpec` (a function's return, a call's argument, a kernel's conditioning value, `Record(..., event_template=...)`), a raw mapping is laid out in the declared order at each node and then checked: a function declared to return `RecordSpec(x=(), y=())` that returns `{"y": 0.0, "x": 1.0}` returns the record `{x, y}`, and its body, given `{"y": 0.0, "x": 1.0}` for an input of that type, receives `{"x": 1.0, "y": 0.0}`. A `Record` already built in another order is refused with `ValueError`, as is a `RecordSpec` in another order where one must conform: "fields ['y', 'x'] are not in the declared order ['x', 'y']; pass a plain mapping, which is laid out in the declared order, or build the record in that order".
+> **Property (checking a record against a `RecordSpec`, § 5.9).** Wherever a value meets a `RecordSpec` (a function's return, a call's argument, a kernel's conditioning value, `Record(..., event_template=...)`), a raw mapping is laid out in the declared order at each node and then checked: a function declared to return `RecordSpec(x=(), y=())` that returns `{"y": 0.0, "x": 1.0}` returns the record `{x, y}`, and its body, given `{"y": 0.0, "x": 1.0}` for an input of that type, receives `{"x": 1.0, "y": 0.0}`. A `Record` already built in another order is refused with `ValueError`, as is a `RecordSpec` in another order where one must conform: "fields ['y', 'x'] are not in the declared order ['x', 'y']; pass a plain mapping, which is laid out in the declared order, or build the record in that order".
 
 > [!NOTE]
 > **Property (the size shorthand).** Wherever an input, a `RecordSpec` field, or the keyword form of `OutputSpec` (§ 11) takes a type, a tuple of sizes is the `NumericArraySpec` of that shape, with no dtype or support: `InputSpec(x=())`, `RecordSpec(x=("n",))`, `OutputSpec(y=(3,))`. A bare int, as `x=3`, is refused.
@@ -1842,7 +1827,7 @@ class OutputSpec:
 
 </details>
 
-Equality: the same type and, for an output at the root, the same name; order-sensitive; an `OutputSpec` equals only another `OutputSpec`, and the hash agrees.
+Two `OutputSpec`s are equal when they have the same type, field order included, and, for an output at the root, the same name; an `OutputSpec` equals only another `OutputSpec`, and the hash agrees with equality.
 `OutputSpec` keeps `is_concrete`, `with_dim_sizes`, and `with_dim_names`; its free dimension names are `term_spec.free_dims`.
 A law's `event_spec=` argument keeps its own reading (III.7): a bare `RecordSpec` is positional, and an event at the root needs its name.
 Code outside `core/_specs.py` reads the form through one private helper, `_root_output_name(O)`, which returns the name of the output at the root, or `None`.
@@ -1855,7 +1840,7 @@ The keyword form alone may leave its type unspecified (§ 3.5): `OutputSpec(mean
 2. with a batch type whose elements carry only the default name `element`, it names the elements `mean`;
 3. with any other type, it raises `TypeError`, asking for a declared record.
 
-Until then, in conformance and unification it admits only a type that could complete it: a base type, or a batch type of base elements (§ 3.5). `InputSpec` refuses it as a source (§ 10), and `&` refuses it (§ 13).
+Until then, in conformance and unification only a type that could complete it conforms to it: a base type, or a batch type of base elements (§ 3.5). `InputSpec` refuses it as a source (§ 10), and `&` refuses it (§ 13).
 
 ### 11.3 Examples
 
@@ -2235,7 +2220,7 @@ class Record(NamedTree[Any], TrackedTerm):
 <summary>Technical note: the contract of <code>RecordSpec</code> and <code>Record</code></summary>
 
 1. **Paths** are those of § 1.2 and § 2.3: a `RecordSpec`'s are those of the records it types, and a `Record`'s continue into the objects its fields hold. `[]` is selection (§ 4.1, § 4.2), and on a `RecordSpec` it gives the type of the records' parts at a path; the path reader's refusals are those of § 12.1.
-2. **Order.** Record types conform and unify only in the same field order (§ 2.1); a raw mapping is laid out in the declared order and then admitted, and a record already built in another order is refused (§ 5.9).
+2. **Order.** Record types conform and unify only in the same field order (§ 2.1); a raw mapping is laid out in the declared order and then checked, and a record already built in another order is refused (§ 5.9).
 3. **Outputs.** A record's value type is its own type, so its outputs are its children (§ 3.2, case 1); its output spec, `OutputSpec(record.spec)`, is derived, and an empty record has none (§ 3.5).
 4. **`output`** returns the object at an output (§ 4.6); **`without`** is removal (§ 4.3); **`rename`** follows II.6's rules (§ 4.5); **`&`** is the merge of records and of record types (§ 5.3, § 5.5), by top-level name.
 
@@ -3109,7 +3094,6 @@ Each has a rule for the time before it, stated in Appendix B.
 4. **The unification of kernel and function types as a true meet.** § 2.1 unifies two kernel or function types only when their input types are equal, so two types that one type conforms to can lack a unification (§ 2.1, consequence 1). A true meet would take, for each input, the widest type both inputs accept, that is, the narrowest type to which both input types conform, since conformance is contravariant in inputs; and for the event or return type, the unification. It needs a join of types, which § 2.1 does not define. *Recommendation:* decide after the workshop. Until then unification requires equal input types.
 
 **Pending items of [`decisions.md`](decisions.md) that concern this design.**
-Each item gives the background, the options, and a recommendation.
 
 | Item | Question |
 | --- | --- |
@@ -3127,8 +3111,6 @@ Each item gives the background, the options, and a recommendation.
 | N32 | The file name of this design once accepted, and whether it replaces `declarations-and-addressing.md` |
 
 ### A.2 Open questions and issues found while writing
-
-Each item gives the reading the text adopts.
 
 1. **When the library stops building the named-whole form.** Source § 6.8 says once G1b merges; T19, § 5.5 of the source, and the probe allowance let selections at fields holding objects build it until G3, and the source marks T19 "Inconsistent". *Reading:* until G3.
 2. **"Has parts" without parts.** The source calls every law and batch an object "with parts", including a law over one array and a batch of arrays, which have no paths. *Reading:* a part is a selection at a path (§ 4.1), so an object without paths has no parts, and § 3.2 requires that only a base value has a name attached from outside it; where the source's steps say "a type with parts", Appendix B says "a type that is not a base type", which is what the keyword-form rules test; behaviour is unchanged.
@@ -3153,10 +3135,10 @@ Each item gives the reading the text adopts.
 
 The items below were found while applying the maintainer's decisions of 2026-10-19.
 
-21. **Field order in record conformance and unification.** *Settled 2026-10-19 by the maintainer:* order-sensitive, matching equality. A record type conforms to and unifies with another only when they have the same child names in the same order; a record built in another order is refused, while a raw mapping is laid out in the declared order and then checked, so an admitted record flattens in the declared order (§ 2.1, § 5.9). Today's code compares the names as sets (`RecordSpec._bind_dims_from_spec` and `_bind_dims_from_value`), while `__eq__` and `__hash__` keep order; S2b changes it (T33; C.3).
+21. **Field order in record conformance and unification.** *Settled 2026-10-19 by the maintainer:* order-sensitive, matching equality. A record type conforms to and unifies with another only when they have the same child names in the same order; a record built in another order is refused, while a raw mapping is laid out in the declared order and then checked, so a record that conforms flattens in the declared order (§ 2.1, § 5.9). Today's code compares the names as sets (`RecordSpec._bind_dims_from_spec` and `_bind_dims_from_value`), while `__eq__` and `__hash__` keep order; S2b changes it (T33; C.3).
 22. **A rename that regroups.** The rule of § 5.2 says a rename keeps factors, while a rename that gathers outputs of several factors under one group makes them one grouped sub-joint, whose factor inputs are none for a law, as G1a's done-condition requires. *Reading:* both hold: a rename keeps each factor it does not gather, and the gathered factors become one factor, as IV.1 keeps a grouped sub-joint one factor.
 23. **`BatchSpec`'s own equality.** The element name is not part of a batch's type (§ 2.1, § 6.5), yet `BatchSpec`, the code form of that type, carries the element spec, and O3 has its `==` compare the name, so that static data never holds a name that compares equal without it (§ 18.3). *Reading:* O3 stands: the type of Part I is `BatchSpec`'s name-free canonical form, which conformance, unification, a batch's equality, hashing, fingerprints, and pytrees use; output specs over batches whose elements carry different names are unequal, since they have different outputs (§ 3.5). The alternative, a `BatchSpec.__eq__` that ignores the name, is O3's rejected option.
-24. **What an unspecified output type admits.** An output spec whose type is unspecified admits only what could complete it: a base type or a batch of raw values. Conformance does not compare a batch's element name, while completing the type with a batch requires its elements to carry only the default name `element` (§ 11.2, O2). *Reading:* in conformance and unification an unspecified type admits any batch type of base elements; completing it then refuses a batch whose elements a maker named.
+24. **Which types conform to an unspecified output type.** Only a type that could complete an output spec whose type is unspecified conforms to it: a base type or a batch of raw values. Conformance does not compare a batch's element name, while completing the type with a batch requires its elements to carry only the default name `element` (§ 11.2, O2). *Reading:* in conformance and unification any batch type of base elements conforms to an unspecified type; completing it then refuses a batch whose elements a maker named.
 25. **"No factor inputs" for a kernel.** The decision says that every operation other than merge and rename gives a result with no factor inputs. A kernel that is its own factor has its inputs as factor inputs (§ 5.2, rule 1), and a selection keeps them (I14). *Reading:* such a result has no factor inputs beyond its inputs: none for a law, its inputs for a kernel.
 26. **The step that delivers the rule of § 5.2.** S3 is mechanical, and B.5 rule 4 lets a mechanical step change only names; G4 already rewrites every route of `condition_on` and adds `law.without`, so it takes the rule, with the marginal's product of factors in `operations/_marginal.py` (T32). *Reading:* G4; the maintainer may move it.
 27. **A law's root name and equality.** A law type holds its event type (§ 2.1), so the root name of a law over a base value, like a batch's element name, is stated by its event spec, not its type; § 2.4 does not say whether `Normal("x", 0, 1)` and `Normal("y", 0, 1)` are equal laws. *Reading:* not stated; the text makes no claim either way.
@@ -3190,6 +3172,10 @@ The items below were found while restructuring types, value types, paths, and ou
 43. **Selection by kind.** § 4.1 defines selection on laws, kernels, functions, and batches case by case: the marginal law, the kernel of marginal laws, `f[p](w) = f(w)[p]`, and the column. Each gives the same result as before. The property once named after the earlier term is now "Selecting commutes with sampling and with evaluation" (§ 4.1), and I13 is "Selecting commutes with evaluation". No rule changed.
 44. **The glossary's word for the value type.** S0's glossary additions named the concept that the value type replaces; S0 now adds *value type*, described as reached through `event_spec`, `output_spec`, `element_spec`, or the term's own `spec` (B.3), and the code gains no name for it (§ 8, B.0). *Reading:* this replacement, which the maintainer may drop.
 
+The item below was found while replacing "admits" with "conforms" on 2026-10-20.
+
+45. **Conformance by inclusion, and the rules by kind.** § 2.1 now uses one word for both relations: an object conforms to a type when it has the structure the type describes, and a type `A` conforms to a type `B` when every object that conforms to `A` conforms to `B`, within one dimension scope; the contravariance of kernel and function types in their inputs follows from it. The rules by kind stay normative, and they decide the cases that inclusion leaves open or reads otherwise: two unbound dimension names at one axis do not conform (the scope rule); a type that sets no dtype conforms to a type of its shape that sets one, although not every object of the first conforms to the second; any side conforms to a side `B` leaves unknown; and a law, kernel, function, or batch is checked through its own type. The unification is, as before, a type that conforms to both types. *Reading:* the rules by kind decide, and inclusion is the concept they implement; no rule changed.
+
 ## B. Implementation plan and sequencing
 
 **Key.** Step codes S0 to S4, G1a to G5, and R (the rename) are this design's steps, and E0 to E6, P0b, PV, and PL the execution plan's, listed in [`README.md`](README.md) § Steps; T1 to T33 are the transition rules of B.4; N1 to N32 are the pending items of [`decisions.md`](decisions.md); O1 to O16, R1 to R6, and Q1 to Q6 are the decision records of Appendix D.2; "fact N" is fact N of [`inputs-and-outputs.md`](inputs-and-outputs.md), Appendix E.
@@ -3197,7 +3183,6 @@ The items below were found while restructuring types, value types, paths, and ou
 Each step is one PR into `dev/overhaul`.
 [`README.md`](README.md) § Steps owns the order of the steps, their dependencies, their branches, and the cut; this appendix owns what each step delivers and its done-condition.
 
-Two forms of output spec recur below.
 The *keyword form* `OutputSpec(n=T)` names an output at the root; the *positional form* `OutputSpec(T)` names none.
 An *interim whole form* is the keyword form over a type `T` that is not a base type, which today's code accepts and § 3.2 forbids; it stays legal until G2.
 
@@ -3317,15 +3302,15 @@ S0 also gives each relation between types one word, rewording these passages (li
 
 | Sense | Passages | S0 writes |
 | --- | --- | --- |
-| a directional check that a value or type is admitted, binding dimension names | II.1 (`02-shared-abstractions.md:23`, `:39`, `:40`); III.7 (`03-term-kinds.md:461`); IV.4 (`04-distributions.md:162`, `:179`); V.6 (`05-functions.md:14`, `:42`, `:149`, `:204`); VI.0 (`06-operations.md:160`); VI.6 (`:286`) | "conforms"; for several at once "conform in one dimension scope" |
-| the symmetric type of values both admit | IV.2 (`04-distributions.md:86`, `:87`); III.2 (`03-term-kinds.md:64`, "Two opaque specs unify") | "unify" |
+| a directional check that a value or type conforms, binding dimension names | II.1 (`02-shared-abstractions.md:23`, `:39`, `:40`); III.7 (`03-term-kinds.md:461`); IV.4 (`04-distributions.md:162`, `:179`); V.6 (`05-functions.md:14`, `:42`, `:149`, `:204`); VI.0 (`06-operations.md:160`); VI.6 (`:286`) | "conforms"; for several at once "conform in one dimension scope" |
+| the symmetric type of the values that conform to both | IV.2 (`04-distributions.md:86`, `:87`); III.2 (`03-term-kinds.md:64`, "Two opaque specs unify") | "unify" |
 | both in one sentence | IV.2 (`04-distributions.md:83`) | "an output that does not conform to the input it feeds, or shared inputs that do not unify", in today's words |
 | completing a declared type with the type of the actual values, keeping its dtype and support | II.2 (`02-shared-abstractions.md:87`, `:113`); III.2 (`03-term-kinds.md:64`); VII.2 (`07-distribution-catalog.md:60`) | "completes", with "conforms" for its check |
 | an input of a joint's factors that no factor feeds | IV.2 (`04-distributions.md:18`, `:66`, `:70`, `:73`, `:76`, `:78`, `:81`, `:85`); VI.6, VI.9 (`06-operations.md:294`, `:368`) | "unfed"; IV.2's variable `unmet` becomes `unfed` |
 | today's code names | `package-structure.md:29`, `:34`, `:142` | unchanged; `_unify_specs` keeps its name |
 
 **The glossary.**
-- **S0 adds** base spec, non-base spec, node, group, column, value type (the type of what an object makes available, reached through `event_spec`, `output_spec`, `element_spec`, or the term's own `spec`), feeds, merge, conforms, unify, and *unfed* (replacing IV.2's "unmet"); adds *slot* and redefines *component* with this design's meanings of input and output.
+- **S0 adds** base spec, non-base spec, node, group, column, value type (the type of an object's values, reached through `event_spec`, `output_spec`, `element_spec`, or the term's own `spec`), feeds, merge, conforms, unify, and *unfed* (replacing IV.2's "unmet"); adds *slot* and redefines *component* with this design's meanings of input and output.
 - **S0 redefines** *field* and *path* (§ 1.2), *name* (names of slots, components, fields, levels), *marginal* ("a path or a list of paths"), *view* (`MarginalView`), and *signature* ("a law's components, a kernel's components with `|` and its slots, or a function's parameters").
 - **S0 narrows** *key* to the random key and a mapping's keys, and **removes** *packaging*, *key* as a field's path, *selection* except *selection order* (II.7), and *type hole*. II.2 states the rule for an output declaration whose type is unspecified, `None` until a producer completes it with `with_term_spec`, and the other passages that use the term say "an output declaration whose type is unspecified" and "completes" (line numbers at `dea1a7ed`: `02-shared-abstractions.md:76`, `:125`; `03-term-kinds.md:202`, `:397`; `06-operations.md:27`; `07-distribution-catalog.md:60`, `:206`).
 - **S0 does not add** producer, consumer, exposes, whole declaration, exposed declaration, address, component spec, leaf path, wrap, position, list of paths, merge category, or interim whole form.
@@ -3385,7 +3370,7 @@ m["G"]["mu"]         # KeyError: paths do not chain at the name (T16)
 | --- | --- | --- | --- | --- |
 | T1 | An output spec over a law or kernel type has the fields of one sample as outputs, typed by one sample's values: `OutputSpec(law_spec).components` is `{mu: NumericArraySpec(()), tau: ...}`. A merge accepts such an operand: for a law `ll` over laws, declared positionally, `ll & Normal("z", 0.0, 1.0)` builds, and sampling it raises `ResultSchemaError` | output specs positional over a law or kernel type; merges of laws and kernels | — | today's reading (fact 11); S2b gives an output spec over a law or kernel type no outputs, and condition 2 of § 5.3 refuses it |
 | T2 | `merge` on records is deep: `Record({"g": {"b": 1.0}}).merge(Record({"g": {"c": 2.0}}))` is `{g: {b, c}}` | `NamedTree`, `Record`, `RecordSpec`, `RecordBatch` | — | today's rule (fact 5); S2b makes it shallow, so S3's `&` is a rename |
-| T33 | Record conformance, unification, and admission ignore field order: `RecordSpec(y=(), x=())` conforms to `RecordSpec(x=(), y=())`, although the two types are unequal; a `Record` built as `{y, x}` is admitted by it and keeps its own order; a raw mapping `{"y": 0.0, "x": 1.0}` is laid out as `{x, y}` when a function returns it, but reaches a function's body or a kernel in the caller's order when given for an input | `RecordSpec._bind_dims_from_spec`, `_bind_dims_from_value`, and their callers; call-time inputs (`functions/_contract.py`) and conditioning values (`operations/_given.py`) | — | today's rule (A.2 item 21); S2b applies § 5.9 |
+| T33 | Record conformance and unification, and the check of a record against a record type, ignore field order: `RecordSpec(y=(), x=())` conforms to `RecordSpec(x=(), y=())`, although the two types are unequal; a `Record` built as `{y, x}` conforms to it and keeps its own order; a raw mapping `{"y": 0.0, "x": 1.0}` is laid out as `{x, y}` when a function returns it, but reaches a function's body or a kernel in the caller's order when given for an input | `RecordSpec._bind_dims_from_spec`, `_bind_dims_from_value`, and their callers; call-time inputs (`functions/_contract.py`) and conditioning values (`operations/_given.py`) | — | today's rule (A.2 item 21); S2b applies § 5.9 |
 
 #### Rules that end at S3
 
@@ -3598,7 +3583,7 @@ V.6 and III.3 state the reading of a bare `output_spec`. `STYLE_GUIDE.md` does n
 
 #### S2b: the operations on input and output specs
 
-*Delivers:* § 10 and the size shorthand (§ 9), with § 10's four messages, `InputSpec.__contains__` and `get`; § 11, selection and removal on output specs (§ 4.4, § 4.3), equality and hashing, `OutputSpec.__iter__`'s refusal; the shallow record merge; order-sensitive conformance and unification of records, and admission by § 5.9 (§ 9's note); the docs of B.3.
+*Delivers:* § 10 and the size shorthand (§ 9), with § 10's four messages, `InputSpec.__contains__` and `get`; § 11, selection and removal on output specs (§ 4.4, § 4.3), equality and hashing, `OutputSpec.__iter__`'s refusal; the shallow record merge; order-sensitive conformance and unification of records, and the check of records by § 5.9 (§ 9's note); the docs of B.3.
 
 | Item | Files | Call sites and tests |
 | --- | --- | --- |
@@ -3860,7 +3845,7 @@ Today `*` merges laws and kernels, as `k * p`.
 | private names | `_exposed_components`, `_component_name`, `_components_of`, `_callable_component`, `_root_component_name`, `_ByComponent` (`operations/_moments.py`) | `_exposed_outputs`, `_output_name`, `_outputs_of`, `_callable_output_name`, `_root_output_name`, `_ByOutput` | R |
 | the docs page | `docs/api/declarations.md` | `docs/api/input_and_output_specs.md` | R |
 | a place an object receives a value | "input slot", "slot", "given slot", "optional slot" | "input", "a kernel's input", "optional input" | S0 keeps "slot"; R |
-| a name under which an object makes a value available | "component", "produced slot", "output slot" | "output"; "component" keeps only a mixture's laws | S0 keeps "component"; R |
+| a name by which other objects refer to a value of an object | "component", "produced slot", "output slot" | "output"; "component" keeps only a mixture's laws | S0 keeps "component"; R |
 | the specs | "input declaration", "output declaration", "event declaration" | "input spec", "output spec", "event spec" | R |
 | sides of a term | "map-like kind", "producer", "consumer" | not terms: "inputs", "value type" | S0, S2a |
 | an output spec whose type is not known yet | "type hole" (the glossary, II.2, III.4, III.7, VI.0, VII.2, VII.6) | "an output spec whose type is unspecified", completed by `with_term_spec`; the glossary entry is removed | S0 (in today's words: "output declaration"); R |
@@ -3900,7 +3885,7 @@ For a law `d` over `{a, g: {b, c}}` and a sample `x = sample(d)`:
 | optional inputs of a `Function` | read from `input_spec` alone | parameters with defaults are optional (O9) | S2b |
 | a law or kernel as a value (an output spec over a law or kernel type) | has a sample's fields as outputs, typed by a sample (fact 11); merges, then fails at sampling | has no outputs; a merge refuses it | S2b |
 | record merge | deep | shallow, by top-level name | S2b |
-| field order when a record type conforms or unifies, or a built record is admitted | ignored: `{y, x}` conforms to `{x, y}`, though unequal, and an admitted record keeps its own order | must match, as equality requires; otherwise `ValueError` | S2b |
+| field order when a record type conforms or unifies, or a built record is checked against one | ignored: `{y, x}` conforms to `{x, y}`, though unequal, and a record that conforms keeps its own order | must match, as equality requires; otherwise `ValueError` | S2b |
 | a raw mapping given for a record input or as a kernel's conditioning value | checked by its set of names and passed on in the caller's order; a function's returned mapping is already laid out in the declared order | laid out in the declared order, then checked (§ 5.9) | S2b |
 | a batch's element | a bare type, no base element's name; columns typed by the element; names cannot be renamed | `element_spec` holds the name (`element` for a raw batch); columns typed by their `BatchSpec`; names out of equality, hashing, fingerprints, and pytrees | S4 |
 | a view or marginal of a group | a whole object named by the group, indexed by `g/b` while its samples use `b` | has its children as outputs | G1a |
@@ -3940,11 +3925,11 @@ A law and its own values disagree on what a path means (run at `a703f15e`, for `
 | `mean(d)["g/b"]` | the mean of `b`, since #576 | `mean(d)["g"]` | `KeyError` |
 | `Normal("x", 0.0, 1.0)["x"]` | the law itself | `sample(Normal("x", 0.0, 1.0))["x"]` | `TypeError`: JAX does not index by string |
 
-Four causes: a tuple means two paths on a law and one nested path on a record or batch; `Record[...]` stops at fields; a name can stand outside the value it names, as `d["g"]` is declared whole under `g`; and summaries renamed their fields, which #576 fixed.
+The mismatches have four causes: a tuple means two paths on a law and one nested path on a record or batch; `Record[...]` stops at fields; a name can stand outside the value it names, as `d["g"]` is declared whole under `g`; and summaries renamed their fields, which #576 fixed.
 
 **Inputs.**
 Declaring a kernel's inputs from other objects' outputs takes conversions: `RecordSpec(ke.event_spec.components)` for a kernel whose event is named at the root, then `x.event_spec.spec.without("sigma").merge(...)`.
-Four defects, at `a703f15e`:
+Declaring inputs has four defects, found at `a703f15e`:
 1. A record read as inputs is read by its leaf paths: after `x.with_path_names({"a": "g/a", "b": "g/b"})`, `conditional_distribution(fn, given_spec=...)` for `fn(a, b, c)` raises "unknown parameters ['g/a', 'g/b']".
 2. `InputSpec(RecordSpec(a=(), b=()))` raises `TypeError`, although `conditional_distribution` accepts the record as `given_spec` (fact 1).
 3. `RecordSpec(a=())` accepts the size shorthand while `InputSpec(a=())`, `given_spec={"a": ()}`, and `OutputSpec(a=())` raise (fact 4).
@@ -4137,7 +4122,7 @@ The four exclusions of the decision of 2026-10-17 (equality, hashing, pytree sta
 ### D.5 The inputs and outputs proposal
 
 [`inputs-and-outputs.md`](inputs-and-outputs.md) synthesized three independent proposals into one, merged here on 2026-10-18 with its recommended answer to each of its questions Q1 to Q6.
-This design takes from it the type of what an object makes available, now the value type, inputs and outputs as plain parallel nouns, `OutputSpec[]` by path, the rule that a law as a value has no outputs, the general merge with its conditions, properties, and value, the invariants, and the shallow record merge.
+This design takes from it the type of an object's values, now the value type, inputs and outputs as plain parallel nouns, `OutputSpec[]` by path, the rule that a law as a value has no outputs, the general merge with its conditions, properties, and value, the invariants, and the shallow record merge.
 Its Appendix A proves the merge properties of § 5.7, its Appendix D records the alternatives its three sources chose, and its Appendix E records how each "fact N" cited here was checked.
 
 The merge made four calls of its own, covered by the acceptance:
@@ -4229,9 +4214,10 @@ The decision "a function with a wrapped output returns the record itself; ProbPi
 | 2026-10-19 | The plan is reorganized into the maintainer's outline (`8af5bd11`); the maintainer finds it hard to assess, and this rewrite begins from an approved outline, style sample, and figures (`6b738dbb`, `605179b4`), with the design held fixed |
 | 2026-10-19 | This rewrite replaces the reorganized text of `declarations-and-addressing-io.md` at `8af5bd11`, with the design unchanged, and keeps the file name until N32 decides it; `declarations-and-addressing.md` and the tag `plans-before-io` stay for recovery |
 | 2026-10-19 | Clarity fixes after the maintainer's first review: the type outputs are read from, outputs at one level only, § 3.4's worked comparison of outputs and paths, figures of batches of functions and of kernels, B.0's implementation principle, and a sweep of constructions that read as identities; the design is unchanged, and A.2 item 19 records the one question raised |
-| 2026-10-19 | Revised after a colleague's review, with the maintainer's decisions: only merge and rename keep factors (§ 5.2; G4, T32); functions feed on their own justification (§ 5.5); a batch's element name belongs to its element spec, not its type (§ 2.1, § 6.5); unification "where it exists" and a true meet as an open question (A.1); an unspecified output type admits only what could complete it (§ 3.5); the formal model's wider coverage (D.1); field order in record conformance left open (A.2 item 21); A.2 items 21 to 27 |
+| 2026-10-19 | Revised after a colleague's review, with the maintainer's decisions: only merge and rename keep factors (§ 5.2; G4, T32); functions feed on their own justification (§ 5.5); a batch's element name belongs to its element spec, not its type (§ 2.1, § 6.5); unification "where it exists" and a true meet as an open question (A.1); only a type that could complete an unspecified output type conforms to it (§ 3.5); the formal model's wider coverage (D.1); field order in record conformance left open (A.2 item 21); A.2 items 21 to 27 |
 | 2026-10-19 | The maintainer settles A.2 item 21: record conformance and unification are order-sensitive, matching equality (§ 2.1); then the ordering principle of § 5.9, under which a raw mapping is laid out in the declared order and a built record in another order is refused; S2b delivers both, with T33 until then |
 | 2026-10-20 | The definition of outputs rewritten after the maintainer's review: motivated by example, three requirements, and one definition by kind, absorbing the former § 3.3's rule, with "output value" for "value at an output" and "offers" dropped; § 3.3 now holds the examples and signatures. B.0 adds that docstrings are written for users, and Part II's docstrings are rewritten so, with each contract in a technical note beside its block; the design is unchanged, and A.2 item 28 records the one question raised |
 | 2026-10-20 | The motivation of shared paths rewritten (then § 2.2): a path must identify one quantity in a law, samples from it, its mean, its marginal laws, and batches of samples, so all take their paths from the event type; § 4.1 states that selecting a path from a law gives the marginal law, a view; the text says "a law over `T`", "a sample", and "a random variable" for what a law is the distribution of; the figures are regenerated; the design is unchanged, and A.2 items 31 and 32 record the readings |
 | 2026-10-20 | The terms "type hole" and "record of outputs" removed, with their rules stated directly (§ 3.5, § 5.3, § 5.5, § 11.2); "event spec" defined in Part II only (§ 8); forward uses of the output at the root removed from §§ 1 and 2; kind-specific items moved from § 3.5's definition box to § 6; the design is unchanged, and A.2 items 33 to 35 record the readings |
 | 2026-10-20 | The structure sections restructured with the maintainer's decisions: § 2.1 relates kinds and types; Part I drops "spec", and § 3.5 becomes "Describing an object's inputs and outputs", with § 8's table of code forms; paths are defined recursively on types (§ 2.3); the value type (§ 2.2) replaces the earlier type of what an object yields, and outputs are defined on types and read from the value type (§ 3.2); output values, selection, and merge's value are stated by kind; S0 removes the glossary's *type hole*; the figures `produced-paths` and `produced-outputs-paths` are renamed `shared-paths` and `outputs-and-paths`; the design is unchanged, and A.2 items 36 to 44 record the readings |
+| 2026-10-20 | Revised with the maintainer's edits: § 1 is retitled "Objects, values, and paths"; § 2.1 lists the types in a table and uses "conforms" for both relations, of an object to a type and of a type to a type, in place of "admits", with the contravariance of kernel and function types derived; § 3.2 motivates outputs as names other objects refer to, and the text no longer says that an object "makes values available"; announcing and pointing sentences, fragments, and empty asides are removed throughout; the design is unchanged, and A.2 item 45 records the reading |
