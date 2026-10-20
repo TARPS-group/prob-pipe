@@ -958,6 +958,55 @@ def figures() -> dict[str, Canvas]:
         "legend-objects": legend_figure(merges=False),
         "legend-merge": legend_figure(objects=False),
         "object-structure": structure_figure(),
+        "produced-paths": row_figure(
+            "A law, one of its draws, its mean, and a batch of its draws share one set of paths",
+            [
+                (
+                    Obj(
+                        "d",
+                        "law",
+                        outputs=[Part("a"), Part("g", [Part("c"), Part("e")])],
+                        show_ports=False,
+                    ),
+                    ["a law over {a, g: {c, e}}"],
+                ),
+                (
+                    Obj(
+                        "a draw",
+                        "record",
+                        outputs=[
+                            Part("a", label="a: 0.4"),
+                            Part("g", [Part("c", label="c: 1.2"), Part("e", label="e: -0.3")]),
+                        ],
+                        show_ports=False,
+                    ),
+                    ["one draw of d"],
+                ),
+                (
+                    Obj(
+                        "the mean",
+                        "record",
+                        outputs=[
+                            Part("a", label="a: 0.0"),
+                            Part("g", [Part("c", label="c: 1.0"), Part("e", label="e: 0.0")]),
+                        ],
+                        show_ports=False,
+                    ),
+                    ["the mean of d"],
+                ),
+                (
+                    Obj(
+                        "draws",
+                        "batch",
+                        outputs=[Part("a"), Part("g", [Part("c"), Part("e")])],
+                        levels="sample",
+                        show_ports=False,
+                    ),
+                    ["100 draws of d"],
+                ),
+            ],
+            gap=44,
+        ),
         "record-tree": single_figure(
             "The record {a: 1.0, g: {b: 2.0, c: 3.0}} as a tree",
             Obj("r", "record", outputs=group, show_ports=False),

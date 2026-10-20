@@ -100,27 +100,21 @@ Figures read from right to left; § 3.6 gives their legend, once inputs and outp
 
 ## The structure every object has
 
-This overview names three ideas informally; the sections listed below define them.
-Every object has:
-1. **parts**: a part is what selecting at a path gives, as `d[g/c]` for the path `g/c`;
-2. a **produced object**, which is what it produces: a base value, a record, or a batch produces itself, a law or kernel a draw, and a function its return value;
-3. **outputs**, the names under which it makes values available to other objects, fixed by the type of its produced object.
+Part I rests on three ideas, introduced here informally and defined in the sections the table below lists.
 
-Paths, and so parts, always come from records: only a record has named children, and a law, kernel, function, or batch has the paths of the record it holds, so a law over an array has none.
-A batch is also selected by *position* along its levels, as `draws[3]`; that is a second way of selecting, and it gives no part.
-The type of the produced object fixes both the paths and the outputs.
+1. **The produced object.** Every object produces something. A law produces random draws, a kernel produces a draw at each value of what it conditions on, and a function produces a return value at each value of its arguments; a base value, a record, and a batch produce themselves. An object's paths and its outputs, the two ideas that follow, are both defined from its produced object.
+2. **Paths and parts.** A *path*, such as `g/c`, is the sequence of names that leads from the root of a record to one of its entries. Only records have named entries, so an object's paths are defined as the paths of the type of its produced object. For a law whose draws are records `{a, g: {c, e}}`, `g/c` is therefore a path of the law, of each of its draws, of its mean, and of a batch of its draws. A law over a single array has no paths, since its draws have no named entries. Selecting at a path gives a *part*, as `d[g/c]` is the part of the law `d` at `g/c`. A batch is also selected by position along its levels, as `draws[3]`; this is a separate way of selecting, and it gives no part.
+3. **Outputs.** An object's *outputs* are the names under which it makes values available to other objects; they are its connection points. Each output names either the whole produced object, when it is a base value, or one of its children, when it is a record; § 3.2 gives every case, including the objects that have no outputs. So a law over `{a, g: {c, e}}` has the outputs `a` and `g`; `g/c` is a path of that law and not an output, since it names a node below a child.
 
 ![A law d over {a, g: {c, e}}. To its left, a dashed arrow labelled "produces" points to a draw, the record {a: 0.4, g: {c: 1.2, e: -0.3}}. The law's box holds the tree of its paths a, g, g/c, g/e, with output ports a and g on its left edge.](figures/object-structure.svg)
-*Figure: a law `d` over `{a, g: {c, e}}`. The tree in its box shows its paths `a`, `g`, `g/c`, `g/e`, and its parts are its selections there, as `d[g/c]`; its produced object is a draw, a record of that type; its outputs are `a` and `g`, the ports on its left edge, while `g/c` and `g/e` are paths only.*
-
-How to read Part I: § 1 defines objects, kinds, and records, and each idea is then defined where the table says.
+*Figure: a law `d` over `{a, g: {c, e}}`. Its produced object is a draw, a record of that type. The tree in its box shows its paths `a`, `g`, `g/c`, and `g/e`, which are the draw's paths; its parts are its selections at these paths, as `d[g/c]`. Its outputs are `a` and `g`, the ports on its left edge.*
 
 | Idea | Defined in |
 | --- | --- |
-| paths | § 1.2 for records; § 2.3 for every object, with why every path comes from a record |
-| produced object | § 2.2, after types (§ 2.1) |
+| the produced object | § 2.2, after types (§ 2.1) |
+| paths | § 1.2 for records; § 2.3 for every object |
 | outputs | § 3.2, with examples in § 3.3 |
-| the three side by side | § 3.4 |
+| the three together | § 3.4 |
 | parts, and positions | § 4.1, once selection is defined |
 | what uses them | selecting (§ 4), merging (§ 5), each kind (§ 6), the invariants (§ 7) |
 
@@ -147,10 +141,13 @@ Examples: the array `2.5`; the string `"abc"`; the law `mu ~ Normal(0, 1)`; the 
 
 ### 1.2 Records, paths, nodes, fields, and groups
 
+A workflow refers to the quantities inside its objects by name, such as the `mu` of a model or the group `g` of its parameters.
+These names are the names of the entries of records, since a record is the only kind of value whose entries are named; § 2.3 defines the paths of every other kind from a record type.
+
 > [!IMPORTANT]
 > **Definition (record and its places).**
 > 1. A *name* is a non-empty string without `/`.
-> 2. A *record* is a tree of named entries: each entry has a name, unique among its siblings, and holds another record or any other object, such as an array or a law.
+> 2. A *record* is a tree of named entries. Each entry has a name, unique among its siblings, and holds either another record or any other object, such as an array or a law.
 > 3. A *node* of a record is the record itself, its *root*, or an entry at any depth below it.
 > 4. The *path* of a node is the names from the root down to it, joined by `/`, as `g/b`; the root has no path.
 > 5. A *child* of a node is an entry directly under it. The *canonical order* lists the nodes depth first, each node before its children, and siblings in insertion order.
@@ -164,7 +161,7 @@ Examples: the array `2.5`; the string `"abc"`; the law `mu ~ Normal(0, 1)`; the 
 > [!NOTE]
 > **Consequence** (of the definition).
 > 1. Sibling names are distinct, so a path names at most one node; two groups may reuse a name, as `g1/theta` and `g2/theta`.
-> 2. A base value has no paths: an array's entries are indexed by position, which is not a path.
+> 2. A base value has no paths, since it has no named entries; an array's entries are indexed by position, which is not a path.
 
 A field may hold a law or any other object; § 2.3 continues paths into it.
 
@@ -172,22 +169,25 @@ A field may hold a law or any other object; § 2.3 continues paths into it.
 
 ### 2.1 Types, and when one admits another
 
+A type describes which objects are allowed, for example as the value of an input, without stating those objects.
+The design reads types wherever it must decide something before any value exists: whether a value may be supplied to an object (§ 3.1), what an object produces (§ 2.2), and which paths it has (§ 2.3).
+
 > [!IMPORTANT]
 > **Definition (type).** A *type* describes a set of objects, the objects it *admits*. Each type is one of the following, and holds what is listed:
 > 1. an *array type* holds a shape, whose sizes are integers or dimension names, and optionally a dtype and a support; it is written by its shape, as `(3,)` or `(n, m)`, with its dtype after it when set;
 > 2. an *opaque type* holds, optionally, a Python type and metadata;
 > 3. a *record type* holds a tree of names, as a record has, with a type at each field;
-> 4. a *law type* holds the law's *event type*, which is the type of the objects the law is a distribution over; every law has an event type, whether or not it can be sampled;
-> 5. a *kernel type* holds, for each value the kernel conditions on, a name, a type, and whether that value may be omitted; and it holds the kernel's event type;
+> 4. a *law type* holds one type, the law's *event type*, which is the type of the objects the law is a distribution over; every law has an event type, whether or not it can be sampled;
+> 5. a *kernel type* holds, for each value the kernel conditions on, a name, a type, and whether that value may be omitted; it also holds the kernel's event type;
 > 6. a *function type* holds the same three things for each argument of the function, and the function's *return type*, which is the type of its return value; the arguments or the return type may be unknown;
-> 7. a *batch type* holds the batch's *element type*, which is the type of one element, and its levels. The name a batch of base values gives its elements is not part of its type: it belongs to the batch's element spec (§ 6.5), which merges, outputs, and renames read.
+> 7. a *batch type* holds the batch's levels and its *element type*, which is the type of one element. The name a batch of base values gives its elements is not part of its type: the batch's element spec (§ 6.5) holds it, and merges, outputs, and renames read it there.
 >
 > Array and opaque types are *base types*. A *law over* `T` is a law whose event type is `T`, as a law over `{mu, sigma}`.
 
 > [!IMPORTANT]
 > **Definition (dimension name, dimension scope).** A *dimension name*, such as `n`, is an array size given by a name.
 > A *dimension scope* is a set of types checked together, namely the fields of one type, or all the types that one check or one merge (§ 5) compares.
-> Within one scope a name stands for one size: its first occurrence against a size binds it; a later occurrence that disagrees is refused; and two different unbound names at one axis are refused, since nothing says whether they are equal (II.1).
+> Within one scope a name denotes one size: its first occurrence against a size binds it; a later occurrence that disagrees is refused; and two different unbound names at one axis are refused, since nothing says whether they are equal (II.1).
 
 > [!IMPORTANT]
 > **Definition (admits).** An array type admits an array whose shape matches its own, binding its dimension names, and whose dtype casts into its own by NumPy's same-kind rule; a support only describes, and is not checked.
@@ -197,8 +197,8 @@ A field may hold a law or any other object; § 2.3 continues paths into it.
 > A law, kernel, function, or batch type admits an object of its kind whose type conforms to it (below).
 
 > [!IMPORTANT]
-> **Definition (conforms, unify).** A type `A` *conforms* to a type `B` when an object of type `A` may stand wherever `B` is required: roughly, when `B` admits everything `A` admits, within one dimension scope.
-> Two types *unify* when one type, their *unification*, may stand for both: roughly, the type of a value both must admit.
+> **Definition (conforms, unify).** A type `A` *conforms* to a type `B` when an object of type `A` may be used wherever `B` is required: roughly, when `B` admits everything `A` admits, within one dimension scope.
+> Two types *unify* when one type, their *unification*, may be used in place of both: roughly, the type of a value both must admit.
 > The technical notes below give the rules by kind, which are normative.
 
 > [!TIP]
@@ -248,10 +248,21 @@ Any other pair, such as an array type with a record type, does not unify.
 
 ### 2.2 What an object produces
 
-Informally, a *draw* of a law is a random object that the law's event type admits, distributed by the law.
+**Why the produced object is needed.**
+A law, one of its draws, its mean, and a batch of its draws are four different objects, yet in each of them `g/c` should mean one quantity: the quantity `g/c` that the law describes.
+The law itself has no entry called `g/c`; its draws do.
+So the design defines a law's paths from its draw rather than from the law: each draw, the mean, and each element of a batch of draws is a record with the tree of names of the law's event type, and so all of them have the paths of that type.
+The same holds for connecting objects: what another object receives from a law is a draw or a child of a draw, and never a property of the law itself, such as its density.
+
+The produced object therefore serves two purposes:
+1. **Paths are defined against it** (§ 2.3), so that a law, its draws, its summaries (§ 6.2), and batches of its draws have one set of paths. That selecting a part commutes with sampling and with summaries then follows (§ 4.1, § 7).
+2. **Outputs are defined against it** (§ 3.2), so that an object's outputs, its connection points to other objects, are determined by its produced type; and combining two objects by name (§ 5) produces a record built from the two produced objects (§ 5.5).
+
+A *draw* of a law is a random object distributed by the law; the law's event type admits it.
+Every law has draws in this sense, whether or not it can be sampled: sampling computes a draw, while the law alone defines what a draw is.
 
 > [!IMPORTANT]
-> **Definition (produced object, produced type).** An object's *produced object* is fixed by its kind, and its *produced type* is the type of its produced object:
+> **Definition (produced object, produced type).** An object's *produced object* is stated by its kind, and its *produced type* is the type of its produced object:
 >
 > | Kind | Produced object | Produced type |
 > | --- | --- | --- |
@@ -259,34 +270,43 @@ Informally, a *draw* of a law is a random object that the law's event type admit
 > | law | a draw | the law's event type |
 > | kernel | at each value of what it conditions on, a draw | the kernel's event type |
 > | function | at each value of its arguments, its return value | the function's return type |
-> | batch | the batch itself | the batch's own type (a batch type) |
+> | batch | the batch itself, with its elements along its levels | the batch's own type, a batch type |
+
+The produced type is read from the object's type (§ 2.1) without producing anything, so a law that cannot be sampled and a function that has not been called still have one; only a function whose return type is unknown has none until it is called.
+A law over `{mu, sigma}` produces records `{mu, sigma}`, so its produced type is the record type `{mu, sigma}`; a function from `x` to `{y, z}` produces, at each value of `x`, a record `{y, z}`.
 
 > [!NOTE]
 > **Consequence** (of this definition, § 2.3, and § 3.2).
 > 1. An object's paths and outputs depend only on its produced type, apart from the name of an output at the root, which the object states (§ 3.2).
-> 2. So a law's outputs and paths are those of its event type, whether or not it can be sampled; a kernel's are those of its event type; a function's are those of its return type; a record's or a batch's are those of its own type.
+> 2. So a law's paths and outputs are those of its event type, whether or not it can be sampled; a kernel's are those of its event type; a function's are those of its return type; a record's or a batch's are those of its own type.
 > 3. A law's or kernel's produced object is random, so a statement about it is a statement about the law of a draw.
 
-A law over `{mu, sigma}` produces records `{mu, sigma}`, so its produced type is the record type `{mu, sigma}`; a function from `x` to `{y, z}` produces, at each `x`, a record `{y, z}`.
+![Four objects side by side with the same tree a, g, g/c, g/e: a law d over {a, g: {c, e}}; one of its draws; its mean; and a batch of 100 of its draws over the level sample.](figures/produced-paths.svg)
+*Figure: a law `d`, one of its draws, its mean, and a batch of its draws have one set of paths, those of `d`'s produced type `{a, g: {c, e}}`.*
 
 ### 2.3 The paths of every object
 
-Only a record type has named children; every other kind takes its paths from the type it holds.
+**Why paths come from records.**
+A path identifies a node by a sequence of names (§ 1.2), so that an operation such as a selection (§ 4) can refer to the node.
+Names come only from records (§ 1.2), since a record is the only kind of value with named entries.
+A law, a kernel, a function, and a batch have no named entries of their own, but each type of these kinds holds another type: a law's or kernel's event type, a function's return type, or a batch's element type.
+When that type is a record type, the object's paths are the paths of that record type. For a law, a kernel, or a function, the held type is the produced type (§ 2.2); for a batch, the element type has the same paths as the batch type, which is the produced type. So an object's paths are defined as the paths of its produced type.
 
 > [!IMPORTANT]
 > **Definition (paths, column).**
-> 1. The *paths* of a type are: for a record type, the paths of its tree, continuing below a field of law, kernel, function, or batch type into that type's paths; for a law or kernel type, its event type's paths; for a function type, its return type's paths; for a batch type, its element type's paths; for a base type, none.
-> 2. The paths of an object are the paths of its type.
+> 1. The *paths* of an object are the paths of its produced type.
+> 2. The paths of a type are:
+>    1. for a record type, the paths of its tree (§ 1.2), continuing below each field whose type is a law, kernel, function, or batch type into that type's paths;
+>    2. for a law or kernel type, the paths of its event type;
+>    3. for a function type, the paths of its return type;
+>    4. for a batch type, the paths of its element type;
+>    5. for a base type, none.
 > 3. The node of a batch at a path `p` is its *column* at `p`: the batch, over the same levels, of each element's node at `p`.
 
-§ 4.1 defines the part of an object at each of its paths, through selection.
+The paths of an object are also the paths of its type: for a value or a batch, the type is the produced type, and for a law, kernel, or function, the rules for law, kernel, and function types give the type the paths of its event or return type, which is the produced type.
+§ 4.1 defines the selection `x[p]` at a path `p` of an object `x`, and calls `x[p]` a *part* of `x`.
 
-> [!NOTE]
-> **Consequence (every path comes from a record).** A law's or kernel's paths come from its event type, a function's from its return type, and a batch's from its element type, and each name in them is a child in a record type; so a law over an array, or a batch of arrays, has no paths.
-> Paths continue through held objects, and every name is still a child in a record type: a record whose field `g` holds a law over `{mu}` has the path `g/mu`, where `mu` is a child of the law's event type.
-> The other names a type holds are not paths: the names of a kernel's or function's arguments (§ 2.1), and the names of a batch's levels.
-
-| Kind | Its paths are those of | An example with no paths | Positions |
+| Kind | Its paths are those of | An example with no paths | Selected by position |
 | --- | --- | --- | --- |
 | base value | nothing | every base value | no |
 | record | its own tree, continuing into the objects its fields hold | a record with no entries | no |
@@ -295,11 +315,13 @@ Only a record type has named children; every other kind takes its paths from the
 | batch | its element type | a batch of arrays | yes: a position along its levels selects an element or a smaller batch, as `draws[3]` |
 
 > [!NOTE]
-> **Consequence** (of the definition).
-> 1. A law's paths come from its event type, not from sampling, so a law that cannot be sampled has the same paths as one that can.
-> 2. A record's fields are only its own: a path through a field into a law is a path of the record, not a field.
-> 3. A function whose return type is unknown has no paths known before it is called.
-> 4. A position is not a path: it selects from a batch along its levels, not by name.
+> **Consequence (every path comes from a record).**
+> 1. Each name in a path is the name of a child in a record type, so an object whose produced type neither is a record type nor holds one, such as a law over an array or a batch of arrays, has no paths.
+> 2. Paths continue into the objects that fields hold: a record whose field `g` holds a law over `{mu}` has the path `g/mu`, where `mu` is a child of the law's event type. The path is the record's, but the record's fields are only its own entries, so `g/mu` is not a field.
+> 3. A law's paths come from its event type, not from sampling, so a law that cannot be sampled has the same paths as one that can.
+> 4. A function whose return type is unknown has no paths known before it is called.
+> 5. The other names a type holds are not paths: the names of a kernel's or function's arguments (§ 2.1), and the names of a batch's levels.
+> 6. A position is not a path: it selects from a batch along its levels, not by name, and § 4.1 keeps it apart from parts.
 
 ![The record r with the field x and the field g, which holds a law d over mu and sigma.](figures/held-field.svg)
 *Figure: for a law `d` over `{mu, sigma}`, the record `{x: 3.0, g: d}` has the paths `x`, `g`, `g/mu`, `g/sigma`; its fields are `x` and `g`.*
@@ -311,16 +333,19 @@ Only a record type has named children; every other kind takes its paths from the
 > Two laws, kernels, or functions are equal when they have equal types and the same distribution or map.
 > Two batches are equal when they have the same levels, in the same order, equal element types, and equal elements.
 
-The name a batch of base values gives its elements is not part of its type (§ 2.1), so equality does not compare it. Unlike a label, it is read: merges, outputs, and renames take it from the batch's element spec (§ 6.5), so equal batches can merge differently (§ 7.2).
+The name a batch of base values gives its elements is not part of its type (§ 2.1), so equality does not compare it. Unlike a label, the name is read: merges, outputs, and renames take it from the batch's element spec (§ 6.5), so equal batches can merge differently (§ 7.2).
 
 ## 3. Inputs and outputs
 
 An object receives values at its inputs and makes values available to other objects at its outputs.
+Inputs and outputs are how objects connect: an output of one object can supply the input of the same name of another, as § 5 defines.
 
 ### 3.1 Inputs
 
+An input is how an object depends on a value it does not produce: a kernel depends on the values it conditions on, and a function on its arguments.
+
 > [!IMPORTANT]
-> **Definition (input).** An *input* is a named place where an object receives one value. The inputs of a kernel are the values it conditions on, and the inputs of a function are its arguments.
+> **Definition (input).** An *input* is a name under which an object receives one value. The inputs of a kernel are the values it conditions on, and the inputs of a function are its arguments.
 > An input has a name, which is a Python identifier; a type (§ 2.1); and a flag, *required* or *optional*.
 > An *optional* input has a default, held by the object that owns the input.
 
@@ -331,7 +356,7 @@ An object receives values at its inputs and makes values available to other obje
 > [!NOTE]
 > **Consequence** (of the definitions and § 1.1).
 > 1. A kernel has at least one input (§ 6.3), and a function has its arguments, which may be none; a batch of either has its elements' inputs, and one binding supplies them to every element.
-> 2. Base values, records, and laws have none, so an object with no inputs is a value, a law, a function with no arguments, or a batch of these; a record whose field holds a kernel has no inputs, since the kernel is the field's value. A law built by merging can still have factor inputs, which its factors take and which a binding does not see (§ 5.2).
+> 2. Base values, records, and laws have none, so an object with no inputs is a value, a law, a function with no arguments, or a batch of these. A record whose field holds a kernel has no inputs, since the kernel is the field's value. A law built by merging can still pass inputs of the laws and kernels it was built from on to a later merge, where a binding does not see them (§ 5.2).
 > 3. An input of record type is one input, supplied with one record.
 
 Take the kernel that draws `y ~ Normal(mu, sigma)`, with `sigma` optional and default 1.
@@ -348,47 +373,63 @@ The kernel then has an input `g` of type `{c}`, now required, since a default is
 
 ### 3.2 Outputs
 
-**Why outputs are needed.**
+**What outputs are for.**
+Outputs are the connection points through which objects are joined to one another.
+They are the values an object makes available for other objects to use, as opposed to anything internal to the object, such as the way a law computes its density.
+Combining objects by name, which § 5 defines as merging, is their main use: one object's output supplies another object's input of the same name.
 Take a law `prior` over `{mu, sigma}` and a kernel `lik` that draws `y` given an input `mu`.
 To build a model in which `lik` receives its `mu` from `prior`, ProbPipe must know which value of `prior` is called `mu`.
-A draw of `prior` is a record, and its children already have names, `mu` and `sigma`; these names can serve as the names under which `prior`'s values are known to other objects.
-A law over a single array, such as `Normal("x", 0.0, 1.0)`, has no named parts in its draw; for its draw to be known to other objects under a name, a name has to be attached to it from outside the draw, here `x`.
-An object's *outputs* are these names: the names under which other objects can refer to the values it produces, and an input can receive one of them.
 
-**Three requirements fix what the outputs of each kind must be.**
-
-1. **An output has the shape of an input.**
-   An input is identified by a single name, not a path, and receives one value whole (§ 3.1).
-   For an output to supply an input, an output must likewise be a single name standing for one value.
-   So an object's outputs are names at one level: the outputs of a law over `{a, g: {c, e}}` can be `a` and `g`, but not the path `g/c`.
-
-2. **Together, the output values determine the produced object.**
-   The output values are all that other objects receive from an object.
-   If they did not determine its produced object, part of what the object produces would be invisible to every other object.
-   For example, if a law over `{mu, sigma}` made only the separate laws of `mu` and of `sigma` known, the dependence between `mu` and `sigma` would be lost.
-
-3. **Only a base value has a name attached from outside.**
-   Some produced objects have named parts, and those names serve as their outputs (requirement 1).
-   A base value (an array or an opaque value) has no parts, so the only way to give it a name is to attach one from outside the value: the object that produces it states the name, as `Normal("x", 0.0, 1.0)` states `x`.
-   We require that no other kind of value has a name attached from outside.
-   The reason is that a value with named parts that also had an attached name would have two names for each part: in a law whose draws are `{mu, sigma}` and which was also named `params`, the part `mu` would be reached as `mu` in a draw but as `params/mu` in the law, and a selection or a combination by one name would miss the other.
-   The requirement depends on the kind of value alone, not on whether a particular value happens to have parts: a law is never given an attached name, even a law over a single array, whose draws have no parts.
-   So an object's type alone determines its outputs.
+**Outputs are determined by the produced object.**
+What another object receives from `prior` is a draw, its produced object (§ 2.2).
+A draw of `prior` is a record `{mu, sigma}`, whose children already have names, so these names can serve as the names of `prior`'s outputs: `prior` has the outputs `mu` and `sigma`.
+A law over a single array, such as `x ~ Normal(0, 1)`, has draws with no named entries; for its draw to be available under a name, the law attaches a name from outside the draw, here `x`.
 
 > [!IMPORTANT]
 > **Definition (output, output value).** An *output* of an object is a name under which the object makes one value, its *output value*, available to other objects.
-> An object's outputs are fixed by its produced object (§ 2.2), in five cases:
+> An object's outputs name either its whole produced object, as its one output, or the children of its produced object, one output each.
+
+**Three requirements decide which.**
+
+1. **An output is one name for one value, as an input is.**
+   An input is identified by a single name, not a path, and receives one value whole (§ 3.1).
+   For an output to supply an input, the output must likewise be a single name with one value.
+   So an output is a single name, never a nested path: a law over `{a, g: {c, e}}` can have the outputs `a` and `g`, but `g/c` cannot be an output.
+
+2. **Together, the output values determine the produced object.**
+   The output values are all that other objects receive from an object.
+   If they did not determine its produced object, part of what the object produces would not be available to any other object.
+   For example, if a law over `{mu, sigma}` made available only the separate laws of `mu` and of `sigma`, the dependence between `mu` and `sigma` would be lost; instead, the output values of `mu` and `sigma` are the two children of one draw.
+
+3. **Only a base value has a name attached from outside.**
+   As § 1.2 describes, a record has named children, and these names can serve as output names.
+   A base value (an array or an opaque value) has no children, so a name for it must be attached from outside the value: the object that produces it states the name, as the law `x ~ Normal(0, 1)` states `x`.
+   Moreover, we require that only a base value may have a name attached from outside.
+   The reason is that a value with named children that also had an attached name would have two names for each child: in a law whose draws are `{mu, sigma}` and which was also named `params`, the child `mu` would be called `mu` in a draw but `params/mu` in the law, and a selection or a combination by one name would miss the other.
+   The requirement depends on the kind of the value alone, not on whether a particular value has children. When a law is itself a produced object, as a law a function returns, it is never given an attached name, even when it is a law over a single array, whose draws have no children.
+   So whether an object's output is named from outside is decided by the kind of its produced object, never by a choice.
+
+The precise rule states, for each kind, which of the two forms applies and what each output value is.
+It is stated for an object `v` determined by the object `x` whose outputs are wanted:
+1. when `x` is a law or a kernel, `v` is a draw of `x`, its produced object; for a kernel, at each value of its inputs;
+2. otherwise, `v` is `x` itself. A base value, a record, and a batch are their own produced objects, and for a function, case 3 below takes the outputs of its return value, which is its produced object.
+
+Cases 3 and 4 apply the cases again, to the return value or to each element as it is; a law there is case 5, and its draws are not used.
+So in every case the outputs depend only on the produced object.
+
+> [!IMPORTANT]
+> **Definition (outputs by kind).** The outputs of an object `x` are those of `v`, defined above, in five cases:
 >
-> | Case | Produced object | Outputs | Output value | Why |
+> | Case | `v` is | Outputs | Output value | Why |
 > | --- | --- | --- | --- | --- |
-> | 1 | a record | one per child, under the child's name | the child | the children are at one level (1), determine the record (2), and carry their own names (3) |
-> | 2 | a base value | one, under the name attached by the object that produces it; this output is *at the root* | the whole value | a base value has no parts to supply names, so its one name is attached from outside, which (3) allows for base values only |
-> | 3 | a function | the outputs of its return value | for each output, the function that maps an argument to that output value of the return value | a function whose return value is a record is determined by these functions (2) |
-> | 4 | a batch | the outputs of its elements | for each output, the batch of the elements' output values; for a child, its column (§ 2.3) | a batch of records is determined by its columns (2) |
+> | 1 | a record | one per child, under the child's name | the child | each child is one name with one value (1), the children determine the record (2), and they already have names, so none is attached from outside (3) |
+> | 2 | a base value | one, under the name attached by the object that produces it; this output is *at the root* | the whole value | a base value has no children to supply names, so its one name is attached from outside, which (3) allows for base values only |
+> | 3 | a function | the outputs of its return value | for each output, the function that maps each value of the arguments to that output value of the return value | a function whose return value is a record is determined by these functions (2) |
+> | 4 | a batch | the outputs of its elements | for each output, the batch of the elements' output values; for a child, the batch's column (§ 2.3) | a batch of records is determined by its columns (2) |
 > | 5 | a law or kernel that is itself produced: a function's return value, a draw, or an element of a batch | none | — | it is not a base value, so no name is attached to it from outside (3); and the laws of its parts do not determine it, so its parts cannot serve as its outputs (2). To make one available, wrap it |
 
-The cases read a law's or kernel's draw, since that is what it produces: a law over `{mu, sigma}` has the outputs `mu` and `sigma` (case 1), whose output values are the draw's children, and a law over an array has one output at the root (case 2).
-Case 5 concerns a law that something else produces, such as a law a function returns.
+For a law over `{mu, sigma}`, `v` is a draw, which is a record, so the law has the outputs `mu` and `sigma` (case 1), whose output values are the draw's children; a law over an array has one output at the root (case 2).
+Case 5 concerns a law that is the produced object of another object, such as a law a function returns, and never a law `x` itself.
 
 > [!IMPORTANT]
 > **Definition (wrap).** To make a value that is not a base value available under one name `n`, the object that produces it *wraps* it: it produces the record `{n: value}` instead, whose one output is `n`.
@@ -397,13 +438,13 @@ Case 5 concerns a law that something else produces, such as a law a function ret
 > **Consequence** (of the definitions; 3 and 4 are proved in the formal model of Appendix D.1).
 > 1. **Output values determine the produced object** wherever there are outputs: a record is rebuilt from its children, a base value is its one output value, and a function or a batch is rebuilt from its output values.
 > 2. **A node below a child is named by a path (§ 2.3), not by an output:** a law over `{a, g: {c, e}}` has the outputs `a` and `g`, while `g/c` and `g/e` are paths only.
-> 3. **An output at the root excludes paths.** An object has either one output at the root, whose name is attached from outside and which has no paths below it, or outputs whose names are all paths of its produced object's children; never both.
+> 3. **An output at the root excludes paths.** An object has either one output at the root, whose name is attached from outside and which has no paths below it, or one output per child of its produced object, each named by the child's path; never both.
 > 4. **One set of names.** The name of an output at the root is not a path, since nothing is below it; every other output's name is its own path. So an object's outputs, its paths, and its draws' paths use one set of names.
-> 5. **Outputs are not chosen.** The produced type fixes them, apart from the name of an output at the root, which the object states.
-> 6. **A base value that no object produced**, such as a lone array, has no outputs: nothing states its name, and a label is not one.
+> 5. **Outputs are not chosen.** The produced type determines them by the five cases, apart from the name of an output at the root, which the object states.
+> 6. **A base value standing alone has no outputs,** such as an array that no law, function, or batch produced: no object attaches a name to it, and a label is not one.
 
 <details>
-<summary>Technical note: why a function whose return value is a record has outputs and a law over records does not</summary>
+<summary>Technical note: why a produced function has outputs and a produced law does not</summary>
 
 A function `f` whose return value is the record `{y, z}` is determined by its output values, since `f(x)` is `{y: f_y(x), z: f_z(x)}`, and a batch of records is determined by its columns.
 A law over `{mu, sigma}` is not determined by its marginals, since many joint laws share them.
@@ -440,32 +481,39 @@ An output named `"n-obs"` therefore supplies no input.
 
 ### 3.4 Produced objects, outputs, and paths, side by side
 
-The produced type fixes both an object's outputs and its paths, and the two sets differ as soon as a value nests.
-Selection (§ 4) reaches every path; merge (§ 5) reads only the outputs.
-Four laws show the difference.
+Four laws show the three ideas of the overview together.
+Each law's produced object is a draw, and its paths and its outputs are both defined from the draw's type.
+When that type is a record type, the outputs are the names of its children (§ 3.2, case 1), while the paths also include the paths below the children, such as `g/c` in `{a, g: {c, e}}` (§ 2.3); so the outputs and the paths coincide only when no child is itself a record.
+When that type is a base type, the law has one output at the root and no paths.
 
 ![Four laws side by side. d1, over an array, has the output x outside its box. d2 has the outputs mu and sigma. d3 has the outputs a and g, with c and e drawn muted under g. d4 has the output params, with a, g, c, and e drawn muted under it.](figures/produced-outputs-paths.svg)
 *Figure: four laws and their outputs. A port marks an output; a muted name under an output is a nested path, not an output.*
 
-| Law | Produced type | Outputs | Paths | Selection reaches | Merge sees |
-| --- | --- | --- | --- | --- | --- |
-| `d1`, over an array `x` | an array type, as `()` | `x`, at the root | none | no path: `x` is not a path, so `d1[x]` is refused | `x` |
-| `d2`, over `{mu, sigma}` | the record type `{mu, sigma}` | `mu`, `sigma` | `mu`, `sigma` | `d2[mu]`, `d2[sigma]` | `mu`, `sigma` |
-| `d3`, over `{a, g: {c, e}}` | the record type `{a, g: {c, e}}` | `a`, `g` | `a`, `g`, `g/c`, `g/e` | every path, as `d3[g/c]` | `a`, `g` |
-| `d4`, over `{params: {a, g: {c, e}}}` | the record type `{params: {a, g: {c, e}}}` | `params` | `params`, `params/a`, `params/g`, `params/g/c`, `params/g/e` | every path, as `d4[params/g/c]` | `params` |
+| Law | A draw (its produced object) | Produced type | Paths | Outputs |
+| --- | --- | --- | --- | --- |
+| `d1`, over an array named `x` | `0.7` | an array type, as `()` | none | `x`, at the root; `x` is the name of an output, not a path |
+| `d2`, over `{mu, sigma}` | `{mu: 0.1, sigma: 1.3}` | the record type `{mu, sigma}` | `mu`, `sigma` | `mu`, `sigma` |
+| `d3`, over `{a, g: {c, e}}` | `{a: 0.4, g: {c: 1.2, e: -0.3}}` | the record type `{a, g: {c, e}}` | `a`, `g`, `g/c`, `g/e` | `a`, `g` |
+| `d4`, over `{params: {a, g: {c, e}}}` | `{params: {a: 0.4, g: {c: 1.2, e: -0.3}}}` | the record type `{params: {a, g: {c, e}}}` | `params`, `params/a`, `params/g`, `params/g/c`, `params/g/e` | `params` |
+
+Paths and outputs serve different operations: § 4 selects a part at any path, while § 5 combines objects through their outputs only.
+Each law also shares its paths with its mean and with a batch of its draws: a batch of 100 draws of `d3` has the paths `a`, `g`, `g/c`, `g/e` and the outputs `a` and `g`, each output value a batch of 100 values (case 4).
 
 > [!NOTE]
 > **Consequence** (of the definitions of output and wrap).
-> 1. **Outputs are not chosen** (§ 3.2, consequence 5): `d3` cannot make its whole record available under one name attached from outside, and its nested nodes `g/c` and `g/e` cannot be outputs.
-> 2. **A wrap gives a value with paths one name, and changes the produced type.** `d4` is a different law from `d3`, since its draws are `{params: {a, g: {c, e}}}`, not `{a, g: {c, e}}`; every path of `d4` starts with `params`.
-> 3. **A merge matches outputs only.** An object that takes an input `g` is fed the group `g` by `d3`, while an input `c` is not fed by `g/c`; to feed it, rename `g/c` to `c` first (§ 4.5).
+> 1. **Outputs are not chosen** (§ 3.2, consequence 5): `d3` cannot make its whole record available under one name attached from outside, and the nested paths `g/c` and `g/e` cannot be outputs.
+> 2. **A wrap makes a record available under one name, and changes the produced type.** `d4` is a different law from `d3`, since its draws are `{params: {a, g: {c, e}}}`, not `{a, g: {c, e}}`; every path of `d4` starts with `params`.
+> 3. **Only outputs connect.** Another object's input `g` can receive the group `g` from `d3`, while an input `c` cannot receive the node at `g/c`, which is not an output; renaming `g/c` to `c` first makes it one (§ 4.5).
 
 ### 3.5 Input specs and output specs
+
+An object's input spec and output spec describe its connection points by their types alone: what the object receives, and what it makes available.
+They are what a check reads before any value exists, as when two objects are combined (§ 5).
 
 > [!IMPORTANT]
 > **Definition (input spec, output spec).**
 > 1. An object's *input spec* lists its inputs in the order of its arguments: names, types, and which are optional. It holds no defaults. Two input specs are equal when they list the same inputs, types, and optional inputs, in any order.
-> 2. An object's *output spec* states the type of its produced object and, when that type is a base type, the name of the output at the root; for a batch type, the batch's element spec carries the elements' name (§ 6.5). An output spec never states an empty record type.
+> 2. An object's *output spec* states its produced type and, when that type is a base type, the name of the output at the root; for a batch type, the batch's element spec holds the elements' name (§ 6.5). An output spec never states an empty record type.
 > 3. A law's or kernel's output spec is its *event spec*.
 > 4. A *type hole* is the pending type of an output spec that names its output at the root before the type is known, as a function's output can be named before its first call; the object fills it once it knows the type.
 > 5. The *record of outputs* of a produced base value `v` with the output `n` is the record `{n: v}`; a produced record is its own record of outputs. It builds the value of a merge (§ 5.5).
@@ -482,16 +530,16 @@ A law over `{mu, sigma}` has an event spec stating the record type `{mu, sigma}`
 <details>
 <summary>Technical note: equality and order</summary>
 
-Output order is the field order of the record of outputs, which fixes a numeric record's flat layout, so output specs listing the same outputs in two orders are unequal, as are record types listing the same children in two orders; neither conforms to nor unifies with the other (§ 2.1).
+Output order is the field order of the record of outputs, which determines a numeric record's flat layout, so output specs listing the same outputs in two orders are unequal, as are record types listing the same children in two orders; neither conforms to nor unifies with the other (§ 2.1).
 An output spec naming a base value `n` and one whose type is `{n: …}` have the same output and are unequal.
-Two output specs over batches whose elements carry different names have different outputs and are unequal, although the two batch types are equal (§ 6.5).
+Two output specs over batches whose elements have different names have different outputs and are unequal, although the two batch types are equal (§ 6.5).
 
 </details>
 
 <details>
 <summary>Technical note: conformance and unification of output specs</summary>
 
-`A` conforms to `B` when they state the same root name, if any, and `A`'s type conforms to `B`'s; the name a batch type's elements carry is not compared (§ 6.5).
+`A` conforms to `B` when they state the same root name, if any, and `A`'s type conforms to `B`'s; the name of a batch type's elements is not compared (§ 6.5).
 A type hole in `B` admits only what can fill it (§ 11.2): a base type, or a batch type whose elements are base values.
 Two output specs unify likewise; a type hole takes the other's type when it admits that type, and otherwise they do not unify.
 
@@ -514,12 +562,12 @@ Figures read from right to left, as a density $p(y \mid \mu)$ does, where `y` is
 
 | | Inputs | Outputs | Why |
 | --- | --- | --- | --- |
-| Naming | every input is named | only a base value has a name attached from outside it | values are supplied to inputs by name; a produced value with paths carries its own names |
+| Naming | every input is named | only a base value has a name attached from outside it | values are supplied to inputs by name; a produced record has named children, whose names are its output names |
 | Names allowed | identifiers | any name | an input matches an argument; an output becomes a field |
-| Structure | flat: each input is one name, and a path may name a node of a record input | one output at the root, or the names of the produced record's children, with nested paths below them | an input receives one value; an output is a place in a produced object |
+| Structure | flat: each input is one name, and a path may name a node of a record input | one output at the root, or the names of the produced record's children, with nested paths below them | an input receives one value; an output names the produced object or one of its children |
 | Presence | may be optional | always present | a produced object has an output value at every output |
 | Type unknown | never | type hole | a binding is checked against the input's type |
-| Equality | ignores order | keeps order | binding is by name; output order fixes layout |
+| Equality | ignores order | keeps order | binding is by name; output order determines the layout |
 | Empty | an object may take no inputs | an output spec is never an empty record type; an object producing a law has no outputs | an empty record describes nothing produced |
 | Batches | the elements' inputs | the elements' outputs, each output value a batch; none when the elements are laws or kernels | one binding supplies every element |
 
@@ -531,7 +579,7 @@ Its outputs are its elements' outputs (§ 3.2, case 4): a batch of functions has
 *Figure: a batch `fs` of functions over the level `j`, each from `x` to `{y, z}`. Its input `x` is its elements' input, bound once for every element; its outputs `y` and `z` are columns, and the output value of `y` is the batch of the functions `f_j[y]`.*
 
 ![A kernel k_j drawing {y, w} given mu, with the outputs y and w; beside it the batch ks of such kernels over the level j, which takes the input mu and has no output ports, with y and w drawn as paths.](figures/batch-kernels.svg)
-*Figure: a batch `ks` of kernels over the level `j`, each drawing `{y, w}` given `mu`. Its input `mu` is its elements' input, bound once for every element. It has no outputs (§ 3.2, case 5), but its paths `y` and `w` reach its elements' draws: `ks[y]` is the batch of the kernels `k_j[y]`.*
+*Figure: a batch `ks` of kernels over the level `j`, each drawing `{y, w}` given `mu`. Its input `mu` is its elements' input, bound once for every element. It has no outputs (§ 3.2, case 5), but its paths `y` and `w` come from its elements' draws: `ks[y]` is the batch of the kernels `k_j[y]`.*
 
 ## 4. Selecting, removing, and renaming parts
 
@@ -3037,7 +3085,7 @@ Each item gives the background, the options, and a recommendation.
 Each item gives the reading the text adopts.
 
 1. **When the library stops building the named-whole form.** Source § 6.8 says once G1b merges; T19, § 5.5 of the source, and the probe allowance let selections at fields holding objects build it until G3, and the source marks T19 "Inconsistent". *Reading:* until G3.
-2. **"Has parts" without parts.** The source calls every law and batch an object "with parts", including a law over one array and a batch of arrays, which have no paths. *Reading:* a part is a selection at a path (§ 4.1), so an object without paths has no parts, and § 3.2 says "only a base value is named from outside"; where the source's steps say "a type with parts", Appendix B says "a type that is not a base type", which is what the keyword-form rules test; behaviour is unchanged.
+2. **"Has parts" without parts.** The source calls every law and batch an object "with parts", including a law over one array and a batch of arrays, which have no paths. *Reading:* a part is a selection at a path (§ 4.1), so an object without paths has no parts, and § 3.2 requires that only a base value has a name attached from outside it; where the source's steps say "a type with parts", Appendix B says "a type that is not a base type", which is what the keyword-form rules test; behaviour is unchanged.
 3. **Paths of a function whose return type is unknown.** `f[p]` is accepted and checked at the call (§ 6.4), while its type has no paths (§ 2.3), and I18 ties paths to selection. *Reading:* none; both rules are stated, and the question is which governs I18.
 4. **Removal on batches of functions or kernels** is not defined (source § 4.5), though such batches are selected by path. *Reading:* not defined.
 5. **Paths of an opaque value.** I18 covers "every object other than an array", while an opaque value has no selection. *Reading:* no string is a path of an opaque value.
@@ -3067,6 +3115,11 @@ The items below were found while applying the maintainer's decisions of 2026-10-
 26. **The step that delivers the rule of § 5.2.** S3 is mechanical, and B.5 rule 4 lets a mechanical step change only names; G4 already rewrites every route of `condition_on` and adds `law.without`, so it takes the rule, with the marginal's product of factors in `operations/_marginal.py` (T32). *Reading:* G4; the maintainer may move it.
 27. **A law's root name and equality.** A law type holds its event type (§ 2.1), so the root name of a law over a base value, like a batch's element name, is stated by its event spec, not its type; § 2.4 does not say whether `Normal("x", 0, 1)` and `Normal("y", 0, 1)` are equal laws. *Reading:* not stated; the text makes no claim either way.
 28. **A produced law over a base value.** *Settled 2026-10-19.* An earlier wording of requirement 3 of § 3.2 ("a name may stand outside a value only when the value has no paths") would have let a name stand outside a produced law over an array, against case 5. Requirement 3 now says that only a base value is named from outside, decided by kind alone, as grammar B (not B′) decided on 2026-10-17; case 5 follows from it. No rule changed.
+
+The items below were found during the pass over §§ 1 to 3 on 2026-10-20.
+
+29. **What the five cases of outputs apply to.** The earlier table of § 3.2 headed its cases "produced object" while case 3 named "a function", which a function's own produced object, its return value, is not; § 3.3 cites cases 3 and 1 for a function from `x` to `{y, z}`. *Reading:* the cases apply to a value or object `v`, which is a draw for a law or kernel and the object itself otherwise; cases 3 and 4 apply the cases again to the return value or to each element as it is, so a law there is case 5. Every example and citation of the cases gives the same outputs as before; no rule changed.
+30. **The paths of an object: its type or its produced type.** The earlier § 2.3 defined an object's paths as the paths of its type, and the overview said they come from the produced object. *Reading:* § 2.3 defines them as the paths of the produced type and states that these equal the paths of the object's type, which holds for every kind by the rules for the paths of a type; no rule changed.
 
 ## B. Implementation plan and sequencing
 
