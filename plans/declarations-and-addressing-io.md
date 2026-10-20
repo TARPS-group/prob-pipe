@@ -54,6 +54,7 @@ Citations such as II.6 and D1 name sections and principles of [`design/`](../des
    6. [Refused merges](#56-refused-merges)
    7. [What merge preserves](#57-what-merge-preserves)
    8. [What merge is not](#58-what-merge-is-not)
+   9. [Order](#59-order)
 6. [The kinds, one by one](#6-the-kinds-one-by-one)
    1. [Base values and records](#61-base-values-and-records)
    2. [Laws](#62-laws)
@@ -192,6 +193,7 @@ A field may hold a law or any other object; § 2.3 continues paths into it.
 > **Definition (admits).** An array type admits an array whose shape matches its own, binding its dimension names, and whose dtype casts into its own by NumPy's same-kind rule; a support only describes, and is not checked.
 > An opaque type admits a value of its Python type.
 > A record type admits a record that has the same tree, with the same child names in the same order at each node, and whose fields are admitted by the types at the matching fields; so an admitted record flattens in the declared order.
+> A *raw mapping*, a mapping of names to values that is not yet a record, such as one a function returns or one given for an input, is first laid out in the declared order at each node and then admitted as a record, so its key order never matters.
 > A law, kernel, function, or batch type admits an object of its kind whose type conforms to it (below).
 
 > [!IMPORTANT]
@@ -307,7 +309,7 @@ Only a record type has named children; every other kind takes its paths from the
 > [!IMPORTANT]
 > **Definition (equal).** Two values are *equal* when they have the same type and equal entries.
 > Two laws, kernels, or functions are equal when they have equal types and the same distribution or map.
-> Two batches are equal when they have the same levels, equal element types, and equal elements.
+> Two batches are equal when they have the same levels, in the same order, equal element types, and equal elements.
 
 The name a batch of base values gives its elements is not part of its type (§ 2.1), so equality does not compare it. Unlike a label, it is read: merges, outputs, and renames take it from the batch's element spec (§ 6.5), so equal batches can merge differently (§ 7.2).
 
@@ -761,7 +763,7 @@ Write `outputs(a)` for the set of `a`'s output names and `inputs(a)` for the set
 
 - **Output specs:** the record type of the first operand's outputs followed by the second operand's outputs; a root output `n` becomes the child `n`, and every other path keeps its type. Conditions 2, 3, and 8 apply.
 - **Input specs:** inputs in order of first appearance; a shared input is unified, and optional only if optional in both; dimension bindings are applied and not kept.
-- **Record types:** both sets of children; a shared top-level name is refused.
+- **Record types:** the first operand's children, then the second's; a shared top-level name is refused.
 - **Law, kernel, function, and batch types:** the type of the merged object. A type states no factor inputs beyond its inputs, so a type merge can be valid where the object merge is refused (§ 5.7).
 
 An input spec and an output spec do not merge; an output spec is read as inputs by taking one required input per output, of its type.
@@ -968,6 +970,23 @@ A kept size can refuse a merge over a name no type shows: if `m1` bound `n = 3` 
 1. **Not composition:** `f ∘ g` passes `g`'s result to `f` by position and returns `f`'s result; a merge matches names and returns both operands' outputs.
 2. **Not binding or conditioning:** binding `lik`'s input `mu = 0.5` removes the input `mu`, and conditioning `lik & prior` on `mu = 0.5` removes the output `mu`; in `lik & prior`, `mu` is fed and stays an output.
 3. **Not renaming:** rename an operand first (§ 4.5), then merge.
+
+### 5.9 Order
+
+> [!IMPORTANT]
+> **Principle (order).** A type's field order is part of the type. Matching by name never depends on order, and always produces its result in a defined order.
+
+| Where | Order | Why |
+| --- | --- | --- |
+| equality and hashing of record types and output specs (§ 2.4, § 3.5) | counts | it is the layout that a numeric record's flat vector and its JAX tree structure read |
+| conformance and unification of record types (§ 2.1) | counts | otherwise a type would conform to one it does not equal, and unification would need an arbitrary tiebreak |
+| admitting a raw mapping, such as one a function returns or one given for an input (§ 2.1) | laid out in the declared order, then checked | construction at the boundary, so the key order of a user's mapping never matters |
+| admitting a record already built in another order | refused, naming both orders | the record has its own type, which does not conform |
+| input specs (§ 3.5) | does not count | inputs bind by name and have no layout, so an input spec is not a record type |
+| selection at a list of paths (§ 4.2) | the object's own order, whatever the list's | the result is a part of the object, so it keeps the object's layout |
+| merge (§ 5.3) | the left operand's outputs, then the right's | the expression fixes it |
+| rename (§ 4.5) | each node keeps its position; a moved node is appended to its new parent | a rename changes names, not the layout |
+| the levels of a batch (§ 2.4, § 5.3) | count | they are axes |
 
 ## 6. The kinds, one by one
 
@@ -1270,6 +1289,9 @@ class FunctionSpec(TermSpec):
 `RecordSpec` is in § 14 and `BatchSpec` in § 18.
 A term spec of a law, kernel, function, or batch has no `[]` of its own: select from the output spec it holds, as `d.spec.event_spec["mu"]`.
 Conformance and unification (§ 2.1) are internal: the private `_unify_specs` in `core/_spec_base.py` checks them, and merges and bindings call it.
+
+> [!NOTE]
+> **Property (admitting a record, § 5.9).** Wherever a value meets a `RecordSpec` (a function's return, a call's argument, a kernel's conditioning value, `Record(..., event_template=...)`), a raw mapping is laid out in the declared order at each node and then checked: a function declared to return `RecordSpec(x=(), y=())` that returns `{"y": 0.0, "x": 1.0}` returns the record `{x, y}`, and its body, given `{"y": 0.0, "x": 1.0}` for an input of that type, receives `{"x": 1.0, "y": 0.0}`. A `Record` already built in another order is refused with `ValueError`, as is a `RecordSpec` in another order where one must conform: "fields ['y', 'x'] are not in the declared order ['x', 'y']; pass a plain mapping, which is laid out in the declared order, or build the record in that order".
 
 > [!NOTE]
 > **Property (the size shorthand).** Wherever an input, a `RecordSpec` field, or the keyword form of `OutputSpec` (§ 11) takes a type, a tuple of sizes is the `NumericArraySpec` of that shape, with no dtype or support: `InputSpec(x=())`, `RecordSpec(x=("n",))`, `OutputSpec(y=(3,))`. A bare int, as `x=3`, is refused.
@@ -2296,6 +2318,7 @@ Every message follows `STYLE_GUIDE.md` §9.3 and names the fix.
 | a merge that breaks a condition | by condition | § 13 |
 | `select` with two paths of one last name | `ValueError` | § 14 |
 | filling a type hole with a type that is not a base type | `TypeError` | § 11.2 |
+| a built `Record` or a `RecordSpec` whose fields are in another order than the declared one | `ValueError` naming both orders | § 9 |
 
 <details>
 <summary>Technical note: behaviours of the code outside the invariants</summary>
@@ -2395,7 +2418,7 @@ Each item gives the reading the text adopts.
 
 The items below were found while applying the maintainer's decisions of 2026-10-19.
 
-21. **Field order in record conformance and unification.** *Settled 2026-10-19 by the maintainer:* order-sensitive, matching equality. A record type conforms to and unifies with another only when they have the same child names in the same order, and a record is admitted likewise, so an admitted record flattens in the declared order (§ 2.1). Today's code compares the names as sets (`RecordSpec._bind_dims_from_spec` and `_bind_dims_from_value`), while `__eq__` and `__hash__` keep order; S2b changes it (T33; C.3).
+21. **Field order in record conformance and unification.** *Settled 2026-10-19 by the maintainer:* order-sensitive, matching equality. A record type conforms to and unifies with another only when they have the same child names in the same order; a record built in another order is refused, while a raw mapping is laid out in the declared order and then checked, so an admitted record flattens in the declared order (§ 2.1, § 5.9). Today's code compares the names as sets (`RecordSpec._bind_dims_from_spec` and `_bind_dims_from_value`), while `__eq__` and `__hash__` keep order; S2b changes it (T33; C.3).
 22. **A rename that regroups.** The rule of § 5.2 says a rename keeps factors, while a rename that gathers outputs of several factors under one group makes them one grouped sub-joint, whose factor inputs are none for a law, as G1a's done-condition requires. *Reading:* both hold: a rename keeps each factor it does not gather, and the gathered factors become one factor, as IV.1 keeps a grouped sub-joint one factor.
 23. **`BatchSpec`'s own equality.** The element name is not part of a batch's type (§ 2.1, § 6.5), yet `BatchSpec`, the code form of that type, carries the element spec, and O3 has its `==` compare the name, so that static data never holds a name that compares equal without it (§ 18.3). *Reading:* O3 stands: the type of Part I is `BatchSpec`'s name-free canonical form, which conformance, unification, a batch's equality, hashing, fingerprints, and pytrees use; output specs over batches whose elements carry different names are unequal, since they offer different outputs (§ 3.5). The alternative, a `BatchSpec.__eq__` that ignores the name, is O3's rejected option.
 24. **What a type hole admits.** A type hole admits only what can fill it: a base type or a batch of raw values. Conformance does not compare a batch's element name, while filling a hole with a batch requires its elements to carry only the default name `element` (§ 11.2, O2). *Reading:* in conformance and unification a hole admits any batch type of base elements; filling then refuses a batch whose elements a maker named.
@@ -2428,7 +2451,7 @@ No kind reimplements a generic rule: two implementations of one rule drift apart
 | S0 | The design text of this design in `design/`, in today's words | PL; the acceptance of this design | before; never cut |
 | S1 | One path reader; `[]` returns groups; lists of paths keep their paths; `in`; `marginal(d, paths)`; `select` | S0 | before; never cut |
 | S2a | **Announced, mechanical.** `term_spec` and `with_term_spec`; `exposes_record` goes | S0 | before; never cut |
-| S2b | `OutputSpec[]`, `in`, `without`, `&`; one reading of inputs; the size shorthand; `InputSpec &`; a produced law or kernel offers nothing; shallow record merge; order-sensitive record conformance | S1, S2a | before; never cut |
+| S2b | `OutputSpec[]`, `in`, `without`, `&`; one reading of inputs; the size shorthand; `InputSpec &`; a produced law or kernel offers nothing; shallow record merge; record order (§ 5.9) | S1, S2a | before; never cut |
 | S3 | **Announced, mechanical.** `&` replaces `*` and `merge`; `rename`; `MarginalView` | S2b | before; never cut |
 | S4 | Every batch stores its element spec | S2b, E3b | before; cut sixth |
 | G1a | The naming rule for views and marginals of groups, the library's laws over records, and grouped sub-joints; the interim-form probe | S2b, S4 | before; cut fifth |
@@ -2590,7 +2613,7 @@ m["G"]["mu"]         # KeyError: paths do not chain at the name (T16)
 | --- | --- | --- | --- | --- |
 | T1 | A produced law or kernel offers the fields of one draw, typed by one draw's values: `OutputSpec(law_spec).components` is `{mu: NumericArraySpec(()), tau: ...}`. A merge accepts such an operand: for a law `ll` whose draws are laws, declared positionally, `ll & Normal("z", 0.0, 1.0)` builds, and sampling it raises `ResultSchemaError` | output specs positional over a law or kernel type; merges of laws and kernels | — | today's reading (fact 11); S2b gives a produced law or kernel no outputs, and condition 2 of § 5.3 refuses it |
 | T2 | `merge` on records is deep: `Record({"g": {"b": 1.0}}).merge(Record({"g": {"c": 2.0}}))` is `{g: {b, c}}` | `NamedTree`, `Record`, `RecordSpec`, `RecordBatch` | — | today's rule (fact 5); S2b makes it shallow, so S3's `&` is a rename |
-| T33 | Record conformance, unification, and admission ignore field order: `RecordSpec(y=(), x=())` conforms to `RecordSpec(x=(), y=())`, and `{"y": 0.0, "x": 1.0}` is admitted by it, although the two types are unequal | `RecordSpec._bind_dims_from_spec`, `_bind_dims_from_value`, and their callers | — | today's rule (A.2 item 21); S2b makes order part of each, as equality does |
+| T33 | Record conformance, unification, and admission ignore field order: `RecordSpec(y=(), x=())` conforms to `RecordSpec(x=(), y=())`, although the two types are unequal; a `Record` built as `{y, x}` is admitted by it and keeps its own order; a raw mapping `{"y": 0.0, "x": 1.0}` is laid out as `{x, y}` when a function returns it, but reaches a function's body or a kernel in the caller's order when given for an input | `RecordSpec._bind_dims_from_spec`, `_bind_dims_from_value`, and their callers; call-time inputs (`functions/_contract.py`) and conditioning values (`operations/_given.py`) | — | today's rule (A.2 item 21); S2b applies § 5.9 |
 
 #### Rules that end at S3
 
@@ -2803,7 +2826,7 @@ V.6 and III.3 state the reading of a bare `output_spec`. `STYLE_GUIDE.md` does n
 
 #### S2b: the operations on input and output specs
 
-*Delivers:* § 10 and the size shorthand (§ 9), with § 10's four messages, `InputSpec.__contains__` and `get`; § 11, selection and removal on output specs (§ 4.4, § 4.3), equality and hashing, `OutputSpec.__iter__`'s refusal; the shallow record merge; order-sensitive conformance, unification, and admission of records (§ 2.1); the docs of B.3.
+*Delivers:* § 10 and the size shorthand (§ 9), with § 10's four messages, `InputSpec.__contains__` and `get`; § 11, selection and removal on output specs (§ 4.4, § 4.3), equality and hashing, `OutputSpec.__iter__`'s refusal; the shallow record merge; order-sensitive conformance and unification of records, and admission by § 5.9 (§ 9's note); the docs of B.3.
 
 | Item | Files | Call sites and tests |
 | --- | --- | --- |
@@ -2813,7 +2836,7 @@ V.6 and III.3 state the reading of a bare `output_spec`. `STYLE_GUIDE.md` does n
 | the joint's event and inputs through `&` | `distributions/_factored.py` | `_factor_graph` |
 | a produced law or kernel offers no outputs | `core/_specs.py` (`_exposed_components`, 3 call sites) | 3 tests change (fact 21) |
 | shallow record merge | `core/named_tree.py`, `core/record.py`, `core/_record_batch.py` | 3 library call sites; 2 tests and 1 message test change (fact 5) |
-| order-sensitive record conformance and admission, with a message naming both orders | `core/_record_spec.py` (`_bind_dims_from_spec`, `_bind_dims_from_value`, `_field_mismatch`) | the callers that pass a record or mapping in another order, each reordered and listed in the PR |
+| order-sensitive record conformance; a built record in another order refused, with a message naming both orders; a raw mapping given for an input laid out in the declared order | `core/_record_spec.py` (`_bind_dims_from_spec`, `_bind_dims_from_value`, `_field_mismatch`), `functions/_contract.py`, `operations/_given.py` | the callers that pass a built record or record spec in another order, each reordered and listed in the PR |
 | `docs/api/declarations.md` with the one idiom, in B.2's words | the page | — |
 | the User Guide's `given_spec` idioms: `given_spec=<law>.event_spec.components` becomes `given_spec=<law>.event_spec`, and `{"<name>": <law>.event_spec.components["<name>"]}` becomes `<law>.event_spec["<name>"]`, wherever the output is unchanged; one-token changes, so mechanical | User Guide 04, 06, 07, 08, 09 | — |
 
@@ -2835,7 +2858,8 @@ The column typing of a batch's outputs waits for S4, the `condition_on` bug of �
 - a nested `RecordSpec` and an `OutputSpec` each declare a kernel's inputs, through `conditional_distribution` and through `ConditionalDistributionSpec(RecordSpec(...), ...)` and `ConditionalDistributionSpec(OutputSpec(...), ...)`; for a law `x` over `{g: {a, b}, c, sigma}` and a function `fn(g, c)`, `conditional_distribution(fn, given_spec=x.event_spec.without("sigma"))` builds a kernel with inputs `g` and `c`;
 - each of § 10's four messages has a test;
 - `Record({"g": {"b": 1.0}}).merge(Record({"g": {"c": 2.0}}))` raises `ValueError`, as do `RecordSpec.merge` and `RecordBatch.merge` on a shared top-level name;
-- `RecordSpec(x=(), y=())` and `RecordSpec(y=(), x=())` neither conform nor unify, at the top level and in a nested record, and `{"y": 0.0, "x": 1.0}` is not admitted by `RecordSpec(x=(), y=())`; each raises `ValueError` naming both orders;
+- `RecordSpec(x=(), y=())` and `RecordSpec(y=(), x=())` neither conform nor unify, at the top level and in a nested record, and `RecordSpec(x=(), y=())` refuses `Record({"y": 0.0, "x": 1.0})`, as a function's return and as an argument; each raises `ValueError` with § 9's message;
+- the raw mapping `{"y": 0.0, "x": 1.0}`, at the top level and nested, is laid out as `{x, y}` when a function declared to return `RecordSpec(x=(), y=())` returns it, when given for an input of that type, where the body receives it in the declared order, and when given as a kernel's conditioning value;
 - tests cover each error of selection, removal, and merge on output and input specs (§ 19), and check I6 and I16;
 - the five User Guide notebooks run with the new idioms, `uv run mkdocs build --strict` passes, and the full suite passes.
 
@@ -3101,7 +3125,8 @@ For a law `d` over `{a, g: {b, c}}` and its draw `x = sample(d)`:
 | optional inputs of a `Function` | read from `input_spec` alone | parameters with defaults are optional (O9) | S2b |
 | a produced law or kernel | offers a draw's fields, typed by a draw (fact 11); merges, then fails at sampling | offers nothing; a merge refuses it | S2b |
 | record merge | deep | shallow, by top-level name | S2b |
-| field order when a record type conforms or unifies, or a record is admitted | ignored: `{y, x}` conforms to `{x, y}`, though unequal | must match, as equality requires; otherwise `ValueError` | S2b |
+| field order when a record type conforms or unifies, or a built record is admitted | ignored: `{y, x}` conforms to `{x, y}`, though unequal, and an admitted record keeps its own order | must match, as equality requires; otherwise `ValueError` | S2b |
+| a raw mapping given for a record input or as a kernel's conditioning value | checked by its set of names and passed on in the caller's order; a function's returned mapping is already laid out in the declared order | laid out in the declared order, then checked (§ 5.9) | S2b |
 | a batch's element | a bare type, no base element's name; columns typed by the element; names cannot be renamed | `element_spec` holds the name (`element` for a raw batch); columns typed by their `BatchSpec`; names out of equality, hashing, fingerprints, and pytrees | S4 |
 | a view or marginal of a group | a whole object named by the group, indexed by `g/b` while its draws use `b` | offers its children | G1a |
 | a factor holding a group | named whole | wrapped, so its draws gain a level; still one factor | G1a |
@@ -3430,4 +3455,4 @@ The decision "a function with a wrapped output returns the record itself; ProbPi
 | 2026-10-19 | This rewrite replaces the reorganized text of `declarations-and-addressing-io.md` at `8af5bd11`, with the design unchanged, and keeps the file name until N32 decides it; `declarations-and-addressing.md` and the tag `plans-before-io` stay for recovery |
 | 2026-10-19 | Clarity fixes after the maintainer's first review: the produced type, outputs at one level only, § 3.4's worked comparison of outputs and paths, figures of batches of functions and of kernels, B.0's implementation principle, and a sweep of constructions that read as identities; the design is unchanged, and A.2 item 19 records the one question raised |
 | 2026-10-19 | Revised after a colleague's review, with the maintainer's decisions: only merge and rename keep factors (§ 5.2; G4, T32); functions feed on their own justification (§ 5.5); a batch's element name belongs to its element spec, not its type (§ 2.1, § 6.5); unification "where it exists" and a true meet as an open question (A.1); a type hole admits only what can fill it (§ 3.5); the formal model's wider coverage (D.1); field order in record conformance left open (A.2 item 21); A.2 items 21 to 27 |
-| 2026-10-19 | The maintainer settles A.2 item 21: record conformance, unification, and admission are order-sensitive, matching equality (§ 2.1); S2b delivers it, with T33 until then |
+| 2026-10-19 | The maintainer settles A.2 item 21: record conformance and unification are order-sensitive, matching equality (§ 2.1); then the ordering principle of § 5.9, under which a raw mapping is laid out in the declared order and a built record in another order is refused; S2b delivers both, with T33 until then |
