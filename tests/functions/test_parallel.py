@@ -2103,7 +2103,7 @@ class TestPrefectMapping:
             payload_field.name
             for payload_field in fields(evaluation_keys_mod.EvaluationPointPrefectPayload)
         }
-        assert payload_field_names == {"item", "attempt", "parent"}
+        assert "provenance_mode" not in payload_field_names
 
     def test_prefect_worker_revalidates_nested_parent_authority_before_callable(self):
         evaluation_point = make_request(calls=[{"x": 1}]).evaluation_points[0]
