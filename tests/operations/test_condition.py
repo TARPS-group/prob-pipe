@@ -1291,7 +1291,7 @@ class TestEndToEnd:
         with workflow_run(seed=0):
             draw = view(_unnormalized_vector())
             draws = view(_unnormalized_vector(), sample_shape=(5,))
-        assert jnp.shape(jnp.asarray(draw.value)) == (2,)
+        assert jnp.shape(jnp.asarray(draw.raw)) == (2,)
         assert draws.batch_shape == (5,)
 
     def test_a_law_that_samples_does_not_normalize(self):

@@ -355,7 +355,7 @@ def _multi_output_basis(X):
 
 def _values(drawn, X):
     """The values at *X* of each function in the batch *drawn*, stacked along its batch axes."""
-    functions = drawn.raw()
+    functions = drawn.raw
     values = [jnp.asarray(f(X)) for f in functions.ravel()]
     return jnp.reshape(jnp.stack(values), (*functions.shape, *values[0].shape))
 

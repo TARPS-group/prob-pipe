@@ -125,8 +125,9 @@ element and `**kwargs` entry as an independent slot while reconstructing the
 original `BoundArguments` before invoking user code.
 
 Exception: the learned-likelihood factories `learn_amortized_likelihood` and
-`learn_amortized_ratio`, and the samplers `rwmh` and `elliptical_slice`, are
-plain functions. A plain public function states its reason in a comment at its
+`learn_amortized_ratio`, the samplers `rwmh` and `elliptical_slice`, and
+`summarize`, which returns the terms the operations return, are plain
+functions. A plain public function states its reason in a comment at its
 definition site.
 
 ### 1.5 Classes
@@ -599,7 +600,7 @@ record/        (core/)
      ↑
 inference/     (core/, values/, distributions/, functions/, operations/, families/)
 validation/    (core/, distributions/, functions/, operations/)
-diagnostics/   (distributions/, functions/, validation/)
+diagnostics/   (distributions/, functions/, operations/, validation/)
 ```
 
 The private helper modules (`_array_utils.py`, `_dtype.py`, `_weights.py`)
@@ -622,9 +623,12 @@ works without the engine. `functions/__init__.py` resolves its exports lazily.
 >   `design/package-structure.md`.
 > - `core/` → `families/`: the function of `core/_fingerprint.py` that
 >   fingerprints a `KDEDistribution` imports the class lazily.
+> - `core/_table.py` → `functions/_recipe.py`: the line below a table of
+>   summaries counts a call's Monte Carlo draws with `monte_carlo_draws`, which
+>   sits beside the code that records them in the call's replay anchor.
 > - `distributions/` → `diagnostics.views` (lazy import inside
 >   `Distribution.diagnostics` to construct the read-only diagnostics accessor)
-> - `diagnostics/` → `inference/`: four diagnostics modules import private
+> - `diagnostics/` → `inference/`: five diagnostics modules import private
 >   helpers of `inference/` lazily, such as the chain helpers of
 >   `inference/_approximate_distribution.py`.
 >

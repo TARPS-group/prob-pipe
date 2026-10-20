@@ -79,16 +79,16 @@ class TestBinding:
         def affine(x, scale=2.0, *, shift=0.0):
             return scale * x + shift
 
-        assert float(affine(1.0).value) == 2.0
-        assert float(affine(1.0, 3.0, shift=1.0).value) == 4.0
+        assert float(affine(1.0).raw) == 2.0
+        assert float(affine(1.0, 3.0, shift=1.0).raw) == 4.0
 
     def test_an_absent_input_spec_adds_no_schema_constraints(self):
         @function
         def kind(x):
             return type(x).__name__
 
-        assert kind(jnp.ones(3)).value == "ArrayImpl"
-        assert kind("text").value == "str"
+        assert kind(jnp.ones(3)).raw == "ArrayImpl"
+        assert kind("text").raw == "str"
 
     def test_tracked_arguments_are_dependencies_and_others_inputs_by_parameter(self):
         @function

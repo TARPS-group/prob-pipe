@@ -426,7 +426,7 @@ class TestRenamedLaws:
         assert plan.runtime_bindings[0].root is root
 
     def test_the_raw_form_of_a_renamed_law_is_its_own_root(self):
-        detached = _posterior().with_path_names(_GROUPING).raw()
+        detached = _posterior().with_path_names(_GROUPING).raw
 
         assert _descendants.capture_stochastic_consumer(detached).root is detached
 
@@ -500,7 +500,7 @@ class TestRenamedLaws:
 
     def test_the_raw_form_of_a_view_of_a_rebuilt_joint_is_its_own_root(self):
         """The view's marginal is a renamed factor, and detaching it drops the factor it renames."""
-        detached = _joint().with_path_names(x="u")["u"].raw()
+        detached = _joint().with_path_names(x="u")["u"].raw
 
         assert _descendants.capture_stochastic_consumer(detached).root is detached
 
@@ -614,7 +614,7 @@ class TestCopies:
     @pytest.mark.parametrize(
         "detach",
         [
-            pytest.param(lambda law: law.raw(), id="raw"),
+            pytest.param(lambda law: law.raw, id="raw"),
             pytest.param(lambda law: marginal(law, "a"), id="marginal"),
             pytest.param(lambda law: factor(law, "a"), id="factor"),
         ],

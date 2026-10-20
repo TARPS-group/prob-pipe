@@ -88,7 +88,7 @@ class TestInferenceMethodRegistry:
             posterior = condition_on.using(method_options={"num_results": 50, "num_warmup": 20})(
                 simple_model, data
             )
-        assert mean(posterior)["mean(beta)"].shape == (2,)
+        assert mean(posterior)["beta"].shape == (2,)
 
     def test_exact_only_refuses_every_inference_method(self, simple_model, data):
         """Every registered method is approximate, so an exact-only call resolves to nothing."""

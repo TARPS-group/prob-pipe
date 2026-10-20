@@ -108,7 +108,7 @@ class TestThePosterior:
         np.testing.assert_allclose(
             posterior.weights, _expected_weights(np.ones(41) / 41), atol=1e-6
         )
-        np.testing.assert_allclose(np.asarray(posterior.atoms["mu"].values), np.asarray(GRID))
+        np.testing.assert_allclose(np.asarray(posterior.atoms["mu"].raw), np.asarray(GRID))
 
     def test_a_weighted_prior_keeps_its_weights_in_the_product(self):
         prior_weights = np.linspace(1.0, 3.0, 41)
@@ -137,7 +137,7 @@ class TestThePosterior:
         )
         posterior = condition_on(observe * particles, {"y": 250.0})
         assert posterior.event_spec == particles.event_spec
-        rate = np.asarray(atoms["phi"].values * atoms["N"].values)
+        rate = np.asarray(atoms["phi"].raw * atoms["N"].raw)
         log_likelihood = np.asarray(jax.scipy.stats.poisson.logpmf(250.0, rate))
         expected = np.exp(log_likelihood - log_likelihood.max())
         # The rates near 250 leave float32 log-likelihoods about 1e-4 relative precision.

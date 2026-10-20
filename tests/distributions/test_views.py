@@ -1262,14 +1262,14 @@ class TestDerivedBehavior:
 
     def test_the_raw_form_of_a_view_is_the_backend_object_of_the_marginal(self):
         parent = _UnguardedMarginalLaw("parent", _EVENT)
-        raw = FieldView(parent, "model/theta/mu").raw()
+        raw = FieldView(parent, "model/theta/mu").raw
         assert parent.marginal_calls == ["model/theta/mu"]
         assert isinstance(raw, tfd.Normal)
 
     def test_the_raw_form_of_a_view_is_the_detached_marginal_without_a_backend(self):
         parent = _UnguardedMarginalLaw("parent", _EVENT, scores=False)
         view = FieldView(parent, "model/theta/mu")
-        raw = view.raw()
+        raw = view.raw
         assert parent.marginal_calls == ["model/theta/mu"]
         assert not isinstance(raw, FieldView)
         # The detached marginal carries the view's expression, whatever label the
@@ -1357,7 +1357,7 @@ class TestNotation:
             jnp.array([0.0, 1.0, 3.0]), component="b", label="b"
         )
         parent = with_fixed_paths(joint.with_label("model"), "obs")
-        detached = parent["b"].raw()
+        detached = parent["b"].raw
         assert _fixed_paths(detached) == ("obs",)
         assert detached.notation == "b(b; obs)"
 
@@ -1485,7 +1485,7 @@ def _prior() -> Distribution:
 
 
 class TestTheRawFormOfAView:
-    """A view's ``raw()`` is the raw form of its parent's marginal at the path."""
+    """A view's ``raw`` is the raw form of its parent's marginal at the path."""
 
     def test_a_view_at_a_tfp_factor_gives_the_tfp_distribution(self):
         model = (
@@ -1496,12 +1496,12 @@ class TestTheRawFormOfAView:
             )
             * _prior()
         ).with_label("model")
-        raw = model["mu"].raw()
+        raw = model["mu"].raw
         assert isinstance(raw, tfd.Normal)
         assert (float(raw.loc), float(raw.scale)) == (0.0, 1.0)
 
     def test_a_view_of_a_gaussian_joint_gives_the_tfp_marginal_of_the_factor(self):
-        raw = _joint_gaussian()["y"].raw()
+        raw = _joint_gaussian()["y"].raw
         assert isinstance(raw, tfd.MultivariateNormalLinearOperator)
         assert jnp.allclose(raw.mean(), _MEAN[1:])
 
@@ -1510,7 +1510,7 @@ class TestTheRawFormOfAView:
             jnp.array([0.0, 1.0, 3.0]), component="b", label="b"
         )
         view = joint.with_label("model")["b"]
-        raw = view.raw()
+        raw = view.raw
         assert isinstance(raw, EmpiricalDistribution) and not isinstance(raw, FieldView)
         assert (raw.notation, raw.provenance) == ("b(b)", None)
         assert raw.notation == marginal(joint.with_label("model"), "b").notation

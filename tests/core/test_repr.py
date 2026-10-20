@@ -5,9 +5,11 @@ from __future__ import annotations
 import copy
 import functools
 import pickle
+from math import prod
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
@@ -21,6 +23,7 @@ from probpipe import (
     KDEDistribution,
     Normal,
     NumericArray,
+    NumericArrayBatch,
     NumericArraySpec,
     NumericRecordBatch,
     Opaque,
@@ -34,19 +37,23 @@ from probpipe import (
     conditional_distribution,
     convert,
     distribution,
+    mean,
     positive,
     workflow_run,
 )
+from probpipe.core import _repr as repr_module
 from probpipe.core._dispatch import MethodInfo
 from probpipe.core._repr import (
     WIDTH,
     format_default,
     format_notation,
     format_signature,
+    format_value,
     grouped_label,
     is_compound,
     is_product,
 )
+from probpipe.core.tracked import TrackedTerm
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.families import BernoulliFamily, MixtureDistribution, glm_likelihood
 from probpipe.linalg import DenseLinOp, DiagonalLinOp
@@ -79,22 +86,15 @@ def _two_fields() -> NumericRecordBatch:
 
 class TestValuesAndBatches:
     def test_an_array_reads_by_its_label_shape_and_dtype(self):
-        assert repr(
-            NumericArray(
-                jnp.zeros(3),
-                label="x",
-            )
-        ) == ("NumericArray('x', shape=(3,), dtype=float32)")
+        assert repr(NumericArray(jnp.zeros(3), label="x")) == (
+            "NumericArray('x', shape=(3,), dtype=float32)\n  [0. 0. 0.]"
+        )
 
     def test_a_declared_support_is_shown(self):
         spec = NumericArraySpec((), jnp.float32, positive)
-        assert repr(
-            NumericArray(
-                jnp.asarray(1.0),
-                spec=spec,
-                label="tau",
-            )
-        ) == ("NumericArray('tau', shape=(), dtype=float32, support=positive)")
+        assert repr(NumericArray(jnp.asarray(1.5), spec=spec, label="tau")) == (
+            "NumericArray('tau', shape=(), dtype=float32, support=positive)\n  1.5"
+        )
 
     def test_an_opaque_value_reads_by_its_type(self):
         assert (
@@ -138,6 +138,207 @@ class TestValuesAndBatches:
         )
 
 
+class TestANumericTermShowsItsValues:
+    """A numeric term shows its values below its summary, formatted by NumPy's printing (II.4)."""
+
+    def test_a_scalar_shows_its_value(self):
+        m = mean(Normal("mu", 0.25, 1.0, label="prior"))
+
+        assert repr(m) == (
+            "NumericArray('𝔼[mu ~ prior]', shape=(), dtype=float32, support=real)\n  0.25"
+        )
+        assert str(m) == "0.25"
+
+    def test_each_line_of_an_array_is_indented_as_a_records_lines_are(self):
+        m = NumericArray(jnp.arange(6.0).reshape(2, 3), label="m")
+
+        assert repr(m) == (
+            "NumericArray('m', shape=(2, 3), dtype=float32)\n  [[0. 1. 2.]\n   [3. 4. 5.]]"
+        )
+        assert str(m) == "[[0. 1. 2.]\n [3. 4. 5.]]"
+
+    def test_a_vector_shows_its_entries(self):
+        v = NumericArray(jnp.array([1.0, 2.5, -3.0]), label="v")
+
+        assert repr(v) == "NumericArray('v', shape=(3,), dtype=float32)\n  [ 1.   2.5 -3. ]"
+
+    def test_numpys_print_options_set_the_precision_and_the_shortening(self):
+        third = NumericArray(jnp.asarray(1.0 / 3.0), label="third")
+        ten = NumericArray(jnp.arange(10), label="ten")
+
+        with np.printoptions(precision=3):
+            assert str(third) == "0.333"
+        with np.printoptions(threshold=5, edgeitems=2):
+            assert str(ten) == "[0 1 ... 8 9]"
+
+    def test_a_long_array_is_shortened_and_reads_only_the_entries_shown(self, monkeypatch):
+        values = np.arange(20000.0, dtype=np.float32).reshape(400, 50)
+        read = []
+        to_numpy = repr_module._to_numpy_array
+
+        def recording(value):
+            read.append(tuple(value.shape))
+            return to_numpy(value)
+
+        monkeypatch.setattr(repr_module, "_to_numpy_array", recording)
+        text = repr(NumericArray(jnp.asarray(values), label="x"))
+
+        assert text == (
+            "NumericArray('x', shape=(400, 50), dtype=float32)\n  "
+            + np.array2string(values, prefix="  ")
+        )
+        assert "..." in text
+        # Three entries at each end of both axes, and one more that NumPy shows as "...".
+        assert sum(prod(shape) for shape in read) == 7 * 7
+
+    def test_a_record_shows_one_path_per_line(self):
+        record = Record(
+            {"population": {"mu": 0.5, "tau": 1.25}, "y": jnp.array([2.0, 2.5])},
+            label="r",
+        )
+
+        assert repr(record) == (
+            "NumericRecord('r')\n"
+            "  population/mu    0.5\n"
+            "  population/tau   1.25\n"
+            "  y                [2.  2.5]"
+        )
+        assert str(record) == (
+            "population/mu    0.5\npopulation/tau   1.25\ny                [2.  2.5]"
+        )
+
+    def test_a_shortened_field_ends_with_its_shape(self):
+        record = Record({"a": 1.0, "y": jnp.arange(2000.0)}, label="r")
+
+        assert repr(record) == (
+            "NumericRecord('r')\n"
+            "  a   1.\n"
+            "  y   [0.000e+00 1.000e+00 2.000e+00 ... 1.997e+03 1.998e+03 1.999e+03]"
+            "   shape=(2000,)"
+        )
+
+    def test_a_field_of_several_lines_stays_in_its_column(self):
+        record = Record({"m": jnp.eye(2)}, label="r")
+
+        assert repr(record) == "NumericRecord('r')\n  m   [[1. 0.]\n       [0. 1.]]"
+
+    def test_a_batch_of_arrays_shows_its_levels_then_its_stored_entries(self):
+        batch = NumericArrayBatch(jnp.arange(6.0).reshape(2, 3), ("chain", "draw"), label="theta")
+
+        assert repr(batch) == (
+            "NumericArrayBatch(\n"
+            "    'theta',\n"
+            "    levels={'chain': 2, 'draw': 3},\n"
+            "    element_spec=NumericArraySpec(shape=(), dtype=float32),\n"
+            ")\n"
+            "  [[0. 1. 2.]\n"
+            "   [3. 4. 5.]]"
+        )
+        assert str(batch) == "[[0. 1. 2.]\n [3. 4. 5.]]"
+
+    def test_a_batch_of_records_shows_its_levels_then_one_column_per_line(self):
+        assert repr(_two_fields()) == (
+            "NumericRecordBatch('rows', levels={'row': 2})\n  a   [0. 1.]\n  b   [1. 3.]"
+        )
+        assert str(_two_fields()) == "a   [0. 1.]\nb   [1. 3.]"
+
+    def test_inside_a_trace_each_kind_shows_its_summary_alone(self):
+        shown = []
+
+        def show(term):
+            shown.append((repr(term), str(term), term._repr_summary()))
+            return term
+
+        terms = [
+            NumericArray(jnp.arange(3.0), label="x"),
+            Record({"population": {"mu": 0.5}, "y": jnp.arange(2.0)}, label="r"),
+            NumericArrayBatch(jnp.arange(4.0), "draw", label="b"),
+            _two_fields(),
+        ]
+        for term in terms:
+            jax.jit(show)(term)
+
+        for text, as_str, summary in shown:
+            assert text == as_str == summary
+            assert "Traced" not in text
+        assert shown[1][0] == "NumericRecord('<no description>', fields=('population/mu', 'y'))"
+
+    def test_inside_a_trace_a_record_has_no_table(self):
+        tables = []
+
+        def show(term):
+            tables.append(term._repr_html_())
+            return term
+
+        jax.jit(show)(Record({"y": jnp.arange(2.0)}, label="r"))
+        jax.jit(show)(_two_fields())
+
+        assert tables == [None, None]
+
+    def test_a_term_whose_entries_cannot_be_read_shows_its_summary_alone(self):
+        stored = jnp.arange(3.0)
+        terms = [
+            NumericArray(stored, label="x"),
+            Record({"y": stored}, label="r"),
+            NumericArrayBatch(stored, "draw", label="b"),
+            NumericRecordBatch({"y": stored}, "draw", label="rows"),
+        ]
+        stored.delete()
+
+        for term in terms:
+            assert repr(term) == str(term) == term._repr_summary()
+        assert repr(terms[1]) == "NumericRecord('r', fields=('y',))"
+        assert terms[1]._repr_html_() is None
+        assert terms[3]._repr_html_() is None
+
+    def test_a_record_with_no_fields_shows_its_summary(self):
+        record = Record({}, label="e")
+
+        assert repr(record) == str(record) == "NumericRecord('e', fields=())"
+        assert record._repr_html_() is None
+
+    def test_a_record_displays_as_a_table_of_paths_and_values_in_a_notebook(self):
+        record = Record({"population": {"mu": 0.5}, "y": jnp.array([2.0, 2.5])}, label="a<b")
+
+        html = record._repr_html_()
+
+        assert html.startswith(
+            '<div><code style="white-space: pre">NumericRecord(&#x27;a&lt;b&#x27;)</code>'
+        )
+        assert "<th>path</th><th>value</th>" in html
+        assert html.count("<tr>") == 3
+        assert "<code>population/mu</code>" in html
+        assert ">[2.  2.5]</code>" in html
+        assert "<th>path</th><th>value</th>" in _two_fields()._repr_html_()
+
+    def test_a_term_inside_another_repr_shows_its_summary_alone(self):
+        atoms = NumericArrayBatch(jnp.arange(3.0), "draw", label="draws")
+        law = EmpiricalDistribution(atoms, component="theta")
+
+        assert repr(law) == (
+            "EmpiricalDistribution(\n"
+            "    atoms=NumericArrayBatch(\n"
+            "        'draws',\n"
+            "        levels={'draw': 3},\n"
+            "        element_spec=NumericArraySpec(shape=(), dtype=float32),\n"
+            "    ),\n"
+            "    component='theta',\n"
+            ")"
+        )
+
+    def test_the_error_of_a_second_provenance_shows_the_summary(self):
+        x = NumericArray(jnp.arange(3.0), label="x")
+        x.with_provenance(probpipe.Provenance("op"))
+
+        with pytest.raises(RuntimeError) as raised:
+            x.with_provenance(probpipe.Provenance("op"))
+
+        assert str(raised.value) == (
+            "provenance of NumericArray('x', shape=(3,), dtype=float32) is already set; "
+            "it can be set only once"
+        )
+
+
 class TestSpecs:
     def test_a_spec_shows_the_attributes_it_sets(self):
         assert repr(NumericArraySpec((3,))) == "NumericArraySpec(shape=(3,))"
@@ -151,11 +352,11 @@ class TestSpecs:
         )
 
     def test_names_that_are_no_identifiers_read_as_one_mapping(self):
-        """A derived component such as mean(theta) cannot be a keyword, so the call maps it."""
-        output = OutputSpec(**{"mean(theta)": NumericArraySpec(())})
-        assert repr(output) == "OutputSpec(**{'mean(theta)': NumericArraySpec(shape=())})"
-        record = RecordSpec({"mean(mu)": (), "mean(tau)": ()})
-        assert repr(record) == "NumericRecordSpec(**{'mean(mu)': (), 'mean(tau)': ()})"
+        """A component such as ``my model`` cannot be a keyword, so the call maps it."""
+        output = OutputSpec(**{"my model": NumericArraySpec(())})
+        assert repr(output) == "OutputSpec(**{'my model': NumericArraySpec(shape=())})"
+        record = RecordSpec({"my model": (), "tau": ()})
+        assert repr(record) == "NumericRecordSpec(**{'my model': (), 'tau': ()})"
         assert eval(repr(output)) == output
 
     def test_a_batch_spec_names_its_levels(self):
@@ -509,6 +710,20 @@ class TestFunctionsAndOperators:
     def test_a_report_shows_the_fields_it_sets(self):
         info = MethodInfo(True, method_name="closed_form", exact=True)
         assert repr(info) == "MethodInfo(True, method_name='closed_form', exact=True)"
+
+    def test_a_term_reads_by_its_repr_without_computing_its_raw_form(self):
+        class Unresolvable(TrackedTerm):
+            def __init__(self):
+                self._init_tracked("unresolvable")
+
+            @property
+            def raw(self):
+                raise RuntimeError("no exact marginal")
+
+            def __repr__(self):
+                return "Unresolvable()"
+
+        assert format_value(Unresolvable()) == "Unresolvable()"
 
 
 class TestLayout:

@@ -86,9 +86,7 @@ class _SuiteConverter(Converter):
         return ((_Source,), self._targets)
 
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
-        return ConversionInfo(
-            True, method_name=self._name, exact=self._exact, target_spec=source.spec
-        )
+        return ConversionInfo(True, target_spec=source.spec)
 
     def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
         component = next(iter(source.event_spec.components)) if self._keep else "other"

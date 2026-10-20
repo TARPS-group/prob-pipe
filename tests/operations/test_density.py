@@ -117,7 +117,7 @@ class TestTheScoredValue:
         assert scores.level_names == ("rows", "cols")
         assert scores.batch_shape == (2, 3)
         np.testing.assert_allclose(
-            np.asarray(scores.values),
+            np.asarray(scores.raw),
             jax.scipy.stats.norm.logpdf(np.linspace(-1.0, 1.0, 6).reshape(2, 3)),
             rtol=1e-6,
         )
@@ -173,8 +173,8 @@ class TestABatchOfArraysIsScoredInOneMappedCall:
         assert all(jnp.shape(jnp.asarray(value)) == (3,) for value in law.calls)
         assert (scores.level_names, scores.batch_shape) == (("point",), (1000,))
         np.testing.assert_allclose(
-            np.asarray(scores.values),
-            np.sum(jax.scipy.stats.norm.logpdf(np.asarray(points.values)), axis=-1),
+            np.asarray(scores.raw),
+            np.sum(jax.scipy.stats.norm.logpdf(np.asarray(points.raw)), axis=-1),
             rtol=1e-6,
         )
 
@@ -187,7 +187,7 @@ class TestABatchOfArraysIsScoredInOneMappedCall:
         law.calls.clear()
         scores = score(law, self._points(5))
         assert len(law.calls) == thousand < 5
-        assert bool(jnp.all(jnp.asarray(scores.values) >= 0))
+        assert bool(jnp.all(jnp.asarray(scores.raw) >= 0))
 
     @pytest.mark.parametrize("score", [log_prob, unnormalized_log_prob])
     def test_the_mapped_scores_equal_the_sequential_ones_at_every_level(self, score):
@@ -204,9 +204,7 @@ class TestABatchOfArraysIsScoredInOneMappedCall:
         assert len(sequential_law.calls) == 8 > len(mapped_law.calls)
         assert mapped.level_names == sequential.level_names == ("rows", "cols")
         assert mapped.batch_shape == sequential.batch_shape == (2, 4)
-        np.testing.assert_allclose(
-            np.asarray(mapped.values), np.asarray(sequential.values), rtol=1e-6
-        )
+        np.testing.assert_allclose(np.asarray(mapped.raw), np.asarray(sequential.raw), rtol=1e-6)
 
 
 class TestLiftedScores:
@@ -214,13 +212,13 @@ class TestLiftedScores:
         report = log_prob.check(Gaussian("g"), Gaussian("v"))
         assert (report.feasible, report.route, report.exact) == (True, "exact", True)
         assert report.lifted == ("value",)
-        assert report.result == OutputSpec(**{"log_prob(g)": NumericArraySpec(())})
+        assert report.result == OutputSpec(**{"log_prob": NumericArraySpec(())})
         lifted = log_prob(Gaussian("g"), Gaussian("v"))
         assert isinstance(lifted, Distribution)
         # The law of the score at draws of the value is the operation at a draw,
         # and its component is the operation's name, never a derived label.
         assert (lifted.label, lifted.notation) == ("log_prob", "log_prob(g(g), v ~ v)")
-        assert list(lifted.event_spec.components) == ["log_prob(g)"]
+        assert list(lifted.event_spec.components) == ["log_prob"]
 
     def test_a_law_whose_draws_do_not_conform_raises_applicability_error(self):
         with pytest.raises(ApplicabilityError, match="does not conform"):

@@ -144,7 +144,7 @@ class TestMomentMatching:
     def test_same_class_needs_no_converter(self):
         n = Normal("x", loc=2.0, scale=0.5)
         info = converter_registry.check(n, Normal)
-        assert (info.method_name, info.exact, info.samples) == (None, True, False)
+        assert (info.method_name, info.exact, info.claims_random_events) == (None, True, False)
 
         result = converter_registry.convert(n, Normal)
         assert isinstance(result, Normal)
@@ -154,7 +154,11 @@ class TestMomentMatching:
     def test_cross_family_moment_match(self):
         g = Laplace("g", loc=9.0, scale=1.0)
         info = converter_registry.check(g, Normal)
-        assert (info.method_name, info.exact, info.samples) == ("moment_match", False, False)
+        assert (info.method_name, info.exact, info.claims_random_events) == (
+            "moment_match",
+            False,
+            False,
+        )
 
         result = converter_registry.convert(g, Normal, num_samples=5000)
         assert isinstance(result, Normal)
@@ -215,7 +219,11 @@ class TestMomentMatching:
     def test_to_empirical(self):
         n = Normal("x", loc=0.0, scale=1.0)
         info = converter_registry.check(n, EmpiricalDistribution)
-        assert (info.method_name, info.exact, info.samples) == ("empirical", False, True)
+        assert (info.method_name, info.exact, info.claims_random_events) == (
+            "empirical",
+            False,
+            True,
+        )
         emp = converter_registry.convert(n, EmpiricalDistribution, num_samples=100)
         assert isinstance(emp, EmpiricalDistribution)
         assert emp.num_atoms == 100
@@ -273,13 +281,17 @@ class TestAnEmpiricalSourceAgainstTheTargetSupport:
             event_spec=OutputSpec(x=NumericArraySpec((2,), support=support)),
         )
         info = converter_registry.check(source, Beta)
-        assert (info.feasible, info.method_name, info.samples) == (True, "moment_match", False)
+        assert (info.feasible, info.method_name, info.claims_random_events) == (
+            True,
+            "moment_match",
+            False,
+        )
         fitted = converter_registry.convert(source, Beta)
         assert isinstance(fitted, Beta)
         assert fitted.support == unit_interval
         # The three equally weighted atoms have means 0.4 and 0.5 and variance 0.08 / 3.
-        np.testing.assert_allclose(mean(fitted).raw(), [0.4, 0.5], rtol=1e-6, atol=0)
-        np.testing.assert_allclose(variance(fitted).raw(), [0.08 / 3] * 2, rtol=1e-6, atol=0)
+        np.testing.assert_allclose(mean(fitted).raw, [0.4, 0.5], rtol=1e-6, atol=0)
+        np.testing.assert_allclose(variance(fitted).raw, [0.08 / 3] * 2, rtol=1e-6, atol=0)
 
 
 class TestASupportTheFamilyDoesNotShare:
@@ -480,8 +492,6 @@ class TestAllCrossFamilyConversions:
             def check(self, source, target_type, **options):
                 return ConversionInfo(
                     True,
-                    method_name=self.name,
-                    exact=False,
                     target_spec=source.spec,
                     target_class=Normal,
                 )
@@ -561,7 +571,7 @@ class TestAllCrossFamilyConversions:
         samples = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
         emp = EmpiricalDistribution(samples, component="x")
         info = converter_registry.check(emp, MultivariateNormal)
-        assert info.samples is False  # the empirical law's moments are in closed form
+        assert info.claims_random_events is False  # the empirical law's moments are in closed form
         result = converter_registry.convert(emp, MultivariateNormal)
         assert isinstance(result, MultivariateNormal)
         assert result.loc.shape == (3,)
@@ -587,7 +597,7 @@ class TestTFPConverter:
         tfp_n = tfd.Normal(loc=2.0, scale=0.5)
         info = converter_registry.check(tfp_n, Normal)
         assert info.feasible
-        assert (info.method_name, info.exact, info.samples) == ("tfp", True, False)
+        assert (info.method_name, info.exact, info.claims_random_events) == ("tfp", True, False)
 
         result = converter_registry.convert(tfp_n, Normal)
         assert isinstance(result, Normal)
@@ -628,7 +638,7 @@ class TestTFPConverter:
         tfp_dist = tfd.VonMises(loc=0.0, concentration=1.0)
         result = converter_registry.convert(tfp_dist, SupportsLogProb)
         assert type(result) is TFPDistribution
-        assert result.raw() is tfp_dist
+        assert result.raw is tfp_dist
 
     def test_unknown_tfp_to_empirical(self):
         """An unknown TFP distribution samples through the backend adapter."""
@@ -640,8 +650,8 @@ class TestTFPConverter:
     def test_a_family_exports_its_backend_distribution_through_raw(self):
         """Converting to a backend class is no conversion, since the result carries no declaration."""
         n = Normal("x", loc=3.0, scale=1.0)
-        assert isinstance(n.raw(), tfd.Normal)
-        np.testing.assert_allclose(float(n.raw().loc), 3.0)
+        assert isinstance(n.raw, tfd.Normal)
+        np.testing.assert_allclose(float(n.raw.loc), 3.0)
         with pytest.raises(ResolutionError):
             converter_registry.convert(n, tfd.Normal)
 
@@ -661,11 +671,11 @@ class TestTFPConverter:
         ids=["beta", "gamma", "exponential", "bernoulli", "dirichlet", "mvn"],
     )
     def test_each_family_exports_its_backend_distribution(self, law, backend):
-        assert isinstance(law.raw(), backend)
+        assert isinstance(law.raw, backend)
 
     def test_probpipe_to_tfp_round_trip(self):
         n = Normal("x", loc=5.0, scale=2.0)
-        n2 = converter_registry.convert(n.raw(), Normal)
+        n2 = converter_registry.convert(n.raw, Normal)
         np.testing.assert_allclose(float(n2._loc), 5.0)
         np.testing.assert_allclose(float(n2._scale), 2.0)
 
@@ -823,7 +833,11 @@ class TestScipyConverter:
 
         info = converter_registry.check(ss.chi2(df=3), Normal)
         assert info.feasible
-        assert (info.method_name, info.exact, info.samples) == ("moment_match", False, True)
+        assert (info.method_name, info.exact, info.claims_random_events) == (
+            "moment_match",
+            False,
+            True,
+        )
         with workflow_run(seed=0):
             result = converter_registry.convert(ss.chi2(df=3), Normal, num_samples=4000)
         np.testing.assert_allclose(float(result._loc), 3.0, atol=0.2)
@@ -948,8 +962,6 @@ class TestCustomConverter:
             def check(self, source, target_type, **options):
                 return ConversionInfo(
                     feasible=True,
-                    method_name=self.name,
-                    exact=True,
                     target_spec=Normal("x", loc=0.0, scale=1.0).spec,
                     target_class=Normal,
                 )
@@ -1045,7 +1057,7 @@ class TestTheDrawCountOfAConversion:
             return d.num_atoms
 
         counted = Function(atoms, label="atoms", dispatch="sequential")
-        assert int(counted.using(num_samples=19)(Normal("x", 0.0, 1.0)).raw()) == 19
+        assert int(counted.using(num_samples=19)(Normal("x", 0.0, 1.0)).raw) == 19
 
     def test_an_exact_conversion_records_no_num_samples(self):
         converted = convert(tfd.Normal(0.0, 1.0), Normal)
@@ -1202,7 +1214,7 @@ class TestProtocolConversion:
         emp = EmpiricalDistribution(samples, component="x")
         info = converter_registry.check(emp, SupportsLogProb)
         assert info.feasible
-        assert (info.method_name, info.exact, info.samples) == ("kde", False, False)
+        assert (info.method_name, info.exact, info.claims_random_events) == ("kde", False, False)
 
     def test_a_law_that_samples_converts_to_a_moment_by_its_empirical_law(self):
         """A converter whose result claims the capability serves a request for it."""
@@ -1213,7 +1225,7 @@ class TestProtocolConversion:
         law = BijectorTransformedDistribution("y", Normal("x", 0.0, 1.0), tfb.Exp())
         assert not isinstance(law, SupportsMean)
         info = converter_registry.check(law, SupportsMean)
-        assert (info.method_name, info.samples) == ("empirical", True)
+        assert (info.method_name, info.claims_random_events) == ("empirical", True)
         assert isinstance(
             converter_registry.convert(law, SupportsMean, num_samples=20), SupportsMean
         )

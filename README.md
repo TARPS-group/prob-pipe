@@ -64,7 +64,7 @@ model = likelihood * prior
 with workflow_run(seed=0):
     posterior = condition_on(model, {"damage": damage})
 
-print("posterior mean of beta:", mean(posterior["beta"]).raw())
+print("posterior mean of beta:", mean(posterior["beta"]).raw)
 
 # Every result records how it was computed.
 for name, result in [("mean of the prior", mean(prior)), ("posterior", posterior)]:
@@ -97,7 +97,7 @@ for method in ["blackjax_nuts", "tfp_nuts", "blackjax_rwmh"]:
         method_posterior = condition_on.using(method=method)(model, {"damage": damage})
     # Adds R-hat and effective sample size diagnostics to the posterior object.
     add_mcmc_diagnostics(method_posterior)
-    mean_slope = float(mean(method_posterior["beta"]).raw()[1])
+    mean_slope = float(mean(method_posterior["beta"]).raw[1])
     largest_rhat = max(method_posterior.diagnostics.mcmc.rhat.values())
     print(f"{method:<15}{mean_slope:>12.3f}{largest_rhat:>16.3f}")
 ```
@@ -132,7 +132,7 @@ with workflow_run(seed=2):
     damage_prob = challenger_damage_probability(posterior["beta"])
 
 print("P(damage at 31°F), posterior mean:", round(float(mean(damage_prob)), 3))
-print("P(damage at 31°F), 90% interval:", quantile(damage_prob, jnp.array([0.05, 0.95])).raw())
+print("P(damage at 31°F), 90% interval:", quantile(damage_prob, jnp.array([0.05, 0.95])).raw)
 
 # The forecast records how it was computed.
 prov_meta = damage_prob.provenance.metadata

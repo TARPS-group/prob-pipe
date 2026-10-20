@@ -49,6 +49,10 @@ class CmdStanNutsMethod(InferenceMethod):
     _method_options = ("num_chains", "num_results", "num_warmup")
 
     @property
+    def description(self) -> str:
+        return "NUTS through CmdStan, for a Stan program's posterior at its data."
+
+    @property
     def name(self) -> str:
         return "cmdstan_nuts"
 

@@ -299,9 +299,9 @@ class TestAnOperationLabelsItsResultByItsLaw:
         law = self._params()
         result = mean(law)
         assert result.label == "𝔼[(x, y) ~ params]"
-        assert list(result.keys()) == ["mean(x)", "mean(y)"]
-        assert float(result["mean(x)"]) == 0.0
-        assert float(result["mean(y)"]) == 2.0
+        assert list(result.keys()) == ["x", "y"]
+        assert float(result["x"]) == 0.0
+        assert float(result["y"]) == 2.0
         assert result.provenance.parents[0].parent is mean
         assert result.provenance.parents[1].parent is law
 
@@ -808,46 +808,44 @@ class TestTheLabelsOfValuesComputedFromALaw:
             pytest.param(sample, lambda: (_prior(), (3,)), "mu ~ prior", ("mu",), id="draws"),
             pytest.param(sample, lambda: (_model(),), "(y, mu) ~ model", ("y", "mu"), id="joint"),
             pytest.param(
-                log_prob, lambda: (_prior(), 0.3), "log prior(mu)", ("log_prob(mu)",), id="score"
+                log_prob, lambda: (_prior(), 0.3), "log prior(mu)", ("log_prob",), id="score"
             ),
             pytest.param(
                 log_prob,
                 lambda: (_model(), {"y": 0.1, "mu": 0.3}),
                 "log model(y, mu)",
-                ("log_prob(y, mu)",),
+                ("log_prob",),
                 id="joint-score",
             ),
             pytest.param(
                 unnormalized_log_prob,
                 lambda: (_prior(), 0.3),
                 "log prior(mu)",
-                ("unnormalized_log_prob(mu)",),
+                ("unnormalized_log_prob",),
                 id="unnormalized-score",
             ),
-            pytest.param(prob, lambda: (_prior(), 0.3), "prior(mu)", ("prob(mu)",), id="density"),
-            pytest.param(
-                mean, lambda: (_model(),), "𝔼[(y, mu) ~ model]", ("mean(y)", "mean(mu)"), id="mean"
-            ),
+            pytest.param(prob, lambda: (_prior(), 0.3), "prior(mu)", ("prob",), id="density"),
+            pytest.param(mean, lambda: (_model(),), "𝔼[(y, mu) ~ model]", ("y", "mu"), id="mean"),
             pytest.param(
                 variance,
                 lambda: (_model(),),
                 "𝕍[(y, mu) ~ model]",
-                ("variance(y)", "variance(mu)"),
+                ("y", "mu"),
                 id="variance",
             ),
             pytest.param(
                 standard_deviation,
                 lambda: (_model(),),
                 "√𝕍[(y, mu) ~ model]",
-                ("standard_deviation(y)", "standard_deviation(mu)"),
+                ("y", "mu"),
                 id="standard_deviation",
             ),
-            pytest.param(cov, lambda: (_model(),), "ℂ[(y, mu) ~ model]", ("cov(y, mu)",), id="cov"),
+            pytest.param(cov, lambda: (_model(),), "ℂ[(y, mu) ~ model]", ("cov",), id="cov"),
             pytest.param(
-                quantile, lambda: (_prior(), 0.5), "ℚ[mu ~ prior]", ("quantile(mu)",), id="quantile"
+                quantile, lambda: (_prior(), 0.5), "ℚ[mu ~ prior]", ("mu",), id="quantile"
             ),
             pytest.param(
-                mean, lambda: (_model()["y"],), "𝔼[y ~ model]", ("mean(y)",), id="mean-of-a-view"
+                mean, lambda: (_model()["y"],), "𝔼[y ~ model]", ("y",), id="mean-of-a-view"
             ),
         ],
     )
@@ -1029,7 +1027,7 @@ class TestTheLabelsOfALiftedFunction:
         with workflow_run(seed=0):
             lifted = log_prob(prior, proposal)
         assert tuple(lifted.event_spec.components) == tuple(declared.components)
-        assert tuple(lifted.event_spec.components) == ("log_prob(g)",)
+        assert tuple(lifted.event_spec.components) == ("log_prob",)
 
     def test_a_parameter_the_caller_omits_is_not_shown(self):
         @function(output_spec=OutputSpec(scaled_value=None))
