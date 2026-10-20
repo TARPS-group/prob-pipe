@@ -200,7 +200,7 @@ class TestAddPpc:
             )
 
         view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
-        atoms = np.ravel(np.asarray(posterior.atoms["alpha"].values))
+        atoms = np.ravel(np.asarray(posterior.atoms["alpha"].raw))
         exact = float(np.mean(stats.norm.sf(location, atoms, np.sqrt(1.0 / 5.0))))
         # Four Monte Carlo standard errors of 2000 replications, plus float32 rounding.
         tolerance = 4.0 * np.sqrt(exact * (1.0 - exact) / 2000) + 2e-3

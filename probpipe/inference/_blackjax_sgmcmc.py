@@ -105,19 +105,24 @@ _SGMCMC_OPTIONS = (
 class _BlackJAXSGMCMCMethod(InferenceMethod):
     """Base for the two BlackJAX SGMCMC methods.
 
-    Subclasses define ``_method_name``, ``_method_priority``, and
-    override :meth:`_build_algorithm` to plug in the specific BlackJAX
+    Subclasses define ``_method_name``, ``_method_priority``,
+    ``_method_description``, and override :meth:`_build_algorithm` to plug in the specific BlackJAX
     kernel constructor (``blackjax.sgld`` or ``blackjax.sghmc``) with
     method-specific kwargs.
     """
 
     _method_name: str = ""
     _method_priority: int | None = None
+    _method_description: str = ""
     _method_options = _SGMCMC_OPTIONS
 
     @property
     def name(self) -> str:
         return self._method_name
+
+    @property
+    def description(self) -> str:
+        return self._method_description
 
     def supported_types(self) -> tuple[type, ...]:
         return (_UnnormalizedConditional,)
@@ -267,6 +272,7 @@ class BlackJAXSGLDMethod(_BlackJAXSGMCMCMethod):
 
     _method_name = "blackjax_sgld"
     _method_priority = 45
+    _method_description = "Stochastic gradient Langevin dynamics through BlackJAX, on minibatches."
 
     def _build_algorithm(self, grad_estimator, **kwargs: Any):
         return blackjax.sgld(grad_estimator)
@@ -292,6 +298,7 @@ class BlackJAXSGHMCMethod(_BlackJAXSGMCMCMethod):
 
     _method_name = "blackjax_sghmc"
     _method_priority = None
+    _method_description = "Stochastic gradient HMC through BlackJAX, on minibatches."
     _method_options = (*_SGMCMC_OPTIONS, "alpha", "beta", "num_integration_steps")
 
     def _build_algorithm(self, grad_estimator, **kwargs: Any):

@@ -56,7 +56,9 @@ A few conventions keep PRs consistent; the PR template
   stale description is a review blocker. The PR text follows the writing
   rules of `STYLE_GUIDE.md` §10, whose rules 9 and 10 keep it free of plan
   labels and self-contained. Scratch planning artifacts, such as `*_plan.md`
-  files, stay off the branch.
+  files, stay off the branch. The one exception is `plans/`, which holds the shared
+  plans of a multi-PR push while it runs and is deleted once its sections
+  have moved into `design/` (`plans/README.md`).
 - **CHANGELOG** — a PR with a user-visible change adds its entry to
   `CHANGELOG.md` in the same PR, under `## [Unreleased]` and the one heading
   of its change type, such as `### Added` or `### Changed (breaking)`.

@@ -306,6 +306,10 @@ class NutpieNutsMethod(InferenceMethod):
         self._supported = (_StanPosterior, PyMCModel)
 
     @property
+    def description(self) -> str:
+        return "NUTS through nutpie, for a Stan program or a PyMC model."
+
+    @property
     def name(self) -> str:
         return "nutpie_nuts"
 

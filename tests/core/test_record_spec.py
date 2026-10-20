@@ -135,7 +135,7 @@ class TestOpaqueSpecTypeAndMeta:
         )
 
         assert tagged().spec == OpaqueSpec(type=str, meta="units")
-        assert tagged().raw() == "m"
+        assert tagged().raw == "m"
 
     def test_completion_keeps_the_declared_type(self):
         declared = OutputSpec(label=OpaqueSpec(type=str))

@@ -22,13 +22,14 @@ if TYPE_CHECKING:
     from ._views import _EventRenames
 
 from ..core._expression import _GENERIC_LAW_SYMBOL, Named, Signature
+from ..core._immutable import transient_memo
 from ..core._record_spec import RecordSpec
 from ..core._repr import call_repr, format_names, public_class_name, term_repr, type_name
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import OutputSpec
 from ..core.constraints import _known_equal
 from ..core.provenance import Provenance
-from ..core.tracked import Annotated, TrackedTerm, _TrackedTermMeta
+from ..core.tracked import Annotated, TrackedTerm, _as_raw_form, _is_raw_form, _TrackedTermMeta
 from ._capabilities import _check_guards
 
 # ---------------------------------------------------------------------------
@@ -514,6 +515,37 @@ def _detached_term(term: Any) -> Any:
     return clone
 
 
+def _cached_raw(term: Any, build: Callable[[], Any]) -> Any:
+    """*term*'s raw form, built by *build* on the first read and kept in its memo.
+
+    Every read returns the same object. A raw form that is itself a term is
+    marked as one (:func:`~probpipe.core.tracked._as_raw_form`), so it refuses
+    provenance that one reader would otherwise show to every later reader, and
+    the raw form of a raw form is itself. A failed build, such as a
+    ``ResolutionError``, is not kept, so a later read tries again. The memo is
+    transient, so a copy or an unpickled term rebuilds its raw form.
+
+    Parameters
+    ----------
+    term : Distribution or ConditionalDistribution
+        The law or kernel whose raw form is read.
+    build : callable
+        Builds the raw form from *term*, called at most once per memo.
+
+    Returns
+    -------
+    Any
+        The raw form, such as a detached law or a backend object.
+    """
+    if _is_raw_form(term):
+        return term
+    memo = transient_memo(term)
+    if "raw" not in memo:
+        raw = build()
+        memo["raw"] = _as_raw_form(raw) if isinstance(raw, TrackedTerm) else raw
+    return memo["raw"]
+
+
 def _fixed_paths(term: Any) -> tuple[str, ...]:
     """The paths the law or kernel *term* holds fixed at given values, in the order they were fixed.
 
@@ -693,6 +725,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
     # -- the representation ---------------------------------------------------
 
+    @property
     def raw(self) -> Distribution:
         """This law detached from the workflow, under its label and declaration.
 
@@ -702,8 +735,12 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         of or a law it is a copy of. A field view returns the raw form of its
         parent's marginal at its path instead, and a backend adapter its
         wrapped backend distribution.
+
+        Every read returns the same copy, which refuses provenance, since every
+        reader shares it. ``with_label`` gives a copy of it that can carry
+        provenance.
         """
-        return _detached_term(self)
+        return _cached_raw(self, lambda: _detached_term(self))
 
     # -- the event declaration ----------------------------------------------
 

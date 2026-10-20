@@ -29,7 +29,6 @@ from probpipe import (
     NumericArrayBatch,
     NumericArraySpec,
     NumericRecord,
-    Opaque,
     OpaqueBatch,
     OpaqueSpec,
     OutputSpec,
@@ -230,7 +229,7 @@ class TestSiblingViewsZipThroughACall:
         out = add(x=views["x"], y=views["y"])
 
         assert out.batch_shape == (3,)
-        np.testing.assert_allclose(out.values, [0.0, 11.0, 22.0])
+        np.testing.assert_allclose(out.raw, [0.0, 11.0, 22.0])
 
 
 class TestOpaqueColumnsAreRearrangedRaw:
@@ -256,7 +255,7 @@ class TestOpaqueColumnsAreRearrangedRaw:
         assert isinstance(batch["tag"], OpaqueBatch)
         assert isinstance(batch._raw_column("tag"), np.ndarray)
         # An array field's column batch holds the stored array.
-        assert batch["x"].raw() is batch._raw_column("x")
+        assert batch["x"].raw is batch._raw_column("x")
 
 
 class TestRetypingADeclaredOutputKeepsColumnsWithTheirKeys:
@@ -435,7 +434,7 @@ class TestMultiLevelSweeps:
         out = scale(p=grid)
 
         assert out.batch_shape == (2, 3)
-        np.testing.assert_allclose(out.values, np.arange(6.0).reshape(2, 3) * 10.0)
+        np.testing.assert_allclose(out.raw, np.arange(6.0).reshape(2, 3) * 10.0)
 
     def test_two_groups_and_a_returned_batch_keep_their_partition(self):
         """The aggregate mints one level per swept group, then the rows' own
@@ -523,7 +522,7 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
         out = double(v=source)
 
         assert out.batch_shape == (3,)
-        np.testing.assert_allclose(out.values, [0.0, 2.0, 4.0])
+        np.testing.assert_allclose(out.raw, [0.0, 2.0, 4.0])
 
 
 class TestSameRankTransformsCannotLieEither:
@@ -687,7 +686,7 @@ class TestZeroWidthEventsUnderExplicitJax:
         assert out.batch_shape == (3,)
         # Row identities survive, so the zero-width column really was carried
         # per row rather than the output being indistinguishable zeros.
-        np.testing.assert_allclose(out.values, [0.0, 1.0, 2.0])
+        np.testing.assert_allclose(out.raw, [0.0, 1.0, 2.0])
 
 
 class TestShapeCannotRecoverAxisProvenance:
@@ -825,8 +824,8 @@ class TestAnEmpiricalTakesABatch:
 
 
 def _stored(element):
-    """What an object batch's element view holds: an Opaque's value, a Function's callable."""
-    return element.value if isinstance(element, Opaque) else element.raw()
+    """What an object batch's element view holds, its raw form: an Opaque's value, a Function's callable."""
+    return element.raw
 
 
 class TestBatchValuedRowAggregation:
@@ -920,7 +919,7 @@ class TestBatchValuedRowAggregation:
         if kind == "opaque":
 
             def evaluate(label):
-                return len(label.value)
+                return len(label.raw)
 
             expected = [5, 10]
         else:
@@ -1027,7 +1026,7 @@ class TestBatchValuedRowAggregation:
         out = _make_stack(rows, n=3, label="f", level_names=("sweep",))
 
         assert (out.batch_shape, out.level_names) == ((3, 2), ("sweep", "inner"))
-        np.testing.assert_allclose(np.asarray(out.values)[2], [3.0, 6.0])
+        np.testing.assert_allclose(np.asarray(out.raw)[2], [3.0, 6.0])
 
     def test_native_batch_rows_remain_usable_after_a_sweep_inside_jit(self):
         pd = pytest.importorskip("pandas")
@@ -1043,7 +1042,7 @@ class TestBatchValuedRowAggregation:
         expected = np.tile([1.0, 2.0], (3, 1))
 
         np.testing.assert_array_equal(jax.jit(lambda: collect(source).as_jax())(), expected)
-        assert inner.values is native
+        assert inner.raw is native
         np.testing.assert_array_equal(inner.as_jax(), [1.0, 2.0])
         result = collect(source)
         assert result.level_names == ("row", "inner")
@@ -1117,8 +1116,8 @@ class TestDeclaredOpaqueOutputAcrossDispatches:
         column = result._raw_column("y")
         assert column.dtype == object
         assert column.shape == (2,)
-        assert [int(v) for v in result[0].raw("y")] == [1, 2]
-        assert [int(v) for v in result[1].raw("y")] == [2, 3]
+        assert [int(v) for v in result[0]["y"].raw] == [1, 2]
+        assert [int(v) for v in result[1]["y"].raw] == [2, 3]
 
 
 class TestEveryBatchIsAnOperand:
@@ -1170,7 +1169,7 @@ class TestEveryBatchIsAnOperand:
             )
         )
 
-        assert [element.value for element in seen] == ["a", "b"]
+        assert [element.raw for element in seen] == ["a", "b"]
         assert [element.label for element in seen] == ["rows[row=0]", "rows[row=1]"]
 
     def test_a_function_batch_is_swept_too(self):
@@ -1183,7 +1182,7 @@ class TestEveryBatchIsAnOperand:
         )
 
         assert (out.batch_shape, out.level_names) == ((2,), ("row",))
-        np.testing.assert_allclose(out.values, [1.0, 2.0])
+        np.testing.assert_allclose(out.raw, [1.0, 2.0])
 
 
 class TestSweepingASingleStoreBatchAgreesAcrossDispatch:
@@ -1212,7 +1211,7 @@ class TestSweepingASingleStoreBatchAgreesAcrossDispatch:
         out = Function(self._inner, label="f", dispatch=dispatch)(v=self._rows())
 
         assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "inner"))
-        np.testing.assert_allclose(out.values, np.repeat(np.arange(3.0), 2).reshape(3, 2))
+        np.testing.assert_allclose(out.raw, np.repeat(np.arange(3.0), 2).reshape(3, 2))
 
     def test_explicit_jax_maps_the_store_and_feeds_each_row_as_an_array(self):
         """One map over the batch's store serves every row, and the body receives each
@@ -1229,4 +1228,4 @@ class TestSweepingASingleStoreBatchAgreesAcrossDispatch:
         assert all(isinstance(row, NumericArray) for row in seen)
         assert all(row.spec == NumericArraySpec(shape=()) for row in seen)
         assert (out.batch_shape, out.level_names) == ((5,), ("row",))
-        np.testing.assert_allclose(out.values, 2.0 * np.arange(5.0))
+        np.testing.assert_allclose(out.raw, 2.0 * np.arange(5.0))

@@ -95,6 +95,7 @@ class TestLabelEnforcement:
             def __init__(self):
                 pass
 
+            @property
             def raw(self):
                 return None
 
@@ -105,6 +106,7 @@ class TestLabelEnforcement:
             def __init__(self):
                 self._init_tracked("")
 
+            @property
             def raw(self):
                 return None
 
@@ -283,7 +285,7 @@ class TestWithLabel:
         r2 = r.with_label("new")
         assert r2.label == "new"
         # shallow copy: field data is shared, not copied
-        assert r2.raw("a") is r.raw("a")
+        assert r2["a"].raw is r["a"].raw
         assert r2.event_template is r.event_template
         assert r == r2 or r2["b"] is r["b"]
 
@@ -345,7 +347,7 @@ class TestWithLabelOnBatchTypes:
         ra2 = ra.with_label("mine")
         assert ra2 is not ra
         assert ra2.label == "mine"
-        assert ra2["a"].raw() is ra["a"].raw()
+        assert ra2["a"].raw is ra["a"].raw
         assert ra2.batch_shape == ra.batch_shape
         assert ra2.event_template is ra.event_template
 
@@ -359,7 +361,7 @@ class TestWithLabelOnBatchTypes:
         )
         nra2 = nrb.with_label("new")
         assert nra2.label == "new"
-        assert nra2["a"].raw() is nrb["a"].raw()
+        assert nra2["a"].raw is nrb["a"].raw
         assert nrb.label == "orig"
 
     def test_distribution_batch(self):

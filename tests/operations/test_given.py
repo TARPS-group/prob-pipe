@@ -400,7 +400,7 @@ class TestConditionalOperations:
 
             def _data(self, given):
                 theta = given["theta"]
-                data = theta.raw("group/a") if isinstance(theta, Record) else theta["group"]["a"]
+                data = theta["group/a"].raw if isinstance(theta, Record) else theta["group"]["a"]
                 return np.asarray(data)
 
         class Direct(Nested, SupportsConditionalMean):
@@ -418,7 +418,7 @@ class TestConditionalOperations:
         assert report.result.spec.shape == (3,)
         np.testing.assert_allclose(mean(kernel, given=given), data, rtol=0.0, atol=0.0)
         assert all(call["theta"] is theta for call in kernel.calls)
-        nested_data = theta.raw("group/a") if record is Record else theta["group"]["a"]
+        nested_data = theta["group/a"].raw if record is Record else theta["group"]["a"]
         assert nested_data is data
         assert kernel.event_spec.spec.free_dims == frozenset({"n"})
         bad = record({"group": {"a": data, "b": np.ones(2)}})

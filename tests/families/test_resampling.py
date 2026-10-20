@@ -886,4 +886,4 @@ class TestTheBootstrapMeasure:
     def test_the_drawn_atoms_are_the_sources(self):
         source = EmpiricalDistribution(jnp.array([1.0, 5.0, 9.0]), component="y")
         draw = BootstrapDistribution("B", source, 30)._sample(jax.random.PRNGKey(3))
-        assert set(np.asarray(draw.atoms.values).tolist()) <= {1.0, 5.0, 9.0}
+        assert set(np.asarray(draw.atoms.raw).tolist()) <= {1.0, 5.0, 9.0}

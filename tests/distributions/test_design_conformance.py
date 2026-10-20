@@ -64,10 +64,7 @@ _OTHER_PACKAGES = frozenset(
 )
 
 #: Declarations the implementation does not match yet, with the change each awaits.
-_PENDING: dict[str, str] = {
-    "Converter": "check and execute take the converter options as keywords, as V.4 forwards them",
-    "ConverterRegistry": "convert takes the converter options as keywords, as V.4 forwards them",
-}
+_PENDING: dict[str, str] = {}
 
 
 def _tool():

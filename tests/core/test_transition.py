@@ -41,13 +41,13 @@ def _component(dist):
 def shift_step(dist, offset):
     """Shift every atom by a scalar. Returns a bare Distribution under *dist*'s label."""
     return EmpiricalDistribution(
-        dist.atoms.values + offset, component=_component(dist), label=dist.label
+        dist.atoms.raw + offset, component=_component(dist), label=dist.label
     )
 
 
 def provenance_step(dist, value):
     """A step that sets its own provenance."""
-    new_dist = EmpiricalDistribution(dist.atoms.values + value, component=_component(dist))
+    new_dist = EmpiricalDistribution(dist.atoms.raw + value, component=_component(dist))
     new_dist.with_provenance(Provenance("custom_step", parents=(dist,), metadata={"value": value}))
     return new_dist
 
@@ -80,8 +80,8 @@ class TestIterate:
     def test_values(self, initial):
         """Step results have correct sample values."""
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0])
-        assert jnp.allclose(dists[1].atoms.values, jnp.ones((50, 2)))
-        assert jnp.allclose(dists[2].atoms.values, jnp.full((50, 2), 3.0))
+        assert jnp.allclose(dists[1].atoms.raw, jnp.ones((50, 2)))
+        assert jnp.allclose(dists[2].atoms.raw, jnp.full((50, 2), 3.0))
 
     def test_provenance_auto_attach(self, initial):
         """Provenance is auto-attached when step function doesn't set it."""
@@ -113,7 +113,7 @@ class TestIterate:
         recorded = []
 
         def cb(i, dist):
-            recorded.append((i, float(dist.atoms.values[0, 0])))
+            recorded.append((i, float(dist.atoms.raw[0, 0])))
 
         iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0, 3.0], callback=cb)
         assert len(recorded) == 3
@@ -155,7 +155,7 @@ class TestIterate:
     def test_final_is_last(self, initial):
         """dists[-1] is the final distribution."""
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0])
-        assert jnp.allclose(dists[-1].atoms.values, jnp.full((50, 2), 3.0))
+        assert jnp.allclose(dists[-1].atoms.raw, jnp.full((50, 2), 3.0))
 
     def test_the_laws_are_on_one_level_named_iterate(self, initial):
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0])
@@ -235,7 +235,7 @@ def drawn_heavy_particles(dist, inp):
     """Draws of *dist* by the converter registry, of which the first ten hold the weight equally."""
     drawn = converter_registry.convert(dist, EmpiricalDistribution, num_samples=_PARTICLES)
     log_w = jnp.where(jnp.arange(_PARTICLES) < 10, 0.0, -100.0)
-    return EmpiricalDistribution(drawn.atoms.values, Weights(log_weights=log_w), component="x")
+    return EmpiricalDistribution(drawn.atoms.raw, Weights(log_weights=log_w), component="x")
 
 
 def _resampled_atoms(step, seed=None):
@@ -243,7 +243,7 @@ def _resampled_atoms(step, seed=None):
     initial = EmpiricalDistribution(jnp.zeros((_PARTICLES, 1)), component="x")
     with contextlib.nullcontext() if seed is None else workflow_run(seed=seed):
         dists = iterate(step_fn=step, initial=initial, inputs=[0.0])
-    return np.asarray(dists[-1].atoms.values)
+    return np.asarray(dists[-1].atoms.raw)
 
 
 class TestWithResampling:
@@ -329,7 +329,7 @@ class TestResamplingRandomness:
         step = with_resampling(ten_heavy_particles)
         with workflow_run(seed=0):
             dists = iterate(step_fn=step, initial=initial, inputs=[0.0, 0.0])
-        assert not np.array_equal(dists[1].atoms.values, dists[2].atoms.values)
+        assert not np.array_equal(dists[1].atoms.raw, dists[2].atoms.raw)
 
     def test_a_resampling_outside_any_scope_is_fresh(self):
         first = _resampled_atoms(with_resampling(ten_heavy_particles))
@@ -347,7 +347,7 @@ class TestResamplingRandomness:
 
         assert first.provenance.operation == "resample"
         np.testing.assert_allclose(first.weights, 1.0 / _PARTICLES)
-        np.testing.assert_array_equal(first.atoms.values, second.atoms.values)
+        np.testing.assert_array_equal(first.atoms.raw, second.atoms.raw)
 
 
 # ---------------------------------------------------------------------------
@@ -360,7 +360,7 @@ class TestNestability:
         """A step function can call iterate internally."""
 
         def inner_step(dist, value):
-            return EmpiricalDistribution(dist.atoms.values + value, component=_component(dist))
+            return EmpiricalDistribution(dist.atoms.raw + value, component=_component(dist))
 
         def outer_step(dist, batch):
             """Each outer step runs an inner iterate loop."""
@@ -371,4 +371,4 @@ class TestNestability:
         dists = iterate(step_fn=outer_step, initial=initial, inputs=outer_inputs)
         assert len(dists) == 3  # initial + 2 outer steps
         # Total shift: (0.1+0.2) + (0.3+0.4+0.5) = 1.5
-        assert jnp.allclose(dists[-1].atoms.values, jnp.full((50, 2), 1.5))
+        assert jnp.allclose(dists[-1].atoms.raw, jnp.full((50, 2), 1.5))

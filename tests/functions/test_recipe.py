@@ -27,10 +27,13 @@ from probpipe import (
     NumericRecordBatch,
     OpaqueSpec,
     OutputSpec,
+    Poisson,
     Provenance,
     ProvenanceMode,
     RecordSpec,
     ReplayCompatibilityError,
+    mean,
+    quantile,
     replay_run,
     sample,
     workflow_run,
@@ -1216,3 +1219,20 @@ def _closure():
         return value + captured
 
     return closure
+
+
+class TestTheMonteCarloDrawsACallRecords:
+    def test_a_monte_carlo_route_records_its_draws_by_the_part_it_drew(self):
+        law = Normal("mu", 0.0, 2.0) * Poisson("count", 4.0)
+        with workflow_run(seed=0):
+            median = quantile(law, 0.5)
+
+        assert _recipe.monte_carlo_draws(median.provenance) == {
+            ("count",): quantile.options["num_samples"]
+        }
+
+    def test_an_exact_route_records_no_draws(self):
+        assert _recipe.monte_carlo_draws(mean(Normal("mu", 0.0, 1.0)).provenance) == {}
+
+    def test_no_provenance_records_no_draws(self):
+        assert _recipe.monte_carlo_draws(None) == {}

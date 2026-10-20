@@ -63,13 +63,13 @@ class TestBatchValuedLifts:
             assert paths.level_names == ("trajectory", "time")
             for row in draws:
                 np.testing.assert_array_equal(
-                    row["trajectory"].raw(), row["beta"] * jnp.arange(1.0, 4.0)
+                    row["trajectory"].raw, row["beta"] * jnp.arange(1.0, 4.0)
                 )
         else:
             assert isinstance(law.event_spec.spec, BatchSpec)
             assert law.event_spec.spec.level_names == ("time",)
             assert draws.level_names == ("sample", "time")
-            np.testing.assert_array_equal(law.atoms.raw(), [[2, 4, 6], [5, 10, 15]])
+            np.testing.assert_array_equal(law.atoms.raw, [[2, 4, 6], [5, 10, 15]])
 
     @pytest.mark.parametrize("sampled", [False, True])
     @pytest.mark.parametrize("include_inputs", [False, True])
@@ -79,7 +79,7 @@ class TestBatchValuedLifts:
         @function(dispatch="auto", max_evaluations=5, include_inputs=include_inputs)
         def total(path: NumericArrayBatch):
             assert isinstance(path, NumericArrayBatch)
-            return jnp.sum(path.raw())
+            return jnp.sum(path.raw)
 
         source = (
             Normal("beta", 0.0, 1.0)
@@ -92,7 +92,7 @@ class TestBatchValuedLifts:
         assert second.num_atoms == (5 if sampled else 2)
         assert second.atoms.level_names == ("total",)
         if not sampled:
-            values = second.atoms.raw("total") if include_inputs else second.atoms.raw()
+            values = second.atoms["total"].raw if include_inputs else second.atoms.raw
             np.testing.assert_array_equal(values, [12.0, 30.0])
             np.testing.assert_allclose(second.weights, [0.25, 0.75])
 
@@ -142,8 +142,8 @@ class TestBatchValuedLiftMoments:
             assert moment.level_names == ("time",)
             assert moment.batch_shape == (3,)
         # The atoms 2·[1, 2, 3] and 5·[1, 2, 3] under the weights 0.25 and 0.75.
-        np.testing.assert_allclose(mu.raw(), [4.25, 8.5, 12.75], rtol=1e-6, atol=1e-6)
-        np.testing.assert_allclose(var.raw(), [1.6875, 6.75, 15.1875], rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(mu.raw, [4.25, 8.5, 12.75], rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(var.raw, [1.6875, 6.75, 15.1875], rtol=1e-6, atol=1e-6)
 
 
 def _trajectory_law(include_inputs):
@@ -170,7 +170,7 @@ class TestBatchValuedFieldSampling:
         levels = ("sample", "time") if sample_shape else ("time",)
         assert viewed.level_names == levels
         assert viewed.batch_shape == (*sample_shape, 3)
-        paths = np.asarray(viewed.raw()).reshape(-1, 3)
+        paths = np.asarray(viewed.raw).reshape(-1, 3)
         np.testing.assert_allclose(paths, paths[:, :1] * np.arange(1.0, 4.0), rtol=1e-6)
 
     @pytest.mark.parametrize("sample_shape", [(), (4,), (2, 3)])
@@ -195,10 +195,10 @@ class TestBatchValuedFieldSampling:
         paths = drawn["trajectory"]
         assert paths.level_names == (("sample", "time") if sample_shape else ("time",))
         assert paths.batch_shape == (*sample_shape, 3)
-        beta = np.asarray(drawn["beta"].raw())
+        beta = np.asarray(drawn["beta"].raw)
         assert beta.shape == sample_shape
         np.testing.assert_allclose(
-            np.asarray(paths.raw()), beta[..., None] * np.arange(1.0, 4.0), rtol=1e-6
+            np.asarray(paths.raw), beta[..., None] * np.arange(1.0, 4.0), rtol=1e-6
         )
 
     @pytest.mark.parametrize("sample_shape", [(), (3,)])
@@ -217,20 +217,20 @@ class TestBatchValuedFieldSampling:
         for paths in (single, selected["trajectory"]):
             assert paths.level_names == levels
             assert paths.batch_shape == (*sample_shape, 2)
-        beta = np.asarray(selected["beta"].raw())
+        beta = np.asarray(selected["beta"].raw)
         np.testing.assert_array_equal(
-            np.asarray(selected["trajectory"].raw("y")), beta[..., None] * np.array([1.0, 2.0])
+            np.asarray(selected["trajectory"]["y"].raw), beta[..., None] * np.array([1.0, 2.0])
         )
 
 
 def _total(trajectory: NumericArrayBatch):
     assert isinstance(trajectory, NumericArrayBatch)
-    return jnp.sum(trajectory.raw())
+    return jnp.sum(trajectory.raw)
 
 
 def _gap(beta, trajectory: NumericArrayBatch):
     assert isinstance(trajectory, NumericArrayBatch)
-    return jnp.sum(trajectory.raw()) - 6.0 * beta
+    return jnp.sum(trajectory.raw) - 6.0 * beta
 
 
 class TestLiftsOverBatchValuedFields:
@@ -254,9 +254,9 @@ class TestLiftsOverBatchValuedFields:
             law = joint(source)
             totals = total(law["trajectory"])
             gaps = gap(law["beta"], law["trajectory"])
-        np.testing.assert_allclose(totals.atoms.raw(), 6.0 * law.atoms.raw("beta"), rtol=1e-6)
+        np.testing.assert_allclose(totals.atoms.raw, 6.0 * law.atoms["beta"].raw, rtol=1e-6)
         np.testing.assert_allclose(totals.weights, law.weights)
-        np.testing.assert_allclose(gaps.atoms.raw(), 0.0, atol=1e-5)
+        np.testing.assert_allclose(gaps.atoms.raw, 0.0, atol=1e-5)
 
     def test_a_lift_over_a_batch_field_of_a_record_output_reads_its_batches(self):
         def summary(beta):
@@ -264,14 +264,14 @@ class TestLiftsOverBatchValuedFields:
 
         def total(traj: NumericArrayBatch):
             assert isinstance(traj, NumericArrayBatch)
-            return jnp.sum(traj.raw())
+            return jnp.sum(traj.raw)
 
         source = EmpiricalDistribution(jnp.array([2.0, 5.0]), component="beta")
         with workflow_run(seed=0):
             law = Function(summary, dispatch="sequential")(source)
             totals = Function(total, dispatch="sequential")(law["traj"])
         assert isinstance(law.event_spec.spec["traj"], BatchSpec)
-        np.testing.assert_allclose(totals.atoms.raw(), [12.0, 30.0])
+        np.testing.assert_allclose(totals.atoms.raw, [12.0, 30.0])
 
 
 class TestSampleLevelCollision:
@@ -317,8 +317,8 @@ class TestBatchOutputComposition:
         assert paths.level_names == ("trajectory", "time")
         for row in draws:
             path = row["trajectory"]
-            np.testing.assert_array_equal(path.raw("x"), jnp.repeat(row["beta"], 2))
-            np.testing.assert_array_equal(path.raw("y"), row["beta"] * jnp.array([1.0, 2.0]))
+            np.testing.assert_array_equal(path["x"].raw, jnp.repeat(row["beta"], 2))
+            np.testing.assert_array_equal(path["y"].raw, row["beta"] * jnp.array([1.0, 2.0]))
         assert law.atoms[0:0]["trajectory"].batch_shape == (0, 2)
 
     def test_replay_preserves_batch_events_and_atom_level_under_a_display_alias(self):
@@ -333,7 +333,7 @@ class TestBatchOutputComposition:
             first = wrapped(source)
         with replay_run(first.provenance):
             second = wrapped.with_label("renamed display")(source)
-        np.testing.assert_array_equal(first.atoms.raw(), second.atoms.raw())
+        np.testing.assert_array_equal(first.atoms.raw, second.atoms.raw)
         assert second.atoms.level_names == ("trajectory", "time")
 
 
@@ -356,11 +356,11 @@ class TestObjectBatchEvents:
             assert isinstance(drawn["payload"], OpaqueBatch)
             field = law.atoms["payload"]
             assert field.level_names == ("payload", "item")
-            assert not field.raw().flags.writeable
+            assert not field.raw.flags.writeable
         else:
             assert isinstance(drawn, OpaqueBatch)
             assert drawn.level_names == ("item",)
-            assert drawn[0].raw() == (2, "a")
+            assert drawn[0].raw == (2, "a")
 
 
 class TestBatchOutputDeclarations:
@@ -417,7 +417,7 @@ class TestBatchValuedDrawsArriveRaw:
         seen, means = self._received(lambda b: b.mean(), replicate)
         assert all(isinstance(b, jax.Array) and b.shape == (4,) for b in seen)
         drawn = np.asarray([np.asarray(b) for b in seen])
-        np.testing.assert_allclose(means.atoms.raw(), drawn.mean(axis=1), rtol=1e-6)
+        np.testing.assert_allclose(means.atoms.raw, drawn.mean(axis=1), rtol=1e-6)
 
     @pytest.mark.parametrize("include_inputs", [False, True])
     def test_an_unannotated_parameter_receives_the_raw_trajectory(self, include_inputs):
@@ -432,7 +432,7 @@ class TestBatchValuedDrawsArriveRaw:
             law = trajectory(source)
         seen, totals = self._received(lambda path: jnp.sum(path), law["trajectory"])
         assert all(isinstance(path, jax.Array) and path.shape == (3,) for path in seen)
-        np.testing.assert_allclose(totals.atoms.raw(), [12.0, 30.0], rtol=1e-6)
+        np.testing.assert_allclose(totals.atoms.raw, [12.0, 30.0], rtol=1e-6)
 
     @pytest.mark.parametrize("annotation", [NumericArrayBatch, Batch, NumericArrayBatch | None])
     def test_a_batch_annotation_receives_the_batch(self, annotation):
@@ -442,14 +442,14 @@ class TestBatchValuedDrawsArriveRaw:
 
         def total(path):
             seen.append(path)
-            return jnp.sum(path.raw())
+            return jnp.sum(path.raw)
 
         total.__annotations__["path"] = annotation
         with workflow_run(seed=0):
             totals = Function(total, dispatch="sequential")(trajectory(source))
         assert all(isinstance(path, NumericArrayBatch) for path in seen)
         assert all(path.level_names == ("time",) for path in seen)
-        np.testing.assert_allclose(totals.atoms.raw(), [12.0, 30.0], rtol=1e-6)
+        np.testing.assert_allclose(totals.atoms.raw, [12.0, 30.0], rtol=1e-6)
 
     def test_an_array_annotation_receives_the_raw_trajectory(self):
         source = EmpiricalDistribution(jnp.array([2.0, 5.0]), component="beta")
@@ -475,7 +475,7 @@ class TestBatchValuedDrawsArriveRaw:
 
         def total(path):
             seen.append(path)
-            columns = path.raw() if annotated else path
+            columns = path.raw if annotated else path
             return jnp.sum(columns["y"])
 
         if annotated:
@@ -491,7 +491,7 @@ class TestBatchValuedDrawsArriveRaw:
             else:
                 assert isinstance(path, Mapping) and set(path) == {"x", "y"}
                 assert np.shape(path["y"]) == (2,)
-        np.testing.assert_allclose(totals.atoms.raw(), [6.0, 15.0], rtol=1e-6)
+        np.testing.assert_allclose(totals.atoms.raw, [6.0, 15.0], rtol=1e-6)
 
 
 class TestNestedBatchValuedInputs:
@@ -508,7 +508,7 @@ class TestNestedBatchValuedInputs:
             if annotated:
                 assert isinstance(p, NumericArrayBatch)
                 assert p.level_names == ("replicate", "time")
-                p = p.raw()
+                p = p.raw
             return jnp.sum(p)
 
         if annotated:
@@ -523,8 +523,8 @@ class TestNestedBatchValuedInputs:
         )
         assert law.atoms["p"].level_names == ("total", "replicate", "time")
         assert drawn["p"].level_names == ("replicate", "time")
-        np.testing.assert_array_equal(drawn["p"].raw(), [[2.0, 4.0, 6.0], [2.0, 4.0, 6.0]])
-        np.testing.assert_array_equal(law.atoms.raw("total"), jnp.full((5,), 24.0))
+        np.testing.assert_array_equal(drawn["p"].raw, [[2.0, 4.0, 6.0], [2.0, 4.0, 6.0]])
+        np.testing.assert_array_equal(law.atoms["total"].raw, jnp.full((5,), 24.0))
 
 
 def _record_trajectory(beta):
@@ -537,7 +537,7 @@ def _assert_same(mapped, rowwise):
     """Assert two stored atom forms hold the same values, batch entries included."""
     if isinstance(mapped, Batch):
         assert mapped.level_names == rowwise.level_names
-        _assert_same(mapped.raw(), rowwise.raw())
+        _assert_same(mapped.raw, rowwise.raw)
     elif isinstance(mapped, Mapping):
         assert set(mapped) == set(rowwise)
         for key in mapped:
@@ -588,7 +588,7 @@ class TestMappedBatchValuedLifts:
         self, dispatch, include_inputs, annotated, source
     ):
         def total(trajectory):
-            values = trajectory.raw() if annotated else trajectory
+            values = trajectory.raw if annotated else trajectory
             return jnp.sum(values) - 6.0
 
         if annotated:

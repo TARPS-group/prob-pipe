@@ -64,7 +64,7 @@ class TestTwoNamespaces:
             label="body",
         )(1.0, **{name: 3})
 
-        assert float(result.value) == 3.0
+        assert float(result.raw) == 3.0
 
     def test_a_call_keyword_named_like_a_control_does_not_set_it(self):
         def body(x, max_evaluations=None, raw=None):
@@ -104,7 +104,7 @@ class TestTwoNamespaces:
         def draw(x, seed):
             return jnp.asarray(x + seed)
 
-        assert float(draw(1.0, seed=2).value) == 3.0
+        assert float(draw(1.0, seed=2).raw) == 3.0
 
 
 class TestResolution:
@@ -391,7 +391,7 @@ class TestAdmissibility:
         def add(x, y):
             return x + y
 
-        assert float(wrapped(1.0).value) == float(add(1.0).value) == 3.0
+        assert float(wrapped(1.0).raw) == float(add(1.0).raw) == 3.0
 
     def test_a_registered_rule_reads_its_budget_from_method_options(self, monkeypatch):
         seen: list[dict[str, Any]] = []

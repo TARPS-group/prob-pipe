@@ -36,6 +36,12 @@ knowledge of ProbPipe conventions, as they may have changed.
 - `design/README.md`, `design/glossary.md`, and the design section of each
   abstraction the PR changes, which `design/package-structure.md` § The tree
   lists beside each module
+- `plans/README.md`, when it exists at the base ref: a multi-PR push is running.
+  A PR implements one of its steps when its body has a "Fit with the plan"
+  section or the push's tracking issue lists its branch. For such a PR, also read
+  `plans/decisions.md` and every current plan that `plans/README.md` lists, and
+  run check 2.9. Review any other PR as usual: the push's directives do not apply
+  to it, and check 2.9 is skipped, apart from its last bullet
 
 ### 1b. Fetch the PR
 
@@ -173,6 +179,31 @@ documentation:
   same pin elsewhere in the repo, and reachable by the automated bumpers
   (Dependabot, `pre-commit autoupdate`)? An inline pin no bumper parses will
   silently drift.
+
+### 2.9 The push's plan (only when `plans/README.md` exists)
+
+- Which step does the PR implement? Does it deliver that step's plan section,
+  and does it meet the step's done-condition?
+- Check each standing directive of `plans/README.md` in turn, with evidence:
+  no partial migration, no bridging code, names that say what each thing is
+  (quote each vague name you find, local variables included, against the five
+  naming rules of directive 5, including vague names already present in the
+  code the PR changes and left unrenamed),
+  modules ordered from the public API down, no duplicated helper, comments that
+  earn their place, docstrings written for users, and stale code replaced
+  rather than worked around.
+- Does the PR contradict any settled entry of `plans/decisions.md`, or settle a
+  design question that `plans/README.md` § When to stop and ask reserves for
+  the maintainer? An item in the "Waiting for a decision" queue of
+  `plans/decisions.md` is the maintainer's: flag a PR that decides one,
+  implements a choice that presumes an answer, or rewords the plans to settle
+  it, and check that the body lists each such question it met.
+- Does the body's "Fit with the plan" section name the plan sections, the
+  departures, the decisions recorded, and the code reused or removed, and does
+  it match the diff?
+- For a PR outside the push: does it change code that a pending step of
+  `plans/README.md` § Steps rewrites? If so, note the overlap, so the two can be
+  coordinated; it is not a defect of the PR.
 
 ## Step 3: Present findings
 

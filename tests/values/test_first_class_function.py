@@ -215,7 +215,7 @@ class TestApplyContract:
         result = structured()
 
         assert result is not returned
-        assert result.raw("y") is value
+        assert result["y"].raw is value
         assert result.event_template == template
         assert returned.event_template != template
 
@@ -761,7 +761,7 @@ class TestApplyContract:
         assert result.batch_shape == (2,)
         assert isinstance(result, NumericArrayBatch)
         assert result.element_spec == NumericArraySpec((3,), dtype="float32")
-        np.testing.assert_allclose(result.values, np.asarray(data) + 1, rtol=0, atol=0)
+        np.testing.assert_allclose(result.raw, np.asarray(data) + 1, rtol=0, atol=0)
         assert wrapped.input_spec.free_dims == {"n"}
         with pytest.raises(ApplicabilityError, match="already bound"):
             wrapped(x=rows, offset=jnp.ones(4))
@@ -1109,7 +1109,7 @@ class TestSymbolicCalls:
         assert result.element_spec == NumericArraySpec((2,), dtype="float32")
         assert result.batch_shape == (3,)
         np.testing.assert_allclose(
-            result.values,
+            result.raw,
             np.asarray([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]]),
         )
 
@@ -1249,7 +1249,7 @@ class TestSymbolicCalls:
 
         # The declaration leaves the dtype open, so completion takes the produced one (II.2).
         assert result.element_spec == NumericArraySpec((), dtype="float32", support=positive)
-        np.testing.assert_allclose(result.values, np.arange(3.0) + 1)
+        np.testing.assert_allclose(result.raw, np.arange(3.0) + 1)
 
     @pytest.mark.parametrize(("shift", "holds"), [(1.0, True), (-5.0, False)])
     def test_support_pinned_sweep_explicit_jax_checks_the_stacked_results(self, shift, holds):
@@ -1272,7 +1272,7 @@ class TestSymbolicCalls:
         )
 
         if holds:
-            np.testing.assert_allclose(wrapped(rows).values, np.arange(3.0) + shift)
+            np.testing.assert_allclose(wrapped(rows).raw, np.arange(3.0) + shift)
         else:
             with pytest.raises(ValueError, match=r"output/y.*support positive"):
                 wrapped(rows)
@@ -1333,15 +1333,15 @@ class TestSymbolicCalls:
         assert result.atoms["stats/value"].shape == (8,)
         np.testing.assert_allclose(
             result.atoms["stats/doubled"],
-            result.atoms["stats/value"].raw() * 2,
+            result.atoms["stats/value"].raw * 2,
         )
         averaged = mean(result)
         assert averaged.event_template == RecordSpec(
-            **{"mean(stats)": RecordSpec(value=(), doubled=())},
+            **{"stats": RecordSpec(value=(), doubled=())},
         )
         np.testing.assert_allclose(
-            averaged["mean(stats)/doubled"],
-            averaged["mean(stats)/value"] * 2,
+            averaged["stats/doubled"],
+            averaged["stats/value"] * 2,
         )
 
     def test_distribution_outputs_keep_their_declaration_through_broadcast(self):
@@ -1790,7 +1790,7 @@ class TestVariadicPlanning:
         result = wrapped(rows, 2.0)
 
         assert result.batch_shape == (3,)
-        np.testing.assert_allclose(result.values, np.arange(3.0) + 2)
+        np.testing.assert_allclose(result.raw, np.arange(3.0) + 2)
 
     def test_record_batch_in_any_varargs_is_swept(self):
         rows = NumericRecordBatch.stack(
@@ -1813,7 +1813,7 @@ class TestVariadicPlanning:
         )(rows)
 
         assert result.batch_shape == (3,)
-        np.testing.assert_allclose(result.values, np.arange(3.0) * 2)
+        np.testing.assert_allclose(result.raw, np.arange(3.0) * 2)
 
     def test_record_batch_in_any_varkwargs_is_swept(self):
         rows = NumericRecordBatch.stack(
@@ -1836,7 +1836,7 @@ class TestVariadicPlanning:
         )(rows=rows)
 
         assert result.batch_shape == (3,)
-        np.testing.assert_allclose(result.values, np.arange(3.0) * 2)
+        np.testing.assert_allclose(result.raw, np.arange(3.0) * 2)
 
     def test_tracked_varargs_are_provenance_parents(self, full_provenance_mode):
         first = NumericRecord(

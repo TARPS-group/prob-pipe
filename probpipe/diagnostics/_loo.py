@@ -35,6 +35,8 @@ import arviz as az
 import numpy as np
 import xarray as xr
 
+from ..core._numeric_array import NumericArray
+from ..core._numeric_array_batch import NumericArrayBatch
 from ..distributions._distribution import Distribution
 from ._datatree import _add_group
 from ._utils import _json_dumps_safe, _record_get, _safe_float
@@ -66,6 +68,9 @@ def _as_numpy(obj: Any) -> np.ndarray | None:
     """Best-effort conversion to NumPy array."""
     if obj is None:
         return None
+
+    if isinstance(obj, NumericArray | NumericArrayBatch):
+        return np.asarray(obj.raw)
 
     if isinstance(obj, xr.DataArray):
         try:

@@ -352,7 +352,7 @@ class TestFixedPaths:
 
     def test_detaching_keeps_the_fixed_paths(self):
         law = with_fixed_paths(_DeclaredLaw("x", NumericArraySpec(())), "y")
-        assert _fixed_paths(law.raw()) == _fixed_paths(_detached_term(law)) == ("y",)
+        assert _fixed_paths(law.raw) == _fixed_paths(_detached_term(law)) == ("y",)
 
     @pytest.mark.parametrize(
         "copy",

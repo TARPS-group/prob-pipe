@@ -157,7 +157,7 @@ A `Function` compares each admitted argument against the kind its parameter expe
 - `Function` (III.3) or a function capability: the parameter expects a value, as for a value type;
 - `Any`: the parameter accepts every kind as it arrives, so a law or a batch passes whole, and an author who wants the lift leaves the parameter unannotated.
 
-Per draw, the function receives the draw as `sample` returns it (VI.3), at the kind the law's event declaration names, except for a batch-valued draw. A batch-valued draw is passed to a parameter whose annotation names a batch class, such as `NumericArrayBatch` or `Batch`, as that batch, and to any other parameter in its raw form: the array, or for a batch of records the nested mapping of columns that `raw()` returns. A function written for arrays therefore takes a bootstrap replicate unchanged.
+Per draw, the function receives the draw as `sample` returns it (VI.3), at the kind the law's event declaration names, except for a batch-valued draw. A batch-valued draw is passed to a parameter whose annotation names a batch class, such as `NumericArrayBatch` or `Batch`, as that batch, and to any other parameter in its raw form: the array, or for a batch of records the nested mapping of columns that `raw` returns. A function written for arrays therefore takes a bootstrap replicate unchanged.
 
 A parameter annotated with a class of raw values, such as `pd.Series` or `jax.Array`, receives the raw form of an argument, or of each element or draw that a lift passes to it, when that form is an instance of the class, so a function written for pandas receives the `Series` that a record field holds.
 
@@ -249,7 +249,7 @@ Resolution selects the route that realizes the call. Candidates are checked on t
 
 An **integration rule**, such as quadrature or quasi-Monte Carlo, registers beside these and returns a weighted empirical law whose atoms are its nodes and whose weights are the nodes' weights (VII.2).
 
-A **floor** is a fallback on its stated domain, with the lowest rank there: the sampling lift on samplable distribution operands and the elementwise sweep on supported batch elements. That rank holds whatever the exactness of the other rules: a registered rule of either exactness takes precedence over a floor where both apply, and selection among the other rules follows II.7. An integration rule or an unscented transform therefore ranks above the empirical lift (II.7). Floors remain subject to fidelity controls, output requirements, and capability guards. The generic lazy linear-pushforward rule (VII.4) represents the image law exactly and preserves derivable moments. The selected route records its representation and local fidelity in provenance. *Requires:* a feasible candidate under the requested controls. *On failure:* `ResolutionError`, naming missing requirements; `check` may report an unresolved selection (V.1).
+A **floor** is a fallback on its stated domain, with the lowest rank there: the sampling lift on samplable distribution operands and the elementwise sweep on supported batch elements. Each declares `is_floor`, which is the first criterion of II.7's selection order, so that rank holds whatever the exactness of the other rules: a registered rule of either exactness takes precedence over a floor where both apply, and selection among the other rules follows II.7. An integration rule or an unscented transform therefore ranks above the empirical lift (II.7). Floors remain subject to fidelity controls, output requirements, and capability guards. The generic lazy linear-pushforward rule (VII.4) represents the image law exactly and preserves derivable moments. The selected route records its representation and local fidelity in provenance. *Requires:* a feasible candidate under the requested controls. *On failure:* `ResolutionError`, naming missing requirements; `check` may report an unresolved selection (V.1).
 
 ### Rationale
 
@@ -373,7 +373,8 @@ A slot checks the claims it needs at construction and raises `ResolutionError` w
 ```python
 def bijector_for(constraint: Constraint) -> Function: ...   # the canonical map ℝⁿ → support(constraint)
 def register_bijector(key: type[Constraint] | Constraint,
-                      factory: Callable[[Constraint], Function]) -> None: ...
+                      factory: Callable[[Constraint], Function], *,
+                      description: str = "") -> None: ...   # the description is the catalog's
 ```
 
 The factory keys on constraint instances and types rather than dispatching on argument types alone, so it is not a dispatch registry; it still satisfies `SupportsRegistryCataloging` and appears in the registry catalog alongside the dispatch registries.

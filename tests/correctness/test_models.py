@@ -420,8 +420,8 @@ class TestUnnormalizedDensity:
                 law, EmpiricalDistribution
             )
         # One row per atom, across the levels chain and draw.
-        atoms = np.reshape(np.asarray(normalized.atoms.values), (normalized.num_atoms, -1))
-        for draw in np.asarray(draws.values):
+        atoms = np.reshape(np.asarray(normalized.atoms.raw), (normalized.num_atoms, -1))
+        for draw in np.asarray(draws.raw):
             assert np.any(np.all(np.isclose(atoms, draw), axis=1))
 
     def test_conversion_through_a_method_keeps_the_declaration(self):
@@ -492,10 +492,10 @@ class TestFactoredJoints:
         joint = Normal("a", 1.0, 2.0) * Gamma("b", 3.0, 2.0)
         means = mean.using(raw=True)(joint)
         variances = variance.using(raw=True)(joint)
-        assert float(means["mean(a)"]) == pytest.approx(1.0)
-        assert float(means["mean(b)"]) == pytest.approx(1.5)
-        assert float(variances["variance(a)"]) == pytest.approx(4.0)
-        assert float(variances["variance(b)"]) == pytest.approx(0.75)
+        assert float(means["a"]) == pytest.approx(1.0)
+        assert float(means["b"]) == pytest.approx(1.5)
+        assert float(variances["a"]) == pytest.approx(4.0)
+        assert float(variances["b"]) == pytest.approx(0.75)
 
     def test_a_dependent_joint_claims_no_moment_and_its_mean_is_estimated(self):
         """The mean of ``p(y | x) p(x)`` falls back to Monte Carlo, within four standard errors."""
@@ -503,7 +503,7 @@ class TestFactoredJoints:
         assert not isinstance(joint, SupportsMean)
         with workflow_run(seed=16):
             means = mean.using(method="monte_carlo", num_samples=DRAWS, raw=True)(joint)
-        _within_mcse([means["mean(x)"], means["mean(y)"]], [1.0, 3.0], [2.0, np.sqrt(16.25)])
+        _within_mcse([means["x"], means["y"]], [1.0, 3.0], [2.0, np.sqrt(16.25)])
 
     def test_the_mean_of_a_dependent_joint_is_exact_at_its_root_factor(self):
         """``by_component`` gives ``E[x] = 1`` and ``Var x = 4`` exactly, and estimates ``y``."""
@@ -512,12 +512,12 @@ class TestFactoredJoints:
         with workflow_run(seed=17):
             means = mean.using(num_samples=DRAWS, raw=True)(joint)
             variances = variance.using(num_samples=DRAWS, raw=True)(joint)
-        assert float(means["mean(x)"]) == pytest.approx(1.0, abs=1e-6)
-        assert float(variances["variance(x)"]) == pytest.approx(4.0, abs=1e-5)
-        _within_mcse(means["mean(y)"], 3.0, np.sqrt(16.25))
+        assert float(means["x"]) == pytest.approx(1.0, abs=1e-6)
+        assert float(variances["x"]) == pytest.approx(4.0, abs=1e-5)
+        _within_mcse(means["y"], 3.0, np.sqrt(16.25))
         # Observed across seeds 17 to 20: errors of the estimated variance up to
         # 0.48, against a standard error of about 0.36.
-        np.testing.assert_allclose(float(variances["variance(y)"]), 16.25, atol=1.45, rtol=0)
+        np.testing.assert_allclose(float(variances["y"]), 16.25, atol=1.45, rtol=0)
 
     def test_the_marginal_of_the_root_factor_is_the_factor(self):
         marginal_x = marginal(_chain(), "x")

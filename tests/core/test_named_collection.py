@@ -152,7 +152,7 @@ class TestConditionalRoundTrip:
         )
         assert (
             Record(
-                r.raw(),
+                r.raw,
                 label="r",
             )
             != r
@@ -494,7 +494,7 @@ class TestEditTemplateThreading:
         )
         assert isinstance(r.event_template, NumericRecordSpec)
         r2 = r.replace(x="hello")
-        assert r2.raw("x") == "hello"
+        assert r2["x"].raw == "hello"
         assert not isinstance(r2.event_template, NumericRecordSpec)
         # ... and merging a mixed record into a numeric one likewise demotes.
         m = r.merge(
@@ -675,7 +675,7 @@ class TestBoundaryRules:
             {"a/b": da, "c": 3.0},
             label="nr",
         )
-        restored = nr.raw("a/b")
+        restored = nr["a/b"].raw
         assert isinstance(restored, xr.DataArray)
         assert restored.dims == ("t",)
 

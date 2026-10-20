@@ -417,11 +417,11 @@ def _output_atoms(
         # that returns its operand returns the stacked draws' own term, whose spec
         # covers every draw, so the element spec is read from one point.
         element = outputs.spec
-        point = tuple(jnp.shape(outputs.value)[1:])
+        point = tuple(jnp.shape(outputs.raw)[1:])
         if tuple(element.shape) != point:
             element = NumericArraySpec(point, element.dtype, element.support)
         atoms: Batch = _record_stored_dtypes(
-            NumericArrayBatch(outputs.value, atom_level, element_spec=element, label=output_label)
+            NumericArrayBatch(outputs.raw, atom_level, element_spec=element, label=output_label)
         )
     else:
         rows = _rows_of(outputs, output_label)
@@ -586,7 +586,7 @@ def _draw_columns(label: str, draws: Any) -> dict[str, Any]:
     if isinstance(draws, RecordBatch):
         return _prefixed(label, draws._raw_columns())
     if isinstance(draws, Record):
-        return _prefixed(label, {path: draws.raw(path) for path in draws.event_template})
+        return _prefixed(label, {path: draws._raw_at(path) for path in draws.event_template})
     if isinstance(draws, Mapping):
         return _prefixed(label, dict(_raw_record(draws)))
     if isinstance(draws, list):
@@ -598,10 +598,8 @@ def _batch_columns(atoms: Batch) -> dict[str, Any]:
     """The columns of a batch led by its axes: by leaf path for records, else one unnamed column."""
     if isinstance(atoms, RecordBatch):
         return dict(atoms._raw_columns())
-    if isinstance(atoms, NumericArrayBatch):
-        return {"": atoms.values}
-    if isinstance(atoms, _ObjectBatch):
-        return {"": atoms._store}
+    if isinstance(atoms, NumericArrayBatch | _ObjectBatch):
+        return {"": atoms.raw}
     raise TypeError(f"a lifted output of kind {type(atoms).__name__} has no columns")
 
 
@@ -727,7 +725,7 @@ def _record_columns(draws: Any, label: str, event: Any = None, *, as_batch: bool
             kind="batch-valued input atoms",
         )
     if isinstance(draws, NumericArray):
-        return draws.raw()
+        return draws.raw
     if isinstance(draws, Mapping) and not isinstance(draws, TrackedTerm):
         return Record(_raw_record(draws), label=label)
     return draws
@@ -1190,7 +1188,7 @@ def _index_sample(s: Any, i: int) -> Any:
     if isinstance(s, Record):
         # Index each leaf field's batch row; rebuild by path key so a nested
         # sample is reconstructed with its structure intact.
-        return Record({p: s.raw(p)[i] for p in s.event_template}, label=s.label)
+        return Record({p: s._raw_at(p)[i] for p in s.event_template}, label=s.label)
     if isinstance(s, Mapping) and not isinstance(s, TrackedTerm):
         # The raw draws of a batch of records: the nested mapping of their columns.
         return _row_at(s, i)

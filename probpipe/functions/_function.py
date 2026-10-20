@@ -445,7 +445,7 @@ def _lifted_expression(
                 )
             )
         elif _is_swept_scalar(value, ref, call_values):
-            arguments.append(constant(value.raw() if isinstance(value, TrackedTerm) else value))
+            arguments.append(constant(value.raw if isinstance(value, TrackedTerm) else value))
         elif (argument := _argument_expression(value, ref, passed)) is not None:
             arguments.append(argument)
     return Applied(function.output_label, tuple(arguments))
