@@ -166,8 +166,9 @@ class _Section:
             workflow run open in this thread, naming the run's mode. On exit,
             if the block closes out of order, as :class:`Config` states.
         """
-        checked_block_values = self._checked_block_values(settings, f"config.{self._name}.using()")
-        return _config_block({self._name: checked_block_values}, yields=self)
+        caller = f"config.{self._name}.using()"
+        checked_block_values = self._checked_block_values(settings, caller)
+        return _config_block({self._name: checked_block_values}, caller=caller, yields=self)
 
 
 # ---------------------------------------------------------------------------
@@ -290,8 +291,8 @@ class PrefectConfig(_Section):
     """
 
     _name = "prefect"
-    # A task runner need not pickle, and a worker process runs no Prefect
-    # orchestration, so the work a call dispatches reads the live values.
+    # A task runner need not pickle, so the work a call dispatches reads the
+    # section's current values rather than a snapshot that travels with it.
     _is_in_session_snapshot = False
     _checks = MappingProxyType(
         {"workflow_kind": _checked_workflow_kind, "task_runner": lambda value, source: value}
@@ -924,7 +925,7 @@ class Config:
             checked_config_values[name] = self._sections[name]._checked_block_values(
                 settings, f"config.using({name}=...)"
             )
-        return _config_block(checked_config_values, yields=self)
+        return _config_block(checked_config_values, caller="config.using()", yields=self)
 
     def reset(self) -> None:
         """Restore every section's session settings to their defaults, reading the environment variables again.
@@ -966,22 +967,20 @@ def _num_samples_in_effect() -> int:
 
 
 @contextmanager
-def _config_block(config_values: Mapping[str, Mapping[str, Any]], *, yields: Any) -> Iterator[Any]:
+def _config_block(
+    config_values: Mapping[str, Mapping[str, Any]], *, caller: str, yields: Any
+) -> Iterator[Any]:
     """A block in which the checked *config_values* of each named section apply, yielding *yields*.
 
     The block installs the call context in effect with one more ``config``
     block, so its values merge over those of the enclosing blocks, and the
     enclosing values apply again when it exits, an error included. A block
     that would change the provenance mode of the open workflow run raises
-    when it is entered, before it installs anything.
+    when it is entered, before it installs anything, with a message that opens
+    with *caller*, the ``using`` call that opened the block.
     """
     block_provenance_mode = config_values.get("provenance", {}).get("mode")
     if block_provenance_mode is not None:
-        caller = (
-            "config.provenance.using()"
-            if set(config_values) == {"provenance"}
-            else "config.using()"
-        )
         _refuse_changing_the_run_provenance_mode(block_provenance_mode, caller)
     with _under_call_context(current_call_context().with_config_block(config_values)):
         yield yields

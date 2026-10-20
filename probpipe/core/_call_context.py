@@ -82,7 +82,8 @@ class _CallContext:
       which installs it before the work runs.
     - Into a worker process, the same carrier is pickled. Its read-only
       mappings travel as plain dicts, nested ones included, and are read-only
-      again when unpickled, and its ``num_samples_used`` arrives new and empty.
+      again when unpickled, so ``session_config_values`` travels with it, and
+      its ``num_samples_used`` arrives new and empty.
 
     Invariants:
 

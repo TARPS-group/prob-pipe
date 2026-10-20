@@ -466,6 +466,14 @@ class TestTheProvenanceModeIsFixedForARun:
                 pass
             assert config.sampling.num_samples == 1024
 
+    def test_a_config_using_block_of_the_provenance_section_alone_names_config_using(self):
+        with (
+            workflow_run(seed=1),
+            pytest.raises(RuntimeError, match=r"^config\.using\(\): cannot set"),
+            config.using(provenance={"mode": ProvenanceMode.OFF}),
+        ):
+            pass
+
     def test_a_block_that_sets_the_runs_own_mode_is_accepted(self):
         config.provenance.mode = ProvenanceMode.FULL
         with workflow_run(seed=1), config.provenance.using(mode=ProvenanceMode.FULL):
