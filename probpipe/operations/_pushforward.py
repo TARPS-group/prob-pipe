@@ -413,7 +413,8 @@ _FORWARDED_CONTROLS = (
     "method_options",
 )
 
-#: The map's own controls that the map built around it keeps.
+#: The map's own controls that the map built around it keeps, when the map sets
+#: them; the others resolve when the new map's call opens.
 _MAP_CONTROLS = ("max_evaluations", "dispatch", "max_workers", "workflow_kind")
 
 
@@ -452,7 +453,7 @@ def _draw_map(
         label=f.label,
         output_spec=f.output_spec,
         output_label=f.output_label,
-        **{name: f.options[name] for name in _MAP_CONTROLS},
+        **{name: f._options[name] for name in _MAP_CONTROLS if name in f._options},
     )
     return mapped, parameter, {}
 

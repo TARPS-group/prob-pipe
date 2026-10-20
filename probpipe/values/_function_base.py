@@ -19,17 +19,17 @@ import os
 import warnings
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
-from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import partial, wraps
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, runtime_checkable
 
 import jax
 import jax.numpy as jnp
 
 from .._messages import label_given_first, unknown_names
 from ..core._array_backend import _is_numeric_leaf
+from ..core._call_context import _open_call_context, _under_call_context, current_call_context
 from ..core._dispatch import Feasibility
 from ..core._expression import Collapse, Expression, Signature
 from ..core._kinds import term_class_for_spec
@@ -38,8 +38,7 @@ from ..core._record_spec import RecordSpec
 from ..core._repr import format_default, format_names, public_class_name, term_repr, type_name
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OpaqueSpec, OutputSpec
-from ..core.config import WorkflowKind, _checked_count, _temporary_settings, config
-from ..core.config import _applying as _applying_settings
+from ..core.config import WorkflowKind, _checked_count, config
 from ..core.tracked import Annotated, TrackedTerm, _callable_label, _callable_name
 from ._binding import (
     FunctionSignatureInfo,
@@ -709,234 +708,63 @@ _DEFAULTED_BY_NONE = frozenset(
 )
 
 #: The two count controls, which a derived operation's identity passes down.
-_COUNTS = ("max_evaluations", "num_samples")
-
-#: The controls that the Function calls of the current context inherit from a
-#: derived operation's identity, or ``None`` where they inherit none:
-#: ``exact_only``, and ``max_evaluations`` and ``num_samples``, each ``None``
-#: where the derived call does not set it and below the calls the scope makes.
-_INHERITED_CONTROLS: ContextVar[Mapping[str, Any] | None] = ContextVar(
-    "probpipe_inherited_controls", default=None
-)
-
-#: The scope below a call made under an inherited ``exact_only``, which keeps it.
-_EXACT_ONLY_BELOW: Mapping[str, Any] = MappingProxyType(
-    {"exact_only": True, "max_evaluations": None, "num_samples": None}
-)
+_PASSED_COUNT_CONTROLS = ("max_evaluations", "num_samples")
 
 
 @contextmanager
-def _passing_down(
+def _passing_controls_to_formula_calls(
     *, exact_only: bool, max_evaluations: int | None, num_samples: int | None
 ) -> Iterator[None]:
-    """A scope whose Function calls inherit *exact_only*, *max_evaluations*, and *num_samples*.
+    """A scope whose Function calls take *exact_only*, *max_evaluations*, and *num_samples*.
 
-    :meth:`Function._inheriting` states how a call takes them. A scope that
-    passes none of them leaves the context as it is.
+    The scope of a derived operation's identity passes these controls to the
+    calls the identity makes directly, as the call context's
+    ``passed_controls``, and :meth:`Function._inheriting` states how a call
+    takes them. A scope that passes none of them leaves the context as it is.
     """
     if not exact_only and max_evaluations is None and num_samples is None:
         yield
         return
-    token = _INHERITED_CONTROLS.set(
-        MappingProxyType(
-            {
-                "exact_only": exact_only,
-                "max_evaluations": max_evaluations,
-                "num_samples": num_samples,
-            }
-        )
-    )
-    try:
+    passed_controls = {
+        "exact_only": exact_only,
+        "max_evaluations": max_evaluations,
+        "num_samples": num_samples,
+    }
+    with _under_call_context(current_call_context().with_passed_controls(passed_controls)):
         yield
-    finally:
-        _INHERITED_CONTROLS.reset(token)
 
 
-def _inheriting_controls(method: Callable[..., Any]) -> Callable[..., Any]:
-    """*method* of a Function, run under the controls a derived operation's identity passes down.
+def _in_child_call_context(
+    entry_method_name: Literal["__call__", "apply", "check"],
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """A decorator that runs the Function method *entry_method_name* in a call context of its own.
 
-    Inside an identity, the call runs on the view that
-    :meth:`Function._inheriting` returns. For the extent of the call the
-    passed counts are cleared, so they apply only to the calls the scope makes
-    outside any other call, while an inherited ``exact_only`` stays, so it
-    restricts every call within the identity.
+    The call runs on the view that :meth:`Function._inheriting` returns when
+    an enclosing identity passes controls, and it opens the child context that
+    :meth:`~probpipe.core._call_context._CallContext.child_for_call` derives,
+    which holds the view's resolved controls, for the extent of the call.
     """
 
-    @wraps(method)
-    def entered(self: Function, *args: Any, **kwargs: Any) -> Any:
-        inherited = _INHERITED_CONTROLS.get()
-        if inherited is None:
-            return method(self, *args, **kwargs)
-        token = _INHERITED_CONTROLS.set(_EXACT_ONLY_BELOW if inherited["exact_only"] else None)
-        try:
-            return method(self._inheriting(inherited), *args, **kwargs)
-        finally:
-            _INHERITED_CONTROLS.reset(token)
+    def decorate(entry_method: Callable[..., Any]) -> Callable[..., Any]:
+        @wraps(entry_method)
+        def run_in_child_call_context(self: Function, /, *args: Any, **kwargs: Any) -> Any:
+            parent_context = current_call_context()
+            function_view = (
+                self
+                if parent_context.passed_controls is None
+                else self._inheriting(parent_context.passed_controls)
+            )
+            child_context = parent_context.child_for_call(
+                entry_method_name=entry_method_name,
+                function_label=function_view.label,
+                resolved_controls=function_view.options,
+            )
+            with _open_call_context(child_context, entry_method_name=entry_method_name):
+                return entry_method(function_view, *args, **kwargs)
 
-    return entered
+        return run_in_child_call_context
 
-
-@dataclass
-class _MonteCarloRecord:
-    """The Monte Carlo draws that the routes of one running call take, as its provenance records them.
-
-    The engine opens one record for each call. A route that estimates a value
-    from draws notes their number in the record of the call it realizes, and
-    the call's provenance records the number as ``num_samples``. A record that
-    collects calls, which is the record of a call realized by a derived
-    operation's identity, also takes the numbers that the records of the calls
-    made directly within it note, so the identity's call states the draws of
-    the constituents it ran.
-
-    Attributes
-    ----------
-    num_samples : int
-        The call's resolved ``num_samples`` control, which a converter that
-        draws takes when its ``num_samples`` option is not given.
-    counts : set of int
-        The number of draws of each Monte Carlo estimate the call's routes made.
-    collects_calls : bool
-        Whether the records of the calls made directly within the call report
-        their counts to this record.
-    """
-
-    num_samples: int
-    counts: set[int] = field(default_factory=set)
-    collects_calls: bool = False
-
-    @property
-    def recorded(self) -> int | tuple[int, ...] | None:
-        """The ``num_samples`` the call's provenance records.
-
-        It is the one count the routes noted, the sorted counts when they noted
-        several, and ``None`` when they drew no Monte Carlo samples.
-        """
-        if not self.counts:
-            return None
-        if len(self.counts) == 1:
-            return next(iter(self.counts))
-        return tuple(sorted(self.counts))
-
-
-#: The record of the call whose routes are running in the current context.
-_MONTE_CARLO: ContextVar[_MonteCarloRecord | None] = ContextVar(
-    "probpipe_monte_carlo_record", default=None
-)
-
-
-def _current_num_samples() -> int:
-    """The ``num_samples`` of the running call, or the session's default outside every call."""
-    record = _MONTE_CARLO.get()
-    return config.sampling.num_samples if record is None else record.num_samples
-
-
-def _note_monte_carlo(count: int) -> None:
-    """Note in the running call's record that one of its routes took *count* Monte Carlo draws.
-
-    Outside every call there is no record, and nothing is noted.
-    """
-    record = _MONTE_CARLO.get()
-    if record is not None:
-        record.counts.add(count)
-
-
-@contextmanager
-def _recording_monte_carlo(num_samples: int) -> Iterator[_MonteCarloRecord]:
-    """A scope whose routes note their Monte Carlo draws in a record of their own.
-
-    When the scope ends without an error, its counts pass to the enclosing
-    record if that record collects calls.
-
-    Parameters
-    ----------
-    num_samples : int
-        The resolved ``num_samples`` of the call the scope runs.
-
-    Yields
-    ------
-    _MonteCarloRecord
-        The scope's record, empty at the start.
-    """
-    parent = _MONTE_CARLO.get()
-    record = _MonteCarloRecord(num_samples)
-    token = _MONTE_CARLO.set(record)
-    try:
-        yield record
-    finally:
-        _MONTE_CARLO.reset(token)
-    if parent is not None and parent.collects_calls:
-        parent.counts |= record.counts
-
-
-class _CarriedContext:
-    """A work function that runs under the call context of the code that dispatched it.
-
-    The call context is the controls a derived operation's identity passes
-    down, the Monte Carlo record of the dispatching call, and the active
-    ``config.using`` blocks. The wrapper holds them as plain data, so it
-    pickles wherever the function does, and a worker in another thread or
-    process runs the function under the same controls and settings. A worker
-    thread notes its Monte Carlo draws in the dispatching call's record, and a
-    worker process in a copy of it, whose counts the call does not receive.
-
-    Parameters
-    ----------
-    func : callable
-        The work function.
-    inherited : Mapping of str to Any or None
-        The inherited controls to restore while *func* runs.
-    record : _MonteCarloRecord or None
-        The record of the call that dispatches *func*.
-    settings : Mapping of str to Mapping
-        The values of the active ``config.using`` blocks, by section and setting.
-    """
-
-    def __init__(
-        self,
-        func: Callable[..., Any],
-        inherited: Mapping[str, Any] | None,
-        record: _MonteCarloRecord | None,
-        settings: Mapping[str, Mapping[str, Any]],
-    ) -> None:
-        self.func = func
-        self.inherited = None if inherited is None else dict(inherited)
-        self.record = record
-        self.settings = {name: dict(values) for name, values in settings.items()}
-
-    def __call__(self, /, *args: Any, **kwargs: Any) -> Any:
-        """*func*'s result, computed under the carried controls, record, and settings.
-
-        ``self`` is positional-only, so a work function's own parameter named
-        ``self`` binds as a keyword argument.
-        """
-        inherited = None if self.inherited is None else MappingProxyType(self.inherited)
-        token = _INHERITED_CONTROLS.set(inherited)
-        record_token = _MONTE_CARLO.set(self.record)
-        try:
-            with _applying_settings(self.settings):
-                return self.func(*args, **kwargs)
-        finally:
-            _MONTE_CARLO.reset(record_token)
-            _INHERITED_CONTROLS.reset(token)
-
-
-def _carrying_call_context(func: Callable[..., Any]) -> Callable[..., Any]:
-    """*func*, run under the call context of the calling code, in whatever worker runs it.
-
-    A worker thread starts without the calling thread's context, and a worker
-    process without the calling process's. A call dispatched to a worker
-    inside a derived operation's identity would otherwise lose an inherited
-    ``exact_only``, a route run in a worker would note its Monte Carlo draws in
-    no record, and a body run in a worker would read the session's settings in
-    place of an active ``config.using`` block. Outside every call, identity, and
-    block, *func* is returned as it is.
-    """
-    inherited = _INHERITED_CONTROLS.get()
-    record = _MONTE_CARLO.get()
-    settings = _temporary_settings()
-    if inherited is None and record is None and not settings:
-        return func
-    return _CarriedContext(func, inherited, record, settings)
+    return decorate
 
 
 #: Removed construction keywords, each with the warning it raises, which are ignored.
@@ -1124,7 +952,7 @@ class Function(TrackedTerm, Annotated):
     each parameter accepts, the result declaration, and the realization. A
     Function declares them by its input declaration and annotations, its
     ``output_spec``, and its body; a subclass realized by routes, as an
-    operation is, declares them through ``_roles``, :meth:`_plan_point`, and
+    operation is, declares them through ``_roles``, :meth:`_plan_route_inputs`, and
     :meth:`_route_candidates`.
     """
 
@@ -1383,7 +1211,7 @@ class Function(TrackedTerm, Annotated):
         object.__setattr__(clone, "_options", MappingProxyType(options))
         return clone
 
-    def _inheriting(self, inherited: Mapping[str, Any]) -> Self:
+    def _inheriting(self, passed_controls: Mapping[str, Any]) -> Self:
         """This view under the controls a derived operation's identity passes down.
 
         An inherited ``exact_only`` applies whatever this view sets, and an
@@ -1393,33 +1221,39 @@ class Function(TrackedTerm, Annotated):
 
         Parameters
         ----------
-        inherited : Mapping of str to Any
+        passed_controls : Mapping of str to Any
             The passed ``exact_only``, and the passed ``max_evaluations`` and
             ``num_samples``, each ``None`` when it is not passed.
 
         Returns
         -------
         Self
-            The view with the inherited controls, or this view when it already
+            The view with the passed controls, or this view when it already
             has them.
         """
-        options = self.options
-        revisions: dict[str, Any] = {}
-        if inherited["exact_only"] and not options["exact_only"]:
-            revisions["exact_only"] = True
-        for name in _COUNTS:
-            count = inherited[name]
-            if count is not None and name not in self._options and options[name] != count:
-                revisions[name] = count
-        if not revisions:
+        effective_controls = self.options
+        control_revisions: dict[str, Any] = {}
+        if passed_controls["exact_only"] and not effective_controls["exact_only"]:
+            control_revisions["exact_only"] = True
+        for name in _PASSED_COUNT_CONTROLS:
+            passed_count = passed_controls[name]
+            if (
+                passed_count is not None
+                and name not in self._options
+                and effective_controls[name] != passed_count
+            ):
+                control_revisions[name] = passed_count
+        if not control_revisions:
             return self
         # The derived call validated the controls, so the view takes them
         # without validating this view's own controls again.
-        view = self._shallow_copy()
-        object.__setattr__(view, "_options", MappingProxyType(dict(self._options) | revisions))
-        return view
+        inheriting_view = self._shallow_copy()
+        object.__setattr__(
+            inheriting_view, "_options", MappingProxyType(dict(self._options) | control_revisions)
+        )
+        return inheriting_view
 
-    @_inheriting_controls
+    @_in_child_call_context("check")
     def check(self, *args: Any, **kwargs: Any) -> Any:
         """Probe a call through the first six steps of the stack, without executing it.
 
@@ -1490,7 +1324,7 @@ class Function(TrackedTerm, Annotated):
             return self._implementation.callable
         return self.apply
 
-    @_inheriting_controls
+    @_in_child_call_context("apply")
     def apply(self, *args: Any, **kwargs: Any) -> Any:
         """Evaluate one point, validating declarations and returning the raw result.
 
@@ -1551,17 +1385,18 @@ class Function(TrackedTerm, Annotated):
         """
         return None
 
-    def _plan_point(
-        self, values: Mapping[str, Any], controls: Mapping[str, Any]
+    def _plan_route_inputs(
+        self, argument_values: Mapping[str, Any], controls: Mapping[str, Any]
     ) -> tuple[Any, OutputSpec | None, tuple[str, ...]]:
         """What the routes read at one point: its call object, result declaration, and deferrals.
 
-        A Function's call object is *values*, and its result declaration its
-        ``output_spec``, whose type hole defers the type to the return.
+        A Function's call object is *argument_values*, and its result
+        declaration its ``output_spec``, whose type hole defers the type to the
+        return.
 
         Parameters
         ----------
-        values : Mapping of str to Any
+        argument_values : Mapping of str to Any
             The point's argument values, keyed by parameter name.
         controls : Mapping of str to Any
             The call's effective controls, which a subclass realized by routes reads.
@@ -1572,13 +1407,15 @@ class Function(TrackedTerm, Annotated):
             The object the routes' checks read, the result declaration, and the
             checks deferred to the return.
         """
-        declared = self.output_spec
+        result_declaration = self.output_spec
         deferred = (
-            () if declared is not None and declared.spec is not None else (_COMPLETED_AT_RETURN,)
+            ()
+            if result_declaration is not None and result_declaration.spec is not None
+            else (_COMPLETED_AT_RETURN,)
         )
-        return values, declared, deferred
+        return argument_values, result_declaration, deferred
 
-    @_inheriting_controls
+    @_in_child_call_context("__call__")
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """Call the function through the installed engine (V.1).
 
@@ -1759,7 +1596,7 @@ def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) 
         raise TypeError(
             f"workflow_kind must be a WorkflowKind enum member; got {options['workflow_kind']!r}"
         )
-    for name in _COUNTS:
+    for name in _PASSED_COUNT_CONTROLS:
         _checked_count(options[name], name)
     for flag in ("include_inputs", "exact_only", "raw"):
         if not isinstance(options[flag], bool):

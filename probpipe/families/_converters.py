@@ -36,8 +36,10 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._dtype import _default_float_dtype
 from .._messages import unknown_names
+from ..core._call_context import _note_num_samples_used
 from ..core._spec_base import NumericArraySpec, NumericSpec
 from ..core._specs import OutputSpec
+from ..core.config import _num_samples_in_effect
 from ..core.constraints import (
     Constraint,
     _supports_compatible,
@@ -65,7 +67,6 @@ from ..distributions._empirical import EmpiricalDistribution, _batch_form
 from ..functions import _broker
 from ..functions._result import SAMPLE_LEVEL
 from ..operations._operation import _workflow_draws
-from ..values._function_base import _current_num_samples, _note_monte_carlo
 from ._backend import TFPDistribution
 from ._continuous import (
     Beta,
@@ -166,7 +167,7 @@ def _sample_count(options: dict[str, Any]) -> int:
     ValueError
         If the count is not positive.
     """
-    value = options.get("num_samples", _current_num_samples())
+    value = options.get("num_samples", _num_samples_in_effect())
     if isinstance(value, bool):
         raise TypeError(f"num_samples must be an integer, got {value!r}")
     try:
@@ -447,10 +448,10 @@ def _draws(source: Any, law: Distribution | None, count: int) -> Any:
 
     A law draws through its ``_sample``. A SciPy frozen distribution with no
     family draws through SciPy, from a generator seeded by the derived key. The
-    count is noted in the converting call's record, so the call's provenance
-    records it as ``num_samples``.
+    count is noted as a ``num_samples`` the converting call used, so the call's
+    provenance records it.
     """
-    _note_monte_carlo(count)
+    _note_num_samples_used(count)
     if law is not None:
         return _workflow_draws(law, (count,), operation_kind="convert", execution_mode="sampled")
     key = _broker._resolve_automatic_key(

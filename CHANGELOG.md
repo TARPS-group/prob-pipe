@@ -1566,7 +1566,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   block, which wins over the session's value. A block applies to the work that a call
   inside it dispatches to worker threads or Prefect workers, and to no other
   thread. An unknown section or setting raises `TypeError` naming the known
-  ones, and a value is checked as an assignment checks it.
+  ones, and a value is checked as an assignment checks it. Blocks close in the
+  reverse order of opening. A block that a generator holds open can break that
+  order in two ways, and each raises `RuntimeError`: a block closed while a call
+  opened inside it still runs keeps applying until the call ends, and a call or
+  a block that ends while a block opened inside it is still open closes that
+  block with it. Either way no closed block applies afterwards.
 
 ### Added
 
@@ -3578,6 +3583,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A nested numeric sweep checks once whether its function traces with JAX and
   shares that check across its cells. Each cell keeps its own check when its
   swept values must stay fixed or when the sweep is over stored objects.
+- **`apply` and `check` inside a call use their own `num_samples`.** The
+  routes that `f.apply(...)` runs, or that `f.check(...)` probes, inside
+  another call read the `num_samples` that `f`'s own controls, a
+  `config.using` block, or the session give, as `f(...)` does, so a converter
+  that draws takes that count. They read the enclosing call's count before.
 
 ### Removed (breaking)
 

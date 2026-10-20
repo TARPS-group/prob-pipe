@@ -39,59 +39,17 @@ __all__ = [
 ]
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
-from contextvars import ContextVar
 from enum import Enum
 from types import MappingProxyType
 from typing import Any, ClassVar, Self
 
 from .._messages import unknown_names
+from ._call_context import _under_call_context, current_call_context
 from ._expression import _STORED_DEPTH
 
 # ---------------------------------------------------------------------------
-# Sections and temporary settings
+# Sections and their blocks
 # ---------------------------------------------------------------------------
-
-#: The values the active ``using`` blocks set, by section name and setting,
-#: the innermost block's last. Reading a setting returns its value here, and
-#: otherwise the session's value.
-_TEMPORARY: ContextVar[Mapping[str, Mapping[str, Any]]] = ContextVar(
-    "probpipe_temporary_settings", default=MappingProxyType({})
-)
-
-
-@contextmanager
-def _temporarily(values: Mapping[str, Mapping[str, Any]], scope: Any) -> Iterator[Any]:
-    """A block in which the checked *values* of each named section apply, yielding *scope*.
-
-    The block's values are merged over those of the enclosing blocks, and the
-    enclosing values apply again when it exits, an error included.
-    """
-    enclosing = _TEMPORARY.get()
-    merged = dict(enclosing)
-    for name, fields in values.items():
-        merged[name] = MappingProxyType({**enclosing.get(name, {}), **fields})
-    token = _TEMPORARY.set(MappingProxyType(merged))
-    try:
-        yield scope
-    finally:
-        _TEMPORARY.reset(token)
-
-
-def _temporary_settings() -> dict[str, dict[str, Any]]:
-    """The values of the active ``using`` blocks, as plain mappings that a worker can take."""
-    return {name: dict(fields) for name, fields in _TEMPORARY.get().items()}
-
-
-@contextmanager
-def _applying(settings: Mapping[str, Mapping[str, Any]]) -> Iterator[None]:
-    """A scope in which *settings*, which :func:`_temporary_settings` took, apply in place of any block."""
-    token = _TEMPORARY.set(
-        MappingProxyType({name: MappingProxyType(dict(f)) for name, f in settings.items()})
-    )
-    try:
-        yield
-    finally:
-        _TEMPORARY.reset(token)
 
 
 class _Section:
@@ -110,19 +68,21 @@ class _Section:
     #: name, and returns the value or raises as an assignment raises.
     _checks: ClassVar[Mapping[str, Callable[[Any, str], Any]]]
 
-    def _current(self, setting: str) -> Any:
-        """The value of *setting* that the innermost block sets, or else the session's value."""
-        block = _TEMPORARY.get().get(self._name)
-        if block is not None and setting in block:
-            return block[setting]
-        return getattr(self, f"_{setting}")
+    def _value_in_effect(self, setting_name: str) -> Any:
+        """The value of *setting_name* that the innermost block sets, or else the session's value."""
+        section_block = current_call_context().config_blocks.get(self._name)
+        if section_block is not None and setting_name in section_block:
+            return section_block[setting_name]
+        return getattr(self, f"_{setting_name}")
 
-    def _checked(self, settings: Mapping[str, Any], caller: str) -> dict[str, Any]:
-        """*settings* checked as an assignment checks them, for the block *caller* opens.
+    def _checked_block_values(
+        self, block_settings: Mapping[str, Any], caller: str
+    ) -> dict[str, Any]:
+        """*block_settings* checked as an assignment checks them, for the block *caller* opens.
 
         Parameters
         ----------
-        settings : Mapping of str to Any
+        block_settings : Mapping of str to Any
             The temporary values, keyed by setting name.
         caller : str
             The call that opens the block, which the error messages open with.
@@ -140,10 +100,17 @@ class _Section:
         ValueError
             As the setting's assignment raises.
         """
-        unknown = [name for name in settings if name not in self._checks]
-        if unknown:
-            raise TypeError(f"{caller}: {unknown_names('setting', unknown, self._checks)}")
-        return {name: self._checks[name](value, name) for name, value in settings.items()}
+        unknown_setting_names = [
+            setting_name for setting_name in block_settings if setting_name not in self._checks
+        ]
+        if unknown_setting_names:
+            raise TypeError(
+                f"{caller}: {unknown_names('setting', unknown_setting_names, self._checks)}"
+            )
+        return {
+            setting_name: self._checks[setting_name](setting_value, setting_name)
+            for setting_name, setting_value in block_settings.items()
+        }
 
     def using(self, **settings: Any) -> AbstractContextManager[Self]:
         """A block in which *settings* replace the section's values, as ``with section.using(...):``.
@@ -151,7 +118,9 @@ class _Section:
         The block's values apply to every read inside it, by the calls a
         ``Function`` dispatches to worker threads or Prefect workers included,
         and the previous values apply again when it exits, an error included.
-        Blocks nest, and an inner block's value wins. A view's own control,
+        Blocks nest, and an inner block's value wins. Blocks close in the
+        reverse order of opening, and :class:`Config` states what happens when
+        a generator that holds a block open breaks that order. A view's own control,
         which ``f.using(...)`` sets, wins over a block, which wins over the
         session's value. ``f.using(...)`` returns a reusable configured copy of ``f``,
         while ``using`` here returns a context manager.
@@ -173,10 +142,11 @@ class _Section:
             a value has the wrong type, as an assignment raises.
         ValueError
             If a value is inadmissible, as an assignment raises.
+        RuntimeError
+            On exit, if the block closes out of order, as :class:`Config` states.
         """
-        return _temporarily(
-            {self._name: self._checked(settings, f"config.{self._name}.using()")}, self
-        )
+        checked_block_values = self._checked_block_values(settings, f"config.{self._name}.using()")
+        return _config_block({self._name: checked_block_values}, yields=self)
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +289,7 @@ class PrefectConfig(_Section):
     @property
     def workflow_kind(self) -> WorkflowKind:
         """Current global orchestration mode."""
-        return self._current("workflow_kind")
+        return self._value_in_effect("workflow_kind")
 
     @workflow_kind.setter
     def workflow_kind(self, value: WorkflowKind) -> None:
@@ -328,7 +298,7 @@ class PrefectConfig(_Section):
     @property
     def task_runner(self) -> Any:
         """Explicit task runner, or ``None`` for auto-detection."""
-        return self._current("task_runner")
+        return self._value_in_effect("task_runner")
 
     @task_runner.setter
     def task_runner(self, value: Any) -> None:
@@ -454,7 +424,7 @@ class ProvenanceConfig(_Section):
     @property
     def mode(self) -> ProvenanceMode:
         """Current global provenance tracking mode."""
-        return self._current("mode")
+        return self._value_in_effect("mode")
 
     @mode.setter
     def mode(self, value: ProvenanceMode) -> None:
@@ -608,7 +578,7 @@ class NotationConfig(_Section):
             On assignment of an integer less than 1 or greater than 64, the
             number of levels a stored expression keeps.
         """
-        return self._current("max_depth")
+        return self._value_in_effect("max_depth")
 
     @max_depth.setter
     def max_depth(self, value: int) -> None:
@@ -746,7 +716,7 @@ class SamplingConfig(_Section):
         ValueError
             On assignment of an integer less than 1.
         """
-        return self._current("max_evaluations")
+        return self._value_in_effect("max_evaluations")
 
     @max_evaluations.setter
     def max_evaluations(self, value: int) -> None:
@@ -766,7 +736,7 @@ class SamplingConfig(_Section):
         ValueError
             On assignment of an integer less than 1.
         """
-        return self._current("num_samples")
+        return self._value_in_effect("num_samples")
 
     @num_samples.setter
     def num_samples(self, value: int) -> None:
@@ -802,14 +772,24 @@ class Config:
     block, then a view's own control: ``f.using(num_samples=...)`` wins over a
     block, which wins over the session. ``f.using(...)`` returns a reusable
     configured copy of ``f``, while ``config.using(...)`` is a context manager.
-    A block is stored in a context variable, as ``workflow_run`` stores its
-    scope, so it applies in the thread that opens it and in the workers that
+    A block applies in the thread that opens it and in the workers that
     ``Function`` calls inside it dispatch to, whether threads or Prefect
     workers, and not in another thread. Assigning a setting inside a block sets
     the session's value, which applies once the block exits, and
     :meth:`reset` inside a block restores the session's values while the block
-    still applies. A setting read while JAX traces a function, as under
-    ``jax.jit``, is the value at trace time, and the compiled function keeps it.
+    still applies. Blocks close in the reverse order of opening, and a block
+    held open by a generator can break that order in two ways, each of which
+    raises ``RuntimeError``:
+
+    - a block closed while a call opened inside it still runs, as when that
+      call closes the generator, keeps applying until the call ends;
+    - a call or a block that ends while a block opened inside it is still
+      open, as when the generator outlives it, closes that block with it.
+
+    Either way no closed block applies afterwards. A call resolves its settings
+    when it opens. ProbPipe code
+    inside a user's own ``jax.jit`` keeps the values in effect while JAX traced
+    it.
     """
 
     def __init__(self) -> None:
@@ -868,19 +848,23 @@ class Config:
             given anything but a mapping, or as a section's ``using`` raises.
         ValueError
             As a section's ``using`` raises.
+        RuntimeError
+            On exit, if the block closes out of order, as the class docstring states.
         """
         unknown = [name for name in sections if name not in self._sections]
         if unknown:
             raise TypeError(f"config.using(): {unknown_names('section', unknown, self._sections)}")
-        checked = {}
+        checked_config_values = {}
         for name, settings in sections.items():
             if not isinstance(settings, Mapping):
                 raise TypeError(
                     f"config.using(): {name}= must be a mapping of settings, "
                     f"got {type(settings).__name__}"
                 )
-            checked[name] = self._sections[name]._checked(settings, f"config.using({name}=...)")
-        return _temporarily(checked, self)
+            checked_config_values[name] = self._sections[name]._checked_block_values(
+                settings, f"config.using({name}=...)"
+            )
+        return _config_block(checked_config_values, yields=self)
 
     def reset(self) -> None:
         """Restore every section's session settings to their defaults, reading the environment variables again.
@@ -900,3 +884,23 @@ class Config:
 # Module-level singleton
 config = Config()
 """The global settings of ProbPipe, an instance of ``Config``."""
+
+
+def _num_samples_in_effect() -> int:
+    """The ``num_samples`` of the running call, or the session's value in effect outside every call."""
+    call_context = current_call_context()
+    if call_context.call_depth == 0:
+        return config.sampling.num_samples
+    return call_context.resolved_controls["num_samples"]
+
+
+@contextmanager
+def _config_block(config_values: Mapping[str, Mapping[str, Any]], *, yields: Any) -> Iterator[Any]:
+    """A block in which the checked *config_values* of each named section apply, yielding *yields*.
+
+    The block installs the call context in effect with one more ``config``
+    block, so its values merge over those of the enclosing blocks, and the
+    enclosing values apply again when it exits, an error included.
+    """
+    with _under_call_context(current_call_context().with_config_block(config_values)):
+        yield yields

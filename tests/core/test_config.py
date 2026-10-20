@@ -2,6 +2,7 @@
 
 import pickle
 import threading
+from types import MappingProxyType
 
 import jax.numpy as jnp
 import pytest
@@ -18,6 +19,7 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core import config as config_module
+from probpipe.core._call_context import _carrying_call_context, _note_num_samples_used
 from probpipe.core._expression import _STORED_DEPTH, Named, Operator, constant
 from probpipe.core.config import (
     _MAX_EVALUATIONS_ENV_VAR,
@@ -33,7 +35,6 @@ from probpipe.core.config import (
     _initial_max_depth,
     _initial_provenance_mode,
 )
-from probpipe.values._function_base import _carrying_call_context
 
 
 class TestProvenanceModeEnvVar:
@@ -410,9 +411,22 @@ class TestTemporarySettings:
         assert seen == [1024]
 
     def test_a_carried_work_function_pickles_and_applies_the_block(self):
-        """A Prefect worker in another process takes the block with the work function."""
+        """A Prefect worker in another process takes the call context with the work function."""
+        carried = []
+
+        @function
+        def dispatching(x):
+            _note_num_samples_used(5)
+            carried.append(_carrying_call_context(_read_num_samples))
+            return x
+
         with config.sampling.using(num_samples=77):
-            carried = _carrying_call_context(_read_num_samples)
-        restored = pickle.loads(pickle.dumps(carried))
+            dispatching.using(method_options={"budget": {"steps": 3}})(1.0)
+        assert carried[0].call_context.num_samples_used.num_samples_values == {5}
+        restored = pickle.loads(pickle.dumps(carried[0]))
         assert restored() == 77
         assert config.sampling.num_samples == 1024
+        restored_context = restored.call_context
+        assert restored_context.resolved_controls["method_options"] == {"budget": {"steps": 3}}
+        assert isinstance(restored_context.resolved_controls["method_options"], MappingProxyType)
+        assert restored_context.num_samples_used.num_samples_values == frozenset()
