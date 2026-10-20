@@ -56,7 +56,7 @@ class TestStaleDocs:
         _notebook(
             root / "docs" / "guide.ipynb",
             "add = Function(lambda x, y: x + y, label='add', dispatch='sequential', y=2.0)",
-            "@pp.function(n_broadcast_samples=8, scale=2.0)\ndef scaled(x, scale):\n    return x",
+            "@pp.function(max_evaluations=8, scale=2.0)\ndef scaled(x, scale):\n    return x",
         )
         (root / "example_scripts" / "demo.py").write_text(
             "wrapped = function(lambda x: x, label='identity', seed=0)\n"

@@ -20,7 +20,7 @@ import warnings
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial, wraps
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
@@ -38,7 +38,7 @@ from ..core._record_spec import RecordSpec
 from ..core._repr import format_default, format_names, public_class_name, term_repr, type_name
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OpaqueSpec, OutputSpec
-from ..core.config import WorkflowKind
+from ..core.config import WorkflowKind, _checked_count, config
 from ..core.tracked import Annotated, TrackedTerm, _callable_label, _callable_name
 from ._binding import (
     FunctionSignatureInfo,
@@ -533,9 +533,9 @@ def _validate_output_values(spec: TermSpec, value: Any, path: str) -> None:
 
         element = spec.element_spec
         if isinstance(element, RecordSpec) and isinstance(value, RecordBatch):
-            for field, child in element.items():
-                column = value._raw_column(field)
-                _validate_output_column(child, column, value.batch_shape, f"{path}/{field}")
+            for field_name, child in element.items():
+                column = value._raw_column(field_name)
+                _validate_output_column(child, column, value.batch_shape, f"{path}/{field_name}")
         elif isinstance(element, NumericArraySpec):
             _validate_output_column(element, value.raw, value.batch_shape, path)
     elif isinstance(spec, RecordSpec):
@@ -683,12 +683,13 @@ def _validate_function_declarations(
 #: The check a result declaration with a type hole defers to the return.
 _COMPLETED_AT_RETURN = "the result's type is completed from the returned value"
 
-#: The engine's controls, each with its default. A default sample count of None
-#: stands for the constructing class's ``DEFAULT_N_BROADCAST_SAMPLES``.
+#: The engine's controls, each with its default. A default count of None stands
+#: for the session's default in ``config.sampling``, read when a call runs.
 _CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
     {
         "workflow_kind": WorkflowKind.DEFAULT,
-        "n_broadcast_samples": None,
+        "max_evaluations": None,
+        "num_samples": None,
         "dispatch": "auto",
         "max_workers": None,
         "include_inputs": False,
@@ -703,35 +704,46 @@ _CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
 #: The controls a construction keyword of None leaves at their default; None is
 #: inadmissible for every other control.
 _DEFAULTED_BY_NONE = frozenset(
-    {"n_broadcast_samples", "max_workers", "method", "conversions", "method_options"}
+    {"max_evaluations", "num_samples", "max_workers", "method", "conversions", "method_options"}
 )
+
+#: The two count controls, which a derived operation's identity passes down.
+_COUNTS = ("max_evaluations", "num_samples")
 
 #: The controls that the Function calls of the current context inherit from a
 #: derived operation's identity, or ``None`` where they inherit none:
-#: ``exact_only``, and ``n_broadcast_samples``, which is ``None`` where the
-#: derived call sets no count and below the calls the scope makes.
+#: ``exact_only``, and ``max_evaluations`` and ``num_samples``, each ``None``
+#: where the derived call does not set it and below the calls the scope makes.
 _INHERITED_CONTROLS: ContextVar[Mapping[str, Any] | None] = ContextVar(
     "probpipe_inherited_controls", default=None
 )
 
 #: The scope below a call made under an inherited ``exact_only``, which keeps it.
 _EXACT_ONLY_BELOW: Mapping[str, Any] = MappingProxyType(
-    {"exact_only": True, "n_broadcast_samples": None}
+    {"exact_only": True, "max_evaluations": None, "num_samples": None}
 )
 
 
 @contextmanager
-def _passing_down(*, exact_only: bool, n_broadcast_samples: int | None) -> Iterator[None]:
-    """A scope whose Function calls inherit *exact_only* and *n_broadcast_samples*.
+def _passing_down(
+    *, exact_only: bool, max_evaluations: int | None, num_samples: int | None
+) -> Iterator[None]:
+    """A scope whose Function calls inherit *exact_only*, *max_evaluations*, and *num_samples*.
 
     :meth:`Function._inheriting` states how a call takes them. A scope that
-    passes neither leaves the context as it is.
+    passes none of them leaves the context as it is.
     """
-    if not exact_only and n_broadcast_samples is None:
+    if not exact_only and max_evaluations is None and num_samples is None:
         yield
         return
     token = _INHERITED_CONTROLS.set(
-        MappingProxyType({"exact_only": exact_only, "n_broadcast_samples": n_broadcast_samples})
+        MappingProxyType(
+            {
+                "exact_only": exact_only,
+                "max_evaluations": max_evaluations,
+                "num_samples": num_samples,
+            }
+        )
     )
     try:
         yield
@@ -744,9 +756,9 @@ def _inheriting_controls(method: Callable[..., Any]) -> Callable[..., Any]:
 
     Inside an identity, the call runs on the view that
     :meth:`Function._inheriting` returns. For the extent of the call the
-    passed sample count is cleared, so it applies only to the calls the scope
-    makes outside any other call, while an inherited ``exact_only`` stays, so
-    it restricts every call within the identity.
+    passed counts are cleared, so they apply only to the calls the scope makes
+    outside any other call, while an inherited ``exact_only`` stays, so it
+    restricts every call within the identity.
     """
 
     @wraps(method)
@@ -763,46 +775,158 @@ def _inheriting_controls(method: Callable[..., Any]) -> Callable[..., Any]:
     return entered
 
 
-class _CarriedControls:
-    """A work function that runs under the inherited controls of the context that made it.
+@dataclass
+class _MonteCarloRecord:
+    """The Monte Carlo draws that the routes of one running call take, as its provenance records them.
 
-    It holds the function and the controls as plain data, so it pickles
-    wherever the function does, and a worker in another thread or process
-    runs the function under the same controls.
+    The engine opens one record for each call. A route that estimates a value
+    from draws notes their number in the record of the call it realizes, and
+    the call's provenance records the number as ``num_samples``. A record that
+    collects calls, which is the record of a call realized by a derived
+    operation's identity, also takes the numbers that the records of the calls
+    made directly within it note, so the identity's call states the draws of
+    the constituents it ran.
+
+    Attributes
+    ----------
+    num_samples : int
+        The call's resolved ``num_samples`` control, which a converter that
+        draws takes when its ``num_samples`` option is not given.
+    counts : set of int
+        The number of draws of each Monte Carlo estimate the call's routes made.
+    collects_calls : bool
+        Whether the records of the calls made directly within the call report
+        their counts to this record.
+    """
+
+    num_samples: int
+    counts: set[int] = field(default_factory=set)
+    collects_calls: bool = False
+
+    @property
+    def recorded(self) -> int | tuple[int, ...] | None:
+        """The ``num_samples`` the call's provenance records.
+
+        It is the one count the routes noted, the sorted counts when they noted
+        several, and ``None`` when they drew no Monte Carlo samples.
+        """
+        if not self.counts:
+            return None
+        if len(self.counts) == 1:
+            return next(iter(self.counts))
+        return tuple(sorted(self.counts))
+
+
+#: The record of the call whose routes are running in the current context.
+_MONTE_CARLO: ContextVar[_MonteCarloRecord | None] = ContextVar(
+    "probpipe_monte_carlo_record", default=None
+)
+
+
+def _current_num_samples() -> int:
+    """The ``num_samples`` of the running call, or the session's default outside every call."""
+    record = _MONTE_CARLO.get()
+    return config.sampling.num_samples if record is None else record.num_samples
+
+
+def _note_monte_carlo(count: int) -> None:
+    """Note in the running call's record that one of its routes took *count* Monte Carlo draws.
+
+    Outside every call there is no record, and nothing is noted.
+    """
+    record = _MONTE_CARLO.get()
+    if record is not None:
+        record.counts.add(count)
+
+
+@contextmanager
+def _recording_monte_carlo(num_samples: int) -> Iterator[_MonteCarloRecord]:
+    """A scope whose routes note their Monte Carlo draws in a record of their own.
+
+    When the scope ends without an error, its counts pass to the enclosing
+    record if that record collects calls.
+
+    Parameters
+    ----------
+    num_samples : int
+        The resolved ``num_samples`` of the call the scope runs.
+
+    Yields
+    ------
+    _MonteCarloRecord
+        The scope's record, empty at the start.
+    """
+    parent = _MONTE_CARLO.get()
+    record = _MonteCarloRecord(num_samples)
+    token = _MONTE_CARLO.set(record)
+    try:
+        yield record
+    finally:
+        _MONTE_CARLO.reset(token)
+    if parent is not None and parent.collects_calls:
+        parent.counts |= record.counts
+
+
+class _CarriedControls:
+    """A work function that runs under the inherited controls and the record of the context that made it.
+
+    It holds the function, the controls, and the record as plain data, so it
+    pickles wherever the function does, and a worker in another thread or
+    process runs the function under the same controls. A worker thread notes
+    its Monte Carlo draws in the calling call's record, and a worker process in
+    a copy of it, whose counts the call does not receive.
 
     Parameters
     ----------
     func : callable
         The work function.
-    inherited : Mapping of str to Any
+    inherited : Mapping of str to Any or None
         The inherited controls to restore while *func* runs.
+    record : _MonteCarloRecord or None
+        The record of the call that dispatches *func*.
     """
 
-    def __init__(self, func: Callable[..., Any], inherited: Mapping[str, Any]) -> None:
+    def __init__(
+        self,
+        func: Callable[..., Any],
+        inherited: Mapping[str, Any] | None,
+        record: _MonteCarloRecord | None,
+    ) -> None:
         self.func = func
-        self.inherited = dict(inherited)
+        self.inherited = None if inherited is None else dict(inherited)
+        self.record = record
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        """*func*'s result, computed under the carried controls."""
-        token = _INHERITED_CONTROLS.set(MappingProxyType(self.inherited))
+    def __call__(self, /, *args: Any, **kwargs: Any) -> Any:
+        """*func*'s result, computed under the carried controls and record.
+
+        ``self`` is positional-only, so a work function's own parameter named
+        ``self`` binds as a keyword argument.
+        """
+        inherited = None if self.inherited is None else MappingProxyType(self.inherited)
+        token = _INHERITED_CONTROLS.set(inherited)
+        record_token = _MONTE_CARLO.set(self.record)
         try:
             return self.func(*args, **kwargs)
         finally:
+            _MONTE_CARLO.reset(record_token)
             _INHERITED_CONTROLS.reset(token)
 
 
 def _carrying_inherited_controls(func: Callable[..., Any]) -> Callable[..., Any]:
-    """*func*, run under the inherited controls of the calling context, in whatever worker runs it.
+    """*func*, run under the inherited controls and the record of the calling context, in whatever worker runs it.
 
     A worker thread starts without the calling thread's context, and a worker
     process without the calling process's, so a call dispatched to a worker
     inside a derived operation's identity would otherwise lose an inherited
-    ``exact_only``. Outside an identity *func* is returned as it is.
+    ``exact_only``, and a route run in a worker would note its Monte Carlo
+    draws in no record. Outside every call and every identity *func* is
+    returned as it is.
     """
     inherited = _INHERITED_CONTROLS.get()
-    if inherited is None:
+    record = _MONTE_CARLO.get()
+    if inherited is None and record is None:
         return func
-    return _CarriedControls(func, inherited)
+    return _CarriedControls(func, inherited, record)
 
 
 #: Removed construction keywords, each with the warning it raises, which are ignored.
@@ -906,8 +1030,19 @@ class Function(TrackedTerm, Annotated):
 
         - ``workflow_kind`` (WorkflowKind): orchestration selection; DEFAULT,
           the default, inherits the workflow configuration.
-        - ``n_broadcast_samples`` (int or None): positive sampling-lift count,
-          defaulting to the class's ``DEFAULT_N_BROADCAST_SAMPLES``, 256.
+        - ``max_evaluations`` (int or None): the maximum number of times a
+          call lifted over laws evaluates the function, a positive integer.
+          The lift enumerates the empirical arguments whose combinations of
+          atoms number at most ``max_evaluations``, smallest first, and draws
+          the other arguments: ``max_evaluations`` joint draws when it
+          enumerates none, and otherwise ``max_evaluations // n`` draws for each
+          of the ``n`` combinations, at least one. The default is
+          ``config.sampling.max_evaluations``, 256.
+        - ``num_samples`` (int or None): the number of Monte Carlo draws that a
+          route estimating a summary takes, such as the Monte Carlo ``mean``,
+          and that a conversion of an argument takes where its converter draws,
+          a positive integer. The default is ``config.sampling.num_samples``,
+          1024.
         - ``dispatch`` ({"auto", "jax", "sequential", "thread"}): evaluation
           dispatch interpreted by the engine, "auto" by default.
         - ``max_workers`` (int or None): positive thread-worker count, or the
@@ -928,8 +1063,8 @@ class Function(TrackedTerm, Annotated):
           workflow, False by default.
 
         A call inside a derived operation's identity also takes the
-        ``exact_only`` and ``n_broadcast_samples`` that the identity passes
-        down (VI.0).
+        ``exact_only``, ``max_evaluations``, and ``num_samples`` that the
+        identity passes down (VI.0).
 
     Raises
     ------
@@ -942,7 +1077,7 @@ class Function(TrackedTerm, Annotated):
         ``func=``.
     ValueError
         For mismatched input slots, invalid defaults or bindings, unknown
-        dispatch, nonpositive worker or sample counts, conversions for a
+        dispatch, a nonpositive worker, evaluation, or draw count, conversions for a
         parameter the signature lacks, or invalid component names.
     NotImplementedError
         If a differentiability claim is given, which Function does not carry
@@ -995,8 +1130,6 @@ class Function(TrackedTerm, Annotated):
     _output_label: str | None
     _output_component: str
     _options: Mapping[str, Any]
-
-    DEFAULT_N_BROADCAST_SAMPLES = 256
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         # The constructor's arguments are checked here, before ``__init__`` binds
@@ -1196,8 +1329,12 @@ class Function(TrackedTerm, Annotated):
         return MappingProxyType(self._control_defaults() | dict(self._options))
 
     def _control_defaults(self) -> dict[str, Any]:
-        """Every control's framework default, the class's sample count included."""
-        return dict(_CONTROL_DEFAULTS) | {"n_broadcast_samples": self.DEFAULT_N_BROADCAST_SAMPLES}
+        """Every control's framework default, with the session's counts as they read now."""
+        sampling = config.sampling
+        return dict(_CONTROL_DEFAULTS) | {
+            "max_evaluations": sampling.max_evaluations,
+            "num_samples": sampling.num_samples,
+        }
 
     def using(self, **controls: Any) -> Self:
         """Return a copy with revised controls, preserving identity and declarations.
@@ -1240,15 +1377,15 @@ class Function(TrackedTerm, Annotated):
         """This view under the controls a derived operation's identity passes down.
 
         An inherited ``exact_only`` applies whatever this view sets, and an
-        inherited ``n_broadcast_samples`` applies unless this view sets its own.
-        Every other control stays this view's, since route names and budgets
-        belong to each function.
+        inherited ``max_evaluations`` or ``num_samples`` applies unless this
+        view sets its own. Every other control stays this view's, since route
+        names and budgets belong to each function.
 
         Parameters
         ----------
         inherited : Mapping of str to Any
-            The passed ``exact_only``, and the passed ``n_broadcast_samples`` or
-            ``None``.
+            The passed ``exact_only``, and the passed ``max_evaluations`` and
+            ``num_samples``, each ``None`` when it is not passed.
 
         Returns
         -------
@@ -1260,16 +1397,13 @@ class Function(TrackedTerm, Annotated):
         revisions: dict[str, Any] = {}
         if inherited["exact_only"] and not options["exact_only"]:
             revisions["exact_only"] = True
-        count = inherited["n_broadcast_samples"]
-        if (
-            count is not None
-            and "n_broadcast_samples" not in self._options
-            and options["n_broadcast_samples"] != count
-        ):
-            revisions["n_broadcast_samples"] = count
+        for name in _COUNTS:
+            count = inherited[name]
+            if count is not None and name not in self._options and options[name] != count:
+                revisions[name] = count
         if not revisions:
             return self
-        # The derived call validated both controls, so the view takes them
+        # The derived call validated the controls, so the view takes them
         # without validating this view's own controls again.
         view = self._shallow_copy()
         object.__setattr__(view, "_options", MappingProxyType(dict(self._options) | revisions))
@@ -1534,50 +1668,6 @@ class Function(TrackedTerm, Annotated):
         return fields
 
 
-def _check_sample_count(count: Any) -> None:
-    """Refuse a sample count that is not a positive integer.
-
-    Parameters
-    ----------
-    count : Any
-        The candidate value of the ``n_broadcast_samples`` control.
-
-    Raises
-    ------
-    TypeError
-        If *count* is not an integer.
-    ValueError
-        If *count* is not positive.
-    """
-    if isinstance(count, bool) or not isinstance(count, int):
-        raise TypeError(f"n_broadcast_samples must be an integer; got {count!r}")
-    if count <= 0:
-        raise ValueError(f"n_broadcast_samples must be a positive integer; got {count!r}")
-
-
-def set_default_n_broadcast_samples(n: int) -> None:
-    """Set the sample count of every function and operation that sets none of its own.
-
-    A call reads the default when it runs, so the setting also governs the
-    functions constructed before it. The converters that draw, such as moment
-    matching, draw this many unless their ``num_samples`` option is given.
-
-    Parameters
-    ----------
-    n : int
-        The number of draws, at least one. The default is 256.
-
-    Raises
-    ------
-    TypeError
-        If *n* is not an integer.
-    ValueError
-        If *n* is less than one.
-    """
-    _check_sample_count(n)
-    Function.DEFAULT_N_BROADCAST_SAMPLES = n
-
-
 def _set_controls(
     defaults: Mapping[str, Any],
     current: Mapping[str, Any],
@@ -1659,7 +1749,8 @@ def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) 
         raise TypeError(
             f"workflow_kind must be a WorkflowKind enum member; got {options['workflow_kind']!r}"
         )
-    _check_sample_count(options["n_broadcast_samples"])
+    for name in _COUNTS:
+        _checked_count(options[name], name)
     for flag in ("include_inputs", "exact_only", "raw"):
         if not isinstance(options[flag], bool):
             raise TypeError(f"{flag} must be a bool; got {options[flag]!r}")

@@ -68,6 +68,8 @@ The canonical name of a recurring concept is the name that its parameters, attri
 | the spec every element of a batch satisfies | `element_spec` |
 | the objects a batch is built from | `elements` |
 | the independent-draw shape prefix of `sample` | `sample_shape` |
+| the maximum number of evaluations of a function lifted over laws | `max_evaluations` |
+| the number of Monte Carlo draws of a summary or an approximate conversion | `num_samples` |
 | a distribution's event declaration, an `OutputSpec` | `event_spec` |
 | a PRNG key | `key` |
 | a function from which `distribution` builds a law | the operation it realizes: `sample`, `log_prob`, or `unnormalized_log_prob` |

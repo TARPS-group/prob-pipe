@@ -297,7 +297,7 @@ class TestReplay:
         difference = Function(
             replayable_difference,
             label="replayable_difference",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             dispatch="sequential",
             output_spec=OutputSpec(replayable_difference=None),
         )

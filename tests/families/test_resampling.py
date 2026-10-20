@@ -784,7 +784,7 @@ class TestTheBootstrapReplicate:
         with workflow_run(seed=4):
             means = Function(
                 lambda b: jnp.mean(b), label="stat", output_spec=OutputSpec(stat=None)
-            ).using(n_broadcast_samples=400)(b=replicate)
+            ).using(max_evaluations=400)(b=replicate)
         np.testing.assert_allclose(means._mean(), jnp.mean(data), atol=0.03)
         np.testing.assert_allclose(
             jnp.sqrt(means._variance()), jnp.std(data) / jnp.sqrt(200.0), rtol=0.2

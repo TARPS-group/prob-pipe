@@ -351,7 +351,7 @@ class TestBroadcastingProvenance:
             identity,
             label="identity",
             dispatch="sequential",
-            n_broadcast_samples=20,
+            max_evaluations=20,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):
@@ -364,7 +364,7 @@ class TestBroadcastingProvenance:
         assert result.provenance.parents[0].parent is wf
         assert result.provenance.parents[1].parent is n
         assert result.provenance.metadata["dispatch"] == "sequential"
-        assert result.provenance.metadata["n_samples"] == 20
+        assert result.provenance.metadata["max_evaluations"] == 20
         assert result.provenance.metadata["func"] == "identity"
         assert result.provenance.metadata["broadcast_args"] == ["x"]
 
@@ -378,7 +378,7 @@ class TestBroadcastingProvenance:
             double,
             label="double",
             dispatch="jax",
-            n_broadcast_samples=20,
+            max_evaluations=20,
             output_spec=OutputSpec(double=None),
         )
         with workflow_run(seed=42):
@@ -399,7 +399,7 @@ class TestBroadcastingProvenance:
             shift,
             label="shift",
             dispatch=dispatch,
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(shift=None),
         )
 
@@ -421,7 +421,7 @@ class TestBroadcastingProvenance:
             add,
             label="add",
             dispatch="sequential",
-            n_broadcast_samples=20,
+            max_evaluations=20,
             output_spec=OutputSpec(add=None),
         )
         with workflow_run(seed=42):
@@ -442,7 +442,7 @@ class TestBroadcastingProvenance:
             add,
             label="add",
             dispatch="sequential",
-            n_broadcast_samples=20,
+            max_evaluations=20,
             output_spec=OutputSpec(add=None),
         )
         with workflow_run(seed=42):
@@ -495,7 +495,7 @@ class TestBroadcastingProvenance:
             add_noise,
             label="add_noise",
             dispatch="sequential",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(add_noise=None),
         )
 
@@ -546,7 +546,7 @@ class TestProvenanceChains:
             log_val,
             label="log_val",
             dispatch="sequential",
-            n_broadcast_samples=20,
+            max_evaluations=20,
             output_spec=OutputSpec(log_val=None),
         )
         with workflow_run(seed=42):
@@ -766,7 +766,7 @@ class TestProvenanceAncestors:
             identity,
             label="identity",
             dispatch="sequential",
-            n_broadcast_samples=10,
+            max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):
@@ -792,7 +792,7 @@ class TestProvenanceAncestors:
             add,
             label="add",
             dispatch="sequential",
-            n_broadcast_samples=10,
+            max_evaluations=10,
             output_spec=OutputSpec(add=None),
         )
         with workflow_run(seed=42):
@@ -884,7 +884,7 @@ class TestProvenanceDag:
             identity,
             label="identity",
             dispatch="sequential",
-            n_broadcast_samples=10,
+            max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):
@@ -960,7 +960,7 @@ class TestProvenanceModes:
             identity,
             label="identity",
             dispatch="sequential",
-            n_broadcast_samples=10,
+            max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):
@@ -985,7 +985,7 @@ class TestProvenanceModes:
             identity,
             label="identity",
             dispatch="sequential",
-            n_broadcast_samples=10,
+            max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):
@@ -1019,7 +1019,7 @@ class TestProvenanceModes:
             identity,
             label="identity",
             dispatch="sequential",
-            n_broadcast_samples=10,
+            max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):
@@ -1044,7 +1044,7 @@ class TestProvenanceModes:
             add,
             label="add",
             dispatch="sequential",
-            n_broadcast_samples=10,
+            max_evaluations=10,
             output_spec=OutputSpec(add=None),
         )
         with workflow_run(seed=42):
@@ -1069,7 +1069,7 @@ class TestProvenanceModes:
             identity,
             label="identity",
             dispatch="sequential",
-            n_broadcast_samples=10,
+            max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):
@@ -1091,7 +1091,7 @@ class TestProvenanceModes:
             identity,
             label="identity",
             dispatch="sequential",
-            n_broadcast_samples=10,
+            max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):
@@ -1157,7 +1157,7 @@ class TestProvenanceModes:
             identity,
             label="identity",
             dispatch="sequential",
-            n_broadcast_samples=10,
+            max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):
@@ -1177,7 +1177,7 @@ class TestProvenanceModes:
             identity,
             label="identity",
             dispatch="sequential",
-            n_broadcast_samples=10,
+            max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):

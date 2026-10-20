@@ -1080,7 +1080,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`Function` controls now live outside user call kwargs.**
   `@function(...)` configures definition-time controls, and
   `workflow.using(...)(...)` is the call-time override API for
-  `seed`, `n_broadcast_samples`, and `include_inputs`. Wrapped
+  `seed`, `max_evaluations`, and `include_inputs`. Wrapped
   functions may now declare and receive those names as ordinary
   parameters. Passing those names as call kwargs no longer configures
   ProbPipe controls; use `workflow.using(...)(...)` instead.
@@ -1523,6 +1523,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``BroadcastDistribution``, ``ProbabilisticModel``, ``SimpleModel``,
   ``SimpleGenerativeModel``, ``PyMCModel``, ``StanModel``). No backward
   alias.
+- **`n_broadcast_samples` is split into `max_evaluations` and `num_samples`.**
+  `max_evaluations` is the maximum number of times a call lifted over laws
+  evaluates its function, 256 by default. The lift enumerates the empirical
+  arguments whose combinations of atoms number at most `max_evaluations` and
+  samples the others within that count. `num_samples` is the number of Monte
+  Carlo draws of a summary, such as `mean` or `quantile`, and of a converter
+  that draws, 1024 by default, so the default Monte Carlo estimates change. `expectation(d, f)` evaluates `f` at most `num_samples`
+  times, and `convert.using(num_samples=n)` and an argument's conversion take
+  the call's `num_samples` unless the converter's `num_samples` option is given.
+  `probpipe.config.sampling` holds both defaults and replaces
+  `set_default_n_broadcast_samples` and `Function.DEFAULT_N_BROADCAST_SAMPLES`,
+  and the environment variables `PROBPIPE_SAMPLING_MAX_EVALUATIONS` and
+  `PROBPIPE_SAMPLING_NUM_SAMPLES` set their initial values. A call's provenance
+  records `num_samples` whenever its routes drew Monte Carlo samples, including
+  the variance of `standard_deviation`, and a lift's provenance records
+  `max_evaluations` where it recorded `n_samples` or `k`. The old name raises
+  `TypeError` as an unknown control. A replay recipe records its plan under
+  `probpipe.stochastic_plan/v2`, so `replay_run` refuses a result recorded
+  earlier and asks for it to be recorded again. Migrate each use as follows:
+  - a lifted function or `pushforward`: `f.using(n_broadcast_samples=n)` becomes
+    `f.using(max_evaluations=n)`;
+  - a summary, `expectation` included: `mean.using(n_broadcast_samples=n)`
+    becomes `mean.using(num_samples=n)`;
+  - the session's default: `set_default_n_broadcast_samples(n)` becomes
+    `probpipe.config.sampling.max_evaluations = n` for lifts and
+    `probpipe.config.sampling.num_samples = n` for summaries.
 
 ### Added
 
@@ -1568,8 +1594,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `2.0` and `√2` without mapping `sqrt` over the fields of `variance`. A random
   function's is its pointwise standard deviation function, and the result is
   labeled `√𝕍[(mu, tau) ~ d]`. It is defined as `sqrt(variance(d))`, so it takes
-  the routes of `variance`, and `exact_only` and `n_broadcast_samples` set on it
-  pass to `variance`.
+  the routes of `variance`, and `exact_only`, `max_evaluations`, and
+  `num_samples` set on it pass to `variance`.
 - **A derived operation's `method` error names the operation that has the
   route.** `standard_deviation.using(method="monte_carlo")` raises
   `ResolutionError` saying that `standard_deviation` does not pass `method` on
@@ -3587,7 +3613,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   about ArviZ. Google Colab preinstalls PyMC 5, so every notebook's Colab
   install cell, and the minimal Colab command of the installation page, also
   installs `pymc>=6.2`, and pip no longer reports a dependency conflict.
-- **A derived operation passes `exact_only` and `n_broadcast_samples` to the
+- **A derived operation passes `exact_only` and its counts to the
   functions its identity calls.** `prob.using(exact_only=True)(Normal("x",
   0.0, 2.0), 0.0)` used to raise `ResolutionError` and now returns the exact
   density, because the `log_prob` that `prob` calls selects only exact routes.
@@ -3597,11 +3623,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when a call inside it has only an approximate route, and when it is declared
   without an `identity_check`, which the message names. The conversion of an
   argument inside the identity follows its parameter's `conversions` control,
-  as in a direct call. A derived operation's `n_broadcast_samples` used to be
-  dropped at its identity's calls, which drew their own default, and now sets
-  their draws when the derived call sets it, unless the identity sets its own
-  on the call. The other controls stay each call's own. A composite identity,
-  such as `expectation`'s, runs each of its steps under the same two controls.
+  as in a direct call. A derived operation's `max_evaluations` and
+  `num_samples` used to be dropped at its identity's calls, which drew their
+  own default, and now set their evaluations and draws when the derived call
+  sets them, unless the identity sets its own on the call. The other controls
+  stay each call's own. A composite identity, such as `expectation`'s, runs each
+  of its steps under the same controls.
   A call under `exact_only` on an operation without an exact route says so,
   where it said that no route is registered.
 - **A SciPy distribution with a location or scale its family does not hold
@@ -3838,7 +3865,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   produced ones where the declaration leaves them unset, a declared symbolic
   dimension binds to the produced size, and a record unifies field by field.
 - **An exact lift over an empirical law runs in one `vmap`.** A function lifted
-  over an empirical law with at most `n_broadcast_samples` atoms is evaluated at
+  over an empirical law with at most `max_evaluations` atoms is evaluated at
   every combination of atoms, and these evaluations ran in a Python loop even
   when the call traces, so a body that runs `jax.lax.scan` was traced again for
   each atom. A 22-step population trajectory over a 2,000-atom posterior took

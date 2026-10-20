@@ -107,9 +107,12 @@ def convert(d: Distribution, target: type):
 
     ``using(method=..., exact_only=...)`` selects the converter, and
     ``using(method_options=...)`` sets the options the selected
-    converter reads, such as ``num_samples``. The converted law keeps *d*'s
-    support. A converter refuses a result on another support unless the option
-    ``check_support=False`` overrides the refusal.
+    converter reads, such as ``check_support``. A converter that draws, such
+    as moment matching, takes ``num_samples`` draws: its option of that name
+    when ``method_options`` gives one, and otherwise the call's
+    ``num_samples`` control, which the call's provenance then records. The
+    converted law keeps *d*'s support. A converter refuses a result on another
+    support unless the option ``check_support=False`` overrides the refusal.
 
     Parameters
     ----------

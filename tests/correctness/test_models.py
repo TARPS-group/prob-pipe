@@ -502,7 +502,7 @@ class TestFactoredJoints:
         joint = _chain()
         assert not isinstance(joint, SupportsMean)
         with workflow_run(seed=16):
-            means = mean.using(method="monte_carlo", n_broadcast_samples=DRAWS, raw=True)(joint)
+            means = mean.using(method="monte_carlo", num_samples=DRAWS, raw=True)(joint)
         _within_mcse([means["x"], means["y"]], [1.0, 3.0], [2.0, np.sqrt(16.25)])
 
     def test_the_mean_of_a_dependent_joint_is_exact_at_its_root_factor(self):
@@ -510,8 +510,8 @@ class TestFactoredJoints:
         joint = _chain()
         assert mean.check(joint).route == "by_component"
         with workflow_run(seed=17):
-            means = mean.using(n_broadcast_samples=DRAWS, raw=True)(joint)
-            variances = variance.using(n_broadcast_samples=DRAWS, raw=True)(joint)
+            means = mean.using(num_samples=DRAWS, raw=True)(joint)
+            variances = variance.using(num_samples=DRAWS, raw=True)(joint)
         assert float(means["x"]) == pytest.approx(1.0, abs=1e-6)
         assert float(variances["x"]) == pytest.approx(4.0, abs=1e-5)
         _within_mcse(means["y"], 3.0, np.sqrt(16.25))

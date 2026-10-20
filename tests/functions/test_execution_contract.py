@@ -30,13 +30,13 @@ from probpipe.functions._plan import build_broadcast_plan, build_stochastic_plan
 from probpipe.values import _binding
 
 
-def _plan(values, n_broadcast_samples=8):
+def _plan(values, max_evaluations=8):
     signature = inspect.Signature(
         [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in values]
     )
     signature_info = _binding.make_signature_info_from_signature(signature)
     broadcast = build_broadcast_plan(values=values, signature_info=signature_info)
-    return build_stochastic_plan(values, broadcast, n_broadcast_samples)
+    return build_stochastic_plan(values, broadcast, max_evaluations)
 
 
 def _record_batch():
@@ -84,7 +84,7 @@ class TestExecutionContract:
     def test_an_exact_plan_is_jax_capable_and_rowwise_capable(self):
         plan = _plan(
             {"x": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), component="x")},
-            n_broadcast_samples=8,
+            max_evaluations=8,
         )
         assert plan.evaluation_mode == "exact"
         jax_contract = _execution_contract.make_execution_contract(
@@ -151,7 +151,7 @@ class TestExecutionContract:
         sampled_plan = _plan({"x": Normal("x", loc=0.0, scale=1.0)})
         exact_plan = _plan(
             {"x": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), component="x")},
-            n_broadcast_samples=8,
+            max_evaluations=8,
         )
         contract = _execution_contract.make_execution_contract(
             evaluator="rowwise",

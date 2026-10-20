@@ -137,7 +137,7 @@ def execute_sweep(
             dist_args=dist_args,
             function_name=function_name,
             batch_shape=plan.sweep_batch_shape,
-            k=0,
+            max_evaluations=None,
             parents=provenance_parents,
             inputs=provenance_inputs,
             stochastic_plan=None,
@@ -178,7 +178,7 @@ def execute_sweep(
         dist_args=dist_args,
         function_name=function_name,
         batch_shape=plan.sweep_batch_shape,
-        k=stochastic_plan.n_broadcast_samples,
+        max_evaluations=stochastic_plan.max_evaluations,
         parents=provenance_parents,
         inputs=provenance_inputs,
         stochastic_plan=stochastic_plan,
@@ -520,7 +520,7 @@ def make_sweep_provenance(
     dist_args: list[_binding.FunctionInputRef],
     function_name: str,
     batch_shape: tuple[int, ...],
-    k: int,
+    max_evaluations: int | None,
     parents: list[TrackedTerm] | None = None,
     inputs: Mapping[str, Any] | None = None,
     stochastic_plan: _plan.StochasticPlan | None = None,
@@ -529,7 +529,9 @@ def make_sweep_provenance(
     """Build provenance metadata for pure and nested sweep outputs.
 
     ``parents`` carries tracked call-level lineage; ``inputs`` carries the
-    original resolved plain values rather than per-cell sweep values.
+    original resolved plain values rather than per-cell sweep values. A nested
+    sweep's metadata records the ``max_evaluations`` of the lift in each cell,
+    which a pure sweep, given ``None``, does not have.
     Returns ``None`` when :attr:`ProvenanceMode.OFF` is active.
     """
     regime = "nested" if dist_args else "stack"
@@ -548,7 +550,7 @@ def make_sweep_provenance(
         metadata={
             "func": function_name,
             "batch_shape": tuple(batch_shape),
-            "k": k,
+            **({} if max_evaluations is None else {"max_evaluations": max_evaluations}),
             "ra_args": [ref.label for ref in array_args],
             "dist_args": [ref.label for ref in dist_args],
             **(dict(route) if route is not None else {}),

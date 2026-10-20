@@ -139,7 +139,7 @@ class TestPrefectRngConformance:
                     label="add_one",
                     workflow_kind=WorkflowKind.OFF,
                     dispatch="sequential",
-                    n_broadcast_samples=6,
+                    max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
                 False,
@@ -150,7 +150,7 @@ class TestPrefectRngConformance:
                     label="add_one",
                     workflow_kind=WorkflowKind.OFF,
                     dispatch="jax",
-                    n_broadcast_samples=6,
+                    max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
                 False,
@@ -162,7 +162,7 @@ class TestPrefectRngConformance:
                     workflow_kind=WorkflowKind.OFF,
                     dispatch="thread",
                     max_workers=2,
-                    n_broadcast_samples=6,
+                    max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
                 False,
@@ -173,7 +173,7 @@ class TestPrefectRngConformance:
                     label="add_one",
                     workflow_kind=WorkflowKind.TASK,
                     dispatch="sequential",
-                    n_broadcast_samples=6,
+                    max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
                 False,
@@ -184,7 +184,7 @@ class TestPrefectRngConformance:
                     label="add_one",
                     workflow_kind=WorkflowKind.TASK,
                     dispatch="jax",
-                    n_broadcast_samples=6,
+                    max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
                 False,
@@ -196,7 +196,7 @@ class TestPrefectRngConformance:
                     workflow_kind=WorkflowKind.TASK,
                     dispatch="thread",
                     max_workers=2,
-                    n_broadcast_samples=6,
+                    max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
                 True,
@@ -207,7 +207,7 @@ class TestPrefectRngConformance:
                     label="add_one",
                     workflow_kind=WorkflowKind.FLOW,
                     dispatch="sequential",
-                    n_broadcast_samples=6,
+                    max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
                 False,
@@ -218,7 +218,7 @@ class TestPrefectRngConformance:
                     label="add_one",
                     workflow_kind=WorkflowKind.FLOW,
                     dispatch="jax",
-                    n_broadcast_samples=6,
+                    max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
                 False,
@@ -345,7 +345,7 @@ class TestPrefectTaskRowWise:
             label="add_one",
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
-            n_broadcast_samples=30,
+            max_evaluations=30,
             output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=0):
@@ -359,7 +359,7 @@ class TestPrefectTaskRowWise:
             label="add_one",
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
-            n_broadcast_samples=200,
+            max_evaluations=200,
             output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=1):
@@ -377,7 +377,7 @@ class TestPrefectTaskRowWise:
             label="sum_xy",
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
-            n_broadcast_samples=30,
+            max_evaluations=30,
             output_spec=OutputSpec(sum_xy=None),
         )
         d2 = Normal("y", loc=2.0, scale=0.3)
@@ -401,7 +401,7 @@ class TestPrefectFlowRowWise:
             label="double_it",
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
-            n_broadcast_samples=25,
+            max_evaluations=25,
             output_spec=OutputSpec(double_it=None),
         )
         with workflow_run(seed=10):
@@ -415,7 +415,7 @@ class TestPrefectFlowRowWise:
             label="double_it",
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
-            n_broadcast_samples=200,
+            max_evaluations=200,
             output_spec=OutputSpec(double_it=None),
         )
         with workflow_run(seed=11):
@@ -442,7 +442,7 @@ class TestPrefectProvenance:
             label="add_one",
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
-            n_broadcast_samples=20,
+            max_evaluations=20,
             output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=40):
@@ -450,7 +450,7 @@ class TestPrefectProvenance:
         assert result.provenance is not None
         assert result.provenance.operation == "broadcast"
         assert result.provenance.metadata["orchestrate"] == "task"
-        assert result.provenance.metadata["n_samples"] == 20
+        assert result.provenance.metadata["max_evaluations"] == 20
 
     def test_flow_provenance(self, normal_dist):
         wf = Function(
@@ -458,7 +458,7 @@ class TestPrefectProvenance:
             label="add_one",
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
-            n_broadcast_samples=20,
+            max_evaluations=20,
             output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=41):
@@ -472,7 +472,7 @@ class TestPrefectProvenance:
             label="add_one",
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
-            n_broadcast_samples=20,
+            max_evaluations=20,
             output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=42):
@@ -532,7 +532,7 @@ class TestPrefectImportGuard:
             label="add_one",
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
-            n_broadcast_samples=10,
+            max_evaluations=10,
             output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=60), pytest.warns(UserWarning, match="Prefect is not installed"):
@@ -550,7 +550,7 @@ class TestPrefectImportGuard:
             label="add_one",
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
-            n_broadcast_samples=10,
+            max_evaluations=10,
             output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=61), pytest.warns(UserWarning, match="Prefect is not installed"):
@@ -568,7 +568,7 @@ class TestPrefectImportGuard:
             label="add_one",
             workflow_kind=WorkflowKind.TASK,
             dispatch="jax",
-            n_broadcast_samples=10,
+            max_evaluations=10,
             output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=62), pytest.warns(UserWarning, match="Prefect is not installed"):

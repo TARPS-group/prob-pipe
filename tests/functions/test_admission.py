@@ -145,7 +145,7 @@ class TestWrap:
 class TestConversionPlanning:
     def test_a_backend_distribution_at_a_value_parameter_is_converted_and_lifted(self):
         @function(
-            n_broadcast_samples=6,
+            max_evaluations=6,
             dispatch="sequential",
             output_spec=OutputSpec(identity=None),
         )
@@ -353,7 +353,7 @@ class TestAdmission:
         wrapped = Function(
             lambda x: 2.0 * x,
             input_spec={"x": SCALAR},
-            n_broadcast_samples=6,
+            max_evaluations=6,
             dispatch="sequential",
             label="double",
             output_spec=OutputSpec(double=None),

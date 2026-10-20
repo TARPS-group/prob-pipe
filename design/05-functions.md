@@ -29,7 +29,7 @@ A `Function` wraps exactly one callable and presents it as a node in a computati
 @function
 def predict(theta, x): ...                    # an ordinary callable over concrete values
 
-@function(n_broadcast_samples=500, dispatch="jax")   # optional construction-time controls
+@function(max_evaluations=500, dispatch="jax")   # optional construction-time controls
 def predict(theta, x): ...
 ```
 
@@ -65,22 +65,41 @@ This makes `C1 – Uniform interface to functions, distributions, and values` an
 
 ### Contract
 
-A `Function` keeps two namespaces apart: the wrapped function's arguments, which are every positional and keyword argument of a call, and the framework's **controls**, which select realization, execution, or presentation. The construction metadata `label`, `output_label`, and `output_spec` are fixed at construction, apart from the controls. The controls are `n_broadcast_samples`, `include_inputs`, `method`, `exact_only`, the per-parameter `conversions`, `method_options`, `raw`, and the dispatch and orchestration selectors. `method_options` is one mapping of the numerical budgets the selected method reads, such as an MCMC method's warmup and draw counts, and the selected method validates its entries when it runs. The name that `method` gives resolves among an operation's routes and the methods of its registry routes (VI.0). Every ProbPipe-caused draw's key comes from the workflow scope (V.8), so a call takes no framework key or seed. A wrapped function's own `key` or `seed` parameter binds as an ordinary argument.
+A `Function` keeps two namespaces apart: the wrapped function's arguments, which are every positional and keyword argument of a call, and the framework's **controls**, which select realization, execution, or presentation. The construction metadata `label`, `output_label`, and `output_spec` are fixed at construction, apart from the controls. The controls are `max_evaluations`, `num_samples`, `include_inputs`, `method`, `exact_only`, the per-parameter `conversions`, `method_options`, `raw`, and the dispatch and orchestration selectors. `method_options` is one mapping of the numerical budgets the selected method reads, such as an MCMC method's warmup and draw counts, and the selected method validates its entries when it runs. The name that `method` gives resolves among an operation's routes and the methods of its registry routes (VI.0). Every ProbPipe-caused draw's key comes from the workflow scope (V.8), so a call takes no framework key or seed. A wrapped function's own `key` or `seed` parameter binds as an ordinary argument.
 
-**Setting a control.** Each control's effective value is resolved from the framework's default, then the decorator or constructor, then the view that `using` returns. The view leaves the original `Function` unchanged. A call inside a derived operation's identity also takes the `exact_only` and the sample count that the identity passes down, as **Controls inside an identity** in VI.0 states. Every control has a default, and a view that sets a control to `None` resets it to the framework's default, whatever the decorator set. The default sample count is 256, the budget of a rough estimate, which `set_default_n_broadcast_samples(n)` changes for the session; a call reads it when it runs, and a converter that draws takes it as its `num_samples` unless that option is given. Per-call controls go through `using` for both ordinary functions and operations; direct call keywords always bind to the authored signature. Thus a wrapped function's own `raw` parameter remains an argument, distinct from the framework's control of that name.
+**Setting a control.** Each control's effective value is resolved from the framework's default, then the decorator or constructor, then the view that `using` returns. The view leaves the original `Function` unchanged. A call inside a derived operation's identity also takes the `exact_only`, `max_evaluations`, and `num_samples` that the identity passes down, as **Controls inside an identity** in VI.0 states. Every control has a default, and a view that sets a control to `None` resets it to the framework's default, whatever the decorator set. Per-call controls go through `using` for both ordinary functions and operations, and direct call keywords always bind to the authored signature. Thus a wrapped function's own `raw` parameter remains an argument, distinct from the framework's control of that name.
+
+**The two counts.** Two controls count the work of an approximation, and each has one role:
+1. `max_evaluations` is the maximum number of times a call lifted over laws evaluates its function (V.5). The lift enumerates the empirical arguments whose combinations of atoms number at most `max_evaluations` (V.7), and it draws the other arguments jointly: `max_evaluations` draws when it enumerates none, and otherwise `max_evaluations // n` draws for each of the `n` combinations, at least one. Its default is 256.
+2. `num_samples` is the number of Monte Carlo draws that a route estimating a summary takes, as the Monte Carlo `mean` does (VI.5), and that a converter takes where it draws, unless the converter's own `num_samples` option is given (VI.10). The call's provenance records it whenever a route of the call draws it. Its default is 1024.
+
+The session's defaults of the two counts are the fields of `config.sampling`, which a call reads when it runs, so a setting governs the functions constructed before it. The environment variables `PROBPIPE_SAMPLING_MAX_EVALUATIONS` and `PROBPIPE_SAMPLING_NUM_SAMPLES` set their initial values.
 
 ```python
-def set_default_n_broadcast_samples(n: int) -> None: ...   # the session's default sample count
+class SamplingConfig:                         # the session's defaults of the two counts
+    @property
+    def max_evaluations(self) -> int: ...     # 256 unless PROBPIPE_SAMPLING_MAX_EVALUATIONS sets another
+    @property
+    def num_samples(self) -> int: ...         # 1024 unless PROBPIPE_SAMPLING_NUM_SAMPLES sets another
+    def reset(self) -> None: ...              # the defaults, reading both variables again
+
+class Config:                                 # the global settings, grouped in sections
+    @property
+    def sampling(self) -> SamplingConfig: ...
+    def reset(self) -> None: ...              # every section's defaults
+
+config: Config                                # the settings in effect, exported as probpipe.config
 ```
 
 ```python
-predict.using(n_broadcast_samples=1000)(theta=prior, x=x_obs)
+predict.using(max_evaluations=1000)(theta=prior, x=x_obs)
 sample.using(raw=True)(posterior, sample_shape=(100,))
-mean.using(method="monte_carlo", n_broadcast_samples=1000)(posterior)
-# sample_shape is an argument; raw and the approximation budget are controls
+mean.using(method="monte_carlo", num_samples=4096)(posterior)
+config.sampling.num_samples = 4096
+# sample_shape is an argument, and raw and the two counts are controls
 ```
 
-*Requires:* every control set is one the framework defines, and its value is admissible, for example a positive sample count or a known dispatch mode; the selected method rejects a `method_options` entry it does not read. *On failure:* a `TypeError` or `ValueError` at the decorator or at the call of `using`, before any call.
+*Requires:* every control set is one the framework defines, and its value is admissible, for example a positive `num_samples` or a known dispatch mode; the selected method rejects a `method_options` entry it does not read. *On failure:* a `TypeError` or `ValueError` at the decorator or at the call of `using`, before any call.
 
 ### Rationale
 
@@ -120,7 +139,7 @@ Normalization is `B1 – Either presentation in` made mechanical, in the order t
 
 ### Contract
 
-A `Function` compares each admitted argument against the kind its parameter expects and lifts where they differ. A `Distribution` where a value is expected induces a **broadcast**, whose result is the pushforward through `f`. Its generic route samples `n` draws and applies the function to each; exact routes may realize the law directly (V.7). A `Batch` where one element is expected is **swept**: the function is mapped over its elements. Both at once give a **nested** sweep of broadcasts, one broadcast within each element, and neither gives a plain call.
+A `Function` compares each admitted argument against the kind its parameter expects and lifts where they differ. A `Distribution` where a value is expected induces a **broadcast**, whose result is the pushforward through `f`. Its generic route applies the function to `max_evaluations` draws (V.2), and exact routes may realize the law directly (V.7). A `Batch` where one element is expected is **swept**: the function is mapped over its elements. Both at once give a **nested** sweep of broadcasts, one broadcast within each element, and neither gives a plain call.
 
 **The trigger.** A slot with a declared input spec expects the kind its spec names (V.1): a `DistributionSpec` or `ConditionalDistributionSpec` slot consumes the law or kernel passed to it, and a slot of a value kind lifts a law. For a parameter with no declared spec, the annotation decides:
 - unannotated, or a value type: the parameter expects a value, so a distribution passed there is lifted;
@@ -185,7 +204,7 @@ growth(interest, horizons)  # a nested sweep: a DistributionBatch on horizon, of
 # posterior.event_spec.spec == RecordSpec(beta=NumericArraySpec(shape=(5,), dtype=float32, support=real))
 
 @function(output_label="prediction", output_spec=OutputSpec(mean=None),
-          include_inputs=True, n_broadcast_samples=200)
+          include_inputs=True, max_evaluations=200)
 def predict(theta, x):
     return x @ theta["beta"]      # theta arrives as the Record a posterior draw is
 
@@ -214,8 +233,8 @@ Carrying known structure forward and validating deferred output information at i
 Resolution selects the route that realizes the call. Candidates are checked on the static information admitted by V.6, including capability guards. Selection follows II.7, including registry priority; operation routes use the convention in VI.0. The controls `method` and `exact_only` select or restrict the route (V.2). A plain call of a plain function has its body as its one candidate, and an operation resolves among its routes (VI.0). The body is exact, so `exact_only=True` admits it, and a name given to `method` matches no route of a plain call and raises `ResolutionError`, as an unregistered name does (II.7). A lifted application, which is the direct call `f(d)` or `f(batch)`, resolves through the **evaluation-rule registry**, which the package exports as `evaluation_rule_registry` beside `converter_registry`. It is a `BinaryDispatchRegistry` keyed on the map's and the operand's types whose methods are **evaluation rules**, each a route of the lifted application. A rule's `check` and `execute` take `(f, operand, /, *, parameter, fixed_args, controls)`: `parameter` names the parameter the operand binds, `fixed_args` holds the map's other arguments, and `controls` holds the resolved controls, kept apart from the map's arguments as VI.1 requires. `pushforward` (VI.1) exposes the registry's rules on laws as an operation, so the direct call `f(d)` of a map that takes draws and `pushforward(d, f)` take the same route. The built-in rule families are:
 - **Closed-form rules** return an exact parametric result. For example, `A @ d` for a Gaussian `d` is again Gaussian, with mean `A @ mean(d)` and covariance `A Σ Aᵀ` built lazily through the operator algebra.
 - **Change of variables** applies when the map is invertible and carries the Jacobian claim (`is_invertible` and `SupportsLogDetJacobian`, III.3), returning a transformed distribution whose `log_prob` is exact via the log-determinant of the Jacobian.
-- **The sampling lift** is the generic rule for an operand that samples, subject to the call's controls and deferred checks: draws from `d` are pushed through the map, returning an empirical distribution over the outputs, with the sample count as a control. It is the route every plain callable takes, and grouped, multi-distribution lifts always take it, as co-sampling requires (V.5).
-- **The empirical enumeration** is exact for an empirical operand: the map is applied at every atom, and the result carries the atoms' weights. Under `jax` dispatch (V.9) every combination of atoms is evaluated in one map, as the sampling lift's draws are. A lift enumerates each empirical argument whose atoms, multiplied by those of the arguments it enumerates already, number at most the sample count, taking the smallest first, and it samples the others. The sampling lift draws an empirical argument's atoms with no more variance than independent draws give: equally weighted atoms without replacement, and weighted atoms by stratified resampling, in a shuffled order.
+- **The sampling lift** is the generic rule for an operand that samples, subject to the call's controls and deferred checks: draws from `d` are pushed through the map, returning an empirical distribution over the outputs, with the number of draws set by `max_evaluations` (V.2). It is the route every plain callable takes, and grouped, multi-distribution lifts always take it, as co-sampling requires (V.5).
+- **The empirical enumeration** is exact for an empirical operand: the map is applied at every atom, and the result carries the atoms' weights. Under `jax` dispatch (V.9) every combination of atoms is evaluated in one map, as the sampling lift's draws are. A lift enumerates each empirical argument whose atoms, multiplied by those of the arguments it enumerates already, number at most `max_evaluations`, taking the smallest first, and it samples the others. The lift evaluates the map at most `max_evaluations` times, as V.2 states. The sampling lift draws an empirical argument's atoms with no more variance than independent draws give: equally weighted atoms without replacement, and weighted atoms by stratified resampling, in a shuffled order.
 - **The elementwise sweep** is the batch counterpart: the rule at the generic pair for a batch operand. A fused batched implementation, such as an operator's matrix–matrix routine or a single vectorized call over array-backed elements, registers above it.
 
 An **integration rule**, such as quadrature or quasi-Monte Carlo, registers beside these and returns a weighted empirical law whose atoms are its nodes and whose weights are the nodes' weights (VII.2).

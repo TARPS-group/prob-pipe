@@ -72,6 +72,8 @@ from ..values._function_base import (
     Function,
     _bind_function_inputs,
     _FunctionInvocationContext,
+    _MonteCarloRecord,
+    _recording_monte_carlo,
     _refuse_unknown_controls,
     _ResultKindMismatch,
     _validate_function_output,
@@ -135,7 +137,7 @@ def function(
 
     Pass keyword arguments to configure ProbPipe controls at definition time::
 
-        @function(n_broadcast_samples=100, dispatch="sequential")
+        @function(max_evaluations=100, dispatch="sequential")
         def my_func(x, y):
             return x + y
 
@@ -308,7 +310,8 @@ def _call_function_in_context(
     # one, selects and runs its routes as any call does.
     token = _call._CHECKING.set(False)
     try:
-        return _run_call(function, args, call_inputs)
+        with _recording_monte_carlo(function.options["num_samples"]) as record:
+            return _run_call(function, args, call_inputs, record)
     finally:
         _call._CHECKING.reset(token)
 
@@ -616,6 +619,7 @@ def _run_call(
     function: Function,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
+    record: _MonteCarloRecord,
 ) -> Any:
     values = _call.resolve_function_call(
         function._signature_info,
@@ -661,6 +665,7 @@ def _run_call(
             candidate.exactness(report),
             method=candidate.method_of(report),
         )
+        record.collects_calls = candidate.collects_calls
     else:
         # A Function's routes take the method control, so a lifted call selects
         # its evaluation rule by rank.
@@ -669,7 +674,7 @@ def _run_call(
     stochastic_plan = _plan.build_stochastic_plan(
         values,
         broadcast_plan,
-        function.options["n_broadcast_samples"],
+        function.options["max_evaluations"],
         enumerate_every_group=route.name != "sampling_lift",
     )
     stochastic_sample_shape = None if stochastic_plan is None else stochastic_plan.sample_shape
@@ -1010,6 +1015,8 @@ def _run_call(
     if settled_exactness:
         exact = False if False in settled_exactness else (True if all(settled_exactness) else None)
         route = replace(route, exact=exact)
+    if record.recorded is not None:
+        route = replace(route, num_samples=record.recorded)
     name = function._label
     controls, diagnostics = _recipe.provenance_recipe_fields(None)
     provenance = Provenance.create(
@@ -1384,6 +1391,10 @@ class _Route:
         The call's other arguments, by parameter name.
     controls : Mapping[str, Any]
         The resolved controls the rule received.
+    num_samples : int, tuple of int, or None
+        The number of Monte Carlo draws the route took, as
+        :attr:`~probpipe.values._function_base._MonteCarloRecord.recorded` gives
+        it, or ``None`` when it took none.
     """
 
     name: str
@@ -1394,13 +1405,16 @@ class _Route:
     fixed_args: Mapping[str, Any] = field(default_factory=dict)
     controls: Mapping[str, Any] = field(default_factory=dict)
     method: str | None = None
+    num_samples: int | tuple[int, ...] | None = None
 
     @property
     def metadata(self) -> dict[str, Any]:
-        """The route's name and exactness, and its registry method, as provenance records them."""
+        """The route's name and exactness, its registry method, and its Monte Carlo draws, as provenance records them."""
         recorded: dict[str, Any] = {"route": self.name, "exact": self.exact}
         if self.method is not None:
             recorded["method"] = self.method
+        if self.num_samples is not None:
+            recorded["num_samples"] = self.num_samples
         return recorded
 
 

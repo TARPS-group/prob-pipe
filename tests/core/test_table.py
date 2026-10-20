@@ -187,7 +187,7 @@ class TestARecordThatIsNotOfSummariesShowsALinePerPath:
 class TestTheFooterStatesHowEachColumnWasComputed:
     def test_a_monte_carlo_column_states_its_draws(self):
         law = Normal("mu", 0.0, 2.0) * Poisson("count", 4.0)
-        draws = quantile.options["n_broadcast_samples"]
+        draws = quantile.options["num_samples"]
 
         with workflow_run(seed=0):
             record = Record({"mean": mean(law), "median": quantile(law, 0.5)}, label="r")
@@ -243,7 +243,7 @@ class TestABatchOfSummariesShowsATablePerElement:
 
     def test_elements_computed_differently_each_state_how(self):
         laws = DistributionBatch([Normal("x", 0.0, 1.0), Poisson("x", 4.0)], "law", label="b")
-        draws = quantile.options["n_broadcast_samples"]
+        draws = quantile.options["num_samples"]
 
         with workflow_run(seed=0):
             lines = repr(summarize(laws, {"median": lambda d: quantile(d, 0.5)})).splitlines()

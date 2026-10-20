@@ -76,7 +76,7 @@ class TestBatchValuedLifts:
     def test_a_second_lift_receives_the_batch_kind(self, sampled, include_inputs):
         trajectory = Function(_trajectory, output_spec=OutputSpec(trajectory=None))
 
-        @function(dispatch="auto", n_broadcast_samples=5, include_inputs=include_inputs)
+        @function(dispatch="auto", max_evaluations=5, include_inputs=include_inputs)
         def total(path: NumericArrayBatch):
             assert isinstance(path, NumericArrayBatch)
             return jnp.sum(path.raw)
@@ -152,7 +152,7 @@ def _trajectory_law(include_inputs):
         _trajectory,
         output_spec=OutputSpec(trajectory=None),
         include_inputs=include_inputs,
-        n_broadcast_samples=6,
+        max_evaluations=6,
     )
     return wrapped(Normal("beta", 0.0, 1.0))
 
@@ -246,10 +246,10 @@ class TestLiftsOverBatchValuedFields:
             _trajectory,
             output_spec=OutputSpec(trajectory=None),
             include_inputs=True,
-            n_broadcast_samples=5,
+            max_evaluations=5,
         )
-        total = Function(_total, dispatch=dispatch, n_broadcast_samples=5)
-        gap = Function(_gap, dispatch=dispatch, n_broadcast_samples=5)
+        total = Function(_total, dispatch=dispatch, max_evaluations=5)
+        gap = Function(_gap, dispatch=dispatch, max_evaluations=5)
         with workflow_run(seed=0):
             law = joint(source)
             totals = total(law["trajectory"])
@@ -326,7 +326,7 @@ class TestBatchOutputComposition:
             _trajectory,
             output_spec=OutputSpec(trajectory=None),
             dispatch="sequential",
-            n_broadcast_samples=5,
+            max_evaluations=5,
         )
         source = Normal("beta", 0.0, 1.0)
         with workflow_run(seed=4):
@@ -408,7 +408,7 @@ class TestBatchValuedDrawsArriveRaw:
             return body(value)
 
         with workflow_run(seed=0):
-            lifted = Function(record, dispatch=dispatch, n_broadcast_samples=6)(law)
+            lifted = Function(record, dispatch=dispatch, max_evaluations=6)(law)
         return seen, lifted
 
     def test_a_bootstrap_replicate_arrives_as_an_array(self):
@@ -513,7 +513,7 @@ class TestNestedBatchValuedInputs:
 
         if annotated:
             total.__annotations__["p"] = NumericArrayBatch
-        wrapped = Function(total, dispatch=dispatch, include_inputs=True, n_broadcast_samples=5)
+        wrapped = Function(total, dispatch=dispatch, include_inputs=True, max_evaluations=5)
         with workflow_run(seed=0):
             law = wrapped(replicate)
             drawn = sample(law)
@@ -563,7 +563,7 @@ class TestMappedBatchValuedLifts:
     @staticmethod
     def _lift(body, law, dispatch, **controls):
         with workflow_run(seed=3):
-            return Function(body, dispatch=dispatch, n_broadcast_samples=7, **controls)(law)
+            return Function(body, dispatch=dispatch, max_evaluations=7, **controls)(law)
 
     @pytest.mark.parametrize("dispatch", ["auto", "jax"])
     @pytest.mark.parametrize("include_inputs", [False, True])
@@ -617,8 +617,8 @@ class TestMappedBatchValuedLifts:
         for dispatch in ("jax", "sequential"):
             calls.clear()
             with workflow_run(seed=0):
-                law = Function(trajectory, dispatch=dispatch, n_broadcast_samples=50)(source)
-                totals = Function(total, dispatch=dispatch, n_broadcast_samples=50)(law)
+                law = Function(trajectory, dispatch=dispatch, max_evaluations=50)(source)
+                totals = Function(total, dispatch=dispatch, max_evaluations=50)(law)
             if dispatch == "jax":
                 # One probe trace and one mapped trace for each lift.
                 assert calls.count("first") <= 2 and calls.count("second") <= 2
@@ -633,9 +633,9 @@ class TestMappedBatchValuedLifts:
             _trajectory,
             output_spec=OutputSpec(trajectory=None),
             include_inputs=True,
-            n_broadcast_samples=5,
+            max_evaluations=5,
         )
-        total = Function(lambda path: jnp.sum(path), dispatch=dispatch, n_broadcast_samples=5)
+        total = Function(lambda path: jnp.sum(path), dispatch=dispatch, max_evaluations=5)
         with workflow_run(seed=0):
             law = joint(Normal("beta", 0.0, 1.0))
             if dispatch == "jax":
@@ -656,7 +656,7 @@ class TestMappedBatchValuedLifts:
         def summary(beta):
             return Record.from_fields(scale=2.0 * beta, traj=_trajectory(beta))
 
-        wrapped = Function(summary, dispatch=dispatch, n_broadcast_samples=5)
+        wrapped = Function(summary, dispatch=dispatch, max_evaluations=5)
         with workflow_run(seed=0):
             if dispatch == "jax":
                 message = (

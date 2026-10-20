@@ -28,14 +28,21 @@ which reads three declarations from the operation at its steps:
 A derived operation's **identity** is the route that runs its definition: by
 default the body route, which runs the declaration's body, or else a composite
 route that runs a route of each constituent operation in turn. The engine runs
-the identity's check and the identity itself in a scope that passes two
+the identity's check and the identity itself in a scope that passes three
 controls of the derived call to the Function calls made within it, operations
 and plain Functions alike (VI.0):
 
 - ``exact_only`` restricts the route selection of every call in the scope, at
   any depth, whatever the call sets;
-- ``n_broadcast_samples``, when the derived call sets it, applies to each call
-  the scope makes outside any other call, unless that call's view sets its own.
+- ``max_evaluations``, when the derived call sets it, applies to each call the
+  scope makes outside any other call, unless that call's view sets its own;
+- ``num_samples`` passes as ``max_evaluations`` does.
+
+An identity that estimates a summary through a lift, as ``expectation``'s does,
+also spends the summary's resolved ``num_samples`` as the lift's
+``max_evaluations``, since each draw is one evaluation of the map. The call of
+an identity states the Monte Carlo draws of the constituents it runs, so its
+provenance records their ``num_samples``.
 
 The scope covers the calls made in the calling thread and in the workers the
 engine dispatches to. A planned conversion follows its parameter's
@@ -751,12 +758,20 @@ class _RegistryRoute(_DelegatingRoute):
 def _identity_scope(call: BoundCall) -> AbstractContextManager[None]:
     """The scope in which an identity route's check and run make their Function calls.
 
-    It passes the derived call's ``exact_only``, and its ``n_broadcast_samples``
-    when the call's view sets one, as the module docstring states.
+    It passes the derived call's ``exact_only``, and its ``max_evaluations`` and
+    ``num_samples`` when the call's view sets them, as the module docstring
+    states.
     """
     view = call.operation
-    count = call.controls["n_broadcast_samples"] if "n_broadcast_samples" in view._options else None
-    return _passing_down(exact_only=call.controls["exact_only"], n_broadcast_samples=count)
+
+    def passed(name: str) -> int | None:
+        return call.controls[name] if name in view._options else None
+
+    return _passing_down(
+        exact_only=call.controls["exact_only"],
+        max_evaluations=passed("max_evaluations"),
+        num_samples=passed("num_samples"),
+    )
 
 
 class _IdentityRoute(_Route):
@@ -925,6 +940,15 @@ class _Candidate:
     def route_name(self) -> str:
         """The name of the route the candidate belongs to."""
         return self.route.name
+
+    @property
+    def collects_calls(self) -> bool:
+        """Whether the calls the route makes directly report their Monte Carlo draws to the call.
+
+        A derived operation's identity collects them, so its call states the
+        draws of the constituents it runs.
+        """
+        return self.route.realizes_identity
 
     @property
     def methods(self) -> tuple[str, ...] | None:
@@ -1177,6 +1201,8 @@ class _GivenCandidate:
 
     label = route_name = "conditional"
     methods = None
+    #: The conditioned call runs the operation, whose Monte Carlo draws the call states.
+    collects_calls = True
 
     def probe(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
         """Check slot binding without constructing or normalizing the kernel's law."""

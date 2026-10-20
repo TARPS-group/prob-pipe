@@ -171,7 +171,7 @@ class TestWorkflowRecipeRecording:
             _identity,
             label="_identity",
             dispatch="sequential",
-            n_broadcast_samples=11,
+            max_evaluations=11,
             output_spec=OutputSpec(_identity=None),
         )
         with workflow_run(seed=7):
@@ -184,7 +184,7 @@ class TestWorkflowRecipeRecording:
         assert recipe["expected_event_count"] == 1
         assert len(recipe["events"]) == 1
         replay = _replay_controls(result)
-        assert replay["plan"]["schema"] == "probpipe.stochastic_plan/v1"
+        assert replay["plan"]["schema"] == "probpipe.stochastic_plan/v2"
         assert replay["plan"]["canonical_fields"]["n_evaluations"] == 11
         assert replay["plan"]["expected_effects"][0]["sample_shape"] == [11]
         assert replay["compatibility"] == {
@@ -208,7 +208,7 @@ class TestWorkflowRecipeRecording:
         workflow = Function(
             _identity,
             label="_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(_identity=None),
         )
         entropy = bytes.fromhex("0123456789abcdef")
@@ -236,7 +236,7 @@ class TestWorkflowRecipeRecording:
         exact_workflow = Function(
             _identity,
             label="_identity",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(_identity=None),
         )
         exact = exact_workflow(
@@ -259,7 +259,7 @@ class TestWorkflowRecipeRecording:
         workflow = Function(
             _difference,
             label="_difference",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(_difference=None),
         )
         with workflow_run(seed=9):
@@ -279,7 +279,7 @@ class TestWorkflowRecipeRecording:
         workflow = Function(
             _add,
             label="_add",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             dispatch="sequential",
             output_spec=OutputSpec(_add=None),
         )
@@ -403,7 +403,7 @@ class TestWorkflowRecipeRecording:
             _nested_automatic,
             label="_nested_automatic",
             dispatch="sequential",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(_nested_automatic=None),
         )
         with workflow_run(seed=21):
@@ -422,7 +422,7 @@ class TestWorkflowRecipeRecording:
             _identity,
             label="_identity",
             dispatch="thread",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(_identity=None),
         )
         with workflow_run(seed=5):
@@ -448,7 +448,7 @@ class TestWorkflowRecipeRecording:
         workflow = Function(
             _identity,
             label="_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(_identity=None),
         )
 
@@ -475,7 +475,7 @@ class TestWorkflowRecipeRecording:
             implementation,
             label="implementation",
             dispatch="sequential",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(implementation=None),
         )
 
@@ -491,7 +491,7 @@ class TestWorkflowRecipeRecording:
         workflow = Function(
             _identity,
             label="_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(_identity=None),
         )
 
@@ -508,7 +508,7 @@ class TestWorkflowRecipeRecording:
             _identity,
             label="_identity",
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(_identity=None),
         )
 
@@ -653,7 +653,7 @@ class TestWorkflowCallableAnchor:
 
     def test_replay_refuses_a_changed_postponed_alias(self, monkeypatch):
         fixtures = _postponed_alias_replay_fixtures
-        workflow = Function(fixtures.shift, dispatch="sequential", n_broadcast_samples=5)
+        workflow = Function(fixtures.shift, dispatch="sequential", max_evaluations=5)
         value = NumericArray(jnp.asarray(1.0), label="x")
         noise = Normal("noise", loc=0.0, scale=1.0)
         with workflow_run(seed=0):
@@ -663,7 +663,7 @@ class TestWorkflowCallableAnchor:
         np.testing.assert_array_equal(np.asarray(first.atoms), np.asarray(same.atoms))
 
         monkeypatch.setattr(fixtures, "Values", fixtures.values_alias("Values", NumericArray))
-        changed = Function(fixtures.shift, dispatch="sequential", n_broadcast_samples=5)
+        changed = Function(fixtures.shift, dispatch="sequential", max_evaluations=5)
         with (
             pytest.raises(
                 ReplayCompatibilityError, match="has changed since the call was recorded"
@@ -697,7 +697,7 @@ class TestWorkflowCallableAnchor:
         workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=17):
@@ -841,13 +841,13 @@ class TestWorkflowCallableAnchor:
         workflow = Function(
             replayable_affine,
             label="replayable_affine",
-            n_broadcast_samples=5,
+            max_evaluations=5,
         )
 
         declared = Function(
             replayable_affine,
             output_spec=OutputSpec(value=None),
-            n_broadcast_samples=5,
+            max_evaluations=5,
         )
         with workflow_run(seed=19):
             result = declared(
@@ -902,13 +902,13 @@ class TestWorkflowCallableAnchor:
         plain = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_identity=None),
         )
         declared = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             input_spec=InputSpec(probpipe.RecordSpec(value=()).children),
             output_spec=OutputSpec(replayable_identity=None),
         )
@@ -936,7 +936,7 @@ class TestWorkflowCallableAnchor:
         workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_identity=None),
         )
         monkeypatch.setattr(
@@ -974,7 +974,7 @@ class TestWorkflowCallableAnchor:
         workflow = Function(
             lambda value: value,
             label="function",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(function=None),
         )
 
@@ -990,7 +990,7 @@ class TestWorkflowCallableAnchor:
         workflow = Function(
             replayable_cyclic_default,
             label="replayable_cyclic_default",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_cyclic_default=None),
         )
 
@@ -1228,7 +1228,7 @@ class TestTheMonteCarloDrawsACallRecords:
             median = quantile(law, 0.5)
 
         assert _recipe.monte_carlo_draws(median.provenance) == {
-            ("count",): quantile.options["n_broadcast_samples"]
+            ("count",): quantile.options["num_samples"]
         }
 
     def test_an_exact_route_records_no_draws(self):

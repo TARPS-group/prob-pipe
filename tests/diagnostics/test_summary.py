@@ -343,7 +343,7 @@ class TestMonteCarloStandardErrors:
             assert float(summary[f"{name}/mu"]) == float(summary[f"{name}/tau"]) == 0.0
 
     def test_a_monte_carlo_mean_has_sd_over_root_n_and_an_exact_path_zero(self):
-        draws = mean.options["n_broadcast_samples"]
+        draws = mean.options["num_samples"]
 
         with workflow_run(seed=0):
             summary = summarize(_kernel_model(), mcse=True)
@@ -371,7 +371,7 @@ class TestTheFooter:
 
     def test_monte_carlo_columns_state_their_draws(self):
         law = (Normal("mu", 0.0, 2.0) * Poisson("count", 4.0)).with_label("pair")
-        draws = quantile.options["n_broadcast_samples"]
+        draws = quantile.options["num_samples"]
 
         with workflow_run(seed=0):
             summary = summarize(law)

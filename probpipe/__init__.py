@@ -69,6 +69,7 @@ from probpipe.core._specs import (
 from probpipe.core.config import (
     ProvenanceMode,
     WorkflowKind,
+    config,
     notation_config,
     prefect_config,
     provenance_config,
@@ -224,7 +225,6 @@ from probpipe.values import (
     SupportsLogDetJacobian,
     is_differentiable,
     is_invertible,
-    set_default_n_broadcast_samples,
 )
 
 __all__ = [
@@ -342,6 +342,7 @@ __all__ = [
     "condition_on",
     "condition_on_nutpie",
     "conditional_distribution",
+    "config",
     "convert",
     "converter_registry",
     "cov",
@@ -391,7 +392,6 @@ __all__ = [
     "replay_run",
     "rwmh",
     "sample",
-    "set_default_n_broadcast_samples",
     "simplex",
     "sphere",
     "standard_deviation",
