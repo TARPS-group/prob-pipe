@@ -1233,8 +1233,8 @@ def figures() -> dict[str, Canvas]:
                 ),
             ],
         ),
-        "batch-columns": row_figure(
-            "A batch of samples and its column at mu",
+        "batch-marginal": row_figure(
+            "A batch of samples and its marginal batch at mu",
             [
                 (
                     Obj("b", "batch", outputs=[Part("mu"), Part("sigma")], levels="sample"),
@@ -1242,7 +1242,7 @@ def figures() -> dict[str, Canvas]:
                 ),
                 (
                     Obj("b[mu]", "batch", root_output="mu", body=["arrays"], levels="sample"),
-                    ["its column at mu:", "one output at the root"],
+                    ["its marginal batch at mu:", "one output at the root"],
                 ),
             ],
         ),
