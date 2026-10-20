@@ -246,7 +246,7 @@ When every leaf is a `NumericSpec`, the schema is fully numeric and construction
 ```python
 class RecordSpec(NamedTree[TermSpec], TermSpec):
     def __init__(self, field_specs: Mapping[str, Any] | None = None, /,
-                 **fields: TermSpec | Mapping | tuple[int, ...]) -> None: ...
+                 **fields: TermSpec | Mapping | tuple[int | str, ...]) -> None: ...
     # a tuple of sizes is the size shorthand of II.1; a field given None raises
     # TypeError, since None is an unspecified spec (II.2), and an opaque field is OpaqueSpec();
     # the positional mapping form accepts "/"-path keys and names that collide with keywords
@@ -391,7 +391,7 @@ class NumericRecordBatch(RecordBatch):
     # vec has shape (*batch_shape, vector_size): the last axis is the flat dimension
 ```
 
-Its elements implement `Numeric` (II.3), and the batch's `to_vector` stacks their vectors. A `RecordBatch` is promoted as a `Record` is (III.5): `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when every column is numeric and no explicit non-numeric `element_spec` vetoes it, and a view over numeric fields, such as a field selected from a batch that also holds opaque fields, is a `NumericRecordBatch` too.
+Its elements implement `Numeric` (II.3), and the batch's `to_vector` stacks their vectors. A `RecordBatch` is promoted as a `Record` is (III.5): `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when every column is numeric and no explicit non-numeric `element_spec.term_spec` vetoes it, and a view over numeric fields, such as a field selected from a batch that also holds opaque fields, is a `NumericRecordBatch` too.
 
 A constructor that mints a level takes the name to give it (II.5), so both constructions here require one: `from_vector` names the levels it reconstructs, which is what lets a multi-level batch round-trip, and `stack` names the single level it introduces.
 
@@ -424,7 +424,7 @@ It declares the operations it supports as **capabilities** (III.8), so operation
 1. at a path to a base node, a law over an array whose output at the root is named by the path's last name, so `d["g/b"]` has the output `b`;
 2. at a group, a law over the group's record, whose children are its outputs, so `d["g"]["b"]` is `d["g/b"]`;
 3. at a list of paths, a law over the record of the chosen nodes, each at its own path, in the law's order, so `d["a", "g/b"]` is a law over `{a, g: {b}}`;
-4. at a path through a field that holds a law, a kernel, a function, or a batch, a law over that field's selection, in the positional form.
+4. at or through a field that holds a law, a kernel, a function, or a batch, a law over that field's selection, in the positional form, so the view at a law-valued field is a law over laws, which has no outputs.
 
 The name of an output at the root alone is not a path, so `Normal("x", 0.0, 1.0)["x"]` raises `KeyError`, and `output("x")` returns the law itself; a list may name it, so `Normal("x", 0.0, 1.0)[["x"]]` is the law over `{x}`. `d.output(c)` is `d[c]` for an output `c` of a record event. `p in d` holds exactly when `d[p]` succeeds. `d.without(*paths)` is the marginal law of every node except those at `paths`, so `d.without("g/c")` is the same law as `d["a", "g/b"]`. Two views of one law merge as independent laws (IV.2), so the joint law of two groups is `d["g1", "g2"]`.
 
@@ -592,7 +592,7 @@ The projection rows are exact whenever the parent's answer is, and the rows thro
 
 Each derived capability carries the parent's guard for the call that its derivation makes, such as the parent's quantile guard at the same probabilities for the quantile row. A moment row through the marginal carries the parent's marginal guard at `p` and then the marginal's guard of the moment, so the view returns or raises as the marginal does. The sample row passes its key and sample shape to the parent unchanged, so a view's draw at a key is the projection at `p` of its parent's draw at that key. A given that covers every field of the view is malformed, since no law remains, so the conditioning row's guard rejects it and `_condition_on` raises `ValueError`. A selection drops each node that the given covers and keeps the rest.
 
-**The marginal's capabilities.** A law claiming `SupportsMarginals` may define the companion `_marginal_capabilities(path)`, which returns the capabilities its exact marginal at `path` claims, read from its declarations without building the marginal. The marginals of a law that defines none claim the law's own capabilities. A factored joint reports the capabilities of the factors a marginal keeps, and an empirical law reports sampling and its moments but no density, so a view of `Normal("a", 0.0, 1.0) & EmpiricalDistribution(atoms, output_name="b")` at `a` claims a density and one at `b` does not. A view reads the report once, at construction, since its path is fixed. It offers the density rows when the report includes the density, and a moment row its parent does not claim when the report includes the moment, so a view of a dependent joint at a root factor carries the factor's exact moments, which the joint does not claim. The `by_component` route of `mean`, `variance`, and `quantile` (VI.5) computes those outputs of the joint's summary through their views, so those outputs of the summary are exact. The projection rows derive from the parent's own capabilities, since each computes from the parent's answer.
+**The marginal's capabilities.** A law claiming `SupportsMarginals` may define the companion `_marginal_capabilities(path)`, which returns the capabilities its exact marginal at `path` claims, read from its declarations without building the marginal. The marginals of a law that defines none claim the law's own capabilities. A factored joint reports the capabilities of the factors a marginal keeps, and an empirical law reports sampling and its moments but no density, so a view of `Normal("a", 0.0, 1.0) & EmpiricalDistribution(atoms, output_name="b")` at `a` claims a density and one at `b` does not. A view reads the report once, at construction, since its path is fixed. It offers the density rows when the report includes the density, and a moment row its parent does not claim when the report includes the moment, so a view of a dependent joint at a root factor carries the factor's exact moments, which the joint does not claim. The `by_output` route of `mean`, `variance`, and `quantile` (VI.5) computes those outputs of the joint's summary through their views, so those outputs of the summary are exact. The projection rows derive from the parent's own capabilities, since each computes from the parent's answer.
 
 ### Rationale
 
@@ -661,7 +661,7 @@ class FullyNumericConditionalDistribution(
         NumericConditionalDistribution, ConditionalNumericDistribution): ...   # both sides numeric
 ```
 
-**The conditional distribution term specification.** `ConditionalDistributionSpec` is the conditional-distribution kind's term spec. As a leaf, it types a field holding a matching `ConditionalDistribution`: one whose inputs are exactly the declared names, in any order, and whose input specs each accept the declared ones in the scope that the given side shares with the event side (II.1). The given side is checked contravariantly, so every value the declared input admits is one the kernel accepts. The event side is an output spec, checked as for `DistributionSpec`, and the given side is always an `InputSpec`, read through its constructor (II.2):
+**The conditional distribution term specification.** `ConditionalDistributionSpec` is the conditional-distribution kind's term spec. As a leaf, it types a field holding a matching `ConditionalDistribution`: one whose inputs are exactly the declared names, in any order, and whose inputs' specs each accept the declared ones in the scope that the given side shares with the event side (II.1). The given side is checked contravariantly, so every value the declared input admits is one the kernel accepts. The event side is an output spec, checked as for `DistributionSpec`, and the given side is always an `InputSpec`, read through its constructor (II.2):
 
 ```python
 class ConditionalDistributionSpec(TermSpec):  # a ConditionalDistribution; is_valid accepts a match

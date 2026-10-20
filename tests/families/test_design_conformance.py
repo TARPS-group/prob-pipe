@@ -55,7 +55,8 @@ _OTHER_PACKAGES = frozenset({"EmpiricalDistribution"})
 
 #: Declarations the implementation does not match yet, with the change each awaits.
 _PENDING = {
-    "KDEDistribution": "the declaration check compares a class-valued default by the class's name",
+    "KDEDistribution": "the declaration check compares a class-valued default by the class's name; "
+    "and VII.2 names the output keyword output_name, which the code names component",
     **{
         name: "Part VII names the output keyword output_name; the code names it component"
         for name in (

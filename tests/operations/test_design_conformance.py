@@ -94,6 +94,11 @@ _PENDING: dict[str, str] = {
     "factor": "VI.8 names the parameter output_name; the code names it component_name",
 }
 
+#: Routes VI.0's code blocks construct that the implementation names otherwise, with the change each awaits.
+_PENDING_ROUTES: dict[str, str] = {
+    "bind_inputs": "VI.0 names condition_on's binding route bind_inputs; the code names it bind_given_slots",
+}
+
 #: Names the package exports that Part VI does not declare, with where each is declared.
 _DECLARED_ELSEWHERE = {
     "operation": "VI.0's prose: @operation registers an operation",
@@ -168,11 +173,18 @@ def _route_constructions() -> list:
                 and isinstance(call.func.value, ast.Name)
                 and call.func.attr in _HELPERS
             ):
+                route_name = ast.literal_eval(call.args[0])
+                marks = ()
+                if route_name in _PENDING_ROUTES:
+                    marks = pytest.mark.pending(
+                        reason=_PENDING_ROUTES[route_name], raises=AssertionError
+                    )
                 param = pytest.param(
                     call.func.value.id,
                     call.func.attr,
                     call,
                     id=f"{call.func.value.id}.{call.func.attr}",
+                    marks=marks,
                 )
                 constructions.append(param)
     return constructions
