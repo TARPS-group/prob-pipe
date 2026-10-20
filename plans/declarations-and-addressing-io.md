@@ -348,16 +348,32 @@ The kernel then has an input `g` of type `{c}`, now required, since a default is
 
 ### 3.2 Outputs
 
-Take a law `prior` over `{mu, sigma}` and a kernel `lik` that draws `y` given `mu`.
-For "`lik` takes `mu` from `prior`" to mean anything, `prior` must make `mu` available by name, as a value.
-A draw of `prior` is a record, so its children `mu` and `sigma` are the named values `prior` can supply.
-A law over one array has no names inside its draw, so it can supply its draw only if the draw is given a name.
-So an object's *outputs* are the named values it makes available to other objects.
+**Why outputs are needed.**
+Take a law `prior` over `{mu, sigma}` and a kernel `lik` that draws `y` given an input `mu`.
+To build a model in which `lik` receives its `mu` from `prior`, ProbPipe must know which value of `prior` is called `mu`.
+A draw of `prior` is a record, and its children already have names, `mu` and `sigma`; these names can serve as the names under which `prior`'s values are known to other objects.
+A law over a single array, such as `Normal("x", 0.0, 1.0)`, has no named parts in its draw; for its draw to be known to other objects under a name, a name has to be attached to it from outside the draw, here `x`.
+An object's *outputs* are these names: the names under which other objects can refer to the values it produces, and an input can receive one of them.
 
-Three requirements decide what they are:
-1. **Outputs match inputs.** An input is a flat name that receives one whole value (§ 3.1), so an output is a flat name with one value: outputs are at one level, never at a path such as `g/c`.
-2. **Nothing is lost.** When objects are combined into one, as `prior` and `lik` make a model over `{y, mu, sigma}`, each keeps only its outputs, so its outputs must together determine everything it produces: the model's `{mu, sigma}` must still be distributed as a draw of `prior`.
-3. **Each name has one place.** Only a base value is named from outside. A value of any other kind has, or can have, names inside it, so a name outside it would give it a second set of paths: a law whose draws are `{mu, sigma}`, named `params` from outside, would have the path `params/mu` while its draws have the path `mu`. Whether an object is named from outside depends on its kind alone, so its type fixes its outputs.
+**Three requirements fix what the outputs of each kind must be.**
+
+1. **An output has the shape of an input.**
+   An input is identified by a single name, not a path, and receives one value whole (§ 3.1).
+   For an output to supply an input, an output must likewise be a single name standing for one value.
+   So an object's outputs are names at one level: the outputs of a law over `{a, g: {c, e}}` can be `a` and `g`, but not the path `g/c`.
+
+2. **Together, the output values determine the produced object.**
+   The output values are all that other objects receive from an object.
+   If they did not determine its produced object, part of what the object produces would be invisible to every other object.
+   For example, if a law over `{mu, sigma}` made only the separate laws of `mu` and of `sigma` known, the dependence between `mu` and `sigma` would be lost.
+
+3. **Only a base value has a name attached from outside.**
+   Some produced objects have named parts, and those names serve as their outputs (requirement 1).
+   A base value (an array or an opaque value) has no parts, so the only way to give it a name is to attach one from outside the value: the object that produces it states the name, as `Normal("x", 0.0, 1.0)` states `x`.
+   We require that no other kind of value has a name attached from outside.
+   The reason is that a value with named parts that also had an attached name would have two names for each part: in a law whose draws are `{mu, sigma}` and which was also named `params`, the part `mu` would be reached as `mu` in a draw but as `params/mu` in the law, and a selection or a combination by one name would miss the other.
+   The requirement depends on the kind of value alone, not on whether a particular value happens to have parts: a law is never given an attached name, even a law over a single array, whose draws have no parts.
+   So an object's type alone determines its outputs.
 
 > [!IMPORTANT]
 > **Definition (output, output value).** An *output* of an object is a name under which the object makes one value, its *output value*, available to other objects.
@@ -366,10 +382,10 @@ Three requirements decide what they are:
 > | Case | Produced object | Outputs | Output value | Why |
 > | --- | --- | --- | --- | --- |
 > | 1 | a record | one per child, under the child's name | the child | the children are at one level (1), determine the record (2), and carry their own names (3) |
-> | 2 | a base value | one, under a name the object states; this output is *at the root* | the whole value | a base value has no names inside, so it needs a name outside, and it is the one kind (3) allows to have one |
+> | 2 | a base value | one, under the name attached by the object that produces it; this output is *at the root* | the whole value | a base value has no parts to supply names, so its one name is attached from outside, which (3) allows for base values only |
 > | 3 | a function | the outputs of its return value | for each output, the function that maps an argument to that output value of the return value | a function whose return value is a record is determined by these functions (2) |
 > | 4 | a batch | the outputs of its elements | for each output, the batch of the elements' output values; for a child, its column (§ 2.3) | a batch of records is determined by its columns (2) |
-> | 5 | a law or kernel that is itself produced: a function's return value, a draw, or an element of a batch | none | — | it is not a base value, so it takes no name outside (3); and its marginals do not determine it, so its children cannot stand in for it (2). To pass one on, wrap it |
+> | 5 | a law or kernel that is itself produced: a function's return value, a draw, or an element of a batch | none | — | it is not a base value, so no name is attached to it from outside (3); and the laws of its parts do not determine it, so its parts cannot serve as its outputs (2). To make one available, wrap it |
 
 The cases read a law's or kernel's draw, since that is what it produces: a law over `{mu, sigma}` has the outputs `mu` and `sigma` (case 1), whose output values are the draw's children, and a law over an array has one output at the root (case 2).
 Case 5 concerns a law that something else produces, such as a law a function returns.
@@ -381,7 +397,7 @@ Case 5 concerns a law that something else produces, such as a law a function ret
 > **Consequence** (of the definitions; 3 and 4 are proved in the formal model of Appendix D.1).
 > 1. **Output values determine the produced object** wherever there are outputs: a record is rebuilt from its children, a base value is its one output value, and a function or a batch is rebuilt from its output values.
 > 2. **A node below a child is named by a path (§ 2.3), not by an output:** a law over `{a, g: {c, e}}` has the outputs `a` and `g`, while `g/c` and `g/e` are paths only.
-> 3. **Only a base value is named from outside.** An object has either one output at the root, and then no paths, or outputs whose names are all top-level paths; never both.
+> 3. **An output at the root excludes paths.** An object has either one output at the root, whose name is attached from outside and which has no paths below it, or outputs whose names are all paths of its produced object's children; never both.
 > 4. **One set of names.** The name of an output at the root is not a path, since nothing is below it; every other output's name is its own path. So an object's outputs, its paths, and its draws' paths use one set of names.
 > 5. **Outputs are not chosen.** The produced type fixes them, apart from the name of an output at the root, which the object states.
 > 6. **A base value that no object produced**, such as a lone array, has no outputs: nothing states its name, and a label is not one.
@@ -440,7 +456,7 @@ Four laws show the difference.
 
 > [!NOTE]
 > **Consequence** (of the definitions of output and wrap).
-> 1. **Outputs are not chosen** (§ 3.2, consequence 5): `d3` cannot make its whole record available under one name given from outside, and its nested nodes `g/c` and `g/e` cannot be outputs.
+> 1. **Outputs are not chosen** (§ 3.2, consequence 5): `d3` cannot make its whole record available under one name attached from outside, and its nested nodes `g/c` and `g/e` cannot be outputs.
 > 2. **A wrap gives a value with paths one name, and changes the produced type.** `d4` is a different law from `d3`, since its draws are `{params: {a, g: {c, e}}}`, not `{a, g: {c, e}}`; every path of `d4` starts with `params`.
 > 3. **A merge matches outputs only.** An object that takes an input `g` is fed the group `g` by `d3`, while an input `c` is not fed by `g/c`; to feed it, rename `g/c` to `c` first (§ 4.5).
 
@@ -498,7 +514,7 @@ Figures read from right to left, as a density $p(y \mid \mu)$ does, where `y` is
 
 | | Inputs | Outputs | Why |
 | --- | --- | --- | --- |
-| Naming | every input is named | only a base value is named from outside | values are supplied to inputs by name; a produced value with paths carries its own names |
+| Naming | every input is named | only a base value has a name attached from outside it | values are supplied to inputs by name; a produced value with paths carries its own names |
 | Names allowed | identifiers | any name | an input matches an argument; an output becomes a field |
 | Structure | flat: each input is one name, and a path may name a node of a record input | one output at the root, or the names of the produced record's children, with nested paths below them | an input receives one value; an output is a place in a produced object |
 | Presence | may be optional | always present | a produced object has an output value at every output |
@@ -3287,7 +3303,7 @@ For a law `d` over `{a, g: {b, c}}` whose group `g` is one factor:
 | T13 | A type hole admits any type: filling it with a type that is not a base type, other than a batch whose element has only the default name (O2), gives an interim whole form instead of raising `TypeError` | `with_term_spec` on a type hole | — | this refusal is the refusal of the form, so it comes with G2 |
 | T14 | The G2 families declare their events in an interim whole form through the private event default (`_whole_term_event`, the event reading of `distribution`, `_agreed_event_spec`, `_event_repr_parts`), which keeps today's rule: the keyword form under the default name for a law, function, or batch. A user-built empirical law of laws keeps it too, so `rm.event_spec["G"]` is `rm.event_spec` | the G2 families; the private event default | — | G2 moves each family to a wrap under its constructor's name, then the default goes, so it changes once |
 | T15 | A merge accepts an interim whole form and stores its produced object whole as the field of its name: condition 2 passes it, and so does `O & P` on output specs. `Normal("z", 0.0, 1.0) & gp`, for a Gaussian process `gp`, and `m & Normal("x", 0.0, 1.0)`, for `m` declared `OutputSpec(G=law_spec)`, merge as today (fact 27) | merges of laws, kernels, and output specs | — | it keeps today's merges of the G2 families working |
-| T16 | The guarantee that only a base value is named from outside (§ 3.2), I17, and § 5.7's paths-kept property fail for an interim whole form, and I5 fails at its name, after G3 as before: `m["G"]` is `m`, so `m["G"]["mu"]` raises `KeyError` while `m["G/mu"]` is the view at `mu` | every interim whole form (T5, T7, T8, T11 to T14, T19) | — | today's reading; ends at G2, and at G1a for the grouped sub-joint |
+| T16 | The guarantee that only a base value has a name attached from outside (§ 3.2, requirement 3), I17, and § 5.7's paths-kept property fail for an interim whole form, and I5 fails at its name, after G3 as before: `m["G"]` is `m`, so `m["G"]["mu"]` raises `KeyError` while `m["G/mu"]` is the view at `mu` | every interim whole form (T5, T7, T8, T11 to T14, T19) | — | today's reading; ends at G2, and at G1a for the grouped sub-joint |
 | T17 | Code outside `core/_specs.py` reads an output spec's form through the private `_root_component_name`, which reads the stored form, since an interim whole form can still be built; the replacement of `exposes_record` reads it too | `_root_component_name` and its callers | S2a | after G2 the helper reduces to "keyword form exactly when the type is a base type"; R renames it |
 
 #### Rules that end at G3
@@ -3591,7 +3607,7 @@ A grouped sub-joint's outputs, `{g}`, differ from its factors', `{b, c}`, so it 
 
 *Delivers:* each G2 family wraps its draws under its constructor's name, so its event is positional over `RecordSpec(<name>=...)`; then the keyword form and the filling of a type hole refuse a type that is not a base type, with a message naming its kind, and the private event default goes: `_whole_term_event`'s rule, the event reading of `distribution`, `_agreed_event_spec`, and `_event_repr_parts` move to `OutputSpec.default` or the families' wraps.
 *Transition rules:* ends T12 to T17, and with them the interim whole form.
-*Invariants:* I1 for those families' draws; I17 for their forms; the guarantee that only a base value is named from outside.
+*Invariants:* I1 for those families' draws; I17 for their forms; the guarantee that only a base value has a name attached from outside.
 *Files:* `_whole_term_event`, `_event_repr_parts` (`distributions/_distribution.py`); `distribution` (`distributions/_from_functions.py`); `_agreed_event_spec` (`distributions/_conditional.py`); `families/_random_functions.py`, `_gaussian.py`, `_resampling.py`; `distributions/_empirical.py`; `inference/_minibatch.py`; `core/_specs.py`; `tests/_interim_form_probe.py`, removed.
 *Done when:*
 - `rm.event_spec == OutputSpec(RecordSpec(G=law_spec))` for a random measure `rm` constructed under the name `G`, and `sample(rm)` is `{G: law}`;
