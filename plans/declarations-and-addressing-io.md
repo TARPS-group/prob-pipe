@@ -180,7 +180,7 @@ The design reads types wherever it must decide something before any value exists
 > 4. a *law type* holds one type, the law's *event type*, which is the type of the objects the law is a distribution over; every law has an event type;
 > 5. a *kernel type* holds, for each value the kernel conditions on, a name, a type, and whether that value may be omitted; it also holds the kernel's event type;
 > 6. a *function type* holds the same three things for each argument of the function, and the function's *return type*, which is the type of its return value; the arguments or the return type may be unknown;
-> 7. a *batch type* holds the batch's levels and its *element type*, which is the type of one element. The name a batch of base values gives its elements is not part of its type: the batch's element spec (§ 6.5) holds it, and merges, outputs, and renames read it there.
+> 7. a *batch type* holds the batch's levels and its *element type*, which is the type of one element. The name a batch of base values gives its elements is not part of its type; § 6.5 states where that name is held and which operations read it.
 >
 > Array and opaque types are *base types*. A *law over* `T` is a law whose event type is `T`, as a law over `{mu, sigma}`; a *kernel over* `T` is a kernel whose event type is `T`.
 
@@ -225,7 +225,7 @@ The design reads types wherever it must decide something before any value exists
 `A` conforms to `B`, in one dimension scope, when:
 1. **arrays:** the ranks are equal, each axis agrees by the scope rule, and when both set a dtype, `A`'s casts into `B`'s by NumPy's same-kind rule; supports are not compared (III.5);
 2. **opaque values:** `B`'s Python type is unset or a superclass of `A`'s, and `B`'s metadata is unset or equal to `A`'s (III.2);
-3. **records:** the same child names in the same order, as the equality of record types and of output specs requires (§ 3.5), each child of `A` conforming to `B`'s;
+3. **records:** the same child names in the same order, as the equality of record types requires (§ 5.9), each child of `A` conforming to `B`'s;
 4. **laws:** `A`'s event type conforms to `B`'s;
 5. **kernels and functions:** the same names of conditioning values or arguments; each of `B`'s types for these conforms to `A`'s type of the same name, and one that may be omitted in `B` may be omitted in `A`; `A`'s event or return type conforms to `B`'s; a side `B` leaves unknown admits any, and a side only `A` leaves unknown does not conform;
 6. **batches:** the same levels, and `A`'s element type conforms to `B`'s; the elements' name is not compared (§ 6.5).
@@ -288,7 +288,7 @@ A law over `{mu, sigma}` produces a random variable whose values are records `{m
 
 > [!NOTE]
 > **Consequence** (of this definition, § 2.3, and § 3.2).
-> 1. An object's paths and outputs depend only on its produced type, apart from the name of an output at the root, which the object states (§ 3.2).
+> 1. An object's paths and outputs depend only on its produced type. The one exception is a base value, which has no paths: an object that produces a base value gives it a single output that names it as a whole, and states that name (§ 3.2).
 > 2. So a law's or kernel's paths and outputs are those of its event type; a function's are those of its return type; a record's or a batch's are those of its own type.
 > 3. A law's or kernel's produced object is a random variable, so a statement about it holds in distribution: for example, § 4.1's statement that selecting commutes with producing says that two random variables have the same law.
 
@@ -301,7 +301,7 @@ A law over `{mu, sigma}` produces a random variable whose values are records `{m
 A path identifies a node by a sequence of names (§ 1.2), so that an operation such as a selection (§ 4) can refer to the node.
 Names come only from records (§ 1.2), since a record is the only kind of value with named entries.
 A law, a kernel, a function, and a batch have no named entries of their own, but each type of these kinds holds another type: a law's or kernel's event type, a function's return type, or a batch's element type.
-When that type is a record type, the object's paths are the paths of that record type. For a law, a kernel, or a function, the held type is the produced type (§ 2.2); for a batch, the element type has the same paths as the batch type, which is the produced type. So an object's paths are defined as the paths of its produced type.
+When that type is a record type, the object inherits the path structure of that record type. For a law, a kernel, or a function, the held type is the object's produced type (§ 2.2). A batch's produced type is its own batch type, which takes its paths from the element type it holds. So the definition below gives every object the paths of its produced type.
 
 > [!IMPORTANT]
 > **Definition (paths, column).**
@@ -343,7 +343,7 @@ The paths of an object are also the paths of its type: for a value or a batch, t
 > Two laws, kernels, or functions are equal when they have equal types and the same distribution or map.
 > Two batches are equal when they have the same levels, in the same order, equal element types, and equal elements.
 
-The name a batch of base values gives its elements is not part of its type (§ 2.1), so equality does not compare it. Unlike a label, the name is read: merges, outputs, and renames take it from the batch's element spec (§ 6.5), so equal batches can merge differently (§ 7.2).
+The name a batch of base values gives its elements is not part of its type (§ 2.1), so equality does not compare it. Unlike a label, the name is read by later operations (§ 6.5), so two equal batches can give different results (§ 7.2).
 
 ## 3. Inputs and outputs
 
@@ -450,7 +450,7 @@ Case 5 concerns a law that is the produced object of another object, such as a l
 > 2. **A node below a child is named by a path (§ 2.3), not by an output:** a law over `{a, g: {c, e}}` has the outputs `a` and `g`, while `g/c` and `g/e` are paths only.
 > 3. **An output at the root excludes paths.** An object has either one output at the root, whose name is attached from outside and which has no paths below it, or one output per child of its produced object, each named by the child's path; never both.
 > 4. **One set of names.** The name of an output at the root is not a path, since nothing is below it; every other output's name is its own path. So an object's outputs, its paths, and the paths of the values it produces use one set of names.
-> 5. **Outputs are not chosen.** The produced type determines them by the five cases, apart from the name of an output at the root, which the object states.
+> 5. **Outputs are not chosen.** They are determined as a function of the object's produced object, through its produced type, by the five cases. The one exception is the name of a base value's single output, which the object that produces the base value states.
 > 6. **A base value standing alone has no outputs,** such as an array that no law, function, or batch produced: no object attaches a name to it, and a label is not one.
 
 <details>
@@ -511,7 +511,7 @@ Each law also shares its paths with its mean and with a batch of its samples: a 
 
 > [!NOTE]
 > **Consequence** (of the definitions of output and wrap).
-> 1. **Outputs are not chosen** (§ 3.2, consequence 5): `d3` cannot make its whole record available under one name attached from outside, and the nested paths `g/c` and `g/e` cannot be outputs.
+> 1. **Outputs are not chosen** (§ 3.2, consequence 5). They are determined as a function of the law's produced object, through its produced type; the one exception is the name of a base value's single output, which the object that produces it states, as `d1` states `x`. So `d3` cannot make its whole record available under one name attached from outside, and the nested paths `g/c` and `g/e` cannot be outputs.
 > 2. **A wrap makes a record available under one name, and changes the produced type.** `d4` is a different law from `d3`, since it is a law over `{params: {a, g: {c, e}}}`, not over `{a, g: {c, e}}`; every path of `d4` starts with `params`.
 > 3. **Only outputs connect.** Another object's input `g` can receive the group `g` from `d3`, while an input `c` cannot receive the node at `g/c`, which is not an output; renaming `g/c` to `c` first makes it one (§ 4.5).
 
@@ -522,25 +522,24 @@ They are what a check reads before any value exists, as when two objects are com
 
 > [!IMPORTANT]
 > **Definition (input spec, output spec).**
-> 1. An object's *input spec* lists its inputs in the order of its arguments: names, types, and which are optional. It holds no defaults. Two input specs are equal when they list the same inputs, types, and optional inputs, in any order.
-> 2. An object's *output spec* states its produced type and, when that type is a base type, the name of the output at the root; for a batch type, the batch's element spec holds the elements' name (§ 6.5). An output spec never states an empty record type.
-> 3. A law's or kernel's output spec is its *event spec*.
-> 4. A *type hole* is the pending type of an output spec that names its output at the root before the type is known, as a function's output can be named before its first call; the object fills it once it knows the type.
-> 5. The *record of outputs* of a produced base value `v` with the output `n` is the record `{n: v}`; a produced record is its own record of outputs. It builds the value of a merge (§ 5.5).
+> 1. An object's *input spec* lists its inputs in order: their names, their types, and which are optional. It holds no defaults. Two input specs are equal when they list the same inputs, types, and optional inputs, in any order.
+> 2. An object's *output spec* states its produced type and, when that type is a base type, the name of the output at the root. An output spec never states an empty record type.
+> 3. Only an output spec that states the name of an output at the root may leave its type unspecified, while the type is not known yet. The object that produces the value completes the type once it is known, under the rules of the technical note below.
 
 > [!NOTE]
 > **Consequence** (of the definitions of output spec and output).
 > 1. The type alone decides whether an output spec names an output at the root, so no flag records it.
 > 2. The type of an output, which is the type of its output value, is read from the output spec: for the output at the root, it is the produced type; for an output of a record, the child's type; for an output of a function, a function type; for an output of a batch, a batch type.
-> 3. A produced base value or record is rebuilt from its record of outputs. A produced function, batch, or law has none.
 
-The kernel `a(y | mu)` has an output spec stating the array type `()` and the name `y`; a sample `0.3` from it, at some value of `mu`, has the record of outputs `{y: 0.3}`.
-A law over `{mu, sigma}` has an event spec stating the record type `{mu, sigma}` and no name.
+The kernel `a(y | mu)` has an output spec stating the array type `()` and the name `y`.
+A law over `{mu, sigma}` has an output spec stating the record type `{mu, sigma}` and no name.
+A function that returns an array under the name `m` can state its output spec before its first call, with the name `m` and the type unspecified; the call shows the type.
+§ 6 states what each kind's specs hold; a batch of base values, for example, takes the name of its output at the root from its element spec (§ 6.5).
 
 <details>
 <summary>Technical note: equality and order</summary>
 
-Output order is the field order of the record of outputs, which determines a numeric record's flat layout, so output specs listing the same outputs in two orders are unequal, as are record types listing the same children in two orders; neither conforms to nor unifies with the other (§ 2.1).
+Output order is the field order of the record that holds the output values, each under its output's name; it determines a numeric record's flat layout, so output specs listing the same outputs in two orders are unequal, as are record types listing the same children in two orders; neither conforms to nor unifies with the other (§ 2.1).
 An output spec naming a base value `n` and one whose type is `{n: …}` have the same output and are unequal.
 Two output specs over batches whose elements have different names have different outputs and are unequal, although the two batch types are equal (§ 6.5).
 
@@ -550,8 +549,19 @@ Two output specs over batches whose elements have different names have different
 <summary>Technical note: conformance and unification of output specs</summary>
 
 `A` conforms to `B` when they state the same root name, if any, and `A`'s type conforms to `B`'s; the name of a batch type's elements is not compared (§ 6.5).
-A type hole in `B` admits only what can fill it (§ 11.2): a base type, or a batch type whose elements are base values.
-Two output specs unify likewise; a type hole takes the other's type when it admits that type, and otherwise they do not unify.
+When `B`'s type is unspecified, `A` conforms to `B` only when `A`'s type is one that could complete it: a base type, or a batch type whose elements are base values.
+Two output specs unify likewise; when the type of one is unspecified, the unification takes the other's type if that type could complete it, and otherwise they do not unify.
+
+</details>
+
+<details>
+<summary>Technical note: an output spec whose type is unspecified</summary>
+
+1. **Where.** Only an output spec that states the name of an output at the root, as a function's output spec can before its first call (§ 3.5, definition, item 3).
+2. **Completing it.** The object that produces the value completes the type once the value is known. A base type completes it, and the output keeps its name. A batch type whose elements are base values carrying only the default name `element` (§ 6.5) completes it, and the batch's elements take the output's name. Any other type is refused, with a message asking for a record type to be stated instead.
+3. **Conformance and unification.** It admits only a type that could complete it, as the technical note above states.
+4. **Reading it as inputs.** An output spec read as inputs gives one input per output, typed by the output's type (§ 5.3, technical note), so an output spec whose type is unspecified is refused there.
+5. **Merging it.** A merge refuses an operand whose produced type is unspecified (§ 5.3, condition 2), and the merge of output specs refuses such an output spec.
 
 </details>
 
@@ -576,7 +586,7 @@ Figures read from right to left, as a density $p(y \mid \mu)$ does, where `y` is
 | Names allowed | identifiers | any name | an input matches an argument; an output becomes a field |
 | Structure | flat: each input is one name, and a path may name a node of a record input | one output at the root, or the names of the produced record's children, with nested paths below them | an input receives one value; an output names the produced object or one of its children |
 | Presence | may be optional | always present | a produced object has an output value at every output |
-| Type unknown | never | type hole | a binding is checked against the input's type |
+| Type unspecified | never | only in an output spec naming an output at the root, until the type is known (§ 3.5) | a binding is checked against the input's type |
 | Equality | ignores order | keeps order | binding is by name; output order determines the layout |
 | Empty | an object may take no inputs | an output spec is never an empty record type; an object producing a law has no outputs | an empty record describes nothing produced |
 | Batches | the elements' inputs | the elements' outputs, each output value a batch; none when the elements are laws or kernels | one binding supplies every element |
@@ -689,7 +699,7 @@ The output spec of `x` (§ 3.5) determines the output spec of every selection of
 
 > [!NOTE]
 > **Consequence** (of Definitions (selection) and (selection from an output spec)).
-> 1. For a law, kernel, function, or batch `x`, the output spec of `x[s]` is `O[s]`. For a record, which produces itself, `O[s]` reads the type of `x[s]` as an output: for `{x: 3.0, g: d}`, `O[g]` states `d`'s type, not `d`'s event spec.
+> 1. For a law, kernel, function, or batch `x`, the output spec of `x[s]` is `O[s]`. For a record, which produces itself, `O[s]` reads the type of `x[s]` as an output: for `{x: 3.0, g: d}`, `O[g]` states `d`'s type, not `d`'s output spec.
 > 2. `O[s]` holds no name that `O` does not hold.
 > 3. Dimension names are kept, in the scope of `O`; binding a size commutes with selecting.
 > 4. Removal from an output spec follows removal from objects (§ 4.3).
@@ -741,7 +751,7 @@ For a law `d` over an array named `x`, the object at `x` is `d`; for a law `e` o
 
 > [!IMPORTANT]
 > **Definition (conditioning).** *Conditioning* a law on values at some of its paths gives the law of the rest of its produced object given those values.
-> Its event spec is the law's event spec without those paths, however it is computed, and conditioning `d` on a sample from `d[[ps]]` fixes exactly the nodes at `ps`.
+> Its output spec is the law's output spec without those paths, however it is computed, and conditioning `d` on a sample from `d[[ps]]` fixes exactly the nodes at `ps`.
 
 For `d` over `{mu, sigma}`, conditioning on `mu = 0.1` gives a law over `{sigma}`.
 Conditioning removes the outputs it fixes, while binding (§ 3.1) removes inputs.
@@ -811,7 +821,7 @@ Write `outputs(a)` for the set of `a`'s output names and `inputs(a)` for the set
 > 2. **factor inputs:** `a`'s factor inputs that `b` does not feed, then `b`'s that are not shared; a shared one is one factor input, typed by the unification of its two types (§ 2.1), and optional only if optional in both;
 > 3. **factors:** for laws and kernels, `a`'s factors, then `b`'s, with the dimension sizes the merge bound kept;
 > 4. **kind and inputs:** records give a record; laws and kernels give a kernel whose inputs are the factor inputs when a required one remains, and otherwise a law, which has no inputs; functions give a function whose inputs are the factor inputs; batches give a batch over the same levels;
-> 5. **produced object:** the record of all outputs, with `b`'s outputs produced first and `a`'s next, from its factor inputs and the values `b` feeds (§ 5.5); for batches, element by element.
+> 5. **produced object:** the record whose fields are the output values of both operands, each under its output's name, in the order of the outputs; `b`'s are produced first and `a`'s next, from its factor inputs and the values `b` feeds (§ 5.5); for batches, element by element.
 
 > [!IMPORTANT]
 > **Definition (valid merge).** `a & b` is refused unless:
@@ -884,7 +894,7 @@ Each factor then takes its own default, since defaults belong to objects and an 
 For values `u` of the result's factor inputs, let `u_a` be those `a` takes and `b` does not feed, and `u_b` those `b` takes.
 
 > [!IMPORTANT]
-> **Definition (law of a merge).** At values `u` of its factor inputs, the produced object of `a & b` is the random variable `z` built as follows: `z_b` is a random variable distributed by `b` at `u_b`; given `z_b`, `z_a` is a random variable distributed by `a` at `u_a` and the values `z_b` feeds; and `z` is `z_a`'s record of outputs followed by `z_b`'s (§ 3.5).
+> **Definition (law of a merge).** At values `u` of its factor inputs, the produced object of `a & b` is the random variable `z` built as follows: `z_b` is a random variable distributed by `b` at `u_b`; given `z_b`, `z_a` is a random variable distributed by `a` at `u_a` and the values `z_b` feeds; and `z` is the record whose fields are `a`'s output values in `z_a`, then `b`'s in `z_b`, each under its output's name. A child keeps its name, and a base value is placed under the name of its single output.
 > So sampling `a & b` samples `b` first, then samples `a` given the values that `b`'s sample feeds.
 
 With densities, where `z_fed` is the fed values:
@@ -907,7 +917,7 @@ For `lik & prior`, this is the product of § 5.1.
 **Functions.** A merge keeps both operands' outputs and feeds each output of `b` to `a`'s input of the same name; for functions, the result is the function that returns both results.
 
 > [!IMPORTANT]
-> **Definition (function of a merge).** For functions `a` and `b`, `(a & b)(u)` is `a`'s record of outputs at `u_a` and the values `b` feeds, followed by `b`'s record of outputs at `u_b`.
+> **Definition (function of a merge).** For functions `a` and `b`, let `y_b` be `b`'s return value at `u_b`, and `y_a` be `a`'s return value at `u_a` and the values `y_b` feeds. Then `(a & b)(u)` is the record whose fields are the output values of `y_a`, then those of `y_b`, each under its output's name.
 > Its inputs are the factor inputs of § 5.3, optional ones included: a function's inputs are its parameters, and functions have no split between a law and a kernel that would hide them.
 
 For `a(mu | data)` returning the mean and `b(sigma | data)` the standard deviation, `a & b` takes `data` once and returns `{mu, sigma}`.
@@ -915,7 +925,7 @@ For `a(mu | data)` returning the mean and `b(sigma | data)` the standard deviati
 > [!TIP]
 > A function is like a kernel whose laws are point masses, and its merge mirrors the law of a merge. The likeness motivates the rule and is not exact: a merged law hides the optional inputs its factors leave at their defaults, while a merged function keeps them as inputs.
 
-**Batches.** Over equal levels, element by element; a base element is read as its record of outputs, so a batch of 3 values named `x` and a batch of 3 values named `y` merge into a batch of 3 records `{x, y}`.
+**Batches.** Over equal levels, element by element; a base element is placed in a record under its output's name, so a batch of 3 values named `x` and a batch of 3 values named `y` merge into a batch of 3 records `{x, y}`.
 
 <details>
 <summary>Technical note: batches merge element by element</summary>
@@ -1040,7 +1050,7 @@ For `M = a & c`, with `a(y | mu, sigma)`, `sigma` optional with default 1, and a
 <summary>Technical note: dimension scopes across merges</summary>
 
 A merged law or kernel keeps the sizes its merge bound; merged specs and functions apply them and keep nothing.
-A kept size can refuse a merge over a name no type shows: if `m1` bound `n = 3` and `m2` bound `n = 4`, `m1 & m2` breaks condition 8 although neither event spec contains `n`, while a sample from `m1` merges with a sample from `m2`.
+A kept size can refuse a merge over a name no type shows: if `m1` bound `n = 3` and `m2` bound `n = 4`, `m1 & m2` breaks condition 8 although neither output spec contains `n`, while a sample from `m1` merges with a sample from `m2`.
 
 </details>
 
@@ -1155,7 +1165,7 @@ So the kernel has the outputs of its event type, and the function has none (§ 3
 > [!NOTE]
 > **Consequence** (of §§ 2 to 5, for functions).
 > 1. **Produces** its return value at each value of its arguments; its **outputs** are its return value's, each output value a function (§ 3.2, case 3).
-> 2. **Inputs:** its arguments; an argument with a default is optional.
+> 2. **Inputs:** its arguments, in their order; an argument with a default is optional.
 > 3. **A function whose return value is a record** is determined by its output values, which are functions, so its outputs lose nothing.
 > 4. **A function that returns a law** has no outputs; to make the law available, it returns `{params: law}`.
 > 5. **A function that returns a function** has that function's outputs.
@@ -1183,6 +1193,7 @@ It has no paths known before it is called, so `f[p]` is checked when the selecte
 > **Definition (element spec).** A batch's *element spec* is the output spec of one element (§ 3.5): the element type (§ 2.1) and, for base elements, the elements' name, which is also the name of the batch's output at the root.
 > A batch an operation produces takes the name its maker gives; a batch built from bare base values names them `element`.
 > The name belongs to the element spec, not to the batch's type: conformance, unification, and equality ignore it (§ 2.1, § 2.4), while merges, outputs, and renames read it.
+> The output spec of a batch of base values states the batch type, and takes the name of its output at the root from the element spec.
 
 > [!NOTE]
 > **Consequence** (of §§ 2 to 5, for batches).
@@ -1206,7 +1217,7 @@ For a batch `b` of 4 samples from a law over an array named `x`: `b` has the out
 
 | # | Invariant | Follows from, or chosen |
 | --- | --- | --- |
-| I1 | **One set of paths:** a path or list valid on `d` is valid on samples from it, on each element of a batch of its samples, on its mean, and on its event spec | § 2.3; proved (D.1) |
+| I1 | **One set of paths:** a path or list valid on `d` is valid on samples from it, on each element of a batch of its samples, on its mean, and on its output spec | § 2.3; proved (D.1) |
 | I2 | **Selecting commutes with sampling:** `sample(d[s])` is distributed as `sample(d)[s]`, at every path | § 4.1; proved (D.1) |
 | I3 | **Selecting commutes with summaries:** the mean of `d` at `s` and the mean of `d[s]` estimate one quantity, equal when computed in closed form; likewise variance, standard deviation, and quantiles | I2, § 6.2 |
 | I4 | **Positions and paths commute** on a batch | § 2.3, § 4.1; proved (D.1) |
@@ -1296,7 +1307,7 @@ An external formal model (Appendix D.1) proves I1 for laws, samples, and batches
 | Part I | Code |
 | --- | --- |
 | input spec, output spec | `InputSpec`, `OutputSpec`; an output spec over a base type is in the *keyword form*, `OutputSpec(y=...)`, and any other is in the *positional form*, `OutputSpec(T)` |
-| a law's or kernel's event spec | `event_spec` |
+| a law's or kernel's output spec, which describes its event type and is called its *event spec* | `event_spec` |
 | a function's output spec, input spec | `output_spec`, `input_spec` |
 | a kernel's input spec | `given_spec`, named for what the kernel is conditioned on (III.9) |
 | a batch's element spec; its element type | `element_spec`; `element_spec.term_spec` |
@@ -1415,7 +1426,7 @@ class FunctionSpec(TermSpec):
 
 These classes are the types of § 2.1: `is_valid` is *admits*, with the same-kind cast of dtypes, a support that is not checked, and a record laid out in the declared order (§ 5.9); `free_dims`, `with_dim_sizes`, and `with_dim_names` act on dimension names, each bound within one dimension scope.
 The `meta` of an `OpaqueSpec` takes part in conformance and unification (§ 2.1, technical notes).
-A `DistributionSpec` is a law type, which holds the law's event spec (§ 3.5); a `ConditionalDistributionSpec` a kernel type, which holds the kernel's input spec and event spec; a `FunctionSpec` a function type, whose input spec or output spec may be unknown.
+A `DistributionSpec` is a law type, which holds the law's event spec (§ 8); a `ConditionalDistributionSpec` a kernel type, which holds the kernel's input spec and event spec; a `FunctionSpec` a function type, whose input spec or output spec may be unknown.
 
 `RecordSpec` is in § 14 and `BatchSpec` in § 18.
 A term spec of a law, kernel, function, or batch has no `[]` of its own: select from the output spec it holds, as `d.spec.event_spec["mu"]`.
@@ -1458,8 +1469,9 @@ class InputSpec(Mapping[str, TermSpec]):
     ValueError
         If an input name is not a Python identifier.
     TypeError
-        If *inputs* is of another class, or is an OutputSpec whose spec is still
-        None, or if both *inputs* and keywords are given.
+        If *inputs* is of another class, or is an OutputSpec whose spec is None,
+        which means the type is not known yet, or if both *inputs* and keywords
+        are given.
 
     Examples
     --------
@@ -1563,7 +1575,7 @@ class InputSpec(Mapping[str, TermSpec]):
 <summary>Technical note: the contract of <code>InputSpec</code></summary>
 
 `InputSpec` is the input spec of § 3.5: it holds no defaults, and its equality ignores order (§ 5.9).
-1. **Sources.** A `RecordSpec` and an `OutputSpec` are recognized before a plain mapping. An `OutputSpec` gives one required input per output, typed by the output's type (§ 3.5, consequence 2): the inputs those outputs would feed. So `InputSpec(R) == InputSpec(OutputSpec(R))`, `InputSpec(RecordSpec())` is `InputSpec()`, and an `OutputSpec` with a type hole raises `TypeError`.
+1. **Sources.** A `RecordSpec` and an `OutputSpec` are recognized before a plain mapping. An `OutputSpec` gives one required input per output, typed by the output's type (§ 3.5, consequence 2): the inputs those outputs would feed. So `InputSpec(R) == InputSpec(OutputSpec(R))`, `InputSpec(RecordSpec())` is `InputSpec()`, and an `OutputSpec` whose type is unspecified raises `TypeError` (§ 3.5).
 2. **Selection and removal** follow § 4.4: by input names, keeping order and optional flags; a path into a record input cuts that input, which becomes required, since a default is a whole value (§ 3.1, technical note). The path reader's other refusals are those of § 12.1.
 3. **`&`** is the merge of input specs (§ 5.3, technical note): inputs in order of first appearance; a shared input takes the unification of its two types (§ 2.1) and is optional only if optional in both; dimension bindings are applied and not kept.
 4. **`rename`** follows II.6's rules, restricted to names.
@@ -1638,7 +1650,8 @@ class OutputSpec:
     **named_output : TermSpec, tuple, or None
         The keyword form: one keyword, the output's name, over the spec of a
         single array or opaque value. A tuple of sizes is the NumericArraySpec of
-        that shape, and None leaves the spec to be filled by ``with_term_spec``.
+        that shape. None means the type is not known yet; ``with_term_spec``
+        gives it later.
 
     Raises
     ------
@@ -1662,7 +1675,7 @@ class OutputSpec:
 
     @property
     def term_spec(self) -> TermSpec | None:
-        """The spec of the values described; None until ``with_term_spec`` fills it."""
+        """The spec of the values described. None means the type is not known yet."""
 
     @property
     def outputs(self) -> Mapping[str, TermSpec | None]:
@@ -1748,25 +1761,26 @@ class OutputSpec:
         """
 
     def with_term_spec(self, term_spec: TermSpec, /) -> OutputSpec:
-        """This OutputSpec with its spec filled in, or completed from *term_spec*.
+        """This OutputSpec with its spec completed from *term_spec*.
 
         Parameters
         ----------
         term_spec : TermSpec
-            The spec of the actual values. Where this OutputSpec's spec is None, it
-            becomes *term_spec*; otherwise the declared spec is kept and its
-            missing details are taken from *term_spec*.
+            The spec of the actual values. Where this OutputSpec's spec is None,
+            which means the type is not known yet, it becomes *term_spec*;
+            otherwise the declared spec is kept and its missing details are taken
+            from *term_spec*.
 
         Returns
         -------
         OutputSpec
-            The filled or completed OutputSpec.
+            The completed OutputSpec.
 
         Raises
         ------
         TypeError
-            If a spec that is None is filled with anything but a single array or
-            opaque value, or a batch of them; declare a RecordSpec instead.
+            If a spec that is None is completed with anything but a single array
+            or opaque value, or a batch of them; declare a RecordSpec instead.
         """
 
     def rename(self, renames: Mapping[str, str] | None = None, /,
@@ -1804,7 +1818,7 @@ class OutputSpec:
 2. **`[]`** is selection from an output spec (§ 4.4); a list may name the output at the root, giving `{n: type}` (§ 4.2, technical note); the path reader's other refusals are those of § 12.1.
 3. **`without`** is removal (§ 4.3).
 4. **`&`** is the merge of output specs (§ 5.3, technical note), under conditions 2, 3, and 8; "a record or a single value with a known spec" is condition 2.
-5. **`with_term_spec`** fills a type hole (§ 11.2), or *completes* a stated type with the produced one, keeping its dtype and support (II.2).
+5. **`with_term_spec`** *completes* the type: an unspecified type becomes the given one (§ 11.2), and a stated type is completed with the produced one, keeping its dtype and support (II.2).
 6. **`rename`** follows § 4.5.
 7. **`default`** is used where no output spec is given: for a function's return value under the callable's name (§ 17.2), and for every event a distribution family does not name itself.
 
@@ -1815,14 +1829,15 @@ Equality: the same type and, for an output at the root, the same name; order-sen
 A law's `event_spec=` argument keeps its own reading (III.7): a bare `RecordSpec` is positional, and an event at the root needs its name.
 Code outside `core/_specs.py` reads the form through one private helper, `_root_output_name(O)`, which returns the name of the output at the root, or `None`.
 
-### 11.2 Type holes
+### 11.2 An output whose type is not known yet
 
-`OutputSpec(mean=None)` names an output whose type is filled later by `with_term_spec`:
-1. filled with a base type, it stays named `mean`;
-2. filled with a batch whose elements carry only the default name `element`, it names the elements `mean`;
-3. filled with any other type, it raises `TypeError`, asking for a declared record.
+The keyword form alone may leave its type unspecified (§ 3.5): `OutputSpec(mean=None)` names the output `mean`, as a function does before its first call.
+`with_term_spec` completes the type once the producer's return value is known:
+1. with a base type, the output stays named `mean`;
+2. with a batch type whose elements carry only the default name `element`, it names the elements `mean`;
+3. with any other type, it raises `TypeError`, asking for a declared record.
 
-In conformance and unification a type hole admits only what can fill it: a base type, or a batch type of base elements (§ 3.5).
+Until then, in conformance and unification it admits only a type that could complete it: a base type, or a batch type of base elements (§ 3.5). `InputSpec` refuses it as a source (§ 10), and `&` refuses it (§ 13).
 
 ### 11.3 Examples
 
@@ -1925,7 +1940,7 @@ The result's label joins the operands' labels with `·`.
 | Condition (§ 5.3) | Error | Message |
 | --- | --- | --- |
 | 1. one merge category | `TypeError`; `ValueError` for unequal levels | for `InputSpec & OutputSpec`, message 4 of § 10 |
-| 2. recordable produced objects | `TypeError` | names the type hole or missing spec, or says to wrap the output under a name |
+| 2. recordable produced objects | `TypeError` | names the spec that is missing or whose type is not known yet, or says to wrap the output under a name |
 | 3. one source per output | `ValueError` | names the output and both operands; for two selections of one law, adds "both are views of one law; for their joint law index once, as d['g1', 'g2']; merging two views treats them as independent" |
 | 4. order | `ValueError` | "write b & a: b takes x, which a outputs, and in a & b only b's outputs feed a's inputs" |
 | 5. separate sides | `ValueError` | says to rename one |
@@ -2751,8 +2766,8 @@ class Function(TrackedTerm):
         Raises
         ------
         TypeError
-            If either function has no ``input_spec`` or no ``output_spec``, or a
-            spec that is still None.
+            If either function has no ``input_spec`` or no ``output_spec``, or an
+            ``output_spec`` whose type is None, which means not known yet.
         """
 ```
 
@@ -2762,7 +2777,7 @@ class Function(TrackedTerm):
 1. A `Function` is a function (§ 6.4): its `spec` is a `FunctionSpec`, its inputs are its arguments, and its outputs are its return value's, each output value a function (§ 3.2, case 3).
 2. `input_spec` is read through the `InputSpec` constructor (§ 10), with O9's rule; a bare `TermSpec` as `output_spec` reads as `OutputSpec.default(term_spec, output_name=` the callable's name `)` (§ 17.2), never its label.
 3. **`[]`** is selection (§ 4.1), with the same inputs (I14); with an unknown return type it is checked at the call (§ 6.4, technical note). **`output`** returns the object at an output (§ 4.6); **`without`** is removal (§ 4.3; A.2 item 18); **`rename`** renames inputs and outputs alike (§ 4.5; A.2 item 17).
-4. **`&`** is the merge of § 5.5: the function returning both results, `b`'s outputs feeding `a`'s inputs and every remaining input kept, optional ones included; condition 2 requires stated inputs and a return type without a type hole.
+4. **`&`** is the merge of § 5.5: the function returning both results, `b`'s outputs feeding `a`'s inputs and every remaining input kept, optional ones included; condition 2 requires stated inputs and a return type that is specified.
 
 </details>
 
@@ -3009,7 +3024,7 @@ Every message follows `STYLE_GUIDE.md` §9.3 and names the fix.
 | a malformed path or position | `ValueError` or `TypeError`, by the reader's table | § 12.1 |
 | a path that does not exist | `KeyError` listing the paths | § 12.1 |
 | the name of the output at the root given to `[]` | `KeyError` pointing to `output` | §§ 11, 15, 18 |
-| an `InputSpec` source of another class, or a type hole | `TypeError` | § 10 |
+| an `InputSpec` source of another class, or an `OutputSpec` whose type is unspecified | `TypeError` | § 10 |
 | an input name that is not an identifier | `ValueError` | § 10 |
 | a declared input the function does not take, or a group's parts where it takes the group | `TypeError` naming the fix | § 10.3 |
 | the keyword form of `OutputSpec` over a type that is not a base type | `TypeError` naming the wrap | § 11 |
@@ -3018,7 +3033,7 @@ Every message follows `STYLE_GUIDE.md` §9.3 and names the fix.
 | a path or input given to `without` that is not present | `KeyError` | §§ 10, 11, 14 |
 | a merge that breaks a condition | by condition | § 13 |
 | `select` with two paths of one last name | `ValueError` | § 14 |
-| filling a type hole with a type that is not a base type | `TypeError` | § 11.2 |
+| completing an unspecified output type with a type that is not a base type | `TypeError` | § 11.2 |
 | a built `Record` or a `RecordSpec` whose fields are in another order than the declared one | `ValueError` naming both orders | § 9 |
 
 <details>
@@ -3122,7 +3137,7 @@ The items below were found while applying the maintainer's decisions of 2026-10-
 21. **Field order in record conformance and unification.** *Settled 2026-10-19 by the maintainer:* order-sensitive, matching equality. A record type conforms to and unifies with another only when they have the same child names in the same order; a record built in another order is refused, while a raw mapping is laid out in the declared order and then checked, so an admitted record flattens in the declared order (§ 2.1, § 5.9). Today's code compares the names as sets (`RecordSpec._bind_dims_from_spec` and `_bind_dims_from_value`), while `__eq__` and `__hash__` keep order; S2b changes it (T33; C.3).
 22. **A rename that regroups.** The rule of § 5.2 says a rename keeps factors, while a rename that gathers outputs of several factors under one group makes them one grouped sub-joint, whose factor inputs are none for a law, as G1a's done-condition requires. *Reading:* both hold: a rename keeps each factor it does not gather, and the gathered factors become one factor, as IV.1 keeps a grouped sub-joint one factor.
 23. **`BatchSpec`'s own equality.** The element name is not part of a batch's type (§ 2.1, § 6.5), yet `BatchSpec`, the code form of that type, carries the element spec, and O3 has its `==` compare the name, so that static data never holds a name that compares equal without it (§ 18.3). *Reading:* O3 stands: the type of Part I is `BatchSpec`'s name-free canonical form, which conformance, unification, a batch's equality, hashing, fingerprints, and pytrees use; output specs over batches whose elements carry different names are unequal, since they have different outputs (§ 3.5). The alternative, a `BatchSpec.__eq__` that ignores the name, is O3's rejected option.
-24. **What a type hole admits.** A type hole admits only what can fill it: a base type or a batch of raw values. Conformance does not compare a batch's element name, while filling a hole with a batch requires its elements to carry only the default name `element` (§ 11.2, O2). *Reading:* in conformance and unification a hole admits any batch type of base elements; filling then refuses a batch whose elements a maker named.
+24. **What an unspecified output type admits.** An output spec whose type is unspecified admits only what could complete it: a base type or a batch of raw values. Conformance does not compare a batch's element name, while completing the type with a batch requires its elements to carry only the default name `element` (§ 11.2, O2). *Reading:* in conformance and unification an unspecified type admits any batch type of base elements; completing it then refuses a batch whose elements a maker named.
 25. **"No factor inputs" for a kernel.** The decision says that every operation other than merge and rename gives a result with no factor inputs. A kernel that is its own factor has its inputs as factor inputs (§ 5.2, rule 1), and a selection keeps them (I14). *Reading:* such a result has no factor inputs beyond its inputs: none for a law, its inputs for a kernel.
 26. **The step that delivers the rule of § 5.2.** S3 is mechanical, and B.5 rule 4 lets a mechanical step change only names; G4 already rewrites every route of `condition_on` and adds `law.without`, so it takes the rule, with the marginal's product of factors in `operations/_marginal.py` (T32). *Reading:* G4; the maintainer may move it.
 27. **A law's root name and equality.** A law type holds its event type (§ 2.1), so the root name of a law over a base value, like a batch's element name, is stated by its event spec, not its type; § 2.4 does not say whether `Normal("x", 0, 1)` and `Normal("y", 0, 1)` are equal laws. *Reading:* not stated; the text makes no claim either way.
@@ -3137,6 +3152,12 @@ The items below were found while rewriting the motivation of § 2.2 and the voca
 
 31. **What other objects receive from a law.** The earlier motivation of § 2.2 said that another object receives from a law only a sampled value or a child of one, never a property of the law; objects do receive properties of a law, such as its mean. *Reading:* § 2.2 now motivates the produced object by the agreement of paths across a law, samples from it, its mean, its marginal laws, and batches of samples; outputs are still defined from the produced object (§ 3.2), and no rule changed.
 32. **The vocabulary of sampling.** The text now says "a law over `T`" for a law's structure, "a sample" for a value sampled from a law, and "a random variable distributed by the law, taking values of its event type" for a law's or kernel's produced object. Two readings follow, neither changing a rule: the cases of § 3.2, applied to the produced object of a law or kernel, read the type of its values, as a record or a base value; and I8 is named "Samples of a list condition back", with its content unchanged.
+
+The items below were found while removing the terms "type hole", "record of outputs", and, from Part I, "event spec" on 2026-10-20.
+
+33. **The exception to "outputs are not chosen" for batches.** Outputs are a function of the produced object, apart from the name of a base value's single output, which the object that produces the base value states (§ 3.2, consequence 5). A batch of base values has one output at the root whose name is held by its element spec, not its type (§ 6.5). *Reading:* the exception covers that name too, stated by the batch's maker; no rule changed.
+34. **The glossary's entry "type hole".** `design/glossary.md` defines *type hole*, and S0 updates that entry to name `with_term_spec` (B.3). This text no longer uses the term: it states where an output spec's type may be unspecified, how it is completed, and how it behaves in conformance, unification, input reading, and merge (§ 3.5, § 11.2). *Reading:* S0 still updates the entry as before, worded without the term here; whether S0 should also drop the term from the glossary is left to the maintainer.
+35. **"Event spec" in Part I.** Part I no longer defines a law's or kernel's *event spec*; it says the law's output spec, which the generic definition already gives (§ 3.5), and Part II names it the event spec where it introduces `event_spec` (§ 8). The item "a batch type's element spec holds the elements' name" moved from the definition of output specs to § 6.5, and "in the order of its arguments" to § 6.4. No rule changed.
 
 ## B. Implementation plan and sequencing
 
@@ -3238,7 +3259,7 @@ S0 writes every row below in today's words; the steps that deliver the code remo
 | Section | Today | After S0 |
 | --- | --- | --- |
 | II.1 Term specs | the size shorthand is a `RecordSpec` field's alone; "binding by unification" | the shorthand once, for every place an input or the keyword form takes a type; "conforms" for the directional check |
-| II.2 Declarations | the keyword form names any type; `spec`, `components`, `exposes_record`, `with_spec`; "packaging"; "map-like kind"; a whole object's paths start with its name; a function returning a law shown as `OutputSpec(posterior=DistributionSpec(...))`; a law's outputs typed by one sample | §§ 2 and 3 of this design: the produced object, inputs and input specs, outputs and output specs in two forms, the interim whole form until G2, type holes; the definition of outputs; `OutputSpec[]`, `term_spec`, `with_term_spec`, `components` (until R), `in`, `without`, `rename`, `&`; a produced law or kernel has no outputs; the four sources of inputs; `InputSpec[]` with a list of names, `&`, `without`, `rename`; one `OutputSpec.default`; a returned law is positional or wrapped; "completes" for II.2's completion |
+| II.2 Declarations | the keyword form names any type; `spec`, `components`, `exposes_record`, `with_spec`; "packaging"; "map-like kind"; a whole object's paths start with its name; a function returning a law shown as `OutputSpec(posterior=DistributionSpec(...))`; a law's outputs typed by one sample | §§ 2 and 3 of this design: the produced object, inputs and input specs, outputs and output specs in two forms, the interim whole form until G2, output specs whose type is unspecified; the definition of outputs; `OutputSpec[]`, `term_spec`, `with_term_spec`, `components` (until R), `in`, `without`, `rename`, `&`; a produced law or kernel has no outputs; the four sources of inputs; `InputSpec[]` with a list of names, `&`, `without`, `rename`; one `OutputSpec.default`; a returned law is positional or wrapped; "completes" for II.2's completion |
 | II.4 Labels and views | positions are a "selection" | the label `(a, g/b)` of a value picked by several paths; "positions" |
 | II.5 `Batch` | a tuple is one path; `()` is the whole batch; a raw batch keeps a bare element type; a name returns a whole element's batch; `Batch.components` | indexed by its elements' paths; always holds `element_spec`, an output spec whose `term_spec` is the element's type; outputs are columns, none for a batch of laws or kernels; raw defaults; the element name belongs to `element_spec`, not the type, so conformance and unification ignore it; `BatchSpec` compares names while equality, hashing, fingerprints, and pytrees use the name-free spec; `()` and lists of positions raise; `in` tests paths; `t.component(c)` reads the output at the root; no `Batch.components` |
 | II.6 `NamedTree` | a path may be a tuple; `[]` raises on a group; `in` tests fields; a key is a field's path; `without(path)` | § 1.2's definitions, how `[]` reads paths, `in`; `[]` returns groups; paths continue into a held object; a list keeps its paths in the tree's order; `without(*paths)`; `rename`; `&` is shallow |
@@ -3273,7 +3294,7 @@ S0 also gives each relation between types one word, rewording these passages (li
 
 **The glossary.**
 - **S0 adds** base spec, non-base spec, node, group, column, produced term, feeds, merge, conforms, unify, and *unfed* (replacing IV.2's "unmet"); adds *slot* and redefines *component* with this design's meanings of input and output.
-- **S0 redefines** *field* and *path* (§ 1.2), *name* (names of slots, components, fields, levels), *marginal* ("a path or a list of paths"), *view* (`MarginalView`), *type hole* (`with_term_spec`), and *signature* ("a law's components, a kernel's components with `|` and its slots, or a function's parameters").
+- **S0 redefines** *field* and *path* (§ 1.2), *name* (names of slots, components, fields, levels), *marginal* ("a path or a list of paths"), *view* (`MarginalView`), the entry for an output spec whose type is `None` (to say `with_term_spec`), and *signature* ("a law's components, a kernel's components with `|` and its slots, or a function's parameters").
 - **S0 narrows** *key* to the random key and a mapping's keys, and **removes** *packaging*, *key* as a field's path, and *selection* except *selection order* (II.7).
 - **S0 does not add** producer, consumer, exposes, whole declaration, exposed declaration, address, component spec, leaf path, wrap, position, list of paths, merge category, or interim whole form.
 - **S0 keeps** *declaration* and its sentences on `InputSpec` and `OutputSpec`, "event declaration" in *conversion* and *event*, and the occurrence path (V.8).
@@ -3304,7 +3325,7 @@ For `O = OutputSpec(n=T)`, with `T` not a base type:
 2. **Paths:** `n`, and `n/q` for each path `q` of `T`. In a type that holds `O`, such as a law's type, the path `n` gives that type itself, and `n/q` gives the type whose output spec is `O["n/q"]`, built privately, so T10's refusals do not apply.
 3. **Selection:** `O[n]` is `O`, after G3 as before; `O["n/q"]` is the output spec of `T`'s part at `q`; a list of these paths selects from `OutputSpec(RecordSpec(n=T))` (§ 4.4), and a type that holds `O` gives the type holding the selection.
 4. **Removal:** `O.without(n)` raises `ValueError`, since nothing would remain; removing paths `n/q` gives `OutputSpec(n=…)` over `T` without them, so the name stays.
-5. **Record of outputs:** a produced value `v` reads as `{n: v}`, so a merge stores the produced object whole, as the field `n` (T15).
+5. **In a merge:** a produced value `v` is placed in the merged record as the field `n`, so a merge stores the produced object whole (T15).
 6. **Paths and a root name together:** the form has an output at the root and paths below it, which § 3.2 forbids (T16).
 
 ```python
@@ -3370,7 +3391,7 @@ For a law `d` over `{a, g: {b, c}}` whose group `g` is one factor:
 | # | Until G2 | Applies to | From | Why |
 | --- | --- | --- | --- | --- |
 | T12 | The keyword form accepts a type that is not a base type and builds an interim whole form: `OutputSpec(params=RecordSpec(mu=(), sigma=()))` and `OutputSpec(f=FunctionSpec(...))` build, and users and tests can still write them | `OutputSpec(n=T)` for `T` not a base type | — | the G2 families use the form, so refusing it first would break them, and exempting them would be bridging code; G2 refuses it last |
-| T13 | A type hole admits any type: filling it with a type that is not a base type, other than a batch whose element has only the default name (O2), gives an interim whole form instead of raising `TypeError` | `with_term_spec` on a type hole | — | this refusal is the refusal of the form, so it comes with G2 |
+| T13 | An unspecified output type may be completed with any type: completing it with a type that is not a base type, other than a batch whose element has only the default name (O2), gives an interim whole form instead of raising `TypeError` | `with_term_spec` on `OutputSpec(n=None)` | — | this refusal is the refusal of the form, so it comes with G2 |
 | T14 | The G2 families declare their events in an interim whole form through the private event default (`_whole_term_event`, the event reading of `distribution`, `_agreed_event_spec`, `_event_repr_parts`), which keeps today's rule: the keyword form under the default name for a law, function, or batch. A user-built empirical law of laws keeps it too, so `rm.event_spec["G"]` is `rm.event_spec` | the G2 families; the private event default | — | G2 moves each family to a wrap under its constructor's name, then the default goes, so it changes once |
 | T15 | A merge accepts an interim whole form and stores its produced object whole as the field of its name: condition 2 passes it, and so does `O & P` on output specs. `Normal("z", 0.0, 1.0) & gp`, for a Gaussian process `gp`, and `m & Normal("x", 0.0, 1.0)`, for `m` declared `OutputSpec(G=law_spec)`, merge as today (fact 27) | merges of laws, kernels, and output specs | — | it keeps today's merges of the G2 families working |
 | T16 | The guarantee that only a base value has a name attached from outside (§ 3.2, requirement 3), I17, and § 5.7's paths-kept property fail for an interim whole form, and I5 fails at its name, after G3 as before: `m["G"]` is `m`, so `m["G"]["mu"]` raises `KeyError` while `m["G/mu"]` is the view at `mu` | every interim whole form (T5, T7, T8, T11 to T14, T19) | — | today's reading; ends at G2, and at G1a for the grouped sub-joint |
@@ -3572,7 +3593,7 @@ The column typing of a batch's outputs waits for S4, the `condition_on` bug of �
 - `OutputSpec(law_spec).components == {}`, and a function whose output spec wraps a law under `params` has `output_spec["params"] == OutputSpec(law_spec)`;
 - a law `ll` whose event is positional over a law builds, with `ll.event_spec.components == {}`; `ll * Normal("z", 0.0, 1.0)` raises `TypeError` whose message says to wrap the laws it is over under a name; `ll` with them wrapped merges;
 - `Normal("z", 0.0, 1.0) * gp` still merges, as T15 states;
-- the four sources and the shorthand work: `InputSpec(a=())`, `given_spec={"a": ()}`, and `OutputSpec(a=())` build, and `InputSpec(a=3)` raises; `InputSpec(a=NumericArraySpec(())).without("zzz")` raises `KeyError`; a kernel's `given_spec[["a", "b"]]` is an `InputSpec`; an `OutputSpec` source with a non-identifier output name, or with a type hole, raises; an optional input whose parameter has no default raises `ValueError`, for kernels and functions (O9);
+- the four sources and the shorthand work: `InputSpec(a=())`, `given_spec={"a": ()}`, and `OutputSpec(a=())` build, and `InputSpec(a=3)` raises; `InputSpec(a=NumericArraySpec(())).without("zzz")` raises `KeyError`; a kernel's `given_spec[["a", "b"]]` is an `InputSpec`; an `OutputSpec` source with a non-identifier output name, or whose type is unspecified (`OutputSpec(a=None)`), raises; an optional input whose parameter has no default raises `ValueError`, for kernels and functions (O9);
 - `["mu"] in k.given_spec` and `("mu",) in k.given_spec` are `False`, and `k.given_spec.get(["mu"])` is `None`;
 - a nested `RecordSpec` and an `OutputSpec` each declare a kernel's inputs, through `conditional_distribution` and through `ConditionalDistributionSpec(RecordSpec(...), ...)` and `ConditionalDistributionSpec(OutputSpec(...), ...)`; for a law `x` over `{g: {a, b}, c, sigma}` and a function `fn(g, c)`, `conditional_distribution(fn, given_spec=x.event_spec.without("sigma"))` builds a kernel with inputs `g` and `c`;
 - each of § 10's four messages has a test;
@@ -3675,7 +3696,7 @@ A grouped sub-joint's outputs, `{g}`, differ from its factors', `{b, c}`, so it 
 
 #### G2: the remaining families, then the refusal
 
-*Delivers:* each G2 family wraps the values it is over under its constructor's name, so its event is positional over `RecordSpec(<name>=...)`; then the keyword form and the filling of a type hole refuse a type that is not a base type, with a message naming its kind, and the private event default goes: `_whole_term_event`'s rule, the event reading of `distribution`, `_agreed_event_spec`, and `_event_repr_parts` move to `OutputSpec.default` or the families' wraps.
+*Delivers:* each G2 family wraps the values it is over under its constructor's name, so its event is positional over `RecordSpec(<name>=...)`; then the keyword form, and the completion of an unspecified type, refuse a type that is not a base type, with a message naming its kind, and the private event default goes: `_whole_term_event`'s rule, the event reading of `distribution`, `_agreed_event_spec`, and `_event_repr_parts` move to `OutputSpec.default` or the families' wraps.
 *Transition rules:* ends T12 to T17, and with them the interim whole form.
 *Invariants:* I1 for those families' samples; I17 for their forms; the guarantee that only a base value has a name attached from outside.
 *Files:* `_whole_term_event`, `_event_repr_parts` (`distributions/_distribution.py`); `distribution` (`distributions/_from_functions.py`); `_agreed_event_spec` (`distributions/_conditional.py`); `families/_random_functions.py`, `_gaussian.py`, `_resampling.py`; `distributions/_empirical.py`; `inference/_minibatch.py`; `core/_specs.py`; `tests/_interim_form_probe.py`, removed.
@@ -3770,7 +3791,7 @@ The addressing plan ran the full suite and every notebook at `638f56bc` with a p
 | A bootstrap replicate law wraps the batches it is over | `_resampling.py`; User Guide 08 and the tour | G2 |
 | The keyword form refuses a type that is not a base type; the private event default goes | `core/_specs.py` | G2, last |
 
-*Totals.* 1,046 tests in 72 files build an interim whole form, 679 in 46 files once the form-only batches are set aside; the counts overlap. The library has about 31 sites, most through `OutputSpec.default` and type holes. No notebook writes the form explicitly: 6 cells produce one through defaults, and 39 more only through form-only batches. About 22 passages of `design/` state or show it: II.2, III.3, III.7, IV.1, V.6, VI.8, VII.2, VII.5, VII.6, and the glossary.
+*Totals.* 1,046 tests in 72 files build an interim whole form, 679 in 46 files once the form-only batches are set aside; the counts overlap. The library has about 31 sites, most through `OutputSpec.default` and unspecified output types completed later. No notebook writes the form explicitly: 6 cells produce one through defaults, and 39 more only through form-only batches. About 22 passages of `design/` state or show it: II.2, III.3, III.7, IV.1, V.6, VI.8, VII.2, VII.5, VII.6, and the glossary.
 
 *Prerequisites.* Today a `FunctionSpec` cannot be positional, and a `BatchSpec` only over records or laws; accepting them needs § 3.2's uniform cases (G1b), and a batch of arrays needs every batch to hold an element spec (S4).
 
@@ -3855,7 +3876,7 @@ For a law `d` over `{a, g: {b, c}}` and a sample `x = sample(d)`:
 | a bare `output_spec` other than a record | keyword form under the callable's name | read by `OutputSpec.default`: a law has no outputs, a function has its outputs, a raw batch is named by the callable | G1b |
 | a lifted law-returning function | names its event whole | wraps its results: a law over `{f: law}` | G1b |
 | `OutputSpec(FunctionSpec(...))`, a positional batch of base values | `TypeError` | accepted | G1b |
-| the keyword form over a type that is not a base type | accepted, an interim whole form | `TypeError`; so is filling a type hole with one | G2 |
+| the keyword form over a type that is not a base type | accepted, an interim whole form | `TypeError`; so is completing an unspecified type with one | G2 |
 | random measures, random functions, bootstrap and empirical laws of laws, minibatched targets | name their event whole | wrap the values they are over under the constructor's name | G2 |
 | the root name in `[]` | `Normal("x", 0.0, 1.0)["x"]` is the law | raises; `t.component(c)` reads it | G3 |
 | paths at a held field | stop; a second `[]` is needed | continue into the held object | G3 |
@@ -3959,7 +3980,7 @@ For each silent row, the PR body and the CHANGELOG entry show the same call befo
 | A function returning a law has no outputs, and one returning a function has its outputs; code receiving it by name needs a wrap | no | G1b |
 | A bare law, function, or batch type given as `output_spec` is positional | yes | G1b |
 | The G2 families wrap the values they are over under their constructor's name | yes | G2 |
-| `OutputSpec(name=T)` raises for `T` not a base type, and so does filling a type hole with one | no | G2 |
+| `OutputSpec(name=T)` raises for `T` not a base type, and so does completing an unspecified type with one | no | G2 |
 | `[]` and `OutputSpec[]` no longer accept the root name: `Normal("x", 0.0, 1.0)["x"]` raises; a view at a held field is positional | no | G3 |
 | `"x" in Normal("x", 0.0, 1.0)` becomes false | yes | G3 |
 | `condition_on` returns a law whose event is a positional record on every route | yes, on routes giving the keyword form today | G4 |
@@ -4009,7 +4030,7 @@ It replaces the original plan's `element_declaration` and the proposal's `elemen
 | R5 | G1 is split: G1b edits `functions/_broadcast.py`, where E5 works, so depends on E5; G1a depends only on S2b and S4 |
 | R6 | S1 makes `select` flatten and adds `in` on laws; G3 makes `[]` stop reading the root name, with the accessor, while `OutputSpec[]`, new in S2b, reads it until then |
 | O1 | *Lapsed:* `OutputSpec[]` never wraps, and no view wraps |
-| O2 | A function names what has no name of its own: a base value, and a batch whose element has only the default name `element`; a maker's name and a law's own names are kept; a type hole filled with a raw batch names its element, and with any other type that is not a base type raises |
+| O2 | A function names what has no name of its own: a base value, and a batch whose element has only the default name `element`; a maker's name and a law's own names are kept; an unspecified output type completed with a raw batch names its elements, and completed with any other type that is not a base type raises |
 | O3 | `BatchSpec` stores a base element's name and compares it; a batch's equality, hashing, fingerprints, and every pytree flatten use a name-free spec. Rejected: ignoring it in `BatchSpec`'s equality (leaks names through static data, unsafe cache keys); storing it on the batch beside the label (no place in a positional output spec without a flag) |
 | O4 | Before the workshop, bodies run by an executor receive raw values only; once #506 lets a body ask for tracked terms, the requester restores names (T31) |
 | O5 | *Lapsed:* no view wraps at any held field |
@@ -4063,7 +4084,7 @@ Where they disagreed, the addressing plan won, then the reply, then the body (de
 | --- | --- | --- |
 | status of grammar B | adopted, B or B′ open | B (2026-10-17) |
 | who builds a wrapped output's record | open, leaning to the body | the body returns the record (§ 6.4) |
-| a type hole filled with a type that is not a base type | open, leaning to raise | raises, in G2; a raw batch is named by the hole (O2) |
+| an unspecified output type completed with a type that is not a base type | open, leaning to raise | raises, in G2; a raw batch takes the output's name (O2) |
 | a view at a held field | wrap, or narrow #571's event rule | neither: positional from G3 (§ 6.2) |
 | the accessor | `t.component(name)`, a placeholder | `t.output(c)`, `t.component(c)` until R (§ 4.6) |
 | `rename`, `MarginalView` | recommended | S3 |
@@ -4147,7 +4168,7 @@ The decision "a function with a wrapped output returns the record itself; ProbPi
 21. **`InputSpec &` takes any of the four sources** (Q3(ii)).
 22. **Deep merge on every kind** (Q4(a), option 3). A factor would produce only some nodes of an output, which IV.1 forbids.
 23. **One pair, `input_spec` and `output_spec`, on every kind.** It renames `event_spec` on 885 lines and `given_spec` on 210 lines of `probpipe/`, and drops III.9's distinction between conditioning and application.
-24. **Merging functions with type holes, checked at the first call.** The merged output spec would be a record of pending children, which `RecordSpec` cannot hold (fact 28).
+24. **Merging functions whose output types are unspecified, checked at the first call.** The merged output spec would be a record of pending children, which `RecordSpec` cannot hold (fact 28).
 25. **A merge that sorts flattened factors topologically**, so a kernel can be added between two merged operands (fact 29). It changes IV.2's conditional-first rule; `deferred.md` records it.
 26. **`element_output_spec` or `BatchSpec.output_spec`** for the elements' output spec. The first is long beside `event_spec`; the second reads as the batch's own output spec.
 
@@ -4175,7 +4196,8 @@ The decision "a function with a wrapped output returns the record itself; ProbPi
 | 2026-10-19 | The plan is reorganized into the maintainer's outline (`8af5bd11`); the maintainer finds it hard to assess, and this rewrite begins from an approved outline, style sample, and figures (`6b738dbb`, `605179b4`), with the design held fixed |
 | 2026-10-19 | This rewrite replaces the reorganized text of `declarations-and-addressing-io.md` at `8af5bd11`, with the design unchanged, and keeps the file name until N32 decides it; `declarations-and-addressing.md` and the tag `plans-before-io` stay for recovery |
 | 2026-10-19 | Clarity fixes after the maintainer's first review: the produced type, outputs at one level only, § 3.4's worked comparison of outputs and paths, figures of batches of functions and of kernels, B.0's implementation principle, and a sweep of constructions that read as identities; the design is unchanged, and A.2 item 19 records the one question raised |
-| 2026-10-19 | Revised after a colleague's review, with the maintainer's decisions: only merge and rename keep factors (§ 5.2; G4, T32); functions feed on their own justification (§ 5.5); a batch's element name belongs to its element spec, not its type (§ 2.1, § 6.5); unification "where it exists" and a true meet as an open question (A.1); a type hole admits only what can fill it (§ 3.5); the formal model's wider coverage (D.1); field order in record conformance left open (A.2 item 21); A.2 items 21 to 27 |
+| 2026-10-19 | Revised after a colleague's review, with the maintainer's decisions: only merge and rename keep factors (§ 5.2; G4, T32); functions feed on their own justification (§ 5.5); a batch's element name belongs to its element spec, not its type (§ 2.1, § 6.5); unification "where it exists" and a true meet as an open question (A.1); an unspecified output type admits only what could complete it (§ 3.5); the formal model's wider coverage (D.1); field order in record conformance left open (A.2 item 21); A.2 items 21 to 27 |
 | 2026-10-19 | The maintainer settles A.2 item 21: record conformance and unification are order-sensitive, matching equality (§ 2.1); then the ordering principle of § 5.9, under which a raw mapping is laid out in the declared order and a built record in another order is refused; S2b delivers both, with T33 until then |
 | 2026-10-20 | The definition of outputs rewritten after the maintainer's review: motivated by example, three requirements, and one definition by the kind of the produced object, absorbing the former § 3.3's rule, with "output value" for "value at an output" and "offers" dropped; § 3.3 now holds the examples and signatures. B.0 adds that docstrings are written for users, and Part II's docstrings are rewritten so, with each contract in a technical note beside its block; the design is unchanged, and A.2 item 28 records the one question raised |
 | 2026-10-20 | The motivation of the produced object rewritten (§ 2.2): a path must identify one quantity in a law, samples from it, its mean, its marginal laws, and batches of samples, so all take their paths from the event type; § 4.1 states that selecting a path from a law gives the marginal law, a view; the text says "a law over `T`", "a sample", and, for a law's produced object, a random variable; the figures are regenerated; the design is unchanged, and A.2 items 31 and 32 record the readings |
+| 2026-10-20 | The terms "type hole" and "record of outputs" removed, with their rules stated directly (§ 3.5, § 5.3, § 5.5, § 11.2); "event spec" defined in Part II only (§ 8); forward uses of the output at the root removed from §§ 1 and 2; kind-specific items moved from § 3.5's definition box to § 6; the design is unchanged, and A.2 items 33 to 35 record the readings |
