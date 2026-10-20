@@ -26,6 +26,7 @@ from probpipe import (
     Distribution,
     EmpiricalDistribution,
     Exponential,
+    Function,
     Gamma,
     KDEDistribution,
     MultivariateNormal,
@@ -37,6 +38,7 @@ from probpipe import (
     OutputSpec,
     Poisson,
     ResolutionError,
+    config,
     convert,
     converter_registry,
     function,
@@ -1025,6 +1027,41 @@ class TestConvertDelegation:
 # ---------------------------------------------------------------------------
 # Provenance and edge cases
 # ---------------------------------------------------------------------------
+
+
+class TestTheDrawCountOfAConversion:
+    """A converter that draws takes ``num_samples`` draws: its option, else the converting call's control."""
+
+    def test_the_default_follows_the_session_setting(self):
+        config.sampling.num_samples = 37
+        config.sampling.max_evaluations = 3
+        source = Normal("x", 0.0, 1.0)
+        assert converter_registry.convert(source, EmpiricalDistribution).num_atoms == 37
+        converted = convert(source, EmpiricalDistribution)
+        assert converted.num_atoms == 37
+        assert converted.provenance.metadata["num_samples"] == 37
+
+    def test_the_convert_calls_num_samples_sets_the_draws_unless_the_option_does(self):
+        source = Normal("x", 0.0, 1.0)
+        converted = convert.using(num_samples=21)(source, EmpiricalDistribution)
+        assert converted.num_atoms == 21
+        assert converted.provenance.metadata["num_samples"] == 21
+        optioned = convert.using(num_samples=21, method_options={"num_samples": 12})(
+            source, EmpiricalDistribution
+        )
+        assert optioned.num_atoms == 12
+        assert optioned.provenance.metadata["num_samples"] == 12
+
+    def test_a_planned_conversion_takes_the_converting_calls_num_samples(self):
+        def atoms(d: EmpiricalDistribution) -> int:
+            return d.num_atoms
+
+        counted = Function(atoms, label="atoms", dispatch="sequential")
+        assert int(counted.using(num_samples=19)(Normal("x", 0.0, 1.0)).raw) == 19
+
+    def test_an_exact_conversion_records_no_num_samples(self):
+        converted = convert(tfd.Normal(0.0, 1.0), Normal)
+        assert "num_samples" not in converted.provenance.metadata
 
 
 class TestConversionProvenance:

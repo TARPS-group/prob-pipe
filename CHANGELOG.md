@@ -963,7 +963,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `UnmanagedConcurrentWorkflowEntryError`, `ReplayCompatibilityError`, and
   `ReplayUnsupportedCallableError`.
 
-  A top-level workflow snapshots `provenance_config.mode` on entry. Nested
+  A top-level workflow snapshots `config.provenance.mode` on entry. Nested
   scopes and managed workers inherit that value, and configuration changes
   made during execution apply only to the next top-level workflow.
 
@@ -1080,7 +1080,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`Function` controls now live outside user call kwargs.**
   `@function(...)` configures definition-time controls, and
   `workflow.using(...)(...)` is the call-time override API for
-  `seed`, `n_broadcast_samples`, and `include_inputs`. Wrapped
+  `seed`, `max_evaluations`, and `include_inputs`. Wrapped
   functions may now declare and receive those names as ordinary
   parameters. Passing those names as call kwargs no longer configures
   ProbPipe controls; use `workflow.using(...)(...)` instead.
@@ -1271,7 +1271,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     invariant.
 
 - **Prefect orchestration is now opt-in** (#182). The shipped global
-  default for `prefect_config.workflow_kind` is `WorkflowKind.OFF`
+  default for `config.prefect.workflow_kind` is `WorkflowKind.OFF`
   instead of the prior `WorkflowKind.DEFAULT` (which auto-promoted to
   `TASK` whenever Prefect was importable). The old behaviour silently
   enabled Prefect for any environment with Prefect on `sys.path` —
@@ -1283,7 +1283,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   ```python
   import probpipe
-  probpipe.prefect_config.workflow_kind = probpipe.WorkflowKind.TASK
+  probpipe.config.prefect.workflow_kind = probpipe.WorkflowKind.TASK
   ```
 
   Or via the new `PROBPIPE_WORKFLOW_KIND` environment variable
@@ -1523,6 +1523,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``BroadcastDistribution``, ``ProbabilisticModel``, ``SimpleModel``,
   ``SimpleGenerativeModel``, ``PyMCModel``, ``StanModel``). No backward
   alias.
+- **`n_broadcast_samples` is split into `max_evaluations` and `num_samples`.**
+  `max_evaluations` is the maximum number of times a call lifted over laws
+  evaluates its function, 256 by default. The lift enumerates the empirical
+  arguments whose combinations of atoms number at most `max_evaluations` and
+  samples the others within that count. `num_samples` is the number of Monte
+  Carlo draws of a summary, such as `mean` or `quantile`, and of a converter
+  that draws, 1024 by default, so the default Monte Carlo estimates change. `expectation(d, f)` evaluates `f` at most `num_samples`
+  times, and `convert.using(num_samples=n)` and an argument's conversion take
+  the call's `num_samples` unless the converter's `num_samples` option is given.
+  `probpipe.config.sampling` holds both defaults and replaces
+  `set_default_n_broadcast_samples` and `Function.DEFAULT_N_BROADCAST_SAMPLES`,
+  and the environment variables `PROBPIPE_SAMPLING_MAX_EVALUATIONS` and
+  `PROBPIPE_SAMPLING_NUM_SAMPLES` set their initial values. A call's provenance
+  records `num_samples` whenever its routes drew Monte Carlo samples, including
+  the variance of `standard_deviation`, and a lift's provenance records
+  `max_evaluations` where it recorded `n_samples` or `k`. The old name raises
+  `TypeError` as an unknown control. A replay recipe records its plan under
+  `probpipe.stochastic_plan/v2`, so `replay_run` refuses a result recorded
+  earlier and asks for it to be recorded again. Migrate each use as follows:
+  - a lifted function or `pushforward`: `f.using(n_broadcast_samples=n)` becomes
+    `f.using(max_evaluations=n)`;
+  - a summary, `expectation` included: `mean.using(n_broadcast_samples=n)`
+    becomes `mean.using(num_samples=n)`;
+  - the session's default: `set_default_n_broadcast_samples(n)` becomes
+    `probpipe.config.sampling.max_evaluations = n` for lifts and
+    `probpipe.config.sampling.num_samples = n` for summaries.
+- **The settings objects are sections of `probpipe.config`.** `config` holds
+  four sections, which keep their classes, checks, and environment variables,
+  and `config.reset()` resets all four. The top-level names
+  `notation_config`, `provenance_config`, and `prefect_config` are removed,
+  with no alias. Migrate each as follows:
+  - `probpipe.notation_config` becomes `probpipe.config.notation`;
+  - `probpipe.provenance_config` becomes `probpipe.config.provenance`;
+  - `probpipe.prefect_config` becomes `probpipe.config.prefect`.
+
+  A `using` block sets temporary values, for one section as
+  `with probpipe.config.sampling.using(num_samples=4096):` and for several as
+  `with probpipe.config.using(sampling={"num_samples": 4096}, notation={"max_depth": 12}):`.
+  The previous values apply again when the block exits, an error included, and
+  blocks nest. A view's own control, which `f.using(...)` sets, wins over a
+  block, which wins over the session's value. A block applies to the work that a call
+  inside it dispatches to worker threads or Prefect workers, and to no other
+  thread. An unknown section or setting raises `TypeError` naming the known
+  ones, and a value is checked as an assignment checks it. Blocks close in the
+  reverse order of opening. A block that a generator holds open can break that
+  order in two ways, and each raises `RuntimeError`: a block closed while a call
+  opened inside it still runs keeps applying until the call ends, and a call or
+  a block that ends while a block opened inside it is still open closes that
+  block with it. Either way no closed block applies afterwards.
 
 ### Added
 
@@ -1568,8 +1617,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `2.0` and `√2` without mapping `sqrt` over the fields of `variance`. A random
   function's is its pointwise standard deviation function, and the result is
   labeled `√𝕍[(mu, tau) ~ d]`. It is defined as `sqrt(variance(d))`, so it takes
-  the routes of `variance`, and `exact_only` and `n_broadcast_samples` set on it
-  pass to `variance`.
+  the routes of `variance`, and `exact_only`, `max_evaluations`, and
+  `num_samples` set on it pass to `variance`.
 - **A derived operation's `method` error names the operation that has the
   route.** `standard_deviation.using(method="monte_carlo")` raises
   `ResolutionError` saying that `standard_deviation` does not pass `method` on
@@ -1603,11 +1652,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `exact_only=True`, the error names the components that have an exact
   summary and the calls on their views that compute it. `cov` keeps the
   Monte Carlo fallback for a dependent joint.
-- **`notation_config.max_depth` sets how many nested levels a label or a
+- **`config.notation.max_depth` sets how many nested levels a label or a
   notation shows.** A label derived from other terms, such as
   `E[f(beta ~ model; y)]`, and the notation of a law nest one level for each
   value or law they are computed from. A rendering shows at most
-  `notation_config.max_depth` levels, 8 by default or the value of the
+  `config.notation.max_depth` levels, 8 by default or the value of the
   environment variable `PROBPIPE_NOTATION_MAX_DEPTH`, and at most 64, the
   number of levels a stored expression keeps. A part nested deeper
   shows as its label, the name of a law or a function, or as `…` for a value,
@@ -2239,8 +2288,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uniform and non-uniform weights so the estimator is continuous in the
   weights.
 
-- **`ProvenanceMode` enum and `provenance_config` singleton for lineage-tracking
-  control.** Three modes are available: `FULL` retains live references to every
+- **`ProvenanceMode` enum and the `config.provenance` section for
+  lineage-tracking control.** Three modes are available: `FULL` retains live references to every
   parent distribution (good for interactive debugging); `LIGHTWEIGHT` (the new
   default) stores only `ParentInfo` descriptors — type name, distribution label,
   and the parent's own provenance chain — so parent data arrays are free to be
@@ -2249,7 +2298,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```python
   import probpipe
   from probpipe import ProvenanceMode
-  probpipe.provenance_config.mode = ProvenanceMode.FULL  # for debugging
+  probpipe.config.provenance.mode = ProvenanceMode.FULL  # for debugging
   ```
 
 - **`ParentInfo` descriptor** (new public export).  A frozen dataclass carrying
@@ -2270,7 +2319,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   future cross-run `cache_key_fn` can fail closed on weak inputs.
 
 - **`Provenance.create()` factory classmethod.**  Centralises mode-checking:
-  reads `provenance_config.mode`, wraps each parent in a `ParentInfo`, and
+  reads `config.provenance.mode`, wraps each parent in a `ParentInfo`, and
   returns `None` in OFF mode.  All ~15 provenance assembly sites in the
   codebase now route through this single entry point, so mode behavior is
   uniform everywhere.
@@ -3211,7 +3260,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ancestor.obj                                 # None — parent may be GC'd
 
   # To restore live-object access, opt in to FULL mode
-  probpipe.provenance_config.mode = ProvenanceMode.FULL
+  probpipe.config.provenance.mode = ProvenanceMode.FULL
   ancestor = provenance_ancestors(result)[0]
   ancestor.obj                                 # live Distribution
   ancestor.obj.sample(key, (10,))              # works
@@ -3534,6 +3583,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A nested numeric sweep checks once whether its function traces with JAX and
   shares that check across its cells. Each cell keeps its own check when its
   swept values must stay fixed or when the sweep is over stored objects.
+- **`apply` and `check` inside a call use their own `num_samples`.** The
+  routes that `f.apply(...)` runs, or that `f.check(...)` probes, inside
+  another call read the `num_samples` that `f`'s own controls, a
+  `config.using` block, or the session give, as `f(...)` does, so a converter
+  that draws takes that count. They read the enclosing call's count before.
 
 ### Removed (breaking)
 
@@ -3587,7 +3641,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   about ArviZ. Google Colab preinstalls PyMC 5, so every notebook's Colab
   install cell, and the minimal Colab command of the installation page, also
   installs `pymc>=6.2`, and pip no longer reports a dependency conflict.
-- **A derived operation passes `exact_only` and `n_broadcast_samples` to the
+- **A derived operation passes `exact_only` and its counts to the
   functions its identity calls.** `prob.using(exact_only=True)(Normal("x",
   0.0, 2.0), 0.0)` used to raise `ResolutionError` and now returns the exact
   density, because the `log_prob` that `prob` calls selects only exact routes.
@@ -3597,11 +3651,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when a call inside it has only an approximate route, and when it is declared
   without an `identity_check`, which the message names. The conversion of an
   argument inside the identity follows its parameter's `conversions` control,
-  as in a direct call. A derived operation's `n_broadcast_samples` used to be
-  dropped at its identity's calls, which drew their own default, and now sets
-  their draws when the derived call sets it, unless the identity sets its own
-  on the call. The other controls stay each call's own. A composite identity,
-  such as `expectation`'s, runs each of its steps under the same two controls.
+  as in a direct call. A derived operation's `max_evaluations` and
+  `num_samples` used to be dropped at its identity's calls, which drew their
+  own default, and now set their evaluations and draws when the derived call
+  sets them, unless the identity sets its own on the call. The other controls
+  stay each call's own. A composite identity, such as `expectation`'s, runs each
+  of its steps under the same controls.
   A call under `exact_only` on an operation without an exact route says so,
   where it said that no route is registered.
 - **A SciPy distribution with a location or scale its family does not hold
@@ -3838,7 +3893,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   produced ones where the declaration leaves them unset, a declared symbolic
   dimension binds to the produced size, and a record unifies field by field.
 - **An exact lift over an empirical law runs in one `vmap`.** A function lifted
-  over an empirical law with at most `n_broadcast_samples` atoms is evaluated at
+  over an empirical law with at most `max_evaluations` atoms is evaluated at
   every combination of atoms, and these evaluations ran in a Python loop even
   when the call traces, so a body that runs `jax.lax.scan` was traced again for
   each atom. A 22-step population trajectory over a 2,000-atom posterior took

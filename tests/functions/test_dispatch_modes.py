@@ -29,7 +29,7 @@ class TestDispatchModes:
         for dispatch in ("jax", "sequential", "thread"):
             wrapped = Function(
                 _affine,
-                n_broadcast_samples=8,
+                max_evaluations=8,
                 dispatch=dispatch,
                 label="affine",
                 output_spec=OutputSpec(affine=None),
@@ -41,7 +41,7 @@ class TestDispatchModes:
         np.testing.assert_allclose(results["thread"], results["sequential"], rtol=1e-6)
 
     def test_auto_runs_a_body_that_does_not_trace(self):
-        @function(n_broadcast_samples=6, dispatch="auto", output_spec=OutputSpec(untraceable=None))
+        @function(max_evaluations=6, dispatch="auto", output_spec=OutputSpec(untraceable=None))
         def untraceable(z):
             return jnp.asarray(float(z) ** 2)
 
@@ -55,7 +55,7 @@ class TestDispatchModes:
         with workflow_run(seed=5):
             auto = Function(
                 _affine,
-                n_broadcast_samples=8,
+                max_evaluations=8,
                 dispatch="auto",
                 label="affine",
                 output_spec=OutputSpec(affine=None),
@@ -63,7 +63,7 @@ class TestDispatchModes:
         with workflow_run(seed=5):
             jax_mode = Function(
                 _affine,
-                n_broadcast_samples=8,
+                max_evaluations=8,
                 dispatch="jax",
                 label="affine",
                 output_spec=OutputSpec(affine=None),
@@ -74,14 +74,14 @@ class TestDispatchModes:
     def test_jax_maps_an_enumeration_as_sequential_dispatch_evaluates_it(self):
         mapped = Function(
             _affine,
-            n_broadcast_samples=64,
+            max_evaluations=64,
             dispatch="jax",
             label="affine",
             output_spec=OutputSpec(affine=None),
         )
         sequential = Function(
             _affine,
-            n_broadcast_samples=64,
+            max_evaluations=64,
             dispatch="sequential",
             label="affine",
             output_spec=OutputSpec(affine=None),
@@ -95,7 +95,7 @@ class TestDispatchModes:
         )
 
     def test_an_unsupported_mode_is_refused_before_sampling(self):
-        @function(n_broadcast_samples=64, dispatch="jax")
+        @function(max_evaluations=64, dispatch="jax")
         def untraceable(z):
             return jnp.asarray(float(z) ** 2)
 
@@ -125,7 +125,7 @@ class TestFailures:
 
         wrapped = Function(
             diverge,
-            n_broadcast_samples=6,
+            max_evaluations=6,
             dispatch=dispatch,
             label="diverge",
         )

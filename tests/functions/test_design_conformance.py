@@ -16,6 +16,7 @@ import pytest
 
 import probpipe.functions as functions
 import probpipe.values as values
+from probpipe.core import config as _config
 from probpipe.functions import (
     _call,
     _context,
@@ -52,7 +53,8 @@ _SECTIONS = (
     "V.12",
 )
 
-#: The modules a declared name is looked up in, first match winning.
+#: The modules a declared name is looked up in, first match winning. The
+#: session's defaults of the controls are settings of the core configuration.
 _MODULES = (
     _function_base,
     _function,
@@ -62,6 +64,7 @@ _MODULES = (
     _context,
     _replay,
     _reparameterization,
+    _config,
 )
 
 #: Names the code blocks define as worked examples rather than as declarations.

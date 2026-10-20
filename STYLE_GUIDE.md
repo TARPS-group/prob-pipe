@@ -168,13 +168,14 @@ Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
 
 `Function` keeps ProbPipe controls separate from wrapped-function
 kwargs. Use `@function(...)` for definition-time controls
-such as `dispatch` and `n_broadcast_samples`, and use
+such as `dispatch` and `max_evaluations`, and use
 `workflow.using(...)` for a copy with revised controls, such as
-`n_broadcast_samples` and `include_inputs`, which every call of the copy reads.
+`max_evaluations`, `num_samples`, and `include_inputs`, which every call of
+the copy reads.
 
 Ordinary workflow calls should treat keyword arguments as user-function
 inputs. Wrapped functions may use names such as `seed`,
-`n_broadcast_samples`, and `include_inputs` when those names are part of
+`num_samples`, and `include_inputs` when those names are part of
 their own domain API.
 
 `seed` is not a `Function` or `using` control. Put reproducible lifted
@@ -944,3 +945,61 @@ judge.
    tier, a wave, or a stage letter.
 10. **Keep PR and issue text self-contained.** Motivate each change from the
     repository's code, merged PRs, `design/`, and open issues.
+11. **Give every sentence content.** Each sentence states a definition, a
+    fact, a rule, or a reason. A sentence that only announces, summarizes, or
+    points to what follows or precedes is cut, and so is a fragment: "Three
+    requirements decide which.", "Here is how it works.", "This matters
+    because", "In short". Write the content in its place.
+12. **Prefer precision to brevity.** Two clear sentences are better than one
+    compressed sentence that can be misread. A colon or an appositive never
+    stands for "has", "holds", or "is described by", since "a law type: its
+    event type" reads as an identity. An informal verb never stands for a
+    defined notion, as "a value nests" or "offers" would, and a relative word
+    names its reference, so "named from outside" says outside what.
+13. **Make definitions useful.** A definition says what a concept is and what
+    it is for. A true statement that leaves both open, such as "outputs are
+    fixed by the produced object", defines nothing. Define a concept from
+    structure that every case has, and state what holds only in some cases as
+    a consequence: a law's paths come from its event type, because not every
+    law can be sampled, and indexing commutes with sampling for each law that
+    can.
+
+### 10.1 Explanatory documents
+
+An explanatory document teaches a design or a concept: a section of `design/`,
+a guide page of the documentation, or a plan. It reads like a textbook, in
+which each idea is introduced because an earlier one needs it. Docstrings
+state contracts instead, as `CONTRACTS.md` directive 2 requires.
+
+1. **Present each concept in three layers.** First the motivation: what the
+   concept is for and the intuition behind it. Then the general definition.
+   Then the precise statement, case by case, such as one rule for each kind of
+   object.
+2. **Order from general to specific.** No term, symbol, or code name is used
+   before it is defined. A pointer to a later section is allowed, but a term
+   that section defines is not used before it.
+3. **Separate definitions from consequences.** Each definition stands in its
+   own definition box, and its consequences follow it and name the
+   definitions they follow from. Several short properties form one numbered
+   list in one box, never a run of one-sentence boxes.
+4. **Introduce a term only when the text needs it.** A term the text can do
+   without is cut.
+5. **Describe the concept before the code.** The conceptual model is stated
+   without code names. Each code object is then introduced by its API, and its
+   docstring addresses a user in the words of the public API, never in the
+   document's internal vocabulary.
+6. **Give small standalone examples.** Each example builds what it uses,
+   follows the idea it illustrates, and uses generic names, such as `a`, `x`,
+   `mu`, and `data`. A document never defines a set of examples up front for
+   the reader to remember.
+7. **Keep special cases out of the main line.** A precise recursive or
+   case-by-case statement, and each special case, goes in a collapsible
+   technical note after the plain statement.
+8. **Keep the body to the target design.** History, comparisons with the
+   current code, sequencing, and rejected alternatives go in appendices. An
+   ambiguity found while writing goes in an appendix list, with the reading
+   the text adopts.
+9. **Name each section by its content.** "How an output of one object
+   supplies an input of another" informs a reader; "Feeds" does not.
+10. **Draw diagrams in one visual language.** One legend states the
+    conventions, and every diagram of the document follows them.

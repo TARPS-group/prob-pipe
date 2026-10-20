@@ -16,13 +16,16 @@ import pytest
 
 from probpipe import (
     Distribution,
+    EmpiricalDistribution,
     Function,
     NumericArraySpec,
     OutputSpec,
     ResolutionError,
     SupportsMean,
     WorkflowKind,
+    config,
     function,
+    mean,
     workflow_run,
 )
 from probpipe.core._dispatch import BinaryDispatchMethod, Feasibility
@@ -32,7 +35,8 @@ from ._design_helpers import error_of, standard_normal
 
 #: The controls the framework defines, each with its default.
 _FRAMEWORK_CONTROLS = {
-    "n_broadcast_samples": Function.DEFAULT_N_BROADCAST_SAMPLES,
+    "max_evaluations": config.sampling.max_evaluations,
+    "num_samples": config.sampling.num_samples,
     "include_inputs": False,
     "method": None,
     "exact_only": False,
@@ -50,7 +54,7 @@ def _identity(x):
 
 
 class TestTwoNamespaces:
-    @pytest.mark.parametrize("name", ["n_broadcast_samples", "raw", "method", "seed", "key"])
+    @pytest.mark.parametrize("name", ["max_evaluations", "raw", "method", "seed", "key"])
     def test_a_call_keyword_binds_to_the_authored_signature(self, name):
         def body(x, **kwargs):
             return jnp.asarray(float(kwargs[name]))
@@ -63,16 +67,16 @@ class TestTwoNamespaces:
         assert float(result.raw) == 3.0
 
     def test_a_call_keyword_named_like_a_control_does_not_set_it(self):
-        def body(x, n_broadcast_samples=None, raw=None):
+        def body(x, max_evaluations=None, raw=None):
             return x
 
         wrapped = Function(
             body, dispatch="sequential", label="body", output_spec=OutputSpec(body=None)
         )
         with workflow_run(seed=0):
-            lifted = wrapped(standard_normal(), n_broadcast_samples=3, raw=True)
+            lifted = wrapped(standard_normal(), max_evaluations=3, raw=True)
 
-        assert lifted.num_atoms == Function.DEFAULT_N_BROADCAST_SAMPLES
+        assert lifted.num_atoms == config.sampling.max_evaluations
         assert lifted.provenance is not None
 
     @pytest.mark.parametrize("name", ["name", "output_label", "output_spec", "input_spec"])
@@ -114,27 +118,27 @@ class TestResolution:
             assert options[name] == default, name
 
     def test_the_decorator_overrides_the_framework_default(self):
-        @function(n_broadcast_samples=7)
+        @function(max_evaluations=7)
         def identity(x):
             return x
 
-        assert identity.options["n_broadcast_samples"] == 7
+        assert identity.options["max_evaluations"] == 7
 
     def test_a_view_overrides_the_decorator_and_leaves_the_original_unchanged(self):
-        @function(n_broadcast_samples=7)
+        @function(max_evaluations=7)
         def identity(x):
             return x
 
-        view = identity.using(n_broadcast_samples=11)
+        view = identity.using(max_evaluations=11)
 
-        assert view.options["n_broadcast_samples"] == 11
-        assert identity.options["n_broadcast_samples"] == 7
+        assert view.options["max_evaluations"] == 11
+        assert identity.options["max_evaluations"] == 7
         assert view.label == identity.label
         assert view.spec is identity.spec
 
-    def test_the_resolved_sample_count_governs_the_lift(self):
+    def test_the_resolved_max_evaluations_governs_the_lift(self):
         @function(
-            n_broadcast_samples=7,
+            max_evaluations=7,
             dispatch="sequential",
             output_spec=OutputSpec(identity=None),
         )
@@ -142,7 +146,7 @@ class TestResolution:
             return x
 
         with workflow_run(seed=0):
-            result = identity.using(n_broadcast_samples=9)(standard_normal())
+            result = identity.using(max_evaluations=9)(standard_normal())
 
         assert result.num_atoms == 9
 
@@ -152,28 +156,28 @@ class TestResolution:
             label="identity",
         )
         view = wrapped.using(raw=True)
-        monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 17)
+        monkeypatch.setattr(config.sampling, "max_evaluations", 17)
 
-        assert wrapped.options["n_broadcast_samples"] == 17
-        assert view.options["n_broadcast_samples"] == 17
+        assert wrapped.options["max_evaluations"] == 17
+        assert view.options["max_evaluations"] == 17
 
     def test_a_set_control_keeps_its_value_when_the_default_changes(self, monkeypatch):
         wrapped = Function(
             _identity,
-            n_broadcast_samples=7,
+            max_evaluations=7,
             label="identity",
         )
-        monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 17)
+        monkeypatch.setattr(config.sampling, "max_evaluations", 17)
 
-        assert wrapped.options["n_broadcast_samples"] == 7
-        assert wrapped.using(raw=True).options["n_broadcast_samples"] == 7
+        assert wrapped.options["max_evaluations"] == 7
+        assert wrapped.using(raw=True).options["max_evaluations"] == 7
 
     def test_the_default_read_at_call_time_governs_the_lift(self, monkeypatch):
         @function(dispatch="sequential", output_spec=OutputSpec(identity=None))
         def identity(x):
             return x
 
-        monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 6)
+        monkeypatch.setattr(config.sampling, "max_evaluations", 6)
         with workflow_run(seed=0):
             result = identity(standard_normal())
 
@@ -182,7 +186,8 @@ class TestResolution:
     @pytest.mark.parametrize(
         ("control", "value"),
         [
-            ("n_broadcast_samples", 7),
+            ("max_evaluations", 7),
+            ("num_samples", 7),
             ("dispatch", "sequential"),
             ("include_inputs", True),
             ("method", "sampling_lift"),
@@ -213,12 +218,12 @@ class TestResolution:
     def test_a_reset_reads_the_default_when_it_is_read(self, monkeypatch):
         reset = Function(
             _identity,
-            n_broadcast_samples=7,
+            max_evaluations=7,
             label="identity",
-        ).using(n_broadcast_samples=None)
-        monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 17)
+        ).using(max_evaluations=None)
+        monkeypatch.setattr(config.sampling, "max_evaluations", 17)
 
-        assert reset.options["n_broadcast_samples"] == 17
+        assert reset.options["max_evaluations"] == 17
 
     def test_a_declaration_is_kept_by_a_view(self):
         wrapped = Function(
@@ -241,10 +246,14 @@ class TestAdmissibility:
     @pytest.mark.parametrize(
         ("controls", "error"),
         [
-            ({"n_broadcast_samples": 0}, ValueError),
-            ({"n_broadcast_samples": -1}, ValueError),
-            ({"n_broadcast_samples": 2.5}, TypeError),
-            ({"n_broadcast_samples": True}, TypeError),
+            ({"max_evaluations": 0}, ValueError),
+            ({"max_evaluations": -1}, ValueError),
+            ({"max_evaluations": 2.5}, TypeError),
+            ({"max_evaluations": True}, TypeError),
+            ({"num_samples": 0}, ValueError),
+            ({"num_samples": -1}, ValueError),
+            ({"num_samples": 2.5}, TypeError),
+            ({"num_samples": True}, TypeError),
             ({"dispatch": "gpu"}, ValueError),
             ({"include_inputs": "yes"}, TypeError),
             ({"method": 3}, TypeError),
@@ -266,7 +275,7 @@ class TestAdmissibility:
 
     @pytest.mark.parametrize(
         ("controls", "error"),
-        [({"n_broadcast_samples": 0}, ValueError), ({"raw": "no"}, TypeError)],
+        [({"max_evaluations": 0}, ValueError), ({"raw": "no"}, TypeError)],
     )
     def test_an_inadmissible_value_raises_at_the_decorator(self, controls, error):
         with pytest.raises(error):
@@ -300,6 +309,30 @@ class TestAdmissibility:
                 y=2,
                 label="add",
             )
+
+    @pytest.mark.parametrize(
+        "make",
+        [
+            lambda: Function(_identity, label="identity").using(n_broadcast_samples=5),
+            lambda: Function(_identity, label="identity", n_broadcast_samples=5),
+            lambda: function(n_broadcast_samples=5),
+        ],
+        ids=["using", "constructor", "decorator"],
+    )
+    def test_the_removed_sample_count_is_an_unknown_control(self, make):
+        """``max_evaluations`` and ``num_samples`` replace it, with no alias."""
+        with pytest.raises(
+            TypeError, match="unknown Function option 'n_broadcast_samples'"
+        ) as raised:
+            make()
+        assert "'max_evaluations'" in str(raised.value)
+        assert "'num_samples'" in str(raised.value)
+
+    def test_an_operation_refuses_the_removed_sample_count_as_an_unknown_control(self):
+        with pytest.raises(
+            TypeError, match=r"mean\.using\(\): unknown control 'n_broadcast_samples'"
+        ):
+            mean.using(n_broadcast_samples=5)
 
     def test_an_unknown_control_lists_the_controls(self):
         with pytest.raises(TypeError, match=r"available Function options: \[.*'dispatch'"):
@@ -421,7 +454,7 @@ class TestAdmissibility:
 class TestControlsThatSelectTheRoute:
     def test_method_names_the_route_of_a_lifted_call(self):
         @function(
-            n_broadcast_samples=8,
+            max_evaluations=8,
             dispatch="sequential",
             output_spec=OutputSpec(identity=None),
         )
@@ -443,7 +476,7 @@ class TestControlsThatSelectTheRoute:
 
     def test_conversions_configure_the_conversion_of_their_parameter(self):
         @function(
-            n_broadcast_samples=8,
+            max_evaluations=8,
             dispatch="sequential",
             output_spec=OutputSpec(identity=None),
         )
@@ -454,3 +487,61 @@ class TestControlsThatSelectTheRoute:
             result = identity.using(conversions={"x": {"exact_only": True}})(standard_normal())
 
         assert result.num_atoms == 8
+
+
+class TestTheCountOfALift:
+    """``max_evaluations`` bounds the evaluations of a lift, and ``num_samples`` plays no part."""
+
+    @pytest.mark.parametrize("num_samples", [1, 5000])
+    def test_a_sampled_lift_follows_max_evaluations_and_ignores_num_samples(self, num_samples):
+        identity = Function(_identity, label="identity", dispatch="sequential")
+        with workflow_run(seed=0):
+            law = identity.using(max_evaluations=9, num_samples=num_samples)(standard_normal())
+        assert law.num_atoms == 9
+        assert law.provenance.metadata["max_evaluations"] == 9
+        assert "num_samples" not in law.provenance.metadata
+
+    @pytest.mark.parametrize(
+        ("max_evaluations", "route", "atoms"),
+        [
+            (6, "empirical_enumeration", 6),
+            (100, "empirical_enumeration", 6),
+            (5, "sampling_lift", 5),
+        ],
+    )
+    def test_enumeration_fits_under_max_evaluations(self, max_evaluations, route, atoms):
+        law = EmpiricalDistribution(jnp.arange(6.0), component="x")
+        identity = Function(_identity, label="identity", dispatch="sequential")
+        with workflow_run(seed=0):
+            pushed = identity.using(max_evaluations=max_evaluations, num_samples=1)(law)
+        assert pushed.provenance.metadata["route"] == route
+        assert pushed.num_atoms == atoms
+
+    def test_the_mixed_case_allocates_max_evaluations_over_the_combinations(self):
+        """Four enumerated atoms share ten evaluations: two draws of ``b`` for each atom."""
+        calls = []
+
+        def add(a, b):
+            calls.append(None)
+            return a + b
+
+        added = Function(add, label="add", dispatch="sequential")
+        a = EmpiricalDistribution(jnp.arange(4.0), component="a")
+        with workflow_run(seed=0):
+            law = added.using(max_evaluations=10, num_samples=3)(a, standard_normal("b"))
+        assert law.num_atoms == len(calls) == 8
+
+    @pytest.mark.parametrize("max_evaluations", [5, 6, 7, 13, 24])
+    def test_a_lift_evaluates_its_function_at_most_max_evaluations_times(self, max_evaluations):
+        calls = []
+
+        def total(a, b, c):
+            calls.append(None)
+            return a + b + c
+
+        lifted = Function(total, label="total", dispatch="sequential")
+        a = EmpiricalDistribution(jnp.arange(3.0), component="a")
+        b = EmpiricalDistribution(jnp.arange(2.0), component="b")
+        with workflow_run(seed=0):
+            law = lifted.using(max_evaluations=max_evaluations)(a, b, standard_normal("c"))
+        assert law.num_atoms == len(calls) <= max_evaluations

@@ -20,7 +20,10 @@ A candidate has the members the engine reads:
 4. ``exactness(report)`` and ``method_of(report)``: the exactness of the
    implementation its report selected, and the registry method, if any;
 5. ``methods``: the methods of its route's registry, or ``None`` for a route
-   that delegates to none.
+   that delegates to none;
+6. ``collects_calls``: whether the calls its run makes directly report their
+   Monte Carlo draws to the call it realizes, as the calls of a derived
+   operation's identity do (:class:`~probpipe.core._call_context._NumSamplesUsed`).
 
 The check of a call the engine lifts is made at each of its points: a swept
 batch at each element, and a law the call broadcasts at a stand-in for its
@@ -283,7 +286,7 @@ def check_point(
     ApplicabilityError
         If an applicability condition of the function fails.
     """
-    call, result, deferred = function._plan_point(values, controls)
+    call, result, deferred = function._plan_route_inputs(values, controls)
     if not select:
         return PointReport(True, result=result, deferred=deferred)
     candidate, report, probed = _probe(candidates, call, result)
@@ -452,8 +455,8 @@ def lifted_declaration(
     ApplicabilityError
         If an applicability condition of the function fails at the point.
     """
-    point = replace_input_refs(values, _stand_ins(values, plan))
-    _, result, _ = function._plan_point(point, controls)
+    stand_in_values = replace_input_refs(values, _stand_ins(values, plan))
+    _, result, _ = function._plan_route_inputs(stand_in_values, controls)
     return result
 
 

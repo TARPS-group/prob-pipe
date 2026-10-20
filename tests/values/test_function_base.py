@@ -474,7 +474,7 @@ class TestFunctionDeclarations:
             output_label="prediction",
             output_spec=OutputSpec(component=NumericArraySpec(())),
             dispatch=dispatch,
-            n_broadcast_samples=8,
+            max_evaluations=8,
             label="predict",
         )
         relabeled = original.with_label("display")
@@ -802,7 +802,7 @@ class TestLiftedNames:
             output_label="doubled",
             output_spec=OutputSpec(value=NumericArraySpec(())),
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             label="double",
         )
         with workflow_run(seed=1):
@@ -872,7 +872,7 @@ class TestLiftedInputDeclarations:
             lambda theta: theta + 1,
             input_spec={"theta": NumericArraySpec(())},
             dispatch=dispatch,
-            n_broadcast_samples=8,
+            max_evaluations=8,
             label="first",
             output_spec=OutputSpec(first=None),
         )
@@ -940,7 +940,7 @@ class TestCompletedOutputDeclarations:
             if isinstance(declaration, OutputSpec) or declaration is None
             else OutputSpec.default(declaration, component="factory"),
             dispatch="sequential",
-            n_broadcast_samples=3,
+            max_evaluations=3,
             label="factory",
         )
         operand = {"plain": rows[0], "sweep": rows, "broadcast": Normal("x", 0.0, 1.0)}[mode]
@@ -966,7 +966,7 @@ class TestCompletedOutputDeclarations:
                 factory=DistributionSpec(OutputSpec(y=NumericArraySpec((), support=positive)))
             ),
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             label="factory",
         )
         operand = {
@@ -1145,7 +1145,7 @@ class TestCompletedOutputDeclarations:
             output_label="result",
             output_spec=declaration,
             dispatch=dispatch,
-            n_broadcast_samples=8,
+            max_evaluations=8,
             label="f",
         )
         with workflow_run(seed=4):
@@ -1207,7 +1207,7 @@ class TestCompletedOutputDeclarations:
             output_label="results",
             output_spec=OutputSpec(component=NumericArraySpec(("width",))),
             dispatch=dispatch,
-            n_broadcast_samples=8,
+            max_evaluations=8,
             include_inputs=True,
             label="factory",
         )
@@ -1242,7 +1242,7 @@ class TestCompletedOutputDeclarations:
             output_label="results",
             output_spec=declaration,
             dispatch=dispatch,
-            n_broadcast_samples=8,
+            max_evaluations=8,
             label="factory",
         )
         with workflow_run(seed=4):
@@ -1299,7 +1299,7 @@ class TestCompletedOutputDeclarations:
             output_label="results",
             output_spec=declaration,
             dispatch=dispatch,
-            n_broadcast_samples=8,
+            max_evaluations=8,
             label="factory",
         )
         with workflow_run(seed=4):
@@ -1406,7 +1406,7 @@ class TestCompletedOutputDeclarations:
             lambda row, x: {"component": jnp.full((2,), x + row["x"])},
             output_spec=declaration,
             dispatch=dispatch,
-            n_broadcast_samples=8,
+            max_evaluations=8,
             label="nested",
         )
         with workflow_run(seed=4):
@@ -1644,10 +1644,8 @@ class TestFunctionLabels:
         def predict(x):
             return x + 1
 
-        inferred = Function(predict, n_broadcast_samples=5)
-        aliased = Function(
-            predict, label="forecast", output_label="estimate", n_broadcast_samples=5
-        )
+        inferred = Function(predict, max_evaluations=5)
+        aliased = Function(predict, label="forecast", output_label="estimate", max_evaluations=5)
         assert fingerprint(inferred) == fingerprint(aliased)
         with workflow_run(seed=42):
             first = inferred(Normal("temperature", 0, 1))
@@ -1656,7 +1654,7 @@ class TestFunctionLabels:
         assert tuple(first.event_spec.components) == ("predict",)
         assert tuple(second.event_spec.components) == ("predict",)
         np.testing.assert_array_equal(first.atoms.raw, second.atoms.raw)
-        unnamed = Function(lambda x: x + 1, label="predict", n_broadcast_samples=5)
+        unnamed = Function(lambda x: x + 1, label="predict", max_evaluations=5)
         assert tuple(unnamed(Normal("temperature", 0, 1)).event_spec.components) == ("f",)
-        exposed = Function(lambda x: {"prediction": x + 1}, n_broadcast_samples=5)
+        exposed = Function(lambda x: {"prediction": x + 1}, max_evaluations=5)
         assert tuple(exposed(Normal("temperature", 0, 1)).event_spec.components) == ("prediction",)

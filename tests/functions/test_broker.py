@@ -560,7 +560,7 @@ class TestFunctionBrokerScope:
         identity = Function(
             lambda value: value,
             label="function",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             dispatch="sequential",
             output_spec=OutputSpec(function=None),
         )
@@ -651,7 +651,7 @@ class TestCallerJaxTrace:
     def test_a_lifted_call_inside_the_callers_jit_raises(self):
         lifted = Function(
             lambda z: 2.0 * z,
-            n_broadcast_samples=8,
+            max_evaluations=8,
             dispatch="auto",
             label="affine",
         )
@@ -665,7 +665,7 @@ class TestCallerJaxTrace:
     def test_a_jax_dispatched_function_over_a_law_draws(self):
         lifted = Function(
             lambda z: 2.0 * z,
-            n_broadcast_samples=8,
+            max_evaluations=8,
             dispatch="jax",
             label="affine",
             output_spec=OutputSpec(affine=None),

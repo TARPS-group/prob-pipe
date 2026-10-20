@@ -117,7 +117,7 @@ class TestAViewRecordsItsContainer:
     def test_no_provenance_is_recorded_when_tracking_is_off(self):
         import probpipe
 
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
 
         assert _mixed()["effect"].provenance is None
 

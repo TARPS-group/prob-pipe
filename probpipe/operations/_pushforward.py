@@ -406,15 +406,16 @@ def pushforward(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
 #: control ``include_inputs`` is not among them, since it would make the result
 #: the law of the map's inputs and outputs together.
 _FORWARDED_CONTROLS = (
-    "n_broadcast_samples",
+    "max_evaluations",
     "dispatch",
     "max_workers",
     "workflow_kind",
     "method_options",
 )
 
-#: The map's own controls that the map built around it keeps.
-_MAP_CONTROLS = ("n_broadcast_samples", "dispatch", "max_workers", "workflow_kind")
+#: The map's own controls that the map built around it keeps, when the map sets
+#: them; the others resolve when the new map's call opens.
+_MAP_CONTROLS = ("max_evaluations", "dispatch", "max_workers", "workflow_kind")
 
 
 def _draw_map(
@@ -429,7 +430,7 @@ def _draw_map(
     calls *f* on it with the fixed arguments. A map whose parameter is annotated
     ``Any`` is applied to the draw with schema validation, so it traces; any other is called
     as a direct call, so the draw goes through its admission, conversions, and
-    routes. The new map keeps *f*'s label, output declaration, and sample count.
+    routes. The new map keeps *f*'s label, output declaration, and ``max_evaluations``.
     """
     operation = isinstance(f, Operation)
     if not operation and _plan.lift_at(f, parameter, d) == "broadcast":
@@ -452,7 +453,7 @@ def _draw_map(
         label=f.label,
         output_spec=f.output_spec,
         output_label=f.output_label,
-        **{name: f.options[name] for name in _MAP_CONTROLS},
+        **{name: f._options[name] for name in _MAP_CONTROLS if name in f._options},
     )
     return mapped, parameter, {}
 
@@ -500,7 +501,8 @@ class _EvaluationRules(_RegistryRoute):
         """The controls the caller set on the operation, which the call of the map takes over its own.
 
         A control the caller left unset keeps the map's value, so a map
-        constructed with its own sample count draws that many.
+        constructed with its own ``max_evaluations`` is evaluated at most that
+        many times.
         """
         set_controls = call.operation._options
         return {name: set_controls[name] for name in self._forwarded if name in set_controls}

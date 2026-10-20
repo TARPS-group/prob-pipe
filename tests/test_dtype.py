@@ -31,8 +31,8 @@ def _run_x64(snippet: str) -> str:
         import jax
         jax.config.update("jax_enable_x64", True)
         import jax.numpy as jnp
-        from probpipe import WorkflowKind, prefect_config
-        prefect_config.workflow_kind = WorkflowKind.OFF
+        from probpipe import WorkflowKind, config
+        config.prefect.workflow_kind = WorkflowKind.OFF
         """
     ) + textwrap.dedent(snippet)
     result = subprocess.run(

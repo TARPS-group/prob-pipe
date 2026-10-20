@@ -66,9 +66,9 @@ class TestUnicodeNotation:
             assert Normal("mu", 0, 1, label=label).label == label
 
     def test_anonymous_display_is_independent_of_schema_and_random_stream(self):
-        automatic = Function(lambda x: x + 1, n_broadcast_samples=5)
+        automatic = Function(lambda x: x + 1, max_evaluations=5)
         fn = automatic.raw
-        ascii_alias = Function(fn, label="f", n_broadcast_samples=5)
+        ascii_alias = Function(fn, label="f", max_evaluations=5)
         assert fingerprint(automatic) == fingerprint(ascii_alias)
         with workflow_run(seed=42):
             first = automatic(Normal("mu", 0, 1))

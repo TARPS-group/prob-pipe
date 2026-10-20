@@ -28,14 +28,21 @@ which reads three declarations from the operation at its steps:
 A derived operation's **identity** is the route that runs its definition: by
 default the body route, which runs the declaration's body, or else a composite
 route that runs a route of each constituent operation in turn. The engine runs
-the identity's check and the identity itself in a scope that passes two
+the identity's check and the identity itself in a scope that passes three
 controls of the derived call to the Function calls made within it, operations
 and plain Functions alike (VI.0):
 
 - ``exact_only`` restricts the route selection of every call in the scope, at
   any depth, whatever the call sets;
-- ``n_broadcast_samples``, when the derived call sets it, applies to each call
-  the scope makes outside any other call, unless that call's view sets its own.
+- ``max_evaluations``, when the derived call sets it, applies to each call the
+  scope makes outside any other call, unless that call's view sets its own;
+- ``num_samples`` passes as ``max_evaluations`` does.
+
+An identity that estimates a summary through a lift, as ``expectation``'s does,
+also spends the summary's resolved ``num_samples`` as the lift's
+``max_evaluations``, since each draw is one evaluation of the map. The call of
+an identity states the Monte Carlo draws of the constituents it runs, so its
+provenance records their ``num_samples``.
 
 The scope covers the calls made in the calling thread and in the workers the
 engine dispatches to. A planned conversion follows its parameter's
@@ -96,7 +103,7 @@ from ..values._binding import (
     resolved_hint,
     values_to_bound_arguments,
 )
-from ..values._function_base import _COMPLETED_AT_RETURN, _passing_down
+from ..values._function_base import _COMPLETED_AT_RETURN, _passing_controls_to_formula_calls
 
 __all__ = [
     "BoundCall",
@@ -751,12 +758,20 @@ class _RegistryRoute(_DelegatingRoute):
 def _identity_scope(call: BoundCall) -> AbstractContextManager[None]:
     """The scope in which an identity route's check and run make their Function calls.
 
-    It passes the derived call's ``exact_only``, and its ``n_broadcast_samples``
-    when the call's view sets one, as the module docstring states.
+    It passes the derived call's ``exact_only``, and its ``max_evaluations`` and
+    ``num_samples`` when the call's view sets them, as the module docstring
+    states.
     """
-    view = call.operation
-    count = call.controls["n_broadcast_samples"] if "n_broadcast_samples" in view._options else None
-    return _passing_down(exact_only=call.controls["exact_only"], n_broadcast_samples=count)
+    operation_view = call.operation
+
+    def passed_count(name: str) -> int | None:
+        return call.controls[name] if name in operation_view._options else None
+
+    return _passing_controls_to_formula_calls(
+        exact_only=call.controls["exact_only"],
+        max_evaluations=passed_count("max_evaluations"),
+        num_samples=passed_count("num_samples"),
+    )
 
 
 class _IdentityRoute(_Route):
@@ -925,6 +940,15 @@ class _Candidate:
     def route_name(self) -> str:
         """The name of the route the candidate belongs to."""
         return self.route.name
+
+    @property
+    def collects_calls(self) -> bool:
+        """Whether the calls the route makes directly report their Monte Carlo draws to the call.
+
+        A derived operation's identity collects them, so its call states the
+        draws of the constituents it runs.
+        """
+        return self.route.realizes_identity
 
     @property
     def methods(self) -> tuple[str, ...] | None:
@@ -1177,6 +1201,8 @@ class _GivenCandidate:
 
     label = route_name = "conditional"
     methods = None
+    #: The conditioned call runs the operation, whose Monte Carlo draws the call states.
+    collects_calls = True
 
     def probe(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
         """Check slot binding without constructing or normalizing the kernel's law."""
@@ -1894,14 +1920,14 @@ class Operation(Function):
             return (*candidates, _GivenCandidate())
         return tuple(candidates)
 
-    def _plan_point(
-        self, values: Mapping[str, Any], controls: Mapping[str, Any]
+    def _plan_route_inputs(
+        self, argument_values: Mapping[str, Any], controls: Mapping[str, Any]
     ) -> tuple[BoundCall, OutputSpec | None, tuple[str, ...]]:
         """The bound call of one point, its result declaration, and the checks deferred to return.
 
         Parameters
         ----------
-        values : Mapping of str to Any
+        argument_values : Mapping of str to Any
             The point's arguments by parameter name, which become the bound
             call's ``operands``.
         controls : Mapping of str to Any
@@ -1911,8 +1937,8 @@ class Operation(Function):
         Returns
         -------
         call : BoundCall
-            The bound call over *values* and *controls*.
-        result : OutputSpec or None
+            The bound call over *argument_values* and *controls*.
+        result_declaration : OutputSpec or None
             The result's declaration, or ``None`` when the declarations leave it
             open.
         deferred : tuple of str
@@ -1926,30 +1952,30 @@ class Operation(Function):
         TypeError
             If the result rule returns something other than an OutputSpec or None.
         """
-        point_values = dict(values)
+        operand_values = dict(argument_values)
         if self._given_subject is not None:
             from ..distributions._conditional import ConditionalDistribution
             from ._given import _GivenLaw
 
-            given = point_values.pop("given", None)
-            subject = point_values[self._given_subject]
+            given = operand_values.pop("given", None)
+            subject = operand_values[self._given_subject]
             if given is not None:
                 if not isinstance(subject, ConditionalDistribution):
                     raise ApplicabilityError(
                         f"{self.name}: given requires a ConditionalDistribution operand"
                     )
-                point_values[self._given_subject] = _GivenLaw(subject, given)
+                operand_values[self._given_subject] = _GivenLaw(subject, given)
             elif isinstance(subject, ConditionalDistribution) and not self._admits_kernel:
                 raise ApplicabilityError(
                     f"{self.name}: ConditionalDistributionSpec requires given values"
                 )
-        call = BoundCall(self, MappingProxyType(point_values), controls)
-        result, deferred = self._plan(call)
-        if self._given_subject is not None and values.get("given") is not None:
+        call = BoundCall(self, MappingProxyType(operand_values), controls)
+        result_declaration, deferred = self._plan(call)
+        if self._given_subject is not None and argument_values.get("given") is not None:
             deferred += (
                 "if conditional delegation is selected, the resulting law's capabilities and fidelity are checked at execution",
             )
-        return call, result, deferred
+        return call, result_declaration, deferred
 
     def _plan(self, call: BoundCall) -> tuple[OutputSpec | None, tuple[str, ...]]:
         """Check the applicability conditions, then derive the result's declaration.

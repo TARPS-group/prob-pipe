@@ -1283,7 +1283,7 @@ class TestEndToEndValuesPipeline:
         from probpipe.functions import function
 
         @function(
-            n_broadcast_samples=100,
+            max_evaluations=100,
             dispatch="sequential",
             output_spec=OutputSpec(predict=None),
         )
@@ -1309,7 +1309,7 @@ class TestEndToEndValuesPipeline:
         from probpipe.functions import function
 
         @function(
-            n_broadcast_samples=50,
+            max_evaluations=50,
             dispatch="sequential",
             output_spec=OutputSpec(identity_pair=None),
         )
@@ -1350,7 +1350,7 @@ class TestEndToEndValuesPipeline:
         from probpipe.functions import function
 
         @function(
-            n_broadcast_samples=posterior.num_atoms,
+            max_evaluations=posterior.num_atoms,
             dispatch="sequential",
             output_spec=OutputSpec(noisy_predict=None),
         )

@@ -8,6 +8,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **base spec**: a `NumericArraySpec` or an `OpaqueSpec`, the spec of a base value, which has no named entries; only a base value takes a name stated outside it, as the output at the root (II.2).
 - **batch**: an indexed collection of separate objects of one element type, with its axes grouped into named levels (II.5). A kind's batch form is its batch class, such as `RecordBatch` for records (II.1).
 - **broadcast**: the lift of a function over a distribution argument, whose result is the pushforward law of the function's output (V.5).
+- **call context**: the per-call state that the code a call runs reads wherever it runs, such as the active `config.using` blocks, the controls a derived operation's identity passes down, and the call's resolved controls. Each call of a `Function` opens a child of the call context in effect, and a `config` block derives a changed copy (V.2).
 - **capability**: an underscore implementation of an operation, such as `_sample` or `_inverse`, that a class claims for its instances by implementing the capability's protocol (III.8, III.3).
 - **column**: the batch, over a batch's levels, of each element's node at one path, which `b[path]` returns; a batch's outputs are its columns (II.5).
 - **component**: one of the component laws of a `MixtureDistribution`, which its constructor takes as `components=` (VII.3).
@@ -76,6 +77,8 @@ The canonical name of a recurring concept is the name that its parameters, attri
 | the output spec of one element of a batch, whose `term_spec` is the element's spec | `element_spec` |
 | the objects a batch is built from | `elements` |
 | the independent-draw shape prefix of `sample` | `sample_shape` |
+| the maximum number of evaluations of a function lifted over laws | `max_evaluations` |
+| the number of Monte Carlo draws of a summary or an approximate conversion | `num_samples` |
 | a distribution's event spec, an `OutputSpec` | `event_spec` |
 | a PRNG key | `key` |
 | a function from which `distribution` builds a law | the operation it realizes: `sample`, `log_prob`, or `unnormalized_log_prob` |

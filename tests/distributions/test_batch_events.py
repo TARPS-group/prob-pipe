@@ -314,7 +314,7 @@ class TestBatchValuedMoments:
             trajectory,
             output_spec=OutputSpec(trajectory=None),
             include_inputs=True,
-            n_broadcast_samples=20,
+            max_evaluations=20,
         )
         with workflow_run(seed=0):
             joint = wrapped(Normal("beta", 0.0, 1.0))

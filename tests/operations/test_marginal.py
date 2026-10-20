@@ -185,7 +185,7 @@ def _difference(fn):
     return Function(
         fn,
         dispatch="sequential",
-        n_broadcast_samples=8,
+        max_evaluations=8,
         label="difference",
         output_spec=OutputSpec(difference=None),
     )

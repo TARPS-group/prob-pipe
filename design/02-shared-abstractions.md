@@ -341,7 +341,7 @@ A term's label is the name part of the rendering:
 
 The notation is the whole rendering, grouped by the rules below. A law's signature is read from its event spec, and the paths it holds fixed and whether a product was given a label are read from its expression (IV.2). `with_label` replaces the expression with the new label, so a user's label hides the derivation, which provenance still records. Provenance records how a term was computed, and the expression records what the term is, for a reader. Fingerprints and replay omit the expression, as they omit the label, and copies and pickles keep it.
 
-A rendering shows at most `notation_config.max_depth` nested levels, eight by default and at most 64, and a part nested deeper renders as its label, the name of a law or a function, or as `…` for a value. A term's label is rendered once, when the term is built, at the setting in effect then, and the term keeps it. A notation is rendered each time it is shown, at the current setting. A stored expression keeps at most 64 levels, so a long derivation, such as a loop that adds to a value, never builds a tree too deep to copy or pickle. A node built over a part that nests 64 levels stores the whole part as its label or `…`, together with its signature and the paths it holds fixed, and it renders that way at any setting, which is why the setting is at most 64. A long derivation is therefore truncated whole each time it reaches 64 levels, and the label of the operation that truncates it shows that operation alone, as `… + 1`. Showing a term warns: `str()`, `repr()`, and `notation` warn with a `UserWarning` when what they show left a part out, and the warning names the setting where raising it shows more. A part that storage truncated warns only where its text shows less than the part in full, and that warning says that no setting shows the part.
+A rendering shows at most `config.notation.max_depth` nested levels (V.2), eight by default and at most 64, and a part nested deeper renders as its label, the name of a law or a function, or as `…` for a value. A term's label is rendered once, when the term is built, at the setting in effect then, and the term keeps it. A notation is rendered each time it is shown, at the current setting. A stored expression keeps at most 64 levels, so a long derivation, such as a loop that adds to a value, never builds a tree too deep to copy or pickle. A node built over a part that nests 64 levels stores the whole part as its label or `…`, together with its signature and the paths it holds fixed, and it renders that way at any setting, which is why the setting is at most 64. A long derivation is therefore truncated whole each time it reaches 64 levels, and the label of the operation that truncates it shows that operation alone, as `… + 1`. Showing a term warns: `str()`, `repr()`, and `notation` warn with a `UserWarning` when what they show left a part out, and the warning names the setting where raising it shows more. A part that storage truncated warns only where its text shows less than the part in full, and that warning says that no setting shows the part.
 
 **Values computed from a law.** A value computed from a law `d` is labeled by the value written in probability notation over `d`, and its outputs follow the result rule of VI.0:
 1. **A draw** (VI.3) is labeled by its outputs, `~`, and `d`'s label, then `;` and the paths `d` holds fixed when it holds any, as `mu ~ prior`, `(y, mu) ~ model`, or `mu ~ model; y`, and it keeps `d`'s outputs.
@@ -410,7 +410,7 @@ class TrackedTerm(ABC):
 class Provenance:
     operation: str                       # the operation that produced the object
     parents:   tuple[ParentInfo, ...]    # descriptors of the tracked inputs
-    controls:  Mapping[str, Any]         # the resolved controls, and the derived key of each draw: sample count, selected method, ...
+    controls:  Mapping[str, Any]         # the resolved controls, and the derived key of each draw: the counts, selected method, ...
     inputs:    Mapping[str, ParentInfo]  # plain (untracked) arguments, keyed by parameter name
 
 class ParentInfo:
@@ -428,7 +428,7 @@ class NotationConfig:                  # how labels and notations render
     def max_depth(self) -> int: ...    # the nested levels a rendering shows: 8 by default, from 1 to 64
     def reset(self) -> None: ...       # the defaults, re-reading PROBPIPE_NOTATION_MAX_DEPTH
 
-notation_config: NotationConfig        # the settings in effect
+# the settings in effect are the section config.notation (V.2)
 ```
 
 The **annotations** store is the one exception to immutability: it can be written after construction, so a diagnostic can attach its result to the object it examined, and by convention it is append-only. Annotations are otherwise inert: no operation reads them to decide behavior, they do not propagate to results because lineage is recorded in `provenance`, and they never enter a compiled trace.

@@ -27,7 +27,7 @@ from ._rng import RandomEventIdentity, encode_random_event
 _RNG_RECIPE_ABI = "probpipe.rng_recipe/v1"
 _RNG_ABI = "ProbPipe-RNG-v1"
 _REPLAY_ANCHOR_ABI = "probpipe.replay_anchor/v1"
-_STOCHASTIC_PLAN_ABI = "probpipe.stochastic_plan/v1"
+_STOCHASTIC_PLAN_ABI = "probpipe.stochastic_plan/v2"
 _CALLABLE_DEFINITION_ABI = "probpipe.callable_definition/v1"
 _PROBPIPE_REPLAY_ABI = "probpipe.replay/v1"
 _MANAGED_CHILD_POLICY_ABI = "probpipe.managed_child/v1"
@@ -72,7 +72,7 @@ _CANONICAL_PLAN_FIELDS = frozenset(
         "arg_refs",
         "source_groups",
         "logical_units",
-        "n_broadcast_samples",
+        "max_evaluations",
         "sample_shape",
         "exact_group_order",
         "exact_combination_order",
@@ -954,14 +954,17 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
     replay = _mapping(controls.get("replay"), "replay")
     _require_version(randomness.get("schema"), "randomness.schema", _RNG_RECIPE_ABI)
     _require_version(replay.get("schema"), "replay.schema", _REPLAY_ANCHOR_ABI)
-    # The callable anchor's fields belong to its definition ABI, so an anchor of
-    # another ABI is refused before its fields are read.
+    # The callable anchor's fields belong to its definition ABI, and the plan's
+    # fields to the plan ABI, so an anchor or a plan of another ABI is refused
+    # before its fields are read.
     callable_anchor = copy.deepcopy(dict(_mapping(replay.get("callable"), "replay.callable")))
     _require_version(
         callable_anchor.get("definition_abi"),
         "replay.callable.definition_abi",
         _CALLABLE_DEFINITION_ABI,
     )
+    plan_anchor = _mapping(replay.get("plan"), "replay.plan")
+    _require_version(plan_anchor.get("schema"), "replay.plan.schema", _STOCHASTIC_PLAN_ABI)
     _validate_version_one_structure(controls)
     _require_version(randomness.get("rng_abi"), "randomness.rng_abi", _RNG_ABI)
 
@@ -1020,8 +1023,6 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
             f"{type(signature).__name__}"
         )
 
-    plan_anchor = _mapping(replay.get("plan"), "replay.plan")
-    _require_version(plan_anchor.get("schema"), "replay.plan.schema", _STOCHASTIC_PLAN_ABI)
     canonical_plan = copy.deepcopy(
         dict(_mapping(plan_anchor.get("canonical_fields"), "replay.plan.canonical_fields"))
     )
@@ -1129,7 +1130,7 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
 
 
 def _validate_version_one_structure(controls: Mapping[str, Any]) -> None:
-    """Require exact fields for every record owned by the replay-v1 schema."""
+    """Require exact fields for every record of the version-1 replay anchor and its version-2 plan."""
     _require_version_one_fields(controls, _CONTROLS_FIELDS, "controls")
     randomness = _version_one_record(controls.get("randomness"), _RANDOMNESS_FIELDS, "randomness")
     replay = _version_one_record(controls.get("replay"), _REPLAY_FIELDS, "replay")
@@ -1759,7 +1760,7 @@ def _unsupported_callable(
 
 def _plan_mismatch(current: dict[str, Any], recorded: dict[str, Any]) -> ReplayCompatibilityError:
     """The error for a call set up differently from the recorded call."""
-    key = "n_broadcast_samples"
+    key = "max_evaluations"
     if _canonical_json(current.get(key)) != _canonical_json(recorded.get(key)):
         detail = f"{key} is {current.get(key)!r}, recorded {recorded.get(key)!r}"
     else:

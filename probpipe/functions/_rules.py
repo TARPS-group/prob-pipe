@@ -69,7 +69,8 @@ FLOOR_PRIORITY = 0
 
 #: The engine controls an engine-realized rule forwards when it calls the map.
 _FORWARDED_CONTROLS = (
-    "n_broadcast_samples",
+    "max_evaluations",
+    "num_samples",
     "dispatch",
     "max_workers",
     "include_inputs",
@@ -344,7 +345,7 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
         """Feasible when the call lifts only laws and every lifted group enumerates.
 
         A group enumerates when its root is an empirical law, and the product of
-        the groups' atom counts is at most the ``n_broadcast_samples`` control.
+        the groups' atom counts is at most the ``max_evaluations`` control.
         The operand's root is read as the lift reads it, through views, batch
         elements, and registered descendants, so the decision does not depend
         on the order of the arguments. A call whose operand's root is not
@@ -353,8 +354,9 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
         Parameters
         ----------
         f : Function
-            The map the call applies, whose own ``n_broadcast_samples`` applies
-            when *controls* sets none.
+            The map the call applies, whose own ``max_evaluations`` applies
+            when *controls* sets none, as for a use of the registry outside a
+            call.
         operand : Distribution
             The law argument the registry dispatched on.
         parameter : str or None
@@ -363,7 +365,7 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
             The map's other arguments, by parameter name, with which the check
             plans the call's lift.
         controls : Mapping of str to Any, or None
-            The call's resolved controls, whose ``n_broadcast_samples`` bounds the
+            The call's resolved controls, whose ``max_evaluations`` bounds the
             product of the groups' atom counts.
 
         Returns
@@ -384,13 +386,16 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
             return Feasibility(
                 False, f"the call does not lift {_describe(operand)} alone as a distribution"
             )
-        count = (controls or {}).get("n_broadcast_samples", f.options["n_broadcast_samples"])
+        count = (controls or {}).get("max_evaluations")
+        if count is None:
+            # A direct use of the registry, outside a call, passes no controls.
+            count = f.options["max_evaluations"]
         stochastic = _plan.build_stochastic_plan(values, plan, count)
         if stochastic is None or stochastic.evaluation_mode != "exact":
             return Feasibility(
                 False,
                 f"every lifted distribution must be an empirical law, with at most "
-                f"n_broadcast_samples={count} combinations of their atoms",
+                f"max_evaluations={count} combinations of their atoms",
             )
         return Feasibility(True)
 

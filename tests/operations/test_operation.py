@@ -26,6 +26,7 @@ from probpipe import (
     ResultKindError,
     ResultSchemaError,
     TrackedTerm,
+    config,
     function,
     workflow_run,
 )
@@ -99,7 +100,7 @@ def _can_sample(call: BoundCall, result: OutputSpec | None) -> bool:
 def _sampled_center(call: BoundCall, result: OutputSpec | None) -> Any:
     draws = _workflow_draws(
         call.operands["d"],
-        (call.controls["n_broadcast_samples"],),
+        (call.controls["num_samples"],),
         operation_kind="center",
         execution_mode="monte_carlo",
     )
@@ -334,7 +335,7 @@ class TestRoles:
         report = shifted.check(law, Gaussian("v", 2.0))
         assert (report.route, report.lifted) == ("shift", ("value",))
         with workflow_run(seed=0):
-            pushforward = shifted.using(n_broadcast_samples=8, dispatch="sequential")(
+            pushforward = shifted.using(max_evaluations=8, dispatch="sequential")(
                 law, Gaussian("v", 2.0)
             )
         assert isinstance(pushforward, EmpiricalDistribution)
@@ -1017,9 +1018,7 @@ class TestControls:
 
     def test_method_runs_the_named_route_instead_of_the_selected_one(self):
         with workflow_run(seed=0):
-            estimate = center.using(method="monte_carlo", n_broadcast_samples=4000)(
-                Gaussian("g", 3.0)
-            )
+            estimate = center.using(method="monte_carlo", num_samples=4000)(Gaussian("g", 3.0))
         assert abs(float(jnp.asarray(estimate)) - 3.0) < 0.1
 
     def test_method_naming_no_route_raises_resolution_error(self):
@@ -1113,9 +1112,9 @@ class TestControls:
         assert not isinstance(result, TrackedTerm)
         assert float(result) == 2.0
 
-    def test_the_sample_count_control_sets_the_number_of_draws(self):
+    def test_the_num_samples_control_sets_the_number_of_draws(self):
         law = Sampler("s")
-        center.using(n_broadcast_samples=17)(law)
+        center.using(num_samples=17)(law)
         assert law.shapes == [(17,)]
 
 
@@ -1178,7 +1177,7 @@ class TestLiftedChecks:
 
     def test_a_method_names_the_route_each_point_of_a_lifted_call_takes(self):
         laws = _laws(Gaussian("g", 1.0), Gaussian("g", 2.0))
-        view = center.using(method="monte_carlo", n_broadcast_samples=4000)
+        view = center.using(method="monte_carlo", num_samples=4000)
         assert view.check(laws).route == "monte_carlo"
         with workflow_run(seed=0):
             means = view(laws)
@@ -1314,35 +1313,42 @@ class TestIdentityControls:
             doubled.using(exact_only=True)(law)
         assert law.shapes == []
 
-    def test_the_sample_count_passes_to_the_constituent(self):
+    def test_num_samples_passes_to_the_constituent(self):
         law = Sampler("s")
-        _body_doubled().using(n_broadcast_samples=33)(law)
+        _body_doubled().using(num_samples=33)(law)
         assert law.shapes == [(33,)]
 
-    def test_the_sample_count_passes_through_a_nested_derived_operation(self):
+    def test_num_samples_passes_through_a_nested_derived_operation(self):
         law = Sampler("s")
         quadrupled = _body_doubled(_body_doubled().using(raw=True))
-        quadrupled.using(n_broadcast_samples=33)(law)
+        quadrupled.using(num_samples=33)(law)
         assert law.shapes == [(33,)]
 
-    @pytest.mark.parametrize("count", [40, center.options["n_broadcast_samples"]])
-    def test_a_sample_count_the_constituent_sets_wins(self, count):
+    @pytest.mark.parametrize("count", [40, center.options["num_samples"]])
+    def test_a_num_samples_the_constituent_sets_wins(self, count):
         law = Sampler("s")
-        doubled = _body_doubled(center.using(raw=True, n_broadcast_samples=count))
-        doubled.using(n_broadcast_samples=33)(law)
+        doubled = _body_doubled(center.using(raw=True, num_samples=count))
+        doubled.using(num_samples=33)(law)
         assert law.shapes == [(count,)]
 
-    def test_a_constituent_keeps_its_class_default_when_the_derived_call_sets_no_count(self):
-        class TenDraws(Function):
-            DEFAULT_N_BROADCAST_SAMPLES = 10
-
-        ten = TenDraws(lambda x: x, label="ten")
+    def test_a_constituent_keeps_the_session_default_when_the_derived_call_sets_no_count(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(config.sampling, "max_evaluations", 10)
+        ten = Function(lambda x: x, label="ten")
         doubled = _body_doubled(lambda d: mean.using(raw=True)(ten(d)))
-        for options, count in (({}, 10), ({"n_broadcast_samples": 33}, 33)):
+        for options, count in (({}, 10), ({"max_evaluations": 33}, 33)):
             law = Sampler("s")
             with workflow_run(seed=0):
                 doubled.using(**options)(law)
             assert law.shapes == [(count,)]
+
+    def test_a_derived_call_passes_each_count_to_its_own_role(self):
+        law = Sampler("s")
+        doubled = _body_doubled(lambda d: center.apply(d) + mean.using(raw=True)(_identity_map(d)))
+        with workflow_run(seed=0):
+            doubled.using(max_evaluations=12, num_samples=34)(law)
+        assert sorted(law.shapes) == [(12,), (34,)]
 
     def test_method_does_not_pass_to_the_constituent(self):
         view = _body_doubled().using(method="identity")
@@ -1401,11 +1407,11 @@ class TestIdentityControls:
             _body_doubled().using(method="nope")(Gaussian("g"))
         assert "does not pass method on" not in str(raised.value)
 
-    def test_the_sample_count_reaches_only_the_calls_the_identity_makes(self):
+    def test_num_samples_reaches_only_the_calls_the_identity_makes(self):
         law = Sampler("s")
         doubled = _body_doubled(_via_center(exact=False).using(raw=True))
-        doubled.using(n_broadcast_samples=33)(law)
-        assert law.shapes == [(center.options["n_broadcast_samples"],)]
+        doubled.using(num_samples=33)(law)
+        assert law.shapes == [(center.options["num_samples"],)]
 
     def test_exact_only_restricts_every_call_the_identity_runs(self):
         via = _via_center(exact=True)
@@ -1422,27 +1428,27 @@ class TestIdentityControls:
 
     def test_the_controls_pass_to_an_apply_in_the_identity(self):
         law = Sampler("s")
-        _body_doubled(lambda d: center.apply(d)).using(n_broadcast_samples=33)(law)
+        _body_doubled(lambda d: center.apply(d)).using(num_samples=33)(law)
         assert law.shapes == [(33,)]
         doubled = _body_doubled(lambda d: center.apply(d), check=lambda d: True)
         with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
             doubled.using(exact_only=True)(Sampler("s"))
 
-    def test_the_sample_count_passes_to_a_plain_function_lifted_in_the_identity(self):
+    def test_the_evaluation_count_passes_to_a_plain_function_lifted_in_the_identity(self):
         law = Sampler("s")
         doubled = _body_doubled(lambda d: mean.using(raw=True)(_identity_map(d)))
         with workflow_run(seed=0):
-            doubled.using(n_broadcast_samples=33)(law)
+            doubled.using(max_evaluations=33)(law)
         assert law.shapes == [(33,)]
 
-    def test_each_point_of_a_lifted_call_passes_the_sample_count(self):
+    def test_each_point_of_a_lifted_call_passes_num_samples(self):
         first, second = Sampler("s", 1.0), Sampler("s", 2.0)
-        _body_doubled().using(n_broadcast_samples=33)(_laws(first, second))
+        _body_doubled().using(num_samples=33)(_laws(first, second))
         assert first.shapes == second.shapes == [(33,)]
 
-    def test_the_points_of_a_threaded_call_pass_the_sample_count(self):
+    def test_the_points_of_a_threaded_call_pass_num_samples(self):
         first, second = Sampler("s", 1.0), Sampler("s", 2.0)
-        view = _body_doubled().using(n_broadcast_samples=33, dispatch="thread")
+        view = _body_doubled().using(num_samples=33, dispatch="thread")
         view(_laws(first, second))
         assert first.shapes == second.shapes == [(33,)]
 
@@ -1507,7 +1513,7 @@ class TestIdentityControls:
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             for _ in range(3):
-                doubled.using(n_broadcast_samples=50)(Gaussian("g", 1.5))
+                doubled.using(num_samples=50)(Gaussian("g", 1.5))
 
     def test_an_identity_check_may_defer_a_constituent_to_the_run(self):
         def center_later(d: Any) -> Any:
@@ -1524,24 +1530,24 @@ class TestIdentityControls:
         assert result.provenance.metadata["exact"] is None
 
     def test_the_scope_ends_when_the_identity_raises(self):
-        view = _body_doubled(check=lambda d: True).using(exact_only=True, n_broadcast_samples=33)
+        view = _body_doubled(check=lambda d: True).using(exact_only=True, num_samples=33)
         with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
             view(Sampler("s"))
         law = Sampler("s")
         center(law)
-        assert law.shapes == [(center.options["n_broadcast_samples"],)]
+        assert law.shapes == [(center.options["num_samples"],)]
 
     def test_the_scope_ends_when_the_identity_check_raises(self):
         def failing(d: Any) -> Any:
             """The check fails."""
             raise RuntimeError("the check fails")
 
-        view = _body_doubled(check=failing).using(exact_only=True, n_broadcast_samples=33)
+        view = _body_doubled(check=failing).using(exact_only=True, num_samples=33)
         with pytest.raises(RuntimeError, match="the check fails"):
             view(Sampler("s"))
         law = Sampler("s")
         center(law)
-        assert law.shapes == [(center.options["n_broadcast_samples"],)]
+        assert law.shapes == [(center.options["num_samples"],)]
 
 
 # ---------------------------------------------------------------------------
