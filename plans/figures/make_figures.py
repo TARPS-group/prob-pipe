@@ -11,8 +11,8 @@ The visual language, which the legend figures state for the reader:
   right edge;
 - an object is a rounded box whose badge names its kind;
 - an optional input is a hollow port;
-- an output at the root, a base value offered whole under one name, has its name
-  outside the box;
+- an output at the root, which names a base value whole, has its name outside
+  the box;
 - the parts of a value are a tree of fields and groups inside the box;
 - a batch is a stack of offset boxes, with its levels at the bottom;
 - a merge draws its two operands side by side as written, wires each output of
@@ -106,9 +106,9 @@ class Port:
 class Obj:
     """An object as a figure draws it.
 
-    ``outputs`` are the top-level parts the object offers, each drawn with a port
-    and with its own parts as a tree below it. ``root_output`` is the name of an
-    output at the root, a base value offered whole, drawn outside the box.
+    ``outputs`` are the object's outputs, each drawn with a port and with its own
+    parts as a tree below it. ``root_output`` is the name of an output at the
+    root, which names a base value whole, drawn outside the box.
     ``body`` holds muted lines of explanation inside the box, and ``levels``
     makes the object a batch, drawn as a stack of boxes. ``faults`` names the
     ports drawn red, and ``faulty`` draws the whole box red.
@@ -488,7 +488,7 @@ def merge_figure(
 
     Each output of ``right`` that names an input of ``left`` feeds it; an input
     of ``left`` that is not fed and that ``right`` also takes is shared, and one
-    port of the result fans out to both. The result offers ``left``'s outputs,
+    port of the result fans out to both. The result has ``left``'s outputs,
     then ``right``'s; it takes ``left``'s remaining inputs, then ``right``'s.
     ``invalid`` marks the merge as refused, and ``fault_wires`` and
     ``fault_results`` name the wires and result ports drawn red.
@@ -730,7 +730,7 @@ class Legend:
         )
         self.explain(
             [
-                "An output at the root offers a base value",
+                "An output at the root names a base value",
                 "whole; its name stands outside the box.",
             ],
             y,
@@ -980,7 +980,7 @@ def figures() -> dict[str, Canvas]:
             annotate_sides=True,
         ),
         "output-naming": row_figure(
-            "Three ways an object offers what it produces",
+            "The outputs of a base value, a record, and a wrapped record",
             [
                 (
                     Obj(
@@ -990,11 +990,11 @@ def figures() -> dict[str, Canvas]:
                         inputs=[Port("mu")],
                         body=["a draw is an array"],
                     ),
-                    ["a base value: offered whole,", "under a name outside it"],
+                    ["a base value: one output,", "named outside it"],
                 ),
                 (
                     Obj("d", "law", outputs=[Part("mu"), Part("sigma")]),
-                    ["a record: offers its children"],
+                    ["a record: one output per child"],
                 ),
                 (
                     Obj("d", "law", outputs=[Part("params", [Part("mu"), Part("sigma")])]),
@@ -1033,7 +1033,7 @@ def figures() -> dict[str, Canvas]:
             [
                 (
                     Obj("f_j", "function", outputs=[Part("y"), Part("z")], inputs=[Port("x")]),
-                    ["one element: f_j maps x to {y, z}", "and offers y and z"],
+                    ["one element: f_j maps x to {y, z};", "outputs y and z"],
                 ),
                 (
                     Obj(
@@ -1057,7 +1057,7 @@ def figures() -> dict[str, Canvas]:
             [
                 (
                     Obj("k_j", "kernel", outputs=[Part("y"), Part("w")], inputs=[Port("mu")]),
-                    ["one element: k_j draws {y, w}", "given mu, and offers y and w"],
+                    ["one element: k_j draws {y, w}", "given mu; outputs y and w"],
                 ),
                 (
                     Obj(
@@ -1072,8 +1072,9 @@ def figures() -> dict[str, Canvas]:
                     ),
                     [
                         "the batch: input mu, bound once",
-                        "for every element; no outputs",
-                        "(rule 5); paths y and w",
+                        "for every element; no outputs,",
+                        "since its elements are kernels;",
+                        "paths y and w",
                     ],
                 ),
             ],
@@ -1146,7 +1147,7 @@ def figures() -> dict[str, Canvas]:
                 ),
                 (
                     Obj("d[g/b]", "law", root_output="b", body=["a draw is an array"]),
-                    ["a base node: offered", "under its last name"],
+                    ["a base node: one output at", "the root, named by its last name"],
                 ),
             ],
             gap=50,
@@ -1156,7 +1157,7 @@ def figures() -> dict[str, Canvas]:
             [
                 (
                     Obj("d", "law", body=["a draw is a law", "no outputs"]),
-                    ["draws laws: offers nothing"],
+                    ["draws laws: no outputs"],
                 ),
                 (
                     Obj("d", "law", outputs=[Part("params", label="params: a law")]),
@@ -1165,11 +1166,11 @@ def figures() -> dict[str, Canvas]:
             ],
         ),
         "function-outputs": row_figure(
-            "A function into records and its selection at one output",
+            "A function whose return value is a record, and its selection at one output",
             [
                 (
                     Obj("f", "function", outputs=[Part("y"), Part("z")], inputs=[Port("x")]),
-                    ["f maps x to {y, z}:", "it offers y and z"],
+                    ["f maps x to {y, z}:", "its outputs are y and z"],
                 ),
                 (
                     Obj(

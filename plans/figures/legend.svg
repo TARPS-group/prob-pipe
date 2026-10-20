@@ -52,7 +52,7 @@
     <text x="59.0" y="341.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="end">y</text>
     <text x="150.5" y="351.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle" font-style="italic">a draw is an array</text>
     <circle cx="70.0" cy="347.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
-    <text x="330.0" y="330.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">An output at the root offers a base value</text>
+    <text x="330.0" y="330.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">An output at the root names a base value</text>
     <text x="330.0" y="348.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">whole; its name stands outside the box.</text>
     <rect x="40.0" y="386.0" width="112.0" height="80.0" rx="8" fill="#fff0f7" stroke="#bf3989" stroke-width="1.6"/>
     <rect x="50.0" y="393.0" width="49.3" height="17.0" rx="8.5" fill="#bf3989" stroke="#bf3989" stroke-width="1"/>

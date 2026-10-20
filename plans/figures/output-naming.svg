@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="796" height="186" viewBox="0 0 796 186" role="img">
-  <title>Three ways an object offers what it produces</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="802" height="186" viewBox="0 0 802 186" role="img">
+  <title>The outputs of a base value, a record, and a wrapped record</title>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
       <path d="M 0 1 L 9 5 L 0 9 z" fill="#424a53"/>
@@ -8,7 +8,7 @@
       <path d="M 0 1 L 9 5 L 0 9 z" fill="#cf222e"/>
     </marker>
   </defs>
-  <rect x="0.5" y="0.5" width="795" height="185" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <rect x="0.5" y="0.5" width="801" height="185" rx="12" fill="#ffffff" stroke="#d0d7de"/>
   <g transform="translate(13.0,18.0)">
     <rect x="23.9" y="0.0" width="190.8" height="58.0" rx="8" fill="#fff0f7" stroke="#bf3989" stroke-width="1.6"/>
     <rect x="33.9" y="7.0" width="49.3" height="17.0" rx="8.5" fill="#bf3989" stroke="#bf3989" stroke-width="1"/>
@@ -19,28 +19,28 @@
     <text x="104.4" y="45.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle" font-style="italic">a draw is an array</text>
     <circle cx="23.9" cy="41.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
     <circle cx="214.8" cy="41.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
-    <text x="107.4" y="128.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">a base value: offered whole,</text>
-    <text x="107.4" y="146.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">under a name outside it</text>
-    <rect x="326.2" y="0.0" width="112.0" height="80.0" rx="8" fill="#f6f0ff" stroke="#8250df" stroke-width="1.6"/>
-    <rect x="336.2" y="7.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
-    <text x="352.0" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
-    <text x="375.8" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">d</text>
-    <text x="338.2" y="45.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">mu</text>
-    <text x="338.2" y="67.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">sigma</text>
-    <circle cx="326.2" cy="41.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
-    <circle cx="326.2" cy="63.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
-    <text x="382.2" y="128.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">a record: offers its children</text>
-    <rect x="601.1" y="0.0" width="112.0" height="102.0" rx="8" fill="#f6f0ff" stroke="#8250df" stroke-width="1.6"/>
-    <rect x="611.1" y="7.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
-    <text x="627.0" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
-    <text x="650.8" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">d</text>
-    <text x="613.1" y="45.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">params</text>
-    <text x="629.1" y="67.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">mu</text>
-    <text x="629.1" y="89.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">sigma</text>
-    <path d="M 617.1,51.0 L 617.1,63.0 L 626.1,63.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
-    <path d="M 617.1,51.0 L 617.1,85.0 L 626.1,85.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
-    <circle cx="601.1" cy="41.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
-    <text x="657.1" y="128.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">the record wrapped under params:</text>
-    <text x="657.1" y="146.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">one output</text>
+    <text x="107.4" y="128.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">a base value: one output,</text>
+    <text x="107.4" y="146.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">named outside it</text>
+    <rect x="329.6" y="0.0" width="112.0" height="80.0" rx="8" fill="#f6f0ff" stroke="#8250df" stroke-width="1.6"/>
+    <rect x="339.6" y="7.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
+    <text x="355.4" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
+    <text x="379.2" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">d</text>
+    <text x="341.6" y="45.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">mu</text>
+    <text x="341.6" y="67.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">sigma</text>
+    <circle cx="329.6" cy="41.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <circle cx="329.6" cy="63.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <text x="385.6" y="128.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">a record: one output per child</text>
+    <rect x="607.9" y="0.0" width="112.0" height="102.0" rx="8" fill="#f6f0ff" stroke="#8250df" stroke-width="1.6"/>
+    <rect x="617.9" y="7.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
+    <text x="633.7" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
+    <text x="657.5" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">d</text>
+    <text x="619.9" y="45.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">params</text>
+    <text x="635.9" y="67.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">mu</text>
+    <text x="635.9" y="89.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">sigma</text>
+    <path d="M 623.9,51.0 L 623.9,63.0 L 632.9,63.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M 623.9,51.0 L 623.9,85.0 L 632.9,85.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="607.9" cy="41.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <text x="663.9" y="128.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">the record wrapped under params:</text>
+    <text x="663.9" y="146.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">one output</text>
   </g>
 </svg>
