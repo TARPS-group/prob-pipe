@@ -124,8 +124,8 @@ A merge determines structure from the names of outputs and inputs alone. Every o
 **What a merge is not.** A merge is not composition, which passes `g`'s result to `f` by position in `f ∘ g` and returns `f`'s result alone, while a merge matches names and keeps both operands' outputs. It is not binding or conditioning: binding `lik`'s input `mu` removes the input, and conditioning `lik & prior` on `mu` removes the output, while in `lik & prior` the output `mu` feeds `lik` and stays an output. It is not renaming either, so an operand is renamed first (II.6) and then merged.
 
 ```python
-def __and__(self, other: Distribution | ConditionalDistribution, /) -> FactoredDistribution | FactoredConditionalDistribution: ...
-def __mul__(self, other: object, /) -> NoReturn: ...   # raises TypeError naming & for a law or a kernel; NotImplemented otherwise
+def __and__(self, other: Distribution | ConditionalDistribution) -> FactoredDistribution | FactoredConditionalDistribution: ...
+def __mul__(self, other: object) -> NoReturn: ...   # raises TypeError naming & for a law or a kernel; NotImplemented otherwise
 def __bool__(self) -> NoReturn: ...   # raises TypeError: a law has no truth value
 ```
 

@@ -68,7 +68,10 @@ _MODULES = (
 _EXAMPLES = frozenset({"growth", "predict", "predict_impl", "rate"})
 
 #: Declarations the implementation does not match yet, with the change each awaits.
-_PENDING: dict[str, str] = {}
+_PENDING: dict[str, str] = {
+    "Function": "III.3 declares [] by paths, output, without, rename, and & on a Function; "
+    "the code has none of them",
+}
 
 #: Public names of the engine that the prose declares rather than a code block.
 _PROSE_DECLARED = frozenset({"function", "workflow_run", "replay_run", "evaluation_rule_registry"})

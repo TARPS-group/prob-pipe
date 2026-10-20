@@ -83,13 +83,16 @@ _PROSE = {
     ),
     "VI.6": ("def condition_on(d, given): ...",),
     "VI.7": ("def joint(A, B, **align): ...",),
-    "VI.8": ("def marginal(d, field): ...", "def factor(d, component_name): ..."),
+    "VI.8": ("def marginal(d, paths): ...", "def factor(d, output_name): ..."),
     "VI.9": ("def mixture(K, mixing): ...",),
     "VI.10": ("def convert(d, target): ...",),
 }
 
 #: Declarations the implementation does not match yet, with the change each awaits.
-_PENDING: dict[str, str] = {}
+_PENDING: dict[str, str] = {
+    "marginal": "VI.8 names the parameter paths; the code names it field",
+    "factor": "VI.8 names the parameter output_name; the code names it component_name",
+}
 
 #: Names the package exports that Part VI does not declare, with where each is declared.
 _DECLARED_ELSEWHERE = {

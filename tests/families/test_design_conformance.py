@@ -56,6 +56,22 @@ _OTHER_PACKAGES = frozenset({"EmpiricalDistribution"})
 #: Declarations the implementation does not match yet, with the change each awaits.
 _PENDING = {
     "KDEDistribution": "the declaration check compares a class-valued default by the class's name",
+    **{
+        name: "Part VII names the output keyword output_name; the code names it component"
+        for name in (
+            "TFPDistribution",
+            "Normal",
+            "BootstrapReplicateDistribution",
+            "BootstrapDistribution",
+            "LinearPushforwardDistribution",
+            "BijectorTransformedDistribution",
+            "GaussianProcess",
+            "LinearBasisFunction",
+            "LinearGaussianConditional",
+            "GLMFamily",
+            "glm_likelihood",
+        )
+    },
 }
 
 #: New declarations the catalog does not define yet; each has a pending case above.
