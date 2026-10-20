@@ -810,7 +810,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         ``", "``. A product without a label reads factor by factor, as
         ``lik(y | beta)·prior(beta | tau)``. The notation is a rendering of the
         kernel's expression, made each time it is shown, which shows at most
-        the current ``notation_config.max_depth`` nested levels. No operation
+        the current ``config.notation.max_depth`` nested levels. No operation
         reads the notation.
         """
         return self._expression.render_notation(self._own_signature(), warn=True)

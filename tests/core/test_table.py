@@ -175,7 +175,7 @@ class TestARecordThatIsNotOfSummariesShowsALinePerPath:
     def test_without_provenance_a_record_of_summaries_shows_a_line_per_path(
         self, model, monkeypatch
     ):
-        monkeypatch.setattr(probpipe.provenance_config, "mode", ProvenanceMode.OFF)
+        monkeypatch.setattr(probpipe.config.provenance, "mode", ProvenanceMode.OFF)
 
         summary = summarize(model, mean)
 

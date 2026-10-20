@@ -103,7 +103,7 @@ from ..values._binding import (
     resolved_hint,
     values_to_bound_arguments,
 )
-from ..values._function_base import _COMPLETED_AT_RETURN, _passing_down
+from ..values._function_base import _COMPLETED_AT_RETURN, _passing_controls_to_formula_calls
 
 __all__ = [
     "BoundCall",
@@ -762,15 +762,15 @@ def _identity_scope(call: BoundCall) -> AbstractContextManager[None]:
     ``num_samples`` when the call's view sets them, as the module docstring
     states.
     """
-    view = call.operation
+    operation_view = call.operation
 
-    def passed(name: str) -> int | None:
-        return call.controls[name] if name in view._options else None
+    def passed_count(name: str) -> int | None:
+        return call.controls[name] if name in operation_view._options else None
 
-    return _passing_down(
+    return _passing_controls_to_formula_calls(
         exact_only=call.controls["exact_only"],
-        max_evaluations=passed("max_evaluations"),
-        num_samples=passed("num_samples"),
+        max_evaluations=passed_count("max_evaluations"),
+        num_samples=passed_count("num_samples"),
     )
 
 
@@ -1920,14 +1920,14 @@ class Operation(Function):
             return (*candidates, _GivenCandidate())
         return tuple(candidates)
 
-    def _plan_point(
-        self, values: Mapping[str, Any], controls: Mapping[str, Any]
+    def _plan_route_inputs(
+        self, argument_values: Mapping[str, Any], controls: Mapping[str, Any]
     ) -> tuple[BoundCall, OutputSpec | None, tuple[str, ...]]:
         """The bound call of one point, its result declaration, and the checks deferred to return.
 
         Parameters
         ----------
-        values : Mapping of str to Any
+        argument_values : Mapping of str to Any
             The point's arguments by parameter name, which become the bound
             call's ``operands``.
         controls : Mapping of str to Any
@@ -1937,8 +1937,8 @@ class Operation(Function):
         Returns
         -------
         call : BoundCall
-            The bound call over *values* and *controls*.
-        result : OutputSpec or None
+            The bound call over *argument_values* and *controls*.
+        result_declaration : OutputSpec or None
             The result's declaration, or ``None`` when the declarations leave it
             open.
         deferred : tuple of str
@@ -1952,30 +1952,30 @@ class Operation(Function):
         TypeError
             If the result rule returns something other than an OutputSpec or None.
         """
-        point_values = dict(values)
+        operand_values = dict(argument_values)
         if self._given_subject is not None:
             from ..distributions._conditional import ConditionalDistribution
             from ._given import _GivenLaw
 
-            given = point_values.pop("given", None)
-            subject = point_values[self._given_subject]
+            given = operand_values.pop("given", None)
+            subject = operand_values[self._given_subject]
             if given is not None:
                 if not isinstance(subject, ConditionalDistribution):
                     raise ApplicabilityError(
                         f"{self.name}: given requires a ConditionalDistribution operand"
                     )
-                point_values[self._given_subject] = _GivenLaw(subject, given)
+                operand_values[self._given_subject] = _GivenLaw(subject, given)
             elif isinstance(subject, ConditionalDistribution) and not self._admits_kernel:
                 raise ApplicabilityError(
                     f"{self.name}: ConditionalDistributionSpec requires given values"
                 )
-        call = BoundCall(self, MappingProxyType(point_values), controls)
-        result, deferred = self._plan(call)
-        if self._given_subject is not None and values.get("given") is not None:
+        call = BoundCall(self, MappingProxyType(operand_values), controls)
+        result_declaration, deferred = self._plan(call)
+        if self._given_subject is not None and argument_values.get("given") is not None:
             deferred += (
                 "if conditional delegation is selected, the resulting law's capabilities and fidelity are checked at execution",
             )
-        return call, result, deferred
+        return call, result_declaration, deferred
 
     def _plan(self, call: BoundCall) -> tuple[OutputSpec | None, tuple[str, ...]]:
         """Check the applicability conditions, then derive the result's declaration.

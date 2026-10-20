@@ -297,7 +297,7 @@ class TestWithLabel:
             n.with_label(3)  # type: ignore[arg-type]
 
     def test_with_label_off_mode_attaches_no_provenance(self):
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         n = Normal("x", loc=0.0, scale=1.0)
         m = n.with_label("y")
         assert m.label == "y"

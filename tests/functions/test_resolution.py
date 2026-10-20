@@ -504,7 +504,7 @@ class TestARoutedPointShowsOnlyPassedArguments:
             {"x": 3.0, "k": 2.0},
             routed.options,
             routed._route_candidates(routed.options),
-            passed=passed,
+            explicit_parameter_names=passed,
         )
         assert term.label == ("_scale(3.0, 2.0)" if "k" in passed else "_scale(3.0)")
 

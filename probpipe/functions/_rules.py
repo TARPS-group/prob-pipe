@@ -355,7 +355,8 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
         ----------
         f : Function
             The map the call applies, whose own ``max_evaluations`` applies
-            when *controls* sets none.
+            when *controls* sets none, as for a use of the registry outside a
+            call.
         operand : Distribution
             The law argument the registry dispatched on.
         parameter : str or None
@@ -385,7 +386,10 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
             return Feasibility(
                 False, f"the call does not lift {_describe(operand)} alone as a distribution"
             )
-        count = (controls or {}).get("max_evaluations", f.options["max_evaluations"])
+        count = (controls or {}).get("max_evaluations")
+        if count is None:
+            # A direct use of the registry, outside a call, passes no controls.
+            count = f.options["max_evaluations"]
         stochastic = _plan.build_stochastic_plan(values, plan, count)
         if stochastic is None or stochastic.evaluation_mode != "exact":
             return Feasibility(

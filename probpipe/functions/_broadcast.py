@@ -41,7 +41,7 @@ from ..core._record_batch import (
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec
 from ..core._specs import OutputSpec
-from ..core.config import WorkflowKind, _checked_count, prefect_config
+from ..core.config import WorkflowKind, _checked_count, config
 from ..core.named_tree import _unflatten_paths
 from ..core.provenance import Provenance
 from ..core.record import Record
@@ -866,7 +866,7 @@ def _mapped_evaluator(
     if workflow_kind == WorkflowKind.TASK:
         run_vmap = task(name=f"{function_name}_vmap")(run_vmap)
     elif workflow_kind == WorkflowKind.FLOW:
-        runner = prefect_config.resolve_task_runner()
+        runner = config.prefect.resolve_task_runner()
         run_vmap = flow(
             name=f"{function_name}_vmap",
             **({"task_runner": runner} if runner is not None else {}),

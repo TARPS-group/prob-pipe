@@ -68,12 +68,12 @@ def _identity(value):
 
 
 def _switch_to_full(value):
-    probpipe.provenance_config.mode = ProvenanceMode.FULL
+    probpipe.config.provenance.mode = ProvenanceMode.FULL
     return value
 
 
 def _switch_to_off(value):
-    probpipe.provenance_config.mode = ProvenanceMode.OFF
+    probpipe.config.provenance.mode = ProvenanceMode.OFF
     return value
 
 
@@ -444,7 +444,7 @@ class TestWorkflowRecipeRecording:
             assert forbidden not in persisted_keys
 
     def test_provenance_off_persists_no_recipe(self):
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         workflow = Function(
             _identity,
             label="_identity",
@@ -470,7 +470,7 @@ class TestWorkflowRecipeRecording:
         implementation,
         expect_provenance,
     ):
-        probpipe.provenance_config.mode = initial_mode
+        probpipe.config.provenance.mode = initial_mode
         workflow = Function(
             implementation,
             label="implementation",
@@ -487,7 +487,7 @@ class TestWorkflowRecipeRecording:
             assert result.provenance.controls["replay"]["callable"]["supported"] is True
 
     def test_nested_workflow_inherits_outer_provenance_mode(self):
-        probpipe.provenance_config.mode = ProvenanceMode.FULL
+        probpipe.config.provenance.mode = ProvenanceMode.FULL
         workflow = Function(
             _identity,
             label="_identity",
@@ -496,7 +496,7 @@ class TestWorkflowRecipeRecording:
         )
 
         with workflow_run(seed=7):
-            probpipe.provenance_config.mode = ProvenanceMode.OFF
+            probpipe.config.provenance.mode = ProvenanceMode.OFF
             with workflow_run(seed=8):
                 result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
@@ -513,7 +513,7 @@ class TestWorkflowRecipeRecording:
         )
 
         def controls_for(mode):
-            probpipe.provenance_config.mode = mode
+            probpipe.config.provenance.mode = mode
             with workflow_run(seed=7):
                 result = workflow(value=Normal("value", loc=0.0, scale=1.0))
             return result.provenance.controls
@@ -677,7 +677,7 @@ class TestWorkflowCallableAnchor:
             _callable._canonical_json({"value": float("nan")})
 
     def test_provenance_off_skips_callable_anchor_capture(self):
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         workflow = Function(
             replayable_identity,
             label="replayable_identity",
@@ -703,7 +703,7 @@ class TestWorkflowCallableAnchor:
         with workflow_run(seed=17):
             original = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         with (
             patch.object(
                 _callable,
