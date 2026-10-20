@@ -58,9 +58,9 @@ These principles refine `C2 – Functional interface over immutable objects`, `C
 
 **The backend's global settings.** The array backend keeps process-wide settings that change results, such as its floating-point precision and the implementation of its random generator. Five rules govern them:
 1. **They belong to the user.** ProbPipe never changes one, at import or during a call.
-2. **A call holds them fixed.** The outermost call records them when it opens, and provenance records them.
+2. **A call holds them fixed.** The outermost call takes a snapshot of them when it opens, and provenance records them.
 3. **A change during a call raises,** naming the setting and both values, because the call's compiled programs were built under the old value.
-4. **Declarations are checked against them.** A declared output precision that the settings do not provide is refused when the call opens, and never silently cast.
+4. **Output specs are checked against them.** A declared output precision that the settings do not provide is refused when the call opens, and never silently cast.
 5. **Work elsewhere runs under the same settings.** Work sent to another process applies them before it reads any of its data.
 
 ## The Three Layers

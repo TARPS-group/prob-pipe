@@ -85,7 +85,7 @@ probpipe/
 │   ├── _replay.py             #   replay_run, replay records and anchors; the cache key (V.8)
 │   ├── _evaluation_keys.py    #   evaluation points: keys across threads, tasks, and flows (V.8, V.9)
 │   ├── _execution.py          #   running evaluation points across threads and tasks, the execution contract (V.9)
-│   ├── _orchestration.py      #   optional tracing (V.9)
+│   ├── _orchestration.py      #   optional recording (V.9)
 │   ├── _result.py             #   assembly, output inference, declaration enforcement and errors, kind-directed wrap, identity (V.10)
 │   └── _reparameterization.py #   bijector_for, register_bijector (V.12)
 ├── operations/                # Part VI — the operations
