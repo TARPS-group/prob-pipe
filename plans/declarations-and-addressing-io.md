@@ -263,7 +263,7 @@ The type of these values decides an object's outputs (§ 3.2) and how two object
 So a sample from a law, a function's return value, and an element of a batch all have the object's value type.
 
 A batch's value type is its element type, not its own batch type.
-The two have the same paths (§ 2.3), and a batch's outputs are read element by element (§ 3.2).
+The two have the same paths (§ 2.3); a batch's outputs are read element by element, and each is typed by the batch type of its column (§ 3.2).
 
 The value type is read from the object's type (§ 2.1) without computing anything.
 A law therefore has a value type whether or not it can be sampled, and a function has one before it is called; only a function whose return type is unknown has none until it is called.
@@ -420,7 +420,7 @@ The precise rule is stated on types, case by case, and an object's outputs are t
 > | 4 | a batch type | the outputs of its element type, read element by element | a batch of records is determined by the batch of each child (2) |
 > | 5 | a law type or a kernel type | none | a law is not a base value, so no name is attached to it from outside (3); and the laws of its parts do not determine it, so its parts cannot serve as its outputs (2). To make one available, wrap it |
 >
-> An object's *outputs* are the outputs of its value type.
+> An object's *outputs* are the outputs of its value type, with one exception for their types: a batch's element type fixes its outputs' names and element-level types, and each output is typed by the type of its output value, the batch type of its column (below), over the batch's levels with the element-level type as element type, as case 4 gives for the batch's own type.
 
 <details>
 <summary>Technical note: reading outputs pointwise and element by element</summary>
@@ -596,7 +596,7 @@ Figures read from right to left, as a density $p(y \mid \mu)$ does, where `y` is
 | Type unspecified | never | only for an output at the root, until the type is known (§ 3.5) | a binding is checked against the input's type |
 | Equality | ignores order | keeps order | binding is by name; output order determines the layout |
 | Empty | an object may take no inputs | outputs are never described by an empty record type; an object whose value type is a law type has no outputs | an empty record describes nothing to make available |
-| Batches | the elements' inputs | the outputs of the element type, each output value a batch; none when the elements are laws or kernels | one binding supplies every element |
+| Batches | the elements' inputs | the outputs of the element type, each output value a column, typed by its batch type; none when the elements are laws or kernels | one binding supplies every element |
 
 A batch of functions and a batch of kernels show both sides at once.
 Each batch's inputs are its elements' inputs, and one binding supplies them to every element.
@@ -753,7 +753,7 @@ II.6 states the rules: every key is resolved against the original tree, so swaps
 
 > [!NOTE]
 > **Consequence** (of the definition, § 3.2, and § 4.4).
-> 1. The type of output `c` is the value type of the object at `c`, except for a record, where it is the type of the child `c`: for `{x: 3.0, g: d}`, the output `g` has `d`'s law type, while `d`'s value type is its event type. For a batch, the object at `c` is a column, whose value type is the element type at `c`.
+> 1. The type of output `c` is the value type of the object at `c`, except for a record or a batch, where it is that object's own type, the type of the output value: for `{x: 3.0, g: d}`, the output `g` has `d`'s law type, while `d`'s value type is its event type; for a batch, the object at `c` is its column, and the output has the column's batch type.
 > 2. An object whose value type is a law or kernel type, such as a function returning a law or a batch of laws or of kernels, has no outputs (§ 3.2, case 5), and so no object at an output.
 
 For a law `d` over an array named `x`, the object at `x` is `d`; for a law `e` over `{a, g: {b, c}}`, the object at `g` is `e[g]`; for a batch of 4 samples from `d`, the object at `x` is the batch.
@@ -1212,7 +1212,7 @@ It has no paths known before it is called, so `f[p]` is checked when the selecte
 > 2. **Equal batches can merge differently:** two batches of the same 4 arrays, one naming them `x` and one `y`, are equal, yet merged with a batch of 4 values named `z` they give the records `{x, z}` and `{y, z}`.
 > 3. **Positions** along its levels select an element or a smaller batch, a second way of selecting that gives no part; positions and paths commute (§ 4.1).
 > 4. **Inputs:** its elements' inputs, supplied to every element by one binding.
-> 5. **Outputs:** those of its element type, each output value a column (§ 3.2, § 4.1): a batch of records has its elements' children, a batch of functions its elements' outputs, each output value a batch of functions, a batch of base values one output at the root, and a batch of laws or of kernels none.
+> 5. **Outputs:** the names of its element type's outputs, each output value a column (§ 4.1) and typed by the column's batch type (§ 3.2): a batch of records has its elements' children, a batch of functions its elements' outputs, each output value a batch of functions, a batch of base values one output at the root, and a batch of laws or of kernels none.
 > 6. **Merge:** two batches over equal levels merge element by element (§ 5.5).
 
 ![A batch b of samples from a law over {mu, sigma}, and its column b[mu], whose output mu is at the root.](figures/batch-columns.svg)
@@ -1239,7 +1239,7 @@ For a batch `b` of 4 samples from a law over an array named `x`: `b` has the out
 | I9 | **One path gives the node, a list a record holding it**, the output at the root included | chosen (§ 4.2); proved (D.1) |
 | I10 | **A list and removal partition** the leaf paths of a record, a type, a batch of records, or a law, and an object's inputs | § 4.3, § 4.4; proved (D.1) |
 | I11 | **Conditioning removes what it fixes**, however it is computed; a kernel's bound inputs, and the bound nodes of a record input, leave its inputs | chosen (§ 4.7) |
-| I12 | **The object at an output:** output `c`'s type is the value type of the object at `c`, or for a record the child's type; an object whose value type is a law or kernel type, such as a batch of laws or kernels, has no output | § 3.2, § 4.6; proved (D.1) |
+| I12 | **The object at an output:** output `c`'s type is the value type of the object at `c`, or, for a record or a batch, that object's own type, the type of the output value, so a batch's output has its column's batch type; an object whose value type is a law or kernel type, such as a batch of laws or kernels, has no output | § 3.2, § 4.6; proved (D.1) |
 | I13 | **Selecting commutes with evaluation:** `f[s](w)` is `f(w)` at `s`; `k[s]` at `w` is the marginal law at `s` of the law `k` gives at `w` | § 4.1; proved for one path (D.1) |
 | I14 | **Selecting keeps inputs** | § 4.1; proved (D.1) |
 | I15 | **Sides are separate:** no name is both a factor input and an output of a kernel, a law, or a merge | chosen for kernels (§ 6.3); conditions 4 and 5 for merges |
@@ -1325,7 +1325,7 @@ Part I speaks of kinds, types, inputs, and outputs; the code realizes each with 
 | an object's outputs, with its value type and a base value's one name (§ 3.5) | an `OutputSpec`, called an *output spec*, whose `term_spec` is the value type; an output spec over a base type is in the *keyword form*, `OutputSpec(y=...)`, and any other is in the *positional form*, `OutputSpec(T)` |
 | a law's or kernel's event type and outputs | `event_spec`, the law's or kernel's *event spec* |
 | a function's return type and outputs | `output_spec` |
-| a batch's element type and outputs, with its elements' name (§ 6.5) | `element_spec`, the batch's *element spec* |
+| a batch's element type, its outputs' names and element-level types, and its elements' name (§ 6.5) | `element_spec`, the batch's *element spec*; the outputs typed by their columns are those of `OutputSpec(b.spec)` |
 | `x[p]`, `x[[p, q]]` | `x["p"]`; `x["p", "q"]` or `x[["p", "q"]]` |
 | `x without p` | `x.without("p")` |
 | rename | `x.rename({"old": "new"})` |
@@ -2977,8 +2977,8 @@ class Batch(TrackedTerm):
 
 </details>
 
-A batch's outputs are described by its `element_spec`, since its value type is its element type (§ 2.2): its elements' children for records, their outputs for functions, one output at the root for base elements, and nothing for laws or kernels.
-`OutputSpec(b.spec)`, positional over the batch type, describes a value that is such a batch, such as a function's return value: it has the same outputs, each typed by a batch type (§ 3.2, case 4).
+A batch's value type is its element type (§ 2.2), so its `element_spec` fixes its outputs' names and their element-level types: its elements' children for records, their outputs for functions, one output at the root for base elements, and nothing for laws or kernels.
+Each output is typed by its column's `BatchSpec`, the batch's levels over the element-level type, as `OutputSpec(b.spec).outputs` gives it (§ 3.2, case 4; § 4.6); `OutputSpec(b.spec)` also describes a value that is such a batch, such as a function's return value.
 A `DistributionBatch`'s and a `ConditionalDistributionBatch`'s `event_spec` is `element_spec.term_spec.event_spec`.
 
 ### 18.2 Where `element_spec` comes from
@@ -3182,7 +3182,7 @@ The items below were found while restructuring types, value types, paths, and ou
 
 36. **Kind and type.** § 2.1 states that every type belongs to exactly one kind and that an object's kind is the kind of its type, as `design/glossary.md` has it (a kind is identified by the class of its term spec). *Reading:* Part I's six kinds group the glossary's finer kinds, so `NumericArray` and `Opaque` are both base values; no rule changed.
 37. **"Spec" in Part I.** Part I uses no "spec": it speaks of types, of an object's inputs, and of its outputs, described by its value type and a base value's one name (§ 3.5); § 8 maps each to `TermSpec`, `InputSpec`, `OutputSpec`, `event_spec`, `output_spec`, and `element_spec`. Selection and removal on output specs are restated on types (§ 4.3, § 4.4), and the merge of input specs and of output specs as the merge of objects' inputs and of objects' outputs (§ 5.3). *Reading:* removal "on types" covers the record types and output specs that the earlier list named, and a law, kernel, function, or batch type is reached in code through an `OutputSpec` over it, as before; no rule changed.
-38. **A batch's value type, and the type of its outputs.** A batch's value type is its element type, while the earlier text read a batch through its own batch type. Paths and output names are unchanged, since a batch type has its element type's paths and outputs. The type of a batch's output was the column's batch type (§ 4.6, I12); it is now the value type of the column, the element type at that output, which is what `element_spec.outputs` gives and what a merge of batches checks its conditions against (§ 5.5, technical note). `OutputSpec(b.spec)`, which describes a value that is a batch, still types its outputs by batch types (§ 3.2, case 4; § 18.1). *Reading:* these; no check or result changes.
+38. **A batch's value type, and the type of its outputs.** A batch's value type is its element type, while the earlier text read a batch through its own batch type. Paths and output names are unchanged, since a batch type has its element type's paths and outputs. The type of a batch's output is kept: it is the type of its output value, the column (§ 3.2 states this as the one exception to reading output types from the value type), so the column's batch type, over the batch's levels with the element-level output type as element type (§ 3.2, § 4.6, I12), as `OutputSpec(b.spec).outputs` gives it and S4's done-condition requires; `element_spec.outputs` gives the element-level types. *Reading:* the element type fixes the names and element-level types, and the column fixes each output's type; no rule changed.
 39. **The types of outputs read pointwise and element by element.** The earlier § 3.5 said that an output of a function type has a function type and an output of a batch type a batch type; the technical note after the cases of § 3.2 now states this. A function object's outputs are typed by its return type's outputs, as before (§ 4.6). No rule changed.
 40. **Cases cited for a function's outputs.** A function from `x` to `{y, z}` takes case 1, since its value type is its return type, where the earlier text cited cases 3 and 1 (§ 3.3, item 29). Case 3 now applies to a value type that is itself a function type, such as a batch of functions (§ 3.7). The outputs are the same.
 41. **Merge's value and condition 2, by kind.** Item 5 of Definition (merge) states the value for two laws or kernels, two functions, two records, and two batches, and condition 2 reads each operand's value type, or, for batches, each element's value type, as the earlier wording read each element. No rule changed.
