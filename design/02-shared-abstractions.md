@@ -365,7 +365,7 @@ So a selection of a batch labeled `x·y` is labeled `(x·y)[sample=0:2]`, and a 
 
 The `spec` attribute is the term's type, stored once. Each kind narrows it to its own spec class and exposes convenience accessors for its properties.
 
-Every tracked term exposes the property `raw` as the single access point to the representation layer. It is the term **detached** from the workflow. Detachment removes provenance, annotations, and any reference to a container or parent, and it keeps the spec and the label. A kind represented by an object from outside ProbPipe has a **raw host**, which is its `raw`, for example a backing array object or a wrapped callable. The `raw` of a kind whose representation is a ProbPipe object, such as a factored joint, is that object detached, and the `raw` of a field view of a law is the raw form of its parent's marginal at its path (III.7). **Every read of `raw` gives the same raw form.** A term keeps the detached copy it builds on the first read, and the copy refuses provenance, since every reader shares it, while a relabeled or unpickled copy of it is a term of its own. A record keeps its resolved leaves and gives a new `dict` over them on each read, which the caller may change (III.5).
+Every tracked term exposes the property `raw` as the single access point to the representation layer. It is the term **detached** from the workflow. Detachment removes provenance, annotations, and any reference to a container or parent, and it keeps the spec and the label. A kind represented by an object from outside ProbPipe has a **raw host**, which is its `raw`, for example a backing array object or a wrapped callable. The `raw` of a kind whose representation is a ProbPipe object, such as a factored joint, is that object detached, and the `raw` of a marginal view of a law is the raw form of its parent's marginal at its path (III.7). **Every read of `raw` gives the same raw form.** A term keeps the detached copy it builds on the first read, and the copy refuses provenance, since every reader shares it, while a relabeled or unpickled copy of it is a term of its own. A record keeps its resolved leaves and gives a new `dict` over them on each read, which the caller may change (III.5).
 
 Accessing a container returns a **view**, for example a record field or a batch element. A container's view is a tracked term labeled from the accessor, which is the path for a record and the selected levels for a batch, and a batch element is a relabeled copy, so the term the batch stores keeps its own label; its provenance records the container and the source term where one was supplied. A batch's label is grouped before the selection, as in `(lik·prior)[dataset=0]`, so the selection reads as applying to the whole label.
 
@@ -647,7 +647,7 @@ When a missing path comes from a tuple whose `/`-joined form is a path, the mess
 
 `rename` renames the nodes *within* a tree, whereas `with_label` relabels the object itself (II.4). `at_path` has a level analogue in `Batch.at_levels` (II.5), and the two are alike: a path addresses a position and returns a field or a group, and named level indexers address positions and return an element or a sub-batch.
 
-`rename` renames nodes by `old="new"` pairs. A **rename** gives the node at path `old` the path `new`, and the node keeps its subtree. In each pair, `old` is the path of a node, read by the reader above, so keyword pairs address top-level nodes and the positional mapping form addresses any node.
+`rename` renames nodes by `old="new"` pairs. A **rename** gives the node at path `old` the path `new`, and the node keeps its children. In each pair, `old` is the path of a node, read by the reader above, so keyword pairs address top-level nodes and the positional mapping form addresses any node.
 
 A target may itself be a path, so a rename can **move** a node to another parent: `rename({"group/mu": "mu"})` promotes the field to the top level, and `{"mu": "group/mu"}` demotes it under `group`, creating intermediate nodes as needed. A rename is *in place* when its target has the node's parent path and no ancestor of the node is itself renamed, so the node keeps its parent; every other rename moves the node. A group that the result leaves empty dissolves, since a tree holds no empty groups, and a target may then take its path.
 
@@ -668,7 +668,7 @@ Named paths satisfy `C5 – Naming for unambiguous meaning`, and keying a rename
 
 ### Notes
 
-- *Mappings are subtrees.* Construction should materialize a mapping value into a subtree. The need for this mapping check is why `NamedTree` implements the `Mapping` interface without registering as a `collections.abc.Mapping`, ensuring a nested mapping and its `to_nested_dict` export round-trip through the constructor.
+- *Mappings are subtrees.* Construction should materialize a mapping value into a group. The need for this mapping check is why `NamedTree` implements the `Mapping` interface without registering as a `collections.abc.Mapping`, ensuring a nested mapping and its `to_nested_dict` export round-trip through the constructor.
 
 ## II.7 — Dispatch and registries
 
