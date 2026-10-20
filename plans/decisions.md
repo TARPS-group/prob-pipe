@@ -6,14 +6,14 @@ When a decision changes a plan, the plan's text changes in the same commit.
 
 ## Waiting for a decision
 
-The items of [`gaps-and-conflicts.md`](gaps-and-conflicts.md) were all settled on 2026-10-18.
+The items of `gaps-and-conflicts.md` were all settled on 2026-10-18; the file is in git history at commit `dac760cf`.
 A question raised during implementation is posted on the tracking issue, or in its PR's body before the issue exists, and the checkpoint PR copies it here, written as README § When to stop and ask describes.
 
 The questions below come from the overnight adversarial review of the plans on 2026-10-18 (reviews p1 consistency, p2 declarations, p3 execution, p4 user experience, p5 feasibility), from jhuggins's comment on #587, and from P0b's draft PR #597. Each gives the background, the options, and a recommendation, so it can be answered by its number. Where an item concerns a plan, the plan keeps its current text with a note "pending the maintainer's decision N…". Answers that change the schedule (N1–N8) are best taken together, since they interact.
 
 Not queued: review p1's B1 ("output declaration" retired now or at the rename) is answered by Q1's accepted option 2; see the settled row of 2026-10-18 on the declaration words.
 
-Where a declarations item has a pending note in `declarations-and-addressing-io.md`, its section is given in brackets.
+Where a declarations item has a pending note in `declarations-and-addressing.md`, its section is given in brackets.
 
 ### Schedule and process
 
@@ -37,7 +37,7 @@ Where a declarations item has a pending note in `declarations-and-addressing-io.
 *Options.* (a) The compile count is a CI test ("a second `condition_on.using(method="blackjax_nuts")(model, observed2)`, with `observed2` of the first call's shapes, compiles no JAX program"), and the wall-clock comparison is a benchmark script whose output goes in the PR body ("NUTS with window adaptation, 4 chains, 1,000 warmup and 1,000 draws, against `blackjax.window_adaptation` plus a hand-written `jax.lax.scan`, within about 10% on CPU"). (b) Both gate CI.
 *Recommendation.* (a), together with N3's off-ramp for the row.
 
-**N5. Split S2b by output and input specs** (p5 M3) [`-io` B.6, after the S2b table].
+**N5. Split S2b by output and input specs** (p5 M3) [B.6, after the S2b table].
 *Background.* S2b edits eight modules, a docs page, and now five User Guide notebooks, with a long done-condition, and gates S3, S4, and E4; but S3 needs only `&` on output specs and the shallow record merge, S4 only `_exposed_components`, and E4 only output specs.
 *Options.* (1) **S2b-out** (`OutputSpec[]`, `in`, `without`, and `&`; `__iter__`'s refusal; a produced law or kernel offers no outputs; the joint's event through `&`; the shallow record merge) and **S2b-in** (the four `InputSpec` sources, the size shorthand, `InputSpec &`, the strict `without`, list indexing, `__contains__` and `get`, O9, § 6.2's messages, `docs/api/declarations.md`, and the User Guide idioms); S3, S4, and E4 build on S2b-out, and S2b-in stays never cut. (2) Keep it whole.
 *Recommendation.* (1).
@@ -73,7 +73,7 @@ Where a declarations item has a pending note in `declarations-and-addressing-io.
 *Options.* (1) jhuggins resolves the conflict by merging `dev/overhaul` into #586 rather than rebasing, so the stacked branches need no rewrite, and both merge by the end of 2026-10-19; the maintainer may merge them if jhuggins is unavailable. (2) Rebase and agree a later date.
 *Recommendation.* (1).
 
-**N12. Accept the merge of the inputs and outputs plan, and by when** (the merge session's question; p5 M5) [`-io` B.7, first paragraph].
+**N12. Accept the merge of the inputs and outputs plan, and by when** (the merge session's question; p5 M5) [B.7, first paragraph].
 *Background.* `inputs-and-outputs.md` was merged into `declarations-and-addressing-io.md`, provisionally, with the recommended answers to Q1–Q6 and the definition of `element_spec` as the output spec of one element as a term; the merge's four judgement calls are listed in `declarations-and-addressing-io.md` D.5. On acceptance, `declarations-and-addressing.md` can be removed; on rejection, the tag `plans-before-io` restores it. S0 waits on the acceptance, and through S0, S2a, and S2b so do E3b and every execution step after it; only P0b, PV, E0, E1, E2, and E3a escape it. S1 is already built against the `-io` text, so a return to the original plan would also rework S1.
 *Options.* (1) Accept on the morning of 2026-10-19; any fallback is decided by the 2026-10-20 checkpoint and means "S0 from the `-io` plan with the rejected items moved after the workshop". (2) Fall back to the original plan at the 2026-10-22 checkpoint, as § 6.7 says now (three days would remain for S0 → S1 → S2b → S3 and S4).
 *Recommendation.* (1); if chosen, `-io` B.5's sentence beginning "With the checkpoint on 2026-10-20" takes the option's text. See `declarations-and-addressing-io.md` D.2, D.5, and D.6.
@@ -88,12 +88,12 @@ Where a declarations item has a pending note in `declarations-and-addressing-io.
 *Options.* (1) 2026-10-20: on track if PL, S0, #586, #587, E0, E1, and PV have merged and E3a, S1, and S2a are open; each day behind moves the cut one place (one day: cut E8 and E7 now; two: cut G1b and E5 too). 2026-10-22: cut every off-ramp whose dependencies will not have merged by the end of 2026-10-23; a step not started by 2026-10-23 does not start before the freeze unless it is never cut. At each checkpoint, run the broad review only if S2b, E3b, or E4 merged since the last. (2) Keep the judgement-based checkpoint.
 *Recommendation.* (1).
 
-**N15. S4: announced, or split** (p2 M2) [`-io` B.6].
+**N15. S4: announced, or split** (p2 M2) [B.6].
 *Background.* The merge made `element_spec` itself change meaning: it is on 364 lines of `probpipe/`, 517 of `tests/`, and 11 of `design/`, and S4 also changes behaviour (stored names, column typing, the canonical spec in equality, hashing, pytrees, fingerprints). README requires a mechanical PR to stay separate and a wide step to be announced, and S4 is not marked announced.
 *Options.* (1) Mark S4 announced, one mixed PR with the mechanical rewrite in its own commit. (2) **S4a** (announced, mechanical: `element_spec` becomes an `OutputSpec` naming base elements `element`, every use rewritten to `.term_spec`, no behaviour change) and **S4b** (stored names, column typing, the canonical spec).
 *Recommendation.* (2).
 
-**N16. The order of the rename PR against G3** (p2 M1) [`-io` B.6, "R: the rename", *Order*; § 4.6; B.2].
+**N16. The order of the rename PR against G3** (p2 M1) [B.6, "R: the rename", *Order*; § 4.6; B.2].
 *Background.* The rename (row R of README § Steps, added tonight) comes "right after the workshop". G3, also after the workshop, adds the accessor of the term at an output, spelled `t.component(c)` before the rename and `t.output(c)` after it. The plans now allow either order, each step adapting.
 *Options.* (1) The rename precedes G2–G5: G3 adds `t.output(c)` directly, the interim `t.component(c)` never ships, and G2–G5 depend on R. (2) Either order, as the plans say now; if G3 merges first, the rename renames `t.component(c)`.
 *Recommendation.* (1), since it never ships a name that is removed weeks later; `-io` § 4.6, B.2's `t.output(c)` row, and B.6's G3 then drop the interim spelling.
@@ -110,17 +110,17 @@ Where a declarations item has a pending note in `declarations-and-addressing-io.
 *Options.* (A) Set a date for the last user-visible break, such as the end of 2026-10-23; after it only steps that change no public name or signature merge, and S4 and G1b are cut if they have not merged. (B) Keep the rule and plan one migration day, 2026-10-26, against the tag. (C) Merge S2a and S3 as early as their dependencies allow, and say so in the critical path.
 *Recommendation.* (A) for S4 and G1b, together with (C).
 
-**N19. A permanent refusal for `*` between laws** (p4 M3) [`-io` A.1, C.1, B.6].
+**N19. A permanent refusal for `*` between laws** (p4 M3) [A.1, C.1, B.6].
 *Background.* Every tutorial and User Guide model is written `likelihood * prior`. After S3, with no alias, users see `TypeError: unsupported operand type(s) for *: 'ConditionalDistribution' and 'FactoredDistribution'`, which does not name `&`.
 *Options.* (A) As planned: Python's generic error. (B) Keep `Distribution.__mul__` and `ConditionalDistribution.__mul__` as permanent refusals: when the other operand is a law or a kernel, raise `TypeError: * does not merge laws; write lik & prior`. It never succeeds, so it is a contract, not an alias, and it reserves `*` between laws, so a later arithmetic lift cannot silently give old code a new meaning; a scalar operand keeps returning `NotImplemented`. (C) (B), plus refusal messages for `OutputSpec.spec` and `with_path_names` until 0.3, which is bridging code under directive 8.
 *Recommendation.* (B).
 
-**N20. `likelihood and prior` silently returns `prior`** (p4 m9) [`-io` A.1, C.1].
+**N20. `likelihood and prior` silently returns `prior`** (p4 m9) [A.1, C.1].
 *Background.* A user who reads `&` as "and" may type `and`; a law has no `__bool__` or `__len__`, so the expression returns `prior` with no error, and the mistake shows only later, as a confusing error.
 *Options.* (A) `Distribution.__bool__` and `ConditionalDistribution.__bool__` raise `TypeError: a law has no truth value; to merge laws write a & b`, as NumPy arrays and pandas frames refuse `bool`; records keep their length-based truth. (B) Leave it.
 *Recommendation.* (A), in S3.
 
-**N21. The workshop teaches names that change a week later** (p4 m10) [`-io` B.2, B.6].
+**N21. The workshop teaches names that change a week later** (p4 m10) [B.2, B.6].
 *Background.* Attendees will copy `event_spec.components`, `component=`, `factor(d, component_name)`, and the words "slot" and "component", all renamed in the first PR after the workshop (Q1). The rename's CHANGELOG entry already maps each name of the workshop's code to its new name (`-io` C.5, B.6).
 *Options.* (1) Keep Q1's timing, pin the materials to the tag (N17), and hold the rename until the workshop week ends. (2) Keep Q1's timing with no hold. (3) Rename before the freeze, one more announced PR on the critical path.
 *Recommendation.* (1).
@@ -162,7 +162,7 @@ Where a declarations item has a pending note in `declarations-and-addressing-io.
 *Options.* (1) Assign it to E4 (or E4b), whose runners become module-level JAX programs, with a test ("with 4 CPU devices and 4 chains, the default draws equal those with 1 device; `chain_map="pmap"` runs one chain per device"). (2) Defer it, and drop `chain_map` from 6.16's first worked example.
 *Recommendation.* (2), since it is not on the core path.
 
-**N29. Evaluation points of a callable that returns a law, a function, or a batch, and the order of S4 and E5** (p1 M5) [`-io` B.6, S4, second pending note; `execution-layer.md` § 6.4 rule 7, § 6.7, E5].
+**N29. Evaluation points of a callable that returns a law, a function, or a batch, and the order of S4 and E5** (p1 M5) [B.6, S4, second pending note; `execution-layer.md` § 6.4 rule 7, § 6.7, E5].
 *Background.* G1b lifts a law-returning function into draws `{law_of_y: law}`, and S4 has sweeps store their element spec; E5 moves lifting and sweeps onto `evaluate_at_points`. The per-point check is defined only for arrays, `EvaluationPoints.output_spec` is `None` for these callables, and nothing says whether `jax` may `jit(vmap(f))` a law-returning `f`, whether a law is pickled to a `process` worker, or who assembles the outcomes and stores S4's element spec.
 *Options.* (a) A callable whose output declaration is not complete always runs on a Python executor (`sequential`, `thread`, or `process` when its outputs pickle), never on `jax`, and its outcomes are checked by conformance of each output's term spec rather than by shape; E5's done-condition adds "lifting `law_of_y` over a law and the tour's `predictive` example still work under `sequential`; a sweep's result keeps the element spec its maker stores"; and README says S4 and E5 may merge in either order. (b) E5 leaves law-, function-, and batch-returning lifts on today's path and moves only numeric ones.
 *Recommendation.* (a).
@@ -174,12 +174,12 @@ Where a declarations item has a pending note in `declarations-and-addressing-io.
 
 ### Declarations and the plan files
 
-**N31. G1a: the library's laws in an interim whole form over a record become positional or wrapped** (p2 M14) [`-io` B.7, row 3; B.6, G1a item 2].
+**N31. G1a: the library's laws in an interim whole form over a record become positional or wrapped** (p2 M14) [B.7, row 3; B.6, G1a item 2].
 *Background.* G1a item 2 says these laws (`_posterior_declaration`, `make_posterior`, and `_marginal` in `_empirical.py`) become "positional or wrapped". The two forms offer different names (`beta` and `sigma`, or `params`) and different draws (`{beta, sigma}` or `{params: {...}}`), a public contract left to the implementer per site.
 *Options.* (1) Positional everywhere: the draws stay unchanged, and the law offers the names its draws hold. (2) Wrapped under today's name: names are kept, but every draw gains a level.
 *Recommendation.* (1), with "`make_posterior` of a target declared `OutputSpec(params=RecordSpec(...))` returns a posterior whose event is `OutputSpec(RecordSpec(...))`" in G1a's done-condition.
 
-**N32. The merged plan's file name after acceptance** (p1 M10) [`-io` header].
+**N32. The merged plan's file name after acceptance** (p1 M10) [header].
 *Background.* `declarations-and-addressing-io.md` carries a merge-time suffix, while #571 and #573 link to `plans/declarations-and-addressing.md` (decision of 2026-10-17), which acceptance removes.
 *Options.* (1) On acceptance, `git mv declarations-and-addressing-io.md declarations-and-addressing.md`, replacing the original, so the issue links hold, and change every citation of the `-io` name in the same commit. (2) Keep the `-io` name and edit the links in #571 and #573.
 *Recommendation.* (1).
@@ -187,6 +187,7 @@ Where a declarations item has a pending note in `declarations-and-addressing-io.
 ## Settled
 
 Newest first.
+A row names files as they were on its date: `declarations-and-addressing-io.md` is now `declarations-and-addressing.md` (N32, 2026-10-20), the original plan of that name is at the tag `plans-before-io`, and the superseded sources, such as `gaps-and-conflicts.md`, `maintainer-review.md`, and `inputs-and-outputs.md`, are in git history at commit `dac760cf`.
 
 | Date | Decision | Area | Source |
 |---|---|---|---|

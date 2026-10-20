@@ -3234,7 +3234,7 @@ The items below were found while applying the final review of 2026-10-20.
 
 ## B. Implementation plan and sequencing
 
-**Key.** Step codes S0 to S4, G1a to G5, and R (the rename) are this design's steps, and E0 to E6, P0b, PV, and PL the execution plan's, listed in [`README.md`](README.md) § Steps; T1 to T33 are the transition rules of B.4; N1 to N32 are the pending items of [`decisions.md`](decisions.md); O1 to O16, R1 to R6, and Q1 to Q6 are the decision records of Appendix D.2; "fact N" is fact N of [`inputs-and-outputs.md`](inputs-and-outputs.md), Appendix E.
+**Key.** Step codes S0 to S4, G1a to G5, and R (the rename) are this design's steps, and E0 to E6, P0b, PV, and PL the execution plan's, listed in [`README.md`](README.md) § Steps; T1 to T33 are the transition rules of B.4; N1 to N32 are the pending items of [`decisions.md`](decisions.md); O1 to O16, R1 to R6, and Q1 to Q6 are the decision records of Appendix D.2; "fact N" is fact N of the inputs and outputs proposal's Appendix E (D.5).
 
 Each step is one PR into `dev/overhaul`.
 [`README.md`](README.md) § Steps owns the order of the steps, their dependencies, their branches, and the cut; this appendix owns what each step delivers and its done-condition.
@@ -4123,7 +4123,7 @@ It replaces the original plan's `element_declaration` and the proposal's `elemen
 ### D.3 #571 and jhuggins's reply
 
 This design merged three sources: the body of [#571](https://github.com/TARPS-group/prob-pipe/issues/571), on declarations; jhuggins's reply on #571 (2026-10-15); and the addressing plan for [#573](https://github.com/TARPS-group/prob-pipe/issues/573) (2026-10-16).
-Where they disagreed, the addressing plan won, then the reply, then the body (decided 2026-10-17); [`gaps-and-conflicts.md`](gaps-and-conflicts.md) D1 records how.
+Where they disagreed, the addressing plan won, then the reply, then the body (decided 2026-10-17); item D1 of `gaps-and-conflicts.md`, in git history at commit `dac760cf`, records how.
 
 | Topic | #571's body | The reply | This design |
 | --- | --- | --- | --- |
@@ -4177,7 +4177,7 @@ The four exclusions of the decision of 2026-10-17 (equality, hashing, pytree sta
 
 ### D.5 The inputs and outputs proposal
 
-[`inputs-and-outputs.md`](inputs-and-outputs.md) synthesized three independent proposals into one, merged here on 2026-10-18 with its recommended answer to each of its questions Q1 to Q6.
+The inputs and outputs proposal, `inputs-and-outputs.md`, synthesized three independent proposals into one, merged here on 2026-10-18 with its recommended answer to each of its questions Q1 to Q6; it is in git history at commit `dac760cf`.
 This design takes from it the type of an object's values, now the value type, inputs and outputs as plain parallel nouns, `OutputSpec[]` by path, the rule that a law as a value has no outputs, the general merge with its conditions, properties, and value, the invariants, and the shallow record merge.
 Its Appendix A proves the merge properties of § 5.7, its Appendix D records the alternatives its three sources chose, and its Appendix E records how each "fact N" cited here was checked.
 
@@ -4189,8 +4189,8 @@ The merge made four calls of its own, covered by the acceptance:
 
 ### D.6 The original plan, and the decisions reversed
 
-[`declarations-and-addressing.md`](declarations-and-addressing.md) stays unchanged for recovery, and the git tag `plans-before-io` marks `plans/` before the merge.
-It replaced `declarations.md` and `addressing.md` (decided 2026-10-17).
+The original plan, which had this file's name until 2026-10-20, is recoverable at the git tag `plans-before-io`, which marks `plans/` before the merge; this design took the name on 2026-10-20 (N32).
+The original plan replaced `declarations.md` and `addressing.md` (decided 2026-10-17), which are in git history.
 This design reverses these decisions:
 
 | # | Decision reversed | Date and source | This design | Question |
@@ -4257,7 +4257,6 @@ The decision "a function with a wrapped output returns the record itself; ProbPi
 - **In scope:** the definitions of types, kinds, the value type, inputs, outputs, input and output specs, paths, lists of paths, and positions; the definition of outputs; reading inputs, the size shorthand, and the operations on both specs; `[]`, lists, positions, and `in` on every kind; `marginal`, `condition_on`, `log_prob`, `without`, `select`, and `rename`; what a summary is indexed by; one merge for every kind; a batch's element spec and its place in equality and JAX; the vocabulary, the changes to `design/`, the steps, and the transition rules. PR #576 (summaries keep the law's paths) and PR #575 (`raw` as a property, removing `raw(path)`) have merged.
 - **Out of scope:** how and where a computation runs, and per-call state such as `config` blocks and the call token ([`execution-layer.md`](execution-layer.md), #580, its § 6.16); `docs/tutorials/`, rewritten separately.
 - **The execution plan relies on this design** twice: an embeddable `Function` needs a complete `term_spec` (its § 6.2), and claims naming paths into an input use the path reader (§ 12). It uses two words this design does not: an *evaluation point*, one evaluation of a callable, and a *requester*, the code asking for a set of them.
-- **Pending:** the file name once accepted, and whether it replaces `declarations-and-addressing.md` so that the links in #571 and #573 keep working (N32).
 
 ### F.2 History
 
@@ -4277,3 +4276,4 @@ The decision "a function with a wrapped output returns the record itself; ProbPi
 | 2026-10-20 | The terms "type hole" and "record of outputs" removed, with their rules stated directly (§ 3.5, § 5.3, § 5.5, § 11.2); "event spec" defined in Part II only (§ 8); forward uses of the output at the root removed from §§ 1 and 2; kind-specific items moved from § 3.5's definition box to § 6; the design is unchanged, and A.2 items 33 to 35 record the readings |
 | 2026-10-20 | The structure sections restructured with the maintainer's decisions: § 2.1 relates kinds and types; Part I drops "spec", and § 3.5 becomes "Describing an object's inputs and outputs", with § 8's table of code forms; paths are defined recursively on types (§ 2.3); the value type (§ 2.2) replaces the earlier type of what an object yields, and outputs are defined on types and read from the value type (§ 3.2); output values, selection, and merge's value are stated by kind; S0 removes the glossary's *type hole*; the figures `produced-paths` and `produced-outputs-paths` are renamed `shared-paths` and `outputs-and-paths`; the design is unchanged, and A.2 items 36 to 44 record the readings |
 | 2026-10-20 | Revised with the maintainer's edits: § 1 is retitled "Objects, values, and paths"; § 2.1 lists the types in a table and uses "conforms" for both relations, of an object to a type and of a type to a type, in place of "admits", with the contravariance of kernel and function types derived; § 3.2 motivates outputs as names other objects refer to, and the text no longer says that an object "makes values available"; announcing and pointing sentences, fragments, and empty asides are removed throughout; the design is unchanged, and A.2 item 45 records the reading |
+| 2026-10-20 | `declarations-and-addressing-io.md` takes the name `declarations-and-addressing.md`, replacing the original plan, which the tag `plans-before-io` keeps, so the links in #571 and #573 hold (N32); the superseded plan files are deleted, and git keeps their history |

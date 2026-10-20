@@ -12,26 +12,26 @@ Every session that works on the push reads this file in full before anything els
 
 ## The files
 
+The plans are five files, and each is the one source of truth for what it holds:
+
 | File | What it holds |
 |---|---|
 | `README.md` | This charter: the directives, the steps, their order and dependencies, the cut order, and the handoff protocol. It is the one owner of the order and the cut; every other file points here |
 | [`decisions.md`](decisions.md) | Every decision taken during the push, with its date and reason, and the queue of questions waiting for the maintainer |
-| [`gaps-and-conflicts.md`](gaps-and-conflicts.md) | The places where the plans disagree or leave a decision open. This PR merges once each is settled. |
-| [`execution-layer.md`](execution-layer.md) | The execution-layer design (#580) |
-| [`declarations-and-addressing-io.md`](declarations-and-addressing-io.md) | The declarations and addressing design (#571, #573) with the inputs and outputs plan merged in, provisionally, rewritten on 2026-10-19 with the design unchanged: Part I the concepts (the naming rule, inputs and outputs, paths and lists of paths, one definition of `&`), Part II the code, and the appendices, B holding steps S0, S1, S2a, S2b, S3, S4, G1a, G1b, and G2–G5 |
-| [`declarations-and-addressing.md`](declarations-and-addressing.md) | The declarations and addressing plan as it stood before the inputs and outputs merge, kept unchanged for recovery until the maintainer accepts the merged copy; the git tag `plans-before-io` marks that state |
-| [`inputs-and-outputs.md`](inputs-and-outputs.md) | The accepted proposal merged into `declarations-and-addressing-io.md`, kept for the proofs, alternatives, and checked facts that the merged copy cites |
 | [`deferred.md`](deferred.md) | Work found or postponed during the push, to become issues after the workshop |
+| [`execution-layer.md`](execution-layer.md) | The execution-layer design (#580), whose § 6.16 holds the call context, and its steps E0 to E8 |
+| [`declarations-and-addressing.md`](declarations-and-addressing.md) | The declarations and addressing design (#571, #573), with the inputs and outputs plan merged in: Part I the concepts (the naming rule, inputs and outputs, paths and lists of paths, one definition of `&`), Part II the code, and the appendices, B holding steps S0, S1, S2a, S2b, S3, S4a, S4b, G1a, G1b, and G2–G5 |
 
-Four superseded sources are still on this branch and are deleted before this PR merges (step PL): `declarations.md` and `addressing.md`, which `declarations-and-addressing.md` replaced (gaps D1); `call-context-proposal.md`, folded into `execution-layer.md` § 6.16; and `maintainer-review.md`, whose recommendations `decisions.md` records. Git keeps their history.
-`declarations-and-addressing-io.md` supersedes `declarations-and-addressing.md` provisionally (decisions, 2026-10-18). PL keeps `declarations-and-addressing.md` and `inputs-and-outputs.md` until the maintainer accepts the merge, and the next checkpoint PR deletes the recovery copy. What the merged plan's file is called after acceptance is pending the maintainer's decision N32 in `decisions.md`.
+The rendered page of the declarations plan is generated from `declarations-and-addressing.md` by `plans/render/render_plan.py`, with the figures of `plans/figures/`, and is never edited by hand.
+The superseded sources `declarations.md`, `addressing.md`, `call-context-proposal.md`, `maintainer-review.md`, `inputs-and-outputs.md`, and `gaps-and-conflicts.md` were deleted on 2026-10-20 and are in git history at commit `dac760cf`; a citation "gaps" and an item, such as "gaps W2", names an item of `gaps-and-conflicts.md`, all settled on 2026-10-18.
+The declarations and addressing plan as it stood before the inputs and outputs merge is at the git tag `plans-before-io`.
 
 ## Standing directives
 
 These apply to every person and agent working on the push.
 They add to `CONTRACTS.md`, `STYLE_GUIDE.md`, and the implementation guidelines of `execution-layer.md` §12, which still apply in full.
 
-1. **Read the full design first.** Before working on a step, read this file, `decisions.md`, and the current plans in full: `declarations-and-addressing-io.md` and `execution-layer.md`, whose § 6.16 holds the call context. Read them whole, not only the sections the step implements. The superseded `declarations.md`, `addressing.md`, `call-context-proposal.md`, and `maintainer-review.md`, while they remain, are not plans; skip them. `declarations-and-addressing.md`, kept for recovery, and `inputs-and-outputs.md`, merged into the `-io` copy, are not current plans either; read them only for what the `-io` copy cites. Check that the work fits the broader goals of the push and of `design/`.
+1. **Read the full design first.** Before working on a step, read this file, `decisions.md`, and the two design plans in full: `declarations-and-addressing.md` and `execution-layer.md`, whose § 6.16 holds the call context. Read them whole, not only the sections the step implements. Check that the work fits the broader goals of the push and of `design/`.
 2. **Design gaps go to the maintainer.** The plans will have gaps that implementation exposes. A gap that needs a real design decision is never settled by the implementer alone: follow § When to stop and ask. A fix to a gap serves the long-term design, never only the step at hand.
 3. **Contracts, not patches.** Write well-designed, coherent contracts. Never patch or work around a deeper design problem. If the problem is within the push's scope, fix it; otherwise record it in `deferred.md` for work after the workshop.
 4. **PR descriptions written for people.** Give the context, and do not assume the reviewer knows ProbPipe's internals. Show specific examples of new behaviour, such as code before and after. Avoid jargon and dense blocks of text. The reasoning should flow, and the summary of changes should read naturally.
@@ -104,7 +104,7 @@ A choice that changes none of the above, such as a private helper's structure, i
 "Before" marks a step planned before the workshop.
 A step may not start until every step and PR it depends on has merged into `dev/overhaul`, or it stacks as § Branches and PRs allows.
 Each step's content and its done-condition are stated where the step's plan section says; this table owns only the order, the dependencies, the branch, and the cut.
-The declarations and addressing steps follow `declarations-and-addressing-io.md`, which merged the inputs and outputs plan on 2026-10-18; the original `declarations-and-addressing.md` is kept unchanged for recovery, pending the maintainer's acceptance of the merge, and the tag `plans-before-io` marks the state before it.
+The declarations and addressing steps follow `declarations-and-addressing.md`, which merged the inputs and outputs plan on 2026-10-18, pending the maintainer's acceptance of the merge (N12); the tag `plans-before-io` marks the state before it.
 
 > **Pending decisions on the schedule.** An overnight review on 2026-10-18 found that the never-cut set, as the steps are drawn, does not fit the week (`decisions.md` N1), and proposed splitting E3a, E4, and S2b (N2, N3, N5), making E4's performance check an off-ramp (N4), letting E6 build on E2 instead of E4 (N6), and separating dependencies a step builds on from those that only fix the merge order (N7). Until the maintainer decides, the tables below stand as written.
 
@@ -125,7 +125,7 @@ Since every merge leaves `dev/overhaul` coherent (directive 7), the code can be 
 
 **The critical path.** Three chains decide the date:
 1. **Execution:** #586 → P0b → #587 → PV → E3a → E3b → E4 → E6, with E1 → E2 joining at E3a. #586 and #587 are jhuggins's PRs, so their merge dates are agreed with him on 2026-10-19 (pending N11; #586 conflicts with `dev/overhaul` tonight).
-2. **Declarations:** the maintainer's acceptance of the inputs and outputs merge → S0 → S1 and S2a → S2b → S3, and S2b with E3b → S4 → G1a. Each day the acceptance waits delays this chain and, through S2a and S2b, the execution chain from E3b on (`declarations-and-addressing-io.md` B.7; pending N12).
+2. **Declarations:** the maintainer's acceptance of the inputs and outputs merge → S0 → S1 and S2a → S2b → S3, and S2b with E3b → S4 → G1a. Each day the acceptance waits delays this chain and, through S2a and S2b, the execution chain from E3b on (`declarations-and-addressing.md` B.7; pending N12).
 3. **Where they join:** S2a gates E3b, and S2b gates E4 and S4.
 
 E0 gates E3a, E1 gates E2, and E2 gates E3a; none of them runs beside the chains. The off-ramps E5 and G1b follow E4.
@@ -137,13 +137,13 @@ E0 gates E3a, E1 gates E2, and E2 gates E3a; none of them runs beside the chains
 | P0 | The in-flight PRs #586 and #587 merge (#575, #583, and #474 merged on 2026-10-17). #586 and #587 record their renames in the CHANGELOG, and their user-visible changes (`n_broadcast_samples` → `max_evaluations` and `num_samples`, `set_default_n_broadcast_samples` → `config.sampling`, `*_config` → `config.*`, the default Monte Carlo count 256 → 1024) are part of any tutorial migration (N17) | — | `dev/split-sample-controls`, `dev/config-sections` |
 | P0b | The call context is created as `execution-layer.md` § 6.16 describes, in #587 before it merges. jhuggins asked on 2026-10-18 that the push make these changes on his branch; the maintainer chose to open them as a draft PR into `dev/config-sections` rather than push to it, and jhuggins merges it into #587 | #586 | `dev/call-context` |
 | PV | The provenance mode becomes a per-call setting, and the `workflow_run` frame and the Prefect payload stop keeping their own copy (decided 2026-10-18; `execution-layer.md` § 6.16, "The provenance mode per call (step PV)", states it and its done-condition); PV adds the call context's `session_config_values` for every section but `prefect`, which evaluation points read, and E3a ships it to process workers. *Pending the maintainer's decision N9: jhuggins asks on #587 that a block changing the mode inside an open run raise instead* | P0, P0b | `dev/provenance-per-call` |
-| PL | This `plans/` PR merges first, by 2026-10-19: the tracking issue, the advisory tutorials leg (gaps W2), and `/review-pr`'s plan check all depend on it. It deletes `declarations.md`, `addressing.md`, `call-context-proposal.md`, and `maintainer-review.md`, and keeps `declarations-and-addressing.md` and `inputs-and-outputs.md` until the acceptance of the merge | every item of `gaps-and-conflicts.md` and every open point of the declarations and addressing plan, all settled on 2026-10-18; PL does not wait on the inputs and outputs questions, which gate S0 instead | `dev/contracts-plans` |
+| PL | This `plans/` PR merges first: the tracking issue, the advisory tutorials leg (gaps W2), and `/review-pr`'s plan check all depend on it. It holds the five files of § The files, the superseded sources having been deleted on 2026-10-20 | every item of the former `gaps-and-conflicts.md` and every open point of the declarations and addressing plan, all settled on 2026-10-18; PL does not wait on the inputs and outputs questions, which gate S0 instead | `dev/contracts-plans` |
 
 ### Declarations and addressing
 
 | Step | What | Plan section | Depends on | Before | Branch |
 |---|---|---|---|---|---|
-| S0 | Design text: II.2 states the grammar rule, input specs, and output specs indexed by path, II.6 the paths and how `[]` reads them; IV.2 retitled "Merging distributions", with the one definition of merge, "merge" for `&`, and "unfed" for "unmet"; "conforms", "unify", and "completes", one word per relation; the glossary; all in today's words "slot", "component", and "input, output, and event declaration", which one PR renames after the workshop; the reworded passages of § 6.5.4; and `_PENDING` entries in the conformance tests for the signatures that change ahead of the code | `declarations-and-addressing-io.md` B.6 S0 | PL; the maintainer's acceptance of the inputs and outputs merge (`declarations-and-addressing-io.md`, provisional 2026-10-18) | yes | recorded on the tracking issue when its PR opens |
+| S0 | Design text: II.2 states the grammar rule, input specs, and output specs indexed by path, II.6 the paths and how `[]` reads them; IV.2 retitled "Merging distributions", with the one definition of merge, "merge" for `&`, and "unfed" for "unmet"; "conforms", "unify", and "completes", one word per relation; the glossary; all in today's words "slot", "component", and "input, output, and event declaration", which one PR renames after the workshop; the reworded passages of § 6.5.4; and `_PENDING` entries in the conformance tests for the signatures that change ahead of the code | `declarations-and-addressing.md` B.6 S0 | PL; the maintainer's acceptance of the inputs and outputs merge (`declarations-and-addressing.md`, provisional 2026-10-18) | yes | recorded on the tracking issue when its PR opens |
 | S1 | One path reader and one `_PATH_SEP`; `[]` returns groups on `Record` and `RecordSpec`; lists of paths keep their paths; `in`, laws included; `marginal(d, paths)`; `select` flattens to last names; `()` on a batch raises | B.6 S1 | S0 | yes | `dev/path-reader` |
 | S2a | **Announced, mechanical.** `spec` becomes `term_spec` and `with_spec` becomes `with_term_spec`; `exposes_record` goes; every read of `_component_name` outside `_specs.py` moves to one private helper; `components` keeps its name | B.6 S2a | S0 | yes | `dev/term-spec-rename` |
 | S2b | `OutputSpec[]`, `in`, and `without` through S1's reader; one reading of inputs, with list selection on `InputSpec`; the size shorthand; `&` on `InputSpec` and `OutputSpec`; a produced law or kernel offers no outputs; `merge` on records, record specs, and `RecordBatch` becomes shallow; record conformance keeps field order, and a raw mapping is laid out in the declared order; the User Guide's `given_spec` idioms (User Guide 04, 06, 07, 08, 09). *Splitting it into output and input parts is pending N5* | B.6 S2b | S1, S2a | yes | `dev/input-output-specs` |
@@ -187,8 +187,8 @@ The maintainer approved starting steps from the plans branch on 2026-10-18, befo
 | P0b | #597 (draft) | `dev/call-context` | `dev/config-sections` (#587) | A PR into #587's branch, the one exception to "every step is one PR into `dev/overhaul`". The maintainer or jhuggins reviews it, and jhuggins merges it into #587; nothing was pushed to `dev/config-sections` itself. |
 | E0 | #598 (draft) | `dev/evaluation-point-rename` | `dev/config-sections` | Once P0b is in #587, it merges `dev/config-sections` and renames P0b's "identity". It retargets `dev/overhaul` when #587 merges. |
 | E1 | #596 (draft) | `dev/execution-design-text` | `dev/config-sections` | Once P0b is in #587, it merges `dev/config-sections`, taking P0b's V.2 sentence and glossary entry "call context". It retargets `dev/overhaul` when #587 merges. |
-| S1 | none yet (draft PR planned) | `dev/path-reader` | `dev/overhaul` | Built ahead of S0, against `declarations-and-addressing-io.md` B.6, S1. It merges after S0, and merges `dev/overhaul` once #587 merges. |
-| S0 | none yet | recorded when its PR opens | `dev/overhaul` | Being written from the merged `-io` plan; it waits for the maintainer's acceptance of the merge (N12). |
+| S1 | none yet (draft PR planned) | `dev/path-reader` | `dev/overhaul` | Built ahead of S0, against `declarations-and-addressing.md` B.6, S1. It merges after S0, and merges `dev/overhaul` once #587 merges. |
+| S0 | none yet | recorded when its PR opens | `dev/overhaul` | Being written from `declarations-and-addressing.md`; it waits for the maintainer's acceptance of the merge (N12). |
 
 When this PR merges, its session creates the tracking issue with these rows, and creates handoffs for PV only; it does not create handoffs for the steps above.
 
@@ -203,7 +203,7 @@ When this PR merges, its session creates the tracking issue with these rows, and
 
 ## Ending a session
 
-1. Open the PR into `dev/overhaul` as a draft, with a body that follows directives 4, 9, and 10 and the PR template. Its CHANGELOG entries go at the **end** of the existing section for their type, and never add a heading that `[Unreleased]` already has; each breaking change goes under `### Changed (breaking)` with a before-and-after line a user can copy, and a silent change shows the same call before and after (`execution-layer.md` § 13.1, `declarations-and-addressing-io.md` C.5).
+1. Open the PR into `dev/overhaul` as a draft, with a body that follows directives 4, 9, and 10 and the PR template. Its CHANGELOG entries go at the **end** of the existing section for their type, and never add a heading that `[Unreleased]` already has; each breaking change goes under `### Changed (breaking)` with a before-and-after line a user can copy, and a silent change shows the same call before and after (`execution-layer.md` § 13.1, `declarations-and-addressing.md` C.5).
 2. Run `/review-pr` on it, fix or answer each finding, and mark it ready for review (directive 13). If `plans/` is not on the PR's base, run `/review-pr` from a checkout of a branch that has `plans/`, or paste `plans/README.md` into the review's context, so the plan check runs.
 3. Comment on the tracking issue with the PR link.
 4. Post any decision or question, and any postponed work, as a comment on the tracking issue (before it exists, in the PR body). Step PRs do not edit `decisions.md` or `deferred.md`, which every parallel PR would otherwise conflict on: at each checkpoint, one small plans PR moves the comments into them. A plan correction that a step needs goes in that step's PR, in the section it corrects, and the checkpoint PR adds its revision-log row.
