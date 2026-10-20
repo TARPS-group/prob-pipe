@@ -194,7 +194,10 @@ documentation:
   rather than worked around.
 - Does the PR contradict any settled entry of `plans/decisions.md`, or settle a
   design question that `plans/README.md` § When to stop and ask reserves for
-  the maintainer?
+  the maintainer? An item in the "Waiting for a decision" queue of
+  `plans/decisions.md` is the maintainer's: flag a PR that decides one,
+  implements a choice that presumes an answer, or rewords the plans to settle
+  it, and check that the body lists each such question it met.
 - Does the body's "Fit with the plan" section name the plan sections, the
   departures, the decisions recorded, and the code reused or removed, and does
   it match the diff?
