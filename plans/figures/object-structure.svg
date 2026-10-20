@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="561" height="230" viewBox="0 0 561 230" role="img">
-  <title>A law over {a, g: {c, e}}: its parts, its produced object, and its outputs</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="554" height="230" viewBox="0 0 554 230" role="img">
+  <title>A law over {a, g: {c, e}}: its paths, its value type, and its outputs</title>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
       <path d="M 0 1 L 9 5 L 0 9 z" fill="#424a53"/>
@@ -8,8 +8,8 @@
       <path d="M 0 1 L 9 5 L 0 9 z" fill="#cf222e"/>
     </marker>
   </defs>
-  <rect x="0.5" y="0.5" width="560" height="229" rx="12" fill="#ffffff" stroke="#d0d7de"/>
-  <g transform="translate(75.5,22.0)">
+  <rect x="0.5" y="0.5" width="553" height="229" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <g transform="translate(68.7,22.0)">
     <rect x="0.0" y="0.0" width="147.2" height="124.0" rx="8" fill="#eef6ff" stroke="#0550ae" stroke-width="1.6"/>
     <rect x="10.0" y="7.0" width="49.3" height="17.0" rx="8.5" fill="#0550ae" stroke="#0550ae" stroke-width="1"/>
     <text x="34.6" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">record</text>
@@ -33,10 +33,10 @@
     <circle cx="297.2" cy="41.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
     <circle cx="297.2" cy="63.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
     <path d="M 295.2,15.0 L 151.2,15.0" fill="none" stroke="#424a53" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
-    <text x="222.2" y="8.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle" font-style="italic">produces</text>
+    <text x="222.2" y="8.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle" font-style="italic">sample</text>
     <text x="285.2" y="56.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="end" font-style="italic">outputs</text>
-    <text x="73.6" y="150.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">a sample: one value of its produced</text>
-    <text x="73.6" y="168.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">object, a record of type {a, g: {c, e}}</text>
+    <text x="73.6" y="150.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">a sample: a value of the law's value</text>
+    <text x="73.6" y="168.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">type, a record of type {a, g: {c, e}}</text>
     <text x="353.2" y="150.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">paths: a, g, g/c, g/e</text>
     <text x="353.2" y="168.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">parts: d[a], d[g], d[g/c], d[g/e]</text>
     <text x="353.2" y="186.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle">outputs: a and g, on the left edge</text>

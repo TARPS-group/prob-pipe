@@ -881,13 +881,13 @@ def opt_kernel(name: str = "a", faults: set[str] = frozenset()) -> Obj:
 
 
 def structure_figure() -> Canvas:
-    """Draw the overview of Part I: a law, its parts, its produced object, and its outputs.
+    """Draw the overview of Part I: a law, its paths, its value type, and its outputs.
 
-    The produced object stands to the left of the law, since data flows from
-    right to left, and a dashed arrow from the law's header marks what it
-    produces.
+    A sample, a value of the law's value type, stands to the left of the law,
+    since data flows from right to left, and a dashed arrow from the law's
+    header marks the sampling.
     """
-    canvas = Canvas("A law over {a, g: {c, e}}: its parts, its produced object, and its outputs")
+    canvas = Canvas("A law over {a, g: {c, e}}: its paths, its value type, and its outputs")
     sample = Obj(
         "a sample",
         "record",
@@ -914,7 +914,7 @@ def structure_figure() -> Canvas:
     canvas.text(
         placed_sample.right + gap / 2,
         arrow_y - 7,
-        "produces",
+        "sample",
         size=12,
         mono=False,
         anchor="middle",
@@ -936,7 +936,7 @@ def structure_figure() -> Canvas:
         canvas,
         placed_sample.w / 2,
         top,
-        ["a sample: one value of its produced", "object, a record of type {a, g: {c, e}}"],
+        ["a sample: a value of the law's value", "type, a record of type {a, g: {c, e}}"],
     )
     caption_lines(
         canvas,
@@ -958,7 +958,7 @@ def figures() -> dict[str, Canvas]:
         "legend-objects": legend_figure(merges=False),
         "legend-merge": legend_figure(objects=False),
         "object-structure": structure_figure(),
-        "produced-paths": row_figure(
+        "shared-paths": row_figure(
             "A law, a sample from it, its mean, and a batch of its samples share one set of paths",
             [
                 (
@@ -1051,8 +1051,8 @@ def figures() -> dict[str, Canvas]:
                 ),
             ],
         ),
-        "produced-outputs-paths": row_figure(
-            "Four laws: their produced types, outputs, and paths",
+        "outputs-and-paths": row_figure(
+            "Four laws: their value types, outputs, and paths",
             [
                 (
                     Obj("d1", "law", root_output="x", body=["over an array"]),
@@ -1320,7 +1320,7 @@ def figures() -> dict[str, Canvas]:
             fault_results={"theta"},
         ),
         "merge-invalid-law": merge_figure(
-            "Refused: the right operand produces a law, which a record cannot hold unnamed",
+            "Refused: the right operand returns a law, which a record cannot hold unnamed",
             Obj("a", "function", root_output="y", inputs=[Port("params")]),
             Obj(
                 "b",
