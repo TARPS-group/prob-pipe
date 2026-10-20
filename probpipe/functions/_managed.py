@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from ..core.config import ProvenanceMode
 from ._rng import _RandomEventPath, _validate_random_event_value
 
 _MANAGED_WORK_ITEM_ABI = "probpipe.managed_work_item/v1"
