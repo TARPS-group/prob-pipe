@@ -30,6 +30,7 @@ from probpipe import (
     OutputSpec,
     ResolutionError,
     WorkflowKind,
+    config,
     mean,
     sample,
     workflow_run,
@@ -613,3 +614,16 @@ class TestInheritedControlsInPrefectTasks:
         ):
             summed_means.using(exact_only=True)(law)
         assert law.shapes == []
+
+
+class TestConfigBlocksInPrefectTasks:
+    """A ``config.using`` block applies to the work a call inside it dispatches to Prefect tasks."""
+
+    def test_a_block_sets_the_draws_of_a_summary_in_a_prefect_task(self):
+        inner = Function(
+            _mean_of_law, workflow_kind=WorkflowKind.TASK, dispatch="sequential"
+        ).using(raw=True)
+        first, second = Sampler("s", 1.0), Sampler("s", 2.0)
+        with workflow_run(seed=64), config.sampling.using(num_samples=37):
+            inner(DistributionBatch([first, second], "laws", label="laws"))
+        assert first.shapes == second.shapes == [(37,)]

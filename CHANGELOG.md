@@ -963,7 +963,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `UnmanagedConcurrentWorkflowEntryError`, `ReplayCompatibilityError`, and
   `ReplayUnsupportedCallableError`.
 
-  A top-level workflow snapshots `provenance_config.mode` on entry. Nested
+  A top-level workflow snapshots `config.provenance.mode` on entry. Nested
   scopes and managed workers inherit that value, and configuration changes
   made during execution apply only to the next top-level workflow.
 
@@ -1271,7 +1271,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     invariant.
 
 - **Prefect orchestration is now opt-in** (#182). The shipped global
-  default for `prefect_config.workflow_kind` is `WorkflowKind.OFF`
+  default for `config.prefect.workflow_kind` is `WorkflowKind.OFF`
   instead of the prior `WorkflowKind.DEFAULT` (which auto-promoted to
   `TASK` whenever Prefect was importable). The old behaviour silently
   enabled Prefect for any environment with Prefect on `sys.path` —
@@ -1283,7 +1283,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   ```python
   import probpipe
-  probpipe.prefect_config.workflow_kind = probpipe.WorkflowKind.TASK
+  probpipe.config.prefect.workflow_kind = probpipe.WorkflowKind.TASK
   ```
 
   Or via the new `PROBPIPE_WORKFLOW_KIND` environment variable
@@ -1549,6 +1549,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - the session's default: `set_default_n_broadcast_samples(n)` becomes
     `probpipe.config.sampling.max_evaluations = n` for lifts and
     `probpipe.config.sampling.num_samples = n` for summaries.
+- **The settings objects are sections of `probpipe.config`.** `config` holds
+  four sections, which keep their classes, checks, and environment variables,
+  and `config.reset()` resets all four. The top-level names
+  `notation_config`, `provenance_config`, and `prefect_config` are removed,
+  with no alias. Migrate each as follows:
+  - `probpipe.notation_config` becomes `probpipe.config.notation`;
+  - `probpipe.provenance_config` becomes `probpipe.config.provenance`;
+  - `probpipe.prefect_config` becomes `probpipe.config.prefect`.
+
+  A `using` block sets temporary values, for one section as
+  `with probpipe.config.sampling.using(num_samples=4096):` and for several as
+  `with probpipe.config.using(sampling={"num_samples": 4096}, notation={"max_depth": 12}):`.
+  The previous values apply again when the block exits, an error included, and
+  blocks nest. A view's own control, which `f.using(...)` sets, wins over a
+  block, which wins over the session's value. A block applies to the work that a call
+  inside it dispatches to worker threads or Prefect workers, and to no other
+  thread. An unknown section or setting raises `TypeError` naming the known
+  ones, and a value is checked as an assignment checks it. Blocks close in the
+  reverse order of opening. A block that a generator holds open can break that
+  order in two ways, and each raises `RuntimeError`: a block closed while a call
+  opened inside it still runs keeps applying until the call ends, and a call or
+  a block that ends while a block opened inside it is still open closes that
+  block with it. Either way no closed block applies afterwards.
 
 ### Added
 
@@ -1629,11 +1652,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `exact_only=True`, the error names the components that have an exact
   summary and the calls on their views that compute it. `cov` keeps the
   Monte Carlo fallback for a dependent joint.
-- **`notation_config.max_depth` sets how many nested levels a label or a
+- **`config.notation.max_depth` sets how many nested levels a label or a
   notation shows.** A label derived from other terms, such as
   `E[f(beta ~ model; y)]`, and the notation of a law nest one level for each
   value or law they are computed from. A rendering shows at most
-  `notation_config.max_depth` levels, 8 by default or the value of the
+  `config.notation.max_depth` levels, 8 by default or the value of the
   environment variable `PROBPIPE_NOTATION_MAX_DEPTH`, and at most 64, the
   number of levels a stored expression keeps. A part nested deeper
   shows as its label, the name of a law or a function, or as `…` for a value,
@@ -2265,8 +2288,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uniform and non-uniform weights so the estimator is continuous in the
   weights.
 
-- **`ProvenanceMode` enum and `provenance_config` singleton for lineage-tracking
-  control.** Three modes are available: `FULL` retains live references to every
+- **`ProvenanceMode` enum and the `config.provenance` section for
+  lineage-tracking control.** Three modes are available: `FULL` retains live references to every
   parent distribution (good for interactive debugging); `LIGHTWEIGHT` (the new
   default) stores only `ParentInfo` descriptors — type name, distribution label,
   and the parent's own provenance chain — so parent data arrays are free to be
@@ -2275,7 +2298,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```python
   import probpipe
   from probpipe import ProvenanceMode
-  probpipe.provenance_config.mode = ProvenanceMode.FULL  # for debugging
+  probpipe.config.provenance.mode = ProvenanceMode.FULL  # for debugging
   ```
 
 - **`ParentInfo` descriptor** (new public export).  A frozen dataclass carrying
@@ -2296,7 +2319,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   future cross-run `cache_key_fn` can fail closed on weak inputs.
 
 - **`Provenance.create()` factory classmethod.**  Centralises mode-checking:
-  reads `provenance_config.mode`, wraps each parent in a `ParentInfo`, and
+  reads `config.provenance.mode`, wraps each parent in a `ParentInfo`, and
   returns `None` in OFF mode.  All ~15 provenance assembly sites in the
   codebase now route through this single entry point, so mode behavior is
   uniform everywhere.
@@ -3237,7 +3260,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ancestor.obj                                 # None — parent may be GC'd
 
   # To restore live-object access, opt in to FULL mode
-  probpipe.provenance_config.mode = ProvenanceMode.FULL
+  probpipe.config.provenance.mode = ProvenanceMode.FULL
   ancestor = provenance_ancestors(result)[0]
   ancestor.obj                                 # live Distribution
   ancestor.obj.sample(key, (10,))              # works
@@ -3560,6 +3583,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A nested numeric sweep checks once whether its function traces with JAX and
   shares that check across its cells. Each cell keeps its own check when its
   swept values must stay fixed or when the sweep is over stored objects.
+- **`apply` and `check` inside a call use their own `num_samples`.** The
+  routes that `f.apply(...)` runs, or that `f.check(...)` probes, inside
+  another call read the `num_samples` that `f`'s own controls, a
+  `config.using` block, or the session give, as `f(...)` does, so a converter
+  that draws takes that count. They read the enclosing call's count before.
 
 ### Removed (breaking)
 

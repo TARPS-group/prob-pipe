@@ -27,7 +27,7 @@ from probpipe import (
     sample,
     workflow_run,
 )
-from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config
+from probpipe.core.config import ProvenanceMode, WorkflowKind, config
 
 
 def add_one(x):
@@ -218,16 +218,16 @@ def make_remote_effect(
 
 @pytest.fixture(autouse=True)
 def _reset_fakes():
-    prefect_config.workflow_kind = WorkflowKind.OFF
-    prefect_config.task_runner = None
+    config.prefect.workflow_kind = WorkflowKind.OFF
+    config.prefect.task_runner = None
     RecordingExecutor.instances.clear()
     FakeMappedTask.created_names.clear()
     FakeMappedTask.reverse_results = False
     FakeMappedTask.map_calls = 0
     RecordingFlow.calls.clear()
     yield
-    prefect_config.workflow_kind = WorkflowKind.OFF
-    prefect_config.task_runner = None
+    config.prefect.workflow_kind = WorkflowKind.OFF
+    config.prefect.task_runner = None
     RecordingExecutor.instances.clear()
     FakeMappedTask.created_names.clear()
     FakeMappedTask.reverse_results = False
@@ -2662,7 +2662,8 @@ class TestFunctionExecutionConfig:
 
         assert (
             node_mod._make_execution_config(
-                wf,
+                wf.label,
+                wf.options,
             ).mode
             == "thread"
         )
@@ -2671,7 +2672,8 @@ class TestFunctionExecutionConfig:
         wf = Function(add_one, label="add_one", dispatch="thread", max_workers=3)
 
         execution = node_mod._make_execution_config(
-            wf,
+            wf.label,
+            wf.options,
         )
 
         assert execution.mode == "thread"
@@ -2681,7 +2683,8 @@ class TestFunctionExecutionConfig:
         wf = Function(add_one, label="add_one", dispatch="thread", max_workers=True)
 
         execution = node_mod._make_execution_config(
-            wf,
+            wf.label,
+            wf.options,
         )
 
         assert execution.mode == "thread"
@@ -2692,7 +2695,8 @@ class TestFunctionExecutionConfig:
             wf = Function(add_one, label="add_one", dispatch="auto", max_workers=3)
 
         execution = node_mod._make_execution_config(
-            wf,
+            wf.label,
+            wf.options,
         )
 
         assert execution.mode == "sequential"
@@ -2718,7 +2722,8 @@ class TestFunctionExecutionConfig:
             wf = Function(add_one, label="add_one", dispatch="sequential", max_workers=3)
 
         execution = node_mod._make_execution_config(
-            wf,
+            wf.label,
+            wf.options,
         )
 
         assert execution.mode == "sequential"
@@ -2739,7 +2744,8 @@ class TestFunctionExecutionConfig:
 
         with pytest.warns(UserWarning, match="do not control Prefect scheduling"):
             execution = node_mod._make_execution_config(
-                wf,
+                wf.label,
+                wf.options,
             )
 
         assert execution.mode == "prefect_task"
@@ -2753,7 +2759,7 @@ class TestFunctionExecutionConfig:
         # (effective_workflow_kind also gates on node_mod.flow, not just task).
         pytest.importorskip("prefect")
         monkeypatch.setattr(node_mod, "task", object())
-        prefect_config.workflow_kind = WorkflowKind.FLOW
+        config.prefect.workflow_kind = WorkflowKind.FLOW
         with pytest.warns(UserWarning, match="max_workers configures only"):
             wf = Function(
                 add_one,
@@ -2764,7 +2770,8 @@ class TestFunctionExecutionConfig:
 
         with pytest.warns(UserWarning, match="do not control Prefect scheduling"):
             execution = node_mod._make_execution_config(
-                wf,
+                wf.label,
+                wf.options,
             )
 
         assert execution.mode == "prefect_flow"
@@ -2781,7 +2788,8 @@ class TestFunctionExecutionConfig:
             )
 
         execution = node_mod._make_execution_config(
-            wf,
+            wf.label,
+            wf.options,
         )
 
         assert execution.mode == "sequential"
