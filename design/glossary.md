@@ -10,7 +10,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **broadcast**: the lift of a function over a distribution argument, whose result is the pushforward law of the function's output (V.5).
 - **call context**: the per-call state that the code a call runs reads wherever it runs, such as the active `config.using` blocks, the controls a derived route passes down, and the call's resolved controls. Each call of a `Function` opens a child of the call context in effect, and a `config` block derives a changed copy (V.2).
 - **capability**: an underscore implementation of an operation, such as `_sample` or `_inverse`, that a class claims for its instances by implementing the capability's protocol (III.8, III.3).
-- **column**: the batch, over a batch's levels, of each element's node at one path, which `b[path]` returns; a batch's outputs are its columns (II.5).
+- **column**: one array of a batch's columnar storage, a field's raw batch form, which `raw` returns (III.5), or one column of a displayed table (II.4). The batch that `b[path]` returns is the *marginal batch*, not a column.
 - **component**: one of the component laws of a `MixtureDistribution`, which its constructor takes as `components=` (VII.3).
 - **conforms**: a value conforms to a spec when it has the structure the spec describes, and a spec conforms to another when every value that conforms to the first conforms to the second, within one dimension scope; conformance is the one-way check of what an input, an output spec, or a field receives (II.1). Completing an output spec checks that the produced value conforms (II.2).
 - **conversion**: a change of a distribution's representation that preserves its law, up to the recorded fidelity, and its event spec; a converter is the registered method that carries one out (IV.3).
@@ -38,6 +38,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **level**: a named group of contiguous batch axes; a batch's `axis_groups` tiles its batch shape into levels, outermost first (II.5).
 - **lift**: the application of a function to a distribution or a batch where it expects a value, which is a broadcast for a distribution and a sweep for a batch (C4, V.5). The sampling lift is the generic evaluation rule that realizes a broadcast from draws (V.7).
 - **marginal**: the law of the nodes at a path or a list of paths of a distribution, detached from that distribution; `marginal(d, paths)` returns it, and `_marginal` is its capability (VI.8, III.8).
+- **marginal batch**: the batch, over a batch's levels, of each element's node at one path, which `b[path]` returns as a view; a batch's outputs are its marginal batches. It is the batch analog of the marginal view `d[path]`: for samples of `d`, the marginal batch at a path holds samples of `d[path]` (II.5).
 - **merge**: what `&` does: `a & b` combines two terms of one kind by name, each output of `b` supplying the input of `a` of the same name, and returns the outputs of both, `a`'s first; for laws and kernels it is the joint, whose density is the product of the operands' (IV.2). Records merge by top-level name (II.6), functions into the function returning both results (III.3), and batches element by element (VI.11). Composition is `f ∘ g` and `A B`, never `&`.
 - **method**: a dispatch method, which is one named implementation that a dispatch registry selects by type and feasibility (II.7). Elsewhere the word keeps its Python sense of a function defined on a class, as `with_label` is.
 - **name**: a non-empty string without `/` that identifies an input, an output, a field, a group, or a level (II.2, II.5, II.6); an input's name is also a Python identifier. A method's or a route's name and an operation's key in `operation_registry` identify registry entries. A tracked term's own identifier is its label.
@@ -62,7 +63,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **unify**: two specs unify when the rules of II.1 give a spec, their unification, that conforms to both; it is the check where one value must satisfy two declared specs, as an input that both operands of a merge take (II.1, IV.2).
 - **unresolved**: the outcome of a feasibility check whose required declarations are not yet available (II.7).
 - **value type**: the spec from which a term's paths and outputs are read: a law's or kernel's `event_spec.term_spec`, a function's `output_spec.term_spec`, a batch's `element_spec.term_spec`, or a record's or base value's own `spec`; it has no attribute of its own (II.2).
-- **view**: a tracked term that refers into its source, such as a record field, a batch element or sub-batch, or a distribution's `MarginalView` `d[paths]` (B4, II.4, III.7).
+- **view**: a tracked term that refers into its source, such as a record field, a batch element, sub-batch, or marginal batch `b[path]`, or a distribution's `MarginalView` `d[paths]` (B4, II.4, III.7).
 
 ## Canonical names
 
