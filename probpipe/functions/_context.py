@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import jax
 import jax.extend.core
 
-from ..core.config import ProvenanceMode, config
+from ..core.config import ProvenanceMode, _register_open_run_provenance_mode_reader, config
 from ..custom_types import PRNGKey
 from ._errors import UnmanagedConcurrentWorkflowEntryError
 from ._rng import (
@@ -143,6 +143,15 @@ def _active_provenance_mode() -> ProvenanceMode:
     """Return the provenance mode fixed for the active workflow run."""
     frame = _ACTIVE_WORKFLOW_FRAME.get()
     return config.provenance.mode if frame is None else frame.provenance_mode
+
+
+def _open_run_provenance_mode() -> ProvenanceMode | None:
+    """The provenance mode fixed for the workflow run open in this thread, or ``None`` outside every run."""
+    frame = _ACTIVE_WORKFLOW_FRAME.get()
+    return None if frame is None else frame.provenance_mode
+
+
+_register_open_run_provenance_mode_reader(_open_run_provenance_mode)
 
 
 @dataclass(slots=True)
@@ -276,6 +285,13 @@ def workflow_run(seed: int | None = None) -> _WorkflowRunScope:
 
     Notes
     -----
+    The outermost scope fixes the run's provenance mode, the
+    ``config.provenance.mode`` in effect when it is entered, and nested scopes
+    keep it. Inside the run, a ``config.provenance.using`` block, an
+    assignment, or a ``reset`` that would set another mode raises
+    ``RuntimeError``, naming the run's mode, so set the mode before the run
+    opens.
+
     ProbPipe operations that omit a key share this scope's structural random
     event stream. Explicit caller-owned keys do not consume that stream.
     Anonymous and nested scopes remain unmaterialized until their first
@@ -604,13 +620,17 @@ def _managed_work_item_scope(
 @contextmanager
 def _transported_workflow_frame(
     root_words: tuple[int, int] | None,
-    provenance_mode: ProvenanceMode,
 ) -> Generator[None, None, None]:
-    """Install a standalone worker frame from serializable parent authority."""
+    """Install a standalone worker frame from serializable parent authority.
+
+    The frame takes the run's provenance mode from the call context the work
+    carries, which is installed first: a block's mode, which cannot differ
+    from the run's, or else the session's mode when the root call opened.
+    """
     frame = _WorkflowFrame(
         kind="managed",
         seed_words=None,
-        provenance_mode=provenance_mode,
+        provenance_mode=config.provenance.mode,
         parent=None,
         owner=_current_workflow_owner(),
         state=_WorkflowFrameState(

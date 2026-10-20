@@ -27,7 +27,9 @@ from probpipe import (
     EmpiricalDistribution,
     Function,
     Normal,
+    NumericArrayBatch,
     OutputSpec,
+    ProvenanceMode,
     ResolutionError,
     WorkflowKind,
     config,
@@ -35,6 +37,7 @@ from probpipe import (
     sample,
     workflow_run,
 )
+from probpipe.functions._context import _active_provenance_mode
 from probpipe.operations import OperationRegistry, operation
 
 from ..operations._laws import Sampler
@@ -627,3 +630,25 @@ class TestConfigBlocksInPrefectTasks:
         with workflow_run(seed=64), config.sampling.using(num_samples=37):
             inner(DistributionBatch([first, second], "laws", label="laws"))
         assert first.shapes == second.shapes == [(37,)]
+
+
+def _provenance_mode_code(x: jnp.ndarray) -> jnp.ndarray:
+    """The position in ``ProvenanceMode`` of the mode the running work is recorded under, plus 0 * x."""
+    return x * 0.0 + list(ProvenanceMode).index(_active_provenance_mode())
+
+
+class TestProvenanceModeInPrefectTasks:
+    """A Prefect task runs under the provenance mode of the workflow run that dispatched it.
+
+    A worker that receives the payload pickled is covered in
+    ``tests/functions/test_parallel.py``.
+    """
+
+    def test_a_prefect_task_runs_under_the_runs_mode(self):
+        reporter = Function(
+            _provenance_mode_code, workflow_kind=WorkflowKind.TASK, dispatch="sequential"
+        ).using(raw=True)
+        config.provenance.mode = ProvenanceMode.OFF
+        with workflow_run(seed=65):
+            codes = reporter(NumericArrayBatch(jnp.zeros(2), "x", label="xs"))
+        assert np.asarray(codes).tolist() == [list(ProvenanceMode).index(ProvenanceMode.OFF)] * 2

@@ -7,7 +7,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from ..core.config import ProvenanceMode
 from ._rng import _RandomEventPath, _validate_random_event_value
 
 _MANAGED_WORK_ITEM_ABI = "probpipe.managed_work_item/v1"
@@ -514,14 +513,12 @@ class ManagedPrefectPayload:
 
     item: ManagedWorkItem
     attempt: ManagedAttemptState
-    provenance_mode: ProvenanceMode
     parent: ManagedParentEnvelope | None = None
 
     def __post_init__(self) -> None:
         _validate_managed_prefect_payload_fields(
             item=self.item,
             attempt=self.attempt,
-            provenance_mode=self.provenance_mode,
             parent=self.parent,
         )
 
@@ -550,7 +547,6 @@ def _validate_managed_prefect_payload_fields(
     *,
     item: object,
     attempt: object,
-    provenance_mode: object,
     parent: object,
 ) -> None:
     """Validate a complete worker payload, including its nested authority."""
@@ -568,8 +564,6 @@ def _validate_managed_prefect_payload_fields(
         work_item_token=attempt.work_item_token,
         attempt_token=attempt.attempt_token,
     )
-    if not isinstance(provenance_mode, ProvenanceMode):
-        raise TypeError("managed Prefect payloads require a provenance mode")
     if parent is not None and not isinstance(parent, ManagedParentEnvelope):
         raise TypeError("managed Prefect parent authority must be an envelope or None")
     if attempt.work_item_token != item.frame.token:
@@ -714,7 +708,6 @@ def _validated_managed_prefect_payload_snapshot(
     return ManagedPrefectPayload(
         item=_validated_managed_work_item_snapshot(payload.item),
         attempt=_validated_managed_attempt_snapshot(payload.attempt),
-        provenance_mode=payload.provenance_mode,
         parent=(
             None
             if payload.parent is None
