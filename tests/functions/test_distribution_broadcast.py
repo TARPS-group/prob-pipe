@@ -328,7 +328,10 @@ class TestExecuteDistributionBroadcast:
 
         def fake_execute_many(request):
             seen["request"] = request
-            return [request.func(**item.call_values()) for item in request.work_items]
+            return [
+                request.func(**evaluation_point.call_arguments())
+                for evaluation_point in request.evaluation_points
+            ]
 
         monkeypatch.setattr(
             _broadcast._execution,
@@ -356,9 +359,15 @@ class TestExecuteDistributionBroadcast:
         assert isinstance(result, EmpiricalDistribution)
         assert request.func is shift
         assert request.execution is execution
-        assert len(request.work_items) == 5
-        assert all(item.call_values()["offset"] == 2.0 for item in request.work_items)
-        assert all(not isinstance(item.call_values()["x"], Normal) for item in request.work_items)
+        assert len(request.evaluation_points) == 5
+        assert all(
+            evaluation_point.call_arguments()["offset"] == 2.0
+            for evaluation_point in request.evaluation_points
+        )
+        assert all(
+            not isinstance(evaluation_point.call_arguments()["x"], Normal)
+            for evaluation_point in request.evaluation_points
+        )
         assert result.provenance.metadata == {
             "dispatch": "thread",
             "orchestrate": "off",

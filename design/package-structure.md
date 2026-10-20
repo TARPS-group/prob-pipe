@@ -83,7 +83,7 @@ probpipe/
 │   ├── _rng.py                #   structural event identity, the versioned key derivation (V.8)
 │   ├── _context.py            #   workflow scopes and frames: workflow_run (V.8)
 │   ├── _replay.py             #   replay_run, replay records and anchors; the cache key (V.8)
-│   ├── _broker.py             #   managed work items: keys across threads, tasks, and flows (V.8, V.9)
+│   ├── _evaluation_keys.py    #   evaluation points: keys across threads, tasks, and flows (V.8, V.9)
 │   ├── _execution.py          #   the jax / sequential / thread dispatch modes, the execution contract (V.9)
 │   ├── _orchestration.py      #   optional tracing (V.9)
 │   ├── _result.py             #   assembly, output inference, declaration enforcement and errors, kind-directed wrap, identity (V.10)
@@ -158,8 +158,6 @@ The spec implementation in `core/` is divided into three files: `core/_spec_base
 | `functions/_normalization.py` | `functions/_call.py`; conversion executes later under the IV.3 plan (V.4) |
 | `functions/_contract.py`, `functions/_descendants.py` | `functions/_plan.py`: the per-call binding of the declared inputs and the root-ancestor capture (V.5, V.6) |
 | `functions/_callable.py`, `functions/_recipe.py` | `functions/_replay.py`: the callable anchors and the recorded recipes (V.8) |
-| `functions/_managed.py` | `functions/_broker.py` (V.8, V.9) |
-| `functions/_execution_contract.py` | `functions/_execution.py` (V.9) |
 | `functions/_errors.py` | `functions/`, each error beside the step that raises it (V.1) |
 | `linalg/linear_operator.py`, `linalg/operations.py`, `linalg/utils.py` | `linalg/_linop.py`, `linalg/_structured.py`, `linalg/_composites.py`; the free-function queries become `LinOp` methods (III.4) |
 | `record/design.py` | `designs/`, generalized from `RecordBatch` to any element spec |

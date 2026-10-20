@@ -6,7 +6,7 @@ import operator
 from typing import Any
 
 from ..custom_types import PRNGKey
-from ..functions import _broker
+from ..functions import _evaluation_keys
 
 _VALIDATION_SAMPLING_ABI = "probpipe.validation/v1"
 _SLICED_WASSERSTEIN_PROVIDER_ABI = "probpipe.validation.sliced_wasserstein/v1"
@@ -33,9 +33,9 @@ def _claim_validation_key(
     provider_abi: str,
 ) -> PRNGKey:
     """Claim one validation singleton event of the workflow scope and return its key."""
-    return _broker._resolve_automatic_key(
+    return _evaluation_keys._resolve_automatic_key(
         None,
-        _broker._singleton_effect_plan(
+        _evaluation_keys._singleton_effect_plan(
             operation_kind=operation_kind,
             execution_mode=execution_mode,
             sample_shape=sample_shape,

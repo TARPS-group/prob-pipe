@@ -7,7 +7,7 @@ annotated ``Distribution`` or ``Any`` (V.5). Its route is the evaluation-rule
 registry, keyed on the map's and the law's types, from which the direct call
 also selects.
 
-The two applicability conditions of the pushforward, which ``expectation``
+The two applicability checks of the pushforward, which ``expectation``
 shares, are defined here: the map's open parameter admits a draw of the law,
 and its fixed arguments are constants.
 """
@@ -150,7 +150,7 @@ def _call_at(
 
 
 # ---------------------------------------------------------------------------
-# The applicability conditions
+# The applicability checks
 # ---------------------------------------------------------------------------
 
 #: Each kind a message names, in plain words, the more specific kinds first.
@@ -268,8 +268,8 @@ def _lifted_fixed_argument(f: Function, fixed: Mapping[str, Any]) -> str:
     return ""
 
 
-def _integrand_conditions(subject: str) -> tuple[Callable[..., Any], Callable[..., Any]]:
-    """The two applicability conditions of an operation that integrates or pushes forward a map.
+def _integrand_applicability_checks(subject: str) -> tuple[Callable[..., Any], Callable[..., Any]]:
+    """The two applicability checks of an operation that integrates or pushes forward a map.
 
     Parameters
     ----------
@@ -347,7 +347,7 @@ def _mapped_expression() -> None:
 @operation(
     result=_pushforward_result,
     roles={"f": (FunctionSpec,)},
-    conditions=_integrand_conditions("pushforward"),
+    applicability_checks=_integrand_applicability_checks("pushforward"),
     label=_map_output_label,
 )
 def pushforward(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = None):

@@ -230,7 +230,7 @@ class TestConditionalOperations:
         kernel = _Direct()
         view = standard_deviation.using(num_samples=64)
         report = view.check(kernel, given={"mu": 2.0})
-        assert (report.route, report.exact) == ("identity", False)
+        assert (report.route, report.exact) == ("derived", False)
         with workflow_run(seed=42):
             result = view(kernel, given={"mu": 2.0})
         assert jnp.isfinite(result)

@@ -80,12 +80,11 @@ from ..values._function_base import (
 )
 from . import (
     _broadcast,
-    _broker,
     _call,
     _callable,
     _context,
+    _evaluation_keys,
     _execution,
-    _execution_contract,
     _normalization,
     _plan,
     _recipe,
@@ -322,7 +321,7 @@ def _call_function(
         occurrence_path = None if replay_call is None else replay_call.occurrence_path
         with (
             _context._ephemeral_workflow_run(),
-            _broker._function_stochastic_scope(occurrence_path=occurrence_path) as broker,
+            _evaluation_keys._function_stochastic_scope(occurrence_path=occurrence_path) as broker,
         ):
             if (
                 replay_call is not None
@@ -644,7 +643,7 @@ def _realized_point(
     Raises
     ------
     ApplicabilityError
-        If an applicability condition fails.
+        If an applicability check fails.
     ResolutionError
         If no candidate is feasible, or the first one that is not is unresolved.
     ResultKindError, ResultSchemaError
@@ -730,9 +729,9 @@ def _run_call(
     stochastic_sample_shape = None if stochastic_plan is None else stochastic_plan.sample_shape
 
     def get_key(event: _plan.PlannedRandomEvent):
-        return _broker._resolve_automatic_key(
+        return _evaluation_keys._resolve_automatic_key(
             None,
-            _broker.StochasticEffectPlan(
+            _evaluation_keys.StochasticEffectPlan(
                 operation_kind="function_lifting",
                 execution_mode="sampled",
                 event=event,
@@ -743,7 +742,7 @@ def _run_call(
         )
 
     workflow_kind = _orchestration_mode(resolved_controls["workflow_kind"])
-    _broker._record_active_requested_execution(
+    _evaluation_keys._record_active_requested_execution(
         resolved_controls["dispatch"],
         workflow_kind.value,
     )
@@ -1079,14 +1078,14 @@ def _run_call(
     execution = _make_execution_config(function._label, resolved_controls)
     request = _execution.WorkflowExecutionRequest(
         func=invoke_point,
-        work_items=_execution.make_managed_work_items(
+        evaluation_points=_execution.issue_evaluation_points(
             [argument_values],
-            unit_segments=(_execution.point_unit_segment(),),
+            point_segments=(_execution.plain_call_point_segment(),),
         ),
         execution=execution,
-        contract=_execution_contract.make_execution_contract(
+        contract=_execution.make_execution_contract(
             evaluator="rowwise",
-            transport=_execution_contract.transport_for_execution_mode(execution.mode),
+            transport=_execution.transport_for_execution_mode(execution.mode),
             stochastic_plan=None,
         ),
     )
@@ -1843,8 +1842,8 @@ def _apply_scope() -> Generator[None, None, None]:
     _replay._reject_function_apply()
     with (
         _context._ephemeral_workflow_run(),
-        _broker._function_stochastic_scope() as broker,
-        _execution.point_work_item_scope(broker),
+        _evaluation_keys._function_stochastic_scope() as broker,
+        _execution.in_place_evaluation_point_scope(broker),
     ):
         yield
 

@@ -234,11 +234,11 @@ class TestLiftedScores:
         assert report.feasible is True
         assert report.lifted == ("d", "value")
 
-    def test_the_identity_of_prob_is_checked_at_the_points_of_a_lift(self):
+    def test_the_formula_of_prob_is_checked_at_the_points_of_a_lift(self):
         report = prob.check(Gaussian("g"), Gaussian("v"))
         assert (report.feasible, report.route, report.lifted) == (
             True,
-            "identity",
+            "derived",
             ("value",),
         )
         assert prob.check(Bare("b"), Gaussian("v")).feasible is False
@@ -247,9 +247,9 @@ class TestLiftedScores:
 class TestDerivedDensities:
     def test_prob_is_derived_from_log_prob(self):
         assert prob.is_derived
-        assert prob.identity == "jnp.exp(log_prob.using(raw=True)(d, value))"
+        assert prob.formula == "jnp.exp(log_prob.using(raw=True)(d, value))"
         (route,) = prob.routes
-        assert (route.name, route.source) == ("identity", RouteSource.FALLBACK)
+        assert (route.name, route.source) == ("derived", RouteSource.FALLBACK)
 
     def test_prob_is_the_exponential_of_log_prob(self):
         law = Gaussian("g", 0.0, 1.5)
@@ -270,29 +270,29 @@ class TestDerivedDensities:
         with pytest.raises(ResolutionError):
             prob(Unnormalized("u"), 0.0)
 
-    def test_the_identity_is_infeasible_where_log_prob_has_no_route(self):
+    def test_the_formula_is_infeasible_where_log_prob_has_no_route(self):
         report = prob.check(Bare("b"), 0.0)
         assert report.feasible is False
         assert "does not implement SupportsLogProb" in report.description
         with pytest.raises(ResolutionError, match="does not implement SupportsLogProb"):
             prob(Bare("b"), 0.0)
 
-    def test_the_unnormalized_identity_is_infeasible_where_its_constituent_has_no_route(self):
+    def test_the_unnormalized_formula_is_infeasible_where_its_constituent_has_no_route(self):
         report = unnormalized_prob.check(Bare("b"), 0.0)
         assert report.feasible is False
         assert "does not implement SupportsUnnormalizedLogProb" in report.description
 
-    def test_the_identity_takes_the_exactness_of_the_route_log_prob_selects(self):
+    def test_the_formula_takes_the_exactness_of_the_route_log_prob_selects(self):
         report = prob.check(Gaussian("g"), 0.5)
-        assert (report.feasible, report.route, report.exact) == (True, "identity", True)
-        assert {info.method_name: info for info in report.routes}["identity"].exact is True
+        assert (report.feasible, report.route, report.exact) == (True, "derived", True)
+        assert {info.method_name: info for info in report.routes}["derived"].exact is True
 
     def test_exact_only_admits_prob_where_log_prob_is_exact(self):
         law = Gaussian("g", 0.0, 2.0)
         exact = prob.using(exact_only=True)(law, 0.0)
         assert float(jnp.asarray(exact)) == float(jnp.asarray(prob(law, 0.0)))
         assert (exact.provenance.metadata["route"], exact.provenance.metadata["exact"]) == (
-            "identity",
+            "derived",
             True,
         )
 
@@ -301,11 +301,11 @@ class TestDerivedDensities:
         exact = unnormalized_prob.using(exact_only=True)(law, 0.0)
         assert float(jnp.asarray(exact)) == float(jnp.asarray(unnormalized_prob(law, 0.0)))
         assert (exact.provenance.metadata["route"], exact.provenance.metadata["exact"]) == (
-            "identity",
+            "derived",
             True,
         )
 
-    def test_the_identity_route_states_its_constituent_as_its_condition(self):
+    def test_the_derived_route_states_its_constituent_as_its_condition(self):
         (route,) = prob.summary().routes
         assert route.condition == "``log_prob`` has a route for the law and the value."
 

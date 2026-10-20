@@ -95,6 +95,10 @@ In the examples, `x` is a law over `{a, b, c, sigma}`, `ke` a kernel `ke(e | sig
 | Old | New | Step | Silent? |
 |---|---|---|---|
 | `method="identity"` | `method="derived"` | E0 | no |
+| `@operation(identity_check=..., identity_route=...)` | `@operation(derived_route_check=..., derived_route=...)` | E0 | no |
+| `@operation(conditions=...)` | `@operation(applicability_checks=...)` | E0 | no |
+| `op.identity`, `op.summary().identity` | `op.formula`, `op.summary().formula` | E0 | no |
+| `metadata["route"] == "identity"` in a derived operation's provenance | `metadata["route"] == "derived"` | E0 | yes |
 | a seeded draw inside an evaluation point | another value, once; a replay record written before cannot be replayed | E0 | yes |
 | `is_jax_traceable(f, x)` | `f.check(x)` reports whether `f` traces | E2 | no |
 | `except ValueError:` around a lifted call whose evaluation point fails | `except EvaluationError as error:`, reading `error.failures` | E3a, E4 | no, but an `except` of the user's own exception type stops catching |
