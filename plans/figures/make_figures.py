@@ -726,7 +726,7 @@ class Legend:
         y += placed.h + 22
 
         placed = draw_obj(
-            canvas, Obj("k", "kernel", root_output="y", body=["a draw is an array"]), 70, y
+            canvas, Obj("k", "kernel", root_output="y", body=["over an array"]), 70, y
         )
         self.explain(
             [
@@ -767,7 +767,7 @@ class Legend:
 
         placed = draw_obj(
             canvas,
-            Obj("draws", "batch", outputs=[Part("mu"), Part("sigma")], levels="sample"),
+            Obj("samples", "batch", outputs=[Part("mu"), Part("sigma")], levels="sample"),
             40,
             y,
         )
@@ -853,8 +853,8 @@ class Legend:
 def legend_figure(*, objects: bool = True, merges: bool = True) -> Canvas:
     title = {
         (True, True): "Legend of the figures",
-        (True, False): "How a figure draws an object",
-        (False, True): "How a figure draws a merge",
+        (True, False): "How a figure shows an object",
+        (False, True): "How a figure shows a merge",
     }[(objects, merges)]
     legend = Legend(title)
     if objects:
@@ -888,8 +888,8 @@ def structure_figure() -> Canvas:
     produces.
     """
     canvas = Canvas("A law over {a, g: {c, e}}: its parts, its produced object, and its outputs")
-    draw = Obj(
-        "a draw",
+    sample = Obj(
+        "a sample",
         "record",
         outputs=[
             Part("a", label="a: 0.4"),
@@ -898,21 +898,21 @@ def structure_figure() -> Canvas:
         show_ports=False,
     )
     law = Obj("d", "law", outputs=[Part("a"), Part("g", [Part("c"), Part("e")])])
-    draw_w, draw_h = obj_size(draw)
+    sample_w, sample_h = obj_size(sample)
     law_w, law_h = obj_size(law)
     gap = 150
-    law_x = draw_w + gap
-    placed_draw = draw_obj(canvas, draw, 0, 0)
+    law_x = sample_w + gap
+    placed_sample = draw_obj(canvas, sample, 0, 0)
     placed_law = draw_obj(canvas, law, law_x, 0)
     arrow_y = HEADER / 2
     canvas.line(
-        [(law_x - 2, arrow_y), (placed_draw.right + 4, arrow_y)],
+        [(law_x - 2, arrow_y), (placed_sample.right + 4, arrow_y)],
         width=1.6,
         arrow=True,
         dash="5 4",
     )
     canvas.text(
-        placed_draw.right + gap / 2,
+        placed_sample.right + gap / 2,
         arrow_y - 7,
         "produces",
         size=12,
@@ -931,12 +931,12 @@ def structure_figure() -> Canvas:
         fill=MUTED,
         italic=True,
     )
-    top = max(draw_h, law_h) + 26
+    top = max(sample_h, law_h) + 26
     caption_lines(
         canvas,
-        placed_draw.w / 2,
+        placed_sample.w / 2,
         top,
-        ["its produced object: a draw,", "a record of type {a, g: {c, e}}"],
+        ["a sample: one value of its produced", "object, a record of type {a, g: {c, e}}"],
     )
     caption_lines(
         canvas,
@@ -959,7 +959,7 @@ def figures() -> dict[str, Canvas]:
         "legend-merge": legend_figure(objects=False),
         "object-structure": structure_figure(),
         "produced-paths": row_figure(
-            "A law, one of its draws, its mean, and a batch of its draws share one set of paths",
+            "A law, a sample from it, its mean, and a batch of its samples share one set of paths",
             [
                 (
                     Obj(
@@ -972,7 +972,7 @@ def figures() -> dict[str, Canvas]:
                 ),
                 (
                     Obj(
-                        "a draw",
+                        "a sample",
                         "record",
                         outputs=[
                             Part("a", label="a: 0.4"),
@@ -980,7 +980,7 @@ def figures() -> dict[str, Canvas]:
                         ],
                         show_ports=False,
                     ),
-                    ["one draw of d"],
+                    ["one sample from d"],
                 ),
                 (
                     Obj(
@@ -996,13 +996,13 @@ def figures() -> dict[str, Canvas]:
                 ),
                 (
                     Obj(
-                        "draws",
+                        "samples",
                         "batch",
                         outputs=[Part("a"), Part("g", [Part("c"), Part("e")])],
                         levels="sample",
                         show_ports=False,
                     ),
-                    ["100 draws of d"],
+                    ["100 samples from d"],
                 ),
             ],
             gap=44,
@@ -1024,7 +1024,7 @@ def figures() -> dict[str, Canvas]:
                 "kernel",
                 root_output="y",
                 inputs=[Port("mu"), Port("sigma", optional=True)],
-                body=["a draw is an array"],
+                body=["over an array"],
             ),
             annotate_sides=True,
         ),
@@ -1037,7 +1037,7 @@ def figures() -> dict[str, Canvas]:
                         "kernel",
                         root_output="y",
                         inputs=[Port("mu")],
-                        body=["a draw is an array"],
+                        body=["over an array"],
                     ),
                     ["a base value: one output,", "named outside it"],
                 ),
@@ -1055,7 +1055,7 @@ def figures() -> dict[str, Canvas]:
             "Four laws: their produced types, outputs, and paths",
             [
                 (
-                    Obj("d1", "law", root_output="x", body=["a draw is an array"]),
+                    Obj("d1", "law", root_output="x", body=["over an array"]),
                     ["over an array x:", "one output, x, at the root;", "no paths"],
                 ),
                 (
@@ -1106,7 +1106,7 @@ def figures() -> dict[str, Canvas]:
             [
                 (
                     Obj("k_j", "kernel", outputs=[Part("y"), Part("w")], inputs=[Port("mu")]),
-                    ["one element: k_j draws {y, w}", "given mu; outputs y and w"],
+                    ["one element: k_j, a kernel over {y, w}", "given mu; outputs y and w"],
                 ),
                 (
                     Obj(
@@ -1137,7 +1137,7 @@ def figures() -> dict[str, Canvas]:
         ),
         "merge-kernel-law": merge_figure(
             "The merge lik & prior of a likelihood and a prior",
-            Obj("lik", "kernel", root_output="y", inputs=[Port("mu")], body=["a draw is an array"]),
+            Obj("lik", "kernel", root_output="y", inputs=[Port("mu")], body=["over an array"]),
             Obj("prior", "law", outputs=[Part("mu"), Part("tau")]),
             result_name="lik & prior",
             result_kind="law",
@@ -1188,29 +1188,29 @@ def figures() -> dict[str, Canvas]:
                 ),
                 (
                     Obj("d[g]", "law", outputs=[Part("b"), Part("c")]),
-                    ["one path: the node g;", "draws {b, c}"],
+                    ["one path: the node g;", "a law over {b, c}"],
                 ),
                 (
                     Obj("d[[g]]", "law", outputs=[Part("g", [Part("b"), Part("c")])]),
-                    ["a list of one path:", "draws {g: {b, c}}"],
+                    ["a list of one path:", "a law over {g: {b, c}}"],
                 ),
                 (
-                    Obj("d[g/b]", "law", root_output="b", body=["a draw is an array"]),
+                    Obj("d[g/b]", "law", root_output="b", body=["over an array"]),
                     ["a base node: one output at", "the root, named by its last name"],
                 ),
             ],
             gap=50,
         ),
         "law-of-laws": row_figure(
-            "A law whose draws are laws, unwrapped and wrapped",
+            "A law over laws, unwrapped and wrapped",
             [
                 (
-                    Obj("d", "law", body=["a draw is a law", "no outputs"]),
-                    ["draws laws: no outputs"],
+                    Obj("d", "law", body=["over laws", "no outputs"]),
+                    ["over laws: no outputs"],
                 ),
                 (
                     Obj("d", "law", outputs=[Part("params", label="params: a law")]),
-                    ["draws {params: law}:", "one output, params"],
+                    ["over {params: law}:", "one output, params"],
                 ),
             ],
         ),
@@ -1234,11 +1234,11 @@ def figures() -> dict[str, Canvas]:
             ],
         ),
         "batch-columns": row_figure(
-            "A batch of draws and its column at mu",
+            "A batch of samples and its column at mu",
             [
                 (
                     Obj("b", "batch", outputs=[Part("mu"), Part("sigma")], levels="sample"),
-                    ["100 draws of a law", "over {mu, sigma}"],
+                    ["100 samples from a law", "over {mu, sigma}"],
                 ),
                 (
                     Obj("b[mu]", "batch", root_output="mu", body=["arrays"], levels="sample"),
@@ -1265,7 +1265,7 @@ def figures() -> dict[str, Canvas]:
                 outputs=[Part("y"), Part("mu")],
                 inputs=[Port("sigma", optional=True, factor=True)],
             ),
-            Obj("e", "law", root_output="sigma", body=["a draw is an array"]),
+            Obj("e", "law", root_output="sigma", body=["over an array"]),
             result_name="(a & c) & e",
             result_kind="law",
         ),
