@@ -766,7 +766,7 @@ The property has no name of its own (decided 2026-10-20): the plans, the design 
 #### How claims combine
 
 Claims combine as V.11's claim does:
-- a view of one field of a law keeps only that field's claims;
+- a coupled marginal at one field of a law keeps only that field's claims;
 - a joint, a kernel, or a law built from functions traces when each of its JAX parts traces and each opaque `Function` inside it is embeddable;
 - a value is differentiable through a chain of steps when every step on its path is differentiable, and an opaque step is differentiable only through a supplied derivative.
 
