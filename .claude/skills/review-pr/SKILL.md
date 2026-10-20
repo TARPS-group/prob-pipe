@@ -153,6 +153,19 @@ documentation:
 - Are there performance concerns (unnecessary copies, unvectorized loops over
   large arrays, repeated recompilation)?
 - Do new and changed error and warning messages follow `STYLE_GUIDE.md` §9.3?
+  Check every message the PR adds or changes, wherever its text appears: in
+  code, and also quoted in `design/`, in a plan, in a docstring, in a test's
+  expected text, or in the PR body. Read each one as a user who has just made
+  the mistake would. Flag a message that:
+  - does not lead with what failed;
+  - explains the design rather than the problem;
+  - uses design vocabulary, such as "wrap" or "packaging", in place of the
+    caller's words;
+  - leaves out the value the caller passed when it is at hand;
+  - chains clauses with semicolons, as "x would name a record; give ...";
+  - gives a fix that does not read as a clear instruction.
+
+  Suggest a rewrite for each flagged message.
 
 ### 2.7 Code quality
 

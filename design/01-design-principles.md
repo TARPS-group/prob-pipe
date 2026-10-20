@@ -12,7 +12,7 @@ ProbPipe's overarching aim is *simplification via abstraction*: complexity is ab
 
 **C4 — Function lifting.** A function defined on values remains well-defined when one or more of its arguments are replaced by distributions or batches over their respective types, the result being a distribution (respectively batch) over the function's output type. In the distributional case the result is the pushforward of the replaced arguments' joint distribution through the function; in the batching case the function is broadcast over the elements.
 
-**C5 — Naming for unambiguous meaning.** Each object and any of its components must carry semantically meaningful names, so a user can determine, from an object alone, what it and its components represent. An object's **label** is its name, which has no mathematical meaning. A **component name** is required for each mathematically distinguishable component of an object.
+**C5 — Naming for unambiguous meaning.** Each object and the quantities inside it must carry semantically meaningful names, so a user can determine, from an object alone, what it and each of those quantities represent. An object's **label** is its name, which has no mathematical meaning. A name is required for each mathematically distinguishable quantity of an object: its outputs, and the nodes at its paths.
 
 **C6 — Traceable and reproducible workflows.** Every result can be traced to the operations and inputs that produced it, and every workflow can be re-run to reproduce a result. The record of how a result was computed is inspectable, so a computation can be audited after the fact.
 
