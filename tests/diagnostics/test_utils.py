@@ -11,9 +11,9 @@ import xarray as xr
 import probpipe.diagnostics._utils as utils
 from probpipe.diagnostics._utils import (
     _as_numpy,
-    _component_name,
     _dataset_values,
     _json_dumps_safe,
+    _output_name,
     _record_get,
     _safe_float,
 )
@@ -196,9 +196,9 @@ class TestJsonDumpsSafe:
 
 
 class TestDiagnosticDatasetValues:
-    def test_component_name_formats_scalar_and_indexed_names(self):
-        assert _component_name("alpha", ()) == "alpha"
-        assert _component_name("beta", (1, 2)) == "beta[1, 2]"
+    def test_output_name_formats_scalar_and_indexed_names(self):
+        assert _output_name("alpha", ()) == "alpha"
+        assert _output_name("beta", (1, 2)) == "beta[1, 2]"
 
     def test_dataset_values_flattens_scalar_vector_and_matrix_values(self):
         ds = xr.Dataset(

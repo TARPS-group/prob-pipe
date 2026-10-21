@@ -19,7 +19,7 @@ from .named_tree import NamedTree
 
 
 def _require_hashable(value: Any, *, context: str) -> None:
-    """Fail at construction when a schema component cannot be hashed."""
+    """Fail at construction when a schema output cannot be hashed."""
     try:
         hash(value)
     except TypeError as error:

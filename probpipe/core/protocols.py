@@ -78,12 +78,12 @@ class SupportsArrayBackend(Protocol):
             def _make_array_backend(
                 cls,
                 *,
-                component: str,
+                output: str,
                 batch_shape: tuple[int, ...],
                 **batched_params,
             ) -> _DistributionArrayBackend:
                 return _MyArrayBackend(
-                    cls=cls, component=component, batch_shape=batch_shape,
+                    cls=cls, output_name=output, batch_shape=batch_shape,
                     **batched_params,
                 )
     """
@@ -92,7 +92,7 @@ class SupportsArrayBackend(Protocol):
     def _make_array_backend(
         cls,
         *,
-        component: str,
+        output_name: str,
         batch_shape: tuple[int, ...],
         **batched_params: Any,
     ) -> _DistributionArrayBackend:
@@ -100,8 +100,8 @@ class SupportsArrayBackend(Protocol):
 
         Parameters
         ----------
-        component : str
-            The component of the event of each law the backend stores.
+        output_name : str
+            The output of the event of each law the backend stores.
         batch_shape : tuple of int
             The leading shape of the batched parameters. The backend
             stores parameters with this shape prepended to each

@@ -2,7 +2,7 @@
 
 # Declarations
 
-A declaration states the kind and structure of a value without holding the value: a term spec declares one value, and an input or output declaration declares a side of a function or of a draw.
+A declaration states the kind and structure of a value without holding the value: a term spec declares one value, and an input or output spec declares a side of a function or of a draw.
 A constraint declares the support of a numeric value.
 The values themselves are on [Values and records](values.md).
 
@@ -30,7 +30,7 @@ The values themselves are on [Values and records](values.md).
     options:
       show_root_full_path: true
 
-## Input and output declarations
+## Input and output specs
 
 ::: probpipe.InputSpec
 

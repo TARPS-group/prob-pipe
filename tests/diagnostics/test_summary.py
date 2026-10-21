@@ -56,7 +56,7 @@ def _kernel_model():
         return Normal("y", jnp.full(2, mu), 1.0)
 
     prior = Normal("mu", 0.0, 2.0)
-    kernel = conditional_distribution(y_given_mu, given_spec=prior.event_spec.components)
+    kernel = conditional_distribution(y_given_mu, given_spec=prior.event_spec.outputs)
     return (kernel * prior).with_label("model")
 
 
@@ -125,7 +125,7 @@ class TestTheDefaultColumns:
     def test_the_summary_is_labeled_by_the_laws_notation(self, model):
         assert summarize(model).label == "summary of model(mu, tau)"
 
-    def test_a_law_of_one_whole_term_holds_each_column_under_its_component(self):
+    def test_a_law_of_one_whole_term_holds_each_column_under_its_output(self):
         summary = summarize(Normal("theta", 1.0, 3.0, label="prior"))
 
         assert summary.label == "summary of prior(theta)"
@@ -140,7 +140,7 @@ class TestTheDefaultColumns:
             float(summary["q90/theta"]), stats.norm(1.0, 3.0).ppf(0.9), **TOLERANCE
         )
 
-    def test_an_array_component_takes_a_row_per_element(self):
+    def test_an_array_output_takes_a_row_per_element(self):
         law = Normal("y", jnp.zeros(3), jnp.array([1.0, 2.0, 3.0]), label="noise")
 
         summary = summarize(law)

@@ -302,7 +302,7 @@ class TestExecuteSweep:
 
         assert isinstance(result, DistributionBatch)
         assert result.batch_shape == (2,)
-        assert [float(mean(component)) for component in result] == [
+        assert [float(mean(output_name)) for output_name in result] == [
             0.0,
             1.0,
         ]
@@ -1239,7 +1239,7 @@ class TestANestedSweepOfRecordRows:
             seen.append((type(row), isinstance(mu, jax.core.Tracer)))
             return self._shift(row, mu)
 
-        law = EmpiricalDistribution(jnp.array([1.0, 2.0, 4.0]), component="mu", label="prior")
+        law = EmpiricalDistribution(jnp.array([1.0, 2.0, 4.0]), output_name="mu", label="prior")
         result = Function(shift, label="shift", dispatch=dispatch)(self._rows(), law)
 
         assert isinstance(result, DistributionBatch)
@@ -1322,7 +1322,7 @@ class TestARecordedDtypeIsTheStoredDtype:
             self._bodies()[body],
             output_spec=declaration
             if isinstance(declaration, OutputSpec) or declaration is None
-            else OutputSpec.default(declaration, component="f"),
+            else OutputSpec.default(declaration, output_name="f"),
             dispatch=dispatch,
             label="f",
         )
@@ -1339,15 +1339,15 @@ class TestARecordedDtypeIsTheStoredDtype:
     def test_a_lift_of_64_bit_draws_records_the_stored_dtype(self, dispatch, declaration):
         wrapped = Function(
             lambda x: np.arange(3.0),
-            output_spec=OutputSpec.default(declaration, component="f"),
+            output_spec=OutputSpec.default(declaration, output_name="f"),
             dispatch=dispatch,
             max_evaluations=5,
             label="f",
         )
-        result = wrapped(EmpiricalDistribution(jnp.arange(3.0), component="x"))
+        result = wrapped(EmpiricalDistribution(jnp.arange(3.0), output_name="x"))
         assert np.asarray(result.atoms.raw).dtype == np.float32
         assert result.atoms.element_spec.dtype == np.float32
-        assert result.event_spec.components["f"].dtype == np.float32
+        assert result.event_spec.outputs["f"].dtype == np.float32
 
     @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax"])
     def test_a_declared_64_bit_record_field_records_the_stored_dtype(self, dispatch):

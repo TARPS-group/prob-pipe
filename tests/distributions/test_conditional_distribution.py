@@ -2,7 +2,7 @@
 
 ``conditional_distribution`` builds a ``ConditionalDistribution`` from a
 function, as ``function`` builds a ``Function``. Each parameter is a given
-slot, declared by its annotation or by ``given_spec``. The event declaration is
+input, declared by its annotation or by ``given_spec``. The event spec is
 the returned law's, or an explicit ``event_spec`` that agrees with it.
 Conditioning, sampling, and the conditional density derive from the returned
 law, each claimed only when that law claims it, and with the law's guard.
@@ -50,7 +50,7 @@ from tests.inference import canonical
 
 REAL = NumericArraySpec((), jnp.float32, real)
 POSITIVE = NumericArraySpec((), jnp.float32, positive)
-SLOTS = {"mu": REAL, "tau": POSITIVE}
+INPUTS = {"mu": REAL, "tau": POSITIVE}
 
 
 def _location(mu: Any, tau: Any) -> Distribution:
@@ -79,15 +79,15 @@ class _GuardedSampler(Distribution, SupportsSampling):
         return False
 
 
-class TestTheGivenSlots:
-    def test_given_spec_declares_the_parameters_as_slots(self):
-        kernel = conditional_distribution(_location, given_spec=SLOTS, label="y")
+class TestTheInputs:
+    def test_given_spec_declares_the_parameters_as_inputs(self):
+        kernel = conditional_distribution(_location, given_spec=INPUTS, label="y")
         assert isinstance(kernel, ConditionalDistribution)
         assert kernel.label == "y"
-        assert kernel.given_spec == InputSpec(SLOTS)
+        assert kernel.given_spec == InputSpec(INPUTS)
 
     def test_an_annotation_declares_its_parameter(self):
-        assert conditional_distribution(_annotated, label="y").given_spec == InputSpec(SLOTS)
+        assert conditional_distribution(_annotated, label="y").given_spec == InputSpec(INPUTS)
 
     def test_given_spec_takes_precedence_over_an_annotation(self):
         kernel = conditional_distribution(_annotated, given_spec={"tau": REAL}, label="y")
@@ -107,13 +107,13 @@ class TestTheGivenSlots:
 
     def test_given_spec_naming_no_parameter_raises(self):
         with pytest.raises(TypeError, match="'sigma'"):
-            conditional_distribution(_location, given_spec={**SLOTS, "sigma": POSITIVE}, label="y")
+            conditional_distribution(_location, given_spec={**INPUTS, "sigma": POSITIVE}, label="y")
 
     def test_a_variadic_parameter_raises(self):
         with pytest.raises(TypeError, match="'values'"):
             conditional_distribution(lambda **values: Normal("y", 0.0, 1.0), label="y")
 
-    def test_a_slot_with_free_dimensions_raises(self):
+    def test_an_input_with_free_dimensions_raises(self):
         with pytest.raises(TypeError, match="unbound dimensions"):
             conditional_distribution(
                 lambda mu: Normal("y", mu, 1.0),
@@ -124,32 +124,32 @@ class TestTheGivenSlots:
 
 class TestTheEventDeclaration:
     def test_the_event_declaration_is_the_returned_laws(self):
-        kernel = conditional_distribution(_location, given_spec=SLOTS, label="y")
+        kernel = conditional_distribution(_location, given_spec=INPUTS, label="y")
         assert kernel.event_spec == Normal("y", 0.0, 1.0).event_spec
 
-    def test_the_slots_shapes_shape_the_event(self):
+    def test_the_inputs_shapes_shape_the_event(self):
         kernel = conditional_distribution(
             lambda mu: Normal("y", mu, 1.0), given_spec={"mu": NumericArraySpec((3,))}, label="y"
         )
-        assert kernel.event_spec.spec.shape == (3,)
+        assert kernel.event_spec.term_spec.shape == (3,)
 
     def test_an_explicit_event_spec_is_completed_from_the_law(self):
         kernel = conditional_distribution(
-            _location, given_spec=SLOTS, event_spec=OutputSpec(y=None), label="y"
+            _location, given_spec=INPUTS, event_spec=OutputSpec(y=None), label="y"
         )
         assert kernel.event_spec == Normal("y", 0.0, 1.0).event_spec
 
-    def test_an_explicit_event_spec_naming_other_components_raises(self):
+    def test_an_explicit_event_spec_naming_other_outputs_raises(self):
         with pytest.raises(ValueError, match="declares the fields"):
             conditional_distribution(
-                _location, given_spec=SLOTS, event_spec=OutputSpec(obs=None), label="y"
+                _location, given_spec=INPUTS, event_spec=OutputSpec(obs=None), label="y"
             )
 
-    def test_a_bare_spec_for_a_law_of_several_components_raises(self):
-        """A bare array spec declares one component, so a joint of two needs an OutputSpec."""
+    def test_a_bare_spec_for_a_law_of_several_outputs_raises(self):
+        """A bare array spec declares one output, so a joint of two needs an OutputSpec."""
         with pytest.raises(
             ValueError,
-            match=r"event_spec of 'yz' needs an explicit OutputSpec for the law's components "
+            match=r"event_spec of 'yz' needs an explicit OutputSpec for the law's outputs "
             r"\['y', 'z'\]",
         ):
             conditional_distribution(
@@ -163,13 +163,13 @@ class TestTheEventDeclaration:
         kernel = conditional_distribution(
             lambda low: Uniform("u", low, low + 1.0), given_spec={"low": REAL}, label="u"
         )
-        assert kernel.event_spec.spec.support is None
-        assert kernel.event_spec.spec.shape == ()
+        assert kernel.event_spec.term_spec.support is None
+        assert kernel.event_spec.term_spec.shape == ()
 
 
 class TestTheCapabilities:
     def test_a_law_that_samples_and_has_a_density_gives_both_twins(self):
-        kernel = conditional_distribution(_location, given_spec=SLOTS, label="y")
+        kernel = conditional_distribution(_location, given_spec=INPUTS, label="y")
         assert isinstance(kernel, SupportsConditionalSampling)
         assert isinstance(kernel, SupportsConditionalLogProb)
 
@@ -189,7 +189,7 @@ class TestTheCapabilities:
 
     def test_a_law_that_only_samples_gives_conditional_sampling_alone(self):
         kernel = conditional_distribution(
-            lambda mu: EmpiricalDistribution(mu + jnp.arange(3.0), component="x"),
+            lambda mu: EmpiricalDistribution(mu + jnp.arange(3.0), output_name="x"),
             given_spec={"mu": REAL},
             label="x",
         )
@@ -206,7 +206,7 @@ class TestTheCapabilities:
 
 
 class TestEvaluation:
-    def test_the_given_values_arrive_by_name_at_their_slots_kinds(self):
+    def test_the_given_values_arrive_by_name_at_their_inputs_kinds(self):
         seen: dict[str, type] = {}
 
         def law(population: Any, scale: Any) -> Distribution:
@@ -222,30 +222,30 @@ class TestEvaluation:
         np.testing.assert_allclose(result._mean(), 1.0)
 
     def test_condition_on_returns_the_law_the_function_returns(self):
-        kernel = conditional_distribution(_location, given_spec=SLOTS, label="y")
+        kernel = conditional_distribution(_location, given_spec=INPUTS, label="y")
         law = condition_on(kernel, {"mu": 1.0, "tau": 2.0})
         assert isinstance(law, Normal)
         np.testing.assert_allclose(law._mean(), 1.0)
         np.testing.assert_allclose(law._variance(), 4.0)
 
-    def test_binding_some_slots_returns_a_kernel_over_the_rest(self):
+    def test_binding_some_inputs_returns_a_kernel_over_the_rest(self):
         rest = condition_on(
-            conditional_distribution(_location, given_spec=SLOTS, label="y"), {"mu": 1.0}
+            conditional_distribution(_location, given_spec=INPUTS, label="y"), {"mu": 1.0}
         )
         assert list(rest.given_spec) == ["tau"]
         assert isinstance(rest, SupportsConditionalSampling)
         np.testing.assert_allclose(condition_on(rest, {"tau": 2.0})._mean(), 1.0)
 
     def test_the_conditional_density_is_the_laws(self):
-        kernel = conditional_distribution(_location, given_spec=SLOTS, label="y")
+        kernel = conditional_distribution(_location, given_spec=INPUTS, label="y")
         np.testing.assert_allclose(
             kernel._conditional_log_prob({"mu": 1.0, "tau": 2.0}, 0.5),
             Normal("y", 1.0, 2.0)._log_prob(0.5),
             rtol=1e-6,
         )
 
-    def test_a_given_that_does_not_conform_to_its_slot_raises(self):
-        kernel = conditional_distribution(_location, given_spec=SLOTS, label="y")
+    def test_a_given_that_does_not_conform_to_its_input_raises(self):
+        kernel = conditional_distribution(_location, given_spec=INPUTS, label="y")
         with pytest.raises(ValueError):
             kernel._condition_on({"mu": jnp.ones(3), "tau": 1.0})
 
@@ -261,12 +261,12 @@ class TestEvaluation:
             kernel._condition_on({"mu": 0.0})
 
     def test_an_option_is_refused(self):
-        kernel = conditional_distribution(_location, given_spec=SLOTS, label="y")
+        kernel = conditional_distribution(_location, given_spec=INPUTS, label="y")
         with pytest.raises(TypeError, match="num_results"):
             kernel._condition_on({"mu": 0.0, "tau": 1.0}, num_results=3)
 
     def test_a_kernel_and_its_partly_bound_kernel_pickle(self):
-        kernel = conditional_distribution(_location, given_spec=SLOTS, label="y")
+        kernel = conditional_distribution(_location, given_spec=INPUTS, label="y")
         restored = pickle.loads(pickle.dumps(kernel))
         np.testing.assert_allclose(condition_on(restored, {"mu": 1.0, "tau": 2.0})._mean(), 1.0)
         rest = pickle.loads(pickle.dumps(condition_on(kernel, {"mu": 1.0})))
@@ -275,15 +275,15 @@ class TestEvaluation:
 
 
 class TestNotation:
-    """A kernel from a function reads by its label, its component, and its slots."""
+    """A kernel from a function reads by its label, its output, and its inputs."""
 
-    def test_the_kernel_lists_its_component_and_its_slots(self):
-        kernel = conditional_distribution(_location, given_spec=SLOTS, label="glm")
+    def test_the_kernel_lists_its_output_and_its_inputs(self):
+        kernel = conditional_distribution(_location, given_spec=INPUTS, label="glm")
         assert str(kernel) == kernel.notation == "glm(y | mu, tau)"
 
-    def test_a_partly_bound_kernel_lists_its_fixed_paths_after_its_free_slots(self):
-        """``condition_on`` records the bound slots; here they are set by hand."""
-        kernel = conditional_distribution(_location, given_spec=SLOTS, label="glm")
+    def test_a_partly_bound_kernel_lists_its_fixed_paths_after_its_free_inputs(self):
+        """``condition_on`` records the bound inputs; here they are set by hand."""
+        kernel = conditional_distribution(_location, given_spec=INPUTS, label="glm")
         rest = kernel._condition_on({"mu": 1.0})
         assert rest.notation == "glm(y | tau)"
         rest._store_expression(rest._expression.with_fixed(("mu",)))
@@ -291,7 +291,7 @@ class TestNotation:
         assert kernel.notation == "glm(y | mu, tau)"
 
     def test_binding_a_partly_bound_kernel_keeps_its_fixed_paths(self):
-        kernel = conditional_distribution(_scaled_location, given_spec=_THREE_SLOTS, label="glm")
+        kernel = conditional_distribution(_scaled_location, given_spec=_THREE_INPUTS, label="glm")
         rest = kernel._condition_on({"mu": 1.0})
         rest._store_expression(rest._expression.with_fixed(("mu",)))
         assert rest._condition_on({"tau": 2.0}).notation == "glm(y | scale; mu)"
@@ -301,10 +301,10 @@ def _scaled_location(mu: Any, tau: Any, scale: Any) -> Distribution:
     return Normal("y", mu, tau * scale)
 
 
-_THREE_SLOTS = {**SLOTS, "scale": POSITIVE}
+_THREE_INPUTS = {**INPUTS, "scale": POSITIVE}
 
 
-#: An array default, which declares its slot's shape.
+#: An array default, which declares its input's shape.
 _OFFSETS = jnp.zeros(3)
 
 
@@ -312,33 +312,33 @@ def _scaled(mu: Any, scale: Any = 2.0) -> Distribution:
     return Normal("y", mu, scale)
 
 
-class TestOptionalSlots:
-    """A parameter with a default is an optional slot, which takes its default when left unbound."""
+class TestOptionalInputs:
+    """A parameter with a default is an optional input, which takes its default when left unbound."""
 
-    def test_a_parameter_with_a_default_is_an_optional_slot(self):
+    def test_a_parameter_with_a_default_is_an_optional_input(self):
         kernel = conditional_distribution(_scaled, given_spec={"mu": REAL}, label="y")
         assert kernel.given_spec.required == ("mu",)
         assert kernel.given_spec.optional == {"scale"}
         assert kernel.given_spec["scale"] == NumericArraySpec(())
 
-    def test_given_spec_declares_an_optional_slot(self):
+    def test_given_spec_declares_an_optional_input(self):
         kernel = conditional_distribution(
             _scaled, given_spec={"mu": REAL, "scale": POSITIVE}, label="y"
         )
         assert kernel.given_spec["scale"] == POSITIVE
         assert kernel.given_spec.optional == {"scale"}
 
-    def test_binding_the_required_slots_takes_the_default(self):
+    def test_binding_the_required_inputs_takes_the_default(self):
         kernel = conditional_distribution(_scaled, given_spec={"mu": REAL}, label="y")
         law = condition_on(kernel, {"mu": 1.0})
         assert isinstance(law, Normal)
         np.testing.assert_allclose(law._variance(), 4.0)
 
-    def test_a_bound_optional_slot_replaces_the_default(self):
+    def test_a_bound_optional_input_replaces_the_default(self):
         kernel = conditional_distribution(_scaled, given_spec={"mu": REAL}, label="y")
         np.testing.assert_allclose(condition_on(kernel, {"mu": 1.0, "scale": 3.0})._variance(), 9.0)
 
-    def test_binding_an_optional_slot_alone_leaves_a_kernel(self):
+    def test_binding_an_optional_input_alone_leaves_a_kernel(self):
         kernel = conditional_distribution(_scaled, given_spec={"mu": REAL}, label="y")
         rest = condition_on(kernel, {"scale": 3.0})
         assert rest.given_spec == InputSpec(mu=REAL)
@@ -349,9 +349,9 @@ class TestOptionalSlots:
         kernel = conditional_distribution(
             lambda mu, n=3: Normal("y", mu * jnp.ones(n), 1.0), given_spec={"mu": REAL}, label="y"
         )
-        assert kernel.event_spec.components["y"].shape == (3,)
+        assert kernel.event_spec.outputs["y"].shape == (3,)
 
-    def test_a_kernel_with_an_optional_slot_pickles(self):
+    def test_a_kernel_with_an_optional_input_pickles(self):
         kernel = conditional_distribution(_scaled, given_spec={"mu": REAL}, label="y")
         restored = pickle.loads(pickle.dumps(kernel))
         assert restored.given_spec == kernel.given_spec
@@ -364,23 +364,23 @@ class TestOptionalSlots:
             lambda mu, loc=_OFFSETS: Normal("y", mu + loc, 1.0), given_spec={"mu": REAL}, label="y"
         )
         assert kernel.given_spec["loc"].shape == (3,)
-        assert kernel.event_spec.components["y"].shape == (3,)
+        assert kernel.event_spec.outputs["y"].shape == (3,)
 
-    def test_an_annotation_declares_an_optional_slot(self):
+    def test_an_annotation_declares_an_optional_input(self):
         def law(mu: REAL, scale: POSITIVE = 2.0) -> Distribution:
             return Normal("y", mu, scale)
 
         kernel = conditional_distribution(law, label="y")
         assert kernel.given_spec == InputSpec(mu=REAL, scale=POSITIVE).with_optional("scale")
 
-    def test_a_keyword_only_default_is_an_optional_slot(self):
+    def test_a_keyword_only_default_is_an_optional_input(self):
         kernel = conditional_distribution(
             lambda mu, *, scale=2.0: Normal("y", mu, scale), given_spec={"mu": REAL}, label="y"
         )
         assert kernel.given_spec.optional == {"scale"}
         np.testing.assert_allclose(condition_on(kernel, {"mu": 0.0, "scale": 3.0})._variance(), 9.0)
 
-    def test_a_default_that_is_no_array_is_an_opaque_slot(self):
+    def test_a_default_that_is_no_array_is_an_opaque_input(self):
         def law(mu: Any, family: Any = "narrow") -> Distribution:
             return Normal("y", mu, 1.0 if family == "narrow" else 2.0)
 
@@ -392,7 +392,7 @@ class TestOptionalSlots:
         )
 
     def test_a_none_default_takes_a_declared_spec_to_be_met(self):
-        """``None`` declares a slot that only ``None`` conforms to, so a prior meets it once declared."""
+        """``None`` declares an input that only ``None`` conforms to, so a prior meets it once declared."""
 
         def law(mu: Any, shift: Any = None) -> Distribution:
             return Normal("y", mu + (0.0 if shift is None else shift), 1.0)
@@ -404,15 +404,15 @@ class TestOptionalSlots:
             undeclared * prior
         declared = conditional_distribution(law, given_spec={"mu": REAL, "shift": REAL}, label="y")
         assert declared.given_spec.optional == {"shift"}
-        assert list((declared * prior).event_spec.components) == ["y", "mu", "shift"]
+        assert list((declared * prior).event_spec.outputs) == ["y", "mu", "shift"]
 
-    def test_a_kernel_whose_slots_are_all_optional_binds_at_its_defaults(self):
+    def test_a_kernel_whose_inputs_are_all_optional_binds_at_its_defaults(self):
         kernel = conditional_distribution(lambda mu=1.0: Normal("y", mu, 1.0), label="y")
         assert kernel.given_spec.required == ()
         np.testing.assert_allclose(kernel._condition_on({})._mean(), 1.0)
         np.testing.assert_allclose(condition_on(kernel, {"mu": 3.0})._mean(), 3.0)
 
-    def test_binding_a_required_slot_leaves_a_kernel_over_the_rest_and_keeps_them_optional(self):
+    def test_binding_a_required_input_leaves_a_kernel_over_the_rest_and_keeps_them_optional(self):
         kernel = conditional_distribution(
             lambda mu, tau, scale=1.0: Normal("y", mu, tau * scale),
             given_spec={"mu": REAL, "tau": POSITIVE},
@@ -422,7 +422,7 @@ class TestOptionalSlots:
         expected = InputSpec(tau=POSITIVE, scale=NumericArraySpec(())).with_optional("scale")
         assert rest.given_spec == expected
 
-    def test_a_value_that_does_not_conform_to_an_optional_slot_raises(self):
+    def test_a_value_that_does_not_conform_to_an_optional_input_raises(self):
         kernel = conditional_distribution(_scaled, given_spec={"mu": REAL}, label="y")
         with pytest.raises(ValueError):
             kernel._condition_on({"mu": 0.0, "scale": jnp.ones(3)})
@@ -437,7 +437,7 @@ class TestOptionalSlots:
         draws = kernel._conditional_sample({"mu": 0.0}, jax.random.PRNGKey(0), (4000,))
         np.testing.assert_allclose(float(jnp.std(draws)), 2.0, rtol=0.05)
 
-    def test_a_renamed_optional_slot_stays_optional(self):
+    def test_a_renamed_optional_input_stays_optional(self):
         kernel = conditional_distribution(_scaled, given_spec={"mu": REAL}, label="y")
         renamed = kernel.with_path_names({"scale": "sigma"})
         assert renamed.given_spec.optional == {"sigma"}
@@ -447,13 +447,13 @@ class TestOptionalSlots:
         )
         assert kernel.with_path_names({"mu": "m"}).given_spec.optional == {"scale"}
 
-    def test_grouping_an_optional_slot_makes_it_required(self):
+    def test_grouping_an_optional_input_makes_it_required(self):
         kernel = conditional_distribution(_scaled, given_spec={"mu": REAL}, label="y")
         grouped = kernel.with_path_names({"mu": "pars/mu", "scale": "pars/scale"})
         assert grouped.given_spec.required == ("pars",)
         assert grouped.given_spec.optional == frozenset()
 
-    def test_the_posterior_fits_the_slots_a_prior_produces(self):
+    def test_the_posterior_fits_the_inputs_a_prior_produces(self):
         """With the default scale the model is conjugate, so NUTS meets its posterior mean."""
         kernel = conditional_distribution(
             lambda mu, scale=2.0: Normal("y", mu * jnp.ones(5), scale),
@@ -466,7 +466,7 @@ class TestOptionalSlots:
             posterior = condition_on.using(method="blackjax_nuts", method_options=budget)(
                 kernel * Normal("mu", 0.0, 1.0), {"y": y}
             )
-        assert list(posterior.event_spec.components) == ["mu"]
+        assert list(posterior.event_spec.outputs) == ["mu"]
         # Precision 1 + 5 / 4, so the mean is (sum(y) / 4) / 2.25.
         expected = float(jnp.sum(y)) / 4.0 / 2.25
         draws = np.asarray(sample(posterior, sample_shape=(2000,)))
@@ -475,7 +475,7 @@ class TestOptionalSlots:
 
 class TestTheForms:
     def test_the_decorator_names_the_kernel_after_the_function(self):
-        @conditional_distribution(given_spec=SLOTS)
+        @conditional_distribution(given_spec=INPUTS)
         def likelihood(mu: Any, tau: Any) -> Distribution:
             return Normal("y", mu, tau)
 
@@ -487,11 +487,11 @@ class TestTheForms:
         def obs(mu: REAL, tau: POSITIVE) -> Distribution:
             return Normal("obs", mu, tau)
 
-        assert obs.given_spec == InputSpec(SLOTS)
-        assert list(obs.event_spec.components) == ["obs"]
+        assert obs.given_spec == InputSpec(INPUTS)
+        assert list(obs.event_spec.outputs) == ["obs"]
 
     def test_the_decorator_takes_a_name(self):
-        kernel = conditional_distribution(given_spec=SLOTS, label="y_model")(_location)
+        kernel = conditional_distribution(given_spec=INPUTS, label="y_model")(_location)
         assert kernel.label == "y_model"
 
     def test_it_is_exported_from_probpipe(self):
@@ -509,12 +509,12 @@ class TestEightSchools:
     def test_the_joint_agrees_with_the_canonical_model(self):
         model = canonical.eight_schools().model
         _, *priors = model.factors
-        slots = {
-            component: spec
+        inputs = {
+            output_name: spec
             for prior in priors
-            for component, spec in prior.event_spec.components.items()
+            for output_name, spec in prior.event_spec.outputs.items()
         }
-        joint = conditional_distribution(_school_effects, given_spec=slots, label="y")
+        joint = conditional_distribution(_school_effects, given_spec=inputs, label="y")
         for prior in priors:
             joint = joint * prior
         J = canonical.SCHOOL_EFFECTS.shape[0]
@@ -532,7 +532,7 @@ class TestEightSchools:
         assert draws.batch_shape == (4,)
         assert draws.element_spec["y"].shape == (J,)
 
-    def test_a_nested_prior_gives_record_slots(self):
+    def test_a_nested_prior_gives_record_inputs(self):
         J = canonical.SCHOOL_EFFECTS.shape[0]
         sigma = jnp.asarray(canonical.SCHOOL_ERRORS, jnp.float32)
         flat = (
@@ -544,7 +544,7 @@ class TestEightSchools:
             {"mu": "population/mu", "tau": "population/tau", "theta_tilde": "groups/theta_tilde"}
         )
 
-        @conditional_distribution(given_spec=prior.event_spec.components)
+        @conditional_distribution(given_spec=prior.event_spec.outputs)
         def y(population: Any, groups: Any) -> Distribution:
             return Normal("y", population["mu"] + population["tau"] * groups["theta_tilde"], sigma)
 

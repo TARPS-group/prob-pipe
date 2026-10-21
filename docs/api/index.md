@@ -9,7 +9,7 @@ A name whose heading is a dotted path, such as `probpipe.families.GaussianProces
 | Page | What it documents |
 |---|---|
 | [Values and records](values.md) | The value kinds, such as records and numeric arrays, their batches, and the linear operators. |
-| [Declarations](declarations.md) | The term specs, the input and output declarations, and the constraints of a numeric value. |
+| [Declarations](declarations.md) | The term specs, the input and output specs, and the constraints of a numeric value. |
 | [Distributions and families](distributions.md) | The distribution classes, their capabilities, and the families ProbPipe ships. |
 | [Random functions](random_functions.md) | The distributions over functions and over distributions. |
 | [Functions](functions.md) | `Function` and its decorator, the capabilities a function claims, and the errors of a call. |

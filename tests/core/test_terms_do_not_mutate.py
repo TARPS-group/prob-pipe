@@ -41,8 +41,8 @@ def assigned_state(term) -> dict:
     ``_memo`` is excluded, being the one store a read is meant to fill.
     """
     state = object.__getstate__(term)
-    instance_dict, slots = state if isinstance(state, tuple) else (state, {})
-    both = {**(instance_dict or {}), **(slots or {})}
+    instance_dict, inputs = state if isinstance(state, tuple) else (state, {})
+    both = {**(instance_dict or {}), **(inputs or {})}
     return {name: (id(value), _census(value)) for name, value in both.items() if name != "_memo"}
 
 
@@ -143,7 +143,7 @@ class TestAnOperationDoesNotMutateItsResultAfterBuildingIt:
         assert assigned_state(conditioned) == before
         assert again is not conditioned
         # The operand is untouched, which is what §V.1 promises.
-        assert set(joint.event_spec.components) == {"z", "x"}
+        assert set(joint.event_spec.outputs) == {"z", "x"}
 
 
 class TestEveryMemoHolderDropsItsMemoOnACopy:

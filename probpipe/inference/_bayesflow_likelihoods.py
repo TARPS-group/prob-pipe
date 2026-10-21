@@ -48,7 +48,7 @@ from ._bayesflow_common import (
     _adapter_field_keys,
     _import_bayesflow,
     _isolated_keras_seeding,
-    _observation_slot,
+    _observation_input,
     _simulate_offline,
     _validate_learn_inputs,
 )
@@ -106,7 +106,7 @@ class _LearnedRatioLaw(_LearnedLaw, SupportsUnnormalizedLogProb):
 class _BayesFlowLikelihoodBase(ConditionalDistribution):
     """A learned kernel from the parameters to conditionally independent observation rows.
 
-    Its given slots are the prior's components, so composing it with the prior
+    Its inputs are the prior's outputs, so composing it with the prior
     it was trained against, as ``learned * prior``, gives the joint law, and
     conditioning that joint on an observation is Bayes' rule, which the
     normalization stage completes by inference. Its event is a dataset of
@@ -117,11 +117,11 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
     Parameters
     ----------
     approximator : ContinuousApproximator or RatioApproximator
-        The trained BayesFlow approximator whose components the subclass's
+        The trained BayesFlow approximator whose outputs the subclass's
         ``_row_scores`` calls.
     prior : Distribution
         The prior the estimator was trained against; its ``event_size`` fixes
-        the expected ``theta`` width, and its components are the given slots.
+        the expected ``theta`` width, and its outputs are the inputs.
     simulator : ConditionalDistribution
         The training simulator.
     data_dim : int
@@ -131,8 +131,8 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         The kernel's label, the name of its public class by default.
     """
 
-    #: The constructors take no component, so the repr shows none.
-    _repr_component: ClassVar[str | None] = None
+    #: The constructors take no output, so the repr shows none.
+    _repr_output_name: ClassVar[str | None] = None
 
     def __init__(
         self,
@@ -144,15 +144,15 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         label: str | None = None,
     ):
         super().__init__(
-            dict(prior.event_spec.components),
-            OutputSpec(**{_observation_slot(prior): NumericArraySpec(("observations", data_dim))}),
+            dict(prior.event_spec.outputs),
+            OutputSpec(**{_observation_input(prior): NumericArraySpec(("observations", data_dim))}),
             label=_constructor_label(self, label, _class_label(self)),
         )
         attributes = {
             "_approximator": approximator,
             "_prior": prior,
             "_simulator": simulator,
-            "_theta_dim": int(prior.event_spec.spec.vector_size),
+            "_theta_dim": int(prior.event_spec.term_spec.vector_size),
             "_data_dim": data_dim,
             "_bound": {},
         }
@@ -175,16 +175,16 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         return self._approximator
 
     def _theta_row(self, values: Mapping[str, Any]) -> Array:
-        """The parameters, keyed by the prior's components, as a ``(d_theta,)`` row.
+        """The parameters, keyed by the prior's outputs, as a ``(d_theta,)`` row.
 
         The row is the record's canonical 1-D vector layout, which matches the
         training layout. Its width is validated against the prior's
         ``event_size`` (static under jit: shapes are concrete at trace time).
         """
-        components = tuple(self._prior.event_spec.components)
+        outputs = tuple(self._prior.event_spec.outputs)
         t = (
             Record(
-                {name: values[name] for name in components},
+                {name: values[name] for name in outputs},
                 label="params",
             )
             .to_numeric()
@@ -221,12 +221,12 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         return rows.reshape(-1, self._data_dim)
 
     def _values(self, given: Any, kwargs: Mapping[str, Any]) -> dict[str, Any]:
-        """The parameter values bound so far and those *given* binds, by slot.
+        """The parameter values bound so far and those *given* binds, by input.
 
         Parameters
         ----------
         given : Record or Mapping of str to Any
-            The values ``condition_on`` passes positionally, by slot.
+            The values ``condition_on`` passes positionally, by input.
         kwargs : Mapping of str to Any
             The values ``condition_on`` passes by keyword, which take precedence
             over *given*.
@@ -239,7 +239,7 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         Raises
         ------
         KeyError
-            If a name is not a given slot.
+            If a name is not an input.
         """
         values = {**dict(given.children if isinstance(given, Record) else given), **kwargs}
         unknown = sorted(set(values) - set(self.given_spec))
@@ -256,7 +256,7 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         forward pass regardless of dataset size.
         """
         if isinstance(data, Record):
-            data = data[_observation_slot(self._prior)]
+            data = data[_observation_input(self._prior)]
         rows = self._data_rows(data)
         theta = self._theta_row(values)
         theta_rows = jnp.tile(theta[None, :], (rows.shape[0], 1))
@@ -267,7 +267,11 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
     ) -> Distribution | ConditionalDistribution:
         """The law of the observations at a value of every parameter, or the kernel over the rest."""
         values = self._values(given, kwargs)
-        left = {slot: spec for slot, spec in self.given_spec.items() if slot not in values}
+        left = {
+            input_name: spec
+            for input_name, spec in self.given_spec.items()
+            if input_name not in values
+        }
         if not left:
             return self._law(values)
         rest = self._shallow_copy()
@@ -314,8 +318,8 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase, SupportsConditionalLogProb):
         The trained BayesFlow approximator whose standardizer and inference
         network score the rows.
     prior : Distribution
-        The prior the estimator was trained against, whose components are the
-        given slots.
+        The prior the estimator was trained against, whose outputs are the
+        inputs.
     simulator : ConditionalDistribution
         The training simulator.
     data_dim : int
@@ -362,8 +366,8 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase, SupportsConditionalLogProb):
     def _row_scores(self, theta_rows: Array, data_rows: Array) -> Array:
         # The public approximator.log_prob is host-bound at both edges (adapter
         # numpy in, convert_to_numpy out), so this re-traces its math on-device:
-        # standardize both slots exactly as training did -- theta feeds the
-        # "inference_conditions" slot, y is the modeled "inference_variables" --
+        # standardize both inputs exactly as training did -- theta feeds the
+        # "inference_conditions" input, y is the modeled "inference_variables" --
         # then ask the flow for the density of standardized y. Adding the
         # standardization log-det-jacobian converts that density back to the
         # original y units, making the values equal to the public log_prob.
@@ -411,8 +415,8 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase, SupportsConditionalUnnormalizedLo
         The trained BayesFlow ratio approximator whose classifier scores the
         rows.
     prior : Distribution
-        The prior the estimator was trained against, whose components are the
-        given slots.
+        The prior the estimator was trained against, whose outputs are the
+        inputs.
     simulator : ConditionalDistribution
         The training simulator.
     data_dim : int
@@ -475,7 +479,7 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase, SupportsConditionalUnnormalizedLo
 
 # ---------------------------------------------------------------------------
 # Learner entry points. Plain functions, as they were for the likelihood
-# components these kernels replace; see STYLE_GUIDE 1.4.
+# outputs these kernels replace; see STYLE_GUIDE 1.4.
 # ---------------------------------------------------------------------------
 
 
@@ -496,9 +500,9 @@ def _train_offline(
 ) -> tuple[ContinuousApproximator | RatioApproximator, int]:
     """Shared NLE/NRE training loop: validate, simulate, adapt, fit.
 
-    ``theta_role`` is the adapter slot the (raw, constrained) theta fields feed
+    ``theta_role`` is the adapter input the (raw, constrained) theta fields feed
     -- ``"inference_conditions"`` for NLE, ``"inference_variables"`` for NRE --
-    with the observation taking the other slot. With ``dequantize``, U[0,1)
+    with the observation taking the other input. With ``dequantize``, U[0,1)
     jitter is added to the simulated observations after simulation (the
     simulator stays untouched). Once the inputs are valid, the training's seed
     is drawn from a workflow-owned random event, and it seeds the simulation,
@@ -523,7 +527,7 @@ def _train_offline(
     sim_backend : {"jax", "sequential"}
         The learner's simulation backend.
     theta_role : str
-        The adapter slot of the theta fields.
+        The adapter input of the theta fields.
     build_approximator : callable
         ``build_approximator(bf, adapter, data_dim)``, the BayesFlow
         approximator to train.
@@ -625,7 +629,7 @@ def learn_amortized_likelihood(
 
     Trains a conditional coupling flow on offline ``(theta, y)`` simulations and
     returns a :class:`BayesFlowLikelihood`, the kernel ``p̂(y | theta)`` from the
-    prior's components to datasets of observation rows, with the network's
+    prior's outputs to datasets of observation rows, with the network's
     jax-traceable density. ``condition_on(learned * prior, {"observation": y})``
     then runs a registered gradient-based MCMC method (BlackJAX/TFP NUTS) for
     datasets of any size, since per-row scores sum under conditional
@@ -642,7 +646,7 @@ def learn_amortized_likelihood(
     ----------
     prior : Distribution
         Prior over the model parameters; a numeric distribution whose
-        components name them, which may be nested (a factored joint of named
+        outputs name them, which may be nested (a factored joint of named
         distributions). Sampled (only) to draw training thetas;
         constrained and discrete-valued parameter fields are both fine here,
         since theta is a network *input* (whether the downstream sampler can
@@ -761,7 +765,7 @@ def learn_amortized_ratio(
     Trains an NRE-C classifier (``RatioApproximator``; contrastive pairs are
     built internally by shuffling theta within each batch, so the training data
     are the same offline ``(theta, y)`` simulations as NLE) and returns a
-    :class:`BayesFlowRatio`, the kernel from the prior's components to datasets
+    :class:`BayesFlowRatio`, the kernel from the prior's outputs to datasets
     of observation rows whose summed per-row log-ratios are its unnormalized
     density: the log-likelihood **up to a theta-independent constant** -- valid
     for ``condition_on(learned * prior, {"observation": y})``, invalid for

@@ -24,7 +24,7 @@ from probpipe.core._fingerprint import fingerprint
 
 class TestUnicodeNotation:
     @pytest.mark.parametrize(
-        "operation,symbol,component",
+        "operation,symbol,output_name",
         [
             (mean, "𝔼", "mu"),
             (variance, "𝕍", "mu"),
@@ -33,12 +33,12 @@ class TestUnicodeNotation:
             (quantile, "ℚ", "mu"),
         ],
     )
-    def test_summary_symbols_preserve_ascii_components(self, operation, symbol, component):
+    def test_summary_symbols_preserve_ascii_outputs(self, operation, symbol, output_name):
         law = Normal("mu", 0.0, 1.0, label="prior")
         args = (law, 0.5) if operation is quantile else (law,)
         result = operation(*args)
         assert result.label == f"{symbol}[mu ~ prior]"
-        assert tuple(operation.check(*args).result.components) == (component,)
+        assert tuple(operation.check(*args).result.outputs) == (output_name,)
         if operation is quantile:
             plural = quantile(law, jnp.array([0.1, 0.9]))
             assert plural.level_names == ("quantile",)
@@ -53,7 +53,7 @@ class TestUnicodeNotation:
             lambda mu: Normal("y", mu, 1), given_spec={"mu": NumericArraySpec(())}
         )
         assert kernel.notation == "ℙ(y | mu)"
-        assert EmpiricalDistribution(jnp.arange(3.0), component="mu").notation == "ℙ(mu)"
+        assert EmpiricalDistribution(jnp.arange(3.0), output_name="mu").notation == "ℙ(mu)"
 
         def f(x):
             return x + 1
@@ -74,8 +74,8 @@ class TestUnicodeNotation:
             first = automatic(Normal("mu", 0, 1))
         with workflow_run(seed=42):
             second = ascii_alias(Normal("mu", 0, 1))
-        assert tuple(first.event_spec.components) == ("f",)
-        assert tuple(second.event_spec.components) == ("f",)
+        assert tuple(first.event_spec.outputs) == ("f",)
+        assert tuple(second.event_spec.outputs) == ("f",)
         np.testing.assert_array_equal(first.atoms.raw, second.atoms.raw)
         typed = Function(fn, output_spec=NumericArraySpec(()))
         assert typed.output_spec == OutputSpec(f=NumericArraySpec(()))

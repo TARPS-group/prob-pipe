@@ -474,7 +474,7 @@ class _MappedBatchStore:
 
     @classmethod
     def of(cls, value: NumericArrayBatch | NumericArray) -> _MappedBatchStore:
-        """Carry *value*'s array, bound event declaration, and any batch levels."""
+        """Carry *value*'s array, bound event spec, and any batch levels."""
         if isinstance(value, NumericArrayBatch):
             return cls(
                 value._label,

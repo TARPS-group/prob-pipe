@@ -121,8 +121,8 @@ class TestOpaqueSpecTypeAndMeta:
         assert declared.bind_dims_from_spec(inferred) == declared
         assert inferred.bind_dims_from_spec(declared) == inferred
         unified = OpaqueSpec(type=str, meta="units")
-        assert OutputSpec(label=declared).with_spec(inferred).spec == unified
-        assert OutputSpec(label=inferred).with_spec(declared).spec == unified
+        assert OutputSpec(label=declared).with_term_spec(inferred).spec == unified
+        assert OutputSpec(label=inferred).with_term_spec(declared).spec == unified
 
     def test_a_function_returning_an_opaque_value_keeps_the_declared_meta(self):
         tagged = Function(
@@ -139,10 +139,10 @@ class TestOpaqueSpecTypeAndMeta:
 
     def test_completion_keeps_the_declared_type(self):
         declared = OutputSpec(label=OpaqueSpec(type=str))
-        assert declared.with_spec(OpaqueSpec()).spec == OpaqueSpec(type=str)
-        assert OutputSpec(label=OpaqueSpec()).with_spec(OpaqueSpec(type=str)).spec == OpaqueSpec(
-            type=str
-        )
+        assert declared.with_term_spec(OpaqueSpec()).spec == OpaqueSpec(type=str)
+        assert OutputSpec(label=OpaqueSpec()).with_term_spec(
+            OpaqueSpec(type=str)
+        ).spec == OpaqueSpec(type=str)
 
     def test_a_record_built_from_values_infers_its_opaque_leaves(self):
         assert Record(
@@ -817,7 +817,7 @@ class TestInferFrom:
     def test_from_mixed_record_stays_base(self):
         """A plain ``Record`` with a non-numeric leaf can't be promoted —
         the result is a plain :class:`RecordSpec` with an opaque
-        slot."""
+        input."""
         r = Record(
             {"x": 1.0, "label": "tag"},
             label="r",
@@ -1230,7 +1230,7 @@ class TestTermSpecs:
     def test_distribution_spec_requires_an_output_declaration(self):
         with pytest.raises(TypeError, match="must be an OutputSpec or a RecordSpec"):
             DistributionSpec(event_spec=(3,))  # type: ignore[arg-type]
-        # A bare array spec has no component name to complete it with.
+        # A bare array spec has no output name to complete it with.
         with pytest.raises(TypeError, match="Name the field"):
             DistributionSpec(event_spec=NumericArraySpec(()))  # type: ignore[arg-type]
         whole = OutputSpec(x=NumericArraySpec(()))
@@ -1416,7 +1416,7 @@ class TestFunctionSpecDeclarationsRequired:
         assert (
             FunctionSpec(
                 InputSpec(RecordSpec(a=()).children), OutputSpec(result=OpaqueSpec())
-            ).output_spec.spec
+            ).output_spec.term_spec
             == OpaqueSpec()
         )
 
@@ -1445,7 +1445,7 @@ class TestFunctionSpecOptionalTemplates:
         spec = FunctionSpec(output_spec=OutputSpec(result=RecordSpec(out=NumericArraySpec(()))))
         assert spec.input_spec is None
         # A record output is stored as its declaration (the storage rule).
-        assert spec.output_spec.spec == RecordSpec(out=NumericArraySpec(()))
+        assert spec.output_spec.term_spec == RecordSpec(out=NumericArraySpec(()))
 
     def test_none_specs_are_hashable_and_equal(self):
         assert FunctionSpec() == FunctionSpec()
@@ -2045,11 +2045,15 @@ class TestTermSpecTaxonomy:
         """The schema already declares the kind; the declaration holds it as is."""
 
         tau = RecordSpec(x=())
-        assert DistributionSpec(tau).event_spec.spec is tau
+        assert DistributionSpec(tau).event_spec.term_spec is tau
         assert isinstance(DistributionSpec(tau).event_spec, OutputSpec)
-        assert FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau)).output_spec.spec is tau
+        assert (
+            FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau)).output_spec.term_spec
+            is tau
+        )
         assert isinstance(
-            FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau)).output_spec.spec, TermSpec
+            FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau)).output_spec.term_spec,
+            TermSpec,
         )
 
     def test_equal_schema_copies_produce_equal_declarations(self):
@@ -2093,28 +2097,30 @@ class TestTermSpecTaxonomy:
         )
 
     def test_term_valued_output_is_kept_not_wrapped(self):
-        """A term output declaration names its own kind and passes through."""
+        """A term output spec names its own kind and passes through."""
         tau = RecordSpec(x=())
         for inner in (DistributionSpec(tau), FunctionSpec()):
             assert (
-                FunctionSpec(InputSpec(tau.children), OutputSpec(result=inner)).output_spec.spec
+                FunctionSpec(
+                    InputSpec(tau.children), OutputSpec(result=inner)
+                ).output_spec.term_spec
                 is inner
             )
 
-    def test_term_valued_event_declaration_needs_a_component(self):
-        """A bare term spec has no component name, so it is refused; named, it is kept.
+    def test_term_valued_event_declaration_needs_an_output(self):
+        """A bare term spec has no output name, so it is refused; named, it is kept.
 
         A random measure declares a distribution-valued draw, and a random
-        function a callable one, each as a whole term under a component.
+        function a callable one, each as a whole term under an output.
         """
         tau = RecordSpec(x=())
         for decl in (DistributionSpec(tau), FunctionSpec()):
             with pytest.raises(TypeError, match="Name the field"):
                 DistributionSpec(decl)  # type: ignore[arg-type]
-            assert DistributionSpec(OutputSpec(m=decl)).event_spec.spec is decl
+            assert DistributionSpec(OutputSpec(m=decl)).event_spec.term_spec is decl
 
     def test_raw_value_output_declaration_is_stored_as_given(self):
-        """An output declaration is any value specification, as in Fun(sigma, rho).
+        """An output spec is any value specification, as in Fun(sigma, rho).
 
         A numeric-array output declares the array itself. No record schema or
         field name is inserted.
@@ -2122,7 +2128,7 @@ class TestTermSpecTaxonomy:
         tau = RecordSpec(x=())
         for raw in (NumericArraySpec((3,)), OpaqueSpec(meta="m")):
             assert (
-                FunctionSpec(InputSpec(tau.children), OutputSpec(result=raw)).output_spec.spec
+                FunctionSpec(InputSpec(tau.children), OutputSpec(result=raw)).output_spec.term_spec
                 is raw
             )
 
@@ -2202,7 +2208,7 @@ class TestRecordSpec:
 
 
 class TestFunctionSpecOutputWidening:
-    """An output declaration admits every kind, and raw values too.
+    """An output spec admits every kind, and raw values too.
 
     The record-output, non-spec-rejection, and callability cases are covered by
     TestFunctionSpecTemplatesRequired and TestFunctionSpecOptionalTemplates; only
@@ -2213,9 +2219,9 @@ class TestFunctionSpecOutputWidening:
         tau = RecordSpec(out=())
         assert FunctionSpec(
             InputSpec(RecordSpec(x=()).children), OutputSpec(result=DistributionSpec(tau))
-        ).output_spec.spec == DistributionSpec(tau)
+        ).output_spec.term_spec == DistributionSpec(tau)
         assert isinstance(
-            FunctionSpec(output_spec=OutputSpec(result=RecordSpec(y=()))).output_spec.spec,
+            FunctionSpec(output_spec=OutputSpec(result=RecordSpec(y=()))).output_spec.term_spec,
             RecordSpec,
         )
 
@@ -2294,7 +2300,7 @@ class TestWithDimSizes:
 
         assert bound.is_concrete
         assert bound["data"].shape == (4,)
-        assert bound["law"].event_spec.components["x"].shape == (4,)
+        assert bound["law"].event_spec.outputs["x"].shape == (4,)
 
     def test_binding_returns_a_new_template(self):
         template = RecordSpec(x=NumericArraySpec(shape=("obs",)))
@@ -2437,7 +2443,7 @@ class TestBindingAFunctionSpec:
             label="r",
         )
 
-        assert record.event_template["f"].output_spec.spec["y"].shape == (5,)
+        assert record.event_template["f"].output_spec.term_spec["y"].shape == (5,)
 
     def test_a_non_callable_is_refused(self):
         declared = RecordSpec(f=FunctionSpec(InputSpec(self._sym().children), None))
@@ -2475,7 +2481,7 @@ class TestInferenceThroughTermSpecs:
         )
 
         assert record.event_template.is_concrete
-        assert record.event_template["law"].event_spec.spec.shape == (3,)
+        assert record.event_template["law"].event_spec.term_spec.shape == (3,)
 
     def test_a_name_shared_across_the_boundary_binds_once(self):
         declared = RecordSpec(
@@ -2489,7 +2495,7 @@ class TestInferenceThroughTermSpecs:
         )
 
         assert record.event_template["data"].shape == (3,)
-        assert record.event_template["law"].event_spec.spec.shape == (3,)
+        assert record.event_template["law"].event_spec.term_spec.shape == (3,)
 
     def test_a_disagreement_binds_inner_first_then_outer(self):
         """The direction that proves the scope is shared, not merely inherited.
@@ -2650,7 +2656,7 @@ class TestAFunctionOutputBindsWhateverItDeclares:
         )
 
         assert record.event_template.is_concrete
-        assert record.event_template["f"].output_spec.spec.shape == (4,)
+        assert record.event_template["f"].output_spec.term_spec.shape == (4,)
 
     def test_a_non_record_output_that_disagrees_with_the_input_raises(self):
         """The case a skipped output hid: the input says 3, the output says 5.
@@ -2689,7 +2695,7 @@ class TestAFunctionOutputBindsWhateverItDeclares:
         )
         declared = self._declared(NumericArraySpec(shape=("n",)))
 
-        with pytest.raises(ValueError, match="incompatible output components"):
+        with pytest.raises(ValueError, match="incompatible outputs"):
             Record(
                 {"f": function},
                 event_template=declared,

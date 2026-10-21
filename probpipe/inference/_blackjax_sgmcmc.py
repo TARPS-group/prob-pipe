@@ -16,7 +16,7 @@ construct a :class:`~probpipe.MinibatchedDistribution` to produce
 unbiased stochastic gradient estimates and feed it to the BlackJAX
 kernel via the ``grad_estimator(position, measure_key)`` closure
 convention — the per-step ``measure_key`` is passed through BlackJAX's
-opaque ``minibatch`` slot.
+opaque ``minibatch`` input.
 
 Both methods require ``batch_size=`` to be passed, so SGMCMC applies only
 when the user has opted into minibatching, as in
@@ -65,7 +65,7 @@ def _build_grad_estimator(measure: RandomMeasure, unflatten: Callable[[Array], A
 
     BlackJAX's SGMCMC kernels take a callable
     ``grad_estimator(position, *opaque)`` and pass whatever the user
-    provides in the ``minibatch`` slot opaquely. We exploit that by
+    provides in the ``minibatch`` input opaquely. We exploit that by
     passing a fresh PRNG key per step; the random measure samples its
     own minibatch internally via
     :meth:`~probpipe.MinibatchedDistribution._random_unnormalized_log_prob`.

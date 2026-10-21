@@ -3,7 +3,7 @@
 Steps 2 and 3 of the call stack: the arguments bind to the wrapped function's
 signature by Python's rules, and each bound argument is admitted against what
 its parameter accepts: the kinds its role names where the Function declares
-roles, as an operation does, and otherwise its input declaration and its
+roles, as an operation does, and otherwise its input spec and its
 annotation. A violation of the call contract raises
 :class:`ApplicabilityError`. The module also decides the form in which the body
 receives each argument (:func:`presented_arguments`).
@@ -432,10 +432,10 @@ def arrived_kind(value: Any) -> type[TermSpec]:
 
 
 def _accepts(declared: type[TermSpec], kind: type[TermSpec]) -> bool:
-    """Whether a slot declaring the kind *declared* admits a value of the kind *kind*.
+    """Whether an input declaring the kind *declared* admits a value of the kind *kind*.
 
     The record kinds admit each other, unification deciding their fields, and an
-    opaque slot admits every kind, as ``OpaqueSpec.is_valid`` does.
+    opaque input admits every kind, as ``OpaqueSpec.is_valid`` does.
     """
     if declared is OpaqueSpec or issubclass(kind, declared):
         return True
@@ -443,14 +443,14 @@ def _accepts(declared: type[TermSpec], kind: type[TermSpec]) -> bool:
 
 
 def _admitted_kind(value: Any, declared: type[TermSpec]) -> type[TermSpec]:
-    """The kind of *value* that a slot declaring *declared* checks.
+    """The kind of *value* that an input declaring *declared* checks.
 
-    A law at a slot of a value kind lifts, so its event kind is checked, and a
-    batch at a slot of another kind is swept, so its element kind is.
+    A law at an input of a value kind lifts, so its event kind is checked, and a
+    batch at an input of another kind is swept, so its element kind is.
     """
     lifted = (ConditionalDistributionSpec, DistributionSpec, BatchSpec)
     if isinstance(value, Distribution) and not issubclass(declared, lifted):
-        return type(value.event_spec.spec)
+        return type(value.event_spec.term_spec)
     if isinstance(value, Batch) and not issubclass(declared, BatchSpec):
         return type(value.element_spec)
     return arrived_kind(value)
@@ -478,7 +478,7 @@ def role_lift(value: Any, role: tuple[type[TermSpec], ...]) -> Literal["sweep", 
     if isinstance(value, Batch) and len(value.batch_shape) > 0:
         return "sweep" if role_admits(role, type(value.element_spec)) else None
     if isinstance(value, Distribution):
-        event = value.event_spec.spec
+        event = value.event_spec.term_spec
         return "broadcast" if event is not None and role_admits(role, type(event)) else None
     return None
 
@@ -491,8 +491,8 @@ def _role_refusal(
     detail = arrived_kind(value).__name__
     if isinstance(value, Batch) and len(value.batch_shape) > 0:
         detail += f" with {type(value.element_spec).__name__} elements"
-    elif isinstance(value, Distribution) and value.event_spec.spec is not None:
-        detail += f" with {type(value.event_spec.spec).__name__} draws"
+    elif isinstance(value, Distribution) and value.event_spec.term_spec is not None:
+        detail += f" with {type(value.event_spec.term_spec).__name__} draws"
     return _kind_refusal(function_name, label, kinds, value, detail)
 
 
@@ -572,8 +572,8 @@ def admit_arguments(
     argument that a variadic parameter annotated ``Any`` collects is admitted
     whatever its kind. A conditional distribution at a parameter that expects a
     value is refused, since a kernel has no marginal law to lift over. Where an
-    *input_spec* declares a slot, the argument's kind must be the slot's: a
-    value's own kind, the event kind of a law the slot lifts, or the element
+    *input_spec* declares an input, the argument's kind must be the input's: a
+    value's own kind, the event kind of a law the input lifts, or the element
     kind of a batch it sweeps (V.4).
 
     Parameters
@@ -583,7 +583,7 @@ def admit_arguments(
     values : Mapping of str to Any
         The bound arguments, shaped by the signature.
     input_spec : InputSpec or None
-        The declared slots, whose kinds the arguments are admitted against.
+        The declared inputs, whose kinds the arguments are admitted against.
     function_name : str or None
         The function's label, for the message.
     roles : Mapping of str to tuple of TermSpec subclasses, or None

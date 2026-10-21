@@ -31,7 +31,7 @@ from probpipe import (
 )
 from probpipe.core._record_batch import _batch_class_for
 from probpipe.core._record_spec import _reshaped_template
-from probpipe.core._specs import OutputSpec
+from probpipe.core._specs import OutputSpec, _has_record_outputs
 from probpipe.core.config import WorkflowKind
 from probpipe.distributions import (
     ConditionalDistribution,
@@ -255,7 +255,7 @@ class TestExecuteDistributionBroadcast:
         shared = EmpiricalDistribution(
             jnp.asarray([1.0, 4.0]),
             weights=jnp.asarray([0.2, 0.8]),
-            component="shared",
+            output_name="shared",
         )
         values = {"first": shared, "second": shared}
 
@@ -381,12 +381,12 @@ class TestExecuteDistributionBroadcast:
             "x": EmpiricalDistribution(
                 jnp.asarray([[1.0], [2.0]]),
                 weights=jnp.asarray([0.25, 0.75]),
-                component="x",
+                output_name="x",
             ),
             "y": EmpiricalDistribution(
                 jnp.asarray([[10.0], [20.0]]),
                 weights=jnp.asarray([0.4, 0.6]),
-                component="y",
+                output_name="y",
             ),
         }
 
@@ -430,7 +430,7 @@ class TestExecuteDistributionBroadcast:
         )
 
     def test_exact_empirical_size_must_match_the_frozen_plan(self):
-        empirical = EmpiricalDistribution(jnp.asarray([1.0, 2.0, 3.0]), component="x")
+        empirical = EmpiricalDistribution(jnp.asarray([1.0, 2.0, 3.0]), output_name="x")
         values = {"x": empirical}
         plan = _stochastic_plan(values, 8)
         atoms = NumericArrayBatch(
@@ -600,7 +600,7 @@ class TestExecuteDistributionBroadcast:
         values = {
             "exact": EmpiricalDistribution(
                 jnp.asarray([1.0, 2.0]),
-                component="exact",
+                output_name="exact",
             ),
             "sampled": _RecordingNormal(sampled_calls, label="sampled"),
         }
@@ -859,7 +859,7 @@ class TestCoSamplingThroughACall:
         differently as ``max_evaluations`` fell below the product size —
         enumerating both, then enumerating one and sampling the other.
         """
-        empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="e")
+        empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), output_name="e")
         result = self._run(
             self._difference(max_evaluations=max_evaluations),
             empirical,
@@ -979,7 +979,7 @@ class TestCoSamplingThroughACall:
         """The joint over a record-valued input is a distribution, so it samples.
 
         Reading ``.atoms`` goes through the output marginal and says nothing
-        about the joint: resampling gathers rows from every component, and a
+        about the joint: resampling gathers rows from every output, and a
         record-valued input carries its rows in fields rather than along a shape.
         """
         empirical = _empirical_of_rows(
@@ -1155,7 +1155,7 @@ class TestCoSamplingThroughACall:
 
     def test_an_aliased_empirical_counts_its_weight_once(self):
         """Weights are per group, so an alias does not square them."""
-        empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="e")
+        empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), output_name="e")
         result = self._run(self._difference(include_inputs=True), empirical, empirical)
 
         np.testing.assert_allclose(np.asarray(result.weights), np.full(3, 1 / 3))
@@ -1170,7 +1170,7 @@ class TestTheDrawsOfALargeEmpiricalLaw:
             return x
 
         with workflow_run(seed=0):
-            result = identity(EmpiricalDistribution(jnp.arange(1000.0), component="x"))
+            result = identity(EmpiricalDistribution(jnp.arange(1000.0), output_name="x"))
         values = np.asarray(result.atoms).ravel()
         assert result.num_atoms == config.sampling.max_evaluations
         assert len(np.unique(values)) == result.num_atoms
@@ -1184,8 +1184,8 @@ class TestTheDrawsOfALargeEmpiricalLaw:
 
         with workflow_run(seed=0):
             result = pair(
-                EmpiricalDistribution(jnp.arange(20.0), component="a"),
-                EmpiricalDistribution(100.0 + jnp.arange(20.0), component="b"),
+                EmpiricalDistribution(jnp.arange(20.0), output_name="a"),
+                EmpiricalDistribution(100.0 + jnp.arange(20.0), output_name="b"),
             )
         sampled = np.asarray(result.atoms)[:, 1]
         assert result.num_atoms == 240
@@ -1202,7 +1202,7 @@ class TestTheDrawsOfALargeEmpiricalLaw:
         weights = weights / weights.sum()
         with workflow_run(seed=0):
             result = identity(
-                EmpiricalDistribution(jnp.arange(1000.0), weights=weights, component="w")
+                EmpiricalDistribution(jnp.arange(1000.0), weights=weights, output_name="w")
             )
         drawn = np.bincount(np.asarray(result.atoms).ravel().astype(int), minlength=1000)
         expected = result.num_atoms * np.asarray(weights)
@@ -1431,7 +1431,7 @@ class TestTheProbeModelsItsExecutorsTransform:
         )
 
     def test_the_views_of_a_dependent_joint_are_probed(self, caplog):
-        """The root's resolved component metadata supplies the probe dtypes."""
+        """The root's resolved output metadata supplies the probe dtypes."""
         joint = _ShiftKernel() * Normal("z", loc=0.0, scale=1.0)
         difference = Function(
             lambda a, b: a - b,
@@ -1617,7 +1617,7 @@ class TestAnEnumerationRunsInOneMappedCall:
     @staticmethod
     def _arrays(n: int, weights=None) -> EmpiricalDistribution:
         return EmpiricalDistribution(
-            jnp.linspace(0.5, 1.5, 2 * n).reshape(n, 2), weights, component="theta"
+            jnp.linspace(0.5, 1.5, 2 * n).reshape(n, 2), weights, output_name="theta"
         )
 
     @staticmethod
@@ -1661,7 +1661,7 @@ class TestAnEnumerationRunsInOneMappedCall:
         """Two weighted laws enumerate their product, each combination weighted by both atoms."""
         theta = getattr(self, make)(4, jnp.array([0.1, 0.2, 0.3, 0.4]))
         scale = EmpiricalDistribution(
-            jnp.array([1.0, 2.0, 3.0]), jnp.array([0.5, 0.3, 0.2]), component="scale"
+            jnp.array([1.0, 2.0, 3.0]), jnp.array([0.5, 0.3, 0.2]), output_name="scale"
         )
         mapped_calls: list = []
         sequential_calls: list = []
@@ -1703,7 +1703,7 @@ class TestAnEnumerationRunsInOneMappedCall:
                 calls, max_evaluations=6, dispatch=dispatch, include_inputs=True
             )(theta)
 
-        assert list(joint["auto"].event_spec.components) == ["theta", "trajectory"]
+        assert list(joint["auto"].event_spec.outputs) == ["theta", "trajectory"]
         for path in ("theta/a", "theta/b", "trajectory"):
             np.testing.assert_allclose(
                 _drawn(joint["auto"], path), _drawn(joint["sequential"], path), rtol=1e-6
@@ -1806,7 +1806,7 @@ class TestAnEnumerationRunsInOneMappedCall:
                     "atom",
                     label="labels",
                 ),
-                component="s",
+                output_name="s",
             )
         laws = [Normal("x", loc=float(loc), scale=1.0) for loc in range(3)]
         return EmpiricalDistribution(
@@ -1815,7 +1815,7 @@ class TestAnEnumerationRunsInOneMappedCall:
                 "law",
                 label="laws",
             ),
-            component="laws",
+            output_name="laws",
         )
 
     @pytest.mark.parametrize("kind", ["opaque", "laws"])
@@ -1925,8 +1925,8 @@ class TestARecordReturnLiftsToARecordLaw:
         with workflow_run(seed=0):
             result = transform(**self._laws())
         assert isinstance(result, EmpiricalDistribution)
-        assert result.event_spec.exposes_record
-        assert list(result.event_spec.components) == ["sum", "diff"]
+        assert _has_record_outputs(result.event_spec)
+        assert list(result.event_spec.outputs) == ["sum", "diff"]
 
     def test_the_mean_and_variance_are_per_field(self, transform):
         with workflow_run(seed=0):
@@ -1949,7 +1949,7 @@ class TestARecordReturnLiftsToARecordLaw:
 
 
 class TestALiftOfALawValuedFunction:
-    """A lift of a function declared to return a law holds each law under its component."""
+    """A lift of a function declared to return a law holds each law under its output."""
 
     @staticmethod
     def _kernel():
@@ -1966,9 +1966,9 @@ class TestALiftOfALawValuedFunction:
     def test_the_law_of_laws_names_the_callable(self):
         with workflow_run(seed=0):
             law = self._kernel()(Normal("x", 0.0, 1.0))
-        assert tuple(law.event_spec.components) == ("kernel",)
+        assert tuple(law.event_spec.outputs) == ("kernel",)
 
     def test_include_inputs_joins_the_draw_and_the_law(self):
         with workflow_run(seed=0):
             law = self._kernel().using(include_inputs=True)(Normal("x", 0.0, 1.0))
-        assert tuple(law.event_spec.components) == ("x", "kernel")
+        assert tuple(law.event_spec.outputs) == ("x", "kernel")

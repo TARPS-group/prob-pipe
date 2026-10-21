@@ -49,6 +49,7 @@ import numpy as np
 import pytest
 
 from probpipe import NumericArrayBatch, workflow_run
+from probpipe.core._specs import _has_record_outputs
 from tests._ops import (
     EmpiricalDistribution,
     condition_on,
@@ -215,7 +216,7 @@ def _node(raw: Any, law: Any, path: str) -> Any:
     """The node at the event path *path* of *raw*, which is a raw draw or raw summary of *law*.
 
     An exposed record's paths index its nested mapping, and a whole term's
-    paths start with its component, which stands for the whole raw value. A
+    paths start with its output, which stands for the whole raw value. A
     summary such as ``mean`` takes the event's paths, so a draw and a summary
     are read alike.
 
@@ -229,11 +230,11 @@ def _node(raw: Any, law: Any, path: str) -> Any:
     declaration = law.event_spec
     raw = _raw_record(raw)
     head, _, rest = path.partition("/")
-    if declaration.exposes_record:
+    if _has_record_outputs(declaration):
         return _at(raw, path)
-    (component,) = declaration.components
-    if head != component:
-        raise AssertionError(f"{path!r} is not an event path of the whole term {component!r}")
+    (output_name,) = declaration.outputs
+    if head != output_name:
+        raise AssertionError(f"{path!r} is not an event path of the whole term {output_name!r}")
     return _at(raw, rest)
 
 

@@ -184,11 +184,11 @@ class TestGaussianRandomFunction:
         with pytest.raises(ValueError, match="leading axis"):
             _ScalarGP()(jnp.asarray(1.0))
 
-    def test_the_law_carries_the_label_and_the_output_component(self):
+    def test_the_law_carries_the_label_and_the_output(self):
         grf = _ScalarGP(label="gp")
         dist = grf(jnp.ones((3, 2)))
         assert dist.label == "gp"
-        assert list(dist.event_spec.components) == ["gp"]
+        assert list(dist.event_spec.outputs) == ["gp"]
 
     def test_the_mean_and_variance_are_functions(self):
         grf = _ScalarGP(variance=2.0, noise=0.0)
@@ -198,11 +198,11 @@ class TestGaussianRandomFunction:
 
 
 class TestDeclarations:
-    def test_both_components_default_to_the_label(self):
+    def test_both_outputs_default_to_the_label(self):
         grf = _MarginalOnlyGRF("f")
         assert grf.event_spec == OutputSpec(f=FunctionSpec(output_spec=OutputSpec(f=None)))
 
-    def test_output_spec_names_the_evaluated_component(self):
+    def test_output_spec_names_the_evaluated_output(self):
         process = GaussianProcess(
             "f",
             lambda X: jnp.zeros(X.shape[0]),
@@ -212,8 +212,8 @@ class TestDeclarations:
         )
         law = process(jnp.ones((3, 2)))
         assert law.label == "f"
-        assert list(law.event_spec.components) == ["y"]
-        assert list(process.event_spec.components) == ["f"]
+        assert list(law.event_spec.outputs) == ["y"]
+        assert list(process.event_spec.outputs) == ["f"]
 
     def test_event_spec_names_the_event_and_its_hole_is_the_function(self):
         process = GaussianProcess("g", lambda X: jnp.zeros(X.shape[0]), _rbf_kernel, label="f")
@@ -265,7 +265,7 @@ class TestDeclarations:
     def test_a_record_output_declaration_raises(self):
         from probpipe import NumericRecordSpec
 
-        with pytest.raises(TypeError, match="one component"):
+        with pytest.raises(TypeError, match="one output"):
             GaussianProcess(
                 "f",
                 lambda X: jnp.zeros(X.shape[0]),
@@ -296,9 +296,9 @@ class TestTheGaussianProcess:
         process = GaussianProcess("f", lambda X: jnp.ones(X.shape[0]), _rbf)
         assert isinstance(process(jnp.array([[0.0]])), Normal)
 
-    def test_the_components_default_to_the_label(self):
+    def test_the_outputs_default_to_the_label(self):
         process = GaussianProcess("f", lambda X: jnp.zeros(X.shape[0]), _rbf)
-        assert list(process.event_spec.components) == ["f"]
+        assert list(process.event_spec.outputs) == ["f"]
 
     def test_the_variance_is_the_kernel_diagonal(self):
         process = GaussianProcess(
@@ -762,7 +762,7 @@ class TestAlgebraNames:
     def test_a_result_is_labeled_from_its_operands(self, build, expected):
         assert build(_named_weight_grf("f"), _named_weight_grf("g")).label == expected
 
-    def test_a_sum_displays_by_its_expression_and_its_component(self):
+    def test_a_sum_displays_by_its_expression_and_its_output(self):
         total = _named_weight_grf("f") + _named_weight_grf("g")
         assert total.notation == "(f + g)(f)"
 
@@ -1222,7 +1222,7 @@ class TestTheFactoredGaussian:
         assert isinstance(joint, FactoredMultivariateGaussian)
         assert joint.label == "Normal·MultivariateNormal"
         assert joint.notation == "Normal(a)·MultivariateNormal(b)"
-        assert list(joint.event_spec.components) == ["a", "b"]
+        assert list(joint.event_spec.outputs) == ["a", "b"]
 
     def test_constructing_the_factored_law_refines_to_it(self):
         from probpipe.distributions import FactoredDistribution
@@ -1269,14 +1269,14 @@ class TestTheFactoredGaussian:
         expected = joint.factors[0]._log_prob(a) + joint.factors[1]._log_prob(b)
         np.testing.assert_allclose(joint._log_prob({"a": a, "b": b}), expected, rtol=1e-6)
 
-    def test_conditioning_on_a_component_is_exact_and_keeps_the_others(self):
+    def test_conditioning_on_an_output_is_exact_and_keeps_the_others(self):
         from probpipe import SupportsExactConditioning
 
         joint = _gaussian_joint()
         assert isinstance(joint, SupportsExactConditioning)
         conditioned = joint._condition_on({"a": 3.0})
         assert isinstance(conditioned, FactoredMultivariateGaussian)
-        assert list(conditioned.event_spec.components) == ["b"]
+        assert list(conditioned.event_spec.outputs) == ["b"]
         assert conditioned.factors == (joint.factors[1],)
         assert conditioned.label == joint.label
 
@@ -1297,7 +1297,7 @@ class TestTheFactoredGaussian:
         joint._store_expression(joint._expression.with_fixed(("y",)))
         assert _fixed_paths(joint._condition_on({"a": 3.0})) == ("y",)
 
-    def test_the_conditioning_guard_needs_components_and_a_remainder(self):
+    def test_the_conditioning_guard_needs_outputs_and_a_remainder(self):
         from probpipe.distributions._capabilities import _capability_guard
 
         joint = _gaussian_joint()
@@ -1305,15 +1305,15 @@ class TestTheFactoredGaussian:
         assert _capability_guard(joint, "_condition_on", ("a", "b")).feasible is False
         assert _capability_guard(joint, "_condition_on", ("c",)).feasible is False
 
-    def test_conditioning_on_every_component_raises(self):
-        with pytest.raises(ValueError, match="on all of its components"):
+    def test_conditioning_on_every_output_raises(self):
+        with pytest.raises(ValueError, match="on all of its outputs"):
             _gaussian_joint()._condition_on({"a": 0.0, "b": jnp.zeros(2)})
 
-    def test_conditioning_on_a_name_that_is_not_a_component_raises(self):
-        with pytest.raises(KeyError, match="unknown component 'c'; available components"):
+    def test_conditioning_on_a_name_that_is_not_an_output_raises(self):
+        with pytest.raises(KeyError, match="unknown output 'c'; available outputs"):
             _gaussian_joint()._condition_on({"c": 0.0})
 
-    def test_the_marginal_at_a_component_is_its_factor(self):
+    def test_the_marginal_at_an_output_is_its_factor(self):
         joint = _gaussian_joint().with_label("model")
         assert joint._marginal("b").label == joint.factors[1].label == "MultivariateNormal"
         np.testing.assert_allclose(
@@ -1326,7 +1326,7 @@ class TestTheFactoredGaussian:
         assert isinstance(symbolic.with_path_names(a="c"), FactoredMultivariateGaussian)
 
     def test_a_regrouped_joint_stays_the_factored_gaussian(self):
-        """A rename that gathers components packages their factors as one Gaussian
+        """A rename that gathers outputs packages their factors as one Gaussian
         factor, so the joint keeps its class, its covariance, and its density."""
         joint = (
             Normal("a", 0.0, 1.0)
@@ -1336,13 +1336,13 @@ class TestTheFactoredGaussian:
         regrouped = joint.with_path_names({"a": "g/a", "b": "g/b"})
         assert isinstance(regrouped, FactoredMultivariateGaussian)
         assert isinstance(regrouped.factors[0], FactoredMultivariateGaussian)
-        assert tuple(regrouped.event_spec.components) == ("g", "c")
+        assert tuple(regrouped.event_spec.outputs) == ("g", "c")
         np.testing.assert_allclose(np.asarray(cov(regrouped)), np.asarray(cov(joint)))
         value = {"g": {"a": 0.3, "b": -0.4}, "c": jnp.array([0.1, 0.2])}
         flat = {"a": 0.3, "b": -0.4, "c": jnp.array([0.1, 0.2])}
         np.testing.assert_allclose(regrouped._log_prob(value), joint._log_prob(flat), rtol=1e-6)
 
-    def test_conditioning_a_regrouped_joint_on_a_component_is_exact(self):
+    def test_conditioning_a_regrouped_joint_on_an_output_is_exact(self):
         joint = (
             Normal("a", 0.0, 1.0)
             * Normal("b", 0.0, 2.0)
@@ -1353,7 +1353,7 @@ class TestTheFactoredGaussian:
         assert report.exact is True
         law = condition_on(regrouped, {"c": jnp.ones(2)})
         assert isinstance(law, FactoredMultivariateGaussian)
-        assert tuple(law.event_spec.components) == ("g",)
+        assert tuple(law.event_spec.outputs) == ("g",)
 
     def test_a_group_with_a_factor_of_another_family_is_a_plain_joint(self):
         joint = Normal("a", 0.0, 1.0) * Gamma("s", 2.0, 1.0) * Normal("c", 0.0, 1.0)

@@ -1139,7 +1139,7 @@ class TestReplayPreflight:
                 {"output_label": "b", "output_spec": OutputSpec(result=NumericArraySpec(()))},
             ),
         ],
-        ids=["output-label", "declared-component", "default-component"],
+        ids=["output-label", "declared-output", "default-output"],
     )
     def test_a_renamed_output_replays_to_the_same_draws(self, before, after):
         """A rename changes no value, so the replay reproduces the draws under the new names."""
@@ -1160,8 +1160,8 @@ class TestReplayPreflight:
             replayed = lifted(**after)(value=law)
 
         np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
-        assert list(replayed.event_spec.components) == list(
-            after.get("output_spec", OutputSpec(result=None)).components
+        assert list(replayed.event_spec.outputs) == list(
+            after.get("output_spec", OutputSpec(result=None)).outputs
         )
 
     def test_an_input_that_differs_only_in_its_expression_replays_to_the_same_draws(self):

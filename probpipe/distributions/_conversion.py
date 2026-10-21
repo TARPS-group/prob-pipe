@@ -10,7 +10,7 @@ declaration and realizes the same law up to the converter's fidelity.
 The registry tests the source first, so a law that already satisfies the
 target is returned as it is, with no converter selected. Otherwise it selects a
 converter as every dispatch registry does, checks the converter's promise and
-its result against the source's event declaration, and records the conversion
+its result against the source's event spec, and records the conversion
 in the result's provenance.
 
 Provides:
@@ -42,7 +42,7 @@ from ..core._dispatch import (
 from ..core._record_spec import RecordSpec
 from ..core._repr import public_class_name, sequence_repr
 from ..core._spec_base import NumericArraySpec, TermSpec, _unify_array_shape
-from ..core._specs import OutputSpec
+from ..core._specs import OutputSpec, _has_record_outputs
 from ..core.provenance import Provenance
 from ..core.tracked import TrackedTerm
 from ._capabilities import (
@@ -210,7 +210,7 @@ class Converter(BinaryDispatchMethod):
 
     @abstractmethod
     def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
-        """Construct the converted law, carrying *source*'s event declaration."""
+        """Construct the converted law, carrying *source*'s event spec."""
 
 
 # ---------------------------------------------------------------------------
@@ -259,10 +259,10 @@ def _guaranteed(capabilities: tuple[type, ...], target: type) -> bool:
 
 
 def _packaging(declaration: OutputSpec) -> str:
-    if declaration.exposes_record:
+    if _has_record_outputs(declaration):
         return "a record of fields"
-    (component,) = declaration.components
-    return f"the single field {component!r}"
+    (output_name,) = declaration.outputs
+    return f"the single field {output_name!r}"
 
 
 #: The names of the two declarations a conversion compares, in its messages.
@@ -281,7 +281,7 @@ def _term_difference(
     The kinds and shapes are compared, and with *dtypes* a set dtype of *actual*
     must cast to one *expected* sets by the same-kind rule, as a law matches a
     ``DistributionSpec``. Supports are not compared, since a family's own
-    support replaces the source's. A type hole in *expected*, which a backend
+    support replaces the source's. An unspecified output type in *expected*, which a backend
     declaration may leave for the converter to fill, matches any term. *sides*
     names the two declarations in the message.
     """
@@ -342,28 +342,28 @@ def _event_difference(
 ) -> str | None:
     """How the declaration *actual* departs from *expected*, or ``None``.
 
-    A conversion preserves the packaging, the component names, and each
-    component's kind and shape, and a dtype it sets casts to the source's (see
+    A conversion preserves the packaging, the output names, and each
+    output's kind and shape, and a dtype it sets casts to the source's (see
     :func:`_term_difference`, which *dtypes* passes to). *sides* names the two
     declarations in the message, the source's and the result's by default.
     """
     first, second = sides
-    if expected.exposes_record != actual.exposes_record:
+    if _has_record_outputs(expected) != _has_record_outputs(actual):
         return f"{first} declares {_packaging(expected)} but {second} {_packaging(actual)}"
-    if tuple(expected.components) != tuple(actual.components):
+    if tuple(expected.outputs) != tuple(actual.outputs):
         return (
-            f"{first} declares the fields {list(expected.components)} but {second} "
-            f"{list(actual.components)}"
+            f"{first} declares the fields {list(expected.outputs)} but {second} "
+            f"{list(actual.outputs)}"
         )
-    for name, spec in expected.components.items():
-        difference = _term_difference(spec, actual.components[name], name, sides, dtypes)
+    for name, spec in expected.outputs.items():
+        difference = _term_difference(spec, actual.outputs[name], name, sides, dtypes)
         if difference is not None:
             return difference
     return None
 
 
 def _source_declaration(source: Any, options: dict[str, Any]) -> OutputSpec | None:
-    """The event declaration a conversion of *source* preserves, or ``None`` when it has none.
+    """The event spec a conversion of *source* preserves, or ``None`` when it has none.
 
     A law's is its own. A backend object carries none, and its declaration is
     the ``event_spec`` option when the caller gives one.
@@ -408,11 +408,11 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
     holds it to the conversion contract:
 
     1. its ``check`` returns a :class:`ConversionInfo`;
-    2. a feasible promise carries the source's event declaration;
+    2. a feasible promise carries the source's event spec;
     3. for a capability target, the promised capabilities include the target or
        a refinement of it, and a guard of the target that only the converted
        law can decide leaves the report unresolved, pending that guard;
-    4. the converted law carries the source's event declaration and satisfies
+    4. the converted law carries the source's event spec and satisfies
        the target, which settles a guard left pending.
 
     The result of a conversion records the source and the converter's name and
@@ -509,7 +509,7 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
         TypeError
             If the converter's ``check`` returns anything but a ``ConversionInfo``.
         ValueError
-            If a feasible promise does not carry the source's event declaration.
+            If a feasible promise does not carry the source's event spec.
         """
         report = registration.method.check(*args, **options)
         if not isinstance(report, ConversionInfo):
@@ -527,7 +527,7 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
             if difference is not None:
                 raise ValueError(
                     f"converter {registration.name!r} promises a law that does not carry the "
-                    f"source's event declaration: {difference}"
+                    f"source's event spec: {difference}"
                 )
         if not _is_capability(target):
             return _Plan(registration, info)
@@ -679,7 +679,7 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
             If ``True``, approximate converters are excluded.
         **options : Any
             Converter options, which the selected converter reads; a backend
-            object's event declaration is the option ``event_spec``.
+            object's event spec is the option ``event_spec``.
 
         Returns
         -------
@@ -700,7 +700,7 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
             ``Distribution`` that satisfies the target.
         ValueError
             If the promise or the converted law does not carry the source's
-            event declaration.
+            event spec.
         """
         options = dict(options)
         plan = self._plan(args, method, exact_only, options)
@@ -769,7 +769,7 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
             If *result* is not a ``Distribution`` that is an instance of, or
             claims, the target.
         ValueError
-            If *result* does not carry the source's event declaration.
+            If *result* does not carry the source's event spec.
         ResolutionError
             If the guard *awaiting* names rejects *result*, or leaves it unresolved.
         """
@@ -825,7 +825,7 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
             If ``True``, approximate converters are excluded.
         **options : Any
             Converter options, which the selected converter reads; a backend
-            object's event declaration is the option ``event_spec``.
+            object's event spec is the option ``event_spec``.
 
         Returns
         -------
@@ -843,7 +843,7 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
             conversion contract in kind.
         ValueError
             If the promise or the converted law does not carry the source's
-            event declaration.
+            event spec.
         """
         return self.execute(source, target_type, method=method, exact_only=exact_only, **options)
 

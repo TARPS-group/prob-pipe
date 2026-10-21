@@ -273,7 +273,7 @@ class TestAnOperationLabelsItsResultByItsLaw:
     def test_a_scalar_law_result_is_labeled_over_the_law(self, compute, label):
         assert compute(self.LAW).label == label
 
-    def test_a_record_law_draw_is_labeled_by_its_components_and_the_law(self):
+    def test_a_record_law_draw_is_labeled_by_its_outputs_and_the_law(self):
         joint = FactoredDistribution(
             [Normal("a", 0.0, 1.0)],
             label="joint",
@@ -293,7 +293,7 @@ class TestAnOperationLabelsItsResultByItsLaw:
         prior_x = Normal("x", 0.0, 1.0, label="prior_x")
         return (prior_x * Normal("y", 2.0, 3.0, label="prior_y")).with_label("params")
 
-    def test_a_record_mean_is_labeled_over_the_law_and_names_its_components(
+    def test_a_record_mean_is_labeled_over_the_law_and_names_its_outputs(
         self, full_provenance_mode
     ):
         law = self._params()
@@ -312,8 +312,8 @@ class TestAnOperationLabelsItsResultByItsLaw:
         law = self._params()
         result = condition_on(law, {"x": 1.0})
         assert result.label == "prior_y"
-        assert tuple(result.event_spec.components) == ("y",)
-        assert tuple(law.event_spec.components) == ("x", "y")
+        assert tuple(result.event_spec.outputs) == ("y",)
+        assert tuple(law.event_spec.outputs) == ("x", "y")
         assert float(mean(result)) == 2.0
         assert float(variance(result)) == 9.0
         assert result.provenance.parents[0].parent is condition_on
@@ -324,7 +324,7 @@ class TestAnOperationLabelsItsResultByItsLaw:
         result = convert(law, Normal)
         assert result is not law
         assert result.label == "prior"
-        assert tuple(result.event_spec.components) == ("theta",)
+        assert tuple(result.event_spec.outputs) == ("theta",)
         assert float(mean(result)) == 2.0
         assert float(variance(result)) == 9.0
         assert result.provenance.parents[0].parent is convert
@@ -371,7 +371,7 @@ class TestLevelsAreNamedForWhatMintsThem:
         assert drawn.level_names == ("sample",)
 
     @pytest.mark.parametrize(
-        ("atoms", "component", "expected"),
+        ("atoms", "output_name", "expected"),
         [
             pytest.param(
                 jnp.linspace(0.0, 1.0, 5), "atoms", "NumericArrayBatch", id="numeric-atoms"
@@ -400,7 +400,7 @@ class TestLevelsAreNamedForWhatMintsThem:
         ],
     )
     def test_a_law_that_assembles_its_own_draws_still_gets_the_level(
-        self, atoms, component, expected
+        self, atoms, output_name, expected
     ):
         """The boundary mints the level for every kind of draw.
 
@@ -409,7 +409,7 @@ class TestLevelsAreNamedForWhatMintsThem:
         """
         from probpipe import EmpiricalDistribution
 
-        drawn = sample(EmpiricalDistribution(atoms, component=component), sample_shape=(3,))
+        drawn = sample(EmpiricalDistribution(atoms, output_name=output_name), sample_shape=(3,))
 
         assert type(drawn).__name__ == expected
         assert (drawn.batch_shape, drawn.level_names) == ((3,), ("sample",))
@@ -418,7 +418,7 @@ class TestLevelsAreNamedForWhatMintsThem:
         """No sample_shape, no level to mint."""
         from probpipe import EmpiricalDistribution
 
-        drawn = sample(EmpiricalDistribution(jnp.linspace(0.0, 1.0, 5), component="atoms"))
+        drawn = sample(EmpiricalDistribution(jnp.linspace(0.0, 1.0, 5), output_name="atoms"))
 
         assert not isinstance(drawn, NumericArrayBatch)
 
@@ -432,7 +432,7 @@ class TestLevelsAreNamedForWhatMintsThem:
                     "atom",
                     label="objects",
                 ),
-                component="atoms",
+                output_name="atoms",
                 label="empirical",
             ),
             sample_shape=(3,),
@@ -675,8 +675,8 @@ def _empirical_model() -> Any:
     return (_likelihood() * prior).with_label("model")
 
 
-def _glm(*slots: str) -> Any:
-    """A kernel ``glm`` over ``y`` given *slots*."""
+def _glm(*inputs: str) -> Any:
+    """A kernel ``glm`` over ``y`` given *inputs*."""
 
     def location(**given: Any) -> Normal:
         return Normal("y", sum(given.values()), 1.0)
@@ -684,8 +684,8 @@ def _glm(*slots: str) -> Any:
     def body(beta, sigma):
         return location(beta=beta, sigma=sigma)
 
-    spec = {slot: NumericArraySpec(()) for slot in slots}
-    if slots == ("beta",):
+    spec = {input_name: NumericArraySpec(()) for input_name in inputs}
+    if inputs == ("beta",):
         return conditional_distribution(
             lambda beta: location(beta=beta), given_spec=spec, label="glm"
         )
@@ -714,7 +714,7 @@ class TestTheLabelsOfResults:
             pytest.param(
                 lambda: condition_on(_glm("beta", "sigma"), {"beta": 1.0}),
                 "glm(y | sigma; beta)",
-                id="kernel-at-some-slots",
+                id="kernel-at-some-inputs",
             ),
         ],
     )
@@ -733,7 +733,7 @@ _OFFSETS = jnp.zeros(3)
 
 
 def _counts() -> Any:
-    """A kernel over ``y`` given ``K`` and ``r``, with the slot ``n0`` defaulting to 50.0."""
+    """A kernel over ``y`` given ``K`` and ``r``, with the input ``n0`` defaulting to 50.0."""
 
     def counts(K: jax.Array, r: jax.Array, n0: float = 50.0) -> Normal:
         return Normal("y", K * r * n0, 1.0)
@@ -743,36 +743,36 @@ def _counts() -> Any:
     )
 
 
-class TestADefaultedSlotShowsItsDefault:
-    """A given slot or a parameter with a default reads ``name=value`` until a given binds it."""
+class TestADefaultedInputShowsItsDefault:
+    """An input or a parameter with a default reads ``name=value`` until a given binds it."""
 
-    def test_a_kernel_shows_its_defaulted_slot(self):
+    def test_a_kernel_shows_its_defaulted_input(self):
         assert str(_counts()) == "counts(y | K, r, n0=50.0)"
 
-    def test_a_law_left_at_a_default_keeps_the_slot_as_given(self):
+    def test_a_law_left_at_a_default_keeps_the_input_as_given(self):
         at = condition_on(_counts(), {"K": 300.0, "r": 0.4})
         assert at.notation == "counts(y | n0=50.0; K, r)"
         assert not hasattr(at, "given_spec")
 
-    def test_a_partly_bound_kernel_keeps_the_defaulted_slot_after_the_free_slots(self):
+    def test_a_partly_bound_kernel_keeps_the_defaulted_input_after_the_free_inputs(self):
         assert str(condition_on(_counts(), {"K": 300.0})) == "counts(y | r, n0=50.0; K)"
 
-    def test_binding_the_defaulted_slot_moves_it_to_the_fixed_paths(self):
+    def test_binding_the_defaulted_input_moves_it_to_the_fixed_paths(self):
         bound = condition_on(_counts(), {"K": 300.0, "r": 0.4, "n0": 10.0})
         assert bound.notation == "counts(y; K, r, n0)"
         assert str(condition_on(_counts(), {"n0": 10.0})) == "counts(y | K, r; n0)"
 
-    def test_a_factor_left_by_conditioning_a_joint_keeps_the_defaulted_slot(self):
+    def test_a_factor_left_by_conditioning_a_joint_keeps_the_defaulted_input(self):
         prior = (Normal("K", 300.0, 10.0) * Normal("r", 0.4, 0.1)).with_label("prior")
         model = _counts() * prior
         assert str(model) == "counts(y | K, r, n0=50.0)·prior(K, r)"
         assert condition_on(model, {"K": 300.0, "r": 0.4}).notation == ("counts(y | n0=50.0; K, r)")
 
-    def test_a_relabeled_law_keeps_the_defaulted_slot(self):
+    def test_a_relabeled_law_keeps_the_defaulted_input(self):
         at = condition_on(_counts(), {"K": 300.0, "r": 0.4}).with_label("at_values")
         assert at.notation == "at_values(y | n0=50.0; K, r)"
 
-    def test_a_relabeled_law_keeps_the_defaulted_slot_inside_another_term(self):
+    def test_a_relabeled_law_keeps_the_defaulted_input_inside_another_term(self):
         at = condition_on(_counts(), {"K": 300.0, "r": 0.4}).with_label("at_values")
         assert log_prob(at, 1.0).label == "log at_values(y | n0=50.0; K, r)"
         assert str(at * Normal("z", 0.0, 1.0)) == "at_values(y | n0=50.0; K, r)·Normal(z)"
@@ -802,7 +802,7 @@ class TestTheLabelsOfValuesComputedFromALaw:
     """A value computed from a law is labeled by the value over the law, in probability notation."""
 
     @pytest.mark.parametrize(
-        ("operation", "arguments", "label", "components"),
+        ("operation", "arguments", "label", "outputs"),
         [
             pytest.param(sample, lambda: (_prior(),), "mu ~ prior", ("mu",), id="draw"),
             pytest.param(sample, lambda: (_prior(), (3,)), "mu ~ prior", ("mu",), id="draws"),
@@ -849,11 +849,11 @@ class TestTheLabelsOfValuesComputedFromALaw:
             ),
         ],
     )
-    def test_a_value_is_labeled_by_the_issue_table(self, operation, arguments, label, components):
+    def test_a_value_is_labeled_by_the_issue_table(self, operation, arguments, label, outputs):
         with workflow_run(seed=0):
             result = operation(*arguments())
         assert result.label == label
-        assert tuple(operation.check(*arguments()).result.components) == components
+        assert tuple(operation.check(*arguments()).result.outputs) == outputs
 
     def test_an_expectation_is_labeled_by_its_integrand_at_a_draw(self):
         def square(x: jax.Array) -> jax.Array:
@@ -1020,14 +1020,14 @@ class TestTheLabelsOfALiftedFunction:
             )
         assert (lifted.label, lifted.notation) == ("log_prob", "log_prob(prior(g), q ~ proposal)")
 
-    def test_a_lifted_score_keeps_the_component_its_check_declares(self):
+    def test_a_lifted_score_keeps_the_output_its_check_declares(self):
         prior = Normal("g", 0.0, 1.0, label="prior")
         proposal = Normal("q", 0.0, 1.0, label="proposal")
         declared = log_prob.check(prior, proposal).result
         with workflow_run(seed=0):
             lifted = log_prob(prior, proposal)
-        assert tuple(lifted.event_spec.components) == tuple(declared.components)
-        assert tuple(lifted.event_spec.components) == ("log_prob",)
+        assert tuple(lifted.event_spec.outputs) == tuple(declared.outputs)
+        assert tuple(lifted.event_spec.outputs) == ("log_prob",)
 
     def test_a_parameter_the_caller_omits_is_not_shown(self):
         @function(output_spec=OutputSpec(scaled_value=None))

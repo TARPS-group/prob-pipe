@@ -77,8 +77,8 @@ def _detach(result: Any) -> Any:
 def _wrap_declared_function_output(
     result: Any, *, function_name: str, output_spec: OutputSpec
 ) -> Any:
-    """Wrap a validated result at its declared kind, preserving component exposure."""
-    spec = output_spec.spec
+    """Wrap a validated result at its declared kind, preserving output exposure."""
+    spec = output_spec.term_spec
     if isinstance(result, TrackedTerm):
         return _copy_result_term(result, output_spec=output_spec)
     if isinstance(spec, RecordSpec):
@@ -102,7 +102,7 @@ def _wrap_declared_function_output(
 
 
 def _aggregate_output_spec(output_spec: OutputSpec, outputs: Any) -> OutputSpec:
-    """Complete a declaration from validated rows, retaining its component names.
+    """Complete a declaration from validated rows, retaining its output names.
 
     Mapped outputs carry the row's spec as static metadata, independently of
     the leading axis JAX added. Empty outputs leave the declaration unchanged.
@@ -132,7 +132,7 @@ def _aggregate_output_spec(output_spec: OutputSpec, outputs: Any) -> OutputSpec:
     from ..core._spec_base import _unify_specs
     from ..values._function_base import _complete_output_metadata, _produced_spec
 
-    spec = output_spec.spec
+    spec = output_spec.term_spec
     bindings: dict[str, int] = {}
     rows = outputs if isinstance(outputs, list) else (outputs,)
     for row in rows:
@@ -151,16 +151,16 @@ def _aggregate_output_spec(output_spec: OutputSpec, outputs: Any) -> OutputSpec:
         except ValueError as error:
             raise ResultSchemaError(str(error)) from error
         spec = _complete_output_metadata(spec, actual)
-    return output_spec._with_spec(None if spec is None else spec._substitute_dims(bindings))
+    return output_spec._with_term_spec(None if spec is None else spec._substitute_dims(bindings))
 
 
 def _output_record_spec(output_spec: OutputSpec) -> RecordSpec | None:
     """Return a record-valued output's schema for the existing aggregate builders.
 
-    Returned laws retain their own event declarations. Their declarations are
+    Returned laws retain their own event specs. Their declarations are
     matched by DistributionSpec, without projecting them onto a record template.
     """
-    spec = output_spec.spec
+    spec = output_spec.term_spec
     if isinstance(spec, RecordSpec):
         return spec
     return None
@@ -211,7 +211,7 @@ def _coerce_output(
     """Return an independently labeled term with this call's provenance.
 
     *label* is the call's result label, separate from the function
-    label in provenance and the declared output components, and it labels a
+    label in provenance and the declared outputs, and it labels a
     wrapped raw return. A tracked return is shallow-copied, sharing value data
     while owning its metadata. The result carries *expression*, the expression
     the call gives its result; a label alone keeps the paths a law holds
@@ -258,7 +258,7 @@ def _prepared(term: Any, expression: Expression) -> Expression:
 def _copy_result_term(value: TrackedTerm, *, output_spec: OutputSpec | None = None) -> TrackedTerm:
     """Copy a tracked result while retaining its value and declaration metadata."""
     clone = value._shallow_copy()
-    spec = output_spec.spec if output_spec is not None else None
+    spec = output_spec.term_spec if output_spec is not None else None
     if isinstance(spec, RecordSpec) and isinstance(clone, Record):
         object.__setattr__(clone, "_spec", spec)
     elif isinstance(spec, NumericArraySpec):
@@ -560,7 +560,7 @@ def _batch_from_declared_sequence(
     declared axes. A declared axis of symbolic size takes the sequence's length
     when it is the only axis. Any other result is returned as it is.
     """
-    spec = None if output_spec is None else output_spec.spec
+    spec = None if output_spec is None else output_spec.term_spec
     if not isinstance(spec, BatchSpec) or not isinstance(result, (list, tuple)):
         return result
     sizes = [size for group in spec.axis_groups for size in group]
@@ -581,9 +581,9 @@ def _batch_from_declared_sequence(
         axis_groups=axis_groups,
         label=function_name,
         output_template=element if is_record else None,
-        # The aggregator reads only the declared element spec, so the component
+        # The aggregator reads only the declared element spec, so the output
         # name of this declaration is never read.
-        output_spec=None if is_record else OutputSpec.default(element, component="element"),
+        output_spec=None if is_record else OutputSpec.default(element, output_name="element"),
     )
 
 
@@ -638,7 +638,7 @@ def _make_stack(
         The declared record of a row, by which each row is wrapped and the
         columns are laid out.
     output_spec : OutputSpec, optional
-        The completed output declaration, whose spec is the element
+        The completed output spec, whose spec is the element
         declaration of an empty sweep's batch and of a batch of objects.
 
     Returns
@@ -723,7 +723,7 @@ def _with_dtypes_of(spec: Any, reference: Any) -> Any:
     """*spec* with each array leaf's dtype taken from the matching leaf of *reference*.
 
     A leaf whose match in *reference* states no dtype keeps its own, so a law's
-    event declaration can take the dtypes its stored atoms hold.
+    event spec can take the dtypes its stored atoms hold.
     """
     if isinstance(spec, BatchSpec) and isinstance(reference, BatchSpec):
         return BatchSpec._from_groups(
@@ -815,7 +815,7 @@ def _stack_rows(
         and n_total == 0
         and output_spec is not None
     ):
-        spec = output_spec.spec
+        spec = output_spec.term_spec
         if spec is None or not spec.is_concrete:
             raise ValueError("An empty sweep requires a concrete output_spec")
         if isinstance(spec, NumericArraySpec):
@@ -1075,7 +1075,7 @@ def _stack_rows(
                 "axes_per_level": _ranks_of(sweep_groups),
             }
             if output_spec is not None:
-                shared["element_spec"] = output_spec.spec
+                shared["element_spec"] = output_spec.term_spec
             # ``outs`` first: every row of none is vacuously callable, and no row
             # is a reason to claim the function kind over the fallback.
             if outs and all(callable(o) for o in outs):
@@ -1187,7 +1187,7 @@ def declared_term(
     """*value* validated against *declared* and wrapped at the kind it names.
 
     This is the return step of one point of a call that a route realized
-    (V.10): a type hole is completed from *value*, a batch declaration reads
+    (V.10): an unspecified output type is completed from *value*, a batch declaration reads
     *value*'s leading axes as its levels, and an undeclared result wraps by
     the kind-directed table.
 
@@ -1218,8 +1218,8 @@ def declared_term(
         If the structure, dimensions, dtype, or support violates the declaration.
     """
     try:
-        if declared is not None and isinstance(declared.spec, BatchSpec):
-            return _batch_at(value, declared.spec, label)
+        if declared is not None and isinstance(declared.term_spec, BatchSpec):
+            return _batch_at(value, declared.term_spec, label)
         if declared is None:
             return _wrap_as_term(value, label)
         completed = _validate_function_output(

@@ -39,7 +39,7 @@ def _identity(prior, n=4):
     return (
         ObservationKernel(
             "y",
-            dict(prior.event_spec.components),
+            dict(prior.event_spec.outputs),
             NumericArraySpec((n,)),
             lambda **values: tfd.Independent(tfd.Normal(jnp.zeros(n), 1.0), 1),
         )
@@ -56,7 +56,7 @@ def _gaussian_mean(prior, n=3):
     return (
         ObservationKernel(
             "y",
-            dict(prior.event_spec.components),
+            dict(prior.event_spec.outputs),
             NumericArraySpec((n,)),
             lambda mu: tfd.Independent(tfd.Normal(jnp.broadcast_to(mu, (n,)), 1.0), 1),
         )

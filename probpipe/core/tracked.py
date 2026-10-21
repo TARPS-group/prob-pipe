@@ -169,7 +169,7 @@ def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
 _NO_DESCRIPTION = "<no description>"
 
 
-#: The ASCII name a lambda takes as an output component.
+#: The ASCII name a lambda takes as an output.
 _LAMBDA_NAME = "f"
 
 

@@ -70,7 +70,7 @@ def rng_key():
 
 @pytest.fixture(scope="module")
 def linop_resources(rng_key):
-    """Core components used to construct various types of linear operators."""
+    """Core outputs used to construct various types of linear operators."""
     k1, k2, _k3 = jax.random.split(rng_key, 3)
 
     # Symmetric positive definite

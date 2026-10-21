@@ -879,7 +879,7 @@ class TestLifts:
 
     def test_an_exact_empirical_root_and_its_transform_enumerate_without_sampling(self):
         root = EmpiricalDistribution(
-            jnp.asarray([1.0, 4.0]), weights=jnp.asarray([0.2, 0.8]), component="base"
+            jnp.asarray([1.0, 4.0]), weights=jnp.asarray([0.2, 0.8]), output_name="base"
         )
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
         workflow = Function(
@@ -897,7 +897,7 @@ class TestLifts:
 
     def test_a_transform_passed_before_its_empirical_root_enumerates(self):
         root = EmpiricalDistribution(
-            jnp.asarray([1.0, 4.0]), weights=jnp.asarray([0.2, 0.8]), component="base"
+            jnp.asarray([1.0, 4.0]), weights=jnp.asarray([0.2, 0.8]), output_name="base"
         )
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
         workflow = Function(
@@ -995,7 +995,7 @@ class TestEmpiricalRootWeights:
         root = EmpiricalDistribution(
             jnp.asarray([1.0, 4.0]),
             weights=jnp.asarray([0.2, 0.8]),
-            component="base",
+            output_name="base",
         )
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
         workflow = Function(
@@ -1053,7 +1053,7 @@ class TestEmpiricalRootWeights:
         exact_root = EmpiricalDistribution(
             jnp.asarray([1.0, 4.0]),
             weights=jnp.asarray([0.2, 0.8]),
-            component="exact",
+            output_name="exact",
         )
         exponentiated = BijectorTransformedDistribution("exponentiated", exact_root, tfb.Exp())
         sampled_calls = []

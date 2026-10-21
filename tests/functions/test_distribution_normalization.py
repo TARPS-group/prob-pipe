@@ -46,7 +46,7 @@ def normal_external():
 def empirical_dist():
     return EmpiricalDistribution(
         jnp.asarray([[0.0], [1.0], [2.0]]),
-        component="x",
+        output_name="x",
     )
 
 

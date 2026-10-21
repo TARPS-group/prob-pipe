@@ -103,7 +103,7 @@ class CmdStanNutsMethod(InferenceMethod):
 
         # stan_variable concatenates the chains in chain order, each draw in the
         # variable's own shape.
-        names = list(target.event_spec.components)
+        names = list(target.event_spec.outputs)
         draws = {name: np.asarray(fit.stan_variable(name)) for name in names}
         per_chain = len(draws[names[0]]) // num_chains
         chains = [
@@ -117,7 +117,7 @@ class CmdStanNutsMethod(InferenceMethod):
             for c in range(num_chains)
         ]
         shapes = {name: draws[name].shape[1:] for name in names}
-        event_spec = OutputSpec(_parameter_record_at(target.event_spec.spec, shapes))
+        event_spec = OutputSpec(_parameter_record_at(target.event_spec.term_spec, shapes))
 
         return make_posterior(
             chains,

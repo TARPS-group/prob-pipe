@@ -313,7 +313,7 @@ class TestANumericTermShowsItsValues:
 
     def test_a_term_inside_another_repr_shows_its_summary_alone(self):
         atoms = NumericArrayBatch(jnp.arange(3.0), "draw", label="draws")
-        law = EmpiricalDistribution(atoms, component="theta")
+        law = EmpiricalDistribution(atoms, output_name="theta")
 
         assert repr(law) == (
             "EmpiricalDistribution(\n"
@@ -322,7 +322,7 @@ class TestANumericTermShowsItsValues:
             "        levels={'draw': 3},\n"
             "        element_spec=NumericArraySpec(shape=(), dtype=float32),\n"
             "    ),\n"
-            "    component='theta',\n"
+            "    output_name='theta',\n"
             ")"
         )
 
@@ -352,7 +352,7 @@ class TestSpecs:
         )
 
     def test_names_that_are_no_identifiers_read_as_one_mapping(self):
-        """A component such as ``my model`` cannot be a keyword, so the call maps it."""
+        """An output such as ``my model`` cannot be a keyword, so the call maps it."""
         output = OutputSpec(**{"my model": NumericArraySpec(())})
         assert repr(output) == "OutputSpec(**{'my model': NumericArraySpec(shape=())})"
         record = RecordSpec({"my model": (), "tau": ()})
@@ -411,13 +411,13 @@ class TestDistributions:
         assert repr(labeled).endswith(",\n    label='q',\n)")
 
     def test_a_law_under_the_label_p_leaves_the_label_out(self):
-        law = EmpiricalDistribution(jnp.arange(3.0), component="theta")
+        law = EmpiricalDistribution(jnp.arange(3.0), output_name="theta")
         assert repr(law).startswith("EmpiricalDistribution(\n    atoms=")
-        assert repr(law).endswith("    component='theta',\n)")
+        assert repr(law).endswith("    output_name='theta',\n)")
         drawn = distribution(
             sample=lambda key: jax.random.normal(key),
             event_spec=NumericArraySpec(()),
-            component="z",
+            output_name="z",
         )
         assert repr(drawn).startswith("Distribution(\n    'z',\n    sample=")
 
@@ -438,12 +438,12 @@ class TestDistributions:
             "Normal('y', loc=0.5, scale=1.0, label='lik', fixed=('mu',))"
         )
 
-    def test_a_partly_bound_kernel_shows_its_fixed_slots(self):
-        def two_slot(beta, sigma):
+    def test_a_partly_bound_kernel_shows_its_fixed_inputs(self):
+        def two_input(beta, sigma):
             return Normal("y", beta, sigma)
 
         kernel = conditional_distribution(
-            two_slot,
+            two_input,
             label="glm",
             given_spec={"beta": NumericArraySpec(()), "sigma": NumericArraySpec(())},
         )
@@ -456,7 +456,7 @@ class TestDistributions:
         likelihood = conditional_distribution(
             lambda mu: Normal("y", mu, 1.0), label="lik", given_spec={"mu": NumericArraySpec(())}
         )
-        prior = EmpiricalDistribution(jnp.linspace(-1.0, 1.0, 5), component="mu", label="prior")
+        prior = EmpiricalDistribution(jnp.linspace(-1.0, 1.0, 5), output_name="mu", label="prior")
         model = (likelihood * prior).with_label("model")
         with workflow_run(seed=0):
             posterior = condition_on(model, {"y": 0.5})
@@ -475,7 +475,7 @@ class TestDistributions:
         kernel = conditional_distribution(y_given_mu, given_spec={"mu": NumericArraySpec(())})
         assert repr(kernel) == ("ConditionalDistribution('y', given=('mu',), label='y_given_mu')")
 
-    def test_a_whole_term_event_shows_its_component_and_no_declaration(self):
+    def test_a_whole_term_event_shows_its_output_and_no_declaration(self):
         law = Normal("beta", 0.0, 1.0, label="prior")
         assert repr(law).startswith("Normal('beta', ")
         assert "event_spec=" not in repr(law)
@@ -494,9 +494,9 @@ class TestDistributions:
         assert "_Renamed" not in renamed
 
     def test_an_empirical_law_reads_by_its_atoms(self):
-        law = EmpiricalDistribution(jnp.arange(5.0), component="e", label="draws")
+        law = EmpiricalDistribution(jnp.arange(5.0), output_name="e", label="draws")
         assert repr(law).startswith("EmpiricalDistribution(\n    atoms=NumericArrayBatch(")
-        assert repr(law).endswith("    component='e',\n    label='draws',\n)")
+        assert repr(law).endswith("    output_name='e',\n    label='draws',\n)")
 
     def test_a_renamed_empirical_law_reads_by_its_renamed_atoms(self):
         renamed = EmpiricalDistribution(_two_fields(), label="e").with_path_names({"a": "g/a"})
@@ -653,7 +653,7 @@ class TestACarriedLabel:
         likelihood = conditional_distribution(
             lambda mu: Normal("y", mu, 1.0), label="lik", given_spec={"mu": NumericArraySpec(())}
         )
-        prior = EmpiricalDistribution(jnp.linspace(-1.0, 1.0, 5), component="mu", label="prior")
+        prior = EmpiricalDistribution(jnp.linspace(-1.0, 1.0, 5), output_name="mu", label="prior")
         with workflow_run(seed=0):
             posterior = condition_on(likelihood * prior, {"y": 0.5})
         assert posterior.label == "lik·prior"
@@ -732,7 +732,7 @@ class TestLayout:
         [
             _schools(),
             Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
-            EmpiricalDistribution(jnp.arange(5.0), component="e"),
+            EmpiricalDistribution(jnp.arange(5.0), output_name="e"),
         ],
         ids=["batch", "joint", "empirical"],
     )
@@ -795,10 +795,10 @@ class TestGrouping:
 class TestSignatureAndNotation:
     """The signature states what a term is over, and the notation is ``label(signature)``."""
 
-    def test_a_signature_joins_the_components(self):
+    def test_a_signature_joins_the_outputs(self):
         assert format_signature(["y", "mu"]) == "y, mu"
 
-    def test_given_slots_follow_a_bar(self):
+    def test_inputs_follow_a_bar(self):
         assert format_signature(["y"], ["beta", "sigma"]) == "y | beta, sigma"
 
     def test_fixed_paths_follow_a_semicolon(self):
@@ -820,7 +820,7 @@ class TestSignatureAndNotation:
         assert format_default(jnp.zeros(3)) == "…"
         assert format_default({"a": 1}) == "…"
 
-    def test_a_signature_of_no_components_is_empty(self):
+    def test_a_signature_of_no_outputs_is_empty(self):
         assert format_signature([]) == ""
 
     @pytest.mark.parametrize(

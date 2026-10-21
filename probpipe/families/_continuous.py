@@ -4,7 +4,7 @@
 ``LogNormal``, ``StudentT``, ``Uniform``, ``Cauchy``, ``Laplace``,
 ``HalfNormal``, ``HalfCauchy``, ``Pareto``, and ``TruncatedNormal`` each derive
 their event term spec from their parameters and take an ``event_spec``
-declaration that names the event's component.
+declaration that names the event's output.
 
 The parameters broadcast against one another. Scalar parameters give a scalar
 draw, and parameters with axes give one draw of independent coordinates of the
@@ -258,8 +258,8 @@ class Normal(TFPDistribution):
 
     Parameters
     ----------
-    component : str
-        The component of the law's event.
+    output_name : str
+        The output of the law's event.
     loc : array-like
         Mean of the distribution.
     scale : array-like
@@ -267,24 +267,24 @@ class Normal(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *component* that declares the type of one draw, which
+        A declaration of *output_name* that declares the type of one draw, which
         the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *component* is not a string, *label* is not a non-empty string, or
+        If *output_name* is not a string, *label* is not a non-empty string, or
         *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If *component* is not a valid component name, or *event_spec* names
-        another component or declares a type that one draw does not conform to.
+        If *output_name* is not a valid output name, or *event_spec* names
+        another output or declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self,
-        component: str,
+        output_name: str,
         loc: ArrayLike,
         scale: ArrayLike,
         *,
@@ -293,7 +293,7 @@ class Normal(TFPDistribution):
     ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
         super().__init__(
-            component,
+            output_name,
             tfd.Normal(loc=self._loc, scale=self._scale),
             label=label,
             event_spec=event_spec,
@@ -321,8 +321,8 @@ class Beta(TFPDistribution):
 
     Parameters
     ----------
-    component : str
-        The component of the law's event.
+    output_name : str
+        The output of the law's event.
     alpha : array-like
         First concentration parameter (> 0).
     beta : array-like
@@ -330,24 +330,24 @@ class Beta(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *component* that declares the type of one draw, which
+        A declaration of *output_name* that declares the type of one draw, which
         the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *component* is not a string, *label* is not a non-empty string, or
+        If *output_name* is not a string, *label* is not a non-empty string, or
         *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If *component* is not a valid component name, or *event_spec* names
-        another component or declares a type that one draw does not conform to.
+        If *output_name* is not a valid output name, or *event_spec* names
+        another output or declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self,
-        component: str,
+        output_name: str,
         alpha: ArrayLike,
         beta: ArrayLike,
         *,
@@ -356,7 +356,7 @@ class Beta(TFPDistribution):
     ):
         _, (self._alpha, self._beta) = _promote_floats(alpha, beta)
         super().__init__(
-            component,
+            output_name,
             tfd.Beta(concentration1=self._alpha, concentration0=self._beta),
             label=label,
             event_spec=event_spec,
@@ -384,8 +384,8 @@ class Gamma(TFPDistribution):
 
     Parameters
     ----------
-    component : str
-        The component of the law's event.
+    output_name : str
+        The output of the law's event.
     concentration : array-like
         Shape parameter (> 0).
     rate : array-like
@@ -393,24 +393,24 @@ class Gamma(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *component* that declares the type of one draw, which
+        A declaration of *output_name* that declares the type of one draw, which
         the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *component* is not a string, *label* is not a non-empty string, or
+        If *output_name* is not a string, *label* is not a non-empty string, or
         *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If *component* is not a valid component name, or *event_spec* names
-        another component or declares a type that one draw does not conform to.
+        If *output_name* is not a valid output name, or *event_spec* names
+        another output or declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self,
-        component: str,
+        output_name: str,
         concentration: ArrayLike,
         rate: ArrayLike,
         *,
@@ -419,7 +419,7 @@ class Gamma(TFPDistribution):
     ):
         _, (self._concentration, self._rate) = _promote_floats(concentration, rate)
         super().__init__(
-            component,
+            output_name,
             tfd.Gamma(concentration=self._concentration, rate=self._rate),
             label=label,
             event_spec=event_spec,
@@ -451,8 +451,8 @@ class InverseGamma(_TailBoundedMoments, TFPDistribution):
 
     Parameters
     ----------
-    component : str
-        The component of the law's event.
+    output_name : str
+        The output of the law's event.
     concentration : array-like
         Shape parameter (> 0).
     scale : array-like
@@ -460,17 +460,17 @@ class InverseGamma(_TailBoundedMoments, TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *component* that declares the type of one draw, which
+        A declaration of *output_name* that declares the type of one draw, which
         the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *component* is not a string, *label* is not a non-empty string, or
+        If *output_name* is not a string, *label* is not a non-empty string, or
         *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If *component* is not a valid component name, or *event_spec* names
-        another component or declares a type that one draw does not conform to.
+        If *output_name* is not a valid output name, or *event_spec* names
+        another output or declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = _CLOSED_FORM
@@ -480,7 +480,7 @@ class InverseGamma(_TailBoundedMoments, TFPDistribution):
 
     def __init__(
         self,
-        component: str,
+        output_name: str,
         concentration: ArrayLike,
         scale: ArrayLike,
         *,
@@ -489,7 +489,7 @@ class InverseGamma(_TailBoundedMoments, TFPDistribution):
     ):
         _, (self._concentration, self._scale) = _promote_floats(concentration, scale)
         super().__init__(
-            component,
+            output_name,
             tfd.InverseGamma(concentration=self._concentration, scale=self._scale),
             label=label,
             event_spec=event_spec,
@@ -517,31 +517,31 @@ class Exponential(TFPDistribution):
 
     Parameters
     ----------
-    component : str
-        The component of the law's event.
+    output_name : str
+        The output of the law's event.
     rate : array-like
         Rate parameter (> 0).
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *component* that declares the type of one draw, which
+        A declaration of *output_name* that declares the type of one draw, which
         the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *component* is not a string, *label* is not a non-empty string, or
+        If *output_name* is not a string, *label* is not a non-empty string, or
         *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If *component* is not a valid component name, or *event_spec* names
-        another component or declares a type that one draw does not conform to.
+        If *output_name* is not a valid output name, or *event_spec* names
+        another output or declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self,
-        component: str,
+        output_name: str,
         rate: ArrayLike,
         *,
         label: str | None = None,
@@ -549,7 +549,7 @@ class Exponential(TFPDistribution):
     ):
         self._rate = _as_float_array(rate)
         super().__init__(
-            component, tfd.Exponential(rate=self._rate), label=label, event_spec=event_spec
+            output_name, tfd.Exponential(rate=self._rate), label=label, event_spec=event_spec
         )
 
     @property
@@ -570,8 +570,8 @@ class LogNormal(TFPDistribution):
 
     Parameters
     ----------
-    component : str
-        The component of the law's event.
+    output_name : str
+        The output of the law's event.
     loc : array-like
         Mean of the underlying normal distribution.
     scale : array-like
@@ -579,24 +579,24 @@ class LogNormal(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *component* that declares the type of one draw, which
+        A declaration of *output_name* that declares the type of one draw, which
         the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *component* is not a string, *label* is not a non-empty string, or
+        If *output_name* is not a string, *label* is not a non-empty string, or
         *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If *component* is not a valid component name, or *event_spec* names
-        another component or declares a type that one draw does not conform to.
+        If *output_name* is not a valid output name, or *event_spec* names
+        another output or declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self,
-        component: str,
+        output_name: str,
         loc: ArrayLike,
         scale: ArrayLike,
         *,
@@ -605,7 +605,7 @@ class LogNormal(TFPDistribution):
     ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
         super().__init__(
-            component,
+            output_name,
             tfd.LogNormal(loc=self._loc, scale=self._scale),
             label=label,
             event_spec=event_spec,
@@ -637,8 +637,8 @@ class StudentT(_TailBoundedMoments, TFPDistribution):
 
     Parameters
     ----------
-    component : str
-        The component of the law's event.
+    output_name : str
+        The output of the law's event.
     df : array-like
         Degrees of freedom (> 0).
     loc : array-like
@@ -648,17 +648,17 @@ class StudentT(_TailBoundedMoments, TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *component* that declares the type of one draw, which
+        A declaration of *output_name* that declares the type of one draw, which
         the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *component* is not a string, *label* is not a non-empty string, or
+        If *output_name* is not a string, *label* is not a non-empty string, or
         *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If *component* is not a valid component name, or *event_spec* names
-        another component or declares a type that one draw does not conform to.
+        If *output_name* is not a valid output name, or *event_spec* names
+        another output or declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = _CLOSED_FORM
@@ -668,7 +668,7 @@ class StudentT(_TailBoundedMoments, TFPDistribution):
 
     def __init__(
         self,
-        component: str,
+        output_name: str,
         df: ArrayLike,
         loc: ArrayLike,
         scale: ArrayLike,
@@ -678,7 +678,7 @@ class StudentT(_TailBoundedMoments, TFPDistribution):
     ):
         _, (self._df, self._loc, self._scale) = _promote_floats(df, loc, scale)
         super().__init__(
-            component,
+            output_name,
             tfd.StudentT(df=self._df, loc=self._loc, scale=self._scale),
             label=label,
             event_spec=event_spec,
@@ -710,8 +710,8 @@ class Uniform(TFPDistribution):
 
     Parameters
     ----------
-    component : str
-        The component of the law's event.
+    output_name : str
+        The output of the law's event.
     low : array-like
         Lower bound.
     high : array-like
@@ -719,24 +719,24 @@ class Uniform(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *component* that declares the type of one draw, which
+        A declaration of *output_name* that declares the type of one draw, which
         the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *component* is not a string, *label* is not a non-empty string, or
+        If *output_name* is not a string, *label* is not a non-empty string, or
         *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If *component* is not a valid component name, or *event_spec* names
-        another component or declares a type that one draw does not conform to.
+        If *output_name* is not a valid output name, or *event_spec* names
+        another output or declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self,
-        component: str,
+        output_name: str,
         low: ArrayLike,
         high: ArrayLike,
         *,
@@ -745,7 +745,7 @@ class Uniform(TFPDistribution):
     ):
         _, (self._low, self._high) = _promote_floats(low, high)
         super().__init__(
-            component,
+            output_name,
             tfd.Uniform(low=self._low, high=self._high),
             label=label,
             event_spec=event_spec,
@@ -776,8 +776,8 @@ class Cauchy(TFPDistribution):
 
     Parameters
     ----------
-    component : str
-        The component of the law's event.
+    output_name : str
+        The output of the law's event.
     loc : array-like
         Location parameter.
     scale : array-like
@@ -785,24 +785,24 @@ class Cauchy(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *component* that declares the type of one draw, which
+        A declaration of *output_name* that declares the type of one draw, which
         the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *component* is not a string, *label* is not a non-empty string, or
+        If *output_name* is not a string, *label* is not a non-empty string, or
         *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If *component* is not a valid component name, or *event_spec* names
-        another component or declares a type that one draw does not conform to.
+        If *output_name* is not a valid output name, or *event_spec* names
+        another output or declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self,
-        component: str,
+        output_name: str,
         loc: ArrayLike,
         scale: ArrayLike,
         *,
@@ -811,7 +811,7 @@ class Cauchy(TFPDistribution):
     ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
         super().__init__(
-            component,
+            output_name,
             tfd.Cauchy(loc=self._loc, scale=self._scale),
             label=label,
             event_spec=event_spec,
@@ -869,8 +869,8 @@ class Laplace(TFPDistribution):
 
     Parameters
     ----------
-    component : str
-        The component of the law's event.
+    output_name : str
+        The output of the law's event.
     loc : array-like
         Location parameter.
     scale : array-like
@@ -878,24 +878,24 @@ class Laplace(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *component* that declares the type of one draw, which
+        A declaration of *output_name* that declares the type of one draw, which
         the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *component* is not a string, *label* is not a non-empty string, or
+        If *output_name* is not a string, *label* is not a non-empty string, or
         *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If *component* is not a valid component name, or *event_spec* names
-        another component or declares a type that one draw does not conform to.
+        If *output_name* is not a valid output name, or *event_spec* names
+        another output or declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self,
-        component: str,
+        output_name: str,
         loc: ArrayLike,
         scale: ArrayLike,
         *,
@@ -904,7 +904,7 @@ class Laplace(TFPDistribution):
     ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
         super().__init__(
-            component,
+            output_name,
             tfd.Laplace(loc=self._loc, scale=self._scale),
             label=label,
             event_spec=event_spec,
@@ -932,31 +932,31 @@ class HalfNormal(TFPDistribution):
 
     Parameters
     ----------
-    component : str
-        The component of the law's event.
+    output_name : str
+        The output of the law's event.
     scale : array-like
         Scale parameter (> 0).
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *component* that declares the type of one draw, which
+        A declaration of *output_name* that declares the type of one draw, which
         the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *component* is not a string, *label* is not a non-empty string, or
+        If *output_name* is not a string, *label* is not a non-empty string, or
         *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If *component* is not a valid component name, or *event_spec* names
-        another component or declares a type that one draw does not conform to.
+        If *output_name* is not a valid output name, or *event_spec* names
+        another output or declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self,
-        component: str,
+        output_name: str,
         scale: ArrayLike,
         *,
         label: str | None = None,
@@ -964,7 +964,7 @@ class HalfNormal(TFPDistribution):
     ):
         self._scale = _as_float_array(scale)
         super().__init__(
-            component, tfd.HalfNormal(scale=self._scale), label=label, event_spec=event_spec
+            output_name, tfd.HalfNormal(scale=self._scale), label=label, event_spec=event_spec
         )
 
     @property
@@ -988,8 +988,8 @@ class HalfCauchy(TFPDistribution):
 
     Parameters
     ----------
-    component : str
-        The component of the law's event.
+    output_name : str
+        The output of the law's event.
     loc : array-like
         Location parameter.
     scale : array-like
@@ -997,24 +997,24 @@ class HalfCauchy(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *component* that declares the type of one draw, which
+        A declaration of *output_name* that declares the type of one draw, which
         the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *component* is not a string, *label* is not a non-empty string, or
+        If *output_name* is not a string, *label* is not a non-empty string, or
         *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If *component* is not a valid component name, or *event_spec* names
-        another component or declares a type that one draw does not conform to.
+        If *output_name* is not a valid output name, or *event_spec* names
+        another output or declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self,
-        component: str,
+        output_name: str,
         loc: ArrayLike,
         scale: ArrayLike,
         *,
@@ -1023,7 +1023,7 @@ class HalfCauchy(TFPDistribution):
     ):
         _, (self._loc, self._scale) = _promote_floats(loc, scale)
         super().__init__(
-            component,
+            output_name,
             tfd.HalfCauchy(loc=self._loc, scale=self._scale),
             label=label,
             event_spec=event_spec,
@@ -1079,8 +1079,8 @@ class Pareto(_TailBoundedMoments, TFPDistribution):
 
     Parameters
     ----------
-    component : str
-        The component of the law's event.
+    output_name : str
+        The output of the law's event.
     concentration : array-like
         Tail index (shape parameter, > 0).
     scale : array-like
@@ -1088,17 +1088,17 @@ class Pareto(_TailBoundedMoments, TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *component* that declares the type of one draw, which
+        A declaration of *output_name* that declares the type of one draw, which
         the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *component* is not a string, *label* is not a non-empty string, or
+        If *output_name* is not a string, *label* is not a non-empty string, or
         *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If *component* is not a valid component name, or *event_spec* names
-        another component or declares a type that one draw does not conform to.
+        If *output_name* is not a valid output name, or *event_spec* names
+        another output or declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = frozenset({SupportsMean, SupportsVariance, SupportsCovariance})
@@ -1108,7 +1108,7 @@ class Pareto(_TailBoundedMoments, TFPDistribution):
 
     def __init__(
         self,
-        component: str,
+        output_name: str,
         concentration: ArrayLike,
         scale: ArrayLike,
         *,
@@ -1117,7 +1117,7 @@ class Pareto(_TailBoundedMoments, TFPDistribution):
     ):
         _, (self._concentration, self._scale) = _promote_floats(concentration, scale)
         super().__init__(
-            component,
+            output_name,
             tfd.Pareto(concentration=self._concentration, scale=self._scale),
             label=label,
             event_spec=event_spec,
@@ -1145,8 +1145,8 @@ class TruncatedNormal(TFPDistribution):
 
     Parameters
     ----------
-    component : str
-        The component of the law's event.
+    output_name : str
+        The output of the law's event.
     loc : array-like
         Mean of the underlying normal distribution.
     scale : array-like
@@ -1158,24 +1158,24 @@ class TruncatedNormal(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *component* that declares the type of one draw, which
+        A declaration of *output_name* that declares the type of one draw, which
         the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *component* is not a string, *label* is not a non-empty string, or
+        If *output_name* is not a string, *label* is not a non-empty string, or
         *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If *component* is not a valid component name, or *event_spec* names
-        another component or declares a type that one draw does not conform to.
+        If *output_name* is not a valid output name, or *event_spec* names
+        another output or declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = _CLOSED_FORM
 
     def __init__(
         self,
-        component: str,
+        output_name: str,
         loc: ArrayLike,
         scale: ArrayLike,
         low: ArrayLike,
@@ -1186,7 +1186,7 @@ class TruncatedNormal(TFPDistribution):
     ):
         _, (self._loc, self._scale, self._low, self._high) = _promote_floats(loc, scale, low, high)
         super().__init__(
-            component,
+            output_name,
             tfd.TruncatedNormal(loc=self._loc, scale=self._scale, low=self._low, high=self._high),
             label=label,
             event_spec=event_spec,

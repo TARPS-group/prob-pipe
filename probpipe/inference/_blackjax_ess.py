@@ -70,7 +70,7 @@ def _gaussian_prior_params(prior: Distribution) -> tuple[Array, Array] | None:
 
     Parameters are returned in the flat-vector layout matching the
     convention used by the other MCMC backends — concatenation in
-    the order of the prior's components for composite priors.
+    the order of the prior's outputs for composite priors.
 
     Recognises:
 
@@ -79,7 +79,7 @@ def _gaussian_prior_params(prior: Distribution) -> tuple[Array, Array] | None:
       promoted to a length-1 vector.
     * a factored joint whose factors are each themselves recognised, as a
       :class:`~probpipe.families.FactoredMultivariateGaussian` is —
-      block-diagonal assembly in the order of its components, the factors
+      block-diagonal assembly in the order of its outputs, the factors
       being independent.
 
     Returns ``None`` for any other distribution: mixtures of Gaussians,
@@ -100,10 +100,10 @@ def _gaussian_prior_params(prior: Distribution) -> tuple[Array, Array] | None:
     if isinstance(prior, FactoredDistribution):
         locs: list[Array] = []
         covs: list[Array] = []
-        for component in prior.factors:
-            if not isinstance(component, Distribution):
+        for output_name in prior.factors:
+            if not isinstance(output_name, Distribution):
                 return None
-            sub = _gaussian_prior_params(component)
+            sub = _gaussian_prior_params(output_name)
             if sub is None:
                 return None
             locs.append(sub[0])

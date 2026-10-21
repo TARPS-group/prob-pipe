@@ -126,7 +126,7 @@ def _is_affine(bijector: Function) -> bool:
 class _ForwardMap:
     """The forward map of a backend bijector at one point, named as the backend names it.
 
-    The name makes the bijector's label and output component the backend's
+    The name makes the bijector's label and output the backend's
     name, as ``exp``, by the rule that names a Function and its output after
     its callable.
     """

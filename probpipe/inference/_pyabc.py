@@ -460,7 +460,7 @@ class PyABCSMCMethod(InferenceMethod):
             method="pyabc_smcabc",
             weights=jnp.asarray(weights / weights.sum()),
             event_spec=target.event_spec,
-            field_order=list(target.event_spec.components),
+            field_order=list(target.event_spec.outputs),
             annotations=_smc_diagnostics(history),
             n_particles=n_particles,
             max_populations=max_populations,

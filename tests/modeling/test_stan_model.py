@@ -83,7 +83,7 @@ def _program(tmp_path, text: str) -> str:
 
 @pytest.mark.usefixtures("_stanc")
 class TestTheProgramText:
-    """The given slots and the parameter record are read from stanc and the program text."""
+    """The inputs and the parameter record are read from stanc and the program text."""
 
     def test_bounds_arrays_and_matrix_types_are_read(self, tmp_path):
         stan_file = _program(
@@ -105,18 +105,20 @@ class TestTheProgramText:
         )
         model = StanModel(stan_file, label="program")
         assert list(model.given_spec) == ["N", "x"]
-        shapes = {name: spec.shape for name, spec in model.event_spec.spec.children.items()}
+        shapes = {name: spec.shape for name, spec in model.event_spec.term_spec.children.items()}
         assert shapes == {"L": (3, 3), "z": (2, "N"), "p": (4,), "B": ("N", 2)}
 
     def test_a_scalar_entry_binds_the_sizes_it_names(self, tmp_path):
         stan_file = _program(tmp_path, "data { int K; } parameters { vector[K] b; } model { }")
-        assert StanModel(stan_file, data={"K": 3}, label="p").event_spec.spec["b"].shape == (3,)
+        assert StanModel(stan_file, data={"K": 3}, label="p").event_spec.term_spec["b"].shape == (
+            3,
+        )
 
     def test_a_size_expression_is_a_symbolic_dimension(self, tmp_path):
         stan_file = _program(
             tmp_path, "data { int K; vector[K] y; } parameters { vector[K - 1] b; } model { }"
         )
-        assert StanModel(stan_file, label="p").event_spec.spec["b"].shape == ("b_0",)
+        assert StanModel(stan_file, label="p").event_spec.term_spec["b"].shape == ("b_0",)
 
     def test_an_unreadable_declaration_raises(self, tmp_path):
         stan_file = _program(tmp_path, "parameters { tuple(real, real) t; } model { }")
@@ -263,7 +265,7 @@ class TestStanPosteriorDensity:
 
 class TestStanPosteriorBlocks:
     def test_the_declared_record_shapes(self, structured_model):
-        assert structured_model.event_spec.spec.leaf_shapes == {
+        assert structured_model.event_spec.term_spec.leaf_shapes == {
             "mu": (),
             "theta": (3,),
             "L": (2, 2),
@@ -322,7 +324,7 @@ class TestUnconstrainedStanView:
     def test_blocks_follow_unconstrained_names(self, structured_model):
         view = structured_model.as_unconstrained_distribution()
         assert view.label == "structured_unconstrained"
-        assert view.event_spec.spec.leaf_shapes["p"] == (2,)
+        assert view.event_spec.term_spec.leaf_shapes["p"] == (2,)
 
     def test_the_density_is_finite_and_unnormalized(self, structured_model):
         view = structured_model.as_unconstrained_distribution()
@@ -336,5 +338,5 @@ class TestStanModelConditionOn:
         report = condition_on.check(
             StanModel(conjugate_stan_file, label="normal_mean"), {"N": 3, "y": [1.0, 2.0, 3.0]}
         )
-        assert report.route == "bind_given_slots"
+        assert report.route == "bind_inputs"
         assert report.method in ("nutpie_nuts", "cmdstan_nuts", "blackjax_rwmh")

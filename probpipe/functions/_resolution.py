@@ -64,7 +64,7 @@ class StandIn:
     """A stand-in for one point of a lifted argument, carrying the point's declaration.
 
     A check draws nothing, so where a call passes a law's draw the check passes
-    this stand-in, whose spec is the law's event declaration, and an empty
+    this stand-in, whose spec is the law's event spec, and an empty
     sweep's point holds one whose spec is the batch's element declaration.
     """
 
@@ -329,7 +329,9 @@ def _label(candidate: Any, report: Feasibility) -> str:
 
 def _draws(values: Mapping[str, Any], plan: BroadcastPlan) -> dict[FunctionInputRef, StandIn]:
     """A stand-in for a draw of each law the call broadcasts over, by its reference."""
-    return {ref: StandIn(input_ref_value(values, ref).event_spec.spec) for ref in plan.dist_args}
+    return {
+        ref: StandIn(input_ref_value(values, ref).event_spec.term_spec) for ref in plan.dist_args
+    }
 
 
 def _stand_ins(values: Mapping[str, Any], plan: BroadcastPlan) -> dict[FunctionInputRef, StandIn]:
@@ -429,7 +431,7 @@ def lifted_declaration(
 
     The point binds a stand-in for a draw of each law the call lifts and for an
     element of each batch it sweeps, and it evaluates and samples nothing. The
-    law of the evaluations therefore declares the components that one point's
+    law of the evaluations therefore declares the outputs that one point's
     result declares, as ``log_prob`` for a score.
 
     Parameters

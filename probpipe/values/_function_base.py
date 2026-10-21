@@ -37,7 +37,7 @@ from ..core._numeric_array import _inferred_spec
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_default, format_names, public_class_name, term_repr, type_name
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
-from ..core._specs import InputSpec, OpaqueSpec, OutputSpec
+from ..core._specs import InputSpec, OpaqueSpec, OutputSpec, _root_output_name
 from ..core.config import WorkflowKind, _checked_count, config
 from ..core.tracked import Annotated, TrackedTerm, _callable_label, _callable_name
 from ._binding import (
@@ -60,15 +60,15 @@ _WARNING_SKIP_PREFIXES = (os.path.dirname(os.path.dirname(__file__)) + os.sep,)
 
 @dataclass(frozen=True, init=False)
 class FunctionSpec(TermSpec):
-    """A callable's optional input slots and output component declaration.
+    """A callable's optional inputs and output spec.
 
     Parameters
     ----------
     input_spec : InputSpec or None
-        Named input slots. None leaves the input side unspecified.
+        Named inputs. None leaves the input side unspecified.
     output_spec : OutputSpec or None
-        The returned term and its exposed components. None leaves that side
-        unspecified; a named type hole leaves only its term kind unspecified.
+        The returned term and its exposed outputs. None leaves that side
+        unspecified; a named unspecified output type leaves only its term kind unspecified.
 
     Raises
     ------
@@ -79,9 +79,9 @@ class FunctionSpec(TermSpec):
     -----
     ``is_valid`` admits any callable without executing it. Dimension binding
     reads declarations when available, sharing one dimension scope across both
-    sides. Missing declarations add no bindings. Incompatible slot names,
+    sides. Missing declarations add no bindings. Incompatible input names,
     output exposure, kinds, or dimensions raise ValueError. Labels are outside
-    this spec; component names participate in declaration matching.
+    this spec; output names participate in declaration matching.
 
     Examples
     --------
@@ -124,7 +124,7 @@ class FunctionSpec(TermSpec):
     def free_dims(self) -> frozenset[str]:
         """Unbound dimensions across both sides, in one scope."""
         inputs = self.input_spec.free_dims if self.input_spec is not None else frozenset()
-        output = self.output_spec.spec if self.output_spec is not None else None
+        output = self.output_spec.term_spec if self.output_spec is not None else None
         return inputs | (output.free_dims if output is not None else frozenset())
 
     def _substitute_dims(self, bindings: Mapping[str, int | str]) -> FunctionSpec:
@@ -137,7 +137,7 @@ class FunctionSpec(TermSpec):
         )
         output = self.output_spec
         if output is not None and output.spec is not None:
-            output = output._with_spec(output.spec._substitute_dims(bindings))
+            output = output._with_term_spec(output.spec._substitute_dims(bindings))
         return FunctionSpec(inputs, output)
 
     def _bind_dims_from_value(self, value: Callable, bindings: dict[str, int], path: str) -> None:
@@ -153,21 +153,21 @@ class FunctionSpec(TermSpec):
         if self.input_spec is not None and actual.input_spec is not None:
             if self.input_spec.keys() != actual.input_spec.keys():
                 raise ValueError(
-                    f"{path} has incompatible input slots {list(actual.input_spec)}; "
+                    f"{path} has incompatible inputs {list(actual.input_spec)}; "
                     f"the declaration expects {list(self.input_spec)}"
                 )
             for name, spec in self.input_spec.items():
                 _unify_specs(spec, actual.input_spec[name], bindings, f"{path}/input/{name}")
         if self.output_spec is not None and actual.output_spec is not None:
             expected, observed = self.output_spec, actual.output_spec
-            if expected.components.keys() != observed.components.keys():
+            if expected.outputs.keys() != observed.outputs.keys():
                 raise ValueError(
-                    f"{path} has incompatible output components {list(observed.components)}; "
-                    f"the declaration expects {list(expected.components)}"
+                    f"{path} has incompatible outputs {list(observed.outputs)}; "
+                    f"the declaration expects {list(expected.outputs)}"
                 )
-            if expected._component_name != observed._component_name:
+            if _root_output_name(expected) != _root_output_name(observed):
                 raise ValueError(
-                    f"{path} has incompatible output components: {observed!r} does not "
+                    f"{path} has incompatible outputs: {observed!r} does not "
                     f"match the declared {expected!r}"
                 )
             if expected.spec is not None and observed.spec is not None:
@@ -223,12 +223,12 @@ class _CallableFunctionImplementation:
         return self.callable(*bound_inputs.args, **bound_inputs.kwargs)
 
 
-#: The output component of a Function whose callable has no usable name.
-_NAMELESS_COMPONENT = "result"
+#: The output of a Function whose callable has no usable name.
+_NAMELESS_OUTPUT = "result"
 
 
-def _callable_component(fn: Any) -> str:
-    """The default output component of a Function wrapping *fn*.
+def _callable_output_name(fn: Any) -> str:
+    """The default output of a Function wrapping *fn*.
 
     It is the callable's name by :func:`~probpipe.core.tracked._callable_name`,
     so a lambda's is ``f``, when that name is a Python identifier and no
@@ -244,23 +244,23 @@ def _callable_component(fn: Any) -> str:
     Returns
     -------
     str
-        The component, which is a valid component name.
+        The output, which is a valid output name.
     """
     name = _callable_name(fn)
     if name is None or not name.isidentifier() or keyword.iskeyword(name):
-        return _NAMELESS_COMPONENT
+        return _NAMELESS_OUTPUT
     return name
 
 
 def _complete_output_spec(
-    output_spec: OutputSpec | TermSpec | None, *, component: str
+    output_spec: OutputSpec | TermSpec | None, *, output_name: str
 ) -> OutputSpec | None:
     if output_spec is None or isinstance(output_spec, OutputSpec):
         return output_spec
     if isinstance(output_spec, RecordSpec):
         return OutputSpec(output_spec)
     if isinstance(output_spec, TermSpec):
-        return OutputSpec.default(output_spec, component=component)
+        return OutputSpec.default(output_spec, output_name=output_name)
     raise TypeError(
         f"output_spec must be an OutputSpec, TermSpec, or None; got {type(output_spec).__name__}"
     )
@@ -289,7 +289,7 @@ def _bind_function_inputs(
 
 
 class _ResultKindMismatch(ValueError):
-    """A returned term's overall kind differs from its output declaration."""
+    """A returned term's overall kind differs from its output spec."""
 
 
 def _validate_return_kind(spec: TermSpec, result: Any, path: str) -> None:
@@ -394,13 +394,13 @@ def _validate_function_output(
     """
     if output_spec is None:
         return None
-    spec = output_spec.spec
+    spec = output_spec.term_spec
     if spec is None:
         spec = _produced_spec(result)
     resolved = dict(bindings)
     path = f"Function {function_name!r} output"
-    if output_spec._component_name is not None:
-        path += f"/{output_spec._component_name}"
+    if _root_output_name(output_spec) is not None:
+        path += f"/{_root_output_name(output_spec)}"
     _validate_return_kind(spec, result, path)
     actual_spec = getattr(result, "spec", None)
     if isinstance(actual_spec, TermSpec):
@@ -410,7 +410,7 @@ def _validate_function_output(
     concrete = spec._substitute_dims(resolved)
     _validate_output_values(concrete, result, path)
     if isinstance(concrete, FunctionSpec) and concrete.input_spec is not None and callable(result):
-        # A returned callable's signature must match the declared input slots,
+        # A returned callable's signature must match the declared inputs,
         # under apply as under a call, and checking it does not invoke it.
         _validate_function_declarations(
             function_name=function_name,
@@ -424,7 +424,7 @@ def _validate_function_output(
         )
     if not isinstance(actual_spec, TermSpec):
         actual_spec = _produced_spec(result)
-    return output_spec._with_spec(_complete_output_metadata(concrete, actual_spec))
+    return output_spec._with_term_spec(_complete_output_metadata(concrete, actual_spec))
 
 
 def _produced_spec(result: Any) -> TermSpec:
@@ -479,9 +479,9 @@ def _validate_declared_support(expected: TermSpec, actual: TermSpec, path: str) 
     """Refuse an actual spec whose support a declared support does not contain, leaf by leaf.
 
     Records and batches are read field by field and element by element, and a
-    law's declaration component by component of its event, so a returned law
+    law's declaration output by output of its event, so a returned law
     whose draws leave the declared support is refused, as completion checks the
-    produced value (II.2). A law's declaration has no type hole, so both sides
+    produced value (II.2). A law's declaration has no unspecified output type, so both sides
     are concrete there. Supports are compared only where both are declared.
 
     Parameters
@@ -492,7 +492,7 @@ def _validate_declared_support(expected: TermSpec, actual: TermSpec, path: str) 
         The spec of the returned term.
     path : str
         The location of the two specs in the output, which grows by one segment
-        per field or component the check descends into.
+        per field or output the check descends into.
 
     Raises
     ------
@@ -510,9 +510,9 @@ def _validate_declared_support(expected: TermSpec, actual: TermSpec, path: str) 
     elif isinstance(expected, BatchSpec) and isinstance(actual, BatchSpec):
         _validate_declared_support(expected.element_spec, actual.element_spec, path)
     elif isinstance(expected_event, OutputSpec) and isinstance(actual_event, OutputSpec):
-        components = actual_event.components
-        for component, child in expected_event.components.items():
-            _validate_declared_support(child, components[component], f"{path}/{component}")
+        outputs = actual_event.outputs
+        for output_name, child in expected_event.outputs.items():
+            _validate_declared_support(child, outputs[output_name], f"{path}/{output_name}")
     elif isinstance(expected, NumericArraySpec) and isinstance(actual, NumericArraySpec):
         if (
             expected.support is not None
@@ -564,7 +564,7 @@ def _validate_stacked_output(
     function_name : str
         The function's label, which error messages name.
     output_spec : OutputSpec or None
-        The function's output declaration. The check runs only when it declares
+        The function's output spec. The check runs only when it declares
         a type.
     batch : Any
         The stacked results. A batch is checked against the supports of its own
@@ -578,11 +578,11 @@ def _validate_stacked_output(
     from ..core._batch import BatchSpec
 
     spec = getattr(batch, "spec", None)
-    if output_spec is None or output_spec.spec is None or not isinstance(spec, BatchSpec):
+    if output_spec is None or output_spec.term_spec is None or not isinstance(spec, BatchSpec):
         return
     path = f"Function {function_name!r} output"
-    if output_spec._component_name is not None:
-        path += f"/{output_spec._component_name}"
+    if _root_output_name(output_spec) is not None:
+        path += f"/{_root_output_name(output_spec)}"
     _validate_output_values(spec, batch, path)
 
 
@@ -651,7 +651,7 @@ def _validate_function_declarations(
             )
         if set(input_spec) != set(parameters):
             raise ValueError(
-                f"Function {function_name!r} input_spec slots {sorted(input_spec)} "
+                f"Function {function_name!r} input_spec inputs {sorted(input_spec)} "
                 f"must exactly match signature parameters {sorted(parameters)}"
             )
     unexpected = set(construction_bindings).difference(parameters)
@@ -680,7 +680,7 @@ def _validate_function_declarations(
         spec._bind_dims_from_value(value, effective, f"Function {function_name!r} {source}/{name}")
 
 
-#: The check a result declaration with a type hole defers to the return.
+#: The check a result declaration with an unspecified output type defers to the return.
 _COMPLETED_AT_RETURN = "the result's type is completed from the returned value"
 
 #: The engine's controls, each with its default. A default count of None stands
@@ -841,15 +841,15 @@ class Function(TrackedTerm, Annotated):
         Optional non-empty display alias. Defaults to the callable name, or ``𝒻``
         for a lambda; a callable without a name requires an explicit label.
     input_spec : InputSpec or Mapping[str, TermSpec] or None
-        Authoritative input slots matching fixed signature parameters by name.
+        Authoritative inputs matching fixed signature parameters by name.
         Declared inputs cannot accompany variadic parameters. Defaults and
         construction bindings must satisfy the declaration.
     output_spec : OutputSpec or TermSpec or None
         Optional result declaration. A bare RecordSpec exposes its fields;
         another bare spec uses the callable's original name (``f`` for a lambda,
         ``result`` for a nameless callable). Without a declaration, the return
-        type is inferred with the same component rule. Display aliases never
-        change this default component. A named type hole is inferred independently for each call.
+        type is inferred with the same output rule. Display aliases never
+        change this default output. A named unspecified output type is inferred independently for each call.
     output_label : str or None
         Optional result alias. Without one, a call on values labels a value
         result by the application, as ``f(2.0)``, and a returned law or kernel
@@ -914,9 +914,9 @@ class Function(TrackedTerm, Annotated):
         as ``Function(g, "g")``; and for a callable given as ``fn=`` or
         ``func=``.
     ValueError
-        For mismatched input slots, invalid defaults or bindings, unknown
+        For mismatched inputs, invalid defaults or bindings, unknown
         dispatch, a nonpositive worker, evaluation, or draw count, conversions for a
-        parameter the signature lacks, or invalid component names.
+        parameter the signature lacks, or invalid output names.
     NotImplementedError
         If a differentiability claim is given, which Function does not carry
         yet.
@@ -940,8 +940,8 @@ class Function(TrackedTerm, Annotated):
     Only the engine's controls are admitted, since a registered method declares
     no controls of its own: its budgets are entries of ``method_options``.
 
-    ``spec`` contains only input/output declarations. ``with_label`` changes the
-    function label and callable metadata; explicit output aliases and component
+    ``spec`` contains only input/output specs. ``with_label`` changes the
+    function label and callable metadata; explicit output aliases and output
     names are preserved. ``str(f)`` returns :attr:`notation`, the label followed
     by the parameters, as ``predict(x, y)``, and the repr keeps the label first.
     ``using`` returns a shallow copy with revised controls. A Function
@@ -950,14 +950,14 @@ class Function(TrackedTerm, Annotated):
 
     The engine reads three declarations from the Function it runs (V.1): what
     each parameter accepts, the result declaration, and the realization. A
-    Function declares them by its input declaration and annotations, its
+    Function declares them by its input spec and annotations, its
     ``output_spec``, and its body; a subclass realized by routes, as an
     operation is, declares them through ``_roles``, :meth:`_plan_route_inputs`, and
     :meth:`_route_candidates`.
     """
 
     #: The kinds each parameter with a role accepts, each named by its spec class
-    #: (VI.0). A parameter with no role is admitted by its input declaration and
+    #: (VI.0). A parameter with no role is admitted by its input spec and
     #: lifted as its annotation states, as every parameter of a Function is.
     _roles: Mapping[str, tuple[type[TermSpec], ...]] = MappingProxyType({})
 
@@ -966,7 +966,7 @@ class Function(TrackedTerm, Annotated):
     _implementation: _FunctionImplementation
     _spec: FunctionSpec
     _output_label: str | None
-    _output_component: str
+    _output_name: str
     _options: Mapping[str, Any]
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
@@ -1062,8 +1062,8 @@ class Function(TrackedTerm, Annotated):
                     f"got {type(input_spec).__name__}"
                 )
             input_spec = InputSpec(input_spec)
-        component = _callable_component(metadata_source)
-        output_spec = _complete_output_spec(output_spec, component=component)
+        output_name = _callable_output_name(metadata_source)
+        output_spec = _complete_output_spec(output_spec, output_name=output_name)
         construction_bindings = dict(bind or {})
         _validate_function_declarations(
             function_name=label,
@@ -1084,7 +1084,7 @@ class Function(TrackedTerm, Annotated):
         set_attribute("_signature_info", signature_info)
         set_attribute("_spec", FunctionSpec(input_spec, output_spec))
         set_attribute("_output_label", output_label)
-        set_attribute("_output_component", component)
+        set_attribute("_output_name", output_name)
         set_attribute("_options", MappingProxyType(options))
         set_attribute("_bind", MappingProxyType(construction_bindings))
         set_attribute("__doc__", getattr(metadata_source, "__doc__", None))
@@ -1126,7 +1126,7 @@ class Function(TrackedTerm, Annotated):
 
     @property
     def input_spec(self) -> InputSpec | None:
-        """The authoritative input slots, or None when undeclared."""
+        """The authoritative inputs, or None when undeclared."""
         return self.spec.input_spec
 
     @property
@@ -1289,7 +1289,7 @@ class Function(TrackedTerm, Annotated):
             applicability check fails, or the declarations conflict, as the
             call raises.
         ValueError
-            If an empty sweep lacks a concrete output declaration after input
+            If an empty sweep lacks a concrete output spec after input
             dimensions bind.
         ResolutionError
             If a conversion has no converter, or the ``method`` control names no
@@ -1304,7 +1304,7 @@ class Function(TrackedTerm, Annotated):
     ) -> None:
         """Store *expression* and its label, which the function's Python names follow.
 
-        Explicit output aliases and the output declaration are kept.
+        Explicit output aliases and the output spec are kept.
 
         Parameters
         ----------
@@ -1328,9 +1328,9 @@ class Function(TrackedTerm, Annotated):
     def apply(self, *args: Any, **kwargs: Any) -> Any:
         """Evaluate one point, validating declarations and returning the raw result.
 
-        Python binding errors raise TypeError. Input or output declaration
+        Python binding errors raise TypeError. Input or output spec
         violations raise ValueError, including a returned kind that differs
-        from the output declaration. Dimension bindings are local to this call.
+        from the output spec. Dimension bindings are local to this call.
         Existing returned objects retain their identity and metadata. A Function
         realized by routes admits each argument by its role, with no lifting,
         raising ``ApplicabilityError`` for a kind its role refuses; runs the
@@ -1391,7 +1391,7 @@ class Function(TrackedTerm, Annotated):
         """What the routes read at one point: its call object, result declaration, and deferrals.
 
         A Function's call object is *argument_values*, and its result
-        declaration its ``output_spec``, whose type hole defers the type to the
+        declaration its ``output_spec``, whose unspecified output type defers the type to the
         return.
 
         Parameters
@@ -1410,7 +1410,7 @@ class Function(TrackedTerm, Annotated):
         result_declaration = self.output_spec
         deferred = (
             ()
-            if result_declaration is not None and result_declaration.spec is not None
+            if result_declaration is not None and result_declaration.term_spec is not None
             else (_COMPLETED_AT_RETURN,)
         )
         return argument_values, result_declaration, deferred
@@ -1456,7 +1456,7 @@ class Function(TrackedTerm, Annotated):
             declarations conflict, or matching levels have shapes that cannot
             broadcast.
         ValueError
-            If an empty sweep lacks a concrete output declaration after input
+            If an empty sweep lacks a concrete output spec after input
             dimensions bind.
         ResolutionError
             If no route realizes the call.
@@ -1769,7 +1769,7 @@ class SupportsDifferentiation(Protocol):
     """An object that declares which of its values gradients propagate through.
 
     The claim is fixed at construction. For a map the template is a sub-schema
-    of its numeric input slots, and for a distribution a sub-schema of its
+    of its numeric inputs, and for a distribution a sub-schema of its
     numeric event schema.
     """
 
@@ -1788,7 +1788,7 @@ def is_differentiable(x: Any, values: NamedTree | None = None) -> bool:
         A map or a distribution.
     values : NamedTree or None
         The values to test, by their paths. None tests every numeric value of
-        *x*: its numeric input slots for a map, its numeric event values for a
+        *x*: its numeric inputs for a map, its numeric event values for a
         distribution.
 
     Returns

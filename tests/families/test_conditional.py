@@ -77,9 +77,9 @@ class _UnitScaleGaussian(GLMFamily):
     canonical_link = GaussianFamily.canonical_link
     has_dispersion = False
 
-    def build(self, component, mean, dispersion=None, *, label=None, event_spec=None):
+    def build(self, output_name, mean, dispersion=None, *, label=None, event_spec=None):
         return MultivariateNormal(
-            component, mean, cov=jnp.eye(mean.shape[0]), label=label, event_spec=event_spec
+            output_name, mean, cov=jnp.eye(mean.shape[0]), label=label, event_spec=event_spec
         )
 
 
@@ -134,8 +134,8 @@ class TestTheResponseFamilies:
         law = family().build("y", jnp.array([0.2, 0.5, 0.9]), _dispersion(family))
         assert isinstance(law, Distribution)
         assert isinstance(law, NumericDistribution)
-        assert list(law.event_spec.components) == ["y"]
-        assert law.event_spec.spec.shape == (3,)
+        assert list(law.event_spec.outputs) == ["y"]
+        assert law.event_spec.term_spec.shape == (3,)
         for protocol in (SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance):
             assert isinstance(law, protocol), protocol.__name__
         assert law._sample(jax.random.PRNGKey(0)).shape == (3,)
@@ -183,7 +183,7 @@ class TestTheResponseFamilies:
         np.testing.assert_allclose(law._log_prob(y), separate, rtol=1e-5)
 
     @pytest.mark.parametrize("family", _FAMILIES)
-    def test_event_spec_names_the_component(self, family):
+    def test_event_spec_names_the_output(self, family):
         law = family().build(
             "counts",
             jnp.array([0.2, 0.5]),
@@ -192,7 +192,7 @@ class TestTheResponseFamilies:
             event_spec=OutputSpec(counts=None),
         )
         assert law.label == "y"
-        assert list(law.event_spec.components) == ["counts"]
+        assert list(law.event_spec.outputs) == ["counts"]
 
     def test_a_missing_dispersion_raises(self):
         with pytest.raises(TypeError, match="requires a dispersion"):
@@ -222,36 +222,36 @@ class TestTheResponseFamilies:
 
 class TestTheDeclarations:
     @pytest.mark.parametrize("family", _FAMILIES)
-    def test_the_given_slots_and_the_response(self, family):
+    def test_the_inputs_and_the_response(self, family):
         likelihood = glm_likelihood("y", family())
         assert isinstance(likelihood, ConditionalDistribution)
         expected = ["X", "beta", "dispersion"] if family.has_dispersion else ["X", "beta"]
         assert list(likelihood.given_spec) == expected
         assert likelihood.given_spec["X"].shape == ("obs", "features")
         assert likelihood.given_spec["beta"].shape == ("features",)
-        assert list(likelihood.event_spec.components) == ["y"]
-        assert likelihood.event_spec.spec.shape == ("obs",)
+        assert list(likelihood.event_spec.outputs) == ["y"]
+        assert likelihood.event_spec.term_spec.shape == ("obs",)
 
     def test_the_dimensions_are_symbolic_until_bound(self):
         likelihood = glm_likelihood("y", BernoulliFamily())
         assert likelihood.spec.free_dims == {"obs", "features"}
         bound = likelihood.with_dim_sizes(obs=4, features=2)
         assert bound.given_spec["X"].shape == (4, 2)
-        assert bound.event_spec.spec.shape == (4,)
+        assert bound.event_spec.term_spec.shape == (4,)
 
-    def test_X_at_construction_binds_the_dimensions_and_leaves_its_slot(self, X):
+    def test_X_at_construction_binds_the_dimensions_and_leaves_its_input(self, X):
         likelihood = glm_likelihood("y", PoissonFamily(), X=X)
         assert list(likelihood.given_spec) == ["beta"]
         assert likelihood.given_spec["beta"].shape == (2,)
-        assert likelihood.event_spec.spec.shape == (4,)
+        assert likelihood.event_spec.term_spec.shape == (4,)
 
-    def test_the_dispersion_at_construction_leaves_its_slot(self, X):
+    def test_the_dispersion_at_construction_leaves_its_input(self, X):
         likelihood = glm_likelihood("y", GaussianFamily(), X=X, dispersion=0.5)
         assert list(likelihood.given_spec) == ["beta"]
 
     def test_event_spec_names_the_response(self, X):
         likelihood = glm_likelihood("counts", PoissonFamily(), X=X, label="y")
-        assert list(likelihood.event_spec.components) == ["counts"]
+        assert list(likelihood.event_spec.outputs) == ["counts"]
 
     def test_both_sides_are_numeric(self, X):
         assert isinstance(
@@ -269,8 +269,8 @@ class TestTheDeclarations:
         ):
             assert isinstance(likelihood, protocol), protocol.__name__
 
-    def test_a_response_named_like_a_given_slot_raises(self):
-        with pytest.raises(ValueError, match="given slot"):
+    def test_a_response_named_like_an_input_raises(self):
+        with pytest.raises(ValueError, match="input"):
             glm_likelihood("beta", PoissonFamily())
 
     def test_a_declared_response_type_binds_the_observations_on_both_sides(self):
@@ -280,7 +280,7 @@ class TestTheDeclarations:
             event_spec=OutputSpec(counts=NumericArraySpec((5,))),
             label="y",
         )
-        assert likelihood.event_spec.spec.shape == (5,)
+        assert likelihood.event_spec.term_spec.shape == (5,)
         assert likelihood.given_spec["X"].shape == (5, "features")
 
     def test_a_declared_response_type_that_agrees_with_X_is_kept(self, X, beta):
@@ -291,14 +291,14 @@ class TestTheDeclarations:
             event_spec=OutputSpec(counts=NumericArraySpec((4,))),
             label="y",
         )
-        assert likelihood.event_spec.spec.shape == (4,)
+        assert likelihood.event_spec.term_spec.shape == (4,)
         law = likelihood._condition_on({"beta": beta})
-        assert list(law.event_spec.components) == ["counts"]
+        assert list(law.event_spec.outputs) == ["counts"]
 
-    def test_a_renamed_kernel_keeps_its_response_component(self, X):
+    def test_a_renamed_kernel_keeps_its_response_output(self, X):
         likelihood = glm_likelihood("y", PoissonFamily(), X=X).with_label("L")
         assert likelihood.label == "L"
-        assert list(likelihood.event_spec.components) == ["y"]
+        assert list(likelihood.event_spec.outputs) == ["y"]
 
 
 class TestACustomFamily:
@@ -307,8 +307,8 @@ class TestACustomFamily:
     def test_the_likelihood_assembles_from_the_declared_members(self, X):
         likelihood = glm_likelihood("y", _UnitScaleGaussian(), X=X)
         assert list(likelihood.given_spec) == ["beta"]
-        assert list(likelihood.event_spec.components) == ["y"]
-        assert likelihood.event_spec.spec.shape == (4,)
+        assert list(likelihood.event_spec.outputs) == ["y"]
+        assert likelihood.event_spec.term_spec.shape == (4,)
 
     def test_the_law_is_the_familys_law_at_the_mean(self, X, beta):
         law = glm_likelihood("y", _UnitScaleGaussian(), X=X)._condition_on({"beta": beta})
@@ -390,33 +390,33 @@ class TestTheLaw:
     def test_the_law_carries_the_declared_response(self, X, beta):
         likelihood = glm_likelihood("counts", PoissonFamily(), X=X, label="y")
         law = likelihood._condition_on({"beta": beta})
-        assert list(law.event_spec.components) == ["counts"]
-        assert law.event_spec.spec.shape == (4,)
+        assert list(law.event_spec.outputs) == ["counts"]
+        assert law.event_spec.term_spec.shape == (4,)
 
-    def test_the_law_of_a_renamed_kernel_keeps_the_response_component(self, X, beta):
+    def test_the_law_of_a_renamed_kernel_keeps_the_response_output(self, X, beta):
         law = (
             glm_likelihood("y", PoissonFamily(), X=X).with_label("L")._condition_on({"beta": beta})
         )
         assert law.label == "L"
-        assert list(law.event_spec.components) == ["y"]
+        assert list(law.event_spec.outputs) == ["y"]
 
     def test_a_fixed_integer_dispersion_builds_the_law(self, X, beta):
         law = glm_likelihood("y", GaussianFamily(), X=X, dispersion=2)._condition_on({"beta": beta})
         np.testing.assert_allclose(law._variance(), jnp.full(4, 4.0), rtol=1e-6)
 
-    def test_binding_every_slot_with_keywords(self, X, beta):
+    def test_binding_every_input_with_keywords(self, X, beta):
         likelihood = glm_likelihood("y", GaussianFamily())
         law = likelihood._condition_on({"X": X}, beta=beta, dispersion=0.5)
         np.testing.assert_allclose(law._mean(), X @ beta, rtol=1e-6)
         np.testing.assert_allclose(law._variance(), jnp.full(4, 0.25), rtol=1e-6)
 
-    def test_binding_some_slots_returns_a_kernel_over_the_rest(self, X, beta):
+    def test_binding_some_inputs_returns_a_kernel_over_the_rest(self, X, beta):
         likelihood = glm_likelihood("y", GaussianFamily())
         rest = likelihood._condition_on({"X": X})
         assert isinstance(rest, ConditionalDistribution)
         assert list(rest.given_spec) == ["beta", "dispersion"]
         assert rest.given_spec["beta"].shape == (2,)
-        assert rest.event_spec.spec.shape == (4,)
+        assert rest.event_spec.term_spec.shape == (4,)
         law = rest._condition_on({"beta": beta, "dispersion": 0.5})
         np.testing.assert_allclose(law._mean(), X @ beta, rtol=1e-6)
 
@@ -425,13 +425,13 @@ class TestTheLaw:
         assert list(rest.given_spec) == ["X"]
         assert rest.given_spec["X"].shape == ("obs", 2)
 
-    def test_binding_some_slots_leaves_the_original_kernel_unchanged(self, X):
+    def test_binding_some_inputs_leaves_the_original_kernel_unchanged(self, X):
         likelihood = glm_likelihood("y", BernoulliFamily())
         likelihood._condition_on({"X": X})
         assert list(likelihood.given_spec) == ["X", "beta"]
 
-    def test_an_unknown_slot_raises(self, X, beta):
-        with pytest.raises(KeyError, match="unknown given slot 'gamma'; available given slots"):
+    def test_an_unknown_input_raises(self, X, beta):
+        with pytest.raises(KeyError, match="unknown input 'gamma'; available inputs"):
             glm_likelihood("y", PoissonFamily(), X=X)._condition_on({"beta": beta, "gamma": 1.0})
 
     def test_a_value_of_the_wrong_shape_raises(self, X):
@@ -519,9 +519,9 @@ class TestTheConditionalCapabilities:
             likelihood._condition_on(given)._sample(key, (2,)),
         )
 
-    def test_a_capability_needs_every_given_slot(self, likelihood, beta):
+    def test_a_capability_needs_every_input(self, likelihood, beta):
         with pytest.raises(
-            KeyError, match=r"'ℙ' is missing values for the given slots \['dispersion'\]"
+            KeyError, match=r"'ℙ' is missing values for the inputs \['dispersion'\]"
         ):
             likelihood._conditional_mean({"beta": beta})
 
@@ -534,7 +534,7 @@ class TestComposition:
         joint = likelihood * prior * scale
         assert isinstance(joint, FactoredDistribution)
         assert joint.factors == (likelihood, prior, scale)
-        assert list(joint.event_spec.components) == ["y", "beta", "dispersion"]
+        assert list(joint.event_spec.outputs) == ["y", "beta", "dispersion"]
 
     def test_an_unbound_design_leaves_a_conditional_joint(self, X):
         likelihood = glm_likelihood("y", BernoulliFamily())
@@ -544,7 +544,7 @@ class TestComposition:
         assert joint.given_spec["X"].shape == ("obs", 2)
         bound = joint._condition_on({"X": X})
         assert isinstance(bound, FactoredDistribution)
-        assert bound.event_spec.components["y"].shape == (4,)
+        assert bound.event_spec.outputs["y"].shape == (4,)
 
     def test_the_joint_samples(self, X):
         likelihood = glm_likelihood("y", PoissonFamily(), X=X)
@@ -562,7 +562,7 @@ class TestTheOperations:
         expected = likelihood._condition_on({"beta": beta})._log_prob(y)
         np.testing.assert_allclose(log_prob(likelihood, y, given={"beta": beta}), expected)
 
-    def test_condition_on_binds_the_given_slots(self, X, beta):
+    def test_condition_on_binds_the_inputs(self, X, beta):
         likelihood = glm_likelihood("y", PoissonFamily(), X=X)
         law = condition_on(likelihood, {"beta": beta})
         np.testing.assert_allclose(law._mean(), jnp.exp(X @ beta), rtol=1e-5)
@@ -578,19 +578,19 @@ class TestTheLinearGaussianKernel:
     def A(self):
         return DenseLinOp(jnp.array([[1.0, 2.0], [0.0, 1.0], [1.0, -1.0]]))
 
-    @pytest.mark.pending(reason="the kernel reads its given slot and event type from A")
-    def test_the_given_slot_is_the_operator_input_slot(self, A):
+    @pytest.mark.pending(reason="the kernel reads its input and event type from A")
+    def test_the_input_is_the_operator_input(self, A):
         kernel = LinearGaussianConditional("y", A, jnp.zeros(3), DenseLinOp(jnp.eye(3)))
         assert len(kernel.given_spec) == 1
-        assert list(kernel.event_spec.components) == ["y"]
-        assert kernel.event_spec.spec.shape == (3,)
+        assert list(kernel.event_spec.outputs) == ["y"]
+        assert kernel.event_spec.term_spec.shape == (3,)
 
     @pytest.mark.pending(reason="conditioning gives N(A @ s + b, cov)")
     def test_conditioning_gives_the_gaussian_law(self, A):
         b = jnp.array([0.5, 0.0, -1.0])
         kernel = LinearGaussianConditional("y", A, b, DenseLinOp(2.0 * jnp.eye(3)))
-        (slot,) = kernel.given_spec
+        (input_name,) = kernel.given_spec
         s = jnp.array([1.0, 1.0])
-        law = kernel._condition_on({slot: s})
+        law = kernel._condition_on({input_name: s})
         np.testing.assert_allclose(law._mean(), A.to_dense() @ s + b, rtol=1e-6)
         np.testing.assert_allclose(law._cov().to_dense(), 2.0 * jnp.eye(3), rtol=1e-6)

@@ -1150,7 +1150,7 @@ class TestTypePreFilter:
         with pytest.raises(ResolutionError):
             reg.execute(Right())
 
-    def test_binary_both_slots_must_match(self):
+    def test_binary_both_inputs_must_match(self):
         reg = BinaryDispatchRegistry()
         reg.register(FakeBinary("m", left=(Left,), right=(Right,), result="ok"))
         assert reg.execute(LeftSub(), Right()) == "ok"

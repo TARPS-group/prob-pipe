@@ -42,7 +42,7 @@ from probpipe.core._dispatch import (
     MathematicalDomainError,
     ResolutionError,
 )
-from probpipe.core._specs import OutputSpec
+from probpipe.core._specs import OutputSpec, _has_record_outputs
 from probpipe.core.constraints import non_negative, real, unit_interval
 from probpipe.distributions._capabilities import (
     SupportsConditionalSampling,
@@ -62,7 +62,7 @@ from probpipe.functions import _rules
 from probpipe.linalg import LinOp
 from probpipe.operations import RouteSource
 from probpipe.operations._moments import (
-    _ByComponent,
+    _ByOutput,
     _root,
     cov,
     expectation,
@@ -115,8 +115,8 @@ def _dependent_joint() -> Any:
 class _Coupled(Distribution, SupportsSampling, SupportsMarginals):
     """``a ~ Normal(1, 1)`` and ``b = -a``: a dependent record that claims no moment.
 
-    Each component's marginal is a normal law with every closed form, which
-    ``_marginal_capabilities`` reports, so each component's view has exact
+    Each output's marginal is a normal law with every closed form, which
+    ``_marginal_capabilities`` reports, so each output's view has exact
     moments.
     """
 
@@ -199,7 +199,7 @@ class _QuadratureStandIn(BinaryDispatchMethod):
         return Feasibility(True)
 
     def execute(self, f: Any, operand: Any, /, **call: Any) -> Any:
-        return EmpiricalDistribution(jnp.array([7.0]), component="stand_in")
+        return EmpiricalDistribution(jnp.array([7.0]), output_name="stand_in")
 
 
 @pytest.fixture
@@ -230,7 +230,7 @@ def _value(term: Any) -> float:
     return float(jnp.asarray(term))
 
 
-class TestDerivedLabelsAreNeverComponents:
+class TestDerivedLabelsAreNeverOutputs:
     """A derived label may hold ``~``, a space, ``;``, or ``/``, and no route names a part by it."""
 
     @staticmethod
@@ -240,26 +240,26 @@ class TestDerivedLabelsAreNeverComponents:
         return law._with_expression(law._expression.with_fixed(("y/obs",)))
 
     @pytest.mark.parametrize(
-        ("moment", "label", "component"),
+        ("moment", "label", "output_name"),
         [
             (mean, "𝔼[g ~ g; y/obs]", "g"),
             (variance, "𝕍[g ~ g; y/obs]", "g"),
         ],
     )
-    def test_a_monte_carlo_moment_is_labeled_over_the_nested_path(self, moment, label, component):
+    def test_a_monte_carlo_moment_is_labeled_over_the_nested_path(self, moment, label, output_name):
         held = self._held()
         with workflow_run(seed=0):
             result = moment.using(method="monte_carlo")(held)
         assert result.label == label
-        assert tuple(moment.check(held).result.components) == (component,)
+        assert tuple(moment.check(held).result.outputs) == (output_name,)
 
-    def test_a_monte_carlo_quantile_takes_the_laws_component(self):
+    def test_a_monte_carlo_quantile_takes_the_laws_output(self):
         held = self._held()
         with workflow_run(seed=0):
             result = quantile.using(method="monte_carlo")(held, jnp.array([0.1, 0.9]))
         assert result.label == "ℚ[g ~ g; y/obs]"
         assert result.level_names == ("quantile",)
-        assert tuple(quantile.check(held, 0.5).result.components) == ("g",)
+        assert tuple(quantile.check(held, 0.5).result.outputs) == ("g",)
 
 
 class TestMean:
@@ -276,15 +276,15 @@ class TestMean:
         assert routes["closed_form"].exact is True
         assert (report.route, report.exact) == ("closed_form", True)
 
-    def test_the_result_takes_the_events_components_and_packaging(self):
+    def test_the_result_takes_the_events_outputs_and_packaging(self):
         assert mean.check(Gaussian("g")).result == OutputSpec(
             **{"g": NumericArraySpec((), jnp.float32, real)}
         )
         result = mean.check(Pair("p")).result
-        assert result.exposes_record
-        assert tuple(result.components) == ("a", "b")
+        assert _has_record_outputs(result)
+        assert tuple(result.outputs) == ("a", "b")
 
-    def test_a_record_law_has_a_record_mean_with_a_field_per_component(self):
+    def test_a_record_law_has_a_record_mean_with_a_field_per_output(self):
         result = mean(Pair("p"))
         assert isinstance(result, Record) and result.fields == ("a", "b")
         assert _value(result["a"]) == 1.0
@@ -305,7 +305,7 @@ class TestMean:
         assert abs(_value(estimate) - 2.0) < 0.1
 
     def test_the_fallback_takes_a_law_whose_label_is_no_identifier(self):
-        """The draws lie on a level named after the law's component, here ``my law``."""
+        """The draws lie on a level named after the law's output, here ``my law``."""
         with workflow_run(seed=1):
             estimate = mean.using(num_samples=_DRAWS)(Sampler("my law", 2.0))
         # Observed across seeds 0-5: errors of 0.001 to 0.020; the standard error is 0.016.
@@ -334,13 +334,13 @@ class TestMean:
             mean(Bare("b"))
 
     def test_the_fallback_mean_of_a_measure_is_the_mixture_of_its_draws(self):
-        assert mean(Measure("m")).event_spec == Measure("m").event_spec.spec.event_spec
+        assert mean(Measure("m")).event_spec == Measure("m").event_spec.term_spec.event_spec
 
     def test_the_mean_of_a_measure_is_a_law_that_exposes_its_event(self):
-        """The mean measure is a law, so it takes its event's components."""
+        """The mean measure is a law, so it takes its event's outputs."""
         result = mean.check(Measure("m")).result
-        assert result == OutputSpec(Measure("m").event_spec.spec)
-        assert not result.exposes_record
+        assert result == OutputSpec(Measure("m").event_spec.term_spec)
+        assert not _has_record_outputs(result)
 
 
 class TestVariance:
@@ -383,7 +383,7 @@ class TestStandardDeviation:
         report = standard_deviation.check(Sampler("s"))
         assert (report.route, report.exact) == ("derived", False)
 
-    def test_a_record_law_has_a_record_with_a_field_per_component(self):
+    def test_a_record_law_has_a_record_with_a_field_per_output(self):
         result = standard_deviation(Gaussian("mu", 0.0, 2.0) * Gaussian("tau", 1.0, 3.0))
         assert isinstance(result, Record)
         assert result.label == "√𝕍[(mu, tau) ~ mu·tau]"
@@ -416,7 +416,7 @@ class TestStandardDeviation:
         # and 0.023 for the second.
         np.testing.assert_allclose(np.asarray(estimate), [1.0, 2.0], atol=0.06, rtol=0)
 
-    def test_a_dependent_joints_exact_component_keeps_its_closed_form(self):
+    def test_a_dependent_joints_exact_output_keeps_its_closed_form(self):
         """``mu ~ Normal(2, 1)`` and ``y = mu + 1``: each has standard deviation 1."""
         with workflow_run(seed=3):
             result = standard_deviation.using(num_samples=_DRAWS)(_dependent_joint())
@@ -426,7 +426,7 @@ class TestStandardDeviation:
         # Observed across seeds 0-5: errors of 0.003 to 0.012 for ``y``.
         np.testing.assert_allclose(_value(result["y"]), 1.0, atol=0.04, rtol=0)
 
-    def test_exact_only_takes_by_component_when_every_component_is_exact(self):
+    def test_exact_only_takes_by_output_when_every_output_is_exact(self):
         result = standard_deviation.using(exact_only=True)(_Coupled())
         assert _value(result["a"]) == 1.0
         assert _value(result["b"]) == 1.0
@@ -447,7 +447,7 @@ class TestStandardDeviation:
         joint = Gaussian("mu", 0.0, 2.0) * Gaussian("tau", 1.0, 3.0)
         return joint.with_path_names({"mu": "g/mu", "tau": "g/tau"})
 
-    def test_a_record_valued_component_keeps_its_fields(self):
+    def test_a_record_valued_output_keeps_its_fields(self):
         result = standard_deviation(self._grouped() * Gaussian("c", 5.0, 4.0))
         assert result.label == "√𝕍[(g, c) ~ mu·tau·c]"
         group = result.at_path("g")
@@ -458,11 +458,11 @@ class TestStandardDeviation:
     def test_a_whole_term_record_event_keeps_its_fields(self):
         """A law over one record-valued term takes the term's fields, unrenamed."""
         law = factor(self._grouped(), "g")
-        assert not law.event_spec.exposes_record
+        assert not _has_record_outputs(law.event_spec)
         result = standard_deviation(law)
         assert isinstance(result, Record) and result.fields == ("mu", "tau")
         assert (_value(result["mu"]), _value(result["tau"])) == (2.0, 3.0)
-        assert tuple(standard_deviation.check(law).result.components) == ("g",)
+        assert tuple(standard_deviation.check(law).result.outputs) == ("g",)
 
     def test_a_function_whose_signature_cannot_be_read_keeps_a_generic_one(self):
         with pytest.raises(ValueError):
@@ -496,8 +496,8 @@ class TestCov:
         np.testing.assert_allclose(np.asarray(estimate), np.diag([1.0, 4.0]), atol=0.3)
 
     def test_the_covariance_is_declared_under_the_operations_name(self):
-        assert list(cov.check(Gaussian("g")).result.components) == ["cov"]
-        assert list(cov.check(Pair("p")).result.components) == ["cov"]
+        assert list(cov.check(Gaussian("g")).result.outputs) == ["cov"]
+        assert list(cov.check(Pair("p")).result.outputs) == ["cov"]
 
     def test_the_covariance_requires_a_numeric_event(self):
         with pytest.raises(ApplicabilityError, match="numeric value"):
@@ -643,23 +643,23 @@ class TestTheFallbacksOnFewDraws:
 
 
 class TestTheFallbacksOfAJoint:
-    """A joint's draws are a mapping of columns, which each fallback reads per component."""
+    """A joint's draws are a mapping of columns, which each fallback reads per output."""
 
-    def test_the_mean_is_the_average_of_each_component(self):
+    def test_the_mean_is_the_average_of_each_output(self):
         with workflow_run(seed=7):
             estimate = mean.using(method="monte_carlo", num_samples=_DRAWS)(_dependent_joint())
         assert isinstance(estimate, Record) and estimate.fields == ("y", "mu")
         assert abs(_value(estimate["mu"]) - 2.0) < 0.1
         assert abs(_value(estimate["y"]) - 3.0) < 0.1
 
-    def test_the_variance_is_the_sample_variance_of_each_component(self):
+    def test_the_variance_is_the_sample_variance_of_each_output(self):
         with workflow_run(seed=8):
             estimate = variance.using(method="monte_carlo", num_samples=_DRAWS)(_dependent_joint())
         assert isinstance(estimate, Record)
         assert abs(_value(estimate["mu"]) - 1.0) < 0.15
         assert abs(_value(estimate["y"]) - 1.0) < 0.15
 
-    def test_the_covariance_couples_the_components(self):
+    def test_the_covariance_couples_the_outputs(self):
         with workflow_run(seed=9):
             estimate = cov.using(num_samples=_DRAWS)(_dependent_joint())
         np.testing.assert_allclose(np.asarray(estimate), np.ones((2, 2)), atol=0.15)
@@ -675,40 +675,40 @@ class TestTheFallbacksOfAJoint:
         assert abs(float(estimate["y"][1]) - 3.0) < 0.1
 
 
-class TestByComponent:
-    """A record law's mean, variance, and quantile compute each component by its own route."""
+class TestByOutput:
+    """A record law's mean, variance, and quantile compute each output by its own route."""
 
     @staticmethod
     def _blocks(result: Any) -> list[tuple[tuple[str, ...], str, bool]]:
-        """Each block's components, route, and exactness, as the result's provenance records them."""
+        """Each block's outputs, route, and exactness, as the result's provenance records them."""
         (assembled,) = [
             parent
             for parent in result.provenance.parents
             if parent.provenance is not None
-            and parent.provenance.metadata.get("route") == "by_component"
+            and parent.provenance.metadata.get("route") == "by_output"
         ]
         return [
             (tuple(block["components"]), block["route"], block["exact"])
             for block in assembled.provenance.metadata["blocks"]
         ]
 
-    def test_a_dependent_joint_with_an_exact_component_takes_the_route(self):
+    def test_a_dependent_joint_with_an_exact_output_takes_the_route(self):
         report = mean.check(_dependent_joint())
-        assert (report.route, report.exact) == ("by_component", False)
+        assert (report.route, report.exact) == ("by_output", False)
 
-    def test_the_exact_candidate_names_the_components_without_an_exact_route(self):
+    def test_the_exact_candidate_names_the_outputs_without_an_exact_route(self):
         routes = {info.method_name: info for info in mean.check(_dependent_joint()).routes}
-        declined = routes["by_component (exact)"]
+        declined = routes["by_output (exact)"]
         assert declined.feasible is False
-        assert declined.description == "the components ('y',) have no exact mean, but ('mu',) do"
+        assert declined.description == "the outputs ('y',) have no exact mean, but ('mu',) do"
         assert not declined.actionable
-        approximate = routes["by_component (approximate)"]
+        approximate = routes["by_output (approximate)"]
         assert (approximate.feasible, approximate.exact) == (True, False)
 
     @pytest.mark.parametrize(
         ("moment", "closed_form", "seed"), [(mean, 2.0, 7), (variance, 1.0, 8)]
     )
-    def test_the_exact_component_is_its_closed_form_and_the_rest_is_estimated(
+    def test_the_exact_output_is_its_closed_form_and_the_rest_is_estimated(
         self, moment, closed_form, seed
     ):
         """``mu ~ Normal(2, 1)`` and ``y = mu + 1``: ``y`` has mean 3 and variance 1."""
@@ -718,7 +718,7 @@ class TestByComponent:
         assert result.fields == ("y", "mu")
         assert _value(result["mu"]) == closed_form
         # Observed across seeds 7, 8, 10, and 11: errors of the estimated
-        # component up to 0.027 for the mean and 0.026 for the variance.
+        # output up to 0.027 for the mean and 0.026 for the variance.
         np.testing.assert_allclose(
             _value(result["y"]), 3.0 if moment is mean else 1.0, atol=0.08, rtol=0
         )
@@ -744,14 +744,14 @@ class TestByComponent:
     def test_provenance_records_the_route_and_exactness_of_each_block(self):
         with workflow_run(seed=7):
             result = mean(_dependent_joint())
-        assert result.provenance.metadata["route"] == "by_component"
+        assert result.provenance.metadata["route"] == "by_output"
         assert result.provenance.metadata["exact"] is False
         assert self._blocks(result) == [
             (("y",), "monte_carlo", False),
             (("mu",), "closed_form", True),
         ]
 
-    def test_the_components_without_an_exact_route_are_one_block(self):
+    def test_the_outputs_without_an_exact_route_are_one_block(self):
         """``z = mu - 1`` and ``y = mu + 1`` are computed from one set of draws."""
         joint = _Shift("z", -1.0) * _Shift("y", 1.0) * Gaussian("mu", 2.0)
         with workflow_run(seed=7):
@@ -770,7 +770,7 @@ class TestByComponent:
         joint = _Shift("y", 1.0) * Gaussian("mu", 2.0) * Gaussian("c", 5.0)
         return joint.with_path_names({"mu": "g/mu", "y": "g/y"})
 
-    def test_a_record_valued_component_is_one_block(self):
+    def test_a_record_valued_output_is_one_block(self):
         """A group of fields is summarized whole, by the route its view selects."""
         with workflow_run(seed=7):
             result = mean(self._nested())
@@ -786,7 +786,7 @@ class TestByComponent:
         np.testing.assert_allclose(_value(group["y"]) - _value(group["mu"]), 1.0, atol=1e-5)
         assert _value(result["c"]) == 5.0
 
-    def test_a_record_valued_component_keeps_its_fields_in_the_variance(self):
+    def test_a_record_valued_output_keeps_its_fields_in_the_variance(self):
         with workflow_run(seed=8):
             result = variance(self._nested())
         group = result.at_path("g")
@@ -795,7 +795,7 @@ class TestByComponent:
         np.testing.assert_allclose(_value(group["y"]), _value(group["mu"]), rtol=1e-5)
         assert _value(result["c"]) == 1.0
 
-    def test_a_record_valued_component_keeps_its_fields_in_several_quantiles(self):
+    def test_a_record_valued_output_keeps_its_fields_in_several_quantiles(self):
         levels = jnp.array([0.25, 0.75])
         with workflow_run(seed=10):
             result = quantile(self._nested(), levels)
@@ -810,10 +810,10 @@ class TestByComponent:
             np.asarray((5.0 + jax.scipy.special.ndtri(levels)).astype(jnp.float32)),
         )
 
-    def test_a_law_whose_components_are_all_exact_takes_the_exact_candidate(self):
+    def test_a_law_whose_outputs_are_all_exact_takes_the_exact_candidate(self):
         law = _Coupled()
         report = mean.check(law)
-        assert (report.route, report.exact) == ("by_component", True)
+        assert (report.route, report.exact) == ("by_output", True)
         result = mean.using(exact_only=True)(law)
         assert (_value(result["a"]), _value(result["b"])) == (1.0, -1.0)
         assert self._blocks(result) == [
@@ -822,11 +822,11 @@ class TestByComponent:
         ]
 
     @pytest.mark.parametrize("moment", [mean, variance])
-    def test_exact_only_says_how_to_compute_the_exact_components(self, moment):
+    def test_exact_only_says_how_to_compute_the_exact_outputs(self, moment):
         name = moment.name
         message = (
-            rf"^{name}: the components \('y',\) have no exact {name}, but \('mu',\) do; call "
-            rf"{name} on the view of each component that does, as {name}\(d\['mu'\]\)"
+            rf"^{name}: the outputs \('y',\) have no exact {name}, but \('mu',\) do; call "
+            rf"{name} on the view of each output that does, as {name}\(d\['mu'\]\)"
         )
         with pytest.raises(ResolutionError, match=message):
             moment.using(exact_only=True)(_dependent_joint())
@@ -839,73 +839,73 @@ class TestByComponent:
         exact = quantile.using(exact_only=True)(joint["mu"], 0.5)
         assert _value(exact) == 2.0
 
-    def test_naming_the_route_under_exact_only_requires_every_component_exact(self):
-        view = mean.using(method="by_component", exact_only=True)
-        assert view.check(_Coupled()).route == "by_component"
+    def test_naming_the_route_under_exact_only_requires_every_output_exact(self):
+        view = mean.using(method="by_output", exact_only=True)
+        assert view.check(_Coupled()).route == "by_output"
         assert view.check(_dependent_joint()).feasible is False
 
-    def test_an_unresolved_component_leaves_the_route_unresolved(self):
+    def test_an_unresolved_output_leaves_the_route_unresolved(self):
         report = mean.check(_Shift() * GuardedMean("mu", None))
         assert report.feasible is None
         assert report.route is None
 
-    def test_components_with_no_route_together_decline_the_route(self):
+    def test_outputs_with_no_route_together_decline_the_route(self):
         routes = {info.method_name: info for info in mean.check(Gaussian("mu") * Bare("b")).routes}
-        assert routes["by_component (approximate)"].description == (
-            "the components ('b',) have no mean route"
+        assert routes["by_output (approximate)"].description == (
+            "the outputs ('b',) have no mean route"
         )
 
-    def test_a_component_the_operation_does_not_apply_to_declines_the_route(self):
-        """A measure-valued component has no event-typed variance, so the fallback reports."""
+    def test_an_output_the_operation_does_not_apply_to_declines_the_route(self):
+        """A measure-valued output has no event-typed variance, so the fallback reports."""
         report = variance.check(Measure("m") * Gaussian("g", 1.0))
         routes = {info.method_name: info for info in report.routes}
         assert report.feasible is False
-        assert routes["by_component (approximate)"].description == (
-            "the components ('m',) have no variance route"
+        assert routes["by_output (approximate)"].description == (
+            "the outputs ('m',) have no variance route"
         )
 
     def test_an_edge_free_joint_keeps_its_closed_form(self):
         report = mean.check(Gaussian("a", 1.0) * Gaussian("b", 2.0))
         assert (report.route, report.exact) == ("closed_form", True)
 
-    def test_a_joint_with_no_exact_component_keeps_the_fallback(self):
+    def test_a_joint_with_no_exact_output_keeps_the_fallback(self):
         report = mean.check(_Shift() * Sampler("mu", 2.0))
         routes = {info.method_name: info for info in report.routes}
         assert report.route == "monte_carlo"
-        assert routes["by_component (approximate)"].description == "no component has an exact mean"
+        assert routes["by_output (approximate)"].description == "no output has an exact mean"
 
-    def test_a_law_of_one_component_keeps_the_fallback(self):
+    def test_a_law_of_one_output_keeps_the_fallback(self):
         routes = {info.method_name: info for info in mean.check(Sampler("s")).routes}
-        assert routes["by_component (exact)"].description == (
-            "the event is not a record of several components"
+        assert routes["by_output (exact)"].description == (
+            "the event is not a record of several outputs"
         )
 
-    def test_the_covariance_has_no_route_by_component(self):
+    def test_the_covariance_has_no_route_by_output(self):
         report = cov.check(_dependent_joint())
         assert report.route == "monte_carlo"
-        assert all(not info.method_name.startswith("by_component") for info in report.routes)
+        assert all(not info.method_name.startswith("by_output") for info in report.routes)
 
     @pytest.mark.parametrize(
-        ("components", "expected_blocks"),
+        ("outputs", "expected_blocks"),
         [
             (("s0", "s1", "a", "b"), [["s0", "s1"], ["a"], ["b"]]),
             (("a", "s0", "b", "s1"), [["a"], ["s0", "s1"], ["b"]]),
             (("a", "b", "s0", "s1"), [["a"], ["b"], ["s0", "s1"]]),
         ],
     )
-    def test_blocks_follow_event_order_at_their_first_component(self, components, expected_blocks):
+    def test_blocks_follow_event_order_at_their_first_output(self, outputs, expected_blocks):
         factors = {
             "a": Gaussian("a", 1.0),
             "b": Gaussian("b", 2.0),
             "s0": Sampler("s0"),
             "s1": Sampler("s1"),
         }
-        law = functools.reduce(operator.mul, [factors[c] for c in components])
+        law = functools.reduce(operator.mul, [factors[c] for c in outputs])
         with workflow_run(seed=7):
-            result = mean.using(method="by_component", num_samples=8)(law)
+            result = mean.using(method="by_output", num_samples=8)(law)
 
-        assert result.fields == tuple(components)
-        assert [list(components) for components, _, _ in self._blocks(result)] == expected_blocks
+        assert result.fields == tuple(outputs)
+        assert [list(outputs) for outputs, _, _ in self._blocks(result)] == expected_blocks
         np.testing.assert_allclose(_value(result["a"]), 1.0, atol=0, rtol=0)
         np.testing.assert_allclose(_value(result["b"]), 2.0, atol=0, rtol=0)
 
@@ -923,7 +923,7 @@ class TestByComponent:
             replayed = mean(_dependent_joint())
         assert _value(replayed["y"]) == _value(original["y"])
 
-    def test_the_raw_result_is_the_mapping_keyed_by_the_components(self):
+    def test_the_raw_result_is_the_mapping_keyed_by_the_outputs(self):
         with workflow_run(seed=7):
             result = mean.using(raw=True)(_dependent_joint())
         assert set(result) == {"y", "mu"}
@@ -931,35 +931,35 @@ class TestByComponent:
 
 
 def _samplers(n: int) -> Any:
-    """The product of *n* sampling-only laws, which claims no summary and has no exact component."""
+    """The product of *n* sampling-only laws, which claims no summary and has no exact output."""
     return functools.reduce(operator.mul, [Sampler(f"s{i}") for i in range(n)])
 
 
-class TestByComponentPlanning:
-    """``by_component`` resolves each component once per call, and hashes the law once."""
+class TestByOutputPlanning:
+    """``by_output`` resolves each output once per call, and hashes the law once."""
 
     @pytest.fixture
     def resolutions(self, monkeypatch):
         """The restriction of each resolution the route makes, in order."""
         calls: list[bool] = []
-        original = _ByComponent._resolve
+        original = _ByOutput._resolve
 
         def spy(self: Any, call: Any, view: Any, exact_only: bool) -> Any:
             calls.append(exact_only)
             return original(self, call, view, exact_only)
 
-        monkeypatch.setattr(_ByComponent, "_resolve", spy)
+        monkeypatch.setattr(_ByOutput, "_resolve", spy)
         return calls
 
     @pytest.mark.parametrize(
         ("law", "on_check", "on_run"),
         [
-            # Each component once, restricted to exact routes; no exact one, so
+            # Each output once, restricted to exact routes; no exact one, so
             # neither candidate resolves the rest, and the fallback runs.
             pytest.param(lambda: _samplers(6), [True] * 6, [], id="sampling-only"),
-            # Each component once, then the rest once per candidate. Resolving
-            # the rest, a selection of two components, considers this route on
-            # it too, which resolves those two components once and declines; the
+            # Each output once, then the rest once per candidate. Resolving
+            # the rest, a selection of two outputs, considers this route on
+            # it too, which resolves those two outputs once and declines; the
             # run selects the rest's route again before running it.
             pytest.param(
                 lambda: _Shift("z", -1.0) * _Shift("y", 1.0) * Gaussian("mu", 2.0),
@@ -967,13 +967,11 @@ class TestByComponentPlanning:
                 [True, True],
                 id="mixed",
             ),
-            # Each component once, and no rest.
+            # Each output once, and no rest.
             pytest.param(_Coupled, [True, True], [], id="all-exact"),
         ],
     )
-    def test_a_check_and_a_call_resolve_each_component_once(
-        self, law, on_check, on_run, resolutions
-    ):
+    def test_a_check_and_a_call_resolve_each_output_once(self, law, on_check, on_run, resolutions):
         """The run reuses the split its candidate's probe made within the call."""
         law = law()
         mean.check(law)
@@ -1063,7 +1061,7 @@ class TestExpectation:
         assert estimate.provenance.metadata["num_samples"] == 29
 
     def test_num_samples_decides_between_enumerating_and_sampling_the_atoms(self):
-        atoms = EmpiricalDistribution(jnp.arange(6.0), component="x")
+        atoms = EmpiricalDistribution(jnp.arange(6.0), output_name="x")
         view = expectation.using(method="pushforward_mean", max_evaluations=100)
         enumerated = view.using(num_samples=6)(atoms, lambda x: x)
         assert enumerated.provenance.metadata["method"] == "empirical_enumeration"
@@ -1148,7 +1146,7 @@ def _the_law(law: Distribution) -> Any:
 
 
 def _atoms() -> EmpiricalDistribution:
-    return EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="x")
+    return EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), output_name="x")
 
 
 class TestTheIntegrandReceivesDraws:
@@ -1464,10 +1462,10 @@ class TestTheDrawCount:
             result = standard_deviation.using(num_samples=31)(_dependent_joint())
         assert result.provenance.metadata["num_samples"] == 31
 
-    def test_by_component_records_the_draws_of_each_monte_carlo_block(self):
+    def test_by_output_records_the_draws_of_each_monte_carlo_block(self):
         with workflow_run(seed=3):
             result = mean.using(num_samples=15)(_dependent_joint())
-        assert result.provenance.metadata["route"] == "by_component"
+        assert result.provenance.metadata["route"] == "by_output"
         assert result.provenance.metadata["num_samples"] == 15
         (record,) = [
             parent.provenance
@@ -1545,7 +1543,7 @@ _SUMMARIES = [
 
 
 class TestASummaryTakesTheEventsNames:
-    """A summary taken coordinate by coordinate takes the event's components and paths (VI.0)."""
+    """A summary taken coordinate by coordinate takes the event's outputs and paths (VI.0)."""
 
     @pytest.mark.parametrize("summary", _SUMMARIES)
     def test_the_summary_declares_the_events_fields(self, summary):
@@ -1571,19 +1569,19 @@ class TestASummaryTakesTheEventsNames:
         ):
             np.testing.assert_allclose(np.asarray(selected), np.asarray(direct), rtol=1e-6)
 
-    def test_an_expectation_takes_the_integrands_component(self):
+    def test_an_expectation_takes_the_integrands_output(self):
         f = Function(lambda x: x * x, output_spec=OutputSpec(sq=NumericArraySpec(())), label="f")
-        assert tuple(expectation.check(_atoms(), f).result.components) == ("sq",)
+        assert tuple(expectation.check(_atoms(), f).result.outputs) == ("sq",)
 
     def test_a_law_of_one_whole_term_has_the_terms_summary(self):
-        """The component of a whole-term law is the whole value, so paths below it index the summary."""
+        """The output of a whole-term law is the whole value, so paths below it index the summary."""
         atoms = NumericRecordBatch(
             {"a": jnp.array([1.0, 2.0, 3.0]), "b": jnp.array([0.0, 0.0, 3.0])}, "row", label="rows"
         )
         law = EmpiricalDistribution(
             atoms, event_spec=OutputSpec(theta=RecordSpec(a=(), b=())), label="post"
         )
-        assert mean.check(law).result.components == law.event_spec.components
+        assert mean.check(law).result.outputs == law.event_spec.outputs
         result = mean(law)
         assert isinstance(result, Record) and result.fields == ("a", "b")
         # Exact empirical averages of the same three atoms: one float32 rounding.
@@ -1601,7 +1599,7 @@ class TestASummaryBindsWhereADrawBinds:
         # The closed-form means are the locations, so both calls score the same values.
         np.testing.assert_allclose(_value(at_mean), _value(at_values), rtol=0, atol=0)
 
-    def test_an_integer_slot_refuses_a_floating_mean(self):
+    def test_an_integer_input_refuses_a_floating_mean(self):
         """The mean of an integer event is floating, so it does not conform where a draw does."""
         law = Bernoulli("z", probs=0.3)
         with workflow_run(seed=0):
@@ -1614,7 +1612,7 @@ class TestASummaryBindsWhereADrawBinds:
             return Normal("y", jnp.full(3, mu), 1.0)
 
         prior = Normal("mu", 0.0, 2.0)
-        likelihood = conditional_distribution(y_given_mu, given_spec=prior.event_spec.components)
+        likelihood = conditional_distribution(y_given_mu, given_spec=prior.event_spec.outputs)
         posterior = EmpiricalDistribution(
             NumericRecordBatch({"mu": jnp.array([1.0, 2.0, 3.0])}, "row", label="mu"),
             label="posterior",

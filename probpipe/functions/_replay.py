@@ -811,7 +811,7 @@ def replay_run(provenance: Provenance) -> _ReplayRunScope:
 
     The definition matches when the code, the signature, and the types of the
     declarations do. A new label for the function or its output, or new names
-    for its output's components, change no value, so the function replays the
+    for its output's outputs, change no value, so the function replays the
     call to the same draws under them (V.8). Replay validates the
     definition, the stochastic plan, and the events the call consumes, and not
     the values of its arguments, so an accepted replay of a call with other
@@ -1800,7 +1800,7 @@ def _draw_mismatch(draw: str, *, worker: bool = False) -> ReplayCompatibilityErr
     return ReplayCompatibilityError(
         f"cannot replay: this call made a random draw{_on_worker(worker)} ({draw}) that "
         "matches no draw of the recorded call. The call must make the same draws as the "
-        "recording, with the same distributions, components, and sample shapes."
+        "recording, with the same distributions, outputs, and sample shapes."
     )
 
 

@@ -13,6 +13,8 @@ import os
 
 import pytest
 
+from probpipe.core._specs import _has_record_outputs
+
 os.environ.setdefault("KERAS_BACKEND", "jax")
 pytest.importorskip("bayesflow")
 
@@ -61,7 +63,9 @@ def _rows(params, num_observations, key):
 def _sim(prior):
     """The conjugate simulator over *prior*'s fields: one row per draw."""
     return SimulatorKernel(
-        prior, (prior.event_spec.spec.vector_size,), lambda params, key: _rows(params, 1, key)[0]
+        prior,
+        (prior.event_spec.term_spec.vector_size,),
+        lambda params, key: _rows(params, 1, key)[0],
     )
 
 
@@ -94,11 +98,11 @@ def _score(lik, theta, rows):
     """The learned kernel's score of the dataset *rows* at the flat parameters *theta*."""
     declaration = lik.prior.event_spec
     theta = jnp.asarray(theta)
-    if declaration.exposes_record:
-        given = NumericRecord.from_vector(declaration.spec, theta, label="theta")
+    if _has_record_outputs(declaration):
+        given = NumericRecord.from_vector(declaration.term_spec, theta, label="theta")
     else:
-        (component,) = declaration.components
-        given = {component: jnp.reshape(theta, declaration.spec.shape)}
+        (output_name,) = declaration.outputs
+        given = {output_name: jnp.reshape(theta, declaration.term_spec.shape)}
     return lik._conditional_unnormalized_log_prob(given, rows)
 
 
@@ -197,13 +201,13 @@ class TestSurrogateContract:
         v, gj = jax.jit(jax.value_and_grad(f))(th0)
         assert jnp.isfinite(v) and jnp.isfinite(gj).all()
 
-    def test_the_kernels_run_from_the_priors_components_to_the_rows(self, nle, nre):
-        """A learned kernel's given slots are the prior's components and its event
+    def test_the_kernels_run_from_the_priors_outputs_to_the_rows(self, nle, nre):
+        """A learned kernel's inputs are the prior's outputs and its event
         the observation rows; NLE has the network's density and NRE one known up to
         a constant."""
         for lik in (nle, nre):
             assert list(lik.given_spec) == ["a", "b"]
-            assert tuple(lik.event_spec.components) == ("observation",)
+            assert tuple(lik.event_spec.outputs) == ("observation",)
         assert isinstance(nle, SupportsConditionalLogProb)
         assert isinstance(nre, SupportsConditionalUnnormalizedLogProb)
         assert not isinstance(nre, SupportsConditionalLogProb)
@@ -222,7 +226,7 @@ class TestSurrogateContract:
     def test_a_record_and_a_mapping_given_score_alike(self, nle):
         """A record of the parameters and a mapping of them give identical scores."""
         record = NumericRecord.from_vector(
-            _prior().event_spec.spec, jnp.array([0.4, -0.3]), label="nr"
+            _prior().event_spec.term_spec, jnp.array([0.4, -0.3]), label="nr"
         )
         y_row = jnp.array([0.6, -0.1])
         np.testing.assert_allclose(
@@ -424,7 +428,7 @@ class TestConditioning:
     def test_nle_constrained_prior_matches_true_likelihood(self):
         """A constrained (Gamma) prior end to end, judged against NUTS run with
         the TRUE (analytic Gaussian) likelihood on the same model -- isolating
-        the learned component's error from MCMC and prior effects. NUTS walks
+        the learned output's error from MCMC and prior effects. NUTS walks
         the natural space; the learned likelihood conditions on raw positive
         theta."""
 
@@ -437,7 +441,7 @@ class TestConditioning:
         prior = _gamma_prior()
         true_likelihood = ObservationKernel(
             "observation",
-            dict(prior.event_spec.components),
+            dict(prior.event_spec.outputs),
             NumericArraySpec(y.shape),
             lambda lam, m: tfd.Independent(
                 tfd.Normal(jnp.broadcast_to(jnp.stack([lam, m]), y.shape), _SIGMA), 2

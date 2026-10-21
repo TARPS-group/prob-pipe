@@ -1,7 +1,7 @@
 """The shipped converters between the catalog's families and backend representations.
 
 Each converter is exact or approximate by its declaration, and its result
-carries the source's event declaration:
+carries the source's event spec:
 
 - ``tfp`` (exact) brings a TFP backend distribution into ProbPipe as its law:
   the family whose parameters it holds, or the bare backend adapter for a
@@ -38,7 +38,7 @@ from .._dtype import _default_float_dtype
 from .._messages import unknown_names
 from ..core._call_context import _note_num_samples_used
 from ..core._spec_base import NumericArraySpec, NumericSpec
-from ..core._specs import OutputSpec
+from ..core._specs import OutputSpec, _has_record_outputs
 from ..core.config import _num_samples_in_effect
 from ..core.constraints import (
     Constraint,
@@ -273,23 +273,23 @@ def _tfp_law(source: tfd.Distribution, declared: OutputSpec | None) -> TFPDistri
     A backend distribution with a family enters as that family at its
     parameters, and any other enters through the bare backend adapter. The law
     is labeled by the backend's name, and *declared*, when given, names its
-    component, which is otherwise the backend's name.
+    output, which is otherwise the backend's name.
     """
     name = source.name or type(source).__name__
-    component = _backend_component(name, declared)
+    output_name = _backend_output(name, declared)
     entry = _TFP_FAMILIES.get(type(source))
     if entry is None:
-        return TFPDistribution(component, source, label=name, event_spec=declared)
+        return TFPDistribution(output_name, source, label=name, event_spec=declared)
     family, arguments = entry
-    return family(component, **arguments(source), label=name, event_spec=declared)
+    return family(output_name, **arguments(source), label=name, event_spec=declared)
 
 
-def _backend_component(name: str, declared: OutputSpec | None) -> str:
-    """The component of a backend distribution's law: the one *declared* names, or *name*."""
-    if declared is None or declared.exposes_record:
+def _backend_output(name: str, declared: OutputSpec | None) -> str:
+    """The output of a backend distribution's law: the one *declared* names, or *name*."""
+    if declared is None or _has_record_outputs(declared):
         return name
-    (component,) = declared.components
-    return component
+    (output_name,) = declared.outputs
+    return output_name
 
 
 def _scipy_arguments(source: Any) -> tuple[tuple[Any, ...], float, float]:
@@ -389,20 +389,23 @@ def _scipy_law(source: Any, declared: OutputSpec | None) -> Distribution | None:
         return None
     shapes, loc, scale = _scipy_arguments(source)
     name = source.dist.name
-    component = _backend_component(name, declared)
+    output_name = _backend_output(name, declared)
     arguments = entry.arguments(shapes, loc, scale)
     shift = 0.0 if entry.holds_loc else loc
     stretch = 1.0 if entry.holds_scale else scale
     if shift == 0.0 and stretch == 1.0:
-        return entry.family(component, **arguments, label=name, event_spec=declared)
-    base = entry.family(f"{component}_base", **arguments, label=name)
+        return entry.family(output_name, **arguments, label=name, event_spec=declared)
+    base = entry.family(f"{output_name}_base", **arguments, label=name)
     law = BijectorTransformedDistribution(
-        component, base, _affine_bijector(shift, stretch, base.event_spec.spec.dtype), label=name
+        output_name,
+        base,
+        _affine_bijector(shift, stretch, base.event_spec.term_spec.dtype),
+        label=name,
     )
-    drawn = law.event_spec.spec
+    drawn = law.event_spec.term_spec
     support = _affine_support(_fixed_support(entry.family), shift, stretch) or drawn.support
     event = _whole_term_event(
-        component,
+        output_name,
         NumericArraySpec(drawn.shape, drawn.dtype, support),
         declared,
         "BijectorTransformedDistribution",
@@ -432,7 +435,7 @@ def _scipy_declaration(source: Any, declared: OutputSpec | None) -> OutputSpec:
     drawn = np.int64 if isinstance(source.dist, _stats.rv_discrete) else np.float64
     spec = NumericArraySpec((), jax.dtypes.canonicalize_dtype(drawn))
     if declared is not None:
-        return declared.with_spec(spec)
+        return declared.with_term_spec(spec)
     return OutputSpec(**{source.dist.name: spec})
 
 
@@ -842,9 +845,9 @@ def _array_event(declaration: OutputSpec, label: str, family: type, rank: int | 
 
     A family draws one array, as a whole term, of the rank its event has.
     """
-    spec = declaration.spec
-    if declaration.exposes_record:
-        fields = list(declaration.components)
+    spec = declaration.term_spec
+    if _has_record_outputs(declaration):
+        fields = list(declaration.outputs)
         return (
             f"{family.__name__} draws a single array, but {label!r} draws a record with fields "
             f"{fields}; convert one field instead, such as d[{fields[0]!r}]"
@@ -871,7 +874,7 @@ def _cast_event(declaration: OutputSpec, label: str, family: type) -> str | None
     dtype must cast to the source's by the same-kind rule, as a law's must to
     the ``DistributionSpec`` it matches.
     """
-    declared = declaration.spec.dtype
+    declared = declaration.term_spec.dtype
     drawn = _fit_dtype(family)
     if declared is None or np.can_cast(drawn, declared, casting="same_kind"):
         return None
@@ -969,7 +972,7 @@ class _MomentMatching(Converter):
     The family is the requested target, and the fit reads the statistics the
     family's parameters need: a moment the law claims in closed form, and any
     other statistic from one shared batch of ``num_samples`` draws. The fit
-    keeps the law's component, and its label unless the label is the law's
+    keeps the law's output, and its label unless the label is the law's
     default, so a ``Normal`` fit to ``Laplace("g", 0.0, 1.0)`` reads
     ``Normal(g)``. A family whose draws do not cast to the law's dtype is
     infeasible, as a ``Normal`` fit to a ``Bernoulli`` law is. Unless ``check_support=False``, the fit keeps the law's support:
@@ -1094,7 +1097,7 @@ class _MomentMatching(Converter):
         if isinstance(planned, str):
             return ConversionInfo(False, description=planned)
         declaration = planned.declaration
-        declared, fixed = declaration.spec.support, _fixed_support(target_type)
+        declared, fixed = declaration.term_spec.support, _fixed_support(target_type)
         if (
             options.get("check_support", True)
             and declared is not None
@@ -1107,8 +1110,8 @@ class _MomentMatching(Converter):
                     target_type.__name__, fixed, _label(source, planned.law, declaration), declared
                 ),
             )
-        promised = declaration._with_spec(
-            NumericArraySpec(declaration.spec.shape, _fit_dtype(target_type))
+        promised = declaration._with_term_spec(
+            NumericArraySpec(declaration.term_spec.shape, _fit_dtype(target_type))
         )
         return ConversionInfo(
             True,
@@ -1135,7 +1138,7 @@ class _MomentMatching(Converter):
         -------
         Distribution
             The fitted instance of *target_type*, which keeps the source's
-            component, and its label unless the label is the source's default.
+            output, and its label unless the label is the source's default.
 
         Raises
         ------
@@ -1152,9 +1155,9 @@ class _MomentMatching(Converter):
         draws = (
             _draws(source, law, _sample_count(options)) if planned.claims_random_events else None
         )
-        (component,) = planned.declaration.components
+        (output_name,) = planned.declaration.outputs
         result = target_type(
-            component,
+            output_name,
             **planned.parameters(_Statistics(law, draws), options),
             label=planned.label,
         )
@@ -1261,7 +1264,7 @@ class _EmpiricalDraws(Converter):
         if isinstance(sampled, str):
             return ConversionInfo(False, description=sampled)
         _, declaration = sampled
-        numeric = isinstance(declaration.spec, NumericSpec)
+        numeric = isinstance(declaration.term_spec, NumericSpec)
         claims = _class_claims(EmpiricalDistribution) + (_NUMERIC_MOMENTS if numeric else ())
         return ConversionInfo(
             True,
@@ -1303,7 +1306,7 @@ class _EmpiricalDraws(Converter):
             raise TypeError(sampled)
         law, declaration = sampled
         name = _label(source, law, declaration)
-        atoms = _batch_form(name, _draws(source, law, count), SAMPLE_LEVEL, declaration.spec)
+        atoms = _batch_form(name, _draws(source, law, count), SAMPLE_LEVEL, declaration.term_spec)
         return EmpiricalDistribution(atoms, label=_kept_label(source, law), event_spec=declaration)
 
 
@@ -1352,10 +1355,10 @@ class _KDESmoothing(Converter):
         if isinstance(sampled, str) and not isinstance(source, EmpiricalDistribution):
             return sampled
         law, declaration = (source, source.event_spec) if isinstance(sampled, str) else sampled
-        if not isinstance(declaration.spec, NumericSpec):
+        if not isinstance(declaration.term_spec, NumericSpec):
             return (
                 f"a KDE needs numeric draws, but {_label(source, law, declaration)!r} draws "
-                f"{type(declaration.spec).__name__} values"
+                f"{type(declaration.term_spec).__name__} values"
             )
         claims_random_events = not isinstance(law, EmpiricalDistribution)
         if claims_random_events:
@@ -1437,14 +1440,14 @@ class _KDESmoothing(Converter):
         bandwidth = options.get("bandwidth")
         if not claims_random_events:
             return KDEDistribution(
-                _smoothed_atoms(name, law._rows, declaration.spec),
+                _smoothed_atoms(name, law._rows, declaration.term_spec),
                 bandwidth,
                 law.weights,
                 label=label,
                 event_spec=declaration,
             )
         draws = _draws(source, law, _sample_count(options))
-        atoms = _smoothed_atoms(name, draws, declaration.spec)
+        atoms = _smoothed_atoms(name, draws, declaration.term_spec)
         return KDEDistribution(atoms, bandwidth, label=label, event_spec=declaration)
 
 

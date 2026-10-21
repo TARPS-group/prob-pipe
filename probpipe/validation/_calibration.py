@@ -7,7 +7,7 @@ an amortized posterior:
 
 - :func:`simulation_based_calibration` (Talts et al. 2018) draws ``θ★`` and
   ``y`` from the joint, forms the posterior at ``y``, and ranks each ``θ★``
-  component among the posterior's draws. The ranks are uniform on
+  output among the posterior's draws. The ranks are uniform on
   ``{0, …, L}`` when the posterior is calibrated, so non-uniform ranks expose a
   biased or mis-tuned method.
 - :func:`interval_coverage` is the companion frequentist check of one posterior:
@@ -32,7 +32,7 @@ import numpy as np
 from .._messages import unknown_names
 from ..core._record_spec import RecordSpec
 from ..core._shapes import NamesLike, _as_names
-from ..core._specs import OutputSpec
+from ..core._specs import OutputSpec, _has_record_outputs
 from ..custom_types import Array, ArrayLike
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution, _array_leaves
@@ -52,13 +52,13 @@ __all__ = ["SBCResult", "interval_coverage", "simulation_based_calibration"]
 def _flatten(value: Any, event_spec: OutputSpec, batch_ndim: int = 0) -> Array:
     """Flatten a parameter value, or a batch of them, to the flat layout of the posterior's draws.
 
-    The posterior's event declaration *event_spec* gives the layout. An array
+    The posterior's event spec *event_spec* gives the layout. An array
     value is raveled, and a record value, a ``Record`` or the nested mapping of
     its leaves, has its leaves raveled and concatenated in the declaration's
     leaf order. The *batch_ndim* leading axes of a batch are kept, so one value
     gives a ``(p,)`` array and a batch of ``n`` draws an ``(n, p)`` array.
     """
-    spec = event_spec.spec
+    spec = event_spec.term_spec
     if isinstance(spec, RecordSpec):
         raw = _raw_record(value)
         leaves = []
@@ -74,7 +74,7 @@ def _flatten(value: Any, event_spec: OutputSpec, batch_ndim: int = 0) -> Array:
 
 
 def _ranks(draws: Array, point: Array) -> Array:
-    """SBC rank of each component of *point*: ``#{draws < point}``, in ``{0, …, n}``.
+    """SBC rank of each output of *point*: ``#{draws < point}``, in ``{0, …, n}``.
 
     Uses strict ``<`` (ties, measure-zero for a continuous posterior, count as
     not-below). ``draws`` is ``(n, d)``; ``point`` is ``(d,)``; returns ``(d,)``.
@@ -82,12 +82,12 @@ def _ranks(draws: Array, point: Array) -> Array:
     return jnp.sum(draws < point[None, :], axis=0)
 
 
-def _component_names(posterior: Any) -> tuple[str, ...]:
+def _output_names(posterior: Any) -> tuple[str, ...]:
     """Per-flattened-component parameter names matching the posterior's flat coordinates.
 
     A scalar leaf keeps its path, and a leaf with ``k > 1`` flattened
-    components becomes ``path[0] … path[k-1]`` (row-major), in the posterior's
-    leaf order. A whole-term posterior's one leaf is its component.
+    outputs becomes ``path[0] … path[k-1]`` (row-major), in the posterior's
+    leaf order. A whole-term posterior's one leaf is its output.
     """
     names: list[str] = []
     for path, spec in _array_leaves(posterior.event_spec).items():
@@ -166,53 +166,53 @@ def _credible_levels(levels: Iterable[float]) -> tuple[float, ...]:
     return tuple(checked)
 
 
-def _slot_binding(kernel: ConditionalDistribution, observed: tuple[str, ...]) -> dict[str, str]:
-    """The observed field that each given slot of *kernel* takes, keyed by the slot.
+def _input_binding(kernel: ConditionalDistribution, observed: tuple[str, ...]) -> dict[str, str]:
+    """The observed field that each input of *kernel* takes, keyed by the input.
 
-    The slots take the observed fields of their names when every observed field
-    names a slot and every required slot is observed. Otherwise a kernel with one
-    given slot takes the one observed field, whatever its name.
+    The inputs take the observed fields of their names when every observed field
+    names an input and every required input is observed. Otherwise a kernel with one
+    input takes the one observed field, whatever its name.
 
     Parameters
     ----------
     kernel : ConditionalDistribution
-        The posterior kernel, whose given slots take the observed fields.
+        The posterior kernel, whose inputs take the observed fields.
     observed : tuple of str
         The names of the observed fields of the model's draw.
 
     Returns
     -------
     dict of str to str
-        The observed field's name by slot name, which is the identity map when
-        the slots take the fields of their names.
+        The observed field's name by input name, which is the identity map when
+        the inputs take the fields of their names.
 
     Raises
     ------
     ValueError
-        If neither rule binds the slots.
+        If neither rule binds the inputs.
     """
-    slots = tuple(kernel.given_spec)
-    if set(observed) <= set(slots) and set(kernel.given_spec.required) <= set(observed):
+    inputs = tuple(kernel.given_spec)
+    if set(observed) <= set(inputs) and set(kernel.given_spec.required) <= set(observed):
         return {name: name for name in observed}
-    if len(slots) == 1 and len(observed) == 1:
-        return {slots[0]: observed[0]}
+    if len(inputs) == 1 and len(observed) == 1:
+        return {inputs[0]: observed[0]}
     raise ValueError(
-        f"the given slots {list(slots)} of posterior {kernel.label!r} do not match the "
-        f"observed fields {list(observed)}. Name the slots after the observed fields, or "
-        f"use a posterior with one given slot for one observed field."
+        f"the inputs {list(inputs)} of posterior {kernel.label!r} do not match the "
+        f"observed fields {list(observed)}. Name the inputs after the observed fields, or "
+        f"use a posterior with one input for one observed field."
     )
 
 
 def _check_parameters(event_spec: OutputSpec, parameters: tuple[str, ...], label: str) -> None:
     """Raise unless a draw of the posterior holds the parameters.
 
-    A draw that exposes a record holds the parameters as its components, and a
+    A draw that exposes a record holds the parameters as its outputs, and a
     whole-term draw is the value of the one parameter.
 
     Parameters
     ----------
     event_spec : OutputSpec
-        The posterior's event declaration.
+        The posterior's event spec.
     parameters : tuple of str
         The names of the model's unobserved fields.
     label : str
@@ -221,13 +221,13 @@ def _check_parameters(event_spec: OutputSpec, parameters: tuple[str, ...], label
     Raises
     ------
     ValueError
-        If the components of an exposed record are not the parameters, or a
+        If the outputs of an exposed record are not the parameters, or a
         whole-term draw meets several parameters.
     """
-    if event_spec.exposes_record:
-        if set(event_spec.components) != set(parameters):
+    if _has_record_outputs(event_spec):
+        if set(event_spec.outputs) != set(parameters):
             raise ValueError(
-                f"posterior {label!r} draws the fields {list(event_spec.components)}, but "
+                f"posterior {label!r} draws the fields {list(event_spec.outputs)}, but "
                 f"they must be the model's parameters {list(parameters)}"
             )
     elif len(parameters) != 1:
@@ -344,14 +344,14 @@ def simulation_based_calibration(
     The posterior at ``y`` is formed in one of two ways:
 
     1. with *posterior*, it is the kernel's law at ``y``, which
-       ``condition_on(posterior, {slot: y})`` returns without a fit, as for an
+       ``condition_on(posterior, {input_name: y})`` returns without a fit, as for an
        amortized posterior or a closed-form posterior;
     2. otherwise, it is the fit of *model* at ``y`` that
        ``condition_on.using(method=method, method_options=method_options)(model, y)``
        returns.
 
-    *posterior*'s given slots take the observed fields of their names, and a
-    kernel with one given slot, such as an amortized posterior's
+    *posterior*'s inputs take the observed fields of their names, and a
+    kernel with one input, such as an amortized posterior's
     ``observation``, takes the one observed field. The draws are
     ``sample(posterior_at_y, sample_shape=(num_posterior_draws,))`` for every
     kind of posterior: the atoms of a weighted empirical law, such as SMC-ABC's
@@ -410,7 +410,7 @@ def simulation_based_calibration(
     ValueError
         If a count is not positive; if an *observed* name is not a field of a
         draw, or no parameter is left; if *method* or *method_options* is given
-        with *posterior*; if *posterior*'s given slots do not take the observed
+        with *posterior*; if *posterior*'s inputs do not take the observed
         fields; or if the posterior's draw does not hold the parameters: a draw
         that exposes a record names other fields, or a whole-term draw meets
         several parameters.
@@ -440,7 +440,7 @@ def simulation_based_calibration(
     >>> likelihood = conditional_distribution(
     ...     lambda mu: Normal("y", mu * jnp.ones(5), 1.0),
     ...     label="y_given_mu",
-    ...     given_spec=prior.event_spec.components,
+    ...     given_spec=prior.event_spec.outputs,
     ... )
     >>> precision = 1 / 4 + 5
     >>> exact = conditional_distribution(
@@ -486,11 +486,11 @@ def simulation_based_calibration(
             f"got {type(model).__name__}"
         )
     observed = _as_names(observed, what="simulation_based_calibration observed")
-    components = tuple(model.event_spec.components)
-    unknown = [name for name in observed if name not in components]
+    outputs = tuple(model.event_spec.outputs)
+    unknown = [name for name in observed if name not in outputs]
     if unknown:
-        raise ValueError(unknown_names("observed field", unknown, components, "fields"))
-    parameters = tuple(name for name in components if name not in observed)
+        raise ValueError(unknown_names("observed field", unknown, outputs, "fields"))
+    parameters = tuple(name for name in outputs if name not in observed)
     if not parameters:
         raise ValueError(
             f"observed={list(observed)} includes every field of {model.label!r}, so no "
@@ -498,25 +498,29 @@ def simulation_based_calibration(
         )
     binding: dict[str, str] = {}
     if posterior is not None:
-        binding = _slot_binding(posterior, observed)
+        binding = _input_binding(posterior, observed)
         _check_parameters(posterior.event_spec, parameters, posterior.label)
 
     simulations = _raw_record(sample.using(raw=True)(model, sample_shape=(num_simulations,)))
     rank_rows: list[np.ndarray] = []
-    component_names: tuple[str, ...] | None = None
+    output_names: tuple[str, ...] | None = None
     for index in range(num_simulations):
         draw = jax.tree.map(lambda column, i=index: column[i], simulations)
         theta_star = {name: draw[name] for name in parameters}
         if posterior is None:
             law = fit(model, {name: draw[name] for name in observed})
         else:
-            law = condition_on(posterior, {slot: draw[field] for slot, field in binding.items()})
+            law = condition_on(
+                posterior, {input_name: draw[field] for input_name, field in binding.items()}
+            )
         draws = sample.using(raw=True)(law, sample_shape=(num_posterior_draws,))
-        if component_names is None:
+        if output_names is None:
             _check_parameters(law.event_spec, parameters, law.label)
-            component_names = _component_names(law)
+            output_names = _output_names(law)
         # A whole-term posterior's draw is its one parameter's value.
-        point = theta_star if law.event_spec.exposes_record else next(iter(theta_star.values()))
+        point = (
+            theta_star if _has_record_outputs(law.event_spec) else next(iter(theta_star.values()))
+        )
         flat_draws = _flatten(draws, law.event_spec, batch_ndim=1)  # (L, p)
         rank_rows.append(np.asarray(_ranks(flat_draws, _flatten(point, law.event_spec))))
 
@@ -525,7 +529,7 @@ def simulation_based_calibration(
     return SBCResult(
         ranks=ranks,
         num_posterior_draws=num_posterior_draws,
-        param_names=component_names,
+        param_names=output_names,
         ks_statistic=ks_stat,
         ks_pvalue=ks_pvalue,
     )
@@ -542,7 +546,7 @@ def interval_coverage(
 ) -> dict[float, Array]:
     """Central-credible-interval coverage of *truth*, per parameter.
 
-    For each ``level``, checks whether each component of *truth* lies in the
+    For each ``level``, checks whether each output of *truth* lies in the
     central ``level`` interval ``[q_{(1−level)/2}, q_{(1+level)/2}]`` of the
     per-parameter posterior. Returns ``{level: covered}`` with ``covered`` a
     boolean array over parameters. Averaging the indicators over many

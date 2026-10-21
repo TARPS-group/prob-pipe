@@ -102,7 +102,7 @@ class TestTheScoredValue:
         five = log_prob(law, jnp.zeros(5))
         np.testing.assert_allclose(float(jnp.asarray(three)), 3 * jax.scipy.stats.norm.logpdf(0.0))
         np.testing.assert_allclose(float(jnp.asarray(five)), 5 * jax.scipy.stats.norm.logpdf(0.0))
-        assert law.event_spec.spec.shape == ("n",)
+        assert law.event_spec.term_spec.shape == ("n",)
 
     def test_a_batch_of_values_is_scored_at_its_levels(self):
         values = NumericArrayBatch(
@@ -216,9 +216,9 @@ class TestLiftedScores:
         lifted = log_prob(Gaussian("g"), Gaussian("v"))
         assert isinstance(lifted, Distribution)
         # The law of the score at draws of the value is the operation at a draw,
-        # and its component is the operation's name, never a derived label.
+        # and its output is the operation's name, never a derived label.
         assert (lifted.label, lifted.notation) == ("log_prob", "log_prob(g(g), v ~ v)")
-        assert list(lifted.event_spec.components) == ["log_prob"]
+        assert list(lifted.event_spec.outputs) == ["log_prob"]
 
     def test_a_law_whose_draws_do_not_conform_raises_applicability_error(self):
         with pytest.raises(ApplicabilityError, match="does not conform"):

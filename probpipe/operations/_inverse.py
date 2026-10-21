@@ -19,16 +19,16 @@ __all__ = ["inverse", "log_det_jacobian"]
 
 
 def _inverse_result(f: Any) -> OutputSpec | None:
-    """A map whose output declaration comes from *f*'s input slots.
+    """A map whose output spec comes from *f*'s inputs.
 
-    One slot is returned whole under that slot's name, and several form an
+    One input is returned whole under that input's name, and several form an
     exposed record.
     """
     return None
 
 
 def _log_det_jacobian_result(f: Any, x: Any) -> OutputSpec:
-    """A scalar under the component ``log_det_jacobian``."""
+    """A scalar under the output ``log_det_jacobian``."""
     return OutputSpec(log_det_jacobian=NumericArraySpec(()))
 
 

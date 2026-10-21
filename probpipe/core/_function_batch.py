@@ -37,7 +37,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
         and its repr gives the levels.
     element_spec : FunctionSpec, optional
         What every element satisfies. Defaults to ``FunctionSpec()``, which
-        specifies a callable and neither of its input/output declarations.
+        specifies a callable and neither of its input/output specs.
     axes_per_level : int or sequence of int, optional
         How many axes each level holds, outermost first (a single int is one level's
         count); they must account for every batch axis. Defaults to one axis per
@@ -178,7 +178,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
         ------
         ValueError
             If the callable's signature cannot be inspected, or does not match the
-            declared input slots.
+            declared inputs.
         """
         spec = self.element_spec
         return Function(

@@ -1587,7 +1587,7 @@ class TestReprAndEquality:
 
 
 class TestProvenance:
-    """Record carries the same ``.provenance`` / ``.with_provenance`` slot as
+    """Record carries the same ``.provenance`` / ``.with_provenance`` input as
     Distribution, so workflow outputs can attach a Provenance node
     regardless of which of the three output types (Record, RecordBatch,
     Distribution) the broadcasting layer produced.

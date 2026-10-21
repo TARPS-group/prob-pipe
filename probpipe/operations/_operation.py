@@ -215,7 +215,7 @@ def _call_label(call: BoundCall) -> str:
 
     A route reads it to label a term it builds before the result boundary
     gives the result its expression. The label names the term and is never a
-    component or a level name, since a derived label may hold ``~``, a space,
+    output or a level name, since a derived label may hold ``~``, a space,
     ``;``, or ``/``.
     """
     return call.operation._derived_label(call.operands)
@@ -1191,7 +1191,7 @@ def _kind_names(kinds: Iterable[type]) -> str:
 class _GivenCandidate:
     """The conditional route, deferred until the kernel's law is available.
 
-    Feasibility means the given slots can be bound. Normalization, the resulting
+    Feasibility means the inputs can be bound. Normalization, the resulting
     law's capability checks, and operation fidelity are deferred, and its exactness is unknown
     until the delegated operation executes. The kernel is never applied by a
     check. This candidate is the last fallback, after every route served by the
@@ -1205,7 +1205,7 @@ class _GivenCandidate:
     collects_calls = True
 
     def probe(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
-        """Check slot binding without constructing or normalizing the kernel's law."""
+        """Check input binding without constructing or normalizing the kernel's law."""
         from ._given import _GivenLaw
 
         subject = call.operands[call.operation._given_subject]
@@ -1213,21 +1213,21 @@ class _GivenCandidate:
             return Feasibility(False, "the operand has no given values")
         if isinstance(subject.given, StandIn):
             return Feasibility(None, pending=("conditional delegation needs the given values",))
-        from ._condition import _BIND_GIVEN_SLOTS, condition_on
+        from ._condition import _BIND_INPUTS, condition_on
 
         binding = BoundCall(
             condition_on,
             MappingProxyType({"d": subject.kernel, "given": subject.given}),
             call.controls,
         )
-        report = _BIND_GIVEN_SLOTS.check(binding)
+        report = _BIND_INPUTS.check(binding)
         if report.feasible is not True:
             return report
-        exact = _BIND_GIVEN_SLOTS.exact(binding)
+        exact = _BIND_INPUTS.exact(binding)
         if call.controls["exact_only"] and not exact:
             return Feasibility(
                 False,
-                "binding the given slots runs approximate conditioning "
+                "binding the inputs runs approximate conditioning "
                 "(SupportsApproximateConditioning), which exact_only excludes",
             )
         return PointReport(
@@ -1275,7 +1275,7 @@ class Operation(Function):
     A subject annotated ``Distribution`` automatically adds keyword-only
     ``given=None`` unless the declaration already names ``given`` or a role
     overrides the subject's kind. A complete given supplies a conditional
-    operand's required slots and binds its symbolic dimensions before planning
+    operand's required inputs and binds its symbolic dimensions before planning
     the result. Routes use the kernel's declared conditional twins, including
     sampling-based fallbacks and derived routes. If no such route applies,
     delegation applies the operation to ``condition_on(subject, given)`` at execution.
@@ -1408,7 +1408,7 @@ class Operation(Function):
             object.__setattr__(self, "__signature__", signature)
             given_doc = (
                 "    given : Record or Mapping[str, Any], optional\n"
-                "        Complete values of a conditional operand's required slots. The\n"
+                "        Complete values of a conditional operand's required inputs. The\n"
                 "        declared conditional capabilities serve applicable routes; otherwise\n"
                 "        the operation applies after condition_on at execution, and check\n"
                 "        defers the resulting law's capabilities and fidelity. A RecordBatch\n"
@@ -2292,7 +2292,7 @@ def _workflow_draws(
     draws = _descendants.sample_captured_consumer(captured, key, sample_shape)
     if captured.root is d:
         return draws
-    return _drawn_form(draws, d.event_spec.spec, sample_shape)
+    return _drawn_form(draws, d.event_spec.term_spec, sample_shape)
 
 
 # ---------------------------------------------------------------------------

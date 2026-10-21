@@ -412,7 +412,7 @@ def _collecting_num_samples_used(merge_rule: _MergeRule) -> Iterator[_NumSamples
     - ``"when_parent_collects"``, for a call: only when the enclosing call
       collects calls;
     - ``"always"``, for a scope inside a call, such as the work one worker runs
-      or one block of a summary computed component by component. Such a scope
+      or one block of a summary computed output by output. Such a scope
       collects the calls made directly within it when its call does, so their
       numbers reach the call through the scope.
 

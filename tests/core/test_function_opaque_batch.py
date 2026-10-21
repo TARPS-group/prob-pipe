@@ -815,7 +815,7 @@ class TestProvenance:
         assert element.provenance is None
 
     def test_the_caller_can_still_set_its_own_provenance_afterwards(self, full_provenance_mode):
-        """The write-once slot stays the caller's to spend."""
+        """The write-once input stays the caller's to spend."""
         element = Record(
             {"x": 1.0},
             label="r",

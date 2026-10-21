@@ -25,6 +25,8 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from ..core._specs import _has_record_outputs
+
 if TYPE_CHECKING:
     from xarray import DataTree
 
@@ -48,11 +50,11 @@ from ..distributions._factored import (
     FactoredConditionalDistribution,
     FactoredDistribution,
     _children,
-    _components_of,
     _event_of,
     _factor_graph,
     _is_named,
     _law_at_defaults,
+    _outputs_of,
     _with_named,
 )
 from ..families._backend import TFPDistribution
@@ -302,9 +304,9 @@ def observed_target(model: Any, observed: Any) -> Any:
     """The target of normalizing *model* at *observed*, as ``probpipe.condition_on`` passes them.
 
     A model with no data, and an object that is not a law, is its own target.
-    Data keyed by the model's given slots and fields form the exact stage of
-    ``condition_on`` (VI.6): a kernel binds the slots its data name first, as
-    the ``bind_given_slots`` route does, and the data of the fields it produces then form the
+    Data keyed by the model's inputs and fields form the exact stage of
+    ``condition_on`` (VI.6): a kernel binds the inputs its data name first, as
+    the ``bind_inputs`` route does, and the data of the fields it produces then form the
     unnormalized conditional of the result, whose joint and given values a
     method reads back. A law that binding leaves unnormalized, with no data
     left, is the target itself. Data that name no field, such as one array for
@@ -319,15 +321,15 @@ def observed_target(model: Any, observed: Any) -> Any:
     values = dict(observed.children if isinstance(observed, Record) else observed)
     law = model
     if isinstance(model, ConditionalDistribution):
-        slots = {key: value for key, value in values.items() if key in model.given_spec}
-        values = {key: value for key, value in values.items() if key not in slots}
-        if slots:
-            law = model._condition_on(slots)
+        inputs = {key: value for key, value in values.items() if key in model.given_spec}
+        values = {key: value for key, value in values.items() if key not in inputs}
+        if inputs:
+            law = model._condition_on(inputs)
     if not values:
         if isinstance(law, Distribution) and not _is_normalized(law):
             return law
         return _UnnormalizedConditional(model, observed, model.event_spec, keyed=False)
-    if not set(values) <= set(law.event_spec.components):
+    if not set(values) <= set(law.event_spec.outputs):
         return _UnnormalizedConditional(law, values, law.event_spec, keyed=False)
     return _unnormalized_conditional(
         law,
@@ -369,9 +371,9 @@ def _has_flat_view(prior: Any) -> bool:
 def _one_array(law: Any) -> NumericArraySpec | None:
     """The spec of the one numeric array of a concrete shape *law* draws, or None."""
     declaration = getattr(law, "event_spec", None)
-    if not isinstance(law, Distribution) or declaration is None or declaration.exposes_record:
+    if not isinstance(law, Distribution) or declaration is None or _has_record_outputs(declaration):
         return None
-    spec = declaration.spec
+    spec = declaration.term_spec
     return spec if isinstance(spec, NumericArraySpec) and spec.is_concrete else None
 
 
@@ -392,7 +394,7 @@ def _flat_view(prior: Any) -> Callable[[Array], Array] | None:
     """
     if not _has_flat_view(prior):
         return None
-    spec = prior.event_spec.spec
+    spec = prior.event_spec.term_spec
     return _reshape_to(spec.shape if isinstance(spec, NumericArraySpec) else ())
 
 
@@ -405,9 +407,9 @@ def flat_record(prior: Any) -> NumericRecordSpec | None:
     if _has_flat_view(prior):
         return None
     declaration = getattr(prior, "event_spec", None)
-    if not isinstance(declaration, OutputSpec) or not declaration.exposes_record:
+    if not isinstance(declaration, OutputSpec) or not _has_record_outputs(declaration):
         return None
-    spec = declaration.spec
+    spec = declaration.term_spec
     return spec if isinstance(spec, NumericRecordSpec) else None
 
 
@@ -594,7 +596,7 @@ def model_factors(target: Any) -> ModelFactors | None:
     prior_factors: list[Any] = []
     likelihood_factors: list[Any] = []
     for factor in factors:
-        produced = set(factor.event_spec.components)
+        produced = set(factor.event_spec.outputs)
         if not produced & observed:
             prior_factors.append(factor)
         elif produced <= observed:
@@ -603,21 +605,21 @@ def model_factors(target: Any) -> ModelFactors | None:
             return None
     if not prior_factors or not likelihood_factors:
         return None
-    prior = _law_at_defaults(_joint_of(joint, prior_factors), joint.event_spec.components)
+    prior = _law_at_defaults(_joint_of(joint, prior_factors), joint.event_spec.outputs)
     likelihood = _joint_of(joint, likelihood_factors)
     if not isinstance(prior, Distribution):
         return None
-    slots = (
+    inputs = (
         set(likelihood.given_spec.required)
         if isinstance(likelihood, ConditionalDistribution)
         else set()
     )
-    if not slots <= set(prior.event_spec.components):
+    if not inputs <= set(prior.event_spec.outputs):
         return None
     children = dict(given.children)
     value = _event_of(
         likelihood.event_spec,
-        {component: children[component] for component in likelihood.event_spec.components},
+        {output_name: children[output_name] for output_name in likelihood.event_spec.outputs},
     )
     return ModelFactors(prior, likelihood, value)
 
@@ -625,19 +627,23 @@ def model_factors(target: Any) -> ModelFactors | None:
 def parameter_given(factors: ModelFactors, draw: Any) -> dict[str, Any]:
     """The likelihood's given values at *draw*, a draw of the prior.
 
-    An optional slot that the prior does not produce takes its default.
+    An optional input that the prior does not produce takes its default.
     """
     if not isinstance(factors.likelihood, ConditionalDistribution):
         return {}
-    components = _components_of(factors.prior.event_spec, draw)
-    return {slot: components[slot] for slot in factors.likelihood.given_spec if slot in components}
+    outputs = _outputs_of(factors.prior.event_spec, draw)
+    return {
+        input_name: outputs[input_name]
+        for input_name in factors.likelihood.given_spec
+        if input_name in outputs
+    }
 
 
 def likelihood_flat(factors: ModelFactors) -> Callable[[Array], Array]:
     """The log-likelihood at a flat parameter vector, up to a constant in the parameters.
 
     The vector unflattens to a draw of the prior, whose values bind the
-    likelihood's given slots, and the likelihood's unnormalized density is read
+    likelihood's inputs, and the likelihood's unnormalized density is read
     at the observed value.
     """
     unflatten = flat_unflatten(factors.prior)
@@ -694,8 +700,8 @@ def _joint_draw(target: Any, key: Array, record: NumericRecordSpec) -> Array | N
                 if isinstance(draw, Record):
                     children.update(draw.children)
                 else:
-                    (component,) = law.event_spec.components
-                    children[component] = draw
+                    (output_name,) = law.event_spec.outputs
+                    children[output_name] = draw
         if not set(record.fields) <= set(children):
             return None
         fields = Record(
@@ -880,7 +886,7 @@ def build_target_log_prob_flat(
       numeric law with a flat-vector view; ``None`` for bare
       array-shaped targets. Passes through to
       :func:`~probpipe.inference._approximate_distribution.make_posterior`
-      so the posterior names its fields by the prior's components.
+      so the posterior names its fields by the prior's outputs.
 
     Three cases:
 
@@ -932,7 +938,7 @@ def _flat_leaves(law: Any) -> list[tuple[tuple[int, ...], Any]] | None:
     lays out, as a bare target over a flat array does.
     """
     if _has_flat_view(law):
-        spec = law.event_spec.spec
+        spec = law.event_spec.term_spec
         if isinstance(spec, NumericArraySpec):
             return [(tuple(spec.shape), spec.support)]
         return None

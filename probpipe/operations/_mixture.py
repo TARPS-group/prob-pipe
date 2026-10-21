@@ -19,12 +19,12 @@ __all__ = ["mixture"]
 
 
 def _mixture_result(K: ConditionalDistributionSpec, mixing: DistributionSpec) -> OutputSpec:
-    """A law that exposes the kernel's event declaration unchanged."""
+    """A law that exposes the kernel's event spec unchanged."""
     return OutputSpec(DistributionSpec(K.event_spec))
 
 
 def _kernel_output_projection(K: ConditionalDistribution) -> Any:
-    """The map from a joint draw to *K*'s produced components, reconstructed by ``K.event_spec``."""
+    """The map from a joint draw to *K*'s outputs, reconstructed by ``K.event_spec``."""
     raise NotImplementedError("mixture is not implemented yet")
 
 
@@ -32,7 +32,7 @@ def _kernel_output_projection(K: ConditionalDistribution) -> Any:
 def mixture(K: ConditionalDistribution, mixing: Distribution):
     """The mixture of the kernel *K* under the mixing distribution *mixing*.
 
-    The mixing distribution's produced slots meet the kernel's given slots by
+    The mixing distribution's outputs meet the kernel's inputs by
     name.
 
     Parameters

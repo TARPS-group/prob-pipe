@@ -105,29 +105,29 @@ class TestRandomFunction:
 class _Mixture(Distribution, SupportsMean):
     """The finite mixture ``Σᵢ wᵢ pᵢ`` of laws that share one declaration, by its mean."""
 
-    def __init__(self, components, weights, *, label="mixture"):
+    def __init__(self, outputs, weights, *, label="mixture"):
         super().__init__(
-            components[0].event_spec,
+            outputs[0].event_spec,
             label=label,
         )
-        self._components = list(components)
+        self._outputs = list(outputs)
         self._w = weights
 
     def _mean(self):
-        return self._w.mean(jnp.stack([component._mean() for component in self._components]))
+        return self._w.mean(jnp.stack([output_name._mean() for output_name in self._outputs]))
 
 
 class _DiracLogProbFunction(RandomFunction):
     """The random log-density of a finite mixture: ``log p_i(x)`` with weight ``w_i``."""
 
-    def __init__(self, components, weights, *, label="dirac_log_prob"):
+    def __init__(self, outputs, weights, *, label="dirac_log_prob"):
         super().__init__("log_prob", label=label)
-        self._components = components
+        self._outputs = outputs
         self._w = weights
 
     def __call__(self, x):
         scalar_dists = [
-            Normal("lp", loc=c._log_prob(x), scale=jnp.array(1e-8)) for c in self._components
+            Normal("lp", loc=c._log_prob(x), scale=jnp.array(1e-8)) for c in self._outputs
         ]
         return _Mixture(scalar_dists, self._w)
 
@@ -145,41 +145,41 @@ class _DiracRandomMeasure(
     measure's ``DistributionSpec`` declares.
     """
 
-    def __init__(self, components, weights=None, *, label=None):
-        components = list(components)
-        if not components:
-            raise ValueError("_DiracRandomMeasure requires at least one component")
-        first = components[0]
-        for i, c in enumerate(components):
+    def __init__(self, outputs, weights=None, *, label=None):
+        outputs = list(outputs)
+        if not outputs:
+            raise ValueError("_DiracRandomMeasure requires at least one output")
+        first = outputs[0]
+        for i, c in enumerate(outputs):
             if c.event_shape != first.event_shape:
                 raise ValueError(
-                    f"All components must share event_shape; components[0]="
-                    f"{first.event_shape} but components[{i}]={c.event_shape}"
+                    f"All outputs must share event_shape; outputs[0]="
+                    f"{first.event_shape} but outputs[{i}]={c.event_shape}"
                 )
             if c.support != first.support:
-                raise ValueError("All components must share support")
-        self._components = components
-        self._w = Weights(n=len(components), weights=weights)
+                raise ValueError("All outputs must share support")
+        self._outputs = outputs
+        self._w = Weights(n=len(outputs), weights=weights)
         super().__init__(
             label or "dirac_random_measure",
             OutputSpec(**{label or "dirac_random_measure": DistributionSpec(first.event_spec)}),
         )
 
     @property
-    def components(self):
-        return self._components
+    def outputs(self):
+        return self._outputs
 
     def _sample(self, key, sample_shape=()):
         if sample_shape == ():
-            return self._components[int(self._w.choice(key))]
+            return self._outputs[int(self._w.choice(key))]
         indices = self._w.choice(key, shape=(prod(sample_shape),))
-        return _object_array([self._components[int(i)] for i in indices], sample_shape)
+        return _object_array([self._outputs[int(i)] for i in indices], sample_shape)
 
     def _mean(self):
-        return _Mixture(self._components, self._w, label=f"{self.label}_expected")
+        return _Mixture(self._outputs, self._w, label=f"{self.label}_expected")
 
     def _random_log_prob(self):
-        return _DiracLogProbFunction(self._components, self._w)
+        return _DiracLogProbFunction(self._outputs, self._w)
 
     def _random_unnormalized_log_prob(self):
         return self._random_log_prob()
@@ -188,14 +188,14 @@ class _DiracRandomMeasure(
 class _SamplingOnlyRandomMeasure(RandomMeasure, SupportsSampling):
     """A random measure that only draws laws."""
 
-    def __init__(self, component, label="sampling_only_rm"):
-        super().__init__(label, OutputSpec(**{label: DistributionSpec(component.event_spec)}))
-        self._component = component
+    def __init__(self, output_name, label="sampling_only_rm"):
+        super().__init__(label, OutputSpec(**{label: DistributionSpec(output_name.event_spec)}))
+        self._output_name = output_name
 
     def _sample(self, key, sample_shape=()):
         if sample_shape == ():
-            return self._component
-        return _object_array([self._component] * prod(sample_shape), sample_shape)
+            return self._output_name
+        return _object_array([self._output_name] * prod(sample_shape), sample_shape)
 
 
 def _object_array(laws, sample_shape):
@@ -217,7 +217,9 @@ class TestInheritance:
         assert isinstance(rm, Distribution)
 
     def test_a_draw_is_an_opaque_law_by_default(self):
-        assert RandomMeasure("m").event_spec.spec == DistributionSpec(OutputSpec(m=OpaqueSpec()))
+        assert RandomMeasure("m").event_spec.term_spec == DistributionSpec(
+            OutputSpec(m=OpaqueSpec())
+        )
 
     def test_a_hole_in_the_event_is_an_opaque_law(self):
         assert RandomMeasure("g", OutputSpec(g=None)).event_spec == OutputSpec(
@@ -323,7 +325,7 @@ class TestTheDrawnLawsDeclaration:
 
     @staticmethod
     def _drawn(rm):
-        return rm.event_spec.spec.event_spec.spec
+        return rm.event_spec.term_spec.event_spec.term_spec
 
     def test_the_support_of_the_drawn_laws(self):
         comps = _normals(3)
@@ -357,6 +359,6 @@ class TestBatchOfRandomMeasures:
             label="measures",
         )
         assert len(batch) == 2
-        assert batch[0].components is rm1.components
-        assert batch[1].components is rm2.components
+        assert batch[0].outputs is rm1.outputs
+        assert batch[1].outputs is rm2.outputs
         assert isinstance(batch[0], RandomMeasure)

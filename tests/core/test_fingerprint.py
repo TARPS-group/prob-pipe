@@ -434,15 +434,15 @@ class TestDistributionHashing:
         from probpipe import EmpiricalDistribution
 
         samples = jnp.array([1.0, 2.0, 3.0])
-        e1 = EmpiricalDistribution(samples, component="posterior")
-        e2 = EmpiricalDistribution(samples, component="posterior")
+        e1 = EmpiricalDistribution(samples, output_name="posterior")
+        e2 = EmpiricalDistribution(samples, output_name="posterior")
         assert fingerprint(e1) == fingerprint(e2)
 
     def test_empirical_different_samples_differ(self):
         from probpipe import EmpiricalDistribution
 
-        e1 = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="post")
-        e2 = EmpiricalDistribution(jnp.array([1.0, 2.0, 9.0]), component="post")
+        e1 = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), output_name="post")
+        e2 = EmpiricalDistribution(jnp.array([1.0, 2.0, 9.0]), output_name="post")
         assert fingerprint(e1) != fingerprint(e2)
 
     def test_empirical_non_uniform_weights_differ(self):
@@ -450,9 +450,9 @@ class TestDistributionHashing:
         from probpipe import EmpiricalDistribution
 
         samples = jnp.array([1.0, 2.0, 3.0])
-        uniform = EmpiricalDistribution(samples, component="post")
+        uniform = EmpiricalDistribution(samples, output_name="post")
         reweighted = EmpiricalDistribution(
-            samples, weights=jnp.array([0.7, 0.2, 0.1]), component="post"
+            samples, weights=jnp.array([0.7, 0.2, 0.1]), output_name="post"
         )
         assert fingerprint(uniform) != fingerprint(reweighted)
 
@@ -461,16 +461,16 @@ class TestDistributionHashing:
         from probpipe import KDEDistribution
 
         pts = jnp.array([0.0, 1.0, 2.0])
-        k1 = KDEDistribution(pts, component="kde")
-        k2 = KDEDistribution(pts, component="kde")
+        k1 = KDEDistribution(pts, output_name="kde")
+        k2 = KDEDistribution(pts, output_name="kde")
         assert fingerprint(k1) == fingerprint(k2)
 
     def test_kde_different_points_differ(self):
         """Two KDE distributions with different data must have different fingerprints."""
         from probpipe import KDEDistribution
 
-        k1 = KDEDistribution(jnp.array([0.0, 1.0, 2.0]), component="kde")
-        k2 = KDEDistribution(jnp.array([0.0, 1.0, 99.0]), component="kde")
+        k1 = KDEDistribution(jnp.array([0.0, 1.0, 2.0]), output_name="kde")
+        k2 = KDEDistribution(jnp.array([0.0, 1.0, 99.0]), output_name="kde")
         assert fingerprint(k1) != fingerprint(k2)
 
 
@@ -597,13 +597,13 @@ class TestFunctionHashing:
         assert a.output_spec is None and b.output_spec is None
         with workflow_run(seed=0):
             laws = [f.using(max_evaluations=8)(Normal("x", 0.0, 1.0)) for f in (a, b)]
-        assert [tuple(law.event_spec.components) for law in laws] == [("first",), ("second",)]
+        assert [tuple(law.event_spec.outputs) for law in laws] == [("first",), ("second",)]
         assert fingerprint(a) == fingerprint(b)
 
     @pytest.mark.parametrize(
         "declaration",
         [None, OutputSpec(value=NumericArraySpec(())), OutputSpec(result=NumericArraySpec(()))],
-        ids=["undeclared", "value-component", "result-component"],
+        ids=["undeclared", "value-output", "result-output"],
     )
     def test_an_output_label_changes_no_identity(self, declaration):
         """Display aliases leave computational declarations and identity unchanged."""
@@ -975,7 +975,7 @@ class TestEmpiricalAtoms:
                 level,
                 label="o",
             ),
-            component="o",
+            output_name="o",
         )
 
     def test_equal_opaque_atoms_give_equal_strong_digests(self):
@@ -992,8 +992,8 @@ class TestEmpiricalAtoms:
         from probpipe import EmpiricalDistribution
 
         atoms = jnp.arange(3.0)
-        assert fingerprint(EmpiricalDistribution(atoms, level="a", component="x")) != fingerprint(
-            EmpiricalDistribution(atoms, level="b", component="x")
+        assert fingerprint(EmpiricalDistribution(atoms, level="a", output_name="x")) != fingerprint(
+            EmpiricalDistribution(atoms, level="b", output_name="x")
         )
         assert fingerprint(self._opaque(["n", "s"], "a")) != fingerprint(
             self._opaque(["n", "s"], "b")
@@ -1011,7 +1011,7 @@ class TestEmpiricalAtoms:
                 element_spec=spec,
                 label="x",
             )
-            return EmpiricalDistribution(atoms, component="x")
+            return EmpiricalDistribution(atoms, output_name="x")
 
         assert fingerprint(law((2, 3))) != fingerprint(law((3, 2)))
 
@@ -1024,7 +1024,7 @@ class TestEmpiricalReweighting:
 
         s = jnp.array([1.0, 2.0, 3.0])
         return EmpiricalDistribution(
-            s, Weights(log_weights=jnp.log(jnp.array(weights))), component="p"
+            s, Weights(log_weights=jnp.log(jnp.array(weights))), output_name="p"
         )
 
     def test_reweighted_differs(self):
@@ -1291,7 +1291,7 @@ class TestTermSpecFingerprints:
     def test_a_deep_declaration_chain_truncates_instead_of_recursing(self, tau):
         """Declaration edges are hashed through the depth-guarded entry point.
 
-        An output declaration may itself be a FunctionSpec, so the chain is
+        An output spec may itself be a FunctionSpec, so the chain is
         unbounded; hashing it must degrade to the depth marker and report weak
         rather than traverse the full declaration. Keep the fixture beyond the
         fingerprint depth limit but within OutputSpec construction's recursive

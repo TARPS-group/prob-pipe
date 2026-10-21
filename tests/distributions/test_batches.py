@@ -1,8 +1,8 @@
 """The batch forms of the two distribution kinds.
 
-A ``DistributionBatch`` holds separate laws sharing one event declaration, and a
+A ``DistributionBatch`` holds separate laws sharing one event spec, and a
 ``ConditionalDistributionBatch`` separate kernels sharing one given declaration
-and one event declaration. Construction checks every element against the
+and one event spec. Construction checks every element against the
 element spec and names the position that fails; the shared declarations are
 views on the batch's spec; indexing and levels follow ``Batch``; and the kind
 table presents a law-valued or kernel-valued record field as the matching batch.
@@ -58,7 +58,7 @@ class _Law(Distribution):
 
 
 class Kernel(ConditionalDistribution):
-    """A kernel over the slots and event it is given, giving a law over that event."""
+    """A kernel over the inputs and event it is given, giving a law over that event."""
 
     def _condition_on(self, given, /, **kwargs):
         return _Law(
@@ -176,7 +176,7 @@ class TestDistributionBatchConstruction:
     @pytest.mark.parametrize(
         "stranger",
         [
-            pytest.param(Normal("other", 0.0, 1.0), id="other-component"),
+            pytest.param(Normal("other", 0.0, 1.0), id="other-output"),
             pytest.param(MultivariateNormal("x", jnp.zeros(2), cov=jnp.eye(2)), id="other-shape"),
             pytest.param(
                 _Law(
@@ -199,7 +199,7 @@ class TestDistributionBatchConstruction:
                 label="laws",
             )
 
-    def test_a_law_of_other_components_raises_naming_the_components(self):
+    def test_a_law_of_other_outputs_raises_naming_the_outputs(self):
         with pytest.raises(TypeError, match=r"element 1 .*fields \['x'\] but the law \['other'\]"):
             DistributionBatch(
                 [Normal("x", 0.0, 1.0), Normal("other", 0.0, 1.0)],
@@ -317,25 +317,25 @@ class TestDistributionBatchDeclarations:
             label="measures",
         )
         assert batch.event_spec == OutputSpec(posterior=drawn)
-        assert batch.event_spec.spec == drawn
+        assert batch.event_spec.term_spec == drawn
 
     @pytest.mark.pending(
-        reason="a batch exposes the components of its element declaration",
+        reason="a batch exposes the outputs of its element declaration",
         raises=AttributeError,
     )
-    def test_the_component_of_a_batch_of_laws_defaults_to_the_batch_label(self):
+    def test_the_output_of_a_batch_of_laws_defaults_to_the_batch_label(self):
         laws = _laws(2)
         batch = DistributionBatch(
             laws,
             "law",
             label="laws",
         )
-        assert dict(batch.components) == {"laws": laws[0].spec}
+        assert dict(batch.outputs) == {"laws": laws[0].spec}
 
     @pytest.mark.pending(
-        reason="a name key addresses the component of every element", raises=TypeError
+        reason="a name key addresses the output of every element", raises=TypeError
     )
-    def test_the_component_of_a_batch_of_laws_addresses_the_batch_itself(self):
+    def test_the_output_of_a_batch_of_laws_addresses_the_batch_itself(self):
         batch = DistributionBatch(
             _laws(2),
             "law",
@@ -519,8 +519,8 @@ class TestConditionalDistributionBatch:
     @pytest.mark.parametrize(
         "stranger",
         [
-            pytest.param(_kernels(1, given={"sigma": SCALAR})[0], id="other-given-slot"),
-            pytest.param(_kernels(1, event=OutputSpec(z=SCALAR))[0], id="other-component"),
+            pytest.param(_kernels(1, given={"sigma": SCALAR})[0], id="other-given-input"),
+            pytest.param(_kernels(1, event=OutputSpec(z=SCALAR))[0], id="other-output"),
             pytest.param(Normal("y", 0.0, 1.0), id="a-law"),
             pytest.param("kernel", id="not-a-kernel"),
         ],

@@ -40,7 +40,7 @@ def _is_target(target: Any) -> Feasibility:
 
 
 def _convert_result(d: DistributionSpec, target: Any) -> OutputSpec:
-    """The converted law, which exposes the source's event declaration."""
+    """The converted law, which exposes the source's event spec."""
     return OutputSpec(DistributionSpec(d.event_spec))
 
 
@@ -56,7 +56,7 @@ def _open_support(spec: TermSpec) -> TermSpec:
 class _Conversion(Operation):
     """The convert operation, whose planning reads the converter option ``check_support``.
 
-    The result rule declares the source's event declaration with its support.
+    The result rule declares the source's event spec with its support.
     A call whose ``method_options`` set ``check_support=False`` overrides the
     support check. Its planning leaves each support of that declaration open,
     so the result has the converted law's own support.
@@ -95,9 +95,9 @@ class _Conversion(Operation):
         result, deferred = super()._plan(call)
         if result is None or call.controls["method_options"].get("check_support", True):
             return result, deferred
-        # The result rule declares a law, and a law's event declaration has no type hole.
+        # The result rule declares a law, and a law's event spec has no unspecified output type.
         event = cast(DistributionSpec, result.spec).event_spec
-        opened = event._with_spec(_open_support(cast(TermSpec, event.spec)))
+        opened = event._with_term_spec(_open_support(cast(TermSpec, event.spec)))
         return OutputSpec(DistributionSpec(opened)), deferred
 
 
@@ -125,7 +125,7 @@ def convert(d: Distribution, target: type):
     -------
     Distribution
         A law of the target class, or claiming the target protocol, with *d*'s
-        event declaration. Under ``check_support=False`` its support is the
+        event spec. Under ``check_support=False`` its support is the
         converted law's own, such as the support of a fitted family.
 
     Raises
@@ -135,7 +135,7 @@ def convert(d: Distribution, target: type):
     ResolutionError
         If *d* does not satisfy *target* and no converter applies.
     ValueError
-        If the converted law does not carry *d*'s event declaration, which
+        If the converted law does not carry *d*'s event spec, which
         includes its support unless ``check_support=False``.
     """
 

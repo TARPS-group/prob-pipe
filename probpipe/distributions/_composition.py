@@ -3,7 +3,7 @@
 ``A * B`` composes two operands conditional-first: the left operand may
 condition on what the right produces, so ``lik * prior`` reads as the density
 ``p(y | β) · p(β)``. Each operand enters as its flattened factors, so ``A * B *
-C`` is one flat joint, and composition reads only component and slot names,
+C`` is one flat joint, and composition reads only output and input names,
 never a label. The result is a ``FactoredDistribution`` when no given is left
 unmet and a ``FactoredConditionalDistribution`` over the unmet givens
 otherwise; it is unlabeled, so its expression is the product of the operands'
@@ -37,10 +37,10 @@ def _compose(
     Parameters
     ----------
     left : Distribution or ConditionalDistribution
-        The left operand, whose given slots may consume the components *right*
+        The left operand, whose inputs may consume the outputs *right*
         produces.
     right : Distribution or ConditionalDistribution
-        The right operand, whose unmet given slots remain unmet in the joint.
+        The right operand, whose unmet inputs remain unmet in the joint.
 
     Returns
     -------
@@ -53,8 +53,8 @@ def _compose(
     Raises
     ------
     ValueError
-        If a component is produced twice, the right operand consumes a
-        component the left produces, or a matched spec does not unify.
+        If an output is produced twice, the right operand consumes a
+        output the left produces, or a matched spec does not unify.
     """
     if not isinstance(right, (Distribution, ConditionalDistribution)):
         return NotImplemented

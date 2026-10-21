@@ -49,9 +49,9 @@ class _Source(Distribution):
 class _Target(Distribution):
     """A representation that an exact and an approximate converter produce."""
 
-    def __init__(self, label: str, component: str | None = None) -> None:
+    def __init__(self, label: str, output_name: str | None = None) -> None:
         super().__init__(
-            OutputSpec(**{component or label: REAL}),
+            OutputSpec(**{output_name or label: REAL}),
             label=label,
         )
 
@@ -61,7 +61,7 @@ class _RoughTarget(_Target):
 
 
 class _Unfaithful(_Target):
-    """A representation whose converter changes the event declaration."""
+    """A representation whose converter changes the event spec."""
 
 
 class _SuiteConverter(Converter):
@@ -89,8 +89,8 @@ class _SuiteConverter(Converter):
         return ConversionInfo(True, target_spec=source.spec)
 
     def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
-        component = next(iter(source.event_spec.components)) if self._keep else "other"
-        law = target_type(self._name, component)
+        output_name = next(iter(source.event_spec.outputs)) if self._keep else "other"
+        law = target_type(self._name, output_name)
         return law
 
 
@@ -204,7 +204,7 @@ class TestTheSupportCheck:
         assert isinstance(fitted, Normal)
         assert fitted.label == "tau"
         assert fitted.support == real
-        assert fitted.event_spec.components["tau"].support == real
+        assert fitted.event_spec.outputs["tau"].support == real
         # Moment matching reads the Gamma law's closed-form mean and variance,
         # so the fit matches them up to rounding.
         np.testing.assert_allclose(
@@ -212,14 +212,14 @@ class TestTheSupportCheck:
         )
 
     def test_the_override_leaves_the_planned_support_open(self):
-        declared = _tau().event_spec.spec
+        declared = _tau().event_spec.term_spec
         report = convert.using(method_options={"check_support": False}).check(_tau(), Normal)
         assert report.result == OutputSpec(
             DistributionSpec(OutputSpec(tau=NumericArraySpec(declared.shape, declared.dtype)))
         )
 
     def test_an_empirical_law_whose_atoms_leave_the_support_converts_under_the_override(self):
-        source = EmpiricalDistribution(jnp.array([0.0, 1.0, 2.0, 3.0]), component="x")
+        source = EmpiricalDistribution(jnp.array([0.0, 1.0, 2.0, 3.0]), output_name="x")
         with pytest.raises(
             ValueError, match=r"lie outside it\. Set the converter option check_support=False"
         ):

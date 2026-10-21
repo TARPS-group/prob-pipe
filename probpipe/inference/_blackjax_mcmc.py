@@ -16,7 +16,7 @@ target whose log-density is JAX-traceable. They run on the flat-vector
 form of the target produced by
 :func:`~probpipe.inference._inference_utils.build_target_log_prob_flat`,
 then lift the resulting chain back through the prior's declaration,
-so the posterior names its fields by the prior's components.
+so the posterior names its fields by the prior's outputs.
 
 The per-draw diagnostics (``acceptance_rate``, ``diverging``,
 ``energy``, ``num_integration_steps``) are read off the BlackJAX

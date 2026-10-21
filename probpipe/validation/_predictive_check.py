@@ -36,7 +36,7 @@ def predictive_check[D](
     """Compare replicated data with the observed data through test statistics.
 
     A replication is a draw of the kernel's event from the composition
-    ``kernel * law``, which draws the given slots from *law* and then the
+    ``kernel * law``, which draws the inputs from *law* and then the
     kernel's event at those values. With the posterior as *law* the check is a
     posterior predictive check, and with the prior it is a prior predictive
     check. Each statistic is computed on the same replications and, when
@@ -58,7 +58,7 @@ def predictive_check[D](
         The law of the observations given the parameters, such as the
         likelihood of a model ``likelihood * prior``.
     law : Distribution
-        A law over the kernel's given slots: the posterior for a posterior
+        A law over the kernel's inputs: the posterior for a posterior
         predictive check, or the prior for a prior predictive check. A
         ``NumericRecord`` of stacked draws is read as the empirical law of its
         rows.
@@ -68,7 +68,7 @@ def predictive_check[D](
         are distinct.
     observed_data : optional
         The observed data, in the form of a replication, or as a mapping from
-        the kernel's components to their values, the form ``condition_on``
+        the kernel's outputs to their values, the form ``condition_on``
         takes.
     num_replications : int
         The number of replications.
@@ -80,7 +80,7 @@ def predictive_check[D](
 
         - ``replicated_statistics``: an ``EmpiricalDistribution`` over the
           statistic's values at the replications, labeled by the statistic's
-          name and declared under the component ``replicated_statistics``.
+          name and declared under the output ``replicated_statistics``.
         - ``test_fn_name``: the statistic's name.
         - ``observed_statistic``: the statistic of *observed_data*, when
           *observed_data* is given.
@@ -98,8 +98,8 @@ def predictive_check[D](
         sample, *test_fns* is neither a callable nor an iterable, a statistic
         is not callable, or *num_replications* is not an integer.
     ValueError
-        If *law* does not produce every given slot of *kernel*, naming the
-        missing slots; if *law* produces a component that *kernel* produces;
+        If *law* does not produce every input of *kernel*, naming the
+        missing inputs; if *law* produces an output that *kernel* produces;
         if *test_fns* is empty or holds two statistics of the same name; or if
         *num_replications* is not positive.
 
@@ -119,7 +119,7 @@ def predictive_check[D](
     >>> likelihood = conditional_distribution(
     ...     lambda mu: Normal("y", mu * jnp.ones(10), 1.0),
     ...     label="y_given_mu",
-    ...     given_spec=prior.event_spec.components,
+    ...     given_spec=prior.event_spec.outputs,
     ... )
     >>> with workflow_run(seed=0):
     ...     check = predictive_check(likelihood, prior, jnp.mean, jnp.zeros(10))
@@ -152,7 +152,7 @@ def predictive_check[D](
         stats_array = replicated[name]
         result: dict[str, Any] = {
             "replicated_statistics": EmpiricalDistribution(
-                stats_array, component="replicated_statistics", label=name
+                stats_array, output_name="replicated_statistics", label=name
             ),
             "test_fn_name": name,
         }
@@ -230,7 +230,7 @@ def _predictive_joint(
     kernel : ConditionalDistribution
         The law of the observations given the parameters.
     law : Distribution
-        A law over the kernel's given slots, such as a posterior or a prior.
+        A law over the kernel's inputs, such as a posterior or a prior.
     operation : str
         The name of the calling function, which each error names.
     law_name : str
@@ -247,8 +247,8 @@ def _predictive_joint(
         If *kernel* is not a ``ConditionalDistribution`` or *law* is not a
         ``Distribution`` that samples.
     ValueError
-        If *law* does not produce every given slot of *kernel*, or produces a
-        component that *kernel* produces.
+        If *law* does not produce every input of *kernel*, or produces a
+        output that *kernel* produces.
     """
     if not isinstance(kernel, ConditionalDistribution):
         raise TypeError(
@@ -272,9 +272,9 @@ def _predictive_joint(
 def _observed_event(kernel: ConditionalDistribution, observed_data: Any) -> Any:
     """*observed_data* in the form of a replication of *kernel*'s event.
 
-    A mapping or a ``Record`` keyed by the kernel's components is
-    reconstructed by the kernel's event declaration, so a whole term is its
-    component's value; any other value is the observed event as given. A
+    A mapping or a ``Record`` keyed by the kernel's outputs is
+    reconstructed by the kernel's event spec, so a whole term is its
+    output's value; any other value is the observed event as given. A
     value held in a registered array host, such as a pandas or xarray object,
     converts to the JAX array a replication holds, so a statistic receives the
     observed data in the form of a replication.
@@ -282,7 +282,7 @@ def _observed_event(kernel: ConditionalDistribution, observed_data: Any) -> Any:
     if isinstance(observed_data, Record):
         observed_data = _raw_record(observed_data)
     declaration = kernel.event_spec
-    if isinstance(observed_data, Mapping) and set(observed_data) == set(declaration.components):
+    if isinstance(observed_data, Mapping) and set(observed_data) == set(declaration.outputs):
         return _event_of(
             declaration, {key: _as_replication(value) for key, value in observed_data.items()}
         )
@@ -306,7 +306,7 @@ def _replicated_statistics(
 
     One call that samples *joint* gives every replication, and each statistic
     reads the same replications, reconstructed from the joint's draws by
-    *kernel*'s event declaration.
+    *kernel*'s event spec.
     """
     draws = _raw_record(joint._sample(key, (num_replications,)))
     replications = _event_of(kernel.event_spec, draws)

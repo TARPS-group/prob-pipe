@@ -5,8 +5,8 @@ declaration as far as they determine it, deferring what only the return can
 settle:
 
 - a bare output spec: completes to ``OutputSpec.default``;
-- a type hole: is filled per call, and the declaration keeps it;
-- a lift: plans a distribution over the output declaration;
+- an unspecified output type: is filled per call, and the declaration keeps it;
+- a lift: plans a distribution over the output spec;
 - ``include_inputs``: returns the joint law of the lifted inputs and the output.
 """
 
@@ -30,6 +30,7 @@ from probpipe import (
     mean,
     workflow_run,
 )
+from probpipe.core._specs import _has_record_outputs
 from probpipe.core.constraints import positive
 
 from ._design_helpers import error_of, one_field_law, standard_normal
@@ -59,11 +60,11 @@ class TestTheDeclaredOutput:
         wrapped = Function(
             lambda x: x,
             output_label="value",
-            output_spec=OutputSpec.default(spec, component="value"),
+            output_spec=OutputSpec.default(spec, output_name="value"),
             label="f",
         )
 
-        assert wrapped.output_spec == OutputSpec.default(spec, component="value")
+        assert wrapped.output_spec == OutputSpec.default(spec, output_name="value")
 
     def test_a_bare_record_spec_exposes_its_fields(self):
         spec = RecordSpec(a=NumericArraySpec(()))
@@ -73,8 +74,8 @@ class TestTheDeclaredOutput:
             label="f",
         )
 
-        assert wrapped.output_spec.exposes_record
-        assert set(wrapped.output_spec.components) == {"a"}
+        assert _has_record_outputs(wrapped.output_spec)
+        assert set(wrapped.output_spec.outputs) == {"a"}
 
     def test_a_type_hole_is_filled_per_call_and_the_declaration_keeps_it(self):
         wrapped = Function(
@@ -87,7 +88,7 @@ class TestTheDeclaredOutput:
         second = wrapped(jnp.ones(3))
 
         assert first.shape == (2,) and second.shape == (3,)
-        assert wrapped.output_spec.spec is None
+        assert wrapped.output_spec.term_spec is None
 
     def test_output_only_dimensions_bind_from_the_returned_term_on_each_call(self):
         rate = _rate_function()
@@ -100,19 +101,19 @@ class TestTheDeclaredOutput:
 
 
 class TestTheResultOfALift:
-    def test_a_lift_keeps_the_declared_components(self):
+    def test_a_lift_keeps_the_declared_outputs(self):
         with workflow_run(seed=0):
             result = _lifted_rate()(jnp.zeros(4), standard_normal())
 
-        assert set(result.event_spec.components) == {"rate"}
+        assert set(result.event_spec.outputs) == {"rate"}
 
     def test_a_lift_plans_a_distribution_over_the_output_declaration(self):
         with workflow_run(seed=0):
             result = _lifted_rate()(jnp.zeros(4), standard_normal())
 
-        assert not result.event_spec.exposes_record
-        assert isinstance(result.event_spec.spec, NumericArraySpec)
-        assert result.event_spec.spec.support is positive
+        assert not _has_record_outputs(result.event_spec)
+        assert isinstance(result.event_spec.term_spec, NumericArraySpec)
+        assert result.event_spec.term_spec.support is positive
 
     def test_an_undeclared_array_return_lifts_to_a_whole_term_under_output_name(self):
         @function(max_evaluations=6, dispatch="sequential", output_spec=OutputSpec(square=None))
@@ -122,8 +123,8 @@ class TestTheResultOfALift:
         with workflow_run(seed=0):
             result = square(standard_normal())
 
-        assert set(result.event_spec.components) == {"square"}
-        assert not result.event_spec.exposes_record
+        assert set(result.event_spec.outputs) == {"square"}
+        assert not _has_record_outputs(result.event_spec)
 
     def test_the_sampling_lift_constructs_an_empirical_approximation(self):
         @function(max_evaluations=6, dispatch="sequential", output_spec=OutputSpec(square=None))
@@ -222,7 +223,7 @@ class TestIncludingTheInputs:
         with workflow_run(seed=0):
             result = self._predict()(theta=standard_normal(), x=jnp.ones(3))
 
-        assert "x" not in result.event_spec.components
+        assert "x" not in result.event_spec.outputs
         assert result.label == "prediction"
 
     def test_the_joint_is_an_empirical_law(self):
@@ -231,11 +232,11 @@ class TestIncludingTheInputs:
 
         assert isinstance(result, EmpiricalDistribution)
 
-    def test_each_lifted_parameter_and_each_exposed_output_component_is_a_field(self):
+    def test_each_lifted_parameter_and_each_exposed_output_is_a_field(self):
         with workflow_run(seed=0):
             result = self._predict()(theta=standard_normal(), x=jnp.ones(3))
 
-        assert set(result.event_spec.components) == {"theta", "mean"}
+        assert set(result.event_spec.outputs) == {"theta", "mean"}
 
     def test_a_one_field_record_draw_remains_nested(self):
         @function(
@@ -250,10 +251,10 @@ class TestIncludingTheInputs:
         with workflow_run(seed=0):
             result = weigh(theta=one_field_law())
 
-        theta = result.event_spec.components["theta"]
+        theta = result.event_spec.outputs["theta"]
         assert isinstance(theta, RecordSpec) and set(theta) == {"beta"}
 
-    def test_a_parameter_named_like_an_output_component_raises(self):
+    def test_a_parameter_named_like_an_output_raises(self):
         @function(include_inputs=True, max_evaluations=6, dispatch="sequential")
         def x(x):
             return x

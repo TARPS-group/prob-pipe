@@ -499,7 +499,7 @@ class TestApplyContract:
         result = wrapped()
 
         assert result is not returned
-        assert result.event_spec.spec is intrinsic
+        assert result.event_spec.term_spec is intrinsic
 
     def test_distribution_output_uses_spec_unification_for_metadata(self):
         class _Undtyped(Distribution):
@@ -545,7 +545,7 @@ class TestApplyContract:
                 label="law",
             ).apply()
 
-    def test_returned_law_with_nested_components_matches_distribution_spec(self):
+    def test_returned_law_with_nested_outputs_matches_distribution_spec(self):
         law = (Normal("a", 0, 1) * Normal("b", 0, 1)).with_path_names(
             {"a": "params/a", "b": "params/b"}
         ) * Normal("s", 0, 1)
@@ -791,7 +791,7 @@ class TestApplyContract:
         assert result.shape == (2, 3, 4)
         assert len(calls) == 1
         assert wrapped.input_spec.free_dims == {"n", "z", "a"}
-        assert wrapped.output_spec.spec.free_dims == {"n", "z", "a"}
+        assert wrapped.output_spec.term_spec.free_dims == {"n", "z", "a"}
 
     def test_a_mismatched_element_kind_names_both_specs(self):
         from probpipe import OpaqueBatch
@@ -864,17 +864,17 @@ class TestApplyContract:
         wrapped = Function(
             lambda x: matching,
             label="function",
-            output_spec=OutputSpec.default(matching.spec, component="function"),
+            output_spec=OutputSpec.default(matching.spec, output_name="function"),
         )
 
         assert wrapped.apply(1) is matching
 
         mismatching = Normal("other", 0, 1)
-        with pytest.raises(ValueError, match=r"declares the component 'draw'.*'other'"):
+        with pytest.raises(ValueError, match=r"declares the output 'draw'.*'other'"):
             Function(
                 lambda x: mismatching,
                 label="function",
-                output_spec=OutputSpec.default(matching.spec, component="function"),
+                output_spec=OutputSpec.default(matching.spec, output_name="function"),
             ).apply(1)
 
     def test_a_returned_function_keeps_its_kind(self, full_provenance_mode):
@@ -1014,7 +1014,7 @@ class TestTemplateDeclarationContract:
         result = wrapped(jnp.ones(3))
         # The declaration leaves the dtype open, so completion takes the produced one (II.2).
         assert result.spec == NumericArraySpec((3,), dtype="float32")
-        assert wrapped.output_spec.spec.free_dims == {"new"}
+        assert wrapped.output_spec.term_spec.free_dims == {"new"}
 
     def test_type_errors_for_non_templates(self):
         with pytest.raises(TypeError, match="input_spec"):
@@ -1127,8 +1127,8 @@ class TestSymbolicCalls:
         with workflow_run(seed=4):
             result = wrapped(Normal("x", 0, 1))
 
-        assert list(result.event_spec.components) == ["pair"]
-        assert result.event_spec.spec.shape == (2,)
+        assert list(result.event_spec.outputs) == ["pair"]
+        assert result.event_spec.term_spec.shape == (2,)
         assert result.num_atoms == 8
         pairs = np.asarray(result._rows)
         assert pairs.shape == (8, 2)
@@ -1201,8 +1201,8 @@ class TestSymbolicCalls:
             result = wrapped(Normal("x", 0, 1))
 
         assert result.provenance.metadata["dispatch"] == "jax"
-        assert list(result.event_spec.components) == ["y"]
-        assert result.event_spec.spec.support == positive
+        assert list(result.event_spec.outputs) == ["y"]
+        assert result.event_spec.term_spec.support == positive
         assert bool(jnp.all(result._rows > 0))
 
     @pytest.mark.parametrize(
@@ -1329,7 +1329,7 @@ class TestSymbolicCalls:
         with workflow_run(seed=7):
             result = wrapped(Normal("x", 0, 1))
 
-        assert result.event_spec.spec.leaf_shapes == {"stats/value": (), "stats/doubled": ()}
+        assert result.event_spec.term_spec.leaf_shapes == {"stats/value": (), "stats/doubled": ()}
         assert result.atoms["stats/value"].shape == (8,)
         np.testing.assert_allclose(
             result.atoms["stats/doubled"],
@@ -1358,7 +1358,7 @@ class TestSymbolicCalls:
             joint = wrapped.using(include_inputs=True)(Normal("x", 0, 1))
         laws = joint._rows["function"]
 
-        assert joint.event_spec.components["function"] == DistributionSpec(
+        assert joint.event_spec.outputs["function"] == DistributionSpec(
             OutputSpec(y=NumericArraySpec((), jnp.asarray(0.0).dtype, real))
         )
         assert joint.num_atoms == 8
@@ -1439,7 +1439,7 @@ class TestSymbolicCalls:
             result = wrapped(rows, Normal("noise", 0, 1))
 
         assert isinstance(result, DistributionBatch)
-        assert result.event_spec.spec.fields == ("prediction",)
+        assert result.event_spec.term_spec.fields == ("prediction",)
 
 
 @dataclass(frozen=True)
@@ -1678,7 +1678,7 @@ class TestReentrancyAndProvenance:
     def test_preprovenanced_tracked_return_is_copied_for_each_call(
         self, stored, full_provenance_mode
     ):
-        # A batch carries no annotations — its slots hold the batch's own state
+        # A batch carries no annotations — its inputs hold the batch's own state
         # alone — so the annotation half of the contract applies to the hosts
         # that have them.
         carries_annotations = hasattr(stored, "annotations")
@@ -1768,7 +1768,7 @@ class TestVariadicPlanning:
 
         assert isinstance(result, Distribution)
         assert result.num_atoms == 8
-        assert list(result.event_spec.components) == ["*items[0]", "function"]
+        assert list(result.event_spec.outputs) == ["*items[0]", "function"]
         assert result.provenance.metadata["broadcast_args"] == ["*items[0]"]
 
     def test_record_batch_in_varargs_is_swept(self):
@@ -1906,7 +1906,7 @@ class TestVariadicPlanning:
             second_extra,
         ]
 
-    def test_plain_inputs_keep_resolved_variadic_slots(self, full_provenance_mode):
+    def test_plain_inputs_keep_resolved_variadic_inputs(self, full_provenance_mode):
         tracked = NumericRecord(
             {"value": 1.0},
             label="tracked",

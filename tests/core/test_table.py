@@ -203,7 +203,7 @@ class TestTheFooterStatesHowEachColumnWasComputed:
             return Normal("y", jnp.full(2, mu), 1.0)
 
         prior = Normal("mu", 0.0, 2.0)
-        kernel = conditional_distribution(y_given_mu, given_spec=prior.event_spec.components)
+        kernel = conditional_distribution(y_given_mu, given_spec=prior.event_spec.outputs)
         with workflow_run(seed=0):
             record = Record({"sd": standard_deviation(kernel * prior)}, label="r")
 

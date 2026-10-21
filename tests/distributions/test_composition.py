@@ -1,11 +1,11 @@
 """The ``*`` operator: composing distributions and kernels into one flat joint.
 
-``A * B`` is conditional-first: the left operand may condition on a component
-the right operand produces. An operand is characterized by its produced slots,
-the keys of its event declaration's components, and its unmet given slots. The
+``A * B`` is conditional-first: the left operand may condition on an output
+the right operand produces. An operand is characterized by its outputs,
+the keys of its event spec's outputs, and its unmet inputs. The
 bound, unmet, and require rules decide the joint's connections and its kind, the
 operands share one dimension scope, and the joint's label joins the operands'
-labels with a middle dot. Composition reads component and slot names, never a
+labels with a middle dot. Composition reads output and input names, never a
 label.
 """
 
@@ -57,7 +57,7 @@ def _total(values: Mapping[str, Any]) -> Any:
 class NormalKernel(ConditionalDistribution):
     """``K(given, ·) = Normal(loc(given), 1)``, a law over the kernel's own whole-term event.
 
-    Binding some of the given slots returns the kernel over the rest, which
+    Binding some of the inputs returns the kernel over the rest, which
     keeps the values bound so far.
     """
 
@@ -80,11 +80,15 @@ class NormalKernel(ConditionalDistribution):
 
     def _condition_on(self, given, /, **options):
         values = {**self._bound, **dict(given.items())}
-        rest = {slot: spec for slot, spec in self.given_spec.items() if slot not in values}
+        rest = {
+            input_name: spec
+            for input_name, spec in self.given_spec.items()
+            if input_name not in values
+        }
         if rest:
             return type(self)(self.name, rest, self.event_spec, loc=self._loc, bound=values)
-        (component,) = self.event_spec.components
-        return Normal(component, self._loc(values), 1.0, label=self.label)
+        (output_name,) = self.event_spec.outputs
+        return Normal(output_name, self._loc(values), 1.0, label=self.label)
 
 
 class Law(Distribution):
@@ -97,21 +101,21 @@ def _likelihood() -> NormalKernel:
 
 
 def _prior() -> Normal:
-    """A law labeled ``prior`` whose component is ``beta``."""
+    """A law labeled ``prior`` whose output is ``beta``."""
     return Normal("beta", 0.0, 1.0, label="prior")
 
 
-def _law(label: str, component: str, spec: Any = SCALAR) -> Law:
-    """A law labeled *label* whose whole-term component is *component*."""
+def _law(label: str, output_name: str, spec: Any = SCALAR) -> Law:
+    """A law labeled *label* whose whole-term output is *output_name*."""
     return Law(
-        OutputSpec(**{component: spec}),
+        OutputSpec(**{output_name: spec}),
         label=label,
     )
 
 
-def _kernel(label: str, given: Mapping[str, Any], component: str, spec: Any = SCALAR):
-    """A kernel labeled *label* on the slots *given* that produces *component*."""
-    return NormalKernel(label, dict(given), OutputSpec(**{component: spec}))
+def _kernel(label: str, given: Mapping[str, Any], output_name: str, spec: Any = SCALAR):
+    """A kernel labeled *label* on the inputs *given* that produces *output_name*."""
+    return NormalKernel(label, dict(given), OutputSpec(**{output_name: spec}))
 
 
 def _features(X):
@@ -146,7 +150,7 @@ def _mentions(*fragments: str) -> str:
 class TestRequireRules:
     """``F_A ∩ F_B = ∅`` and ``G_B ∩ F_A = ∅``: each violation raises ValueError naming the fix."""
 
-    def test_a_component_both_operands_produce_raises(self):
+    def test_an_output_both_operands_produce_raises(self):
         first = Normal("a", 0.0, 1.0, label="first")
         second = Normal("a", 1.0, 1.0, label="second")
         with pytest.raises(
@@ -154,13 +158,13 @@ class TestRequireRules:
         ):
             first * second
 
-    def test_a_component_produced_inside_both_joint_operands_raises(self):
+    def test_an_output_produced_inside_both_joint_operands_raises(self):
         left = _law("u", "a") * _law("v", "b")
         right = _law("w", "c") * _law("x", "b")
         with pytest.raises(ValueError, match=_mentions("'b'", "'v'", "'x'")):
             left * right
 
-    def test_a_kernel_and_a_law_that_produce_one_component_raise(self):
+    def test_a_kernel_and_a_law_that_produce_one_output_raise(self):
         with pytest.raises(ValueError, match=_mentions("'a'", "'k'", "'l'")):
             _kernel("k", {"x": SCALAR}, "a") * _law("l", "a")
 
@@ -186,7 +190,7 @@ class TestRequireRules:
 
 
 class TestBoundRule:
-    """``bound = G_A ∩ F_B``: a given of the left operand is met by a component on the right."""
+    """``bound = G_A ∩ F_B``: a given of the left operand is met by an output on the right."""
 
     def test_a_given_the_right_operand_produces_is_met(self):
         joint = _likelihood() * _prior()
@@ -203,15 +207,15 @@ class TestBoundRule:
             pytest.param(OutputSpec(RecordSpec(beta=SCALAR)), id="one-field-record"),
         ],
     )
-    def test_a_component_meets_a_given_under_either_packaging(self, event_spec):
+    def test_an_output_meets_a_given_under_either_packaging(self, event_spec):
         joint = _likelihood() * Law(
             event_spec,
             label="prior",
         )
         assert isinstance(joint, FactoredDistribution)
-        assert list(joint.event_spec.components) == ["y", "beta"]
+        assert list(joint.event_spec.outputs) == ["y", "beta"]
 
-    def test_a_whole_record_component_meets_a_record_slot(self):
+    def test_a_whole_record_output_meets_a_record_input(self):
         params = RecordSpec(u=SCALAR, v=SCALAR)
         joint = _kernel("lik", {"params": params}, "y") * _law("prior", "params", params)
         assert isinstance(joint, FactoredDistribution)
@@ -250,8 +254,8 @@ class TestUnmetRule:
         assert isinstance(pair * _law("p", "x"), FactoredDistribution)
 
 
-class TestOptionalSlots:
-    """An optional slot is met as a required one is; unmet, it takes its default."""
+class TestOptionalInputs:
+    """An optional input is met as a required one is; unmet, it takes its default."""
 
     @staticmethod
     def _scaled() -> ConditionalDistribution:
@@ -259,16 +263,16 @@ class TestOptionalSlots:
             lambda mu, scale=2.0: Normal("y", mu, scale), given_spec={"mu": SCALAR}, label="lik"
         )
 
-    def test_an_unmet_optional_slot_leaves_the_joint_unconditional(self):
+    def test_an_unmet_optional_input_leaves_the_joint_unconditional(self):
         joint = self._scaled() * Normal("mu", 0.0, 1.0)
         assert isinstance(joint, FactoredDistribution)
         expected = Normal("y", 0.0, 2.0)._log_prob(0.5) + Normal("mu", 0.0, 1.0)._log_prob(0.0)
         np.testing.assert_allclose(joint._log_prob({"y": 0.5, "mu": 0.0}), expected, rtol=1e-6)
 
-    def test_a_factor_that_produces_an_optional_slot_meets_it(self):
+    def test_a_factor_that_produces_an_optional_input_meets_it(self):
         prior = Normal("mu", 0.0, 1.0) * HalfNormal("scale", 1.0)
         joint = self._scaled() * prior
-        assert list(joint.event_spec.components) == ["y", "mu", "scale"]
+        assert list(joint.event_spec.outputs) == ["y", "mu", "scale"]
         expected = (
             Normal("y", 0.0, 3.0)._log_prob(0.5)
             + Normal("mu", 0.0, 1.0)._log_prob(0.0)
@@ -277,44 +281,44 @@ class TestOptionalSlots:
         value = {"y": 0.5, "mu": 0.0, "scale": 3.0}
         np.testing.assert_allclose(joint._log_prob(value), expected, rtol=1e-6)
 
-    def test_a_conditional_joint_keeps_its_unmet_optional_slots(self):
+    def test_a_conditional_joint_keeps_its_unmet_optional_inputs(self):
         joint = self._scaled() * _law("other", "c")
         assert isinstance(joint, FactoredConditionalDistribution)
         assert joint.given_spec.required == ("mu",)
         assert joint.given_spec.optional == {"scale"}
 
-    def test_a_slot_one_factor_requires_is_required(self):
+    def test_an_input_one_factor_requires_is_required(self):
         joint = self._scaled() * _kernel("k2", {"scale": SCALAR}, "b")
         assert set(joint.given_spec.required) == {"mu", "scale"}
 
-    def test_a_producer_to_the_left_of_an_optional_slot_raises(self):
+    def test_a_producer_to_the_left_of_an_optional_input_raises(self):
         with pytest.raises(ValueError, match="to its left"):
             HalfNormal("scale", 1.0) * self._scaled()
 
-    def test_a_produced_component_whose_spec_does_not_unify_raises(self):
+    def test_an_output_whose_spec_does_not_unify_raises(self):
         with pytest.raises(ValueError, match="'scale'"):
             self._scaled() * (Normal("mu", 0.0, 1.0) * Normal("scale", jnp.ones(3), 1.0))
 
-    def test_the_joint_draws_the_slot_from_its_producer(self):
+    def test_the_joint_draws_the_input_from_its_producer(self):
         """A scale concentrated at 5 replaces the default of 2 in the draws of ``y``."""
         joint = self._scaled() * (Normal("mu", 0.0, 1e-3) * Normal("scale", 5.0, 1e-3))
         draws = joint._sample(jax.random.PRNGKey(0), (4000,))
         np.testing.assert_allclose(float(jnp.std(draws["y"])), 5.0, rtol=0.05)
 
-    def test_the_joint_draws_an_unmet_slot_at_its_default(self):
+    def test_the_joint_draws_an_unmet_input_at_its_default(self):
         joint = self._scaled() * Normal("mu", 0.0, 1e-3)
         draws = joint._sample(jax.random.PRNGKey(0), (4000,))
         np.testing.assert_allclose(float(jnp.std(draws["y"])), 2.0, rtol=0.05)
 
-    def test_a_later_operand_meets_an_optional_slot_through_flattening(self):
-        """``(k * mu) * scale`` is the joint ``k * (mu * scale)``, with the slot met."""
+    def test_a_later_operand_meets_an_optional_input_through_flattening(self):
+        """``(k * mu) * scale`` is the joint ``k * (mu * scale)``, with the input met."""
         left = (self._scaled() * Normal("mu", 0.0, 1.0)) * HalfNormal("scale", 1.0)
         right = self._scaled() * (Normal("mu", 0.0, 1.0) * HalfNormal("scale", 1.0))
         value = {"y": 0.5, "mu": 0.0, "scale": 3.0}
-        assert list(left.event_spec.components) == ["y", "mu", "scale"]
+        assert list(left.event_spec.outputs) == ["y", "mu", "scale"]
         np.testing.assert_allclose(left._log_prob(value), right._log_prob(value), rtol=1e-6)
 
-    def test_binding_the_required_slots_of_a_conditional_joint_takes_the_defaults(self):
+    def test_binding_the_required_inputs_of_a_conditional_joint_takes_the_defaults(self):
         joint = self._scaled() * Normal("c", 0.0, 1.0)
         law = joint._condition_on({"mu": 0.0})
         assert isinstance(law, FactoredDistribution)
@@ -330,18 +334,18 @@ class TestOptionalSlots:
             rtol=1e-6,
         )
 
-    def test_binding_only_an_optional_slot_of_a_conditional_joint_leaves_a_kernel(self):
+    def test_binding_only_an_optional_input_of_a_conditional_joint_leaves_a_kernel(self):
         joint = self._scaled() * Normal("c", 0.0, 1.0)
         rest = joint._condition_on({"scale": 3.0})
         assert isinstance(rest, FactoredConditionalDistribution)
         assert rest.given_spec.required == ("mu",)
 
-    def test_a_conditional_joint_requires_its_required_slots(self):
+    def test_a_conditional_joint_requires_its_required_inputs(self):
         joint = self._scaled() * Normal("c", 0.0, 1.0)
-        with pytest.raises(KeyError, match="missing a value for the required given slot"):
+        with pytest.raises(KeyError, match="missing a value for the required input"):
             joint._conditional_log_prob({"scale": 3.0}, {"y": 0.5, "c": 0.0})
 
-    def test_a_slot_two_factors_hold_optional_is_optional_and_feeds_both(self):
+    def test_an_input_two_factors_hold_optional_is_optional_and_feeds_both(self):
         first = self._scaled()
         second = conditional_distribution(
             lambda nu, scale=2.0: Normal("z", nu, scale), given_spec={"nu": SCALAR}, label="lik2"
@@ -367,14 +371,14 @@ class TestOptionalSlots:
 
 
 class TestSameNamedGivens:
-    """Same-named unmet givens are one slot, and binding it binds each factor that names it."""
+    """Same-named unmet givens are one input, and binding it binds each factor that names it."""
 
     def test_same_named_givens_unify_whichever_dtype_is_listed_first(self):
         wide = _kernel("k1", {"x": NumericArraySpec((), np.float32)}, "a")
         narrow = _kernel("k2", {"x": NumericArraySpec((), np.int32)}, "b")
         assert list((wide * narrow).given_spec) == list((narrow * wide).given_spec) == ["x"]
 
-    def test_same_named_unmet_givens_are_one_slot(self):
+    def test_same_named_unmet_givens_are_one_input(self):
         joint = _kernel("k1", {"x": SCALAR}, "a") * _kernel("k2", {"x": SCALAR}, "b")
         assert dict(joint.given_spec) == {"x": SCALAR}
 
@@ -382,7 +386,7 @@ class TestSameNamedGivens:
         with pytest.raises(ValueError, match=_mentions("'x'")):
             _kernel("k1", {"x": SCALAR}, "a") * _kernel("k2", {"x": VECTOR}, "b")
 
-    def test_the_slot_carries_the_first_factor_spec(self):
+    def test_the_input_carries_the_first_factor_spec(self):
         typed = NumericArraySpec((), "float32")
         joint = _kernel("k1", {"x": SCALAR}, "a") * _kernel("k2", {"x": typed}, "b")
         assert joint.given_spec["x"] == SCALAR
@@ -391,9 +395,9 @@ class TestSameNamedGivens:
         polymorphic = _kernel("k1", {"x": SYMBOLIC}, "a", SYMBOLIC)
         joint = polymorphic * _kernel("k2", {"x": VECTOR}, "b")
         assert joint.given_spec["x"] == VECTOR
-        assert joint.factors[0].event_spec.spec == VECTOR
+        assert joint.factors[0].event_spec.term_spec == VECTOR
 
-    def test_binding_the_slot_binds_it_in_every_factor_that_names_it(self):
+    def test_binding_the_input_binds_it_in_every_factor_that_names_it(self):
         joint = _kernel("k1", {"x": SCALAR}, "a") * _kernel("k2", {"x": SCALAR}, "b")
         bound = joint._condition_on({"x": 0.5})
         assert isinstance(bound, FactoredDistribution)
@@ -404,7 +408,7 @@ class TestSameNamedGivens:
         assert joint.given_spec["x"] == SYMBOLIC
         assert joint.spec.free_dims == {"n"}
 
-    def test_the_unified_slot_does_not_depend_on_the_operand_order(self):
+    def test_the_unified_input_does_not_depend_on_the_operand_order(self):
         polymorphic = _kernel("k1", {"x": SYMBOLIC}, "a", SYMBOLIC)
         concrete = _kernel("k2", {"x": VECTOR}, "b")
         left, right = polymorphic * concrete, concrete * polymorphic
@@ -424,16 +428,16 @@ class TestOneDimensionScope:
 
     def test_a_dimension_two_factors_declare_is_one_free_dimension(self):
         joint = _law("la", "a", SYMBOLIC) * _law("lb", "b", SYMBOLIC)
-        assert joint.event_spec.spec.free_dims == {"n"}
+        assert joint.event_spec.term_spec.free_dims == {"n"}
         bound = joint.with_dim_sizes(n=3)
-        assert [spec.shape for spec in bound.event_spec.components.values()] == [(3,), (3,)]
+        assert [spec.shape for spec in bound.event_spec.outputs.values()] == [(3,), (3,)]
 
-    def test_a_matched_slot_binds_the_dimension_in_every_factor_that_declares_it(self):
+    def test_a_matched_input_binds_the_dimension_in_every_factor_that_declares_it(self):
         consumer = _kernel("k", {"x": SYMBOLIC}, "a", SYMBOLIC)
         joint = consumer * _law("l", "b", SYMBOLIC) * _law("p", "x", VECTOR)
-        shapes = {component: spec.shape for component, spec in joint.event_spec.components.items()}
+        shapes = {output_name: spec.shape for output_name, spec in joint.event_spec.outputs.items()}
         assert shapes == {"a": (3,), "b": (3,), "x": (3,)}
-        assert [factor.event_spec.spec.shape for factor in joint.factors] == [(3,), (3,), (3,)]
+        assert [factor.event_spec.term_spec.shape for factor in joint.factors] == [(3,), (3,), (3,)]
         assert joint.factors[0].given_spec["x"] == VECTOR
 
     def test_a_dimension_bound_to_two_sizes_raises(self):
@@ -448,44 +452,44 @@ class TestOneDimensionScope:
         second = _kernel("k2", {"w": SYMBOLIC}, "b", SYMBOLIC).with_dim_names(n="m")
         producers = _law("p", "x", VECTOR) * _law("q", "w", NumericArraySpec((4,)))
         joint = first * second * producers
-        assert joint.event_spec.components["a"].shape == (3,)
-        assert joint.event_spec.components["b"].shape == (4,)
+        assert joint.event_spec.outputs["a"].shape == (3,)
+        assert joint.event_spec.outputs["b"].shape == (4,)
 
-    def test_a_slot_and_its_producer_sharing_a_dimension_keep_it_free(self):
+    def test_an_input_and_its_producer_sharing_a_dimension_keep_it_free(self):
         joint = _kernel("lik", {"beta": SYMBOLIC}, "y", SYMBOLIC) * _law("prior", "beta", SYMBOLIC)
-        assert joint.event_spec.spec.free_dims == {"n"}
+        assert joint.event_spec.term_spec.free_dims == {"n"}
         bound = joint.with_dim_sizes(n=3)
-        assert [factor.event_spec.spec.shape for factor in bound.factors] == [(3,), (3,)]
+        assert [factor.event_spec.term_spec.shape for factor in bound.factors] == [(3,), (3,)]
 
 
 # -- Matched specs -----------------------------------------------------------------
 
 
 class TestMatchedSpecs:
-    """A name match is not enough: the supplying component's spec must unify with the slot."""
+    """A name match is not enough: the supplying output's spec must unify with the input."""
 
     @pytest.mark.parametrize(
-        "component_spec",
+        "output_term_spec",
         [
             pytest.param(SCALAR, id="rank"),
             pytest.param(OpaqueSpec(), id="kind"),
             pytest.param(NumericArraySpec((3,), "float32"), id="dtype"),
         ],
     )
-    def test_a_producer_whose_spec_does_not_unify_with_the_slot_raises(self, component_spec):
+    def test_a_producer_whose_spec_does_not_unify_with_the_input_raises(self, output_term_spec):
         consumer = _kernel("lik", {"beta": NumericArraySpec((3,), "int32")}, "y")
         with pytest.raises(ValueError, match=_mentions("'beta'")):
-            consumer * _law("prior", "beta", component_spec)
+            consumer * _law("prior", "beta", output_term_spec)
 
-    def test_a_polymorphic_slot_binds_to_its_producer(self):
+    def test_a_polymorphic_input_binds_to_its_producer(self):
         joint = _kernel("lik", {"beta": SYMBOLIC}, "y", SYMBOLIC) * _law("prior", "beta", VECTOR)
-        assert joint.event_spec.components["y"] == VECTOR
+        assert joint.event_spec.outputs["y"] == VECTOR
         assert joint.factors[0].given_spec["beta"] == VECTOR
 
-    def test_a_polymorphic_producer_binds_to_the_slot_it_meets(self):
+    def test_a_polymorphic_producer_binds_to_the_input_it_meets(self):
         joint = _kernel("lik", {"beta": VECTOR}, "y") * _law("prior", "beta", SYMBOLIC)
-        assert joint.event_spec.components["beta"] == VECTOR
-        assert joint.factors[1].event_spec.spec == VECTOR
+        assert joint.event_spec.outputs["beta"] == VECTOR
+        assert joint.factors[1].event_spec.term_spec == VECTOR
 
 
 # -- Flattening --------------------------------------------------------------------
@@ -517,9 +521,9 @@ class TestFlattening:
         joint = (lik * prior).with_label("posterior") * other
         assert joint.factors == (lik, prior, other)
 
-    def test_the_components_follow_the_flattened_factor_order(self):
+    def test_the_outputs_follow_the_flattened_factor_order(self):
         joint = _likelihood() * (_prior() * _law("other", "c"))
-        assert list(joint.event_spec.components) == ["y", "beta", "c"]
+        assert list(joint.event_spec.outputs) == ["y", "beta", "c"]
 
     def test_an_independent_factor_may_stand_anywhere_in_a_chain(self):
         lik, prior, other = _likelihood(), _prior(), _law("other", "c")
@@ -577,7 +581,7 @@ class TestAssociativity:
     def test_a_joint_carries_its_bound_dimensions_into_a_later_composition(self):
         a, b, c = _scope_carried()
         joint = (a * b) * c
-        assert joint.event_spec.components["b"] == VECTOR
+        assert joint.event_spec.outputs["b"] == VECTOR
 
     @pytest.mark.parametrize(
         "operands",
@@ -672,8 +676,8 @@ class TestTheJointIsUnlabeled:
         a, b = _law("a", "a"), _law("b", "b")
         ab, ba = a * b, b * a
         assert (ab.label, ba.label) == ("a·b", "b·a")
-        assert list(ab.event_spec.components) == ["a", "b"]
-        assert list(ba.event_spec.components) == ["b", "a"]
+        assert list(ab.event_spec.outputs) == ["a", "b"]
+        assert list(ba.event_spec.outputs) == ["b", "a"]
         assert (ab.factors, ba.factors) == ((a, b), (b, a))
 
     def test_exchanging_independent_operands_keeps_the_law(self):
@@ -698,7 +702,7 @@ class TestWithName:
 
 
 class TestLabelsNeverDecideStructure:
-    """Composition matches component and slot names; a label never meets a given."""
+    """Composition matches output and input names; a label never meets a given."""
 
     def test_a_label_that_matches_a_given_does_not_meet_it(self):
         impostor = Normal("theta", 0.0, 1.0, label="beta")
@@ -706,14 +710,14 @@ class TestLabelsNeverDecideStructure:
         assert isinstance(joint, FactoredConditionalDistribution)
         assert list(joint.given_spec) == ["beta"]
 
-    def test_a_component_meets_a_given_whatever_its_label(self):
+    def test_an_output_meets_a_given_whatever_its_label(self):
         joint = _likelihood() * Normal("beta", 0.0, 1.0, label="anything")
         assert isinstance(joint, FactoredDistribution)
 
-    def test_a_law_keeps_its_component_after_with_name(self):
+    def test_a_law_keeps_its_output_after_with_name(self):
         joint = _likelihood() * Normal("beta", 0.0, 1.0).with_label("renamed")
         assert isinstance(joint, FactoredDistribution)
-        assert list(joint.event_spec.components) == ["y", "beta"]
+        assert list(joint.event_spec.outputs) == ["y", "beta"]
 
     def test_relabeling_the_operands_changes_only_the_label(self):
         lik, prior = _likelihood(), _prior()
@@ -729,7 +733,7 @@ class TestLabelsNeverDecideStructure:
         joint = _law("x", "a") * _law("x", "b")
         assert joint.label == "x·x"
         assert [factor.label for factor in joint.factors] == ["x", "x"]
-        assert list(joint.event_spec.components) == ["a", "b"]
+        assert list(joint.event_spec.outputs) == ["a", "b"]
 
 
 # -- Operand kinds -----------------------------------------------------------------
@@ -761,9 +765,9 @@ class TestOperandKinds:
     def test_a_law_times_a_random_function_composes(self):
         joint = Normal("z", 0.0, 1.0) * _random_function()
         assert isinstance(joint, FactoredDistribution)
-        assert list(joint.event_spec.components) == ["z", "f"]
+        assert list(joint.event_spec.outputs) == ["z", "f"]
 
     def test_a_random_function_times_a_law_composes(self):
         joint = _random_function() * Normal("z", 0.0, 1.0)
         assert isinstance(joint, FactoredDistribution)
-        assert list(joint.event_spec.components) == ["f", "z"]
+        assert list(joint.event_spec.outputs) == ["f", "z"]

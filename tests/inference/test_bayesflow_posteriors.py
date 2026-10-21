@@ -153,7 +153,7 @@ def _conjugate(params, key):
 
 
 def _conjugate_simulator(prior):
-    return SimulatorKernel(prior, (prior.event_spec.spec.vector_size,), _conjugate)
+    return SimulatorKernel(prior, (prior.event_spec.term_spec.vector_size,), _conjugate)
 
 
 def _named_field(params, key):
@@ -198,7 +198,7 @@ def _nested_observe(r, m, c, seed):
     per-draw record via ``from_vector`` (leaf order ``[r, m, c]``) -- the same
     structured object the offline simulator passes the simulator at train time."""
     rec = NumericRecord.from_vector(
-        _nested_prior().event_spec.spec, jnp.array([r, m, c]), label="nr"
+        _nested_prior().event_spec.term_spec, jnp.array([r, m, c]), label="nr"
     )
     return _nested(rec, jax.random.PRNGKey(seed))
 
@@ -335,7 +335,7 @@ class TestBayesFlowNPE:
         at an observation; its prior and simulator properties are the joint it
         was trained on."""
         assert not isinstance(npe_model, SupportsSampling)
-        assert tuple(npe_model.prior.event_spec.components) == ("a", "b")
+        assert tuple(npe_model.prior.event_spec.outputs) == ("a", "b")
         assert isinstance(npe_model.simulator, SimulatorKernel)
 
     def test_it_is_a_kernel_from_the_observation_to_the_parameters(self, npe_model):
@@ -346,15 +346,15 @@ class TestBayesFlowNPE:
         assert npe_model.event_spec == npe_model.prior.event_spec
 
     def test_conditioning_evaluates_it_with_no_inference(self, npe_model):
-        """Conditioning on an observation binds the kernel's given slot, which is approximate,
+        """Conditioning on an observation binds the kernel's input, which is approximate,
         and returns a law that samples, so no inference method runs."""
         observation = {"observation": _observe(0.5, 0.0, 0)}
         report = condition_on_operation.check(npe_model, observation)
-        assert (report.route, report.method, report.exact) == ("bind_given_slots", None, False)
+        assert (report.route, report.method, report.exact) == ("bind_inputs", None, False)
         law = condition_on_operation(npe_model, observation)
         assert isinstance(law, SupportsSampling)
         assert _is_normalized(law)
-        assert tuple(law.event_spec.components) == ("a", "b")
+        assert tuple(law.event_spec.outputs) == ("a", "b")
 
     def test_a_parameter_given_with_the_observation_is_conditioned_by_bayes_rule(self, npe_model):
         """Conditioning a parameter is Bayes' rule on the learned law, which inference
@@ -365,7 +365,7 @@ class TestBayesFlowNPE:
         with workflow_run(seed=0):
             law = condition_on_operation.using(method_options=budgets)(npe_model, given)
         assert isinstance(law, EmpiricalDistribution)
-        assert tuple(law.event_spec.components) == ("b",)
+        assert tuple(law.event_spec.outputs) == ("b",)
         # Observed across four workflow seeds: |mean of b| 0.009-0.056.
         assert abs(float(np.asarray(pp.mean(law)["b"]).ravel()[0])) < 0.5
 
@@ -392,7 +392,7 @@ class TestBayesFlowNPE:
         with pytest.raises(ResolutionError):
             condition_on_operation(npe_model, given)
 
-    def test_its_conditioning_reads_the_observation_slot_alone(self, npe_model):
+    def test_its_conditioning_reads_the_observation_input_alone(self, npe_model):
         with pytest.raises(KeyError, match="typo"):
             npe_model._condition_on({"observation": _observe(0.5, 0.0, 0), "typo": 1.0})
 
@@ -903,9 +903,9 @@ class TestBayesFlowMethods:
                 batch_size=256,
                 verbose=0,
             )
-        (slot,) = model.given_spec
-        assert slot == "observation_"
-        draws = law_draws(condition_on(model, {slot: jnp.array([0.5, 0.1])}), 200)
+        (input_name,) = model.given_spec
+        assert input_name == "observation_"
+        draws = law_draws(condition_on(model, {input_name: jnp.array([0.5, 0.1])}), 200)
         for f in ("observation", "inference_variables"):
             x = np.asarray(draws[f]).reshape(-1)
             assert x.shape[0] == 200

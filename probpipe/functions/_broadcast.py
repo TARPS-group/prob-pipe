@@ -5,7 +5,7 @@ call resolution, normalization, planning, and route selection have identified
 the distribution regime. It draws or enumerates the lifted arguments, runs the
 function once per evaluation under the dispatch mode, and returns the
 pushforward as an :class:`~probpipe.EmpiricalDistribution` over the outputs,
-whose event declaration is the function's completed output declaration (V.6,
+whose event spec is the function's completed output spec (V.6,
 V.10). With ``include_inputs`` the law is the joint empirical law of the lifted
 inputs and the outputs.
 """
@@ -20,6 +20,8 @@ from typing import Any, cast
 import jax
 import jax.numpy as jnp
 import numpy as np
+
+from ..core._specs import _has_record_outputs, _root_output_name
 
 try:
     from prefect import flow, task
@@ -50,7 +52,7 @@ from ..custom_types import Array, PRNGKey
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _raw_record
 from ..values._binding import FunctionInputRef, input_ref_value, replace_input_refs
-from ..values._function_base import _NAMELESS_COMPONENT, _validate_stacked_output
+from ..values._function_base import _NAMELESS_OUTPUT, _validate_stacked_output
 from . import _execution, _plan, _recipe
 from ._call import ApplicabilityError
 from ._context import _workflow_jax_runtime_guard
@@ -119,7 +121,7 @@ def execute_distribution_broadcast(
     require_jax_traceable: Callable[[dict[str, Any], list[FunctionInputRef]], None],
     function_name: str,
     output_label: str | None = None,
-    output_component: str = _NAMELESS_COMPONENT,
+    output_name: str = _NAMELESS_OUTPUT,
     output_expression: Expression | None = None,
     output_spec: OutputSpec | None = None,
     workflow_kind: WorkflowKind,
@@ -173,14 +175,14 @@ def execute_distribution_broadcast(
         The function's label, which provenance metadata records.
     output_label : str or None
         The result's display alias; the function's label by default.
-    output_component : str
-        Default mathematical component, independent of display aliases.
+    output_name : str
+        Default mathematical output, independent of display aliases.
     output_expression : Expression or None
         The result's expression, the function applied to draws of its
         inputs, which gives the result its label; *output_label* labels the
         result when it is ``None``.
     output_spec : OutputSpec or None
-        The function's output declaration with the call's shared dimensions
+        The function's output spec with the call's shared dimensions
         bound, which the outputs complete.
     workflow_kind : WorkflowKind
         Effective orchestration mode for this call. The value is recorded in
@@ -201,20 +203,20 @@ def execute_distribution_broadcast(
     Returns
     -------
     EmpiricalDistribution
-        Atoms on the output component level, one per evaluation. The event declaration is
-        the completed output declaration: a declared output completed by the
+        Atoms on the output level, one per evaluation. The event spec is
+        the completed output spec: a declared output completed by the
         returned values, or else an exposed record for an undeclared record return.
         An undeclared whole-term result uses the callable's original name. Under *include_inputs* the
         event exposes one field per lifted parameter, holding its complete draw,
-        followed by the output's components.
+        followed by the output's outputs.
 
     Raises
     ------
     ApplicabilityError
         If *include_inputs* is set and a lifted parameter shares its name with a
-        component of the output.
+        output of the output.
     ResultSchemaError
-        If the outputs do not satisfy the output declaration or do not agree on
+        If the outputs do not satisfy the output spec or do not agree on
         one declaration.
     """
     broadcast_args = list(stochastic_plan.arg_refs)
@@ -278,7 +280,7 @@ def execute_distribution_broadcast(
         broadcast_args=broadcast_args,
         output_label=output_label or function_name,
         output_spec=output_spec,
-        output_component=output_component,
+        output_name=output_name,
         include_inputs=include_inputs,
     )
     if output_expression is not None:
@@ -307,17 +309,17 @@ def _lift_result(
     broadcast_args: Sequence[FunctionInputRef],
     output_label: str,
     output_spec: OutputSpec | None,
-    output_component: str,
+    output_name: str,
     include_inputs: bool,
 ) -> EmpiricalDistribution:
     """The empirical law of a lifted call's evaluations, under their weights.
 
-    The atoms are the outputs on the output component level, and the event declaration
-    is the completed output declaration. A declaration that exposes a returned
-    law's components holds each law whole under *output_component* instead,
+    The atoms are the outputs on the output level, and the event spec
+    is the completed output spec. A declaration that exposes a returned
+    law's outputs holds each law whole under *output_name* instead,
     since each atom is a law. Under *include_inputs* each atom joins
     the draw of every lifted argument, under its parameter's label, to the
-    output's components.
+    output's outputs.
 
     Parameters
     ----------
@@ -332,10 +334,10 @@ def _lift_result(
     output_label : str
         The result's display alias.
     output_spec : OutputSpec or None
-        The function's output declaration with the call's shared dimensions
+        The function's output spec with the call's shared dimensions
         bound, or ``None`` when the function declares no output.
-    output_component : str
-        Default mathematical component, independent of display aliases.
+    output_name : str
+        Default mathematical output, independent of display aliases.
     include_inputs : bool
         Whether the law is the joint law of the lifted inputs and the outputs.
 
@@ -347,18 +349,18 @@ def _lift_result(
     Raises
     ------
     ApplicabilityError
-        If a lifted parameter shares its name with an output component.
+        If a lifted parameter shares its name with an output.
     ResultSchemaError
-        If the outputs do not satisfy the output declaration.
+        If the outputs do not satisfy the output spec.
     """
     atoms, declaration = _output_atoms(
-        draws.outputs, draws.count, output_label, output_spec, output_component
+        draws.outputs, draws.count, output_label, output_spec, output_name
     )
-    if declaration._component_name is None and not declaration.exposes_record:
+    if _root_output_name(declaration) is None and not _has_record_outputs(declaration):
         # A law's event is a value, so the law of the evaluations holds each
-        # returned law whole under the default component, as an undeclared
+        # returned law whole under the default output, as an undeclared
         # output places its result.
-        declaration = OutputSpec(**{output_component: declaration.spec})
+        declaration = OutputSpec(**{output_name: declaration.term_spec})
     if not include_inputs:
         return EmpiricalDistribution(
             atoms, draws.weights, label=output_label, event_spec=declaration
@@ -372,13 +374,13 @@ def _output_atoms(
     count: int,
     output_label: str,
     output_spec: OutputSpec | None,
-    output_component: str,
+    output_name: str,
 ) -> tuple[Batch, OutputSpec]:
-    """The outputs as a batch on the output component level, and the declaration they complete.
+    """The outputs as a batch on the output level, and the declaration they complete.
 
     A declared output completes to its declaration with the shared dimensions
-    bound by the outputs and any type hole filled. An undeclared record exposes
-    its fields; an undeclared whole-term output uses *output_component*.
+    bound by the outputs and any unspecified output type filled. An undeclared record exposes
+    its fields; an undeclared whole-term output uses *output_name*.
 
     Parameters
     ----------
@@ -388,30 +390,30 @@ def _output_atoms(
     count : int
         The number of evaluations.
     output_label : str
-        The batch's display alias, independent of its output components.
+        The batch's display alias, independent of its outputs.
     output_spec : OutputSpec or None
-        The function's output declaration with the call's shared dimensions
+        The function's output spec with the call's shared dimensions
         bound, or ``None`` when the function declares no output.
-    output_component : str
-        Default mathematical component, independent of display aliases.
+    output_name : str
+        Default mathematical output, independent of display aliases.
 
     Returns
     -------
     atoms : Batch
         The outputs, with one atom per evaluation.
     declaration : OutputSpec
-        The completed output declaration, which records the dtypes the atoms hold.
+        The completed output spec, which records the dtypes the atoms hold.
 
     Raises
     ------
     ResultSchemaError
         If the outputs do not satisfy the declaration or do not agree on one spec,
         or an evaluation returns a batch with a level named like the output
-        component, which names the atom level.
+        output, which names the atom level.
     """
     atom_level = (
-        output_spec._component_name if output_spec is not None else None
-    ) or output_component
+        _root_output_name(output_spec) if output_spec is not None else None
+    ) or output_name
     if isinstance(outputs, NumericArray):
         # The mapped dispatch returns one array term led by the draw axis. A map
         # that returns its operand returns the stacked draws' own term, whose spec
@@ -429,10 +431,10 @@ def _output_atoms(
         if atom_level in returned:
             raise ResultSchemaError(
                 f"the atoms of {output_label!r} lie on the level {atom_level!r} that the output "
-                f"component names, but the evaluations return batches on the levels "
+                f"output names, but the evaluations return batches on the levels "
                 f"{list(returned)}, which include it. Pass an explicit OutputSpec with a distinct "
-                f"output component, such as "
-                f"output_spec=OutputSpec({_free_component(dict.fromkeys(returned))}=None)."
+                f"output, such as "
+                f"output_spec=OutputSpec({_free_output(dict.fromkeys(returned))}=None)."
             )
         completed = None if output_spec is None else _aggregate_output_spec(output_spec, rows)
         try:
@@ -452,13 +454,13 @@ def _output_atoms(
         else atoms.element_spec
     )
     if output_spec is None:
-        return atoms, OutputSpec.default(actual, component=output_component)
+        return atoms, OutputSpec.default(actual, output_name=output_name)
     try:
         _validate_stacked_output(function_name=output_label, output_spec=output_spec, batch=atoms)
     except ValueError as error:
         raise ResultSchemaError(str(error)) from error
-    declaration = output_spec.with_spec(actual)
-    return atoms, declaration._with_spec(_with_dtypes_of(declaration.spec, actual))
+    declaration = output_spec.with_term_spec(actual)
+    return atoms, declaration._with_term_spec(_with_dtypes_of(declaration.term_spec, actual))
 
 
 def _returned_levels(rows: Any) -> tuple[str, ...]:
@@ -491,19 +493,19 @@ def _joint_atoms(
     broadcast_args: Sequence[FunctionInputRef],
     output_label: str,
 ) -> RecordBatch:
-    """The batch of joint atoms: each lifted argument's draw, then the output's components.
+    """The batch of joint atoms: each lifted argument's draw, then the output's outputs.
 
     Each lifted parameter contributes one field, under its label, holding its
-    complete draw at the kind its law's event declaration names, so a record
+    complete draw at the kind its law's event spec names, so a record
     draw stays nested even when it has one field. The output contributes the
-    components *declaration* exposes.
+    outputs *declaration* exposes.
 
     Parameters
     ----------
     atoms : Batch
-        The outputs on the output component level, as :func:`_output_atoms` returns them.
+        The outputs on the output level, as :func:`_output_atoms` returns them.
     declaration : OutputSpec
-        The completed output declaration, as :func:`_output_atoms` returns it.
+        The completed output spec, as :func:`_output_atoms` returns it.
     draws : _LiftDraws
         The lifted call's evaluations, whose ``inputs`` hold each lifted
         argument's draws.
@@ -513,22 +515,22 @@ def _joint_atoms(
     broadcast_args : sequence of FunctionInputRef
         The references to the lifted arguments, in the order of their fields.
     output_label : str
-        The batch's label. The output's components come from *declaration*.
+        The batch's label. The output's outputs come from *declaration*.
 
     Returns
     -------
     RecordBatch
-        The joint atoms on the output component level, labeled *output_label*.
+        The joint atoms on the output level, labeled *output_label*.
 
     Raises
     ------
     ApplicabilityError
-        If a lifted parameter's label is also an output component.
+        If a lifted parameter's label is also an output.
     """
     fields: dict[str, Any] = {}
     columns: dict[str, Any] = {}
     for ref in broadcast_args:
-        event = input_ref_value(values, ref).event_spec.spec
+        event = input_ref_value(values, ref).event_spec.term_spec
         if isinstance(event, BatchSpec):
             event = _flat_batch_spec(event)
         fields[ref.label] = event
@@ -537,22 +539,22 @@ def _joint_atoms(
             # A batch-valued field holds one batch per draw in its object column.
             inputs = _record_columns(inputs, ref.label, event, as_batch=True)
         columns.update(_draw_columns(ref.label, inputs))
-    clash = sorted(set(fields) & set(declaration.components))
+    clash = sorted(set(fields) & set(declaration.outputs))
     if clash:
         if len(clash) == 1:
-            named, held = f"parameter {clash[0]!r}", "a component with that name"
+            named, held = f"parameter {clash[0]!r}", "an output with that name"
         else:
-            named, held = f"parameters {clash}", "components with those names"
+            named, held = f"parameters {clash}", "outputs with those names"
         raise ApplicabilityError(
             f"include_inputs=True cannot add {named} to the output of {output_label!r}, which "
             f"already has {held}; rename the {'parameter' if len(clash) == 1 else 'parameters'}, "
-            f"or pass output_spec=OutputSpec({_free_component(fields)}=None) to hold the output "
+            f"or pass output_spec=OutputSpec({_free_output(fields)}=None) to hold the output "
             "under a name no parameter has"
         )
-    if isinstance(declaration.spec, BatchSpec):
-        component = cast(str, declaration._component_name)
-        fields[component] = declaration.spec
-        columns[component] = _from_iterable(
+    if isinstance(declaration.term_spec, BatchSpec):
+        output_name = cast(str, _root_output_name(declaration))
+        fields[output_name] = declaration.term_spec
+        columns[output_name] = _from_iterable(
             [atoms[index] for index in range(draws.count)], kind="batch-valued output atoms"
         )
         element = RecordSpec(fields)
@@ -560,21 +562,21 @@ def _joint_atoms(
             columns, atoms.level_names[0], element_spec=element, label=output_label
         )
     stored = _batch_columns(atoms)
-    if declaration.exposes_record:
-        fields.update(declaration.spec.children)
+    if _has_record_outputs(declaration):
+        fields.update(declaration.term_spec.children)
         columns.update(stored)
     else:
-        component = cast(str, declaration._component_name)
-        fields[component] = declaration.spec
-        columns.update(_prefixed(component, stored))
+        output_name = cast(str, _root_output_name(declaration))
+        fields[output_name] = declaration.term_spec
+        columns.update(_prefixed(output_name, stored))
     element = RecordSpec(fields)
     return _batch_class_for(element)(
         columns, atoms.level_names[0], element_spec=element, label=output_label
     )
 
 
-def _free_component(taken: Mapping[str, Any]) -> str:
-    """A component name that no key of *taken* is: ``output``, extended by ``_`` until it is free."""
+def _free_output(taken: Mapping[str, Any]) -> str:
+    """An output name that no key of *taken* is: ``output``, extended by ``_`` until it is free."""
     name = "output"
     while name in taken:
         name += "_"
@@ -683,7 +685,9 @@ def _sample_planned_source_groups(
         key = get_key(event)
         binding = stochastic_plan.runtime_bindings[group.index]
         root_sample = _record_columns(
-            binding.sample_root(key, sample_shape), binding.root.label, binding.root.event_spec.spec
+            binding.sample_root(key, sample_shape),
+            binding.root.label,
+            binding.root.event_spec.term_spec,
         )
         for consumer, evaluate, event, as_batch in zip(
             group.consumers,
@@ -959,7 +963,7 @@ def _broadcast_enumerate(
         binding = stochastic_plan.runtime_bindings[group_index]
         # Every atom along one leading axis, in its raw form.
         atoms = _record_columns(
-            root._atoms_at(jnp.arange(root.num_atoms)), root.label, root.event_spec.spec
+            root._atoms_at(jnp.arange(root.num_atoms)), root.label, root.event_spec.term_spec
         )
         group = stochastic_plan.source_groups[group_index]
         exact_entries.append(
@@ -1081,7 +1085,9 @@ def _enumerated_inputs(
         group = stochastic_plan.source_groups[group_index]
         binding = stochastic_plan.runtime_bindings[group_index]
         atoms = _record_columns(
-            root._atoms_at(jnp.asarray(atom_indices[:, column])), root.label, root.event_spec.spec
+            root._atoms_at(jnp.asarray(atom_indices[:, column])),
+            root.label,
+            root.event_spec.term_spec,
         )
         for consumer, evaluate, event in zip(
             group.consumers, binding.consumer_evaluators, binding.consumer_events, strict=True

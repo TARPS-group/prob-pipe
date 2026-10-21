@@ -1,4 +1,4 @@
-"""Renaming event paths and given slots keeps the law and renames its values.
+"""Renaming event paths and inputs keeps the law and renames its values.
 
 ``with_path_names`` on a law whose rename changes the path of a field of a
 record draw returns a law that holds the original and renames at its boundary,
@@ -6,10 +6,10 @@ unless the law's family rebuilds itself under the new paths, as an empirical
 law over records does. Either way its draws, moments, and marginals carry the
 new names, and the law that holds the original translates a scored value, a
 given, or a path under the new names to the original's. Renaming a whole term's
-component alone changes only the declaration. On a kernel, a
-given-side target is the node's new path, so a rename may group slots or split
-a field out of a structured slot; binding the renamed kernel translates the
-given to the original slots and renames what the binding returns.
+output alone changes only the declaration. On a kernel, a
+given-side target is the node's new path, so a rename may group inputs or split
+a field out of a structured input; binding the renamed kernel translates the
+given to the original inputs and renames what the binding returns.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ from probpipe.distributions._capabilities import (
 from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.linalg import DenseLinOp, LinOp
 
-_REAL = Normal("x", 0.0, 1.0).event_spec.spec
+_REAL = Normal("x", 0.0, 1.0).event_spec.term_spec
 _SCALAR = NumericArraySpec(())
 _MEAN = jnp.array([1.0, 2.0, 3.0])
 _COV = jnp.array([[2.0, 0.3, 0.1], [0.3, 1.5, 0.2], [0.1, 0.2, 1.0]])
@@ -103,13 +103,13 @@ class _NestedLaw(
             return RecordBatch(
                 fields,
                 "sample",
-                element_spec=self.event_spec.spec,
+                element_spec=self.event_spec.term_spec,
                 axes_per_level=(len(sample_shape),),
                 label=self.label,
             )
         return Record(
             fields,
-            event_template=self.event_spec.spec,
+            event_template=self.event_spec.term_spec,
             label=self.label,
         )
 
@@ -121,10 +121,10 @@ class _NestedLaw(
 
     def _marginal(self, path: str | tuple[str, ...]) -> Distribution:
         self.marginal_calls.append(path)
-        component = path.rsplit("/", 1)[-1]
-        if component == "theta":
+        output_name = path.rsplit("/", 1)[-1]
+        if output_name == "theta":
             return _Law("theta", OutputSpec(theta=RecordSpec(mu=_REAL, tau=(2,))))
-        return Normal(component, 0.0, 1.0)
+        return Normal(output_name, 0.0, 1.0)
 
     def _marginal_guard(self, path: str | tuple[str, ...]) -> Feasibility:
         if path == "y":
@@ -178,7 +178,7 @@ class _WholeRecordLaw(_Law, SupportsSampling):
     """The whole record ``parameters`` of a parent's draws."""
 
     def __init__(self, parent: Distribution) -> None:
-        super().__init__("whole", OutputSpec(parameters=parent.event_spec.spec))
+        super().__init__("whole", OutputSpec(parameters=parent.event_spec.term_spec))
         self.parent = parent
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
@@ -226,10 +226,10 @@ class _NamedDensityLaw(_Law, SupportsLogProb):
 
 
 class _RecordingKernel(ConditionalDistribution):
-    """A kernel that records each given it binds and returns a kernel over the slots left.
+    """A kernel that records each given it binds and returns a kernel over the inputs left.
 
-    Binding every slot returns a law over the kernel's event under the kernel's
-    label and records the bound values in slot order; binding some returns the kernel over the rest,
+    Binding every input returns a law over the kernel's event under the kernel's
+    label and records the bound values in input order; binding some returns the kernel over the rest,
     which keeps the values bound so far.
     """
 
@@ -254,7 +254,11 @@ class _RecordingKernel(ConditionalDistribution):
         given = dict(given)
         self.calls.append(given)
         bound = {**self.bound, **given}
-        remaining = {slot: spec for slot, spec in self.given_spec.items() if slot not in given}
+        remaining = {
+            input_name: spec
+            for input_name, spec in self.given_spec.items()
+            if input_name not in given
+        }
         if remaining:
             return _RecordingKernel(
                 self.label, remaining, self.event_spec, calls=self.calls, bound=bound
@@ -378,11 +382,11 @@ def _whole_record_view() -> Distribution:
 
 
 class TestRenamedLawDeclaration:
-    def test_renaming_a_whole_term_component_keeps_the_class(self):
+    def test_renaming_a_whole_term_output_keeps_the_class(self):
         law = Normal("x", 0.0, 1.0)
         renamed = law.with_path_names(x="location")
         assert type(renamed) is type(law)
-        assert list(renamed.event_spec.components) == ["location"]
+        assert list(renamed.event_spec.outputs) == ["location"]
 
     def test_renaming_a_field_keeps_the_name_and_renames_the_declaration(self):
         parent = _product()
@@ -422,7 +426,7 @@ class TestRenamedLawValues:
         draw = renamed._sample(key)
         assert list(draw.keys()) == ["model/theta/m", "model/theta/tau", "obs"]
         assert jnp.array_equal(draw["model/theta/m"], parent._sample(key)["model/theta/mu"])
-        assert renamed.event_spec.spec.is_valid(draw)
+        assert renamed.event_spec.term_spec.is_valid(draw)
 
     def test_a_batch_of_draws_carries_the_new_names(self, key):
         parent = _NestedLaw()
@@ -480,7 +484,7 @@ class TestRenamedLawPaths:
         renamed = parent.with_path_names({"model/theta/mu": "model/theta/m"})
         marginal = renamed._marginal("model/theta/m")
         assert parent.marginal_calls == ["model/theta/mu"]
-        assert list(marginal.event_spec.components) == ["m"]
+        assert list(marginal.event_spec.outputs) == ["m"]
 
     def test_the_marginal_of_a_group_takes_the_renames_below_it(self):
         parent = _NestedLaw()
@@ -547,7 +551,7 @@ class TestRenamedLawMoves:
         original = parent._sample(key)
         assert jnp.array_equal(draw["mu"], original["model/theta/mu"])
         assert jnp.array_equal(draw["model/y"], original["y"])
-        assert renamed.event_spec.spec.is_valid(draw)
+        assert renamed.event_spec.term_spec.is_valid(draw)
 
     def test_a_batch_of_draws_moves_its_columns(self, key):
         parent = _NestedLaw()
@@ -606,7 +610,7 @@ class TestRenamedLawMoves:
         parent = _grouped_law()
         renamed = parent.with_path_names({"a/x": "x"})
         marginal = renamed._marginal("x")
-        assert list(marginal.event_spec.components) == ["x"]
+        assert list(marginal.event_spec.outputs) == ["x"]
         assert jnp.allclose(marginal._mean(), jnp.mean(_XS))
         assert renamed._marginal("b").event_spec == OutputSpec(b=RecordSpec(y=_SCALAR))
 
@@ -643,7 +647,7 @@ class TestRenamedLawMoves:
 class TestRenamingARenamedLaw:
     """A renamed law applies a further rename to its parent, composed with its own."""
 
-    def test_a_component_rename_after_a_field_rename_keeps_the_field_rename(self, key):
+    def test_an_output_rename_after_a_field_rename_keeps_the_field_rename(self, key):
         law = _whole_record_view()
         renamed = law.with_path_names({"parameters/beta": "parameters/b"}).with_path_names(
             parameters="theta"
@@ -652,7 +656,7 @@ class TestRenamingARenamedLaw:
         assert renamed.event_spec == OutputSpec(theta=RecordSpec(b=_SCALAR, sigma=_SCALAR))
         assert _capability_guard(renamed, "_marginal", "theta/b") == Feasibility(True)
         marginal = renamed._marginal("theta/b")
-        assert list(marginal.event_spec.components) == ["b"]
+        assert list(marginal.event_spec.outputs) == ["b"]
         assert jnp.allclose(marginal._mean(), jnp.mean(_XS))
         assert list(renamed._sample(key).keys()) == ["b", "sigma"]
 
@@ -675,7 +679,7 @@ def _vector(size: int) -> NumericArraySpec:
 
 
 class TestRenamedKernelBinding:
-    def test_a_grouped_slot_binds_the_original_slots(self):
+    def test_a_grouped_input_binds_the_original_inputs(self):
         kernel = _RecordingKernel("k", {"a": _SCALAR, "b": _vector(2)}, OutputSpec(y=_SCALAR))
         grouped = kernel.with_path_names({"a": "theta/a", "b": "theta/b"})
         law = grouped._condition_on({"theta": {"a": 1.0, "b": jnp.zeros(2)}})
@@ -683,7 +687,7 @@ class TestRenamedKernelBinding:
         assert list(kernel.calls[0]) == ["a", "b"]
         assert kernel.calls[0]["a"] == 1.0
 
-    def test_split_slots_bind_the_original_structured_slot(self):
+    def test_split_inputs_bind_the_original_structured_input(self):
         kernel = _RecordingKernel(
             "k", {"theta": RecordSpec(a=_SCALAR, b=_vector(2))}, OutputSpec(y=_SCALAR)
         )
@@ -694,7 +698,7 @@ class TestRenamedKernelBinding:
         assert given["theta"]["a"] == 1.0
         assert jnp.array_equal(given["theta"]["b"], jnp.zeros(2))
 
-    def test_binding_one_split_slot_holds_its_field_until_the_slot_completes(self):
+    def test_binding_one_split_input_holds_its_field_until_the_input_completes(self):
         kernel = _RecordingKernel(
             "k", {"theta": RecordSpec(a=_SCALAR, b=_vector(2))}, OutputSpec(y=_SCALAR)
         )
@@ -707,16 +711,16 @@ class TestRenamedKernelBinding:
         assert isinstance(law, Distribution)
         assert kernel.calls[0]["theta"]["a"] == 1.0
 
-    def test_binding_some_slots_returns_the_renamed_kernel_over_the_rest(self):
+    def test_binding_some_inputs_returns_the_renamed_kernel_over_the_rest(self):
         kernel = _RecordingKernel("k", {"mu": _SCALAR, "sigma": _SCALAR}, OutputSpec(y=_SCALAR))
         renamed = kernel.with_path_names(mu="loc", sigma="scale", y="obs")
         rest = renamed._condition_on({"loc": 1.0})
         assert isinstance(rest, ConditionalDistribution)
         assert list(rest.given_spec) == ["scale"]
-        assert list(rest.event_spec.components) == ["obs"]
+        assert list(rest.event_spec.outputs) == ["obs"]
         law = rest._condition_on({"scale": 2.0})
         assert [dict(given) for given in kernel.calls] == [{"mu": 1.0}, {"sigma": 2.0}]
-        assert list(law.event_spec.components) == ["obs"]
+        assert list(law.event_spec.outputs) == ["obs"]
 
     def test_the_returned_law_carries_the_renamed_fields(self):
         kernel = _RecordingKernel(
@@ -725,13 +729,13 @@ class TestRenamedKernelBinding:
         law = kernel.with_path_names(y="obs")._condition_on({"mu": 1.0})
         assert law.event_spec == OutputSpec(RecordSpec(obs=_SCALAR, z=_SCALAR))
 
-    def test_binding_part_of_a_structured_slot_raises_value_error(self):
+    def test_binding_part_of_a_structured_input_raises_value_error(self):
         kernel = _RecordingKernel("k", {"a": _SCALAR, "b": _SCALAR}, OutputSpec(y=_SCALAR))
         grouped = kernel.with_path_names({"a": "theta/a", "b": "theta/b"})
-        with pytest.raises(ValueError, match="cannot bind part of a given slot"):
+        with pytest.raises(ValueError, match="cannot bind part of an input"):
             grouped._condition_on({"theta": {"a": 1.0}})
 
-    def test_a_key_that_is_not_a_slot_raises_key_error(self):
+    def test_a_key_that_is_not_an_input_raises_key_error(self):
         kernel = _RecordingKernel("k", {"mu": _SCALAR}, OutputSpec(y=_SCALAR))
         with pytest.raises(KeyError):
             kernel.with_path_names(mu="loc")._condition_on({"mu": 1.0})
@@ -749,7 +753,7 @@ class TestRenamedKernelMoves:
         [
             pytest.param({"a": "a/x"}, ValueError, id="into-its-own-node"),
             pytest.param({"a": "g", "b": "g/b"}, ValueError, id="overlapping-targets"),
-            pytest.param({"a": "b"}, ValueError, id="onto-a-slot"),
+            pytest.param({"a": "b"}, ValueError, id="onto-an-input"),
             pytest.param({"a": "g//a"}, ValueError, id="empty-segment"),
             pytest.param({"a": "not a name"}, ValueError, id="not-an-identifier"),
             pytest.param({"a/x": "x"}, KeyError, id="below-a-leaf"),
@@ -760,14 +764,14 @@ class TestRenamedKernelMoves:
         with pytest.raises(error):
             kernel.with_path_names(moves)
 
-    def test_a_field_renamed_within_its_slot_keeps_its_position(self):
+    def test_a_field_renamed_within_its_input_keeps_its_position(self):
         kernel = _RecordingKernel(
             "k", {"theta": RecordSpec(a=_SCALAR, b=_SCALAR)}, OutputSpec(y=_SCALAR)
         )
         renamed = kernel.with_path_names({"theta/a": "theta/alpha"})
         assert renamed.given_spec["theta"] == RecordSpec(alpha=_SCALAR, b=_SCALAR)
 
-    def test_swapped_slots_exchange_their_names(self):
+    def test_swapped_inputs_exchange_their_names(self):
         kernel = _RecordingKernel("k", {"a": _SCALAR, "b": _vector(2)}, OutputSpec(y=_SCALAR))
         swapped = kernel.with_path_names(a="b", b="a")
         assert list(swapped.given_spec) == ["b", "a"]
@@ -797,21 +801,21 @@ class TestRenamedKernelMoves:
         renamed = joint.with_path_names(x="u", b="c")
         assert isinstance(renamed, FactoredConditionalDistribution)
         assert set(renamed.given_spec) == {"u", "w"}
-        assert list(renamed.event_spec.components) == ["a", "c"]
+        assert list(renamed.event_spec.outputs) == ["a", "c"]
         assert list(renamed.factors[0].given_spec) == ["u"]
-        assert list(renamed.factors[1].event_spec.components) == ["c"]
+        assert list(renamed.factors[1].event_spec.outputs) == ["c"]
         renamed._condition_on({"u": 1.0, "w": 2.0})
         assert first.calls == [{"x": 1.0}]
 
-    def test_gathering_a_component_of_a_kernel_joint_packages_its_factor(self):
-        """Moving a whole term's component into a new node packages its factor as the node."""
+    def test_gathering_an_output_of_a_kernel_joint_packages_its_factor(self):
+        """Moving a whole term's output into a new node packages its factor as the node."""
         joint = _RecordingKernel("k1", {"x": _SCALAR}, OutputSpec(a=_SCALAR)) * _RecordingKernel(
             "k2", {"w": _SCALAR}, OutputSpec(b=_SCALAR)
         )
         renamed = joint.with_path_names({"a": "g/a"})
         assert isinstance(renamed, FactoredConditionalDistribution)
         assert set(renamed.given_spec) == {"x", "w"}
-        assert list(renamed.event_spec.components) == ["g", "b"]
+        assert list(renamed.event_spec.outputs) == ["g", "b"]
         group = renamed.factors[0]
         assert list(group.given_spec) == ["x"]
         assert group.event_spec == OutputSpec(g=RecordSpec(a=_SCALAR))
@@ -826,7 +830,7 @@ class TestRenamedKernelMoves:
         renamed = joint.with_path_names({"a": "g/a", "c": "g/c"})
         assert not isinstance(renamed, FactoredConditionalDistribution)
         assert list(renamed.given_spec) == ["x"]
-        assert set(renamed.event_spec.components) == {"b", "g"}
+        assert set(renamed.event_spec.outputs) == {"b", "g"}
 
 
 class TestRenamedKernelCapabilities:
@@ -851,10 +855,10 @@ class TestRenamedKernelCapabilities:
         assert list(draw.keys()) == ["obs", "z"]
         assert jnp.allclose(draw["obs"] - draw["z"], 1.0)
 
-    def test_a_conditional_capability_needs_every_required_slot(self):
+    def test_a_conditional_capability_needs_every_required_input(self):
         kernel = _RecordingKernel("k", {"mu": _SCALAR, "sigma": _SCALAR}, OutputSpec(y=_SCALAR))
         renamed = kernel.with_path_names(mu="loc")
-        with pytest.raises(ValueError, match="every required given slot"):
+        with pytest.raises(ValueError, match="every required input"):
             renamed._parent_given({"loc": 1.0})
 
     def test_a_conditional_capability_carries_the_parent_guard(self):

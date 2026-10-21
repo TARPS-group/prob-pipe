@@ -229,7 +229,7 @@ class _StringSlotsBatch(Batch[int]):
     """A double whose ``__slots__`` names its one slot as a bare string.
 
     It derives from :class:`Batch` directly, not from another double: a parent
-    declaring the same slot in the tuple form would supply the name the string
+    declaring the same input in the tuple form would supply the name the string
     form fails to, and the double would pass whether or not the string was read
     correctly.
     """
@@ -539,7 +539,7 @@ class TestLevelNames:
 
     @pytest.mark.parametrize("name", ["my level", "mean(mu)", "[model] | y", "3"])
     def test_a_level_name_is_any_non_empty_string_without_a_slash(self, name):
-        """A level name follows the rule for component names."""
+        """A level name follows the rule for output names."""
         assert _spec([(2,)], [name]).level_names == (name,)
 
     def test_a_level_name_containing_a_slash_raises(self):
@@ -1663,7 +1663,7 @@ class TestAViewOverSharedStorageBehavesLikeAnyBatch:
         return _ViewBatch(list(range(6)), _spec([(2,), (3,)], ["chain", "draw"]))
 
     def test_a_view_round_trips_through_pickle(self, viewed):
-        # A second storage shape, to pin that the slot walk carries whatever a
+        # A second storage shape, to pin that the input walk carries whatever a
         # subclass declares rather than the doubles' one list.
         view = viewed[1]
         restored = pickle.loads(pickle.dumps(view))

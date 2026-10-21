@@ -118,7 +118,7 @@ class TestAddRhat:
         for v in view.rhat.values():
             assert v == NotComputed("R-hat requires at least 2 chains")
 
-    def test_a_single_chain_posterior_reports_each_component(self):
+    def test_a_single_chain_posterior_reports_each_output(self):
         import jax.numpy as jnp
 
         from probpipe import NumericArraySpec, RecordSpec
@@ -253,7 +253,7 @@ class TestAddEss:
         from probpipe import EmpiricalDistribution
 
         law = EmpiricalDistribution(
-            np.random.default_rng(0).standard_normal((50, 2)), component="theta"
+            np.random.default_rng(0).standard_normal((50, 2)), output_name="theta"
         )
         with pytest.raises(ValueError, match=r"ℙ\(theta\) has no chains: .* \['theta'\]"):
             add_ess(law)
@@ -459,7 +459,7 @@ class TestAddMcmcDiagnostics:
         add_mcmc_diagnostics(posterior)
         assert posterior.diagnostics.mcmc.n_divergences == 3
 
-    def test_vector_parameter_diagnostics_are_written_by_component(self):
+    def test_vector_parameter_diagnostics_are_written_by_output(self):
         posterior = _posterior_of_draws(_vector_draws())
 
         add_mcmc_diagnostics(posterior)

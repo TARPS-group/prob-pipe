@@ -109,11 +109,11 @@ def _methods(protocol: type) -> dict[str, Callable[..., Any]]:
 
 
 class _GivenLaw(Distribution):
-    """The kernel's law at complete given slots, without evaluating the kernel.
+    """The kernel's law at complete inputs, without evaluating the kernel.
 
     It claims exactly the unconditional capabilities whose conditional twins
     the kernel claims. All given values unify in one dimension scope before
-    the event declaration is substituted. No density, draw, kernel application,
+    the event spec is substituted. No density, draw, kernel application,
     or inference method runs during construction. Internal declaration-only
     planning also accepts a record-valued StandIn: its field declarations bind
     the dimensions, and guards that need its values remain unresolved.
@@ -123,14 +123,14 @@ class _GivenLaw(Distribution):
     kernel : ConditionalDistribution
         The kernel whose conditional capabilities serve this call.
     given : Record, Mapping[str, Any], or StandIn
-        Values of every required given slot; optional slots may be omitted. A
-        private planning stand-in carries a RecordSpec for those slots.
+        Values of every required input; optional inputs may be omitted. A
+        private planning stand-in carries a RecordSpec for those inputs.
 
     Raises
     ------
     ApplicabilityError
         If the given is not a record, mapping, or record-valued planning stand-in,
-        names an unknown slot, leaves a required slot unbound, or fails its declaration.
+        names an unknown input, leaves a required input unbound, or fails its declaration.
     """
 
     _capability_table: ClassVar[dict[type, dict[str, Callable[..., Any]]]] = {
@@ -148,14 +148,14 @@ class _GivenLaw(Distribution):
         elif isinstance(given, Mapping):
             values = dict(given)
         else:
-            raise ApplicabilityError("given must be a Record or a mapping of given slots")
+            raise ApplicabilityError("given must be a Record or a mapping of inputs")
         unknown = set(values) - set(kernel.given_spec)
         missing = set(kernel.given_spec.required) - set(values)
         if unknown or missing:
             raise ApplicabilityError(
-                f"given for {kernel.label!r}: unknown slots {sorted(unknown)}; "
-                f"missing required slots {sorted(missing)}; "
-                f"available slots {list(kernel.given_spec)}"
+                f"given for {kernel.label!r}: unknown inputs {sorted(unknown)}; "
+                f"missing required inputs {sorted(missing)}; "
+                f"available inputs {list(kernel.given_spec)}"
             )
         bindings: dict[str, int] = {}
         try:
