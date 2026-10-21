@@ -195,9 +195,12 @@ class ProbeResult:
         Whether JAX traced the callable at the probed input structure.
     ints_static : bool
         Whether it traced only with its integer scalar arguments static.
-    abstract_output : Any
-        The callable's result as JAX traced it, a tree of
-        ``jax.ShapeDtypeStruct``, when it traced, and ``None`` otherwise.
+    abstract_output_leaves : tuple of jax.ShapeDtypeStruct or None
+        The leaves of the callable's result as JAX traced it, when it traced,
+        and ``None`` otherwise.
+    abstract_output_tree : PyTreeDef or None
+        The tree structure of that result, which :attr:`abstract_output`
+        rebuilds it from.
     error : BaseException or None
         The error the trace raised when it did not trace, without its
         traceback.
@@ -211,10 +214,23 @@ class ProbeResult:
 
     traces: bool
     ints_static: bool = False
-    abstract_output: Any = None
+    abstract_output_leaves: tuple[jax.ShapeDtypeStruct, ...] | None = None
+    abstract_output_tree: Any = None
     error: BaseException | None = None
     draws_global_random: bool = False
     retry_with_static_ints: bool = False
+
+    @property
+    def abstract_output(self) -> Any:
+        """The callable's result as JAX traced it, a tree of ``jax.ShapeDtypeStruct``, or ``None``.
+
+        It is rebuilt only when read, since a ProbPipe term in the result, such
+        as a ``NumericArray``, cannot hold a ``jax.ShapeDtypeStruct``; read it
+        only for a result of raw arrays and mappings.
+        """
+        if self.abstract_output_leaves is None:
+            return None
+        return jax.tree.unflatten(self.abstract_output_tree, self.abstract_output_leaves)
 
     @property
     def traceability(self) -> Traceability:
@@ -370,7 +386,8 @@ def probe(
     static_result = ProbeResult(
         traces=static_attempt.traces,
         ints_static=static_attempt.traces,
-        abstract_output=static_attempt.abstract_output,
+        abstract_output_leaves=static_attempt.abstract_output_leaves,
+        abstract_output_tree=static_attempt.abstract_output_tree,
         error=static_attempt.error,
         draws_global_random=static_attempt.draws_global_random,
     )
@@ -460,18 +477,21 @@ def probe_closure(
     )
 
 
-def spec_stand_in(spec: TermSpec | None) -> Any:
+def spec_stand_in(spec: TermSpec | None, *, unbound_size: int | None = None) -> Any:
     """The abstract stand-in of one value of *spec*, or ``None`` when an array leaf has none.
 
-    An array leaf of fixed shape stands in as its shape and dtype, the default
-    float dtype when it sets none, and a record as the mapping of its fields'
-    stand-ins. A spec of any other kind, and an array with a dimension not yet
-    bound, have none.
+    An array leaf stands in as its shape and dtype, the default float dtype
+    when it sets none, and a record as the mapping of its fields' stand-ins. A
+    dimension not yet bound takes *unbound_size*, and without one the array has
+    no stand-in. A spec of any other kind has none.
 
     Parameters
     ----------
     spec : TermSpec or None
         The spec of the value.
+    unbound_size : int or None
+        The size a dimension name not yet bound stands in with, or ``None``
+        to give no stand-in for an array with such a dimension.
 
     Returns
     -------
@@ -479,11 +499,15 @@ def spec_stand_in(spec: TermSpec | None) -> Any:
         The stand-in.
     """
     if isinstance(spec, RecordSpec):
-        children = {name: spec_stand_in(child) for name, child in spec.children.items()}
+        children = {
+            name: spec_stand_in(child, unbound_size=unbound_size)
+            for name, child in spec.children.items()
+        }
         return None if any(child is None for child in children.values()) else children
-    if isinstance(spec, NumericArraySpec) and not spec.free_dims:
+    if isinstance(spec, NumericArraySpec) and (not spec.free_dims or unbound_size is not None):
         dtype = spec.dtype if spec.dtype is not None else jnp.result_type(float)
-        return jax.ShapeDtypeStruct(tuple(spec.shape), dtype)
+        shape = tuple(size if isinstance(size, int) else unbound_size for size in spec.shape)
+        return jax.ShapeDtypeStruct(shape, dtype)
     return None
 
 
@@ -698,17 +722,33 @@ def _trace_once(
     draws; a probe runs only while a call is being planned.
     """
     states_before = _global_random_states()
+    output_trees: list[Any] = []
+
+    def traced_output_leaves(data_leaves: tuple[Any, ...]) -> list[Any]:
+        # The output is returned as its leaves, and its tree kept here, since
+        # JAX would otherwise rebuild the tree with abstract leaves, which a
+        # ProbPipe term in it cannot hold.
+        output_leaves, output_tree = jax.tree.flatten(
+            traced_function(probe_arguments.rebuild(data_leaves))
+        )
+        output_trees.append(output_tree)
+        return output_leaves
+
     try:
-        _, abstract_output = jax.make_jaxpr(
-            lambda data_leaves: traced_function(probe_arguments.rebuild(data_leaves)),
-            return_shape=True,
-        )(probe_arguments.data_leaves)
+        closed_jaxpr = jax.make_jaxpr(traced_output_leaves)(probe_arguments.data_leaves)
     except FalseTraceableClaimError:
         raise
     except Exception as error:
         attempt = ProbeResult(traces=False, error=error.with_traceback(None))
     else:
-        attempt = ProbeResult(traces=True, abstract_output=abstract_output)
+        attempt = ProbeResult(
+            traces=True,
+            abstract_output_leaves=tuple(
+                jax.ShapeDtypeStruct(aval.shape, aval.dtype, weak_type=aval.weak_type)
+                for aval in closed_jaxpr.out_avals
+            ),
+            abstract_output_tree=output_trees[-1],
+        )
     if not _random_states_equal(states_before, _global_random_states()):
         _restore_global_random_states(states_before)
         warnings.warn(

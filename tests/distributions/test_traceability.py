@@ -27,6 +27,7 @@ from probpipe import (
     inference_method_registry,
 )
 from probpipe.core._execution_claims import Traceability
+from probpipe.distributions import ConditionalDistribution, SupportsConditionalSampling
 from probpipe.distributions._capabilities import SupportsUnnormalizedLogProb
 from probpipe.distributions._distribution import Distribution
 from probpipe.inference._blackjax_rwmh import _target_traces
@@ -75,6 +76,15 @@ class TestDerivedFromParts:
         assert kernel._traceability() is Traceability.TRACEABLE
         assert kernel._traceability() is Traceability.TRACEABLE
         assert len(probe_attempts) == 1
+
+    def test_a_kernel_whose_event_has_an_unbound_dimension_is_probed_at_size_one(self):
+        rows = ObservationKernel(
+            "y",
+            {"mu": NumericArraySpec(())},
+            NumericArraySpec(("rows",)),
+            lambda mu: tfd.Independent(tfd.Normal(jnp.reshape(mu, (1,)), 1.0), 1),
+        )
+        assert rows._traceability() is Traceability.TRACEABLE
 
     def test_a_kernel_whose_density_converts_to_numpy_is_host_only(self):
         assert (
@@ -200,6 +210,28 @@ class TestInferenceReadsTheTraceability:
         report = inference_method_registry.get_method("blackjax_elliptical_slice").check(target)
         assert report.feasible is False
         assert report.description == "the log-likelihood is not JAX-traceable"
+
+    def test_elliptical_slice_refuses_a_likelihood_without_a_density(self):
+        class _SamplingOnly(ConditionalDistribution, SupportsConditionalSampling):
+            def __init__(self) -> None:
+                super().__init__(
+                    {"mu": NumericArraySpec(())},
+                    OutputSpec(y=NumericArraySpec((3,))),
+                    label="y",
+                )
+
+            def _condition_on(self, given: Any, /, **options: Any) -> Any:
+                return Normal("y", given["mu"] * jnp.ones(3), 1.0)
+
+            def _conditional_sample(self, given: Any, key: Any, sample_shape=()) -> Any:
+                return self._condition_on(given)._sample(key, sample_shape)
+
+        target = condition_on.using(method="unnormalized")(
+            _SamplingOnly() * Normal("mu", 0.0, 1.0), {"y": Y}
+        )
+        report = inference_method_registry.get_method("blackjax_elliptical_slice").check(target)
+        assert report.feasible is False
+        assert "the likelihood must have an unnormalized log-density" in report.description
 
     def test_tfp_nuts_refuses_a_target_that_is_host_only(self):
         target = condition_on.using(method="unnormalized")(

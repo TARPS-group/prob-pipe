@@ -638,8 +638,9 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         """The traceability of a kernel that states none: its density probed at one given value.
 
         The density is traced at a stand-in of each required input and of
-        one value of the event. A kernel without a density probes its sampler
-        at one key instead, and one whose inputs or event have no stand-in is
+        one value of the event, each dimension not yet bound of size one. A
+        kernel without a density probes its sampler at one key instead, and one
+        whose inputs or event have no stand-in is
         host-only. A subclass whose methods are JAX code, or are built from
         parts that state their traceability, overrides this.
 
@@ -1709,7 +1710,7 @@ def _probed_kernel_traceability(kernel: ConditionalDistribution) -> Traceability
     """
     given_spec = kernel.given_spec
     given_stand_ins = {
-        input_name: spec_stand_in(spec)
+        input_name: spec_stand_in(spec, unbound_size=1)
         for input_name, spec in given_spec.items()
         if input_name not in given_spec.optional
     }
@@ -1723,7 +1724,7 @@ def _probed_kernel_traceability(kernel: ConditionalDistribution) -> Traceability
         }
 
     event = kernel.event_spec.term_spec
-    event_stand_in = spec_stand_in(event)
+    event_stand_in = spec_stand_in(event, unbound_size=1)
     if isinstance(kernel, SupportsConditionalUnnormalizedLogProb) and event_stand_in is not None:
         probe_result = probe(
             None,

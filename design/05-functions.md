@@ -728,7 +728,7 @@ A law or a kernel has a **traceability**: traceable, embeddable, or host-only, t
 | a law built from functions | its density's probe result, or its sampler's when it has no density |
 | the kernel of a function | the traceability of the law its function returned when the kernel was built, read by the construction's abstract evaluation (IV.4) |
 | a conditional at given values | its joint's |
-| any other law or kernel | its density probed once at a stand-in of one value, or its sampler at one key when it has no density |
+| any other law or kernel | its density probed once at a stand-in of one value, each dimension not yet bound of size one, or its sampler at one key when it has no density |
 
 The least of several is their meet, in the order traceable, embeddable, host-only.
 

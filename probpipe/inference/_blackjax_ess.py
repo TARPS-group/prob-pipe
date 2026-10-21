@@ -35,6 +35,10 @@ import numpy as np
 from ..core._dispatch import Feasibility
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
+from ..distributions._capabilities import (
+    SupportsConditionalUnnormalizedLogProb,
+    SupportsUnnormalizedLogProb,
+)
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import FactoredDistribution
@@ -333,10 +337,21 @@ class BlackJAXESSMethod(InferenceMethod):
                 feasible=False,
                 description=f"the prior must be Gaussian; got {described(factors.prior)}",
             )
+        likelihood = factors.likelihood
+        if not isinstance(
+            likelihood, SupportsConditionalUnnormalizedLogProb | SupportsUnnormalizedLogProb
+        ):
+            return Feasibility(
+                feasible=False,
+                description=(
+                    "the likelihood must have an unnormalized log-density "
+                    f"(SupportsConditionalUnnormalizedLogProb); got {described(likelihood)}"
+                ),
+            )
         # The runner traces the BlackJAX ESS step under ``lax.scan``, with no
         # eager fallback, so a likelihood JAX cannot trace leaves selection to
         # RWMH.
-        if not traces_in_jax(factors.likelihood):
+        if not traces_in_jax(likelihood):
             return Feasibility(
                 feasible=False,
                 description="the log-likelihood is not JAX-traceable",

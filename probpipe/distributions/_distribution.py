@@ -808,9 +808,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     def _derived_traceability(self) -> Traceability:
         """The traceability of a law that states none: its density probed at one value of its event.
 
-        A law without a density probes its sampler at one key instead, and one
-        whose event has no stand-in, such as a value that is not an array, is
-        host-only. A subclass whose methods are JAX code, or are built from
+        A dimension not yet bound stands in with size one. A law without a
+        density probes its sampler at one key instead, and one whose event has
+        no stand-in, such as a value that is not an array, is host-only. A subclass whose methods are JAX code, or are built from
         parts that state their traceability, overrides this.
 
         Returns
@@ -1586,7 +1586,7 @@ def _value_at_declared_kind(spec: TermSpec, record_label: str, value: Any) -> An
 def _probed_law_traceability(law: Distribution) -> Traceability:
     """*law*'s density traced at a stand-in of one value of its event, or its sampler at one key."""
     spec = law.event_spec.term_spec
-    stand_in = spec_stand_in(spec)
+    stand_in = spec_stand_in(spec, unbound_size=1)
     if isinstance(law, SupportsUnnormalizedLogProb) and stand_in is not None:
         probe_result = probe(
             None,
