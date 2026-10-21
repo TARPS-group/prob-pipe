@@ -1608,6 +1608,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   # after:  [0.80094, 0.327328, -0.465379]
   ```
 
+- **A lifted function that draws from NumPy's or Python's global random
+  generator gives each point its own noise, with a warning.** Before, JAX
+  traced it once and fixed one draw into the compiled program, so every point
+  received the same noise; now ProbPipe evaluates it one point at a time.
+
+  ```python
+  @function
+  def simulate(r):
+      return r + np.random.normal()
+
+  simulate.using(max_evaluations=5)(Normal("r", 0.0, 1.0))
+  # before: every draw's noise was the same number
+  # after:  each draw has its own noise, and a UserWarning names simulate
+  ```
+
 ### Added
 
 - **`summarize(d)` collects a law's standard summaries in one record that
@@ -3649,9 +3664,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value. A body that branches in Python on an argument that is not lifted, or
   on a swept value, now runs one point at a time, where before it was traced
   again with that value fixed; the results are the same up to rounding.
-- **A function that draws from NumPy's global random generator runs one point
-  at a time, with a warning.** Before, JAX traced it and fixed its noise into
-  the compiled program, so every point received the same noise.
 - **A false `traceable=True` claim raises an error naming the claim.** A
   `Function` that claims `traceable=True` and fails while JAX traces it raises
   `TypeError: 'forward' claims traceable=True, but tracing it failed: it
@@ -3663,14 +3675,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Inference methods read the target's traceability instead of tracing it.**
   A law or a kernel derives whether JAX can trace it from its parts and keeps
   the answer: a family is traceable, a joint is traceable when each factor is,
-  and a law built from functions is traceable when each of its functions
-  traced. So `condition_on.check` and method selection trace nothing for a
-  model of families, NUTS, HMC, and elliptical slice sampling refuse a target
-  with a part JAX cannot trace, and random-walk Metropolis runs such a target
-  in a Python loop. A law built with `distribution(...)` whose sampler or
-  density does not trace is no longer selected for those methods, even when
-  its other function traces. The law that a kernel builds anew at each given
-  value traces its functions once, not at every application.
+  and a law built from functions is traceable when its density traced, or its
+  sampler for a law without one. So `condition_on.check` and method selection
+  trace nothing for a model of families, NUTS, HMC, and elliptical slice
+  sampling refuse a target with a part JAX cannot trace, and random-walk
+  Metropolis runs such a target in a Python loop. The law that a kernel builds anew at each given value traces
+  its functions once, not at every application, unless its functions read
+  the values they capture, as `jnp.zeros(int(n))` does.
 
 ### Removed (breaking)
 

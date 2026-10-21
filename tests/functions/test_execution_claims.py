@@ -23,25 +23,9 @@ from probpipe import (
     NumericArraySpec,
     conditional_distribution,
     function,
-    sample,
     workflow_run,
 )
-from probpipe.core import _execution_claims
 from probpipe.core._execution_claims import ExecutionClaims
-
-
-@pytest.fixture
-def probe_attempts(monkeypatch):
-    """The input structures each probe attempt traced, recorded as the probe runs them."""
-    attempts: list[object] = []
-    trace_once = _execution_claims._trace_once
-
-    def counting_trace_once(trace, probe_arguments):
-        attempts.append(probe_arguments.structure)
-        return trace_once(trace, probe_arguments)
-
-    monkeypatch.setattr(_execution_claims, "_trace_once", counting_trace_once)
-    return attempts
 
 
 def _prior():
@@ -71,8 +55,8 @@ class TestTheClaims:
     @pytest.mark.parametrize(
         ("keyword", "value", "message"),
         [
-            ("traceable", "yes", "traceable of 'f' must be True, False, or None, got str"),
-            ("vectorized", None, "vectorized of 'f' must be True or False, got NoneType"),
+            ("traceable", "yes", "traceable of 'f' must be True, False, or None, got 'yes'"),
+            ("vectorized", None, "vectorized of 'f' must be True or False, got None"),
         ],
     )
     def test_a_claim_that_is_not_a_bool_raises(self, keyword, value, message):
@@ -278,12 +262,66 @@ class TestTraceableTrue:
                 label="likelihood",
             )
 
-    def test_a_true_claim_runs_unchanged_on_concrete_values(self):
+    def test_a_true_claim_maps_the_same_values_as_sequential_dispatch(self):
         @function(traceable=True)
         def growth(r):
             return jnp.exp(r)
 
         assert float(growth.apply(0.0)) == 1.0
         with workflow_run(seed=0):
-            draws = sample(growth.using(max_evaluations=8)(_prior()), 2)
-        assert draws is not None
+            mapped = growth.using(max_evaluations=8)(_prior())
+        with workflow_run(seed=0):
+            sequential = growth.using(max_evaluations=8, dispatch="sequential")(_prior())
+        np.testing.assert_allclose(
+            np.asarray(mapped.atoms), np.asarray(sequential.atoms), rtol=1e-6
+        )
+
+    def test_a_false_claim_inside_a_probed_function_is_not_swallowed(self):
+        @function(traceable=True)
+        def inner(theta):
+            return jnp.asarray(np.asarray(theta))
+
+        @function
+        def outer(theta):
+            return inner(theta) + 1.0
+
+        with workflow_run(seed=0), pytest.raises(TypeError, match="'inner' claims traceable=True"):
+            outer.using(max_evaluations=8)(_prior())
+
+
+class TestCheckSharesItsProbe:
+    def test_a_sweep_reads_the_probe_check_stored(self, probe_attempts):
+        @function
+        def total(x):
+            return jnp.sum(x)
+
+        rows = NumericArrayBatch(jnp.ones((3, 2)), level_names=("row",), label="rows")
+        total.check(rows)
+        assert len(probe_attempts) == 1
+        with workflow_run(seed=0):
+            total(rows)
+        assert len(probe_attempts) == 1
+
+    def test_a_nested_sweep_reads_the_probe_check_stored(self, probe_attempts):
+        @function
+        def shifted(shift, noise):
+            return shift + noise
+
+        rows = NumericArrayBatch(jnp.arange(3.0), "row", label="shift")
+        shifted.using(max_evaluations=8).check(rows, _prior())
+        assert len(probe_attempts) == 1
+        with workflow_run(seed=0):
+            shifted.using(max_evaluations=8)(rows, _prior())
+        assert len(probe_attempts) == 1
+
+    def test_jax_dispatch_refuses_a_function_that_draws_from_numpys_generator(self):
+        @function(dispatch="jax")
+        def simulate(r):
+            return r + np.random.normal()
+
+        with (
+            workflow_run(seed=0),
+            pytest.warns(UserWarning, match="global random generator"),
+            pytest.raises(ValueError, match="dispatch='jax' cannot trace 'simulate'"),
+        ):
+            simulate.using(max_evaluations=5)(_prior())

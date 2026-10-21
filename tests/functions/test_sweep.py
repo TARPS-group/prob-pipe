@@ -5,7 +5,6 @@ from __future__ import annotations
 import inspect
 import logging
 from itertools import permutations
-from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -31,7 +30,6 @@ from probpipe import (
     mean,
     workflow_run,
 )
-from probpipe.core import _execution_claims
 from probpipe.core._record_batch import _MappedBatchColumns
 from probpipe.core.constraints import positive
 from probpipe.functions import _execution, _sweep
@@ -78,20 +76,6 @@ def _unexpected_distribution_broadcast(*args, **kwargs):
 
 def _require_not_called(*args, **kwargs):
     raise AssertionError("JAX traceability should not be required")
-
-
-def _record_probes(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
-    """Record whether each attempt of a JAX traceability probe traced."""
-    probes: list[bool] = []
-    trace_once = _execution_claims._trace_once
-
-    def recording_trace_once(trace: Any, probe_arguments: Any) -> Any:
-        probe_result = trace_once(trace, probe_arguments)
-        probes.append(probe_result.traces)
-        return probe_result
-
-    monkeypatch.setattr(_execution_claims, "_trace_once", recording_trace_once)
-    return probes
 
 
 class TestSliceSweepValues:
@@ -404,8 +388,8 @@ class TestPairedNumericSweeps:
 
 class TestNestedSweepProbes:
     @pytest.mark.parametrize("dispatch", ["auto", "jax"])
-    def test_numeric_sweep_probes_once_and_keeps_per_cell_draws(self, monkeypatch, dispatch):
-        probes = _record_probes(monkeypatch)
+    def test_numeric_sweep_probes_once_and_keeps_per_cell_draws(self, probe_attempts, dispatch):
+        probes = probe_attempts
         rows = NumericArrayBatch(jnp.arange(4.0), "row", label="shift")
         law = Normal("noise", 0.0, 1.0)
         wrapped = Function(
@@ -427,9 +411,9 @@ class TestNestedSweepProbes:
 
     @pytest.mark.parametrize("dispatch", ["auto", "jax"])
     def test_a_branch_on_the_swept_value_runs_every_cell_one_draw_at_a_time(
-        self, monkeypatch, dispatch
+        self, probe_attempts, dispatch
     ):
-        probes = _record_probes(monkeypatch)
+        probes = probe_attempts
 
         def body(shift, noise):
             return noise + shift if float(shift) > 0 else noise - shift
@@ -467,8 +451,8 @@ class TestNestedSweepProbes:
             )
 
     @pytest.mark.parametrize("dispatch", ["auto", "jax"])
-    def test_untraceable_numeric_sweep_probes_once(self, monkeypatch, caplog, dispatch):
-        probes = _record_probes(monkeypatch)
+    def test_untraceable_numeric_sweep_probes_once(self, probe_attempts, caplog, dispatch):
+        probes = probe_attempts
         rows = NumericArrayBatch(jnp.arange(5.0), "row", label="shift")
         law = Normal("noise", 0.0, 1.0)
         wrapped = Function(
@@ -498,8 +482,8 @@ class TestNestedSweepProbes:
         assert probes == [False]
 
     @pytest.mark.parametrize("dispatch", ["auto", "jax"])
-    def test_object_cells_keep_their_own_traceability_check(self, monkeypatch, dispatch):
-        probes = _record_probes(monkeypatch)
+    def test_object_cells_keep_their_own_traceability_check(self, probe_attempts, dispatch):
+        probes = probe_attempts
 
         def body(mode, noise):
             return float(noise) if mode.raw == "python" else noise + 1

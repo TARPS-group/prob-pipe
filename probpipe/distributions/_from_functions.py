@@ -23,8 +23,7 @@ import numpy as np
 from ..core._execution_claims import (
     ProbeResults,
     Traceability,
-    closure_probe_key,
-    probe,
+    probe_closure,
     spec_stand_in,
 )
 from ..core._record_spec import RecordSpec
@@ -38,7 +37,7 @@ from ._capabilities import (
     SupportsUnnormalizedLogProb,
     _capability_subclass,
 )
-from ._distribution import DEFAULT_LABEL, Distribution, _argument, _given_label
+from ._distribution import DEFAULT_LABEL, Distribution, _given_label, _value_at_declared_kind
 from ._factored import _each_value, _flatten_draws, _leading_axes, _raw_record
 
 __all__ = ["distribution"]
@@ -126,10 +125,10 @@ def _score(law: _FunctionLaw, density: Callable[[Any], Array], value: Any) -> Ar
         value = jnp.asarray(value)
     axes = _leading_axes(value, spec) or ()
     if not axes:
-        return jnp.asarray(density(_argument(spec, law.label, value)))
+        return jnp.asarray(density(_value_at_declared_kind(spec, law.label, value)))
     count = math.prod(axes)
     scores = _each_value(
-        lambda one: jnp.asarray(density(_argument(spec, law.label, one))),
+        lambda one: jnp.asarray(density(_value_at_declared_kind(spec, law.label, one))),
         count,
         _flatten_draws(_raw_record(value), axes),
         traceable=law._density_traces,
@@ -227,11 +226,14 @@ class _FunctionLaw(Distribution):
         self._density_traces = density_traces
 
     def _derived_traceability(self) -> Traceability:
-        """Traceable when each function the law was built from traced when it was built."""
-        traces = (self._sampler is None or self._sampler_traces) and (
-            (self._log_density is None and self._unnormalized_log_density is None)
-            or self._density_traces
-        )
+        """Whether the law's density traced when the law was built, or its sampler for a law without one.
+
+        A law's traceability is that of the method that scores it, as for any
+        law (:meth:`Distribution._derived_traceability`), so a law with a
+        density that traces is traceable whatever its sampler does.
+        """
+        has_density = self._log_density is not None or self._unnormalized_log_density is not None
+        traces = self._density_traces if has_density else self._sampler_traces
         return Traceability.TRACEABLE if traces else Traceability.HOST_ONLY
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
@@ -296,17 +298,18 @@ def _sampler_declaration(
     """
     if declaration.spec is not None and not isinstance(declaration.spec, NumericSpec):
         return declaration, False
-    probe_result = probe(
+    probe_result = probe_closure(
         _FUNCTION_PROBE_RESULTS,
-        lambda key: jax.tree.map(jnp.asarray, _raw_record(sample(key))),
+        sample,
+        lambda sampler, key: jax.tree.map(jnp.asarray, _raw_record(sampler(key))),
         jax.random.key(0),
         label=label,
-        key=("sample", closure_probe_key(sample)),
+        role="sample",
     )
     if not probe_result.traces:
         # The sampler does not trace; a failure of its own raises at a draw.
         return declaration, False
-    spec = _abstract_spec(probe_result.output)
+    spec = _abstract_spec(probe_result.abstract_output)
     try:
         return declaration.with_spec(spec), True
     except (TypeError, ValueError) as error:
@@ -399,17 +402,20 @@ def _density_traces(
     stand_in = spec_stand_in(spec)
     if stand_in is None:
         return False
-    probe_result = probe(
+    probe_result = probe_closure(
         _FUNCTION_PROBE_RESULTS,
-        lambda value: jnp.asarray(density(_argument(spec, label, value))),
+        density,
+        lambda scoring_function, value: jnp.asarray(
+            scoring_function(_value_at_declared_kind(spec, label, value))
+        ),
         stand_in,
         label=label,
-        key=(name, closure_probe_key(density)),
+        role=name,
     )
     if not probe_result.traces:
         # The density does not trace; a failure of its own raises at a value.
         return False
-    score = probe_result.output
+    score = probe_result.abstract_output
     real = jnp.issubdtype(score.dtype, jnp.floating) or jnp.issubdtype(score.dtype, jnp.integer)
     if score.shape != () or not real:
         raise ValueError(

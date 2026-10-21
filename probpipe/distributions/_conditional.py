@@ -50,7 +50,6 @@ from ._distribution import (
     DEFAULT_LABEL,
     Distribution,
     DistributionSpec,
-    _argument,
     _cached_raw,
     _check_marker_claims,
     _complete_event_spec,
@@ -63,6 +62,7 @@ from ._distribution import (
     _no_free_dims,
     _record_default_expression,
     _unify_declarations,
+    _value_at_declared_kind,
 )
 
 if TYPE_CHECKING:
@@ -612,7 +612,10 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         return self._spec
 
     def _traceability(self) -> Traceability:
-        """Whether JAX can trace this kernel's raw methods: traceable, embeddable, or host-only (V.13).
+        """Whether JAX can trace this kernel's density, or its sampler when it has none (V.13).
+
+        It is traceable, embeddable, or host-only, and inference methods read it
+        instead of tracing the kernel.
 
         The value is derived from the kernel's parts the first time it is read
         and kept for the kernel's life: a family is traceable, the kernel of a
@@ -1225,7 +1228,10 @@ class _FunctionKernel(ConditionalDistribution):
 
     def _arguments(self, values: Mapping[str, Any]) -> dict[str, Any]:
         """*values* at the kinds their slots declare, as the function receives them."""
-        return {slot: _argument(self._slots[slot], slot, value) for slot, value in values.items()}
+        return {
+            slot: _value_at_declared_kind(self._slots[slot], slot, value)
+            for slot, value in values.items()
+        }
 
     def _law(self, given: Any) -> Distribution:
         """The law the function returns at *given*, a value of every required slot.
@@ -1380,7 +1386,12 @@ def _evaluate_abstractly(
     found: dict[str, Any] = {}
 
     def evaluate(values: Mapping[str, Any]) -> Any:
-        law = fn(**{slot: _argument(slots[slot], slot, value) for slot, value in values.items()})
+        law = fn(
+            **{
+                slot: _value_at_declared_kind(slots[slot], slot, value)
+                for slot, value in values.items()
+            }
+        )
         if not isinstance(law, Distribution):
             raise TypeError(
                 f"the function of {label!r} must return a Distribution; got {type(law).__name__}"
@@ -1700,7 +1711,10 @@ def _probed_kernel_traceability(kernel: ConditionalDistribution) -> Traceability
         return Traceability.HOST_ONLY
 
     def given_values(stand_ins: Mapping[str, Any]) -> dict[str, Any]:
-        return {slot: _argument(given_spec[slot], slot, value) for slot, value in stand_ins.items()}
+        return {
+            slot: _value_at_declared_kind(given_spec[slot], slot, value)
+            for slot, value in stand_ins.items()
+        }
 
     event = kernel.event_spec.spec
     event_stand_in = spec_stand_in(event)
@@ -1708,7 +1722,8 @@ def _probed_kernel_traceability(kernel: ConditionalDistribution) -> Traceability
         probe_result = probe(
             None,
             lambda stand_ins: kernel._conditional_unnormalized_log_prob(
-                given_values(stand_ins[0]), _argument(event, kernel.label, stand_ins[1])
+                given_values(stand_ins[0]),
+                _value_at_declared_kind(event, kernel.label, stand_ins[1]),
             ),
             (given_stand_ins, event_stand_in),
             label=kernel.label,

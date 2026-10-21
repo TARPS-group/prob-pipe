@@ -11,12 +11,13 @@ from __future__ import annotations
 
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
+    EmpiricalDistribution,
     Normal,
     NumericArraySpec,
     OutputSpec,
@@ -25,27 +26,13 @@ from probpipe import (
     distribution,
     inference_method_registry,
 )
-from probpipe.core import _execution_claims
 from probpipe.core._execution_claims import Traceability
 from probpipe.distributions._capabilities import SupportsUnnormalizedLogProb
 from probpipe.distributions._distribution import Distribution
+from probpipe.inference._blackjax_rwmh import _target_traces
 from tests.inference.canonical import ObservationKernel
 
 Y = jnp.array([0.2, -0.4, 1.1])
-
-
-@pytest.fixture
-def probe_attempts(monkeypatch):
-    """The input structures each probe attempt traced, recorded as the probe runs them."""
-    attempts: list[object] = []
-    trace_once = _execution_claims._trace_once
-
-    def counting_trace_once(trace, probe_arguments):
-        attempts.append(probe_arguments.structure)
-        return trace_once(trace, probe_arguments)
-
-    monkeypatch.setattr(_execution_claims, "_trace_once", counting_trace_once)
-    return attempts
 
 
 def _observation_kernel() -> ObservationKernel:
@@ -151,13 +138,34 @@ class TestLawsFromFunctions:
             assert law._traceability() is Traceability.TRACEABLE
         assert len(probe_attempts) == attempts_at_construction + 1
 
-    def test_a_sampler_that_does_not_trace_makes_the_law_host_only(self):
+    def test_a_law_with_only_a_sampler_that_does_not_trace_is_host_only(self):
         law = distribution(
-            sample=lambda key: np.float32(np.asarray(key).sum()),
+            sample=lambda key: np.float32(np.asarray(jax.random.key_data(key)).sum()),
             event_spec=NumericArraySpec((), jnp.float32),
             component="x",
         )
         assert law._traceability() is Traceability.HOST_ONLY
+
+    def test_a_law_whose_density_traces_is_traceable_whatever_its_sampler_does(self):
+        law = distribution(
+            sample=lambda key: np.float32(np.asarray(jax.random.key_data(key)).sum()),
+            log_prob=lambda x: -0.5 * x**2,
+            event_spec=NumericArraySpec((), jnp.float32),
+            component="mu",
+        )
+        assert law._traceability() is Traceability.TRACEABLE
+
+    def test_laws_whose_samplers_read_a_captured_size_keep_their_own_event(self):
+        def law_of_size(size):
+            count = np.array(size)
+            return distribution(
+                sample=lambda key: jax.random.normal(key, (int(count),)),
+                event_spec=OutputSpec(x=None),
+            )
+
+        assert law_of_size(3).event_spec.spec.shape == (3,)
+        assert law_of_size(5).event_spec.spec.shape == (5,)
+        assert law_of_size(3).event_spec.spec.shape == (3,)
 
 
 class TestInferenceReadsTheTraceability:
@@ -184,3 +192,52 @@ class TestInferenceReadsTheTraceability:
         report = inference_method_registry.get_method("blackjax_nuts").check(target)
         assert report.feasible is True
         assert len(probe_attempts) == attempts_before
+
+    def test_elliptical_slice_refuses_a_likelihood_that_is_host_only(self):
+        target = condition_on.using(method="unnormalized")(
+            _host_observation_kernel() * Normal("mu", 0.0, 1.0), {"y": Y}
+        )
+        report = inference_method_registry.get_method("blackjax_elliptical_slice").check(target)
+        assert report.feasible is False
+        assert report.description == "the log-likelihood is not JAX-traceable"
+
+    def test_tfp_nuts_refuses_a_target_that_is_host_only(self):
+        target = condition_on.using(method="unnormalized")(
+            _host_observation_kernel() * Normal("mu", 0.0, 1.0), {"y": Y}
+        )
+        report = inference_method_registry.get_method("tfp_nuts").check(target)
+        assert report.feasible is False
+        assert report.description == "the log-density is not JAX-traceable"
+
+    def test_rwmh_runs_a_host_only_target_in_its_python_loop(self):
+        traceable = condition_on.using(method="unnormalized")(
+            _observation_kernel() * Normal("mu", 0.0, 1.0), {"y": Y}
+        )
+        host_only = condition_on.using(method="unnormalized")(
+            _host_observation_kernel() * Normal("mu", 0.0, 1.0), {"y": Y}
+        )
+        start = jnp.zeros(1)
+        assert _target_traces(traceable, None, None, start) is True
+        assert _target_traces(host_only, None, None, start) is False
+
+    def test_empirical_reweighting_scores_a_host_only_likelihood_atom_by_atom(self):
+        atoms = jnp.linspace(-2.0, 2.0, 9)
+        weights = {}
+        for name, kernel in (
+            ("traceable", _observation_kernel()),
+            ("host_only", _host_observation_kernel()),
+        ):
+            prior = EmpiricalDistribution(atoms, component="mu", label="prior")
+            posterior = condition_on.using(method="empirical_reweighting")(kernel * prior, {"y": Y})
+            weights[name] = np.asarray(posterior.weights)
+        np.testing.assert_allclose(weights["host_only"], weights["traceable"], rtol=1e-5)
+
+
+def _host_observation_kernel() -> _HostObservationKernel:
+    """``y ~ N(mu, 1)`` three times, scored through NumPy."""
+    return _HostObservationKernel(
+        "y",
+        {"mu": NumericArraySpec(())},
+        NumericArraySpec((3,)),
+        lambda mu: tfd.Independent(tfd.Normal(jnp.broadcast_to(mu, (3,)), 1.0), 1),
+    )

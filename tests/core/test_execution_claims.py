@@ -11,12 +11,12 @@ import numpy as np
 import pytest
 
 from probpipe.core._execution_claims import (
+    FalseTraceableClaimError,
     ProbeResult,
     ProbeResults,
     Traceability,
-    closure_probe_key,
     probe,
-    raise_for_false_traceable_claim,
+    probe_closure,
     spec_stand_in,
 )
 from probpipe.core._record_spec import RecordSpec
@@ -70,7 +70,7 @@ class TestProbe:
         probe(store, double, jnp.zeros(3), label="double")
         probe(store, double, jnp.ones(4), label="double")
         assert first.traces
-        assert first.output == jax.ShapeDtypeStruct((3,), jnp.float32)
+        assert first.abstract_output == jax.ShapeDtypeStruct((3,), jnp.float32)
         assert len(traced) == 2
 
     def test_a_failure_keeps_its_error_without_a_traceback(self):
@@ -107,31 +107,69 @@ class TestProbe:
             random.random()
             return x + np.random.normal()
 
-        with pytest.warns(UserWarning, match="'noisy' draws from NumPy's global random"):
+        with pytest.warns(UserWarning, match="'noisy' draws from NumPy's or Python's global"):
             result = probe(None, noisy, jnp.ones(2), label="noisy")
         assert not result.traces and result.draws_global_random
         np.testing.assert_array_equal(np.random.get_state()[1], numpy_state)
         assert random.getstate() == python_state
 
 
-class TestClosureProbeKey:
+def _call(closure, arguments):
+    return closure(arguments)
+
+
+class TestProbeClosure:
     @staticmethod
-    def _closure(captured):
+    def _scaled_by(captured):
         return lambda y: y * captured
 
-    def test_closures_of_one_code_share_a_key_by_the_structure_they_capture(self):
-        assert closure_probe_key(self._closure(jnp.ones(2))) == closure_probe_key(
-            self._closure(jnp.zeros(2))
+    def test_closures_of_one_code_share_a_result_by_the_shapes_they_capture(self, probe_attempts):
+        probe_results = ProbeResults()
+        for captured in (jnp.ones(2), jnp.zeros(2), 3.0 * jnp.ones(2)):
+            result = probe_closure(
+                probe_results, self._scaled_by(captured), _call, jnp.ones(2), label="f", role="f"
+            )
+            assert result.traces
+        probe_closure(
+            probe_results, self._scaled_by(jnp.ones(3)), _call, jnp.ones(3), label="f", role="f"
         )
-        assert closure_probe_key(self._closure(jnp.ones(2))) != closure_probe_key(
-            self._closure(jnp.ones(3))
-        )
-        assert closure_probe_key(self._closure(2.0)) != closure_probe_key(self._closure(3.0))
+        assert probe_attempts == [True, True]
 
-    def test_a_closure_capturing_an_unhashable_value_shares_only_with_itself(self):
-        first = self._closure([1.0])
-        assert closure_probe_key(first) == closure_probe_key(first)
-        assert closure_probe_key(first) != closure_probe_key(self._closure([1.0]))
+    def test_a_closure_that_reads_a_captured_value_shares_only_with_equal_captures(
+        self, probe_attempts
+    ):
+        def sized_by(size):
+            count = np.array(size)
+            return lambda key: jax.random.normal(key, (int(count),))
+
+        probe_results = ProbeResults()
+        three = probe_closure(
+            probe_results, sized_by(3), _call, jax.random.key(0), label="f", role="sample"
+        )
+        five = probe_closure(
+            probe_results, sized_by(5), _call, jax.random.key(0), label="f", role="sample"
+        )
+        again = probe_closure(
+            probe_results, sized_by(3), _call, jax.random.key(0), label="f", role="sample"
+        )
+        assert three.abstract_output.shape == (3,)
+        assert five.abstract_output.shape == (5,)
+        assert again.abstract_output.shape == (3,)
+        # With the count as data each fails; as a constant each traces, keyed by its value.
+        assert probe_attempts == [False, True, True]
+
+    def test_a_closure_capturing_a_plain_callable_is_probed_for_itself(self, probe_attempts):
+        def scale(y):
+            return 2 * y
+
+        def make(captured):
+            return lambda y: scale(y) * captured(y)
+
+        probe_results = ProbeResults()
+        probe_closure(probe_results, make(jnp.sin), _call, jnp.ones(2), label="f", role="f")
+        probe_closure(probe_results, make(jnp.sin), _call, jnp.ones(2), label="f", role="f")
+        assert probe_attempts == [True, True]
+        assert len(probe_results) == 0
 
 
 class TestStandIns:
@@ -148,18 +186,26 @@ class TestStandIns:
 
 class TestFalseClaim:
     @pytest.mark.parametrize(
-        ("trace", "failure"),
+        ("traced_function", "failure"),
         [
             (lambda x: np.asarray(x), "it converts a traced value to NumPy"),
             (lambda x: x if x > 0 else -x, "it branches in Python on a traced value"),
             (lambda x: list(range(x)), "it converts a traced value to a Python int"),
         ],
     )
-    def test_the_message_says_what_the_callable_did(self, trace, failure):
-        try:
-            jax.make_jaxpr(trace)(1)
-        except Exception as error:
-            tracing_error = error
-        with pytest.raises(TypeError, match=failure) as raised:
-            raise_for_false_traceable_claim("forward", tracing_error)
-        assert raised.value.__cause__ is tracing_error
+    def test_the_message_says_what_the_callable_did(self, traced_function, failure):
+        with pytest.raises(jax.errors.JAXTypeError) as raised:
+            jax.make_jaxpr(traced_function)(1)
+        error = FalseTraceableClaimError.for_tracing_error("forward", raised.value)
+        assert isinstance(error, TypeError)
+        assert str(error) == (
+            f"'forward' claims traceable=True, but tracing it failed: {failure} "
+            f"({type(raised.value).__name__}). Remove the claim, or claim traceable=False"
+        )
+
+    def test_a_probe_lets_a_false_claim_propagate(self):
+        def claims_falsely(x):
+            raise FalseTraceableClaimError("'inner' claims traceable=True, but tracing it failed")
+
+        with pytest.raises(FalseTraceableClaimError):
+            probe(None, claims_falsely, jnp.ones(2), label="outer")

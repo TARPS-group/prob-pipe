@@ -788,12 +788,14 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         return spec.shape
 
     def _traceability(self) -> Traceability:
-        """Whether JAX can trace this law's raw methods: traceable, embeddable, or host-only (V.13).
+        """Whether JAX can trace this law's density, or its sampler when it has none (V.13).
 
-        The value is derived from the law's parts the first time it is read and
-        kept for the law's life: a family is traceable, a law built from other
-        laws or kernels takes the meet of theirs, and any other law is probed
-        once, as :meth:`_derived_traceability` states.
+        It is traceable, embeddable, or host-only, and inference methods read it
+        instead of tracing the law. The value is derived from the law's parts
+        the first time it is read and kept for the law's life: a family is
+        traceable, a law built from other laws or kernels takes the meet of
+        theirs, and any other law is probed once, as
+        :meth:`_derived_traceability` states.
 
         Returns
         -------
@@ -1566,21 +1568,15 @@ class DistributionSpec(TermSpec):
         return True
 
 
-def _argument(spec: TermSpec, slot: str, value: Any) -> Any:
-    """*value* at the kind its slot *spec* declares, as the function receives it.
+def _value_at_declared_kind(spec: TermSpec, record_label: str, value: Any) -> Any:
+    """*value* at the kind *spec* declares, as a function's body receives a draw.
 
-    A record slot's value is a ``Record`` and an array slot's an array, as a
-    function's body receives a draw; a value of another kind is passed as it is.
+    A value of a record spec is a ``Record``, labeled *record_label* when it
+    is built here, and a value of an array spec is an array; a value of
+    another kind is passed as it is.
     """
     if isinstance(spec, RecordSpec):
-        return (
-            value
-            if isinstance(value, Record)
-            else Record(
-                value,
-                label=slot,
-            )
-        )
+        return value if isinstance(value, Record) else Record(value, label=record_label)
     if isinstance(spec, NumericArraySpec):
         return jnp.asarray(value)
     return value
@@ -1593,7 +1589,9 @@ def _probed_law_traceability(law: Distribution) -> Traceability:
     if isinstance(law, SupportsUnnormalizedLogProb) and stand_in is not None:
         probe_result = probe(
             None,
-            lambda value: law._unnormalized_log_prob(_argument(spec, law.label, value)),
+            lambda value: law._unnormalized_log_prob(
+                _value_at_declared_kind(spec, law.label, value)
+            ),
             stand_in,
             label=law.label,
         )

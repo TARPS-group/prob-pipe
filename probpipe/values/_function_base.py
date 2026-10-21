@@ -34,9 +34,9 @@ from ..core._dispatch import Feasibility
 from ..core._execution_claims import (
     TRACING_ERRORS,
     ExecutionClaims,
+    FalseTraceableClaimError,
     ProbeResults,
-    execution_claims,
-    raise_for_false_traceable_claim,
+    checked_execution_claims,
 )
 from ..core._expression import Collapse, Expression, Signature
 from ..core._kinds import term_class_for_spec
@@ -878,11 +878,9 @@ class Function(TrackedTerm, Annotated):
         A callable with side effects, or one that draws from NumPy's random
         generators, should claim ``False``.
     vectorized : bool
-        Whether the callable accepts every array argument with an extra
-        leading axis of evaluation points and returns its outputs stacked on
-        that axis, output row ``i`` depending only on input row ``i``, so that
-        a stack of evaluation points can be evaluated in one call. False by
-        default.
+        Whether the callable evaluates a stack of evaluation points in one
+        call, returning their outputs stacked on a leading axis, with output
+        row ``i`` depending only on evaluation point ``i``. False by default.
     differentiable : NumericSpec or None
         The differentiability claim: exactly the numeric input values gradients
         propagate through. None makes no claim.
@@ -1093,7 +1091,7 @@ class Function(TrackedTerm, Annotated):
             )
         if not isinstance(label, str) or not label:
             raise TypeError(f"Function requires a non-empty label, got {label!r}")
-        claims = execution_claims(
+        claims = checked_execution_claims(
             function_name=label,
             traceable=traceable,
             vectorized=vectorized,
@@ -1427,7 +1425,9 @@ class Function(TrackedTerm, Annotated):
         try:
             return _invoke_engine(self, values, context)
         except TRACING_ERRORS as tracing_error:
-            raise_for_false_traceable_claim(self.label, tracing_error)
+            raise FalseTraceableClaimError.for_tracing_error(
+                self.label, tracing_error
+            ) from tracing_error
 
     def _route_candidates(
         self, controls: Mapping[str, Any], values: Mapping[str, Any] | None = None

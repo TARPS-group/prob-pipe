@@ -19,23 +19,24 @@ Provides:
     the bounded store of them.
   - :func:`probe` – the one probe, with its rules for Python numbers and for the
     global random generators.
-  - :func:`closure_probe_key` – the key under which closures of one code share a
-    probe result.
+  - :func:`probe_closure` – the probe of a closure, which closures of one code
+    share.
   - :func:`spec_stand_in` – the abstract stand-in of one value of a spec.
-  - :func:`raise_for_false_traceable_claim` – the error for a false claim.
+  - :class:`FalseTraceableClaimError` – the error for a false claim.
 """
 
 from __future__ import annotations
 
 import enum
+import hashlib
 import random
 import threading
 import warnings
 from collections import OrderedDict
 from collections.abc import Callable, Hashable
 from dataclasses import dataclass
-from types import FunctionType
-from typing import Any, NoReturn
+from types import CellType, FunctionType
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -48,19 +49,19 @@ __all__ = [
     "NO_CLAIMS",
     "TRACING_ERRORS",
     "ExecutionClaims",
+    "FalseTraceableClaimError",
     "ProbeResult",
     "ProbeResults",
     "Traceability",
-    "closure_probe_key",
-    "execution_claims",
+    "checked_execution_claims",
     "probe",
-    "raise_for_false_traceable_claim",
+    "probe_closure",
     "spec_stand_in",
 ]
 
 
 # ---------------------------------------------------------------------------
-# Claims, traceability, and the probe
+# Claims and traceability
 # ---------------------------------------------------------------------------
 
 
@@ -78,9 +79,9 @@ class ExecutionClaims:
         it cannot, so ProbPipe never traces or probes it. ``None`` states
         nothing, and the callable is probed once per input structure.
     vectorized : bool
-        Whether the callable accepts every array argument with an extra
-        leading axis of evaluation points and returns its outputs stacked on
-        that axis, output row ``i`` depending only on input row ``i``.
+        Whether the callable evaluates a stack of evaluation points in one
+        call, returning their outputs stacked on a leading axis, with output
+        row ``i`` depending only on evaluation point ``i``.
     differentiable : NumericSpec or None
         The differentiability claim: the numeric inputs gradients flow
         through, or ``None`` for no claim.
@@ -95,14 +96,14 @@ class ExecutionClaims:
 NO_CLAIMS = ExecutionClaims()
 
 
-def execution_claims(
+def checked_execution_claims(
     *,
     function_name: str,
     traceable: bool | None,
     vectorized: bool,
     differentiable: NumericSpec | None,
 ) -> ExecutionClaims:
-    """The claims *function_name* states, checked.
+    """The claims *function_name* states, after checking that each has an admitted value.
 
     Parameters
     ----------
@@ -128,12 +129,11 @@ def execution_claims(
     """
     if traceable is not None and not isinstance(traceable, bool):
         raise TypeError(
-            f"traceable of {function_name!r} must be True, False, or None, "
-            f"got {type(traceable).__name__}"
+            f"traceable of {function_name!r} must be True, False, or None, got {traceable!r}"
         )
     if not isinstance(vectorized, bool):
         raise TypeError(
-            f"vectorized of {function_name!r} must be True or False, got {type(vectorized).__name__}"
+            f"vectorized of {function_name!r} must be True or False, got {vectorized!r}"
         )
     if traceable is None and not vectorized and differentiable is None:
         return NO_CLAIMS
@@ -180,6 +180,11 @@ class Traceability(enum.Enum):
         )
 
 
+# ---------------------------------------------------------------------------
+# The probe and its results
+# ---------------------------------------------------------------------------
+
+
 @dataclass(frozen=True)
 class ProbeResult:
     """The stored outcome of one probe.
@@ -189,10 +194,10 @@ class ProbeResult:
     traces : bool
         Whether JAX traced the callable at the probed input structure.
     ints_static : bool
-        Whether it traced only with its Python ``int`` arguments static.
-    output : Any
-        The abstract output, a tree of ``jax.ShapeDtypeStruct``, when it
-        traced, and ``None`` otherwise.
+        Whether it traced only with its integer scalar arguments static.
+    abstract_output : Any
+        The callable's result as JAX traced it, a tree of
+        ``jax.ShapeDtypeStruct``, when it traced, and ``None`` otherwise.
     error : BaseException or None
         The error the trace raised when it did not trace, without its
         traceback.
@@ -200,13 +205,13 @@ class ProbeResult:
         Whether the callable drew from NumPy's or Python's global random
         generator while it was traced, which makes it opaque.
     retry_with_static_ints : bool
-        Whether this result only records that the form with ``int``\\ s as
+        Whether this result only records that the form with integer scalars as
         data failed, so the form with them static decides.
     """
 
     traces: bool
     ints_static: bool = False
-    output: Any = None
+    abstract_output: Any = None
     error: BaseException | None = None
     draws_global_random: bool = False
     retry_with_static_ints: bool = False
@@ -218,7 +223,7 @@ class ProbeResult:
 
 
 class ProbeResults:
-    """The probe results of one owner, by input structure, bounded and safe for several threads.
+    """The probe results of one owner, by cache key, bounded and safe for several threads.
 
     The store keeps at most *max_entries* results and drops the least
     recently used one beyond that. It is shared by every copy of its owner
@@ -245,13 +250,13 @@ class ProbeResults:
         with self._lock:
             return len(self._results)
 
-    def get(self, structure: Hashable) -> ProbeResult | None:
-        """The result stored under *structure*, or ``None``.
+    def get(self, cache_key: Hashable) -> ProbeResult | None:
+        """The result stored under *cache_key*, or ``None``.
 
         Parameters
         ----------
-        structure : Hashable
-            The input structure, with whatever else the owner keys by.
+        cache_key : Hashable
+            The input structure, with whatever else the owner's results depend on.
 
         Returns
         -------
@@ -259,64 +264,66 @@ class ProbeResults:
             The stored result.
         """
         with self._lock:
-            result = self._results.get(structure)
-            if result is not None:
-                self._results.move_to_end(structure)
-            return result
+            stored_result = self._results.get(cache_key)
+            if stored_result is not None:
+                self._results.move_to_end(cache_key)
+            return stored_result
 
-    def put(self, structure: Hashable, result: ProbeResult) -> None:
-        """Store *result* under *structure*, dropping the least recently used result past the bound.
+    def put(self, cache_key: Hashable, probe_result: ProbeResult) -> None:
+        """Store *probe_result* under *cache_key*, dropping the least recently used result past the bound.
 
         Parameters
         ----------
-        structure : Hashable
-            The input structure, with whatever else the owner keys by.
-        result : ProbeResult
+        cache_key : Hashable
+            The input structure, with whatever else the owner's results depend on.
+        probe_result : ProbeResult
             The outcome to store.
         """
         with self._lock:
-            self._results[structure] = result
-            self._results.move_to_end(structure)
+            self._results[cache_key] = probe_result
+            self._results.move_to_end(cache_key)
             while len(self._results) > self._max_entries:
                 self._results.popitem(last=False)
 
 
 def probe(
-    store: ProbeResults | None,
-    trace: Callable[[Any], Any],
+    probe_results: ProbeResults | None,
+    traced_function: Callable[[Any], Any],
     arguments: Any,
     *,
     label: str,
-    key: Hashable = (),
+    cache_key_prefix: Hashable = (),
 ) -> ProbeResult:
-    """Whether *trace* traces at *arguments*, read from *store* or probed and stored there.
+    """Whether *traced_function* traces at *arguments*, read from *probe_results* or probed and stored there.
 
-    A probe traces *trace* once with ``jax.make_jaxpr``, taking every numeric
-    array, stand-in, and Python ``float`` of *arguments* as data and passing
-    every other leaf as it is. It follows the probe rules of V.13:
+    A probe traces *traced_function* once with ``jax.make_jaxpr``, taking every
+    numeric array, stand-in, and Python ``float`` of *arguments* as data and
+    passing every other leaf as it is, so the result holds for any arguments of
+    the same input structure. It follows the probe rules of V.13:
 
-    1. A Python ``int`` is data first. When the probe fails with an ``int`` as
-       data, it is retried once with every ``int`` static, as one probe, and
-       the result is stored under the input structure that holds the ``int``
-       values.
+    1. An integer scalar, a Python ``int`` or a NumPy integer, is data first.
+       When the probe fails with one as data, it is retried once with every
+       integer scalar static, as one probe, and that result is stored under
+       the input structure that holds the integers' values.
     2. A callable that draws from NumPy's or Python's global random generator
        while it is traced is recorded as opaque, and a warning names it. The
        generators are put back to their states before the probe.
 
     The probe runs the callable's Python up to the first operation that fails
-    on a tracer.
+    on a tracer. A false ``traceable=True`` claim inside it is not a probe
+    outcome, and its error propagates.
 
     Parameters
     ----------
-    store : ProbeResults or None
+    probe_results : ProbeResults or None
         Where results are read and stored; ``None`` stores nothing.
-    trace : Callable
+    traced_function : Callable
         Called with the arguments, rebuilt with tracers for their data.
     arguments : Any
         The arguments, a tree of arrays, stand-ins, and other values.
     label : str
         The callable's label, which the warning names.
-    key : Hashable
+    cache_key_prefix : Hashable
         What else the result depends on besides the input structure, such as
         the route the call runs.
 
@@ -324,80 +331,133 @@ def probe(
     -------
     ProbeResult
         The stored or new outcome.
+
+    Raises
+    ------
+    FalseTraceableClaimError
+        If a ``Function`` that claims ``traceable=True`` fails while the probe
+        traces it.
     """
     data_form = _probe_arguments(arguments, ints_static=False)
-    data_key = None if store is None or data_form.structure is None else (key, data_form.structure)
-    stored = None if data_key is None else store.get(data_key)
-    if stored is not None and not stored.retry_with_static_ints:
-        return stored
-    if stored is None:
-        result = _trace_once(trace, data_form)
-        if result.draws_global_random:
-            _warn_global_random(label)
-        if result.traces or result.draws_global_random or not data_form.has_int_data:
-            if data_key is not None:
-                store.put(data_key, result)
-            return result
-        if data_key is not None:
-            store.put(data_key, ProbeResult(traces=False, retry_with_static_ints=True))
+    data_cache_key = (
+        None
+        if probe_results is None or data_form.structure is None
+        else (cache_key_prefix, data_form.structure)
+    )
+    stored_result = None if data_cache_key is None else probe_results.get(data_cache_key)
+    if stored_result is not None and not stored_result.retry_with_static_ints:
+        return stored_result
+    if stored_result is None:
+        data_result = _trace_once(traced_function, data_form, label)
+        if data_result.traces or data_result.draws_global_random or not data_form.has_int_data:
+            if data_cache_key is not None:
+                probe_results.put(data_cache_key, data_result)
+            return data_result
+        if data_cache_key is not None:
+            probe_results.put(
+                data_cache_key, ProbeResult(traces=False, retry_with_static_ints=True)
+            )
     static_form = _probe_arguments(arguments, ints_static=True)
-    static_key = (
-        None if store is None or static_form.structure is None else (key, static_form.structure)
+    static_cache_key = (
+        None
+        if probe_results is None or static_form.structure is None
+        else (cache_key_prefix, static_form.structure)
     )
-    static_stored = None if static_key is None else store.get(static_key)
-    if static_stored is not None:
-        return static_stored
-    static_result = _trace_once(trace, static_form)
-    if static_result.draws_global_random:
-        _warn_global_random(label)
+    stored_static_result = None if static_cache_key is None else probe_results.get(static_cache_key)
+    if stored_static_result is not None:
+        return stored_static_result
+    static_attempt = _trace_once(traced_function, static_form, label)
     static_result = ProbeResult(
-        traces=static_result.traces,
-        ints_static=static_result.traces,
-        output=static_result.output,
-        error=static_result.error,
-        draws_global_random=static_result.draws_global_random,
+        traces=static_attempt.traces,
+        ints_static=static_attempt.traces,
+        abstract_output=static_attempt.abstract_output,
+        error=static_attempt.error,
+        draws_global_random=static_attempt.draws_global_random,
     )
-    if static_key is not None:
-        store.put(static_key, static_result)
+    if static_cache_key is not None:
+        probe_results.put(static_cache_key, static_result)
     return static_result
 
 
-def closure_probe_key(callable_: Callable[..., Any]) -> Hashable:
-    """The key under which every closure of *callable_*'s code with captures of one structure shares a probe result.
+def probe_closure(
+    probe_results: ProbeResults,
+    closure: Callable[..., Any],
+    call_closure: Callable[[Callable[..., Any], Any], Any],
+    arguments: Any,
+    *,
+    label: str,
+    role: str,
+) -> ProbeResult:
+    """Whether ``call_closure(closure, arguments)`` traces, sharing the result among closures of one code.
 
-    A plain function counts by its code and by the structure of what it
-    captures: the values in its closure cells and its defaults. A captured
-    array counts by its shape and dtype, and a hashable value by its value.
-    Any other callable, or a function that captures any other value, counts by
-    itself, so it shares its result only with itself.
+    Closures of one code, such as the density of the law a kernel builds anew
+    at each given value, share a probe result when what they capture has one
+    structure (V.13, probe rule 3):
+
+    1. The probe first traces the closure with each captured array as data, so
+       its result, the abstract output included, holds for any captured values
+       of the same shapes and dtypes. A captured hashable value counts by its
+       value, and a captured ``Function`` by itself.
+    2. A closure that fails with its captured arrays as data, because it reads
+       one's value, as ``jnp.zeros(int(n))`` does, is probed again as it is, and
+       that result is shared only by closures that capture equal arrays.
+    3. A closure that captures any other value, a plain callable included, and
+       a callable that is no plain function, are probed for themselves, and
+       their results are not stored.
 
     Parameters
     ----------
-    callable_ : Callable
-        The closure, such as the density of a law built inside a kernel.
+    probe_results : ProbeResults
+        Where results are read and stored.
+    closure : Callable
+        The closure, such as a law's sampler or density.
+    call_closure : Callable
+        ``call_closure(callable, arguments)``, the computation the probe traces,
+        given the closure or a copy of it with other captured values.
+    arguments : Any
+        The arguments, as :func:`probe` takes them.
+    label : str
+        The label the warning of :func:`probe` names.
+    role : str
+        What the closure is to its owner, such as ``"sample"``, which keeps the
+        results of one code in two roles apart.
 
     Returns
     -------
-    Hashable
-        The key.
+    ProbeResult
+        The stored or new outcome.
     """
-    if isinstance(callable_, FunctionType):
-        captured = [cell.cell_contents for cell in callable_.__closure__ or ()]
-        captured.extend(callable_.__defaults__ or ())
-        captured.extend((callable_.__kwdefaults__ or {}).values())
-        try:
-            return (
-                "code",
-                callable_.__code__,
-                tuple(_captured_value_key(value) for value in captured),
-            )
-        except (_Unkeyable, ValueError):
-            pass
-    try:
-        hash(callable_)
-    except TypeError:
-        return ("unshared", object())
-    return ("callable", callable_)
+    captures = _closure_captures(closure)
+    if captures is None:
+        return probe(
+            None,
+            lambda probed_arguments: call_closure(closure, probed_arguments),
+            arguments,
+            label=label,
+        )
+    with_captures_as_data = probe(
+        probe_results,
+        lambda probed_inputs: call_closure(captures.rebuild(probed_inputs[1]), probed_inputs[0]),
+        (arguments, captures.captured_arrays),
+        label=label,
+        cache_key_prefix=("captures as data", role, closure.__code__, captures.static_cache_key),
+    )
+    if with_captures_as_data.traces or with_captures_as_data.draws_global_random:
+        return with_captures_as_data
+    value_cache_key = captures.value_cache_key
+    return probe(
+        None if value_cache_key is None else probe_results,
+        lambda probed_arguments: call_closure(closure, probed_arguments),
+        arguments,
+        label=label,
+        cache_key_prefix=(
+            "captures as constants",
+            role,
+            closure.__code__,
+            captures.static_cache_key,
+            value_cache_key,
+        ),
+    )
 
 
 def spec_stand_in(spec: TermSpec | None) -> Any:
@@ -427,6 +487,56 @@ def spec_stand_in(spec: TermSpec | None) -> Any:
     return None
 
 
+# ---------------------------------------------------------------------------
+# A false claim
+# ---------------------------------------------------------------------------
+
+
+class FalseTraceableClaimError(TypeError):
+    """A ``Function`` claims ``traceable=True``, but JAX failed to trace it.
+
+    Use :meth:`for_tracing_error` to build one from JAX's error, which the
+    raised error is chained to.
+    """
+
+    @classmethod
+    def for_tracing_error(
+        cls, function_name: str, tracing_error: Exception
+    ) -> FalseTraceableClaimError:
+        """The error for *function_name*, saying what JAX's *tracing_error* shows the callable did.
+
+        Parameters
+        ----------
+        function_name : str
+            The label of the ``Function`` that makes the claim.
+        tracing_error : Exception
+            The JAX tracing error, one of :data:`TRACING_ERRORS`.
+
+        Returns
+        -------
+        FalseTraceableClaimError
+            The error, whose message names the claim, what the callable did,
+            and JAX's error.
+        """
+        failure = next(
+            (
+                description
+                for error_class, description in _TRACING_FAILURES
+                if isinstance(tracing_error, error_class)
+            ),
+            "it reads the value of a traced input",
+        )
+        return cls(
+            f"{function_name!r} claims traceable=True, but tracing it failed: {failure} "
+            f"({type(tracing_error).__name__}). Remove the claim, or claim traceable=False"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
+
 #: What each JAX tracing error says the callable did, most specific first.
 _TRACING_FAILURES: tuple[tuple[type[Exception], str], ...] = (
     (jax.errors.TracerArrayConversionError, "it converts a traced value to NumPy"),
@@ -436,55 +546,15 @@ _TRACING_FAILURES: tuple[tuple[type[Exception], str], ...] = (
     (jax.errors.ConcretizationTypeError, "it reads the value of a traced input"),
 )
 
-
 #: The JAX errors that mean a callable cannot be traced.
-TRACING_ERRORS: tuple[type[Exception], ...] = tuple(error for error, _ in _TRACING_FAILURES)
-
-
-def raise_for_false_traceable_claim(function_name: str, error: Exception) -> NoReturn:
-    """Raise the error for a callable that claims ``traceable=True`` but failed to trace.
-
-    Parameters
-    ----------
-    function_name : str
-        The label of the ``Function`` that makes the claim.
-    error : Exception
-        The JAX tracing error, one of :data:`TRACING_ERRORS`, which the raised
-        error is chained to.
-
-    Raises
-    ------
-    TypeError
-        Always, naming the claim, what the callable did, and JAX's error.
-    """
-    failure = next(
-        description for kind, description in _TRACING_FAILURES if isinstance(error, kind)
-    )
-    raise TypeError(
-        f"{function_name!r} claims traceable=True, but tracing it failed: {failure} "
-        f"({type(error).__name__}). Remove the claim, or claim traceable=False"
-    ) from error
-
-
-# ---------------------------------------------------------------------------
-# Private helpers
-# ---------------------------------------------------------------------------
+TRACING_ERRORS: tuple[type[Exception], ...] = tuple(
+    error_class for error_class, _ in _TRACING_FAILURES
+)
 
 
 def _is_numeric_dtype(dtype: Any) -> bool:
     """Whether *dtype* is a number or a PRNG key, which a probe takes as data."""
     return jnp.issubdtype(dtype, jax.dtypes.prng_key) or np.dtype(dtype).kind in "biufc"
-
-
-def _array_leaf_key(leaf: Any) -> tuple[Any, ...]:
-    """The part of the input structure an array leaf contributes: its shape, dtype, and kind."""
-    origin = "tracer" if isinstance(leaf, jax.core.Tracer) else "array"
-    return (
-        origin,
-        tuple(leaf.shape),
-        str(leaf.dtype),
-        bool(getattr(leaf, "weak_type", False)),
-    )
 
 
 def _is_array_leaf(leaf: Any) -> bool:
@@ -494,21 +564,32 @@ def _is_array_leaf(leaf: Any) -> bool:
     return False
 
 
-def _is_python_int(leaf: Any) -> bool:
-    """Whether *leaf* is a Python ``int``, a ``bool`` included."""
-    return isinstance(leaf, int)
+def _is_integer_scalar(leaf: Any) -> bool:
+    """Whether *leaf* is a Python ``int``, a ``bool`` included, or a NumPy integer scalar."""
+    return isinstance(leaf, int | np.integer | np.bool_)
 
 
-class _Unkeyable(Exception):
-    """An argument has no part in an input structure: it is neither an array nor hashable."""
+def _array_leaf_cache_key(leaf: Any) -> tuple[Any, ...]:
+    """The part of an input structure an array leaf gives: whether it is traced, its shape, and its dtype."""
+    origin = "tracer" if isinstance(leaf, jax.core.Tracer) else "array"
+    return (
+        origin,
+        tuple(leaf.shape),
+        str(leaf.dtype),
+        bool(getattr(leaf, "weak_type", False)),
+    )
 
 
-def _static_leaf_key(leaf: Any) -> tuple[Any, ...]:
-    """The part of the input structure a leaf passed as it is contributes: its type and value."""
+class _NoCacheKey(Exception):
+    """A value has no part in a cache key: it is neither an array nor hashable."""
+
+
+def _static_leaf_cache_key(leaf: Any) -> tuple[Any, ...]:
+    """The part of an input structure a leaf passed as it is gives: its type and value."""
     try:
         hash(leaf)
     except TypeError:
-        raise _Unkeyable from None
+        raise _NoCacheKey from None
     return ("static", type(leaf), leaf)
 
 
@@ -526,7 +607,7 @@ class _ProbeArguments:
     rebuild : Callable
         Rebuilds the arguments from values of the data leaves.
     has_int_data : bool
-        Whether a Python ``int`` is among the data leaves.
+        Whether an integer scalar is among the data leaves.
     """
 
     structure: Hashable | None
@@ -536,40 +617,46 @@ class _ProbeArguments:
 
 
 def _probe_arguments(arguments: Any, *, ints_static: bool) -> _ProbeArguments:
-    """*arguments* split for a probe, with Python ``int``\\ s as data or as static values.
+    """*arguments* split for a probe, with integer scalars as data or as static values.
 
     A numeric array, a stand-in of one, and a Python ``float`` or ``complex``
-    are data, the float a weakly typed scalar. A Python ``int`` is data unless
-    *ints_static*. Every other leaf is passed as it is, and enters the input
-    structure by its value.
+    are data, a Python number a weakly typed scalar. An integer scalar is data
+    unless *ints_static*. Every other leaf is passed as it is, and enters the
+    input structure by its value.
     """
     leaves, treedef = jax.tree.flatten(arguments)
     data_positions: list[int] = []
-    leaf_keys: list[tuple[Any, ...]] = []
+    leaf_cache_keys: list[tuple[Any, ...]] = []
     structure_known = True
     has_int_data = False
     for position, leaf in enumerate(leaves):
-        if _is_array_leaf(leaf):
+        if _is_integer_scalar(leaf):
+            if ints_static:
+                leaf_cache_keys.append(_static_leaf_cache_key(leaf))
+                continue
             data_positions.append(position)
-            leaf_keys.append(_array_leaf_key(leaf))
-        elif isinstance(leaf, float | complex) or (_is_python_int(leaf) and not ints_static):
+            leaf_cache_keys.append(("integer", type(leaf)))
+            has_int_data = True
+        elif _is_array_leaf(leaf):
             data_positions.append(position)
-            leaf_keys.append(("scalar", type(leaf)))
-            has_int_data = has_int_data or _is_python_int(leaf)
+            leaf_cache_keys.append(_array_leaf_cache_key(leaf))
+        elif isinstance(leaf, float | complex):
+            data_positions.append(position)
+            leaf_cache_keys.append(("scalar", type(leaf)))
         else:
             try:
-                leaf_keys.append(_static_leaf_key(leaf))
-            except _Unkeyable:
+                leaf_cache_keys.append(_static_leaf_cache_key(leaf))
+            except _NoCacheKey:
                 structure_known = False
 
     def rebuild(data_values: tuple[Any, ...]) -> Any:
-        rebuilt = list(leaves)
-        for position, value in zip(data_positions, data_values, strict=True):
-            rebuilt[position] = value
-        return jax.tree.unflatten(treedef, rebuilt)
+        rebuilt_leaves = list(leaves)
+        for position, data_value in zip(data_positions, data_values, strict=True):
+            rebuilt_leaves[position] = data_value
+        return jax.tree.unflatten(treedef, rebuilt_leaves)
 
     return _ProbeArguments(
-        structure=(treedef, tuple(leaf_keys)) if structure_known else None,
+        structure=(treedef, tuple(leaf_cache_keys)) if structure_known else None,
         data_leaves=tuple(leaves[position] for position in data_positions),
         rebuild=rebuild,
         has_int_data=has_int_data,
@@ -581,15 +668,17 @@ def _global_random_states() -> tuple[Any, Any]:
     return np.random.get_state(), random.getstate()
 
 
-def _states_equal(before: tuple[Any, Any], after: tuple[Any, Any]) -> bool:
+def _random_states_equal(states_before: tuple[Any, Any], states_after: tuple[Any, Any]) -> bool:
     """Whether two snapshots of the global random states are the same."""
-    numpy_before, python_before = before
-    numpy_after, python_after = after
-    same_numpy = numpy_before[0] == numpy_after[0] and all(
+    numpy_state_before, python_state_before = states_before
+    numpy_state_after, python_state_after = states_after
+    same_numpy_state = numpy_state_before[0] == numpy_state_after[0] and all(
         np.array_equal(part_before, part_after)
-        for part_before, part_after in zip(numpy_before[1:], numpy_after[1:], strict=True)
+        for part_before, part_after in zip(
+            numpy_state_before[1:], numpy_state_after[1:], strict=True
+        )
     )
-    return same_numpy and python_before == python_after
+    return same_numpy_state and python_state_before == python_state_after
 
 
 def _restore_global_random_states(states: tuple[Any, Any]) -> None:
@@ -599,41 +688,132 @@ def _restore_global_random_states(states: tuple[Any, Any]) -> None:
     random.setstate(python_state)
 
 
-def _trace_once(trace: Callable[[Any], Any], probe_arguments: _ProbeArguments) -> ProbeResult:
-    """One attempt of a probe: *trace* traced at the data leaves of *probe_arguments*."""
+def _trace_once(
+    traced_function: Callable[[Any], Any], probe_arguments: _ProbeArguments, label: str
+) -> ProbeResult:
+    """One attempt of a probe: *traced_function* traced at the data leaves of *probe_arguments*.
+
+    The global random generators are put back to their states before the
+    attempt, so another thread that draws from them while it runs loses those
+    draws; a probe runs only while a call is being planned.
+    """
     states_before = _global_random_states()
     try:
-        _, output = jax.make_jaxpr(
-            lambda data_leaves: trace(probe_arguments.rebuild(data_leaves)), return_shape=True
+        _, abstract_output = jax.make_jaxpr(
+            lambda data_leaves: traced_function(probe_arguments.rebuild(data_leaves)),
+            return_shape=True,
         )(probe_arguments.data_leaves)
+    except FalseTraceableClaimError:
+        raise
     except Exception as error:
-        result = ProbeResult(traces=False, error=error.with_traceback(None))
+        attempt = ProbeResult(traces=False, error=error.with_traceback(None))
     else:
-        result = ProbeResult(traces=True, output=output)
-    if not _states_equal(states_before, _global_random_states()):
+        attempt = ProbeResult(traces=True, abstract_output=abstract_output)
+    if not _random_states_equal(states_before, _global_random_states()):
         _restore_global_random_states(states_before)
+        warnings.warn(
+            f"{label!r} draws from NumPy's or Python's global random generator, so ProbPipe "
+            f"does not compile it with JAX. Draw from a JAX key instead, or pass "
+            f"traceable=False",
+            UserWarning,
+            stacklevel=4,
+        )
         return ProbeResult(traces=False, draws_global_random=True)
-    return result
+    return attempt
 
 
-def _warn_global_random(label: str) -> None:
-    """Warn that the callable *label* draws from a global random generator."""
-    warnings.warn(
-        f"{label!r} draws from NumPy's global random generator, so it is treated as opaque; "
-        f"its noise would otherwise be fixed into the compiled JAX program. Draw from a key "
-        f"instead, or claim traceable=False",
-        UserWarning,
-        stacklevel=3,
+@dataclass(frozen=True)
+class _ClosureCaptures:
+    """What a plain function captures, split into the arrays a probe can trace and the rest.
+
+    Attributes
+    ----------
+    captured_arrays : tuple
+        The captured arrays, in the order of the closure's cells.
+    static_cache_key : Hashable
+        Every captured value but the arrays, by value, with each array's place
+        and shape and dtype.
+    value_cache_key : Hashable or None
+        The captured arrays by their contents, or ``None`` when one is traced.
+    rebuild : Callable
+        A copy of the closure that captures other arrays in their places.
+    """
+
+    captured_arrays: tuple[Any, ...]
+    static_cache_key: Hashable
+    value_cache_key: Hashable | None
+    rebuild: Callable[[tuple[Any, ...]], Callable[..., Any]]
+
+
+def _closure_captures(closure: Callable[..., Any]) -> _ClosureCaptures | None:
+    """What *closure* captures, or ``None`` when it shares no probe result with another closure.
+
+    A closure shares nothing when it is no plain function, or when it captures
+    a value that is neither an array, a ``Function``, nor another hashable
+    value that is not callable.
+    """
+    if not isinstance(closure, FunctionType):
+        return None
+    cell_values = [cell.cell_contents for cell in closure.__closure__ or ()]
+    defaults = (*(closure.__defaults__ or ()), *(closure.__kwdefaults__ or {}).values())
+    array_positions: list[int] = []
+    static_parts: list[Hashable] = []
+    try:
+        for position, cell_value in enumerate(cell_values):
+            if _is_array_leaf(cell_value) or isinstance(cell_value, jax.core.Tracer):
+                array_positions.append(position)
+                static_parts.append(_array_leaf_cache_key(cell_value))
+            else:
+                static_parts.append(_captured_static_cache_key(cell_value))
+        static_parts.extend(_captured_static_cache_key(default) for default in defaults)
+    except (_NoCacheKey, ValueError):
+        return None
+    captured_arrays = tuple(cell_values[position] for position in array_positions)
+
+    def rebuild(replacement_arrays: tuple[Any, ...]) -> Callable[..., Any]:
+        rebuilt_values = list(cell_values)
+        for position, replacement in zip(array_positions, replacement_arrays, strict=True):
+            rebuilt_values[position] = replacement
+        rebuilt = FunctionType(
+            closure.__code__,
+            closure.__globals__,
+            closure.__name__,
+            closure.__defaults__,
+            tuple(CellType(rebuilt_value) for rebuilt_value in rebuilt_values),
+        )
+        rebuilt.__kwdefaults__ = closure.__kwdefaults__
+        return rebuilt
+
+    return _ClosureCaptures(
+        captured_arrays=captured_arrays,
+        static_cache_key=tuple(static_parts),
+        value_cache_key=_array_contents_cache_key(captured_arrays),
+        rebuild=rebuild,
     )
 
 
-def _captured_value_key(value: Any) -> Hashable:
-    """The part of a closure's probe key one captured value contributes.
+def _captured_static_cache_key(captured_value: Any) -> Hashable:
+    """The part of a closure's cache key a captured value that is not an array gives.
 
-    An array counts by its shape and dtype, and a hashable value by its value;
-    a ``Function`` is hashable by its identity, and its claims are fixed. Any
-    other value raises :class:`_Unkeyable`.
+    A ``Function`` counts by itself, since its claims are fixed; any other
+    hashable value counts by its value. Another callable, whose behaviour is
+    not its value, and an unhashable value raise :class:`_NoCacheKey`, so the
+    closure shares nothing.
     """
-    if _is_array_leaf(value) or isinstance(value, jax.core.Tracer):
-        return _array_leaf_key(value)
-    return _static_leaf_key(value)
+    if callable(captured_value) and getattr(captured_value, "_execution_claims", None) is None:
+        raise _NoCacheKey
+    return _static_leaf_cache_key(captured_value)
+
+
+def _array_contents_cache_key(arrays: tuple[Any, ...]) -> Hashable | None:
+    """*arrays* by their shapes, dtypes, and contents, or ``None`` when one is traced."""
+    if any(isinstance(array, jax.core.Tracer) for array in arrays):
+        return None
+    contents_cache_key = []
+    for array in arrays:
+        if jnp.issubdtype(array.dtype, jax.dtypes.prng_key):
+            array = jax.random.key_data(array)
+        host_array = np.asarray(array)
+        digest = hashlib.blake2b(np.ascontiguousarray(host_array).tobytes(), digest_size=16)
+        contents_cache_key.append((host_array.shape, str(host_array.dtype), digest.hexdigest()))
+    return tuple(contents_cache_key)
