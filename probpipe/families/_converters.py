@@ -1,7 +1,7 @@
 """The shipped converters between the catalog's families and backend representations.
 
 Each converter is exact or approximate by its declaration, and its result
-carries the source's event declaration:
+carries the source's event spec:
 
 - ``tfp`` (exact) brings a TFP backend distribution into ProbPipe as its law:
   the family whose parameters it holds, or the bare backend adapter for a
@@ -36,8 +36,10 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._dtype import _default_float_dtype
 from .._messages import unknown_names
+from ..core._call_context import _note_num_samples_used
 from ..core._spec_base import NumericArraySpec, NumericSpec
-from ..core._specs import OutputSpec
+from ..core._specs import OutputSpec, _has_record_outputs
+from ..core.config import _num_samples_in_effect
 from ..core.constraints import (
     Constraint,
     _supports_compatible,
@@ -62,10 +64,9 @@ from ..distributions._distribution import (
     _whole_term_event,
 )
 from ..distributions._empirical import EmpiricalDistribution, _batch_form
-from ..functions import _broker
+from ..functions import _evaluation_keys
 from ..functions._result import SAMPLE_LEVEL
 from ..operations._operation import _workflow_draws
-from ..values import Function
 from ._backend import TFPDistribution
 from ._continuous import (
     Beta,
@@ -142,9 +143,12 @@ def _refuse_unread(converter: str, options: dict[str, Any], reads: tuple[str, ..
 
 
 def _sample_count(options: dict[str, Any]) -> int:
-    """The ``num_samples`` option as a positive integer, or the default sample count without it.
+    """The ``num_samples`` option as a positive integer, or the converting call's ``num_samples`` without it.
 
-    The default is the one :func:`~probpipe.set_default_n_broadcast_samples` sets.
+    The converting call is the ``convert`` call, or the call whose argument is
+    converted, and its ``num_samples`` control defaults to
+    ``config.sampling.num_samples``, which a conversion outside every call
+    takes.
 
     Parameters
     ----------
@@ -163,7 +167,7 @@ def _sample_count(options: dict[str, Any]) -> int:
     ValueError
         If the count is not positive.
     """
-    value = options.get("num_samples", Function.DEFAULT_N_BROADCAST_SAMPLES)
+    value = options.get("num_samples", _num_samples_in_effect())
     if isinstance(value, bool):
         raise TypeError(f"num_samples must be an integer, got {value!r}")
     try:
@@ -176,7 +180,7 @@ def _sample_count(options: dict[str, Any]) -> int:
 
 
 def _declared(source: Any, options: dict[str, Any]) -> OutputSpec | None:
-    """The ``event_spec`` option, the declaration of a backend source.
+    """The ``event_spec`` option, the event spec of a backend source.
 
     Parameters
     ----------
@@ -188,13 +192,13 @@ def _declared(source: Any, options: dict[str, Any]) -> OutputSpec | None:
     Returns
     -------
     OutputSpec or None
-        The declaration of the backend source's event, or None when the option is absent.
+        The event spec of the backend source, or None when the option is absent.
 
     Raises
     ------
     TypeError
         If the option is not an ``OutputSpec``, or is given for a ProbPipe law,
-        which carries its own declaration.
+        which carries its own event spec.
     """
     declared = options.get("event_spec")
     if declared is None:
@@ -269,23 +273,23 @@ def _tfp_law(source: tfd.Distribution, declared: OutputSpec | None) -> TFPDistri
     A backend distribution with a family enters as that family at its
     parameters, and any other enters through the bare backend adapter. The law
     is labeled by the backend's name, and *declared*, when given, names its
-    component, which is otherwise the backend's name.
+    one output, which is otherwise named by the backend's name.
     """
     name = source.name or type(source).__name__
-    component = _backend_component(name, declared)
+    output_name = _backend_output(name, declared)
     entry = _TFP_FAMILIES.get(type(source))
     if entry is None:
-        return TFPDistribution(component, source, label=name, event_spec=declared)
+        return TFPDistribution(output_name, source, label=name, event_spec=declared)
     family, arguments = entry
-    return family(component, **arguments(source), label=name, event_spec=declared)
+    return family(output_name, **arguments(source), label=name, event_spec=declared)
 
 
-def _backend_component(name: str, declared: OutputSpec | None) -> str:
-    """The component of a backend distribution's law: the one *declared* names, or *name*."""
-    if declared is None or declared.exposes_record:
+def _backend_output(name: str, declared: OutputSpec | None) -> str:
+    """The output name of a backend distribution's law: the one *declared* names, or *name*."""
+    if declared is None or _has_record_outputs(declared):
         return name
-    (component,) = declared.components
-    return component
+    (output_name,) = declared.outputs
+    return output_name
 
 
 def _scipy_arguments(source: Any) -> tuple[tuple[Any, ...], float, float]:
@@ -385,20 +389,23 @@ def _scipy_law(source: Any, declared: OutputSpec | None) -> Distribution | None:
         return None
     shapes, loc, scale = _scipy_arguments(source)
     name = source.dist.name
-    component = _backend_component(name, declared)
+    output_name = _backend_output(name, declared)
     arguments = entry.arguments(shapes, loc, scale)
     shift = 0.0 if entry.holds_loc else loc
     stretch = 1.0 if entry.holds_scale else scale
     if shift == 0.0 and stretch == 1.0:
-        return entry.family(component, **arguments, label=name, event_spec=declared)
-    base = entry.family(f"{component}_base", **arguments, label=name)
+        return entry.family(output_name, **arguments, label=name, event_spec=declared)
+    base = entry.family(f"{output_name}_base", **arguments, label=name)
     law = BijectorTransformedDistribution(
-        component, base, _affine_bijector(shift, stretch, base.event_spec.spec.dtype), label=name
+        output_name,
+        base,
+        _affine_bijector(shift, stretch, base.event_spec.term_spec.dtype),
+        label=name,
     )
-    drawn = law.event_spec.spec
+    drawn = law.event_spec.term_spec
     support = _affine_support(_fixed_support(entry.family), shift, stretch) or drawn.support
     event = _whole_term_event(
-        component,
+        output_name,
         NumericArraySpec(drawn.shape, drawn.dtype, support),
         declared,
         "BijectorTransformedDistribution",
@@ -420,7 +427,7 @@ def _entering_law(source: Any, declared: OutputSpec | None) -> Distribution | No
 
 
 def _scipy_declaration(source: Any, declared: OutputSpec | None) -> OutputSpec:
-    """The declaration of one draw of a SciPy frozen distribution: a scalar under its name.
+    """The event spec of one draw of a SciPy frozen distribution: a scalar under its name.
 
     Its dtype is the one JAX gives SciPy's draws: the default integer dtype for
     a discrete distribution, and the default floating dtype otherwise.
@@ -428,7 +435,7 @@ def _scipy_declaration(source: Any, declared: OutputSpec | None) -> OutputSpec:
     drawn = np.int64 if isinstance(source.dist, _stats.rv_discrete) else np.float64
     spec = NumericArraySpec((), jax.dtypes.canonicalize_dtype(drawn))
     if declared is not None:
-        return declared.with_spec(spec)
+        return declared.with_term_spec(spec)
     return OutputSpec(**{source.dist.name: spec})
 
 
@@ -443,13 +450,16 @@ def _draws(source: Any, law: Distribution | None, count: int) -> Any:
     """*count* draws of *source*, the draw axis leading, from a workflow-owned key.
 
     A law draws through its ``_sample``. A SciPy frozen distribution with no
-    family draws through SciPy, from a generator seeded by the derived key.
+    family draws through SciPy, from a generator seeded by the derived key. The
+    count is noted as a ``num_samples`` the converting call used, so the call's
+    provenance records it.
     """
+    _note_num_samples_used(count)
     if law is not None:
         return _workflow_draws(law, (count,), operation_kind="convert", execution_mode="sampled")
-    key = _broker._resolve_automatic_key(
+    key = _evaluation_keys._resolve_automatic_key(
         None,
-        _broker._singleton_effect_plan(
+        _evaluation_keys._singleton_effect_plan(
             operation_kind="convert",
             execution_mode="sampled",
             sample_shape=(count,),
@@ -501,8 +511,6 @@ class _BackendConverter(Converter):
             )
         return ConversionInfo(
             True,
-            method_name=self.name,
-            exact=True,
             target_spec=law.spec,
             target_class=type(law),
             capabilities=_claims(law),
@@ -821,7 +829,7 @@ _CLOSED_FORM = {
 }
 
 
-def _samples(law: Distribution | None, needs: frozenset[str]) -> bool:
+def _fit_claims_random_events(law: Distribution | None, needs: frozenset[str]) -> bool:
     """Whether a fit reading *needs* takes draws: a statistic *law* has in no closed form.
 
     A SciPy frozen distribution without a family, whose *law* is ``None``, has
@@ -833,13 +841,13 @@ def _samples(law: Distribution | None, needs: frozenset[str]) -> bool:
 
 
 def _array_event(declaration: OutputSpec, label: str, family: type, rank: int | None) -> str | None:
-    """Why the event *declaration* cannot be a draw of *family*, or ``None`` when it can.
+    """Why the event spec *declaration* cannot be a draw of *family*, or ``None`` when it can.
 
     A family draws one array, as a whole term, of the rank its event has.
     """
-    spec = declaration.spec
-    if declaration.exposes_record:
-        fields = list(declaration.components)
+    spec = declaration.term_spec
+    if _has_record_outputs(declaration):
+        fields = list(declaration.outputs)
         return (
             f"{family.__name__} draws a single array, but {label!r} draws a record with fields "
             f"{fields}; convert one field instead, such as d[{fields[0]!r}]"
@@ -860,13 +868,13 @@ def _array_event(declaration: OutputSpec, label: str, family: type, rank: int | 
 
 
 def _cast_event(declaration: OutputSpec, label: str, family: type) -> str | None:
-    """Why a draw of *family* does not cast to the dtype *declaration* sets, or ``None``.
+    """Why a draw of *family* does not cast to the event spec *declaration*'s dtype, or ``None``.
 
-    A conversion's result carries the source's declaration, so the family's
+    A conversion's result carries the source's event spec, so the family's
     dtype must cast to the source's by the same-kind rule, as a law's must to
     the ``DistributionSpec`` it matches.
     """
-    declared = declaration.spec.dtype
+    declared = declaration.term_spec.dtype
     drawn = _fit_dtype(family)
     if declared is None or np.can_cast(drawn, declared, casting="same_kind"):
         return None
@@ -955,7 +963,7 @@ class _MomentFit:
     declaration: OutputSpec
     label: str | None
     parameters: Callable[[_Statistics, dict[str, Any]], dict[str, Any]]
-    samples: bool
+    claims_random_events: bool
 
 
 class _MomentMatching(Converter):
@@ -964,7 +972,7 @@ class _MomentMatching(Converter):
     The family is the requested target, and the fit reads the statistics the
     family's parameters need: a moment the law claims in closed form, and any
     other statistic from one shared batch of ``num_samples`` draws. The fit
-    keeps the law's component, and its label unless the label is the law's
+    keeps the law's output name, and its label unless the label is the law's
     default, so a ``Normal`` fit to ``Laplace("g", 0.0, 1.0)`` reads
     ``Normal(g)``. A family whose draws do not cast to the law's dtype is
     infeasible, as a ``Normal`` fit to a ``Bernoulli`` law is. Unless ``check_support=False``, the fit keeps the law's support:
@@ -1042,19 +1050,21 @@ class _MomentMatching(Converter):
             return reason
         if target_type in _COUNTED:
             _total_count(options, target_type)
-        samples = _samples(law, needs)
-        if samples:
+        claims_random_events = _fit_claims_random_events(law, needs)
+        if claims_random_events:
             if law is not None and not isinstance(law, SupportsSampling):
                 return (
                     f"{name!r} has no closed-form moments for the fit and does not support sampling"
                 )
             _sample_count(options)
-        return _MomentFit(law, declaration, _kept_label(source, law), parameters, samples)
+        return _MomentFit(
+            law, declaration, _kept_label(source, law), parameters, claims_random_events
+        )
 
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
-        """Promise the family *target_type* over the source's declaration, without fitting it.
+        """Promise the family *target_type* over the source's event spec, without fitting it.
 
-        The promised declaration is the source's shape with the family's dtype.
+        The promised event spec is the source's shape with the family's dtype.
         A fit whose draws do not cast to the source's dtype by the same-kind
         rule is infeasible, so the registry tries the next converter, and so is
         a family whose support is fixed and differs from the support the source
@@ -1087,7 +1097,7 @@ class _MomentMatching(Converter):
         if isinstance(planned, str):
             return ConversionInfo(False, description=planned)
         declaration = planned.declaration
-        declared, fixed = declaration.spec.support, _fixed_support(target_type)
+        declared, fixed = declaration.term_spec.support, _fixed_support(target_type)
         if (
             options.get("check_support", True)
             and declared is not None
@@ -1100,21 +1110,19 @@ class _MomentMatching(Converter):
                     target_type.__name__, fixed, _label(source, planned.law, declaration), declared
                 ),
             )
-        promised = declaration._with_spec(
-            NumericArraySpec(declaration.spec.shape, _fit_dtype(target_type))
+        promised = declaration._with_term_spec(
+            NumericArraySpec(declaration.term_spec.shape, _fit_dtype(target_type))
         )
         return ConversionInfo(
             True,
-            method_name=self.name,
-            exact=False,
             target_spec=DistributionSpec(promised),
             target_class=target_type,
             capabilities=_class_claims(target_type),
-            samples=planned.samples,
+            claims_random_events=planned.claims_random_events,
         )
 
     def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
-        """The fit of the family *target_type* to the source, over its declaration.
+        """The fit of the family *target_type* to the source, over its event spec.
 
         Parameters
         ----------
@@ -1130,7 +1138,7 @@ class _MomentMatching(Converter):
         -------
         Distribution
             The fitted instance of *target_type*, which keeps the source's
-            component, and its label unless the label is the source's default.
+            output name, and its label unless the label is the source's default.
 
         Raises
         ------
@@ -1144,10 +1152,12 @@ class _MomentMatching(Converter):
         if isinstance(planned, str):
             raise TypeError(planned)
         law = planned.law
-        draws = _draws(source, law, _sample_count(options)) if planned.samples else None
-        (component,) = planned.declaration.components
+        draws = (
+            _draws(source, law, _sample_count(options)) if planned.claims_random_events else None
+        )
+        (output_name,) = planned.declaration.outputs
         result = target_type(
-            component,
+            output_name,
             **planned.parameters(_Statistics(law, draws), options),
             label=planned.label,
         )
@@ -1164,10 +1174,10 @@ class _MomentMatching(Converter):
 def _sampled_source(
     source: Any, options: dict[str, Any]
 ) -> tuple[Distribution | None, OutputSpec] | str:
-    """The law a sampling converter draws from, with the declaration of a draw, or why it cannot.
+    """The law a sampling converter draws from, with the event spec of a draw, or why it cannot.
 
     A SciPy frozen distribution without a family has no law, and draws through
-    SciPy under the declaration of a scalar named by its distribution.
+    SciPy under the event spec of a scalar named by its distribution.
     """
     declared = _declared(source, options)
     law = _entering_law(source, declared)
@@ -1225,7 +1235,7 @@ class _EmpiricalDraws(Converter):
         return ((Distribution, *_BACKEND_SOURCES), (EmpiricalDistribution, *_NUMERIC_MOMENTS))
 
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
-        """Promise the empirical law of the source's draws, over its declaration.
+        """Promise the empirical law of the source's draws, over its event spec.
 
         Parameters
         ----------
@@ -1254,20 +1264,18 @@ class _EmpiricalDraws(Converter):
         if isinstance(sampled, str):
             return ConversionInfo(False, description=sampled)
         _, declaration = sampled
-        numeric = isinstance(declaration.spec, NumericSpec)
+        numeric = isinstance(declaration.term_spec, NumericSpec)
         claims = _class_claims(EmpiricalDistribution) + (_NUMERIC_MOMENTS if numeric else ())
         return ConversionInfo(
             True,
-            method_name=self.name,
-            exact=False,
             target_spec=DistributionSpec(declaration),
             target_class=EmpiricalDistribution,
             capabilities=claims,
-            samples=True,
+            claims_random_events=True,
         )
 
     def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
-        """The empirical law of ``num_samples`` draws, keeping the source's declaration.
+        """The empirical law of ``num_samples`` draws, keeping the source's event spec.
 
         Parameters
         ----------
@@ -1298,7 +1306,7 @@ class _EmpiricalDraws(Converter):
             raise TypeError(sampled)
         law, declaration = sampled
         name = _label(source, law, declaration)
-        atoms = _batch_form(name, _draws(source, law, count), SAMPLE_LEVEL, declaration.spec)
+        atoms = _batch_form(name, _draws(source, law, count), SAMPLE_LEVEL, declaration.term_spec)
         return EmpiricalDistribution(atoms, label=_kept_label(source, law), event_spec=declaration)
 
 
@@ -1347,18 +1355,18 @@ class _KDESmoothing(Converter):
         if isinstance(sampled, str) and not isinstance(source, EmpiricalDistribution):
             return sampled
         law, declaration = (source, source.event_spec) if isinstance(sampled, str) else sampled
-        if not isinstance(declaration.spec, NumericSpec):
+        if not isinstance(declaration.term_spec, NumericSpec):
             return (
                 f"a KDE needs numeric draws, but {_label(source, law, declaration)!r} draws "
-                f"{type(declaration.spec).__name__} values"
+                f"{type(declaration.term_spec).__name__} values"
             )
-        samples = not isinstance(law, EmpiricalDistribution)
-        if samples:
+        claims_random_events = not isinstance(law, EmpiricalDistribution)
+        if claims_random_events:
             _sample_count(options)
-        return law, declaration, samples
+        return law, declaration, claims_random_events
 
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
-        """Promise the kernel density estimate of the source, over its declaration.
+        """Promise the kernel density estimate of the source, over its event spec.
 
         Parameters
         ----------
@@ -1387,19 +1395,17 @@ class _KDESmoothing(Converter):
         planned = self._planned(source, options)
         if isinstance(planned, str):
             return ConversionInfo(False, description=planned)
-        _, declaration, samples = planned
+        _, declaration, claims_random_events = planned
         return ConversionInfo(
             True,
-            method_name=self.name,
-            exact=False,
             target_spec=DistributionSpec(declaration),
             target_class=KDEDistribution,
             capabilities=_class_claims(KDEDistribution),
-            samples=samples,
+            claims_random_events=claims_random_events,
         )
 
     def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
-        """The kernel density estimate, keeping the source's declaration.
+        """The kernel density estimate, keeping the source's event spec.
 
         Parameters
         ----------
@@ -1428,20 +1434,20 @@ class _KDESmoothing(Converter):
         planned = self._planned(source, options)
         if isinstance(planned, str):
             raise TypeError(planned)
-        law, declaration, samples = planned
+        law, declaration, claims_random_events = planned
         name = _label(source, law, declaration)
         label = _kept_label(source, law)
         bandwidth = options.get("bandwidth")
-        if not samples:
+        if not claims_random_events:
             return KDEDistribution(
-                _smoothed_atoms(name, law._rows, declaration.spec),
+                _smoothed_atoms(name, law._rows, declaration.term_spec),
                 bandwidth,
                 law.weights,
                 label=label,
                 event_spec=declaration,
             )
         draws = _draws(source, law, _sample_count(options))
-        atoms = _smoothed_atoms(name, draws, declaration.spec)
+        atoms = _smoothed_atoms(name, draws, declaration.term_spec)
         return KDEDistribution(atoms, bandwidth, label=label, event_spec=declaration)
 
 

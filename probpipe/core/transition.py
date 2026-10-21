@@ -28,7 +28,7 @@ from ..distributions._batches import DistributionBatch
 from ..distributions._conversion import converter_registry
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution, _batch_form
-from ..functions import _broker, function
+from ..functions import _evaluation_keys, function
 from ..values import Function
 from .provenance import Provenance
 
@@ -66,7 +66,7 @@ def iterate[S](
     Starting from *initial*, applies ``step_fn(dist, inp)`` for each element
     of *inputs*. The laws visited, *initial* first, are the elements of a
     ``DistributionBatch`` on one level named ``iterate``, so they share one
-    event declaration. Each element is a view of the law the fold produced at
+    event spec. Each element is a view of the law the fold produced at
     that step, and its provenance records the batch and that law.
 
     A step's law that has no provenance receives a record of the step, whose
@@ -96,7 +96,7 @@ def iterate[S](
     ------
     TypeError
         If a step returns something other than a ``Distribution``, or a law
-        whose event declaration does not match *initial*'s.
+        whose event spec does not match *initial*'s.
     """
     laws: list[Distribution] = [initial]
     current = initial
@@ -254,9 +254,9 @@ def with_resampling(
             ess_ratio = ess / n
 
             if ess_ratio < ess_threshold:
-                key = _broker._resolve_automatic_key(
+                key = _evaluation_keys._resolve_automatic_key(
                     None,
-                    _broker._singleton_effect_plan(
+                    _evaluation_keys._singleton_effect_plan(
                         operation_kind="resample",
                         execution_mode="sampled",
                         sample_shape=(n,),
@@ -270,7 +270,7 @@ def with_resampling(
                     out_dist.label,
                     out_dist._atoms_at(indices),
                     "resample",
-                    out_dist.event_spec.spec,
+                    out_dist.event_spec.term_spec,
                 )
                 resampled = EmpiricalDistribution(
                     atoms, label=out_dist.label, event_spec=out_dist.event_spec

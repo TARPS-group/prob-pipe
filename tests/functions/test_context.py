@@ -20,7 +20,6 @@ import probpipe.functions._rng as _rng
 from probpipe import (
     Function,
     Normal,
-    ProvenanceMode,
     UnmanagedConcurrentWorkflowEntryError,
     sample,
     workflow_run,
@@ -94,7 +93,7 @@ class TestWorkflowRunBoundary:
                 "probpipe.functions._context._os_urandom",
                 return_value=bytes.fromhex("0123456789abcdef"),
             ) as urandom,
-            _context._transported_workflow_frame(None, ProvenanceMode.FULL),
+            _context._transported_workflow_frame(None),
         ):
             frame = _context._capture_active_workflow_frame()
             assert frame is not None
@@ -294,7 +293,7 @@ class TestWorkflowAdmission:
         assert child_root != parent_root
         urandom.assert_called_once_with(8)
 
-    def test_managed_thread_work_item_can_enter_the_parent_run(self):
+    def test_thread_evaluation_point_can_enter_the_parent_run(self):
         def run_once():
             workflow = Function(_nested_draw, label="_nested_draw", dispatch="thread")
             with workflow_run(seed=7):
@@ -309,7 +308,7 @@ class TestWorkflowAdmission:
         assert "UnmanagedConcurrentWorkflowEntryError" in probpipe.__all__
 
     def test_transported_root_is_not_reported_as_a_user_seed(self):
-        with _context._transported_workflow_frame((1, 2), ProvenanceMode.FULL):
+        with _context._transported_workflow_frame((1, 2)):
             frame = _context._capture_active_workflow_frame()
             assert frame is not None
             origin = _context._describe_rng_origin(frame)
@@ -390,7 +389,7 @@ class TestWorkflowOccurrences:
         assert inner_key(1) == inner_key(2)
 
     @pytest.mark.parametrize("dispatch", ["sequential", "thread"])
-    def test_explicit_nested_seed_inside_managed_function_replaces_outer_root(
+    def test_explicit_nested_seed_inside_an_evaluation_point_replaces_outer_root(
         self,
         dispatch,
     ):

@@ -44,7 +44,7 @@ def _value(term: Any) -> float:
 
 def _bootstrap() -> BootstrapDistribution:
     """A random measure: a draw is the empirical law of three draws of the atoms 0, 1, 2."""
-    return BootstrapDistribution("D", EmpiricalDistribution(jnp.arange(3.0), component="y"), 3)
+    return BootstrapDistribution("D", EmpiricalDistribution(jnp.arange(3.0), output_name="y"), 3)
 
 
 def test_the_route_is_the_evaluation_rule_registry():
@@ -66,18 +66,18 @@ def test_a_map_pushes_a_law_forward():
     assert law.provenance.operation == "workflow.pushforward"
 
 
-def test_a_maps_own_sample_count_survives_pushforward():
+def test_a_maps_own_max_evaluations_survives_pushforward():
     """pushforward forwards a control only when its caller set it, so the map keeps its own count."""
     double = Function(
         lambda x: 2.0 * x,
-        n_broadcast_samples=9,
+        max_evaluations=9,
         dispatch="sequential",
         label="double",
         output_spec=OutputSpec(double=None),
     )
     with workflow_run(seed=0):
         assert pushforward(Gaussian("g"), double).num_atoms == 9
-        assert pushforward.using(n_broadcast_samples=5)(Gaussian("g"), double).num_atoms == 5
+        assert pushforward.using(max_evaluations=5)(Gaussian("g"), double).num_atoms == 5
 
 
 def test_the_result_takes_the_maps_output_name():
@@ -122,7 +122,7 @@ def test_the_fixed_arguments_bind_the_other_parameters():
     def shift(x, offset):
         return x + offset
 
-    atoms = EmpiricalDistribution(jnp.array([0.0, 1.0]), component="x")
+    atoms = EmpiricalDistribution(jnp.array([0.0, 1.0]), output_name="x")
     law = pushforward(atoms, shift, fixed_args={"offset": 2.0})
     assert _value(mean(law)) == pytest.approx(2.5)
 
@@ -146,7 +146,7 @@ def test_a_map_left_with_no_open_parameter_is_refused_without_naming_others():
 
 def _weighted_atoms():
     return EmpiricalDistribution(
-        jnp.array([0.0, 1.0, 2.0]), weights=jnp.array([0.2, 0.3, 0.5]), component="e"
+        jnp.array([0.0, 1.0, 2.0]), weights=jnp.array([0.2, 0.3, 0.5]), output_name="e"
     )
 
 
@@ -154,9 +154,9 @@ def _weighted_atoms():
 def test_a_named_rule_runs_as_the_direct_call_runs_it(method):
     square = Function(lambda t: t * t, label="square", output_spec=OutputSpec(square=None))
     with workflow_run(seed=0):
-        pushed = pushforward.using(method=method, n_broadcast_samples=8)(_weighted_atoms(), square)
+        pushed = pushforward.using(method=method, max_evaluations=8)(_weighted_atoms(), square)
     with workflow_run(seed=0):
-        direct = square.using(method="sampling_lift", n_broadcast_samples=8)(_weighted_atoms())
+        direct = square.using(method="sampling_lift", max_evaluations=8)(_weighted_atoms())
     assert pushed.num_atoms == direct.num_atoms == 8
 
 
@@ -199,7 +199,7 @@ class TestTheMapReceivesDraws:
             return mean(D)
 
         with workflow_run(seed=0):
-            law = pushforward.using(n_broadcast_samples=1000)(_bootstrap(), statistic)
+            law = pushforward.using(max_evaluations=1000)(_bootstrap(), statistic)
         assert law.num_atoms == 1000
         assert received and all(issubclass(kind, EmpiricalDistribution) for kind in received)
         # The mean of three draws of the atoms 0, 1, 2 has mean 1 and variance
@@ -213,12 +213,12 @@ class TestTheMapReceivesDraws:
             return mean(D)
 
         with workflow_run(seed=0):
-            law = pushforward.using(n_broadcast_samples=4)(_bootstrap(), statistic)
+            law = pushforward.using(max_evaluations=4)(_bootstrap(), statistic)
         assert law.num_atoms == 4
 
     def test_an_operation_receives_draws(self):
         with workflow_run(seed=0):
-            law = pushforward.using(n_broadcast_samples=400)(_bootstrap(), mean)
+            law = pushforward.using(max_evaluations=400)(_bootstrap(), mean)
         assert law.num_atoms == 400
         # The replicate means have mean 1 and standard deviation sqrt(2/9), so
         # 400 of them give a standard error of about 0.024; over seeds 0 to 3
@@ -229,7 +229,7 @@ class TestTheMapReceivesDraws:
     def test_an_operation_receives_draws_where_its_parameter_samples(self):
         """log_prob's value parameter samples the law, so its rule runs on a map of its own."""
         with workflow_run(seed=0):
-            law = pushforward.using(n_broadcast_samples=_DRAWS)(
+            law = pushforward.using(max_evaluations=_DRAWS)(
                 Gaussian("g"), log_prob, {"d": Gaussian("g")}
             )
         # E[log N(X; 0, 1)] = -(log(2 pi) + 1) / 2 for X ~ N(0, 1). Over seeds 0
@@ -250,7 +250,7 @@ class TestTheMapReceivesDraws:
         assert _value(mean(pushforward(_weighted_atoms(), bound))) == pytest.approx(11.3)
 
     def test_a_plain_callable_is_admitted_as_the_map(self):
-        law = pushforward.using(n_broadcast_samples=4)(
+        law = pushforward.using(max_evaluations=4)(
             Normal("x", 0.0, 1.0), lambda x: {"doubled": 2.0 * x}
         )
         assert law.num_atoms == 4
@@ -258,7 +258,7 @@ class TestTheMapReceivesDraws:
     def test_the_identity_over_a_field_view_gives_one_atom_per_draw(self):
         """The map returns its operand, so the stacked draws' term reaches the result step."""
         view = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0))["a"]
-        law = pushforward.using(n_broadcast_samples=3)(
+        law = pushforward.using(max_evaluations=3)(
             view, Function(lambda x: x, output_spec=OutputSpec(a=None))
         )
         assert law.num_atoms == 3
@@ -283,7 +283,7 @@ class _KeyedRule(BinaryDispatchMethod):
         return Feasibility(True)
 
     def execute(self, f, operand, /, **call):
-        return EmpiricalDistribution(jnp.array([7.0]), component="keyed")
+        return EmpiricalDistribution(jnp.array([7.0]), output_name="keyed")
 
 
 def test_a_rule_keyed_on_the_maps_type_applies_where_the_direct_call_samples(monkeypatch):
@@ -318,8 +318,8 @@ class TestTheOperand:
     def test_a_batch_of_laws_gives_the_batch_of_their_pushforwards(self):
         laws = DistributionBatch(
             [
-                EmpiricalDistribution(jnp.array([0.0, 1.0]), component="x"),
-                EmpiricalDistribution(jnp.array([2.0, 4.0]), component="x"),
+                EmpiricalDistribution(jnp.array([0.0, 1.0]), output_name="x"),
+                EmpiricalDistribution(jnp.array([2.0, 4.0]), output_name="x"),
             ],
             "law",
             label="laws",
@@ -330,7 +330,7 @@ class TestTheOperand:
 
     def test_a_kernel_with_given_is_conditioned_first(self):
         kernel = conditional_distribution(
-            lambda mu: EmpiricalDistribution(jnp.stack([mu, mu + 2.0]), component="y"),
+            lambda mu: EmpiricalDistribution(jnp.stack([mu, mu + 2.0]), output_name="y"),
             given_spec={"mu": REAL},
         )
         with workflow_run(seed=0):
@@ -417,7 +417,7 @@ class TestTheDomainCondition:
             label="dot",
             input_spec={"x": NumericArraySpec(("n",)), "w": NumericArraySpec(("n",))},
         )
-        laws = EmpiricalDistribution(jnp.ones((3, 2)), component="x")
+        laws = EmpiricalDistribution(jnp.ones((3, 2)), output_name="x")
         with pytest.raises(
             ApplicabilityError, match=r"fixed_args\['w'\] does not match the input_spec"
         ):
@@ -528,7 +528,7 @@ def test_any_map_preserves_shared_input_output_dimensions(dispatch, output_size)
         input_spec={"x": NumericArraySpec(("n",))},
         output_spec=NumericArraySpec(("n",)),
     )
-    law = EmpiricalDistribution(jnp.ones((2, 2)), component="x")
+    law = EmpiricalDistribution(jnp.ones((2, 2)), output_name="x")
     op = pushforward.using(dispatch=dispatch)
     if output_size == 3:
         with pytest.raises(ValueError) as error:
@@ -537,5 +537,5 @@ def test_any_map_preserves_shared_input_output_dimensions(dispatch, output_size)
         assert "already bound to 2" in str(cause)
     else:
         result = op(law, fn)
-        assert result.event_spec.spec.shape == (2,)
+        assert result.event_spec.term_spec.shape == (2,)
         assert jnp.array_equal(mean(result).raw, jnp.ones(2))

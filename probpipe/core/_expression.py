@@ -31,7 +31,7 @@ child nodes. No node holds a reference to a term. The node classes are these:
 
 Each node renders itself: it gives its label, its notation, and the text it
 collapses to, and it states the paths it holds fixed. A term reads the
-signature of its own expression from its declaration when it renders, so a
+signature of its own expression from its specs when it renders, so a
 stored expression never disagrees with its term. A node that has a law as a
 child records the law's signature, because the node holds no term.
 
@@ -60,8 +60,8 @@ from typing import Any
 from ._repr import (
     ELLIPSIS,
     PRODUCT_SYMBOL,
-    format_components,
     format_notation,
+    format_outputs,
     format_signature,
     format_value,
     grouped_label,
@@ -100,7 +100,7 @@ _WARNING_SKIP_PREFIXES = (os.path.dirname(os.path.dirname(__file__)) + os.sep,)
 #: The greatest depth of a stored expression. A node built over a child that
 #: nests this many levels stores a :class:`Truncated` node in its place, so a
 #: long derivation, such as a loop that adds to a value, never builds a tree
-#: too deep to copy, hash, or pickle. ``notation_config.max_depth``, which bounds
+#: too deep to copy, hash, or pickle. ``config.notation.max_depth``, which bounds
 #: what a rendering shows, is at most this bound, since a rendering of more
 #: levels would show no more.
 _STORED_DEPTH = 64
@@ -108,23 +108,23 @@ _STORED_DEPTH = 64
 
 @dataclass(frozen=True, slots=True)
 class Signature:
-    """What a law, a kernel, or a function is over, as its declaration states it.
+    """What a law, a kernel, or a function is over, as its specs state it.
 
     Attributes
     ----------
-    components : tuple of str
-        A law's or a kernel's event components, or a function's parameters, in
+    outputs : tuple of str
+        A law's or a kernel's outputs, or a function's parameters, in
         declaration order.
     given : tuple of str
-        A kernel's given slots, in declaration order. A law and a function have
+        A kernel's inputs, in declaration order. A law and a function have
         none.
     defaults : tuple of (str, str)
-        Each given slot or parameter that has a default, paired with the
+        Each input or parameter that has a default, paired with the
         default as :func:`~probpipe.core._repr.format_default` formats it, in
         declaration order. The signature writes such a name as ``name=value``.
     """
 
-    components: tuple[str, ...]
+    outputs: tuple[str, ...]
     given: tuple[str, ...] = ()
     defaults: tuple[tuple[str, str], ...] = ()
 
@@ -138,7 +138,7 @@ class Collapse:
     Attributes
     ----------
     max_depth : int
-        The ``notation_config.max_depth`` the rendering showed.
+        The ``config.notation.max_depth`` the rendering showed.
     beyond_depth : bool
         Whether the rendering collapsed a part nested deeper than *max_depth*,
         which a greater setting shows.
@@ -261,9 +261,9 @@ class Expression:
         return self
 
     def _defaulted_givens(self) -> tuple[tuple[str, str], ...]:
-        """The given slots with a default that this node's law or kernel leaves free.
+        """The inputs with a default that this node's law or kernel leaves free.
 
-        Each slot is paired with its formatted default. A kernel's slot that
+        Each input is paired with its formatted default. A kernel's input that
         has a default stays a given of every law and kernel that conditioning
         makes from the kernel until a conditioning fixes it, so the kernel
         ``counts(y | K, n0=50.0)`` at ``K`` is ``counts(y | n0=50.0; K)``.
@@ -271,19 +271,19 @@ class Expression:
         return ()
 
     def full_signature(self, signature: Signature) -> Signature:
-        """*signature* followed by the defaulted given slots this node leaves free.
+        """*signature* followed by the defaulted inputs this node leaves free.
 
-        A slot that *signature* names already is left as it is.
+        An input that *signature* names already is left as it is.
         """
         free = [
             (name, text)
             for name, text in self._defaulted_givens()
-            if name not in signature.given and name not in signature.components
+            if name not in signature.given and name not in signature.outputs
         ]
         if not free:
             return signature
         return Signature(
-            signature.components,
+            signature.outputs,
             signature.given + tuple(name for name, _ in free),
             signature.defaults + tuple(free),
         )
@@ -325,18 +325,18 @@ class Expression:
     def _signature_text(self, signature: Signature) -> str:
         """The text of *signature* for this node.
 
-        It lists the node's fixed paths and the defaulted slots the node leaves free.
+        It lists the node's fixed paths and the defaulted inputs the node leaves free.
         """
         signature = self.full_signature(signature)
         return format_signature(
-            signature.components,
+            signature.outputs,
             signature.given,
             self.fixed_paths(),
             dict(signature.defaults),
         )
 
     def render_label(self) -> str:
-        """The label this node renders, at the current ``notation_config.max_depth``.
+        """The label this node renders, at the current ``config.notation.max_depth``.
 
         The label of a law, a kernel, or a function is its name, and a value's
         label is its rendering.
@@ -349,7 +349,7 @@ class Expression:
         Returns
         -------
         str
-            The label, which shows at most ``notation_config.max_depth`` nested
+            The label, which shows at most ``config.notation.max_depth`` nested
             levels.
         """
         return self.label_rendering()[0]
@@ -373,7 +373,7 @@ class Expression:
     def render_notation(self, own: Signature | None = None, *, warn: bool = False) -> str:
         """The notation this node renders.
 
-        *own* is the signature that the term's declaration states.
+        *own* is the signature that the term's specs state.
 
         A law, a kernel, or a function reads as its grouped label followed by its
         signature, which lists the fixed paths after ``;``, as ``model(mu; y)``. A
@@ -384,7 +384,7 @@ class Expression:
         Parameters
         ----------
         own : Signature or None, optional
-            The components and given slots that the term's declaration states,
+            The outputs and inputs that the term's specs state,
             which replace those the node records.
         warn : bool, optional
             Whether the rendering warns when it collapses a node, as the
@@ -393,14 +393,14 @@ class Expression:
         Returns
         -------
         str
-            The notation, which shows at most ``notation_config.max_depth``
+            The notation, which shows at most ``config.notation.max_depth``
             nested levels.
 
         Warns
         -----
         UserWarning
             When *warn* is true and the rendering collapses a part nested deeper
-            than ``notation_config.max_depth``, or shows less of a part that
+            than ``config.notation.max_depth``, or shows less of a part that
             storage truncated than the part rendered in full.
         """
         rendering = _Rendering(_max_depth())
@@ -432,7 +432,7 @@ def _truncated(part: Expression) -> Truncated:
     """The :class:`Truncated` node that stores *part*.
 
     It keeps the part's collapsed text, its signature, the paths it holds
-    fixed, and the defaulted given slots it leaves free, and records where its
+    fixed, and the defaulted inputs it leaves free, and records where its
     text shows less than the part renders in full.
     """
     signature = part.signature if isinstance(part, _Signed) else None
@@ -510,9 +510,9 @@ class Named(_Signed):
     signature : Signature or None
         The signature of a law, a kernel, or a function, which the notation
         follows the label with. It is ``None`` for a value and for the
-        expression a term is constructed with, whose declaration supplies the
+        expression a term is constructed with, whose specs supply the
         signature. The expression that ``with_label`` gives a law or a kernel
-        records the signature, so its notation keeps the defaulted given slots
+        records the signature, so its notation keeps the defaulted inputs
         the law leaves free.
     """
 
@@ -561,7 +561,7 @@ class Truncated(_Signed):
     fixed : tuple of str
         The paths the part holds fixed, in the order fixed.
     givens : tuple of (str, str)
-        The given slots with a default that the part leaves free, each with its
+        The inputs with a default that the part leaves free, each with its
         formatted default.
     signature : Signature or None
         The signature the part records, or ``None``.
@@ -708,7 +708,7 @@ class Collection(Expression):
 class Conditioned(_Signed):
     """A law or a kernel at given values of some paths.
 
-    It is a conditional law, or a kernel at some of its given slots.
+    It is a conditional law, or a kernel at some of its inputs.
 
     It keeps its base's label. It holds its base's fixed paths followed by the
     paths of :attr:`fixed` that its base does not hold. A conditioned base
@@ -721,7 +721,7 @@ class Conditioned(_Signed):
     fixed : tuple of str
         The paths that this conditioning fixes at given values.
     signature : Signature or None
-        The components and given slots of the result, recorded where the node
+        The outputs and inputs of the result, recorded where the node
         is a child of another node. It is ``None`` for a term's own expression.
     """
 
@@ -773,9 +773,9 @@ class Selected(_Signed):
     base : Expression
         The law selected from.
     paths : tuple of str
-        The paths selected, in the order of the result's components.
+        The paths selected, in the order of the result's outputs.
     signature : Signature or None
-        The components of the result, recorded where the node is a child of
+        The outputs of the result, recorded where the node is a child of
         another node. It is ``None`` for a term's own expression.
     """
 
@@ -813,7 +813,7 @@ class Selected(_Signed):
 class Draw(Expression):
     """A draw from a law.
 
-    Its label is the drawn components, ``~``, and the law's label, as
+    Its label is the drawn outputs, ``~``, and the law's label, as
     ``(y, mu) ~ model``. When the law holds paths fixed, ``;`` and those paths
     follow, as ``mu ~ model; y``. A draw from a law that :class:`Applied`
     describes is that law's call, as ``f(beta ~ model; y)``, since that law is
@@ -821,14 +821,14 @@ class Draw(Expression):
 
     Attributes
     ----------
-    components : tuple of str
-        The components drawn. One is written as it is, and several are
+    outputs : tuple of str
+        The outputs drawn. One is written as it is, and several are
         parenthesized.
     law : Expression
         The law drawn from.
     """
 
-    components: tuple[str, ...]
+    outputs: tuple[str, ...]
     law: Expression
     depth: int = _derived_field()
     holds_loss: bool = _derived_field()
@@ -848,7 +848,7 @@ class Draw(Expression):
         if rendering.beyond(level):
             return rendering.collapse(self)
         law = self.law
-        text = f"{format_components(self.components)} ~ {law._label(rendering, level + 1)}"
+        text = f"{format_outputs(self.outputs)} ~ {law._label(rendering, level + 1)}"
         fixed = law.fixed_paths()
         return f"{text}; {', '.join(fixed)}" if fixed else text
 
@@ -1075,7 +1075,7 @@ class Indexed(_Signed):
     index : str
         The selected levels, as ``sample=0`` or ``chain=0, draw=7``.
     signature : Signature or None
-        The components of an element law, recorded where the node is a child
+        The outputs of an element law, recorded where the node is a child
         of another node. It is ``None`` for a term's own expression.
     element : Expression or None
         The call of the row that an element of a lifted batch holds, which the
@@ -1140,9 +1140,9 @@ def _merged(held: tuple[str, ...], added: Iterable[str]) -> tuple[str, ...]:
 # ---------------------------------------------------------------------------
 
 
-def draw_of(term: Any, components: Iterable[str] | None = None) -> Draw:
-    """A draw of *components* from the law *term*, by default every event component."""
-    names = tuple(term.event_spec.components) if components is None else tuple(components)
+def draw_of(term: Any, outputs: Iterable[str] | None = None) -> Draw:
+    """A draw of *outputs* from the law *term*, by default every output of its event."""
+    names = tuple(term.event_spec.outputs) if outputs is None else tuple(outputs)
     return Draw(names, term._embedded_expression())
 
 
@@ -1184,12 +1184,12 @@ def warn_collapsed(collapse: Collapse, *, stored: bool) -> None:
     Warns
     -----
     UserWarning
-        Always. A rendering that collapsed a part beyond ``notation_config.max_depth``
+        Always. A rendering that collapsed a part beyond ``config.notation.max_depth``
         names the setting, and for a stored label says to raise it before
         building the term. A rendering that showed a part storage truncated
         says that no setting shows that part.
     """
-    depth = f"notation_config.max_depth={collapse.max_depth} levels"
+    depth = f"config.notation.max_depth={collapse.max_depth} levels"
     stored_levels = f"the {_STORED_DEPTH} levels a term stores"
     shown_as = f"so its deeper parts show as their labels or {ELLIPSIS!r}"
     subject = "this label" if stored else "a label or notation"
@@ -1201,18 +1201,18 @@ def warn_collapsed(collapse: Collapse, *, stored: bool) -> None:
         shows = f"up to {_STORED_DEPTH} levels" if collapse.truncated else "them"
         message = (
             f"{subject} nests more than {setting}{limit}, {shown_as}. Raise "
-            f"notation_config.max_depth {fix}to show {shows}."
+            f"config.notation.max_depth {fix}to show {shows}."
         )
     else:
         message = (
             f"{subject} nests more than {stored_levels}, {shown_as} at any "
-            f"notation_config.max_depth"
+            f"config.notation.max_depth"
         )
     warnings.warn(message, UserWarning, skip_file_prefixes=_WARNING_SKIP_PREFIXES)
 
 
 def _max_depth() -> int:
-    """The number of nested levels a rendering shows, as ``notation_config`` sets it."""
-    from .config import notation_config
+    """The number of nested levels a rendering shows, as ``config.notation`` sets it."""
+    from .config import config
 
-    return notation_config.max_depth
+    return config.notation.max_depth

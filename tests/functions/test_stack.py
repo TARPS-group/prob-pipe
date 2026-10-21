@@ -39,11 +39,11 @@ class TestTheFunction:
         assert wrapped.raw is predict
 
     def test_the_decorator_takes_construction_time_controls(self):
-        @function(n_broadcast_samples=500, dispatch="jax")
+        @function(max_evaluations=500, dispatch="jax")
         def predict(theta, x):
             return x * theta
 
-        assert predict.options["n_broadcast_samples"] == 500
+        assert predict.options["max_evaluations"] == 500
         assert predict.options["dispatch"] == "jax"
 
     def test_a_call_agrees_with_plain_evaluation_adding_the_wrap_and_the_provenance(self):
@@ -136,7 +136,7 @@ class TestCheck:
 
     def test_check_causes_no_random_event(self):
         @function(
-            n_broadcast_samples=8,
+            max_evaluations=8,
             dispatch="sequential",
             output_spec=OutputSpec(identity=None),
         )
@@ -160,7 +160,7 @@ class TestCheck:
         def identity(x):
             return x
 
-        identity.using(n_broadcast_samples=16).check(standard_normal())
+        identity.using(max_evaluations=16).check(standard_normal())
 
     def test_an_argument_that_does_not_bind_raises_as_the_call_would(self):
         @function

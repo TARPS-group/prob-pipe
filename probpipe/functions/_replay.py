@@ -18,19 +18,24 @@ from typing import Any
 
 from .._messages import count
 from ..core.provenance import Provenance
-from . import _context, _execution_contract
+from . import _context, _execution
 from ._callable import CallableAnchor
 from ._errors import ReplayCompatibilityError, ReplayUnsupportedCallableError
-from ._managed import _MANAGED_WORK_ITEM_ABI, ManagedAttemptState, ManagedEffectClaim
+from ._evaluation_keys import (
+    _EVALUATION_POINT_ABI,
+    _EVALUATION_POINT_CHILD_POLICY_ABI,
+    _EVALUATION_POINT_TAG,
+    EvaluationPointAttempt,
+    StochasticEffectClaim,
+)
 from ._rng import RandomEventIdentity, encode_random_event
 
 _RNG_RECIPE_ABI = "probpipe.rng_recipe/v1"
 _RNG_ABI = "ProbPipe-RNG-v1"
 _REPLAY_ANCHOR_ABI = "probpipe.replay_anchor/v1"
-_STOCHASTIC_PLAN_ABI = "probpipe.stochastic_plan/v1"
+_STOCHASTIC_PLAN_ABI = "probpipe.stochastic_plan/v2"
 _CALLABLE_DEFINITION_ABI = "probpipe.callable_definition/v1"
 _PROBPIPE_REPLAY_ABI = "probpipe.replay/v1"
-_MANAGED_CHILD_POLICY_ABI = "probpipe.managed_child/v1"
 
 _CONTROLS_FIELDS = frozenset({"randomness", "replay"})
 _RANDOMNESS_FIELDS = frozenset(
@@ -72,13 +77,13 @@ _CANONICAL_PLAN_FIELDS = frozenset(
         "arg_refs",
         "source_groups",
         "logical_units",
-        "n_broadcast_samples",
+        "max_evaluations",
         "sample_shape",
         "exact_group_order",
         "exact_combination_order",
         "repetitions_per_combination",
         "n_evaluations",
-        "managed_child_policy",
+        "evaluation_point_child_policy",
         "key_ownership",
     }
 )
@@ -125,10 +130,10 @@ class _ExpectedReplayEvent:
     effect_json: bytes
     encoded_identity: bytes
 
-    def managed_effect(self) -> ManagedEffectClaim:
+    def effect_claim(self) -> StochasticEffectClaim:
         """Return the transport-safe expected effect descriptor."""
         sample_shape = self.effect["sample_shape"]
-        return ManagedEffectClaim(
+        return StochasticEffectClaim(
             occurrence_path=self.occurrence_path,
             occurrence_kind=self.occurrence_kind,
             stochastic_source_id=self.source,
@@ -149,7 +154,7 @@ class _ReplayEventClaim:
 
     expected: _ExpectedReplayEvent
     direct_claimed: bool = False
-    work_item_token: bytes | None = None
+    evaluation_point_token: bytes | None = None
     attempt_tokens: set[bytes] = field(default_factory=set)
     direct_successful: bool = False
     successful_attempt_token: bytes | None = None
@@ -161,7 +166,7 @@ class _ReplayClaimMutation:
 
     claim: _ReplayEventClaim
     direct: bool
-    work_item_token: bytes | None
+    evaluation_point_token: bytes | None
     attempt_token: bytes | None
 
 
@@ -201,9 +206,9 @@ class _ReplayState:
         tuple[tuple[Any, ...], tuple[Any, ...]],
         frozenset[bytes],
     ] = field(init=False, repr=False)
-    managed_effects_by_namespace: dict[
+    effect_claims_by_point_namespace: dict[
         tuple[tuple[Any, ...], tuple[Any, ...]],
-        tuple[ManagedEffectClaim, ...],
+        tuple[StochasticEffectClaim, ...],
     ] = field(init=False, repr=False)
     claims_lock: Any = field(default_factory=Lock, repr=False)
 
@@ -217,24 +222,24 @@ class _ReplayState:
             tuple[tuple[Any, ...], tuple[Any, ...]],
             set[bytes],
         ] = {}
-        managed_effects: dict[
+        point_effect_claims: dict[
             tuple[tuple[Any, ...], tuple[Any, ...]],
-            list[ManagedEffectClaim],
+            list[StochasticEffectClaim],
         ] = {}
         for expected in self.expected_events:
             source_unit = (expected.source, expected.unit)
             effect_anchors.setdefault(source_unit, set()).add(expected.effect_json)
-            managed_effect = expected.managed_effect()
+            effect_claim = expected.effect_claim()
             for index, segment in enumerate(expected.occurrence_path):
-                if segment[0] != "managed-unit":
+                if segment[0] != _EVALUATION_POINT_TAG:
                     continue
                 namespace = (expected.occurrence_path[:index], segment)
-                managed_effects.setdefault(namespace, []).append(managed_effect)
+                point_effect_claims.setdefault(namespace, []).append(effect_claim)
         self.effect_anchors_by_source_unit = {
             source_unit: frozenset(anchors) for source_unit, anchors in effect_anchors.items()
         }
-        self.managed_effects_by_namespace = {
-            namespace: tuple(effects) for namespace, effects in managed_effects.items()
+        self.effect_claims_by_point_namespace = {
+            namespace: tuple(effects) for namespace, effects in point_effect_claims.items()
         }
 
     def validate_callable(self, current: CallableAnchor) -> None:
@@ -352,9 +357,9 @@ class _ReplayState:
 
     def claim_effect(
         self,
-        effect: ManagedEffectClaim,
+        effect: StochasticEffectClaim,
         *,
-        attempt: ManagedAttemptState | None,
+        attempt: EvaluationPointAttempt | None,
     ) -> None:
         """Validate and atomically claim an event before key derivation."""
         self._commit_effect_batch(
@@ -365,10 +370,10 @@ class _ReplayState:
 
     def _commit_effect_batch(
         self,
-        effects: tuple[ManagedEffectClaim, ...],
+        effects: tuple[StochasticEffectClaim, ...],
         *,
-        successful_effects: tuple[ManagedEffectClaim, ...],
-        attempt: ManagedAttemptState | None,
+        successful_effects: tuple[StochasticEffectClaim, ...],
+        attempt: EvaluationPointAttempt | None,
     ) -> None:
         """Validate and atomically commit claims and their successful subset."""
         with self.claims_lock:
@@ -386,9 +391,9 @@ class _ReplayState:
 
     def _prepare_effect_claim_batch_unlocked(
         self,
-        effects: tuple[ManagedEffectClaim, ...],
+        effects: tuple[StochasticEffectClaim, ...],
         *,
-        attempt: ManagedAttemptState | None,
+        attempt: EvaluationPointAttempt | None,
     ) -> tuple[_ReplayClaimMutation, ...]:
         """Validate a replay batch without changing its expected-event registry."""
         mutations = []
@@ -396,14 +401,16 @@ class _ReplayState:
         for effect in effects:
             encoded = _encoded_effect_identity(effect)
             if encoded in seen:
-                raise ReplayCompatibilityError("one managed report duplicated a replay event claim")
+                raise ReplayCompatibilityError(
+                    "one evaluation point report duplicated a replay event claim"
+                )
             seen.add(encoded)
             claim = self.claims.get(encoded)
             if claim is None:
                 raise _extra_draw(_describe_draw(effect))
             _require_matching_effect(claim.expected, effect)
             if attempt is None:
-                if claim.direct_claimed or claim.work_item_token is not None:
+                if claim.direct_claimed or claim.evaluation_point_token is not None:
                     raise ReplayCompatibilityError(
                         "workflow execution duplicated an already claimed replay event"
                     )
@@ -411,30 +418,33 @@ class _ReplayState:
                     _ReplayClaimMutation(
                         claim=claim,
                         direct=True,
-                        work_item_token=None,
+                        evaluation_point_token=None,
                         attempt_token=None,
                     )
                 )
                 continue
 
-            work_item_token = attempt.work_item_token.value
+            evaluation_point_token = attempt.evaluation_point_token.value
             if claim.direct_claimed:
                 raise ReplayCompatibilityError(
-                    "a managed work item cannot reuse a directly claimed replay event"
+                    "an evaluation point cannot reuse a directly claimed replay event"
                 )
-            if claim.work_item_token is not None and claim.work_item_token != work_item_token:
+            if (
+                claim.evaluation_point_token is not None
+                and claim.evaluation_point_token != evaluation_point_token
+            ):
                 raise ReplayCompatibilityError(
-                    "a different managed work-item token attempted to reuse a replay event"
+                    "a different evaluation point token attempted to reuse a replay event"
                 )
             if attempt.attempt_token in claim.attempt_tokens:
                 raise ReplayCompatibilityError(
-                    "one managed attempt duplicated a replay event claim"
+                    "one evaluation point attempt duplicated a replay event claim"
                 )
             mutations.append(
                 _ReplayClaimMutation(
                     claim=claim,
                     direct=False,
-                    work_item_token=work_item_token,
+                    evaluation_point_token=evaluation_point_token,
                     attempt_token=attempt.attempt_token,
                 )
             )
@@ -442,9 +452,9 @@ class _ReplayState:
 
     def _prepare_success_batch_unlocked(
         self,
-        effects: tuple[ManagedEffectClaim, ...],
+        effects: tuple[StochasticEffectClaim, ...],
         *,
-        attempt: ManagedAttemptState | None,
+        attempt: EvaluationPointAttempt | None,
         pending_claims: tuple[_ReplayClaimMutation, ...],
     ) -> tuple[_ReplaySuccessMutation, ...]:
         """Validate success ownership without changing replay claim state."""
@@ -485,14 +495,14 @@ class _ReplayState:
 
             if claim.direct_claimed or (pending is not None and pending.direct):
                 raise ReplayCompatibilityError(
-                    "a managed successful replay event was directly claimed"
+                    "a successful evaluation point replay event was directly claimed"
                 )
-            work_item_token = claim.work_item_token
-            if work_item_token is None and pending is not None:
-                work_item_token = pending.work_item_token
-            if work_item_token != attempt.work_item_token.value:
+            evaluation_point_token = claim.evaluation_point_token
+            if evaluation_point_token is None and pending is not None:
+                evaluation_point_token = pending.evaluation_point_token
+            if evaluation_point_token != attempt.evaluation_point_token.value:
                 raise ReplayCompatibilityError(
-                    "successful replay event belongs to a different managed work item"
+                    "successful replay event belongs to a different evaluation point"
                 )
             attempt_claimed = attempt.attempt_token in claim.attempt_tokens or (
                 pending is not None
@@ -521,8 +531,8 @@ class _ReplayState:
             if mutation.direct:
                 mutation.claim.direct_claimed = True
                 continue
-            if mutation.claim.work_item_token is None:
-                mutation.claim.work_item_token = mutation.work_item_token
+            if mutation.claim.evaluation_point_token is None:
+                mutation.claim.evaluation_point_token = mutation.evaluation_point_token
             if mutation.attempt_token is not None:
                 mutation.claim.attempt_tokens.add(mutation.attempt_token)
 
@@ -549,11 +559,11 @@ class _ReplayState:
 
     def mark_successful_effects(
         self,
-        effects: tuple[ManagedEffectClaim, ...],
+        effects: tuple[StochasticEffectClaim, ...],
         *,
-        attempt: ManagedAttemptState | None,
+        attempt: EvaluationPointAttempt | None,
     ) -> None:
-        """Bind successful events to their direct or managed claimant."""
+        """Bind successful events to their direct or evaluation point claimant."""
         self._commit_effect_batch(
             (),
             successful_effects=effects,
@@ -562,9 +572,9 @@ class _ReplayState:
 
     def finalize_successful_effects(
         self,
-        effects: tuple[ManagedEffectClaim, ...],
+        effects: tuple[StochasticEffectClaim, ...],
     ) -> None:
-        """Confirm a successful root's direct and managed recipe effects."""
+        """Confirm a successful root's direct and evaluation point recipe effects."""
         with self.claims_lock:
             direct_mutations = []
             seen = set()
@@ -598,14 +608,14 @@ class _ReplayState:
                 )
             self._apply_success_mutations_unlocked(tuple(direct_mutations))
 
-    def expected_effects_for_unit(
+    def expected_effects_for_evaluation_point(
         self,
         parent_occurrence_path: tuple[Any, ...],
-        unit_segment: tuple[Any, ...],
-    ) -> tuple[ManagedEffectClaim, ...]:
-        """Return the exact replay namespace assigned to one remote work item."""
-        return self.managed_effects_by_namespace.get(
-            (parent_occurrence_path, unit_segment),
+        point_segment: tuple[Any, ...],
+    ) -> tuple[StochasticEffectClaim, ...]:
+        """Return the exact replay namespace assigned to one remote evaluation point."""
+        return self.effect_claims_by_point_namespace.get(
+            (parent_occurrence_path, point_segment),
             (),
         )
 
@@ -614,8 +624,8 @@ class _ReplayState:
 class _RemoteReplayClaims:
     """Worker-local pre-derivation validator for one assigned namespace."""
 
-    expected_by_identity: dict[bytes, ManagedEffectClaim]
-    attempt: ManagedAttemptState
+    expected_by_identity: dict[bytes, StochasticEffectClaim]
+    attempt: EvaluationPointAttempt
     claimed: set[bytes] = field(default_factory=set)
     effect_anchors_by_source_unit: dict[
         tuple[tuple[Any, ...], tuple[Any, ...]],
@@ -633,7 +643,7 @@ class _RemoteReplayClaims:
                 effect.logical_unit_id,
             )
             effect_anchors.setdefault(source_unit, set()).add(
-                _canonical_json(_managed_effect_anchor(effect))
+                _canonical_json(_effect_claim_anchor(effect))
             )
         self.effect_anchors_by_source_unit = {
             source_unit: frozenset(anchors) for source_unit, anchors in effect_anchors.items()
@@ -645,21 +655,21 @@ class _RemoteReplayClaims:
 
     def claim(
         self,
-        effect: ManagedEffectClaim,
-        attempt: ManagedAttemptState | None,
+        effect: StochasticEffectClaim,
+        attempt: EvaluationPointAttempt | None,
     ) -> None:
         if attempt != self.attempt:
             raise ReplayCompatibilityError(
-                "remote replay event does not belong to its assigned work-item attempt"
+                "remote replay event does not belong to its assigned evaluation point attempt"
             )
         encoded = _encoded_effect_identity(effect)
         expected = self.expected_by_identity.get(encoded)
         if expected is None:
             raise _extra_draw(_describe_draw(effect), worker=True)
-        _require_matching_managed_effect(expected, effect)
+        _require_matching_effect_claim(expected, effect)
         if encoded in self.claimed:
             raise ReplayCompatibilityError(
-                "one remote managed attempt duplicated a replay event claim"
+                "one remote evaluation point attempt duplicated a replay event claim"
             )
         self.claimed.add(encoded)
 
@@ -801,7 +811,7 @@ def replay_run(provenance: Provenance) -> _ReplayRunScope:
 
     The definition matches when the code, the signature, and the types of the
     declarations do. A new label for the function or its output, or new names
-    for its output's components, change no value, so the function replays the
+    for its outputs, change no value, so the function replays the
     call to the same draws under them (V.8). Replay validates the
     definition, the stochastic plan, and the events the call consumes, and not
     the values of its arguments, so an accepted replay of a call with other
@@ -881,9 +891,9 @@ def _active_replay_diagnostics() -> dict[str, Any] | None:
 
 
 def _claim_effect_before_derivation(
-    effect: ManagedEffectClaim,
+    effect: StochasticEffectClaim,
     *,
-    attempt: ManagedAttemptState | None,
+    attempt: EvaluationPointAttempt | None,
 ) -> None:
     """Claim a local or transported event before deriving its key."""
     remote = _REMOTE_REPLAY_CLAIMS.get()
@@ -906,20 +916,20 @@ def _validate_effect_plan_before_commit(plan: Any) -> None:
         state.validate_effect_plan(plan)
 
 
-def _expected_effects_for_managed_unit(
+def _expected_effects_for_evaluation_point(
     parent_occurrence_path: tuple[Any, ...],
-    unit_segment: tuple[Any, ...],
-) -> tuple[ManagedEffectClaim, ...] | None:
+    point_segment: tuple[Any, ...],
+) -> tuple[StochasticEffectClaim, ...] | None:
     state = _ACTIVE_REPLAY_STATE.get()
     if state is None:
         return None
-    return state.expected_effects_for_unit(parent_occurrence_path, unit_segment)
+    return state.expected_effects_for_evaluation_point(parent_occurrence_path, point_segment)
 
 
 @contextmanager
 def _remote_replay_claim_scope(
-    expected: tuple[ManagedEffectClaim, ...] | None,
-    attempt: ManagedAttemptState,
+    expected: tuple[StochasticEffectClaim, ...] | None,
+    attempt: EvaluationPointAttempt,
 ) -> Generator[None, None, None]:
     """Install a worker-local expected namespace when replay authority exists."""
     if expected is None:
@@ -954,14 +964,17 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
     replay = _mapping(controls.get("replay"), "replay")
     _require_version(randomness.get("schema"), "randomness.schema", _RNG_RECIPE_ABI)
     _require_version(replay.get("schema"), "replay.schema", _REPLAY_ANCHOR_ABI)
-    # The callable anchor's fields belong to its definition ABI, so an anchor of
-    # another ABI is refused before its fields are read.
+    # The callable anchor's fields belong to its definition ABI, and the plan's
+    # fields to the plan ABI, so an anchor or a plan of another ABI is refused
+    # before its fields are read.
     callable_anchor = copy.deepcopy(dict(_mapping(replay.get("callable"), "replay.callable")))
     _require_version(
         callable_anchor.get("definition_abi"),
         "replay.callable.definition_abi",
         _CALLABLE_DEFINITION_ABI,
     )
+    plan_anchor = _mapping(replay.get("plan"), "replay.plan")
+    _require_version(plan_anchor.get("schema"), "replay.plan.schema", _STOCHASTIC_PLAN_ABI)
     _validate_version_one_structure(controls)
     _require_version(randomness.get("rng_abi"), "randomness.rng_abi", _RNG_ABI)
 
@@ -1020,15 +1033,13 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
             f"{type(signature).__name__}"
         )
 
-    plan_anchor = _mapping(replay.get("plan"), "replay.plan")
-    _require_version(plan_anchor.get("schema"), "replay.plan.schema", _STOCHASTIC_PLAN_ABI)
     canonical_plan = copy.deepcopy(
         dict(_mapping(plan_anchor.get("canonical_fields"), "replay.plan.canonical_fields"))
     )
     _require_version(
-        canonical_plan.get("managed_child_policy"),
-        "replay.plan.canonical_fields.managed_child_policy",
-        _MANAGED_CHILD_POLICY_ABI,
+        canonical_plan.get("evaluation_point_child_policy"),
+        "replay.plan.canonical_fields.evaluation_point_child_policy",
+        _EVALUATION_POINT_CHILD_POLICY_ABI,
     )
     if canonical_plan.get("key_ownership") != "automatic":
         raise _malformed(
@@ -1062,7 +1073,7 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
     _require_version(
         execution_contract_abi,
         "replay.compatibility.execution_contract",
-        _execution_contract.execution_contract_abi(),
+        _execution.execution_contract_abi(),
     )
     sampling_abis = _abi_sequence(
         compatibility.get("sampling_abi"), "replay.compatibility.sampling_abi"
@@ -1078,7 +1089,7 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
     _require_version(
         key_adapter_abi,
         "replay.compatibility.key_adapter_abi",
-        _execution_contract.key_adapter_abi(),
+        _execution.key_adapter_abi(),
     )
 
     compatibility_material = (canonical_plan, [event.effect for event in expected_events])
@@ -1129,7 +1140,7 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
 
 
 def _validate_version_one_structure(controls: Mapping[str, Any]) -> None:
-    """Require exact fields for every record owned by the replay-v1 schema."""
+    """Require exact fields for every record of the version-1 replay anchor and its version-2 plan."""
     _require_version_one_fields(controls, _CONTROLS_FIELDS, "controls")
     randomness = _version_one_record(controls.get("randomness"), _RANDOMNESS_FIELDS, "randomness")
     replay = _version_one_record(controls.get("replay"), _REPLAY_FIELDS, "replay")
@@ -1346,7 +1357,7 @@ def _validate_effect(effect: dict[str, Any], *, index: int) -> None:
     _validate_descriptor_value(effect.get("descendant_descriptor"), index=index)
 
 
-def _encoded_effect_identity(effect: ManagedEffectClaim) -> bytes:
+def _encoded_effect_identity(effect: StochasticEffectClaim) -> bytes:
     return encode_random_event(
         RandomEventIdentity(
             occurrence_path=effect.occurrence_path,
@@ -1358,25 +1369,25 @@ def _encoded_effect_identity(effect: ManagedEffectClaim) -> bytes:
 
 def _require_matching_effect(
     expected: _ExpectedReplayEvent,
-    actual: ManagedEffectClaim,
+    actual: StochasticEffectClaim,
 ) -> None:
     if (
         expected.occurrence_kind != actual.occurrence_kind
-        or _canonical_json(_managed_effect_anchor(actual)) != expected.effect_json
+        or _canonical_json(_effect_claim_anchor(actual)) != expected.effect_json
     ):
         raise _draw_mismatch(_describe_draw(actual))
 
 
-def _require_matching_managed_effect(
-    expected: ManagedEffectClaim,
-    actual: ManagedEffectClaim,
+def _require_matching_effect_claim(
+    expected: StochasticEffectClaim,
+    actual: StochasticEffectClaim,
 ) -> None:
     """Require one transported effect to match with type-exact semantics."""
     if (
         _encoded_effect_identity(expected) != _encoded_effect_identity(actual)
         or expected.occurrence_kind != actual.occurrence_kind
-        or _canonical_json(_managed_effect_anchor(expected))
-        != _canonical_json(_managed_effect_anchor(actual))
+        or _canonical_json(_effect_claim_anchor(expected))
+        != _canonical_json(_effect_claim_anchor(actual))
     ):
         raise _draw_mismatch(_describe_draw(actual), worker=True)
 
@@ -1408,7 +1419,7 @@ def _effect_plan_anchor(plan: Any) -> dict[str, Any]:
     }
 
 
-def _managed_effect_anchor(effect: ManagedEffectClaim) -> dict[str, Any]:
+def _effect_claim_anchor(effect: StochasticEffectClaim) -> dict[str, Any]:
     return {
         "operation_kind": effect.operation_kind,
         "execution_mode": effect.execution_mode,
@@ -1526,14 +1537,14 @@ def _validate_function_occurrence_path(path: tuple[Any, ...]) -> None:
     index += 1
 
     while index < len(path):
-        if path[index][0] != "managed-unit":
+        if path[index][0] != _EVALUATION_POINT_TAG:
             raise ReplayCompatibilityError(
                 "recorded randomness.occurrence_path has a dangling Function segment"
             )
         index += 1
         if index == len(path) or path[index][0] != "child":
             raise ReplayCompatibilityError(
-                "recorded randomness.occurrence_path has a dangling managed unit"
+                "recorded randomness.occurrence_path has a dangling evaluation point"
             )
         index += 1
 
@@ -1564,8 +1575,8 @@ def _validate_occurrence_path(path: tuple[Any, ...]) -> None:
                     f"recorded randomness.occurrence_path contains an invalid {tag!r} segment"
                 )
             continue
-        if tag == "managed-unit":
-            _validate_managed_unit_segment(segment)
+        if tag == _EVALUATION_POINT_TAG:
+            _validate_evaluation_point_segment(segment)
             continue
         raise ReplayCompatibilityError(
             "recorded randomness.occurrence_path contains an unknown path segment"
@@ -1576,10 +1587,10 @@ def _validate_occurrence_path(path: tuple[Any, ...]) -> None:
         )
 
 
-def _validate_managed_unit_segment(segment: tuple[Any, ...]) -> None:
-    if len(segment) < 3 or segment[1] != _MANAGED_WORK_ITEM_ABI:
+def _validate_evaluation_point_segment(segment: tuple[Any, ...]) -> None:
+    if len(segment) < 3 or segment[1] != _EVALUATION_POINT_ABI:
         raise ReplayCompatibilityError(
-            "recorded randomness.occurrence_path contains an incompatible managed unit"
+            "recorded randomness.occurrence_path contains an incompatible evaluation point"
         )
     layout = segment[2]
     if layout == "point":
@@ -1596,7 +1607,7 @@ def _validate_managed_unit_segment(segment: tuple[Any, ...]) -> None:
         valid = False
     if not valid:
         raise ReplayCompatibilityError(
-            "recorded randomness.occurrence_path contains an invalid managed unit"
+            "recorded randomness.occurrence_path contains an invalid evaluation point"
         )
 
 
@@ -1759,7 +1770,7 @@ def _unsupported_callable(
 
 def _plan_mismatch(current: dict[str, Any], recorded: dict[str, Any]) -> ReplayCompatibilityError:
     """The error for a call set up differently from the recorded call."""
-    key = "n_broadcast_samples"
+    key = "max_evaluations"
     if _canonical_json(current.get(key)) != _canonical_json(recorded.get(key)):
         detail = f"{key} is {current.get(key)!r}, recorded {recorded.get(key)!r}"
     else:
@@ -1789,7 +1800,7 @@ def _draw_mismatch(draw: str, *, worker: bool = False) -> ReplayCompatibilityErr
     return ReplayCompatibilityError(
         f"cannot replay: this call made a random draw{_on_worker(worker)} ({draw}) that "
         "matches no draw of the recorded call. The call must make the same draws as the "
-        "recording, with the same distributions, components, and sample shapes."
+        "recording, with the same distributions, outputs, and sample shapes."
     )
 
 

@@ -175,7 +175,7 @@ class TestARecordThatIsNotOfSummariesShowsALinePerPath:
     def test_without_provenance_a_record_of_summaries_shows_a_line_per_path(
         self, model, monkeypatch
     ):
-        monkeypatch.setattr(probpipe.provenance_config, "mode", ProvenanceMode.OFF)
+        monkeypatch.setattr(probpipe.config.provenance, "mode", ProvenanceMode.OFF)
 
         summary = summarize(model, mean)
 
@@ -187,7 +187,7 @@ class TestARecordThatIsNotOfSummariesShowsALinePerPath:
 class TestTheFooterStatesHowEachColumnWasComputed:
     def test_a_monte_carlo_column_states_its_draws(self):
         law = Normal("mu", 0.0, 2.0) * Poisson("count", 4.0)
-        draws = quantile.options["n_broadcast_samples"]
+        draws = quantile.options["num_samples"]
 
         with workflow_run(seed=0):
             record = Record({"mean": mean(law), "median": quantile(law, 0.5)}, label="r")
@@ -203,7 +203,7 @@ class TestTheFooterStatesHowEachColumnWasComputed:
             return Normal("y", jnp.full(2, mu), 1.0)
 
         prior = Normal("mu", 0.0, 2.0)
-        kernel = conditional_distribution(y_given_mu, given_spec=prior.event_spec.components)
+        kernel = conditional_distribution(y_given_mu, given_spec=prior.event_spec.outputs)
         with workflow_run(seed=0):
             record = Record({"sd": standard_deviation(kernel * prior)}, label="r")
 
@@ -243,7 +243,7 @@ class TestABatchOfSummariesShowsATablePerElement:
 
     def test_elements_computed_differently_each_state_how(self):
         laws = DistributionBatch([Normal("x", 0.0, 1.0), Poisson("x", 4.0)], "law", label="b")
-        draws = quantile.options["n_broadcast_samples"]
+        draws = quantile.options["num_samples"]
 
         with workflow_run(seed=0):
             lines = repr(summarize(laws, {"median": lambda d: quantile(d, 0.5)})).splitlines()

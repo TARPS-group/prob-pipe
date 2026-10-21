@@ -13,7 +13,7 @@ capability protocol. The converter registry
 It tests the source first, returning a law that already satisfies the target
 as it is. Its ``check`` reports the selected converter's promise under the
 registered name and exactness, and a conversion carries the source's event
-declaration and satisfies the target.
+spec and satisfies the target.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ _SCALAR = NumericArraySpec(())
 
 
 class Source(Distribution):
-    """A law the converters below read, over a scalar unless given a declaration."""
+    """A law the converters below read, over a scalar unless given an event spec."""
 
     def __init__(self, label: str = "x", event_spec: OutputSpec | None = None):
         super().__init__(
@@ -76,7 +76,7 @@ class Stranger(Distribution):
 
 
 class Target(Distribution):
-    """A representation converted to, built from a name and a declaration."""
+    """A representation converted to, built from a name and an event spec."""
 
 
 class TargetSub(Target):
@@ -147,10 +147,10 @@ class Labeled(Protocol):
 class ToyConverter(Converter):
     """A converter whose declarations, report, and result each test sets.
 
-    When feasible, ``check`` promises the source's declaration with
+    When feasible, ``check`` promises the source's event spec with
     ``target_class`` and ``capabilities``, and ``report`` replaces that promise.
     ``execute`` returns ``result``, or else a ``target_class`` law carrying the
-    source's declaration. Each call's arguments are recorded.
+    source's event spec. Each call's arguments are recorded.
     """
 
     def __init__(
@@ -211,8 +211,6 @@ class ToyConverter(Converter):
             feasible=self._feasible,
             description=self._description,
             pending=self._pending,
-            method_name=self._name,
-            exact=self._exact,
             target_spec=source.spec if self._feasible else None,
             target_class=self._target_class,
             capabilities=self._capabilities,
@@ -245,21 +243,23 @@ class TestConversionInfo:
         assert issubclass(ConversionInfo, MethodInfo)
         assert issubclass(ConversionInfo, Feasibility)
 
-    def test_adds_the_promise_and_whether_the_conversion_samples(self):
+    def test_adds_the_promise_and_whether_the_conversion_claims_random_events(self):
         inherited = {field.name for field in fields(MethodInfo)}
         added = [field.name for field in fields(ConversionInfo) if field.name not in inherited]
-        assert added == ["target_spec", "target_class", "capabilities", "samples"]
+        assert added == ["target_spec", "target_class", "capabilities", "claims_random_events"]
 
-    def test_samples_must_be_a_bool(self):
-        with pytest.raises(TypeError, match="samples"):
-            ConversionInfo(feasible=False, samples=1)
+    def test_claims_random_events_must_be_a_bool(self):
+        with pytest.raises(TypeError, match="claims_random_events must be a bool, got 1"):
+            ConversionInfo(feasible=False, claims_random_events=1)
 
     def test_a_report_selecting_no_converter_is_an_exact_one(self):
         """A source that already satisfies the target needs no converter, and is exact."""
         info = ConversionInfo(feasible=True, exact=True, target_spec=Source().spec)
         assert info.method_name is None and info.exact is True
-        with pytest.raises(ValueError, match="must set method_name and exact"):
+        with pytest.raises(ValueError, match="got exact=False without method_name"):
             ConversionInfo(feasible=True, exact=False, target_spec=Source().spec)
+        with pytest.raises(ValueError, match="got exact=False without method_name"):
+            ConversionInfo(feasible=None, pending=("the event spec",), exact=False)
 
     def test_promises_nothing_by_default(self):
         info = ConversionInfo(feasible=False)
@@ -294,29 +294,37 @@ class TestConversionInfo:
 
     def test_carries_pending_requirements_exactly_when_unresolved(self):
         info = ConversionInfo(
-            feasible=None, pending=("the event declaration",), method_name="m", exact=True
+            feasible=None, pending=("the event spec",), method_name="m", exact=True
         )
         assert info.unresolved
         with pytest.raises(ValueError, match="pending"):
             ConversionInfo(feasible=None, method_name="m", exact=True)
         with pytest.raises(ValueError, match="only an unresolved"):
-            ConversionInfo(feasible=False, pending=("the event declaration",))
+            ConversionInfo(feasible=False, pending=("the event spec",))
 
-    def test_sets_the_method_name_and_exactness_together(self):
-        for partial in ({"method_name": "m"}, {"exact": True}):
-            with pytest.raises(ValueError, match="together"):
-                ConversionInfo(feasible=False, **partial)
+    @pytest.mark.parametrize(
+        "feasible", [True, None, False], ids=["feasible", "unresolved", "infeasible"]
+    )
+    def test_a_method_name_needs_its_exactness(self, feasible: bool | None):
+        promise = {"target_spec": Source().spec} if feasible else {}
+        pending = {"pending": ("the event spec",)} if feasible is None else {}
+        with pytest.raises(ValueError, match="got method_name='m' without exact"):
+            ConversionInfo(feasible=feasible, method_name="m", **promise, **pending)
 
-    def test_a_feasible_or_unresolved_report_names_its_converter(self):
-        """A converter fills in its own name and exactness; an infeasible report may omit both."""
-        ConversionInfo(feasible=False)
-        with pytest.raises(ValueError, match="must set method_name and exact"):
-            ConversionInfo(feasible=True, target_spec=Source().spec)
-        with pytest.raises(ValueError, match="must set method_name and exact"):
-            ConversionInfo(feasible=None, pending=("the event declaration",))
+    def test_an_infeasible_report_names_no_exactness_without_a_converter(self):
+        with pytest.raises(ValueError, match="got exact=True without method_name on an infeasible"):
+            ConversionInfo(feasible=False, exact=True)
+
+    def test_a_converter_states_only_its_promise(self):
+        """A converter's report leaves the name and the exactness to the registry, in every state."""
+        feasible = ConversionInfo(feasible=True, target_spec=Source().spec)
+        assert (feasible.method_name, feasible.exact) == (None, None)
+        unresolved = ConversionInfo(feasible=None, pending=("the event spec",))
+        assert (unresolved.method_name, unresolved.exact) == (None, None)
+        assert ConversionInfo(feasible=False).exact is None
 
     def test_a_feasible_report_promises_its_target_spec(self):
-        """Planning reads the promised declaration, so a feasible conversion states it."""
+        """Planning reads the promised spec, so a feasible conversion states it."""
         with pytest.raises(ValueError):
             ConversionInfo(feasible=True, method_name="m", exact=True, target_class=Target)
 
@@ -393,7 +401,7 @@ class TestRegistration:
 
     @pytest.mark.parametrize("side", ["sources", "targets"])
     def test_the_numeric_marker_is_refused_on_either_side(self, side: str):
-        """Membership follows an instance's declaration, so selection by class would miss laws."""
+        """Membership follows an instance's event spec, so selection by class would miss laws."""
         registry = ConverterRegistry()
         with pytest.raises(TypeError, match="cannot dispatch on NumericDistribution"):
             registry.register(ToyConverter("m", **{side: (NumericDistribution,)}))
@@ -720,13 +728,13 @@ class TestSelectionOrder:
 
     def test_an_unresolved_candidate_above_a_feasible_one_is_reported_and_blocks_conversion(self):
         registry = _registry(
-            ToyConverter("awaiting", priority=2, feasible=None, pending=("the event declaration",)),
+            ToyConverter("awaiting", priority=2, feasible=None, pending=("the event spec",)),
             ToyConverter("ready", priority=1),
         )
         info = registry.check(Source(), Target)
         assert info.unresolved and info.method_name == "awaiting"
-        assert info.pending == ("the event declaration",)
-        with pytest.raises(ResolutionError, match="the event declaration"):
+        assert info.pending == ("the event spec",)
+        with pytest.raises(ResolutionError, match="the event spec"):
             registry.convert(Source(), Target)
 
     def test_an_opt_in_only_converter_is_skipped_by_auto_selection(self):
@@ -830,8 +838,8 @@ class TestNamedConverter:
             registry.convert(Source(), Target, method="m")
 
     def test_a_named_unresolved_converter_raises_resolution_error(self):
-        registry = _registry(ToyConverter("m", feasible=None, pending=("the event declaration",)))
-        with pytest.raises(ResolutionError, match="pending: the event declaration"):
+        registry = _registry(ToyConverter("m", feasible=None, pending=("the event spec",)))
+        with pytest.raises(ResolutionError, match="pending: the event spec"):
             registry.convert(Source(), Target, method="m")
 
 
@@ -908,7 +916,7 @@ class TestConvert:
         assert registry.convert(source, Target, method="copy") is source
         info = registry.check(source, Target)
         assert info.feasible is True
-        assert (info.method_name, info.exact, info.samples) == (None, True, False)
+        assert (info.method_name, info.exact, info.claims_random_events) == (None, True, False)
         assert info.target_spec == source.spec and info.target_class is Target
         assert copier.check_calls == [] and copier.execute_calls == []
 
@@ -1028,17 +1036,23 @@ class TestCheckReport:
         assert info.target_class is Scored
         assert info.capabilities == (SupportsLogProb,)
 
+    @pytest.mark.parametrize("declared_exact", [True, False], ids=["exact", "approximate"])
+    def test_names_a_promise_that_states_only_its_promise(self, declared_exact: bool):
+        """A converter leaves its name and exactness unset, and the registry sets both."""
+        source = Source()
+        promise = ConversionInfo(feasible=True, target_spec=source.spec, target_class=Target)
+        assert (promise.method_name, promise.exact) == (None, None)
+        registry = _registry(ToyConverter("m", exact=declared_exact, report=promise))
+        info = registry.check(source, Target)
+        assert (info.method_name, info.exact) == ("m", declared_exact)
+        assert info.target_spec == source.spec
+
     def test_keeps_an_unresolved_promise_and_its_pending_requirements(self):
-        report = ConversionInfo(
-            feasible=None,
-            pending=("the event declaration",),
-            method_name="m",
-            exact=True,
-            target_class=Target,
-        )
+        report = ConversionInfo(feasible=None, pending=("the event spec",), target_class=Target)
         info = _registry(ToyConverter("m", report=report)).check(Source(), Target)
         assert isinstance(info, ConversionInfo) and info.unresolved
-        assert info.pending == ("the event declaration",)
+        assert (info.method_name, info.exact) == ("m", True)
+        assert info.pending == ("the event spec",)
         assert info.target_spec is None and info.target_class is Target
 
     def test_names_an_infeasible_report_by_the_registration(self):
@@ -1087,7 +1101,7 @@ class TestCheckReport:
 
 
 # ---------------------------------------------------------------------------
-# A conversion carries the source's event declaration
+# A conversion carries the source's event spec
 # ---------------------------------------------------------------------------
 
 
@@ -1105,7 +1119,7 @@ class TestEventDeclarationPreserved:
             OutputSpec(x=NumericArraySpec((2,))),
             OutputSpec(RecordSpec(x=_SCALAR)),
         ],
-        ids=["renamed-component", "reshaped", "repackaged"],
+        ids=["renamed-output", "reshaped", "another-form"],
     )
     def test_a_converted_law_with_another_declaration_is_refused(self, declaration: OutputSpec):
         registry = _registry(

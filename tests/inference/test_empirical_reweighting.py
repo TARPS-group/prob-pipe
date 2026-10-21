@@ -37,7 +37,7 @@ Y = jnp.array([0.4, 0.9, -0.1])
 
 def _grid_prior(weights: Any = None) -> EmpiricalDistribution:
     """An empirical law of ``mu`` on a grid, uniform unless *weights* are given."""
-    return EmpiricalDistribution(GRID, weights, component="mu")
+    return EmpiricalDistribution(GRID, weights, output_name="mu")
 
 
 def _normal_kernel() -> ConditionalDistribution:
@@ -97,7 +97,7 @@ class TestThePosterior:
         assert posterior.label == "model"
         assert str(posterior) == posterior.notation == "model(mu; y)"
 
-    def test_the_atoms_are_labeled_by_the_posteriors_components(self):
+    def test_the_atoms_are_labeled_by_the_posteriors_outputs(self):
         prior = EmpiricalDistribution(GRID, event_spec=OutputSpec(mu=None), label="prior")
         posterior = condition_on(_normal_kernel() * prior, {"y": Y})
         assert posterior.atoms.label == "mu"
@@ -132,7 +132,7 @@ class TestThePosterior:
         particles = EmpiricalDistribution(atoms, label="particles")
         observe = conditional_distribution(
             lambda phi, N: Poisson("y", phi * N),
-            given_spec=particles.event_spec.components,
+            given_spec=particles.event_spec.outputs,
             label="count",
         )
         posterior = condition_on(observe * particles, {"y": 250.0})
@@ -149,7 +149,7 @@ class TestThePosterior:
             posterior.weights, _expected_weights(np.ones(41) / 41), atol=1e-6
         )
 
-    def test_an_optional_slot_of_the_likelihood_takes_its_default(self):
+    def test_an_optional_input_of_the_likelihood_takes_its_default(self):
         kernel = conditional_distribution(
             lambda mu, scale=2.0: Normal("y", mu * jnp.ones(3), scale),
             given_spec={"mu": REAL},
@@ -175,10 +175,10 @@ class TestThePosterior:
         assert posterior.annotations.attrs["method"] == "empirical_reweighting"
 
     def test_zero_likelihood_at_every_atom_raises(self):
-        prior = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="rate")
+        prior = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), output_name="rate")
         observe = conditional_distribution(
             lambda rate: Poisson("y", rate),
-            given_spec=prior.event_spec.components,
+            given_spec=prior.event_spec.outputs,
             label="count",
         )
         with pytest.raises(ValueError, match="zero likelihood at every atom"):
@@ -219,7 +219,7 @@ class TestWhenItApplies:
 
     def test_an_empirical_prior_of_draws_is_reweighted(self):
         draws = jax.random.normal(jax.random.PRNGKey(0), (500,))
-        prior = EmpiricalDistribution(draws, component="mu")
+        prior = EmpiricalDistribution(draws, output_name="mu")
         with workflow_run(seed=0):
             posterior = condition_on(_normal_kernel() * prior, {"y": Y})
         assert posterior.num_atoms == 500

@@ -16,7 +16,7 @@ ProbPipe is built around a small number of mathematical objects, their specializ
 | function | `f : X → Y` | `Function` |
 | linear operator | `A : ℝⁿ → ℝᵐ` | `LinOp`, the linear `Function` subtype |
 
-Labels and component names are distinct sorts of name (C5): composition matches the component interface declared by `OutputSpec`, whatever the objects' labels.
+Labels and output names are distinct sorts of name (C5): a merge matches the outputs and inputs that `OutputSpec` and `InputSpec` declare, whatever the objects' labels.
 
 Each object also has an indexed-collection form (a *batch*), and every function lifts to batches elementwise. Structured values, distributions, and conditional distributions additionally have **numeric** specializations, such as `NumericRecord` and `NumericDistribution`, covering the all-array case: they identify the event space with a flat vector space, where `LinOp` acts and differentiation applies.
 
@@ -28,9 +28,10 @@ Some important mathematical operations supported by ProbPipe include the followi
 | sampling | `x ~ μ` |
 | density evaluation | `(dμ/dν)(x)` |
 | distribution functionals | `𝔼[f(X)]` for `X ~ μ`; mean, variance, covariance, quantiles |
-| composition | `p(x \| y) · p(y)`, `f ∘ g`, `A B` |
+| merge | `p(x \| y) · p(y)`, written `&` |
+| composition | `f ∘ g`, `A B` |
 | conditioning | `μ(· \| y = b)` for a field `y` |
-| marginalization | the law of a named field of `X ~ μ` |
+| marginalization | the law of the nodes at a path of `X ~ μ` |
 | mixture | `μK = ∫ K(s, ·) μ(ds)`, the law of `T` for `S ~ μ` and `T ~ K(S, ·)` |
 
 ### Contents
@@ -38,10 +39,10 @@ Some important mathematical operations supported by ProbPipe include the followi
 The document has seven parts and one more planned, and it has a glossary and a package-structure companion:
 
 - **[Part I — Design Principles](01-design-principles.md)** — the high-level commitments that drive every downstream design decision. They are stated without reference to any specific class, type, or API.
-- **[Part II — Shared Abstractions](02-shared-abstractions.md)** — the generic, type-agnostic abstractions the rest of the library is built on: the term-specification layer with named input/output component declarations and the `Numeric` interface, identity, provenance, and metadata, batching, the named-tree abstraction, and the dispatch registries.
+- **[Part II — Shared Abstractions](02-shared-abstractions.md)** — the generic, type-agnostic abstractions the rest of the library is built on: the term-specification layer with input specs and output specs, the `Numeric` interface, identity, provenance, and metadata, batching, the named-tree abstraction, and the dispatch registries.
 - **[Part III — Term Kinds](03-term-kinds.md)** — the term kinds in dependency order: the base value kinds, functions and linear operators, records and record batches, distributions and their capabilities, conditional distributions, and their batch forms, each with a precise contract that must align with the design principles.
-- **[Part IV — Constructing distributions](04-distributions.md)** — how distributions are constructed from other distributions, as factored distributions, by composition with `*`, and by conversion between representations, and from functions that a user writes.
-- **[Part V — Functions](05-functions.md)** — how an ordinary Python callable is lifted into ProbPipe: the engine's stack, then each step in order, controls, binding, normalization, lifting, planning, resolution, randomness, execution, and return, then the differentiability claim and constraint reparameterization. This is the layer the operations build on.
+- **[Part IV — Constructing distributions](04-distributions.md)** — how distributions are constructed from other distributions, as factored distributions, by merging with `&`, and by conversion between representations, and from functions that a user writes.
+- **[Part V — Functions](05-functions.md)** — how an ordinary Python callable is lifted into ProbPipe: the engine's stack, then each step in order, controls, binding, normalization, lifting, planning, resolution, randomness, execution on executors, and return, then the differentiability claim, constraint reparameterization, and the execution claims with the boundary between JAX code and opaque code. This is the layer the operations build on.
 - **[Part VI — Operations](06-operations.md)** — precise contracts for the core operations, functions before distributions: function evaluation, inversion, sampling, density evaluation, distribution functionals, conditioning, joints, marginals and factors, mixtures, conversion between representations, and batched operations.
 - **[Part VII — The Distribution Catalog](07-distribution-catalog.md)** — the concrete families: parametric, empirical, mixtures, evaluation results, random functions and measures, the Gaussian algebra, inference-produced distributions, and the conditional families, including GLM likelihoods.
 - **Part VIII — Agentic Interface (planned)** — A higher-level agentic interface to help guide the process of designing, building, and auditing a ProbPipe workflow.
@@ -56,7 +57,7 @@ Every numbered section in Parts II through VII leads with a **Contract** subsect
 
 #### Formatting
 
-Class and method names are set in code font. Design principles are cited only in the **Rationale** subsections, by identifier and short name, drawing on the *core principles* (the C-series), *derived principles* (the D-series), and *boundary principles* (the B-series) of Part I. For example, the fourth core principle would be cited as `C4 – Function lifting`. An abstraction is referred to by its class name rather than by the underlying mathematical concept, except in mathematical statements. For example, `ConditionalDistribution` is used throughout, with *kernel* reserved for mathematical statements such as its definition as a probability kernel `K : S → P(T)`.
+Class and method names are set in code font. Design principles are cited only in the **Rationale** subsections, by identifier and short name, drawing on the *core principles* (the C-series), *derived principles* (the D-series), *execution principles* (the P-series), and *boundary principles* (the B-series) of Part I. For example, the fourth core principle would be cited as `C4 – Function lifting`. An abstraction is referred to by its class name rather than by the underlying mathematical concept, except in mathematical statements. For example, `ConditionalDistribution` is used throughout, with *kernel* reserved for mathematical statements such as its definition as a probability kernel `K : S → P(T)`.
 
 A code comment states what the signature does not, for example a default or a constraint, and never the sentence above the block. A **Rationale** names the principle and the reason; it never restates the contract.
 

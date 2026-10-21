@@ -151,10 +151,10 @@ class TestNestedBatchEvents:
         law = EmpiricalDistribution(atoms, [0.25, 0.75], event_spec=declaration)
 
         assert law.num_atoms == 2
-        assert law.event_spec.spec == BatchSpec(
+        assert law.event_spec.term_spec == BatchSpec(
             NumericArraySpec((), jnp.float32), replicate=2, time=(2, 3)
         )
-        assert declaration.spec is nested
+        assert declaration.term_spec is nested
         assert isinstance(nested.element_spec, BatchSpec)
         with workflow_run(seed=0):
             drawn = sample(law, 4)
@@ -314,7 +314,7 @@ class TestBatchValuedMoments:
             trajectory,
             output_spec=OutputSpec(trajectory=None),
             include_inputs=True,
-            n_broadcast_samples=20,
+            max_evaluations=20,
         )
         with workflow_run(seed=0):
             joint = wrapped(Normal("beta", 0.0, 1.0))

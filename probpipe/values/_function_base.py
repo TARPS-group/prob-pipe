@@ -19,17 +19,17 @@ import os
 import warnings
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
-from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import partial, wraps
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, runtime_checkable
 
 import jax
 import jax.numpy as jnp
 
 from .._messages import label_given_first, unknown_names
 from ..core._array_backend import _is_numeric_leaf
+from ..core._call_context import _open_call_context, _under_call_context, current_call_context
 from ..core._dispatch import Feasibility
 from ..core._expression import Collapse, Expression, Signature
 from ..core._kinds import term_class_for_spec
@@ -37,8 +37,8 @@ from ..core._numeric_array import _inferred_spec
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_default, format_names, public_class_name, term_repr, type_name
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
-from ..core._specs import InputSpec, OpaqueSpec, OutputSpec
-from ..core.config import WorkflowKind
+from ..core._specs import InputSpec, OpaqueSpec, OutputSpec, _root_output_name
+from ..core.config import WorkflowKind, _checked_count, config
 from ..core.tracked import Annotated, TrackedTerm, _callable_label, _callable_name
 from ._binding import (
     FunctionSignatureInfo,
@@ -60,32 +60,34 @@ _WARNING_SKIP_PREFIXES = (os.path.dirname(os.path.dirname(__file__)) + os.sep,)
 
 @dataclass(frozen=True, init=False)
 class FunctionSpec(TermSpec):
-    """A callable's optional input slots and output component declaration.
+    """A callable's optional inputs and output spec.
 
     Parameters
     ----------
     input_spec : InputSpec or None
-        Named input slots. None leaves the input side unspecified.
+        Named inputs. None leaves the input side unspecified.
     output_spec : OutputSpec or None
-        The returned term and its exposed components. None leaves that side
-        unspecified; a named type hole leaves only its term kind unspecified.
+        The returned term and its outputs. None leaves that side unspecified;
+        an output spec that names its output but leaves its type unspecified,
+        as ``OutputSpec(y=None)``, leaves only the returned term's kind open.
 
     Raises
     ------
     TypeError
-        If either side has the wrong declaration type.
+        If either side has the wrong spec type.
 
     Notes
     -----
     ``is_valid`` admits any callable without executing it. Dimension binding
-    reads declarations when available, sharing one dimension scope across both
-    sides. Missing declarations add no bindings. Incompatible slot names,
-    output exposure, kinds, or dimensions raise ValueError. Labels are outside
-    this spec; component names participate in declaration matching.
+    reads the input spec and output spec of each side when they are given,
+    sharing one dimension scope across both sides. A side left unspecified adds
+    no bindings. Incompatible input names,
+    output names or forms, kinds, or dimensions raise ValueError. Labels are
+    outside this spec; output names take part in matching the specs.
 
     Examples
     --------
-    A function's declaration binds a dimension that its sides share:
+    A function's input spec and output spec bind a dimension that they share:
 
     >>> from probpipe import FunctionSpec, InputSpec, NumericArraySpec, OutputSpec
     >>> declared = FunctionSpec(
@@ -124,7 +126,7 @@ class FunctionSpec(TermSpec):
     def free_dims(self) -> frozenset[str]:
         """Unbound dimensions across both sides, in one scope."""
         inputs = self.input_spec.free_dims if self.input_spec is not None else frozenset()
-        output = self.output_spec.spec if self.output_spec is not None else None
+        output = self.output_spec.term_spec if self.output_spec is not None else None
         return inputs | (output.free_dims if output is not None else frozenset())
 
     def _substitute_dims(self, bindings: Mapping[str, int | str]) -> FunctionSpec:
@@ -136,8 +138,8 @@ class FunctionSpec(TermSpec):
             )
         )
         output = self.output_spec
-        if output is not None and output.spec is not None:
-            output = output._with_spec(output.spec._substitute_dims(bindings))
+        if output is not None and output.term_spec is not None:
+            output = output._with_term_spec(output.term_spec._substitute_dims(bindings))
         return FunctionSpec(inputs, output)
 
     def _bind_dims_from_value(self, value: Callable, bindings: dict[str, int], path: str) -> None:
@@ -153,25 +155,27 @@ class FunctionSpec(TermSpec):
         if self.input_spec is not None and actual.input_spec is not None:
             if self.input_spec.keys() != actual.input_spec.keys():
                 raise ValueError(
-                    f"{path} has incompatible input slots {list(actual.input_spec)}; "
-                    f"the declaration expects {list(self.input_spec)}"
+                    f"{path} has the inputs {list(actual.input_spec)}, but the expected "
+                    f"FunctionSpec has the inputs {list(self.input_spec)}; make the input "
+                    f"names match"
                 )
             for name, spec in self.input_spec.items():
                 _unify_specs(spec, actual.input_spec[name], bindings, f"{path}/input/{name}")
         if self.output_spec is not None and actual.output_spec is not None:
             expected, observed = self.output_spec, actual.output_spec
-            if expected.components.keys() != observed.components.keys():
+            if expected.outputs.keys() != observed.outputs.keys():
                 raise ValueError(
-                    f"{path} has incompatible output components {list(observed.components)}; "
-                    f"the declaration expects {list(expected.components)}"
+                    f"{path} has the outputs {list(observed.outputs)}, but the expected "
+                    f"FunctionSpec has the outputs {list(expected.outputs)}; make the output "
+                    f"names match"
                 )
-            if expected._component_name != observed._component_name:
+            if _root_output_name(expected) != _root_output_name(observed):
                 raise ValueError(
-                    f"{path} has incompatible output components: {observed!r} does not "
+                    f"{path} has incompatible outputs: {observed!r} does not "
                     f"match the declared {expected!r}"
                 )
-            if expected.spec is not None and observed.spec is not None:
-                _unify_specs(expected.spec, observed.spec, bindings, f"{path}/output")
+            if expected.term_spec is not None and observed.term_spec is not None:
+                _unify_specs(expected.term_spec, observed.term_spec, bindings, f"{path}/output")
         return True
 
     def is_valid(self, value: Any) -> bool:
@@ -223,12 +227,12 @@ class _CallableFunctionImplementation:
         return self.callable(*bound_inputs.args, **bound_inputs.kwargs)
 
 
-#: The output component of a Function whose callable has no usable name.
-_NAMELESS_COMPONENT = "result"
+#: The output name of a Function whose callable has no usable name.
+_NAMELESS_OUTPUT = "result"
 
 
-def _callable_component(fn: Any) -> str:
-    """The default output component of a Function wrapping *fn*.
+def _callable_output_name(fn: Any) -> str:
+    """The default output name of a Function wrapping *fn*.
 
     It is the callable's name by :func:`~probpipe.core.tracked._callable_name`,
     so a lambda's is ``f``, when that name is a Python identifier and no
@@ -244,23 +248,23 @@ def _callable_component(fn: Any) -> str:
     Returns
     -------
     str
-        The component, which is a valid component name.
+        The callable's name, or ``result``, which is a valid output name.
     """
     name = _callable_name(fn)
     if name is None or not name.isidentifier() or keyword.iskeyword(name):
-        return _NAMELESS_COMPONENT
+        return _NAMELESS_OUTPUT
     return name
 
 
 def _complete_output_spec(
-    output_spec: OutputSpec | TermSpec | None, *, component: str
+    output_spec: OutputSpec | TermSpec | None, *, output_name: str
 ) -> OutputSpec | None:
     if output_spec is None or isinstance(output_spec, OutputSpec):
         return output_spec
     if isinstance(output_spec, RecordSpec):
         return OutputSpec(output_spec)
     if isinstance(output_spec, TermSpec):
-        return OutputSpec.default(output_spec, component=component)
+        return OutputSpec.default(output_spec, output_name=output_name)
     raise TypeError(
         f"output_spec must be an OutputSpec, TermSpec, or None; got {type(output_spec).__name__}"
     )
@@ -289,7 +293,7 @@ def _bind_function_inputs(
 
 
 class _ResultKindMismatch(ValueError):
-    """A returned term's overall kind differs from its output declaration."""
+    """A returned term's overall kind differs from its output spec."""
 
 
 def _validate_return_kind(spec: TermSpec, result: Any, path: str) -> None:
@@ -362,7 +366,7 @@ def _kind_description(spec: TermSpec, kind: type) -> str:
 def _validate_function_output(
     *, function_name: str, output_spec: OutputSpec | None, result: Any, bindings: Mapping[str, int]
 ) -> OutputSpec | None:
-    """Validate one returned term without wrapping it or changing its declaration.
+    """Validate one returned term without wrapping it or changing its output spec.
 
     Each declared array's dtype admits a returned dtype of the same kind (bool,
     integer, floating, or complex) at any width, and its support must hold.
@@ -381,26 +385,26 @@ def _validate_function_output(
     Returns
     -------
     OutputSpec or None
-        The declaration completed from the result, or ``None`` when *output_spec*
-        is ``None``.
+        The output spec completed from the result, or ``None`` when
+        *output_spec* is ``None``.
 
     Raises
     ------
     _ResultKindMismatch
-        If the result's overall kind differs from the declaration.
+        If the result's overall kind differs from the output spec.
     ValueError
         If the result's structure, dimensions, dtype, or support does not
-        conform to the declaration.
+        conform to the output spec.
     """
     if output_spec is None:
         return None
-    spec = output_spec.spec
+    spec = output_spec.term_spec
     if spec is None:
         spec = _produced_spec(result)
     resolved = dict(bindings)
     path = f"Function {function_name!r} output"
-    if output_spec._component_name is not None:
-        path += f"/{output_spec._component_name}"
+    if _root_output_name(output_spec) is not None:
+        path += f"/{_root_output_name(output_spec)}"
     _validate_return_kind(spec, result, path)
     actual_spec = getattr(result, "spec", None)
     if isinstance(actual_spec, TermSpec):
@@ -410,7 +414,7 @@ def _validate_function_output(
     concrete = spec._substitute_dims(resolved)
     _validate_output_values(concrete, result, path)
     if isinstance(concrete, FunctionSpec) and concrete.input_spec is not None and callable(result):
-        # A returned callable's signature must match the declared input slots,
+        # A returned callable's signature must match the declared inputs,
         # under apply as under a call, and checking it does not invoke it.
         _validate_function_declarations(
             function_name=function_name,
@@ -424,7 +428,7 @@ def _validate_function_output(
         )
     if not isinstance(actual_spec, TermSpec):
         actual_spec = _produced_spec(result)
-    return output_spec._with_spec(_complete_output_metadata(concrete, actual_spec))
+    return output_spec._with_term_spec(_complete_output_metadata(concrete, actual_spec))
 
 
 def _produced_spec(result: Any) -> TermSpec:
@@ -479,9 +483,9 @@ def _validate_declared_support(expected: TermSpec, actual: TermSpec, path: str) 
     """Refuse an actual spec whose support a declared support does not contain, leaf by leaf.
 
     Records and batches are read field by field and element by element, and a
-    law's declaration component by component of its event, so a returned law
-    whose draws leave the declared support is refused, as completion checks the
-    produced value (II.2). A law's declaration has no type hole, so both sides
+    law's event spec output by output, so a returned law whose draws leave the
+    declared support is refused, as completion checks the produced value
+    (II.2). A law's event spec never leaves its type unspecified, so both sides
     are concrete there. Supports are compared only where both are declared.
 
     Parameters
@@ -492,7 +496,7 @@ def _validate_declared_support(expected: TermSpec, actual: TermSpec, path: str) 
         The spec of the returned term.
     path : str
         The location of the two specs in the output, which grows by one segment
-        per field or component the check descends into.
+        per field or output the check descends into.
 
     Raises
     ------
@@ -510,9 +514,9 @@ def _validate_declared_support(expected: TermSpec, actual: TermSpec, path: str) 
     elif isinstance(expected, BatchSpec) and isinstance(actual, BatchSpec):
         _validate_declared_support(expected.element_spec, actual.element_spec, path)
     elif isinstance(expected_event, OutputSpec) and isinstance(actual_event, OutputSpec):
-        components = actual_event.components
-        for component, child in expected_event.components.items():
-            _validate_declared_support(child, components[component], f"{path}/{component}")
+        outputs = actual_event.outputs
+        for output_name, child in expected_event.outputs.items():
+            _validate_declared_support(child, outputs[output_name], f"{path}/{output_name}")
     elif isinstance(expected, NumericArraySpec) and isinstance(actual, NumericArraySpec):
         if (
             expected.support is not None
@@ -533,9 +537,9 @@ def _validate_output_values(spec: TermSpec, value: Any, path: str) -> None:
 
         element = spec.element_spec
         if isinstance(element, RecordSpec) and isinstance(value, RecordBatch):
-            for field, child in element.items():
-                column = value._raw_column(field)
-                _validate_output_column(child, column, value.batch_shape, f"{path}/{field}")
+            for field_name, child in element.items():
+                column = value._raw_column(field_name)
+                _validate_output_column(child, column, value.batch_shape, f"{path}/{field_name}")
         elif isinstance(element, NumericArraySpec):
             _validate_output_column(element, value.raw, value.batch_shape, path)
     elif isinstance(spec, RecordSpec):
@@ -564,7 +568,7 @@ def _validate_stacked_output(
     function_name : str
         The function's label, which error messages name.
     output_spec : OutputSpec or None
-        The function's output declaration. The check runs only when it declares
+        The function's output spec. The check runs only when it declares
         a type.
     batch : Any
         The stacked results. A batch is checked against the supports of its own
@@ -578,11 +582,11 @@ def _validate_stacked_output(
     from ..core._batch import BatchSpec
 
     spec = getattr(batch, "spec", None)
-    if output_spec is None or output_spec.spec is None or not isinstance(spec, BatchSpec):
+    if output_spec is None or output_spec.term_spec is None or not isinstance(spec, BatchSpec):
         return
     path = f"Function {function_name!r} output"
-    if output_spec._component_name is not None:
-        path += f"/{output_spec._component_name}"
+    if _root_output_name(output_spec) is not None:
+        path += f"/{_root_output_name(output_spec)}"
     _validate_output_values(spec, batch, path)
 
 
@@ -651,8 +655,9 @@ def _validate_function_declarations(
             )
         if set(input_spec) != set(parameters):
             raise ValueError(
-                f"Function {function_name!r} input_spec slots {sorted(input_spec)} "
-                f"must exactly match signature parameters {sorted(parameters)}"
+                f"Function {function_name!r} declares the inputs {sorted(input_spec)} in "
+                f"input_spec, but its signature has the parameters {sorted(parameters)}; "
+                f"they must match"
             )
     unexpected = set(construction_bindings).difference(parameters)
     if unexpected and not any(p.kind == p.VAR_KEYWORD for p in parameters.values()):
@@ -680,15 +685,16 @@ def _validate_function_declarations(
         spec._bind_dims_from_value(value, effective, f"Function {function_name!r} {source}/{name}")
 
 
-#: The check a result declaration with a type hole defers to the return.
+#: The check that an output spec whose type is unspecified defers to the return.
 _COMPLETED_AT_RETURN = "the result's type is completed from the returned value"
 
-#: The engine's controls, each with its default. A default sample count of None
-#: stands for the constructing class's ``DEFAULT_N_BROADCAST_SAMPLES``.
+#: The engine's controls, each with its default. A default count of None stands
+#: for the session's default in ``config.sampling``, read when a call runs.
 _CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
     {
         "workflow_kind": WorkflowKind.DEFAULT,
-        "n_broadcast_samples": None,
+        "max_evaluations": None,
+        "num_samples": None,
         "dispatch": "auto",
         "max_workers": None,
         "include_inputs": False,
@@ -703,106 +709,72 @@ _CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
 #: The controls a construction keyword of None leaves at their default; None is
 #: inadmissible for every other control.
 _DEFAULTED_BY_NONE = frozenset(
-    {"n_broadcast_samples", "max_workers", "method", "conversions", "method_options"}
+    {"max_evaluations", "num_samples", "max_workers", "method", "conversions", "method_options"}
 )
 
-#: The controls that the Function calls of the current context inherit from a
-#: derived operation's identity, or ``None`` where they inherit none:
-#: ``exact_only``, and ``n_broadcast_samples``, which is ``None`` where the
-#: derived call sets no count and below the calls the scope makes.
-_INHERITED_CONTROLS: ContextVar[Mapping[str, Any] | None] = ContextVar(
-    "probpipe_inherited_controls", default=None
-)
-
-#: The scope below a call made under an inherited ``exact_only``, which keeps it.
-_EXACT_ONLY_BELOW: Mapping[str, Any] = MappingProxyType(
-    {"exact_only": True, "n_broadcast_samples": None}
-)
+#: The two count controls, which a derived route passes down.
+_PASSED_COUNT_CONTROLS = ("max_evaluations", "num_samples")
 
 
 @contextmanager
-def _passing_down(*, exact_only: bool, n_broadcast_samples: int | None) -> Iterator[None]:
-    """A scope whose Function calls inherit *exact_only* and *n_broadcast_samples*.
+def _passing_controls_to_formula_calls(
+    *, exact_only: bool, max_evaluations: int | None, num_samples: int | None
+) -> Iterator[None]:
+    """A scope whose Function calls take *exact_only*, *max_evaluations*, and *num_samples*.
 
-    :meth:`Function._inheriting` states how a call takes them. A scope that
-    passes neither leaves the context as it is.
+    The scope of a derived route passes these controls to the
+    calls the formula makes directly, as the call context's
+    ``passed_controls``, and :meth:`Function._inheriting` states how a call
+    takes them. A scope that passes none of them leaves the context as it is.
     """
-    if not exact_only and n_broadcast_samples is None:
+    if not exact_only and max_evaluations is None and num_samples is None:
         yield
         return
-    token = _INHERITED_CONTROLS.set(
-        MappingProxyType({"exact_only": exact_only, "n_broadcast_samples": n_broadcast_samples})
-    )
-    try:
+    passed_controls = {
+        "exact_only": exact_only,
+        "max_evaluations": max_evaluations,
+        "num_samples": num_samples,
+    }
+    with _under_call_context(current_call_context().with_passed_controls(passed_controls)):
         yield
-    finally:
-        _INHERITED_CONTROLS.reset(token)
 
 
-def _inheriting_controls(method: Callable[..., Any]) -> Callable[..., Any]:
-    """*method* of a Function, run under the controls a derived operation's identity passes down.
+def _in_child_call_context(
+    entry_method_name: Literal["__call__", "apply", "check"],
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """A decorator that runs the Function method *entry_method_name* in a call context of its own.
 
-    Inside an identity, the call runs on the view that
-    :meth:`Function._inheriting` returns. For the extent of the call the
-    passed sample count is cleared, so it applies only to the calls the scope
-    makes outside any other call, while an inherited ``exact_only`` stays, so
-    it restricts every call within the identity.
+    The call runs on the view that :meth:`Function._inheriting` returns when
+    an enclosing derived route passes controls, and it opens the child context that
+    :meth:`~probpipe.core._call_context._CallContext.child_for_call` derives,
+    which holds the view's resolved controls, for the extent of the call. A
+    root call also takes the snapshot of the session's values that the work it
+    dispatches reads.
     """
 
-    @wraps(method)
-    def entered(self: Function, *args: Any, **kwargs: Any) -> Any:
-        inherited = _INHERITED_CONTROLS.get()
-        if inherited is None:
-            return method(self, *args, **kwargs)
-        token = _INHERITED_CONTROLS.set(_EXACT_ONLY_BELOW if inherited["exact_only"] else None)
-        try:
-            return method(self._inheriting(inherited), *args, **kwargs)
-        finally:
-            _INHERITED_CONTROLS.reset(token)
+    def decorate(entry_method: Callable[..., Any]) -> Callable[..., Any]:
+        @wraps(entry_method)
+        def run_in_child_call_context(self: Function, /, *args: Any, **kwargs: Any) -> Any:
+            parent_context = current_call_context()
+            function_view = (
+                self
+                if parent_context.passed_controls is None
+                else self._inheriting(parent_context.passed_controls)
+            )
+            child_context = parent_context.child_for_call(
+                entry_method_name=entry_method_name,
+                function_label=function_view.label,
+                resolved_controls=function_view.options,
+                session_config_values=(
+                    config._session_values_snapshot() if parent_context.call_depth == 0 else None
+                ),
+            )
+            with _open_call_context(child_context, entry_method_name=entry_method_name):
+                return entry_method(function_view, *args, **kwargs)
 
-    return entered
+        return run_in_child_call_context
 
-
-class _CarriedControls:
-    """A work function that runs under the inherited controls of the context that made it.
-
-    It holds the function and the controls as plain data, so it pickles
-    wherever the function does, and a worker in another thread or process
-    runs the function under the same controls.
-
-    Parameters
-    ----------
-    func : callable
-        The work function.
-    inherited : Mapping of str to Any
-        The inherited controls to restore while *func* runs.
-    """
-
-    def __init__(self, func: Callable[..., Any], inherited: Mapping[str, Any]) -> None:
-        self.func = func
-        self.inherited = dict(inherited)
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        """*func*'s result, computed under the carried controls."""
-        token = _INHERITED_CONTROLS.set(MappingProxyType(self.inherited))
-        try:
-            return self.func(*args, **kwargs)
-        finally:
-            _INHERITED_CONTROLS.reset(token)
-
-
-def _carrying_inherited_controls(func: Callable[..., Any]) -> Callable[..., Any]:
-    """*func*, run under the inherited controls of the calling context, in whatever worker runs it.
-
-    A worker thread starts without the calling thread's context, and a worker
-    process without the calling process's, so a call dispatched to a worker
-    inside a derived operation's identity would otherwise lose an inherited
-    ``exact_only``. Outside an identity *func* is returned as it is.
-    """
-    inherited = _INHERITED_CONTROLS.get()
-    if inherited is None:
-        return func
-    return _CarriedControls(func, inherited)
+    return decorate
 
 
 #: Removed construction keywords, each with the warning it raises, which are ignored.
@@ -879,15 +851,17 @@ class Function(TrackedTerm, Annotated):
         Optional non-empty display alias. Defaults to the callable name, or ``𝒻``
         for a lambda; a callable without a name requires an explicit label.
     input_spec : InputSpec or Mapping[str, TermSpec] or None
-        Authoritative input slots matching fixed signature parameters by name.
+        Authoritative inputs matching fixed signature parameters by name.
         Declared inputs cannot accompany variadic parameters. Defaults and
-        construction bindings must satisfy the declaration.
+        construction bindings must satisfy the input spec.
     output_spec : OutputSpec or TermSpec or None
-        Optional result declaration. A bare RecordSpec exposes its fields;
-        another bare spec uses the callable's original name (``f`` for a lambda,
-        ``result`` for a nameless callable). Without a declaration, the return
-        type is inferred with the same component rule. Display aliases never
-        change this default component. A named type hole is inferred independently for each call.
+        Optional output spec of the result. A bare RecordSpec exposes its
+        fields as outputs; another bare spec is the single output, named by the
+        callable's original name (``f`` for a lambda, ``result`` for a nameless
+        callable). Without an output spec, the return type is inferred and the
+        output is named by the same rule. Display aliases never change this
+        default output name. An output spec that names its output but leaves
+        its type unspecified has the type inferred independently for each call.
     output_label : str or None
         Optional result alias. Without one, a call on values labels a value
         result by the application, as ``f(2.0)``, and a returned law or kernel
@@ -906,8 +880,19 @@ class Function(TrackedTerm, Annotated):
 
         - ``workflow_kind`` (WorkflowKind): orchestration selection; DEFAULT,
           the default, inherits the workflow configuration.
-        - ``n_broadcast_samples`` (int or None): positive sampling-lift count,
-          defaulting to the class's ``DEFAULT_N_BROADCAST_SAMPLES``, 256.
+        - ``max_evaluations`` (int or None): the maximum number of times a
+          call lifted over laws evaluates the function, a positive integer.
+          The lift enumerates the empirical arguments whose combinations of
+          atoms number at most ``max_evaluations``, smallest first, and draws
+          the other arguments: ``max_evaluations`` joint draws when it
+          enumerates none, and otherwise ``max_evaluations // n`` draws for each
+          of the ``n`` combinations, at least one. The default is
+          ``config.sampling.max_evaluations``, 256.
+        - ``num_samples`` (int or None): the number of Monte Carlo draws that a
+          route estimating a summary takes, such as the Monte Carlo ``mean``,
+          and that a conversion of an argument takes where its converter draws,
+          a positive integer. The default is ``config.sampling.num_samples``,
+          1024.
         - ``dispatch`` ({"auto", "jax", "sequential", "thread"}): evaluation
           dispatch interpreted by the engine, "auto" by default.
         - ``max_workers`` (int or None): positive thread-worker count, or the
@@ -927,9 +912,9 @@ class Function(TrackedTerm, Annotated):
         - ``raw`` (bool): whether a call returns its result detached from the
           workflow, False by default.
 
-        A call inside a derived operation's identity also takes the
-        ``exact_only`` and ``n_broadcast_samples`` that the identity passes
-        down (VI.0).
+        A call inside a derived operation's formula also takes the
+        ``exact_only``, ``max_evaluations``, and ``num_samples`` that the
+        derived route passes down (VI.0).
 
     Raises
     ------
@@ -941,9 +926,9 @@ class Function(TrackedTerm, Annotated):
         as ``Function(g, "g")``; and for a callable given as ``fn=`` or
         ``func=``.
     ValueError
-        For mismatched input slots, invalid defaults or bindings, unknown
-        dispatch, nonpositive worker or sample counts, conversions for a
-        parameter the signature lacks, or invalid component names.
+        For mismatched inputs, invalid defaults or bindings, unknown
+        dispatch, a nonpositive worker, evaluation, or draw count, conversions for a
+        parameter the signature lacks, or invalid output names.
     NotImplementedError
         If a differentiability claim is given, which Function does not carry
         yet.
@@ -967,8 +952,8 @@ class Function(TrackedTerm, Annotated):
     Only the engine's controls are admitted, since a registered method declares
     no controls of its own: its budgets are entries of ``method_options``.
 
-    ``spec`` contains only input/output declarations. ``with_label`` changes the
-    function label and callable metadata; explicit output aliases and component
+    ``spec`` contains only input/output specs. ``with_label`` changes the
+    function label and callable metadata; explicit output aliases and output
     names are preserved. ``str(f)`` returns :attr:`notation`, the label followed
     by the parameters, as ``predict(x, y)``, and the repr keeps the label first.
     ``using`` returns a shallow copy with revised controls. A Function
@@ -976,15 +961,15 @@ class Function(TrackedTerm, Annotated):
     control's default when it is read.
 
     The engine reads three declarations from the Function it runs (V.1): what
-    each parameter accepts, the result declaration, and the realization. A
-    Function declares them by its input declaration and annotations, its
+    each parameter accepts, the output spec of the result, and the realization. A
+    Function declares them by its input spec and annotations, its
     ``output_spec``, and its body; a subclass realized by routes, as an
-    operation is, declares them through ``_roles``, :meth:`_plan_point`, and
+    operation is, declares them through ``_roles``, :meth:`_plan_route_inputs`, and
     :meth:`_route_candidates`.
     """
 
     #: The kinds each parameter with a role accepts, each named by its spec class
-    #: (VI.0). A parameter with no role is admitted by its input declaration and
+    #: (VI.0). A parameter with no role is admitted by its input spec and
     #: lifted as its annotation states, as every parameter of a Function is.
     _roles: Mapping[str, tuple[type[TermSpec], ...]] = MappingProxyType({})
 
@@ -993,10 +978,8 @@ class Function(TrackedTerm, Annotated):
     _implementation: _FunctionImplementation
     _spec: FunctionSpec
     _output_label: str | None
-    _output_component: str
+    _output_name: str
     _options: Mapping[str, Any]
-
-    DEFAULT_N_BROADCAST_SAMPLES = 256
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         # The constructor's arguments are checked here, before ``__init__`` binds
@@ -1091,8 +1074,8 @@ class Function(TrackedTerm, Annotated):
                     f"got {type(input_spec).__name__}"
                 )
             input_spec = InputSpec(input_spec)
-        component = _callable_component(metadata_source)
-        output_spec = _complete_output_spec(output_spec, component=component)
+        output_name = _callable_output_name(metadata_source)
+        output_spec = _complete_output_spec(output_spec, output_name=output_name)
         construction_bindings = dict(bind or {})
         _validate_function_declarations(
             function_name=label,
@@ -1113,7 +1096,7 @@ class Function(TrackedTerm, Annotated):
         set_attribute("_signature_info", signature_info)
         set_attribute("_spec", FunctionSpec(input_spec, output_spec))
         set_attribute("_output_label", output_label)
-        set_attribute("_output_component", component)
+        set_attribute("_output_name", output_name)
         set_attribute("_options", MappingProxyType(options))
         set_attribute("_bind", MappingProxyType(construction_bindings))
         set_attribute("__doc__", getattr(metadata_source, "__doc__", None))
@@ -1155,7 +1138,7 @@ class Function(TrackedTerm, Annotated):
 
     @property
     def input_spec(self) -> InputSpec | None:
-        """The authoritative input slots, or None when undeclared."""
+        """The authoritative inputs, or None when undeclared."""
         return self.spec.input_spec
 
     @property
@@ -1173,7 +1156,7 @@ class Function(TrackedTerm, Annotated):
         """The orchestration mode a call of this function runs under.
 
         The ``workflow_kind`` control decides it, and ``DEFAULT`` defers to the
-        global ``prefect_config.workflow_kind``, read each time the property is
+        global ``config.prefect.workflow_kind``, read each time the property is
         read. When both are ``DEFAULT``, orchestration is ``OFF``. A requested
         ``TASK`` or ``FLOW`` falls back to ``OFF`` when Prefect is not
         installed. Until the call engine is installed, a call evaluates plainly,
@@ -1196,8 +1179,12 @@ class Function(TrackedTerm, Annotated):
         return MappingProxyType(self._control_defaults() | dict(self._options))
 
     def _control_defaults(self) -> dict[str, Any]:
-        """Every control's framework default, the class's sample count included."""
-        return dict(_CONTROL_DEFAULTS) | {"n_broadcast_samples": self.DEFAULT_N_BROADCAST_SAMPLES}
+        """Every control's framework default, with the session's counts as they read now."""
+        sampling = config.sampling
+        return dict(_CONTROL_DEFAULTS) | {
+            "max_evaluations": sampling.max_evaluations,
+            "num_samples": sampling.num_samples,
+        }
 
     def using(self, **controls: Any) -> Self:
         """Return a copy with revised controls, preserving identity and declarations.
@@ -1236,46 +1223,49 @@ class Function(TrackedTerm, Annotated):
         object.__setattr__(clone, "_options", MappingProxyType(options))
         return clone
 
-    def _inheriting(self, inherited: Mapping[str, Any]) -> Self:
-        """This view under the controls a derived operation's identity passes down.
+    def _inheriting(self, passed_controls: Mapping[str, Any]) -> Self:
+        """This view under the controls a derived route passes down.
 
         An inherited ``exact_only`` applies whatever this view sets, and an
-        inherited ``n_broadcast_samples`` applies unless this view sets its own.
-        Every other control stays this view's, since route names and budgets
-        belong to each function.
+        inherited ``max_evaluations`` or ``num_samples`` applies unless this
+        view sets its own. Every other control stays this view's, since route
+        names and budgets belong to each function.
 
         Parameters
         ----------
-        inherited : Mapping of str to Any
-            The passed ``exact_only``, and the passed ``n_broadcast_samples`` or
-            ``None``.
+        passed_controls : Mapping of str to Any
+            The passed ``exact_only``, and the passed ``max_evaluations`` and
+            ``num_samples``, each ``None`` when it is not passed.
 
         Returns
         -------
         Self
-            The view with the inherited controls, or this view when it already
+            The view with the passed controls, or this view when it already
             has them.
         """
-        options = self.options
-        revisions: dict[str, Any] = {}
-        if inherited["exact_only"] and not options["exact_only"]:
-            revisions["exact_only"] = True
-        count = inherited["n_broadcast_samples"]
-        if (
-            count is not None
-            and "n_broadcast_samples" not in self._options
-            and options["n_broadcast_samples"] != count
-        ):
-            revisions["n_broadcast_samples"] = count
-        if not revisions:
+        effective_controls = self.options
+        control_revisions: dict[str, Any] = {}
+        if passed_controls["exact_only"] and not effective_controls["exact_only"]:
+            control_revisions["exact_only"] = True
+        for name in _PASSED_COUNT_CONTROLS:
+            passed_count = passed_controls[name]
+            if (
+                passed_count is not None
+                and name not in self._options
+                and effective_controls[name] != passed_count
+            ):
+                control_revisions[name] = passed_count
+        if not control_revisions:
             return self
-        # The derived call validated both controls, so the view takes them
+        # The derived call validated the controls, so the view takes them
         # without validating this view's own controls again.
-        view = self._shallow_copy()
-        object.__setattr__(view, "_options", MappingProxyType(dict(self._options) | revisions))
-        return view
+        inheriting_view = self._shallow_copy()
+        object.__setattr__(
+            inheriting_view, "_options", MappingProxyType(dict(self._options) | control_revisions)
+        )
+        return inheriting_view
 
-    @_inheriting_controls
+    @_in_child_call_context("check")
     def check(self, *args: Any, **kwargs: Any) -> Any:
         """Probe a call through the first six steps of the stack, without executing it.
 
@@ -1299,7 +1289,7 @@ class Function(TrackedTerm, Annotated):
             The call's report: for each candidate route whether it is feasible,
             infeasible with a reason, or unresolved with the declarations it
             still needs; the selected route when selection can be decided; the
-            planned result declaration; the checks deferred to return; the
+            planned output spec of the result; the checks deferred to return; the
             lifted parameters; and the planned conversions.
 
         Raises
@@ -1308,10 +1298,10 @@ class Function(TrackedTerm, Annotated):
             If an argument does not bind to the signature.
         ApplicabilityError
             If an argument's kind is not one its parameter accepts, an
-            applicability condition fails, or the declarations conflict, as the
+            applicability check fails, or the declarations conflict, as the
             call raises.
         ValueError
-            If an empty sweep lacks a concrete output declaration after input
+            If an empty sweep lacks a concrete output spec after input
             dimensions bind.
         ResolutionError
             If a conversion has no converter, or the ``method`` control names no
@@ -1326,7 +1316,7 @@ class Function(TrackedTerm, Annotated):
     ) -> None:
         """Store *expression* and its label, which the function's Python names follow.
 
-        Explicit output aliases and the output declaration are kept.
+        Explicit output aliases and the output spec are kept.
 
         Parameters
         ----------
@@ -1346,13 +1336,13 @@ class Function(TrackedTerm, Annotated):
             return self._implementation.callable
         return self.apply
 
-    @_inheriting_controls
+    @_in_child_call_context("apply")
     def apply(self, *args: Any, **kwargs: Any) -> Any:
         """Evaluate one point, validating declarations and returning the raw result.
 
-        Python binding errors raise TypeError. Input or output declaration
+        Python binding errors raise TypeError. Input or output spec
         violations raise ValueError, including a returned kind that differs
-        from the output declaration. Dimension bindings are local to this call.
+        from the output spec. Dimension bindings are local to this call.
         Existing returned objects retain their identity and metadata. A Function
         realized by routes admits each argument by its role, with no lifting,
         raising ``ApplicabilityError`` for a kind its role refuses; runs the
@@ -1407,17 +1397,18 @@ class Function(TrackedTerm, Annotated):
         """
         return None
 
-    def _plan_point(
-        self, values: Mapping[str, Any], controls: Mapping[str, Any]
+    def _plan_route_inputs(
+        self, argument_values: Mapping[str, Any], controls: Mapping[str, Any]
     ) -> tuple[Any, OutputSpec | None, tuple[str, ...]]:
-        """What the routes read at one point: its call object, result declaration, and deferrals.
+        """What the routes read at one point: its call object, output spec, and deferrals.
 
-        A Function's call object is *values*, and its result declaration its
-        ``output_spec``, whose type hole defers the type to the return.
+        A Function's call object is *argument_values*, and the output spec of its
+        result is its ``output_spec``, which defers the type to the return when
+        the type is unspecified.
 
         Parameters
         ----------
-        values : Mapping of str to Any
+        argument_values : Mapping of str to Any
             The point's argument values, keyed by parameter name.
         controls : Mapping of str to Any
             The call's effective controls, which a subclass realized by routes reads.
@@ -1425,16 +1416,18 @@ class Function(TrackedTerm, Annotated):
         Returns
         -------
         tuple
-            The object the routes' checks read, the result declaration, and the
+            The object the routes' checks read, the output spec of the result, and the
             checks deferred to the return.
         """
-        declared = self.output_spec
+        result_declaration = self.output_spec
         deferred = (
-            () if declared is not None and declared.spec is not None else (_COMPLETED_AT_RETURN,)
+            ()
+            if result_declaration is not None and result_declaration.term_spec is not None
+            else (_COMPLETED_AT_RETURN,)
         )
-        return values, declared, deferred
+        return argument_values, result_declaration, deferred
 
-    @_inheriting_controls
+    @_in_child_call_context("__call__")
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """Call the function through the installed engine (V.1).
 
@@ -1442,7 +1435,7 @@ class Function(TrackedTerm, Annotated):
         batch passed where a value is expected lifts the call over it: a law is
         broadcast and a batch is swept (V.5). The controls come from the
         construction and :meth:`using`, together with those that a
-        derived operation's identity passes down (VI.0), and the call's
+        derived route passes down (VI.0), and the call's
         keywords bind to the wrapped callable. Swept batches align by level name:
         within each matching level, shapes align from the right and size-one
         axes broadcast independently of other levels. The sweep carries each
@@ -1458,7 +1451,7 @@ class Function(TrackedTerm, Annotated):
         Returns
         -------
         TrackedTerm or Any
-            The result at the kind its declaration names, with the call's
+            The result at the kind its output spec names, with the call's
             provenance. It is labeled by an explicit ``output_label``, or else
             by the application for a value and by the function's label for a
             returned law or kernel. A broadcast
@@ -1475,12 +1468,12 @@ class Function(TrackedTerm, Annotated):
             declarations conflict, or matching levels have shapes that cannot
             broadcast.
         ValueError
-            If an empty sweep lacks a concrete output declaration after input
+            If an empty sweep lacks a concrete output spec after input
             dimensions bind.
         ResolutionError
             If no route realizes the call.
         ResultKindError, ResultSchemaError
-            If the result violates the completed declaration.
+            If the result violates the completed output spec.
         """
         return _call_engine(self, *args, **kwargs)
 
@@ -1493,7 +1486,7 @@ class Function(TrackedTerm, Annotated):
         ``predict(x, scale=1.0)``, when the default is a number, a string,
         ``None``, or an array of no axes, and ``name=…`` for any other default.
         The notation is rendered each time it is shown, at the current
-        ``notation_config.max_depth``. No operation reads the notation.
+        ``config.notation.max_depth``. No operation reads the notation.
         """
         return self._expression.render_notation(self._own_signature(), warn=True)
 
@@ -1532,50 +1525,6 @@ class Function(TrackedTerm, Annotated):
             if declaration is not None:
                 fields.append((side, repr(declaration)))
         return fields
-
-
-def _check_sample_count(count: Any) -> None:
-    """Refuse a sample count that is not a positive integer.
-
-    Parameters
-    ----------
-    count : Any
-        The candidate value of the ``n_broadcast_samples`` control.
-
-    Raises
-    ------
-    TypeError
-        If *count* is not an integer.
-    ValueError
-        If *count* is not positive.
-    """
-    if isinstance(count, bool) or not isinstance(count, int):
-        raise TypeError(f"n_broadcast_samples must be an integer; got {count!r}")
-    if count <= 0:
-        raise ValueError(f"n_broadcast_samples must be a positive integer; got {count!r}")
-
-
-def set_default_n_broadcast_samples(n: int) -> None:
-    """Set the sample count of every function and operation that sets none of its own.
-
-    A call reads the default when it runs, so the setting also governs the
-    functions constructed before it. The converters that draw, such as moment
-    matching, draw this many unless their ``num_samples`` option is given.
-
-    Parameters
-    ----------
-    n : int
-        The number of draws, at least one. The default is 256.
-
-    Raises
-    ------
-    TypeError
-        If *n* is not an integer.
-    ValueError
-        If *n* is less than one.
-    """
-    _check_sample_count(n)
-    Function.DEFAULT_N_BROADCAST_SAMPLES = n
 
 
 def _set_controls(
@@ -1659,7 +1608,8 @@ def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) 
         raise TypeError(
             f"workflow_kind must be a WorkflowKind enum member; got {options['workflow_kind']!r}"
         )
-    _check_sample_count(options["n_broadcast_samples"])
+    for name in _PASSED_COUNT_CONTROLS:
+        _checked_count(options[name], name)
     for flag in ("include_inputs", "exact_only", "raw"):
         if not isinstance(options[flag], bool):
             raise TypeError(f"{flag} must be a bool; got {options[flag]!r}")
@@ -1831,7 +1781,7 @@ class SupportsDifferentiation(Protocol):
     """An object that declares which of its values gradients propagate through.
 
     The claim is fixed at construction. For a map the template is a sub-schema
-    of its numeric input slots, and for a distribution a sub-schema of its
+    of its numeric inputs, and for a distribution a sub-schema of its
     numeric event schema.
     """
 
@@ -1850,7 +1800,7 @@ def is_differentiable(x: Any, values: NamedTree | None = None) -> bool:
         A map or a distribution.
     values : NamedTree or None
         The values to test, by their paths. None tests every numeric value of
-        *x*: its numeric input slots for a map, its numeric event values for a
+        *x*: its numeric inputs for a map, its numeric event values for a
         distribution.
 
     Returns

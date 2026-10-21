@@ -3,6 +3,7 @@ from __future__ import annotations
 import pickle
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, fields, replace
+from functools import partial
 from threading import Barrier, Event
 from types import SimpleNamespace
 from typing import ClassVar
@@ -11,11 +12,10 @@ from unittest.mock import Mock, patch
 import jax
 import pytest
 
-import probpipe.functions._broker as broker_mod
 import probpipe.functions._context as context_mod
+import probpipe.functions._evaluation_keys as evaluation_keys_mod
 import probpipe.functions._execution as execution_mod
 import probpipe.functions._function as node_mod
-import probpipe.functions._managed as managed_mod
 import probpipe.functions._replay as replay_mod
 from probpipe import (
     Function,
@@ -27,7 +27,8 @@ from probpipe import (
     sample,
     workflow_run,
 )
-from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config
+from probpipe.core._call_context import _CallContext, _ContextBoundFunction
+from probpipe.core.config import ProvenanceMode, WorkflowKind, config
 
 
 def add_one(x):
@@ -39,10 +40,10 @@ def add_xy(x, y):
 
 
 def _claim_automatic_words():
-    key = broker_mod._resolve_automatic_key(
+    key = evaluation_keys_mod._resolve_automatic_key(
         None,
-        broker_mod._singleton_effect_plan(
-            operation_kind="managed-test",
+        evaluation_keys_mod._singleton_effect_plan(
+            operation_kind="evaluation-point-test",
             execution_mode="sampled",
             sample_shape=(),
         ),
@@ -51,10 +52,10 @@ def _claim_automatic_words():
 
 
 def _claim_automatic_scalar():
-    key = broker_mod._resolve_automatic_key(
+    key = evaluation_keys_mod._resolve_automatic_key(
         None,
-        broker_mod._singleton_effect_plan(
-            operation_kind="managed-test",
+        evaluation_keys_mod._singleton_effect_plan(
+            operation_kind="evaluation-point-test",
             execution_mode="sampled",
             sample_shape=(),
         ),
@@ -148,16 +149,18 @@ def make_request(
     prefect_task_runner=None,
 ):
     call_values = calls if calls is not None else [{"x": 1}, {"x": 2}]
-    unit_segments = (
-        (execution_mod.point_unit_segment(),)
+    point_segments = (
+        (execution_mod.plain_call_point_segment(),)
         if len(call_values) == 1
-        else tuple(execution_mod.sweep_unit_segment((index,)) for index in range(len(call_values)))
+        else tuple(
+            execution_mod.sweep_cell_point_segment((index,)) for index in range(len(call_values))
+        )
     )
     return execution_mod.WorkflowExecutionRequest(
         func=func,
-        work_items=execution_mod.make_managed_work_items(
+        evaluation_points=execution_mod.issue_evaluation_points(
             call_values,
-            unit_segments=unit_segments,
+            point_segments=point_segments,
         ),
         execution=execution_mod.WorkflowExecutionConfig(
             mode=mode,
@@ -168,21 +171,21 @@ def make_request(
     )
 
 
-def make_managed_frame():
-    return managed_mod.ManagedUnitFrame(
-        unit_segment=managed_mod.point_unit_segment(),
-        token=managed_mod.ManagedWorkItemToken(b"w" * 16),
+def make_evaluation_point_frame():
+    return evaluation_keys_mod.EvaluationPointFrame(
+        point_segment=evaluation_keys_mod.plain_call_point_segment(),
+        token=evaluation_keys_mod.EvaluationPointToken(b"w" * 16),
     )
 
 
-def make_managed_attempt():
-    return managed_mod.ManagedAttemptState(
-        work_item_token=managed_mod.ManagedWorkItemToken(b"w" * 16),
+def make_evaluation_point_attempt():
+    return evaluation_keys_mod.EvaluationPointAttempt(
+        evaluation_point_token=evaluation_keys_mod.EvaluationPointToken(b"w" * 16),
         attempt_token=b"a" * 16,
     )
 
 
-def make_managed_effect(**overrides):
+def make_effect_claim(**overrides):
     values = {
         "occurrence_path": (("invocation", 0),),
         "occurrence_kind": "invocation",
@@ -195,7 +198,7 @@ def make_managed_effect(**overrides):
         "provider_abi": "probpipe.distribution/v1",
     }
     values.update(overrides)
-    return managed_mod.ManagedEffectClaim(**values)
+    return evaluation_keys_mod.StochasticEffectClaim(**values)
 
 
 def make_remote_effect(
@@ -204,12 +207,12 @@ def make_remote_effect(
     source_index=0,
     child_segment=("child", 0),
     parent_path=None,
-    unit_segment=None,
+    point_segment=None,
 ):
-    return make_managed_effect(
+    return make_effect_claim(
         occurrence_path=(
             *(envelope.parent_occurrence_path if parent_path is None else parent_path),
-            envelope.frame.unit_segment if unit_segment is None else unit_segment,
+            envelope.frame.point_segment if point_segment is None else point_segment,
             child_segment,
         ),
         stochastic_source_id=("source-group", source_index),
@@ -218,16 +221,16 @@ def make_remote_effect(
 
 @pytest.fixture(autouse=True)
 def _reset_fakes():
-    prefect_config.workflow_kind = WorkflowKind.OFF
-    prefect_config.task_runner = None
+    config.prefect.workflow_kind = WorkflowKind.OFF
+    config.prefect.task_runner = None
     RecordingExecutor.instances.clear()
     FakeMappedTask.created_names.clear()
     FakeMappedTask.reverse_results = False
     FakeMappedTask.map_calls = 0
     RecordingFlow.calls.clear()
     yield
-    prefect_config.workflow_kind = WorkflowKind.OFF
-    prefect_config.task_runner = None
+    config.prefect.workflow_kind = WorkflowKind.OFF
+    config.prefect.task_runner = None
     RecordingExecutor.instances.clear()
     FakeMappedTask.created_names.clear()
     FakeMappedTask.reverse_results = False
@@ -236,21 +239,21 @@ def _reset_fakes():
 
 
 class TestExecutionRequestShape:
-    def test_managed_work_items_are_frozen_tuple_only_and_pickleable(self):
+    def test_issued_evaluation_points_are_frozen_tuple_only_and_pickleable(self):
         request = make_request(calls=[{"x": 1}])
 
-        assert isinstance(request.work_items, tuple)
-        assert request.work_items[0].values == (("x", 1),)
-        assert request.work_items[0].frame.unit_segment == (
-            "managed-unit",
-            "probpipe.managed_work_item/v1",
+        assert isinstance(request.evaluation_points, tuple)
+        assert request.evaluation_points[0].arguments == (("x", 1),)
+        assert request.evaluation_points[0].frame.point_segment == (
+            "evaluation-point",
+            "probpipe.evaluation_point/v1",
             "point",
             0,
         )
-        assert len(request.work_items[0].frame.token.value) == 16
-        assert pickle.loads(pickle.dumps(request.work_items)) == request.work_items
+        assert len(request.evaluation_points[0].frame.token.value) == 16
+        assert pickle.loads(pickle.dumps(request.evaluation_points)) == request.evaluation_points
         with pytest.raises(FrozenInstanceError):
-            request.work_items[0].index = 9
+            request.evaluation_points[0].index = 9
 
     def test_execution_config_has_resolved_execution_fields_only(self):
         field_names = {field.name for field in fields(execution_mod.WorkflowExecutionConfig)}
@@ -269,7 +272,7 @@ class TestExecutionRequestShape:
 
         def fake_execute_many(request):
             seen["request"] = request
-            return [request.func(**request.work_items[0].call_values())]
+            return [request.func(**request.evaluation_points[0].call_arguments())]
 
         monkeypatch.setattr(execution_mod, "execute_many", fake_execute_many)
         wf = Function(add_one, label="add_one", dispatch="sequential")
@@ -282,17 +285,17 @@ class TestExecutionRequestShape:
         assert not isinstance(seen["request"].func, Function)
         assert seen["request"].execution.mode == "sequential"
 
-    def test_execute_many_revalidates_work_items_before_broker_or_callable(self):
+    def test_execute_many_revalidates_evaluation_points_before_broker_or_callable(self):
         func = Mock(return_value=2)
         request = make_request(calls=[{"x": 1}], func=func)
         object.__setattr__(
-            request.work_items[0],
-            "values",
+            request.evaluation_points[0],
+            "arguments",
             (("x", 1), ("x", 2)),
         )
 
         with (
-            patch.object(broker_mod, "_record_active_execution_contract") as record,
+            patch.object(evaluation_keys_mod, "_record_active_execution_contract") as record,
             pytest.raises(ValueError, match="duplicate parameter names"),
         ):
             execution_mod.execute_many(request)
@@ -300,118 +303,118 @@ class TestExecutionRequestShape:
         func.assert_not_called()
         record.assert_not_called()
 
-    def test_managed_registration_failure_is_transactional_and_preserves_cause(self):
+    def test_evaluation_point_registration_failure_is_transactional_and_preserves_cause(self):
         func = Mock(return_value=1)
         request = make_request(func=func)
         duplicate_token = replace(
-            request.work_items[1],
+            request.evaluation_points[1],
             frame=replace(
-                request.work_items[1].frame,
-                token=request.work_items[0].frame.token,
+                request.evaluation_points[1].frame,
+                token=request.evaluation_points[0].frame.token,
             ),
         )
         request = replace(
             request,
-            work_items=(request.work_items[0], duplicate_token),
+            evaluation_points=(request.evaluation_points[0], duplicate_token),
         )
 
         with (
             workflow_run(seed=17),
             pytest.raises(
                 RuntimeError,
-                match="managed work-item token cannot own multiple logical units",
+                match="evaluation point token cannot own multiple point segments",
             ),
-            broker_mod._function_stochastic_scope() as parent,
+            evaluation_keys_mod._function_stochastic_scope() as parent,
         ):
             execution_mod.execute_many(request)
 
         func.assert_not_called()
-        assert parent._managed_claims.by_unit == {}
-        assert parent._managed_claims.by_token == {}
-        assert parent._lifecycle is broker_mod._BrokerLifecycle.SEALED
+        assert parent._evaluation_point_claims.by_point_segment == {}
+        assert parent._evaluation_point_claims.by_token == {}
+        assert parent._lifecycle is evaluation_keys_mod._BrokerLifecycle.SEALED
 
 
-class TestManagedPayloadValidation:
+class TestEvaluationPointPayloadValidation:
     @pytest.mark.parametrize(
         ("factory", "exception", "match"),
         [
             pytest.param(
-                lambda: managed_mod.ManagedWorkItemToken(b"short"),
+                lambda: evaluation_keys_mod.EvaluationPointToken(b"short"),
                 TypeError,
                 "exactly 16 bytes",
-                id="work-item-token",
+                id="evaluation-point-token",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedUnitFrame(
-                    unit_segment=[],
-                    token=managed_mod.ManagedWorkItemToken(b"w" * 16),
+                lambda: evaluation_keys_mod.EvaluationPointFrame(
+                    point_segment=[],
+                    token=evaluation_keys_mod.EvaluationPointToken(b"w" * 16),
                 ),
                 TypeError,
-                "unit segments must be tuples",
-                id="unit-segment",
+                "point segments must be tuples",
+                id="point-segment",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedUnitFrame(
-                    unit_segment=("scope", 0),
-                    token=managed_mod.ManagedWorkItemToken(b"w" * 16),
+                lambda: evaluation_keys_mod.EvaluationPointFrame(
+                    point_segment=("scope", 0),
+                    token=evaluation_keys_mod.EvaluationPointToken(b"w" * 16),
                 ),
                 ValueError,
-                "canonical managed unit segment",
-                id="colliding-unit-segment",
+                "canonical evaluation point segment",
+                id="colliding-point-segment",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedUnitFrame(
-                    unit_segment=managed_mod.point_unit_segment(),
-                    token=managed_mod.ManagedWorkItemToken(b"w" * 16),
-                    derivation_abi="unknown-managed/v99",
+                lambda: evaluation_keys_mod.EvaluationPointFrame(
+                    point_segment=evaluation_keys_mod.plain_call_point_segment(),
+                    token=evaluation_keys_mod.EvaluationPointToken(b"w" * 16),
+                    derivation_abi="unknown-evaluation-point/v99",
                 ),
                 ValueError,
-                "unsupported managed work-item ABI",
-                id="managed-abi",
+                "unsupported evaluation point ABI",
+                id="evaluation-point-abi",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedWorkItem(
+                lambda: evaluation_keys_mod.IssuedEvaluationPoint(
                     index=True,
-                    values=(("x", 1),),
-                    frame=make_managed_frame(),
+                    arguments=(("x", 1),),
+                    frame=make_evaluation_point_frame(),
                 ),
                 TypeError,
                 "indexes must be non-negative integers",
-                id="work-item-index",
+                id="evaluation-point-index",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedWorkItem(
+                lambda: evaluation_keys_mod.IssuedEvaluationPoint(
                     index=0,
-                    values=[("x", 1)],
-                    frame=make_managed_frame(),
+                    arguments=[("x", 1)],
+                    frame=make_evaluation_point_frame(),
                 ),
                 TypeError,
-                "values must be name/value tuples",
-                id="work-item-values",
+                "arguments must be name/value tuples",
+                id="evaluation-point-values",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedWorkItem(
+                lambda: evaluation_keys_mod.IssuedEvaluationPoint(
                     index=0,
-                    values=(("x", 1), ("x", 2)),
-                    frame=make_managed_frame(),
+                    arguments=(("x", 1), ("x", 2)),
+                    frame=make_evaluation_point_frame(),
                 ),
                 ValueError,
                 "duplicate parameter names",
-                id="work-item-duplicate-values",
+                id="evaluation-point-duplicate-values",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedWorkItem(
+                lambda: evaluation_keys_mod.IssuedEvaluationPoint(
                     index=0,
-                    values=(("x", 1),),
+                    arguments=(("x", 1),),
                     frame=object(),
                 ),
                 TypeError,
-                "valid managed unit frame",
-                id="work-item-frame",
+                "valid evaluation point frame",
+                id="evaluation-point-frame",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedAttemptState(
-                    work_item_token=managed_mod.ManagedWorkItemToken(b"w" * 16),
+                lambda: evaluation_keys_mod.EvaluationPointAttempt(
+                    evaluation_point_token=evaluation_keys_mod.EvaluationPointToken(b"w" * 16),
                     attempt_token=b"short",
                 ),
                 TypeError,
@@ -419,33 +422,33 @@ class TestManagedPayloadValidation:
                 id="attempt-token",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedParentEnvelope(
+                lambda: evaluation_keys_mod.EvaluationPointParentEnvelope(
                     root_words=(True, 1),
                     parent_occurrence_path=(("invocation", 0),),
-                    frame=make_managed_frame(),
-                    attempt=make_managed_attempt(),
+                    frame=make_evaluation_point_frame(),
+                    attempt=make_evaluation_point_attempt(),
                 ),
                 TypeError,
                 "root words must be two uint32 integers",
                 id="parent-root-words",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedParentEnvelope(
+                lambda: evaluation_keys_mod.EvaluationPointParentEnvelope(
                     root_words=(0, 1),
                     parent_occurrence_path=[],
-                    frame=make_managed_frame(),
-                    attempt=make_managed_attempt(),
+                    frame=make_evaluation_point_frame(),
+                    attempt=make_evaluation_point_attempt(),
                 ),
                 TypeError,
                 "parent occurrence paths must be tuples",
                 id="parent-occurrence-path",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedParentEnvelope(
+                lambda: evaluation_keys_mod.EvaluationPointParentEnvelope(
                     root_words=(0, 1),
                     parent_occurrence_path=(("invocation", 0),),
-                    frame=make_managed_frame(),
-                    attempt=make_managed_attempt(),
+                    frame=make_evaluation_point_frame(),
+                    attempt=make_evaluation_point_attempt(),
                     replay_expected_effects=[],
                 ),
                 TypeError,
@@ -453,11 +456,11 @@ class TestManagedPayloadValidation:
                 id="parent-replay-effects",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedParentEnvelope(
+                lambda: evaluation_keys_mod.EvaluationPointParentEnvelope(
                     root_words=(0, 1),
                     parent_occurrence_path=(("invocation", 0),),
-                    frame=make_managed_frame(),
-                    attempt=make_managed_attempt(),
+                    frame=make_evaluation_point_frame(),
+                    attempt=make_evaluation_point_attempt(),
                     retry_effects=[],
                 ),
                 TypeError,
@@ -465,36 +468,36 @@ class TestManagedPayloadValidation:
                 id="parent-retry-effects",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedParentEnvelope(
+                lambda: evaluation_keys_mod.EvaluationPointParentEnvelope(
                     root_words=(0, 1),
                     parent_occurrence_path=(("invocation", 0),),
-                    frame=make_managed_frame(),
-                    attempt=make_managed_attempt(),
-                    replay_expected_effects=(make_managed_effect(), make_managed_effect()),
+                    frame=make_evaluation_point_frame(),
+                    attempt=make_evaluation_point_attempt(),
+                    replay_expected_effects=(make_effect_claim(), make_effect_claim()),
                 ),
                 ValueError,
                 "replay expectations contains a duplicate effect identity",
                 id="parent-duplicate-replay-effects",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedParentEnvelope(
+                lambda: evaluation_keys_mod.EvaluationPointParentEnvelope(
                     root_words=(0, 1),
                     parent_occurrence_path=(("invocation", 0),),
-                    frame=make_managed_frame(),
-                    attempt=make_managed_attempt(),
-                    retry_effects=(make_managed_effect(), make_managed_effect()),
+                    frame=make_evaluation_point_frame(),
+                    attempt=make_evaluation_point_attempt(),
+                    retry_effects=(make_effect_claim(), make_effect_claim()),
                 ),
                 ValueError,
                 "retry effects contains a duplicate effect identity",
                 id="parent-duplicate-retry-effects",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedParentEnvelope(
+                lambda: evaluation_keys_mod.EvaluationPointParentEnvelope(
                     root_words=(0, 1),
                     parent_occurrence_path=(("invocation", 0),),
-                    frame=make_managed_frame(),
-                    attempt=managed_mod.ManagedAttemptState(
-                        work_item_token=managed_mod.ManagedWorkItemToken(b"z" * 16),
+                    frame=make_evaluation_point_frame(),
+                    attempt=evaluation_keys_mod.EvaluationPointAttempt(
+                        evaluation_point_token=evaluation_keys_mod.EvaluationPointToken(b"z" * 16),
                         attempt_token=b"a" * 16,
                     ),
                 ),
@@ -503,146 +506,145 @@ class TestManagedPayloadValidation:
                 id="parent-attempt-frame",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedPrefectPayload(
-                    item=managed_mod.ManagedWorkItem(
+                lambda: evaluation_keys_mod.EvaluationPointPrefectPayload(
+                    evaluation_point=evaluation_keys_mod.IssuedEvaluationPoint(
                         index=0,
-                        values=(),
-                        frame=make_managed_frame(),
+                        arguments=(),
+                        frame=make_evaluation_point_frame(),
                     ),
-                    attempt=managed_mod.ManagedAttemptState(
-                        work_item_token=managed_mod.ManagedWorkItemToken(b"z" * 16),
+                    attempt=evaluation_keys_mod.EvaluationPointAttempt(
+                        evaluation_point_token=evaluation_keys_mod.EvaluationPointToken(b"z" * 16),
                         attempt_token=b"a" * 16,
                     ),
-                    provenance_mode=ProvenanceMode.FULL,
                 ),
                 ValueError,
-                "attempt must own its work item",
-                id="payload-attempt-item",
+                "attempt must own its evaluation point",
+                id="payload-attempt-evaluation-point",
             ),
             pytest.param(
-                lambda: make_managed_effect(occurrence_path=[]),
+                lambda: make_effect_claim(occurrence_path=[]),
                 TypeError,
                 "effect occurrence paths must be tuples",
                 id="effect-occurrence-path",
             ),
             pytest.param(
-                lambda: make_managed_effect(stochastic_source_id=[]),
+                lambda: make_effect_claim(stochastic_source_id=[]),
                 TypeError,
                 "source and unit identities must be tuples",
                 id="effect-source",
             ),
             pytest.param(
-                lambda: make_managed_effect(occurrence_kind=1),
+                lambda: make_effect_claim(occurrence_kind=1),
                 TypeError,
                 "occurrence_kind must be a string",
                 id="effect-occurrence-kind-type",
             ),
             pytest.param(
-                lambda: make_managed_effect(occurrence_kind="nested"),
+                lambda: make_effect_claim(occurrence_kind="nested"),
                 ValueError,
                 "occurrence_kind must be 'invocation' or 'operation'",
                 id="effect-occurrence-kind-value",
             ),
             pytest.param(
-                lambda: make_managed_effect(operation_kind=1),
+                lambda: make_effect_claim(operation_kind=1),
                 TypeError,
                 "operation_kind must be a string",
                 id="effect-operation-kind-type",
             ),
             pytest.param(
-                lambda: make_managed_effect(operation_kind=""),
+                lambda: make_effect_claim(operation_kind=""),
                 ValueError,
                 "operation_kind must be non-empty",
                 id="effect-operation-kind-empty",
             ),
             pytest.param(
-                lambda: make_managed_effect(execution_mode=None),
+                lambda: make_effect_claim(execution_mode=None),
                 TypeError,
                 "execution_mode must be a string",
                 id="effect-execution-mode-type",
             ),
             pytest.param(
-                lambda: make_managed_effect(execution_mode=""),
+                lambda: make_effect_claim(execution_mode=""),
                 ValueError,
                 "execution_mode must be non-empty",
                 id="effect-execution-mode-empty",
             ),
             pytest.param(
-                lambda: make_managed_effect(sampling_abi=1),
+                lambda: make_effect_claim(sampling_abi=1),
                 TypeError,
                 "sampling_abi must be a string",
                 id="effect-sampling-abi-type",
             ),
             pytest.param(
-                lambda: make_managed_effect(sampling_abi=""),
+                lambda: make_effect_claim(sampling_abi=""),
                 ValueError,
                 "sampling_abi must be non-empty",
                 id="effect-sampling-abi-empty",
             ),
             pytest.param(
-                lambda: make_managed_effect(provider_abi=None),
+                lambda: make_effect_claim(provider_abi=None),
                 TypeError,
                 "provider_abi must be a string",
                 id="effect-provider-abi-type",
             ),
             pytest.param(
-                lambda: make_managed_effect(provider_abi=""),
+                lambda: make_effect_claim(provider_abi=""),
                 ValueError,
                 "provider_abi must be non-empty",
                 id="effect-provider-abi-empty",
             ),
             pytest.param(
-                lambda: make_managed_effect(sample_shape=[]),
+                lambda: make_effect_claim(sample_shape=[]),
                 TypeError,
                 "sample shapes must be tuples or None",
                 id="effect-sample-shape",
             ),
             pytest.param(
-                lambda: make_managed_effect(sample_shape=(True,)),
+                lambda: make_effect_claim(sample_shape=(True,)),
                 TypeError,
                 "sample shape dimensions must be non-boolean integers",
                 id="effect-sample-shape-bool",
             ),
             pytest.param(
-                lambda: make_managed_effect(sample_shape=(-1,)),
+                lambda: make_effect_claim(sample_shape=(-1,)),
                 ValueError,
                 "sample shape dimensions must be non-negative",
                 id="effect-sample-shape-negative",
             ),
             pytest.param(
-                lambda: make_managed_effect(record_path=[]),
+                lambda: make_effect_claim(record_path=[]),
                 TypeError,
                 "record paths must be tuples",
                 id="effect-record-path",
             ),
             pytest.param(
-                lambda: make_managed_effect(record_path=("field", 1)),
+                lambda: make_effect_claim(record_path=("field", 1)),
                 TypeError,
                 "record path fields must be strings",
                 id="effect-record-path-item",
             ),
             pytest.param(
-                lambda: make_managed_effect(descendant_descriptor=[]),
+                lambda: make_effect_claim(descendant_descriptor=[]),
                 TypeError,
                 "descendant descriptors must be tuples or None",
                 id="effect-descendant",
             ),
             pytest.param(
-                lambda: make_managed_effect(descendant_descriptor=("descriptor", ["mutable"])),
+                lambda: make_effect_claim(descendant_descriptor=("descriptor", ["mutable"])),
                 TypeError,
                 "canonical tuple values",
                 id="effect-descendant-nested-list",
             ),
             pytest.param(
-                lambda: make_managed_effect(descendant_descriptor=("descriptor", 1.5)),
+                lambda: make_effect_claim(descendant_descriptor=("descriptor", 1.5)),
                 TypeError,
                 "canonical tuple values",
                 id="effect-descendant-float",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedClaimReport(
-                    frame=make_managed_frame(),
-                    attempt=make_managed_attempt(),
+                lambda: evaluation_keys_mod.EvaluationPointClaimReport(
+                    frame=make_evaluation_point_frame(),
+                    attempt=make_evaluation_point_attempt(),
                     child_count=True,
                 ),
                 TypeError,
@@ -650,9 +652,9 @@ class TestManagedPayloadValidation:
                 id="report-child-count",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedClaimReport(
-                    frame=make_managed_frame(),
-                    attempt=make_managed_attempt(),
+                lambda: evaluation_keys_mod.EvaluationPointClaimReport(
+                    frame=make_evaluation_point_frame(),
+                    attempt=make_evaluation_point_attempt(),
                     child_count=0,
                     effects=[],
                 ),
@@ -661,32 +663,32 @@ class TestManagedPayloadValidation:
                 id="report-effects",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedClaimReport(
-                    frame=make_managed_frame(),
-                    attempt=make_managed_attempt(),
+                lambda: evaluation_keys_mod.EvaluationPointClaimReport(
+                    frame=make_evaluation_point_frame(),
+                    attempt=make_evaluation_point_attempt(),
                     child_count=0,
                     successful_effects=[],
                 ),
                 TypeError,
-                "successful effects must contain a tuple",
+                "successful evaluation point effects must contain a tuple",
                 id="report-successful-effects",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedClaimReport(
-                    frame=make_managed_frame(),
-                    attempt=make_managed_attempt(),
+                lambda: evaluation_keys_mod.EvaluationPointClaimReport(
+                    frame=make_evaluation_point_frame(),
+                    attempt=make_evaluation_point_attempt(),
                     child_count=0,
-                    successful_effects=(make_managed_effect(),),
+                    successful_effects=(make_effect_claim(),),
                 ),
                 ValueError,
                 "must be claimed by the same attempt",
                 id="report-successful-subset",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedClaimReport(
-                    frame=make_managed_frame(),
-                    attempt=managed_mod.ManagedAttemptState(
-                        work_item_token=managed_mod.ManagedWorkItemToken(b"z" * 16),
+                lambda: evaluation_keys_mod.EvaluationPointClaimReport(
+                    frame=make_evaluation_point_frame(),
+                    attempt=evaluation_keys_mod.EvaluationPointAttempt(
+                        evaluation_point_token=evaluation_keys_mod.EvaluationPointToken(b"z" * 16),
                         attempt_token=b"a" * 16,
                     ),
                     child_count=0,
@@ -696,45 +698,45 @@ class TestManagedPayloadValidation:
                 id="report-attempt-frame",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedClaimReport(
-                    frame=make_managed_frame(),
-                    attempt=make_managed_attempt(),
+                lambda: evaluation_keys_mod.EvaluationPointClaimReport(
+                    frame=make_evaluation_point_frame(),
+                    attempt=make_evaluation_point_attempt(),
                     child_count=1,
-                    effects=(make_managed_effect(), make_managed_effect()),
+                    effects=(make_effect_claim(), make_effect_claim()),
                 ),
                 ValueError,
                 "duplicate effect identity",
                 id="report-duplicate-effect",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedClaimReport(
-                    frame=make_managed_frame(),
-                    attempt=make_managed_attempt(),
+                lambda: evaluation_keys_mod.EvaluationPointClaimReport(
+                    frame=make_evaluation_point_frame(),
+                    attempt=make_evaluation_point_attempt(),
                     child_count=1,
-                    effects=(make_managed_effect(),),
-                    successful_effects=(make_managed_effect(), make_managed_effect()),
+                    effects=(make_effect_claim(),),
+                    successful_effects=(make_effect_claim(), make_effect_claim()),
                 ),
                 ValueError,
                 "duplicate effect identity",
                 id="report-duplicate-successful-effect",
             ),
             pytest.param(
-                lambda: managed_mod.make_managed_work_items(
+                lambda: evaluation_keys_mod.issue_evaluation_points(
                     [{"x": 1}],
-                    unit_segments=(),
+                    point_segments=(),
                 ),
                 ValueError,
                 "must have equal lengths",
-                id="work-item-count",
+                id="evaluation-point-count",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedExecutionOutcome(index=True),
+                lambda: evaluation_keys_mod.EvaluationPointOutcome(index=True),
                 TypeError,
                 "outcome indexes must be non-negative integers",
                 id="outcome-index",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedExecutionOutcome(
+                lambda: evaluation_keys_mod.EvaluationPointOutcome(
                     index=0,
                     coordination_required=1,
                 ),
@@ -743,19 +745,19 @@ class TestManagedPayloadValidation:
                 id="outcome-coordination-flag",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedExecutionOutcome(index=0, error="failure"),
+                lambda: evaluation_keys_mod.EvaluationPointOutcome(index=0, error="failure"),
                 TypeError,
                 "outcome errors must be Exception values or None",
                 id="outcome-error",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedExecutionOutcome(index=0, report=object()),
+                lambda: evaluation_keys_mod.EvaluationPointOutcome(index=0, report=object()),
                 TypeError,
                 "outcome reports must be claim reports or None",
                 id="outcome-report",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedExecutionOutcome(
+                lambda: evaluation_keys_mod.EvaluationPointOutcome(
                     index=0,
                     error=RuntimeError("failure"),
                     coordination_required=True,
@@ -765,9 +767,9 @@ class TestManagedPayloadValidation:
                 id="outcome-coordination-error",
             ),
             pytest.param(
-                lambda: managed_mod.ManagedExecutionOutcome(
+                lambda: evaluation_keys_mod.EvaluationPointOutcome(
                     index=0,
-                    value="success",
+                    output="success",
                     error=RuntimeError("failure"),
                 ),
                 ValueError,
@@ -775,19 +777,19 @@ class TestManagedPayloadValidation:
                 id="outcome-error-value",
             ),
             pytest.param(
-                lambda: managed_mod.sweep_unit_segment(()),
+                lambda: evaluation_keys_mod.sweep_cell_point_segment(()),
                 ValueError,
                 "at least one coordinate",
                 id="empty-sweep-segment",
             ),
             pytest.param(
-                lambda: managed_mod.sweep_unit_segment((True,)),
+                lambda: evaluation_keys_mod.sweep_cell_point_segment((True,)),
                 TypeError,
                 "non-boolean integers",
                 id="bool-sweep-coordinate",
             ),
             pytest.param(
-                lambda: managed_mod.sweep_unit_segment((-1,)),
+                lambda: evaluation_keys_mod.sweep_cell_point_segment((-1,)),
                 ValueError,
                 "non-negative",
                 id="negative-sweep-coordinate",
@@ -799,219 +801,227 @@ class TestManagedPayloadValidation:
             factory()
 
 
-class TestManagedRetryClaims:
+class TestEvaluationPointRetryClaims:
     def test_child_exports_preseal_snapshot_while_parent_is_open(self, monkeypatch):
         operation_brokers = []
         lifecycle_pairs = []
-        original_publish = broker_mod._AutomaticKeyBroker._publish_managed_effects
+        original_publish = (
+            evaluation_keys_mod._AutomaticKeyBroker._publish_effects_to_evaluation_point
+        )
 
         def observe_publish(broker, effects):
-            if broker._managed_attempt is not None:
+            if broker._evaluation_point_attempt is not None:
                 lifecycle_pairs.append(
                     (
                         broker._lifecycle,
-                        broker._managed_attempt.parent_broker._lifecycle,
+                        broker._evaluation_point_attempt.parent_broker._lifecycle,
                         effects,
                     )
                 )
             return original_publish(broker, effects)
 
         monkeypatch.setattr(
-            broker_mod._AutomaticKeyBroker,
-            "_publish_managed_effects",
+            evaluation_keys_mod._AutomaticKeyBroker,
+            "_publish_effects_to_evaluation_point",
             observe_publish,
         )
 
         def claim_inside_operation():
-            with broker_mod._managed_stochastic_scope() as operation_broker:
+            with evaluation_keys_mod._operation_stochastic_scope() as operation_broker:
                 operation_brokers.append(operation_broker)
                 _claim_automatic_words()
 
         request = make_request(calls=[{}], func=claim_inside_operation)
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope():
             execution_mod.execute_many(request)
 
         assert len(operation_brokers) == 1
         assert len(lifecycle_pairs) == 1
         child_status, parent_status, effects = lifecycle_pairs[0]
-        assert child_status is broker_mod._BrokerLifecycle.FINALIZING
-        assert parent_status is broker_mod._BrokerLifecycle.OPEN
+        assert child_status is evaluation_keys_mod._BrokerLifecycle.FINALIZING
+        assert parent_status is evaluation_keys_mod._BrokerLifecycle.OPEN
         assert len(effects) == 1
-        assert operation_brokers[0]._lifecycle is broker_mod._BrokerLifecycle.SEALED
+        assert operation_brokers[0]._lifecycle is evaluation_keys_mod._BrokerLifecycle.SEALED
         with pytest.raises(RuntimeError, match="finalizing"):
-            operation_brokers[0]._publish_managed_effects(effects)
+            operation_brokers[0]._publish_effects_to_evaluation_point(effects)
 
     def test_failed_operation_scope_seals_without_publishing_effects(self):
         operation_brokers = []
 
         def fail_after_claim():
-            with broker_mod._managed_stochastic_scope() as operation_broker:
+            with evaluation_keys_mod._operation_stochastic_scope() as operation_broker:
                 operation_brokers.append(operation_broker)
                 _claim_automatic_words()
                 raise RuntimeError("operation failed")
 
         request = make_request(calls=[{}], func=fail_after_claim)
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
             with pytest.raises(RuntimeError, match="operation failed"):
                 execution_mod.execute_many(request)
             assert parent._effects_by_identity == {}
 
         assert len(operation_brokers) == 1
-        assert operation_brokers[0]._lifecycle is broker_mod._BrokerLifecycle.SEALED
+        assert operation_brokers[0]._lifecycle is evaluation_keys_mod._BrokerLifecycle.SEALED
 
-    def test_managed_operation_broker_closes_before_publishing_effects(self):
+    def test_operation_broker_in_an_evaluation_point_closes_before_publishing_effects(self):
         operation_brokers = []
 
         def leave_nested_item_unjoined():
-            with broker_mod._managed_stochastic_scope() as operation_broker:
+            with evaluation_keys_mod._operation_stochastic_scope() as operation_broker:
                 operation_brokers.append(operation_broker)
                 _claim_automatic_words()
                 nested_request = make_request(calls=[{}], func=lambda: None)
-                operation_broker.register_managed_work_items(nested_request.work_items)
+                operation_broker.register_evaluation_points(nested_request.evaluation_points)
 
         request = make_request(calls=[{}], func=leave_nested_item_unjoined)
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
-            with pytest.raises(RuntimeError, match="before all managed work items join"):
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
+            with pytest.raises(RuntimeError, match="before all evaluation points join"):
                 execution_mod.execute_many(request)
 
             assert parent._effects_by_identity == {}
 
         assert len(operation_brokers) == 1
 
-    def test_successful_managed_operation_broker_is_sealed(self):
+    def test_successful_operation_broker_in_an_evaluation_point_is_sealed(self):
         operation_brokers = []
 
         def capture_operation_broker():
-            with broker_mod._managed_stochastic_scope() as operation_broker:
+            with evaluation_keys_mod._operation_stochastic_scope() as operation_broker:
                 operation_brokers.append(operation_broker)
 
         request = make_request(calls=[{}], func=capture_operation_broker)
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope():
             execution_mod.execute_many(request)
 
         assert len(operation_brokers) == 1
-        assert operation_brokers[0]._lifecycle is broker_mod._BrokerLifecycle.SEALED
+        assert operation_brokers[0]._lifecycle is evaluation_keys_mod._BrokerLifecycle.SEALED
 
     def test_successful_effects_require_the_active_claiming_attempt(self):
         request = make_request(calls=[{}], func=lambda: None)
-        item = request.work_items[0]
-        claimed = make_managed_effect()
+        evaluation_point = request.evaluation_points[0]
+        claimed = make_effect_claim()
         unclaimed = replace(
             claimed,
             stochastic_source_id=("source-group", 1),
         )
 
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
-            parent.register_managed_work_items(request.work_items)
-            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
-            parent.begin_managed_attempt(attempt, item.frame)
-            parent.claim_managed_effect(
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
+            parent.register_evaluation_points(request.evaluation_points)
+            attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
+                evaluation_point.frame.token
+            )
+            parent.begin_evaluation_point_attempt(attempt, evaluation_point.frame)
+            parent.claim_evaluation_point_effect(
                 claimed,
-                frame=item.frame,
+                frame=evaluation_point.frame,
                 attempt=attempt,
             )
-            stale_attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+            stale_attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
+                evaluation_point.frame.token
+            )
 
             with pytest.raises(RuntimeError, match="active attempt"):
-                parent.accept_successful_managed_effects(
+                parent.accept_successful_evaluation_point_effects(
                     (claimed,),
-                    frame=item.frame,
+                    frame=evaluation_point.frame,
                     attempt=stale_attempt,
                 )
             assert parent._effects_by_identity == {}
 
             with pytest.raises(RuntimeError, match="was not claimed"):
-                parent.accept_successful_managed_effects(
+                parent.accept_successful_evaluation_point_effects(
                     (unclaimed,),
-                    frame=item.frame,
+                    frame=evaluation_point.frame,
                     attempt=attempt,
                 )
             assert parent._effects_by_identity == {}
 
-            parent.accept_successful_managed_effects(
+            parent.accept_successful_evaluation_point_effects(
                 (claimed,),
-                frame=item.frame,
+                frame=evaluation_point.frame,
                 attempt=attempt,
             )
-            parent.finish_managed_attempt(attempt)
+            parent.finish_evaluation_point_attempt(attempt)
 
         assert tuple(parent._effects_by_identity.values()) == (claimed,)
 
     def test_sealed_parent_rejects_successful_effect_injection(self):
         request = make_request(calls=[{}], func=lambda: None)
-        item = request.work_items[0]
-        effect = make_managed_effect()
-        attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+        evaluation_point = request.evaluation_points[0]
+        effect = make_effect_claim()
+        attempt = evaluation_keys_mod.EvaluationPointAttempt.create(evaluation_point.frame.token)
 
         with workflow_run(seed=17):
-            with broker_mod._function_stochastic_scope() as parent:
-                parent.register_managed_work_items(request.work_items)
-                parent.begin_managed_attempt(attempt, item.frame)
-                parent.claim_managed_effect(
+            with evaluation_keys_mod._function_stochastic_scope() as parent:
+                parent.register_evaluation_points(request.evaluation_points)
+                parent.begin_evaluation_point_attempt(attempt, evaluation_point.frame)
+                parent.claim_evaluation_point_effect(
                     effect,
-                    frame=item.frame,
+                    frame=evaluation_point.frame,
                     attempt=attempt,
                 )
-                parent.finish_managed_attempt(attempt)
+                parent.finish_evaluation_point_attempt(attempt)
 
             with pytest.raises(RuntimeError, match="sealed"):
-                parent.accept_successful_managed_effects(
+                parent.accept_successful_evaluation_point_effects(
                     (effect,),
-                    frame=item.frame,
+                    frame=evaluation_point.frame,
                     attempt=attempt,
                 )
 
         assert parent._effects_by_identity == {}
 
-    def test_same_work_item_token_retries_the_same_child_claim(self):
+    def test_same_evaluation_point_token_retries_the_same_child_claim(self):
         request = make_request(calls=[{}], func=_claim_automatic_words)
 
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
             first = execution_mod.execute_many(request)[0]
             second = execution_mod.execute_many(request)[0]
 
-            state = parent._managed_claims.by_unit[request.work_items[0].frame.unit_segment]
+            state = parent._evaluation_point_claims.by_point_segment[
+                request.evaluation_points[0].frame.point_segment
+            ]
             occurrence_path = state.child_invocations[0].occurrence_path
 
         assert first == second
         assert occurrence_path == (
             ("invocation", 0),
-            request.work_items[0].frame.unit_segment,
+            request.evaluation_points[0].frame.point_segment,
             ("child", 0),
         )
 
-    def test_different_token_cannot_reuse_a_managed_unit(self):
+    def test_different_token_cannot_reuse_an_evaluation_point(self):
         first_request = make_request(calls=[{}], func=lambda: None)
         second_request = make_request(calls=[{}], func=lambda: None)
 
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope():
             execution_mod.execute_many(first_request)
             with pytest.raises(RuntimeError, match="different token"):
                 execution_mod.execute_many(second_request)
 
     def test_same_attempt_cannot_enter_twice(self):
         request = make_request(calls=[{}], func=lambda: None)
-        item = request.work_items[0]
-        attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+        evaluation_point = request.evaluation_points[0]
+        attempt = evaluation_keys_mod.EvaluationPointAttempt.create(evaluation_point.frame.token)
 
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
-            parent.register_managed_work_items(request.work_items)
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
+            parent.register_evaluation_points(request.evaluation_points)
             root_frame = context_mod._capture_active_workflow_frame()
             assert root_frame is not None
             with (
-                context_mod._managed_work_item_scope(
+                context_mod._evaluation_point_frame_scope(
                     root_frame,
-                    item.frame.unit_segment,
+                    evaluation_point.frame.point_segment,
                 ),
-                broker_mod._managed_work_item_stochastic_scope(
+                evaluation_keys_mod._evaluation_point_stochastic_scope(
                     parent,
-                    item.frame,
+                    evaluation_point.frame,
                     attempt=attempt,
                 ),
                 pytest.raises(RuntimeError, match="active attempt"),
-                broker_mod._managed_work_item_stochastic_scope(
+                evaluation_keys_mod._evaluation_point_stochastic_scope(
                     parent,
-                    item.frame,
+                    evaluation_point.frame,
                     attempt=attempt,
                 ),
             ):
@@ -1024,7 +1034,7 @@ class TestManagedRetryClaims:
             monkeypatch.setattr(execution_mod, "flow", fake_flow)
 
         def duplicate_effect_claim():
-            with broker_mod._managed_stochastic_scope():
+            with evaluation_keys_mod._operation_stochastic_scope():
                 _claim_automatic_words()
                 _claim_automatic_words()
 
@@ -1035,7 +1045,7 @@ class TestManagedRetryClaims:
         )
         with (
             workflow_run(seed=17),
-            broker_mod._function_stochastic_scope(),
+            evaluation_keys_mod._function_stochastic_scope(),
             pytest.raises(RuntimeError, match="duplicated a stochastic effect claim"),
         ):
             execution_mod.execute_many(request)
@@ -1047,13 +1057,13 @@ class TestManagedRetryClaims:
             return _claim_automatic_words() if state["random"] else None
 
         request = make_request(calls=[{}], func=maybe_claim)
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope():
             assert execution_mod.execute_many(request) == [None]
             state["random"] = True
             after_deterministic = execution_mod.execute_many(request)[0]
 
         baseline = make_request(calls=[{}], func=_claim_automatic_words)
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope():
             first_child = execution_mod.execute_many(baseline)[0]
 
         assert after_deterministic == first_child
@@ -1069,7 +1079,7 @@ class TestManagedRetryClaims:
             return words
 
         request = make_request(calls=[{}], func=fail_once_after_claim)
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope():
             with pytest.raises(RuntimeError, match="retry me"):
                 execution_mod.execute_many(request)
             retried = execution_mod.execute_many(request)[0]
@@ -1088,7 +1098,7 @@ class TestManagedRetryClaims:
             return words
 
         request = make_request(calls=[{}], func=fail_once_after_nested_claim)
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope():
             with pytest.raises(RuntimeError, match="retry me"):
                 execution_mod.execute_many(request)
             retried = execution_mod.execute_many(request)[0]
@@ -1106,12 +1116,12 @@ class TestManagedRetryClaims:
             return 1
 
         request = make_request(calls=[{}], func=conditional_attempt)
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope():
             with pytest.raises(RuntimeError, match="retry me"):
                 execution_mod.execute_many(request)
             state.update(claim=False, fail=False)
             assert execution_mod.execute_many(request) == [1]
-            snapshot = broker_mod._snapshot_active_recipe_state()
+            snapshot = evaluation_keys_mod._snapshot_active_recipe_state()
 
         assert snapshot is None
 
@@ -1131,9 +1141,9 @@ class TestManagedRetryClaims:
             return 1
 
         request = make_request(calls=[{}], func=catch_nested_failure)
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope():
             assert execution_mod.execute_many(request) == [1]
-            snapshot = broker_mod._snapshot_active_recipe_state()
+            snapshot = evaluation_keys_mod._snapshot_active_recipe_state()
 
         assert snapshot is None
 
@@ -1144,89 +1154,93 @@ class TestManagedRetryClaims:
             return value
 
         request = make_request(calls=[{"value": 1}, {"value": 2}], func=fail)
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
             with pytest.raises(RuntimeError, match="stop"):
                 execution_mod.execute_many(request)
-            parent.assert_managed_items_joined(request.work_items)
+            parent.assert_evaluation_points_joined(request.evaluation_points)
 
     def test_cancelled_item_cannot_start_later(self):
         request = make_request(calls=[{}], func=lambda: None)
-        item = request.work_items[0]
-        attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+        evaluation_point = request.evaluation_points[0]
+        attempt = evaluation_keys_mod.EvaluationPointAttempt.create(evaluation_point.frame.token)
 
         with workflow_run(seed=17):
-            parent = broker_mod._AutomaticKeyBroker(
+            parent = evaluation_keys_mod._AutomaticKeyBroker(
                 "invocation",
                 _frame=context_mod._capture_active_workflow_frame(),
             )
-            parent.register_managed_work_items(request.work_items)
-            parent.cancel_unstarted_managed_items(request.work_items)
-            state = parent._managed_claims.by_token[item.frame.token]
-            assert state.status is broker_mod._ManagedUnitStatus.CANCELLED
+            parent.register_evaluation_points(request.evaluation_points)
+            parent.cancel_unstarted_evaluation_points(request.evaluation_points)
+            state = parent._evaluation_point_claims.by_token[evaluation_point.frame.token]
+            assert state.status is evaluation_keys_mod._EvaluationPointStatus.CANCELLED
 
             with pytest.raises(RuntimeError, match="cancelled"):
-                parent.begin_managed_attempt(attempt, item.frame)
+                parent.begin_evaluation_point_attempt(attempt, evaluation_point.frame)
 
-    def test_managed_unit_uses_explicit_lifecycle_status(self):
+    def test_evaluation_point_uses_explicit_lifecycle_status(self):
         request = make_request(calls=[{}], func=lambda: None)
-        item = request.work_items[0]
+        evaluation_point = request.evaluation_points[0]
 
         with workflow_run(seed=17):
-            parent = broker_mod._AutomaticKeyBroker(
+            parent = evaluation_keys_mod._AutomaticKeyBroker(
                 "invocation",
                 _frame=context_mod._capture_active_workflow_frame(),
             )
-            parent.register_managed_work_items(request.work_items)
-            state = parent._managed_claims.by_token[item.frame.token]
-            assert state.status is broker_mod._ManagedUnitStatus.ISSUED
+            parent.register_evaluation_points(request.evaluation_points)
+            state = parent._evaluation_point_claims.by_token[evaluation_point.frame.token]
+            assert state.status is evaluation_keys_mod._EvaluationPointStatus.ISSUED
 
-            first_attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
-            parent.begin_managed_attempt(first_attempt, item.frame)
-            assert state.status is broker_mod._ManagedUnitStatus.ACTIVE
+            first_attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
+                evaluation_point.frame.token
+            )
+            parent.begin_evaluation_point_attempt(first_attempt, evaluation_point.frame)
+            assert state.status is evaluation_keys_mod._EvaluationPointStatus.ACTIVE
             assert state.active_attempt == first_attempt.attempt_token
 
-            parent.finish_managed_attempt(first_attempt)
-            assert state.status is broker_mod._ManagedUnitStatus.JOINED
+            parent.finish_evaluation_point_attempt(first_attempt)
+            assert state.status is evaluation_keys_mod._EvaluationPointStatus.JOINED
             assert state.active_attempt is None
             assert state.seen_attempts == {first_attempt.attempt_token}
 
-            retry_attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
-            parent.begin_managed_attempt(retry_attempt, item.frame)
-            assert state.status is broker_mod._ManagedUnitStatus.ACTIVE
+            retry_attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
+                evaluation_point.frame.token
+            )
+            parent.begin_evaluation_point_attempt(retry_attempt, evaluation_point.frame)
+            assert state.status is evaluation_keys_mod._EvaluationPointStatus.ACTIVE
             assert state.active_attempt == retry_attempt.attempt_token
             assert state.seen_attempts == {
                 first_attempt.attempt_token,
                 retry_attempt.attempt_token,
             }
-            parent.finish_managed_attempt(retry_attempt)
-            assert state.status is broker_mod._ManagedUnitStatus.JOINED
+            parent.finish_evaluation_point_attempt(retry_attempt)
+            assert state.status is evaluation_keys_mod._EvaluationPointStatus.JOINED
 
     def test_cancel_and_begin_race_has_one_terminal_outcome(self):
         request = make_request(calls=[{}], func=lambda: None)
-        item = request.work_items[0]
-        attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+        evaluation_point = request.evaluation_points[0]
+        attempt = evaluation_keys_mod.EvaluationPointAttempt.create(evaluation_point.frame.token)
         barrier = Barrier(2)
 
         with workflow_run(seed=17):
-            parent = broker_mod._AutomaticKeyBroker(
+            parent = evaluation_keys_mod._AutomaticKeyBroker(
                 "invocation",
                 _frame=context_mod._capture_active_workflow_frame(),
             )
-            parent.register_managed_work_items(request.work_items)
+            parent.register_evaluation_points(request.evaluation_points)
 
             def cancel():
                 barrier.wait()
-                parent.cancel_unstarted_managed_items(request.work_items)
+                parent.cancel_unstarted_evaluation_points(request.evaluation_points)
 
             def begin():
                 barrier.wait()
                 try:
-                    parent.begin_managed_attempt(attempt, item.frame)
+                    parent.begin_evaluation_point_attempt(attempt, evaluation_point.frame)
                 except RuntimeError as error:
                     assert "cancelled" in str(error)
-                    return broker_mod._ManagedUnitStatus.CANCELLED
-                parent.finish_managed_attempt(attempt)
-                return broker_mod._ManagedUnitStatus.JOINED
+                    return evaluation_keys_mod._EvaluationPointStatus.CANCELLED
+                parent.finish_evaluation_point_attempt(attempt)
+                return evaluation_keys_mod._EvaluationPointStatus.JOINED
 
             with ThreadPoolExecutor(max_workers=2) as pool:
                 cancel_future = pool.submit(cancel)
@@ -1234,43 +1248,45 @@ class TestManagedRetryClaims:
                 cancel_future.result()
                 outcome = begin_future.result()
 
-            state = parent._managed_claims.by_token[item.frame.token]
+            state = parent._evaluation_point_claims.by_token[evaluation_point.frame.token]
 
         assert state.status is outcome
 
     def test_function_scope_seals_its_broker(self):
         request = make_request(calls=[{}], func=lambda: None)
 
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
             execution_mod.execute_many(request)
 
         with pytest.raises(RuntimeError, match="sealed"):
-            parent.register_managed_work_items(request.work_items)
+            parent.register_evaluation_points(request.evaluation_points)
         with pytest.raises(RuntimeError, match="sealed"):
-            parent.begin_managed_attempt(
-                managed_mod.ManagedAttemptState.create(request.work_items[0].frame.token),
-                request.work_items[0].frame,
+            parent.begin_evaluation_point_attempt(
+                evaluation_keys_mod.EvaluationPointAttempt.create(
+                    request.evaluation_points[0].frame.token
+                ),
+                request.evaluation_points[0].frame,
             )
 
     def test_frame_mismatch_fails_before_attempt_reservation(self):
         request = make_request(calls=[{}], func=lambda: None)
-        item = request.work_items[0]
-        attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
-        wrong_frame = managed_mod.ManagedUnitFrame(
-            unit_segment=managed_mod.sweep_unit_segment((0,)),
-            token=item.frame.token,
+        evaluation_point = request.evaluation_points[0]
+        attempt = evaluation_keys_mod.EvaluationPointAttempt.create(evaluation_point.frame.token)
+        wrong_frame = evaluation_keys_mod.EvaluationPointFrame(
+            point_segment=evaluation_keys_mod.sweep_cell_point_segment((0,)),
+            token=evaluation_point.frame.token,
         )
 
         with workflow_run(seed=17):
-            parent = broker_mod._AutomaticKeyBroker(
+            parent = evaluation_keys_mod._AutomaticKeyBroker(
                 "invocation",
                 _frame=context_mod._capture_active_workflow_frame(),
             )
-            parent.register_managed_work_items(request.work_items)
+            parent.register_evaluation_points(request.evaluation_points)
 
             with (
                 pytest.raises(RuntimeError, match="frame does not match"),
-                broker_mod._managed_work_item_stochastic_scope(
+                evaluation_keys_mod._evaluation_point_stochastic_scope(
                     parent,
                     wrong_frame,
                     attempt=attempt,
@@ -1279,109 +1295,111 @@ class TestManagedRetryClaims:
                 pass
 
             with (
-                context_mod._managed_work_item_scope(
+                context_mod._evaluation_point_frame_scope(
                     context_mod._capture_active_workflow_frame(),
-                    item.frame.unit_segment,
+                    evaluation_point.frame.point_segment,
                 ),
-                broker_mod._managed_work_item_stochastic_scope(
+                evaluation_keys_mod._evaluation_point_stochastic_scope(
                     parent,
-                    item.frame,
+                    evaluation_point.frame,
                     attempt=attempt,
                 ),
             ):
                 pass
 
-    def test_missing_managed_frame_does_not_reserve_attempt(self):
+    def test_missing_evaluation_point_frame_does_not_reserve_attempt(self):
         request = make_request(calls=[{}], func=lambda: None)
-        item = request.work_items[0]
+        evaluation_point = request.evaluation_points[0]
 
-        parent = broker_mod._AutomaticKeyBroker("invocation")
-        parent.register_managed_work_items(request.work_items)
+        parent = evaluation_keys_mod._AutomaticKeyBroker("invocation")
+        parent.register_evaluation_points(request.evaluation_points)
         with (
             pytest.raises(RuntimeError, match="active workflow frame"),
-            broker_mod._managed_work_item_stochastic_scope(parent, item.frame),
+            evaluation_keys_mod._evaluation_point_stochastic_scope(parent, evaluation_point.frame),
         ):
             pass
 
-        parent.cancel_unstarted_managed_items(request.work_items)
-        parent.assert_managed_items_joined(request.work_items)
+        parent.cancel_unstarted_evaluation_points(request.evaluation_points)
+        parent.assert_evaluation_points_joined(request.evaluation_points)
 
     def test_context_installation_failure_releases_attempt(self, monkeypatch):
         request = make_request(calls=[{}], func=lambda: None)
-        item = request.work_items[0]
+        evaluation_point = request.evaluation_points[0]
 
         class BrokenContextVar:
             def set(self, value):
                 del value
                 raise RuntimeError("context installation failed")
 
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
-            parent.register_managed_work_items(request.work_items)
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
+            parent.register_evaluation_points(request.evaluation_points)
             root_frame = context_mod._capture_active_workflow_frame()
             assert root_frame is not None
-            with context_mod._managed_work_item_scope(
+            with context_mod._evaluation_point_frame_scope(
                 root_frame,
-                item.frame.unit_segment,
+                evaluation_point.frame.point_segment,
             ):
                 monkeypatch.setattr(
-                    broker_mod,
-                    "_ACTIVE_MANAGED_ATTEMPT",
+                    evaluation_keys_mod,
+                    "_ACTIVE_EVALUATION_POINT_ATTEMPT",
                     BrokenContextVar(),
                 )
                 with (
                     pytest.raises(RuntimeError, match="context installation failed"),
-                    broker_mod._managed_work_item_stochastic_scope(parent, item.frame),
+                    evaluation_keys_mod._evaluation_point_stochastic_scope(
+                        parent, evaluation_point.frame
+                    ),
                 ):
                     pass
 
-            parent.assert_managed_items_joined(request.work_items)
+            parent.assert_evaluation_points_joined(request.evaluation_points)
 
     def test_remote_attempt_is_reserved_before_submission(self):
         request = make_request(calls=[{}], func=lambda: None)
-        item = request.work_items[0]
-        first = managed_mod.ManagedAttemptState.create(item.frame.token)
-        second = managed_mod.ManagedAttemptState.create(item.frame.token)
+        evaluation_point = request.evaluation_points[0]
+        first = evaluation_keys_mod.EvaluationPointAttempt.create(evaluation_point.frame.token)
+        second = evaluation_keys_mod.EvaluationPointAttempt.create(evaluation_point.frame.token)
 
         with workflow_run(seed=17):
-            parent = broker_mod._AutomaticKeyBroker(
+            parent = evaluation_keys_mod._AutomaticKeyBroker(
                 "invocation",
                 _frame=context_mod._capture_active_workflow_frame(),
             )
-            parent.register_managed_work_items(request.work_items)
+            parent.register_evaluation_points(request.evaluation_points)
 
             assert (
-                parent.reserve_remote_managed_attempt(
-                    item.frame,
+                parent.reserve_remote_evaluation_point_attempt(
+                    evaluation_point.frame,
                     first,
                     parent_authority=False,
                 )
                 is None
             )
             with pytest.raises(RuntimeError, match="active attempt"):
-                parent.reserve_remote_managed_attempt(
-                    item.frame,
+                parent.reserve_remote_evaluation_point_attempt(
+                    evaluation_point.frame,
                     second,
                     parent_authority=False,
                 )
 
-            parent.abort_remote_managed_attempt(first)
+            parent.abort_remote_evaluation_point_attempt(first)
             assert (
-                parent.reserve_remote_managed_attempt(
-                    item.frame,
+                parent.reserve_remote_evaluation_point_attempt(
+                    evaluation_point.frame,
                     second,
                     parent_authority=False,
                 )
                 is None
             )
-            parent.abort_remote_managed_attempt(second)
-            parent.assert_managed_items_joined(request.work_items)
+            parent.abort_remote_evaluation_point_attempt(second)
+            parent.assert_evaluation_points_joined(request.evaluation_points)
 
 
 class TestRemoteReportTransactions:
     def test_worker_rejects_a_transported_frame_root_mismatch(self):
-        frame = make_managed_frame()
-        attempt = make_managed_attempt()
-        envelope = managed_mod.ManagedParentEnvelope(
+        frame = make_evaluation_point_frame()
+        attempt = make_evaluation_point_attempt()
+        envelope = evaluation_keys_mod.EvaluationPointParentEnvelope(
             root_words=(0, 17),
             parent_occurrence_path=(("invocation", 0),),
             frame=frame,
@@ -1389,36 +1407,36 @@ class TestRemoteReportTransactions:
         )
 
         with (
-            context_mod._transported_workflow_frame((0, 99), ProvenanceMode.FULL),
+            context_mod._transported_workflow_frame((0, 99)),
             pytest.raises(RuntimeError, match="transport envelope"),
-            broker_mod._remote_managed_work_item_stochastic_scope(envelope, attempt),
+            evaluation_keys_mod._remote_evaluation_point_stochastic_scope(envelope, attempt),
         ):
             pass
 
     def test_sealed_parent_rejects_remote_report(self):
         request = make_request(calls=[{}], func=lambda: None)
-        item = request.work_items[0]
-        attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
-        report = managed_mod.ManagedClaimReport(
-            frame=item.frame,
+        evaluation_point = request.evaluation_points[0]
+        attempt = evaluation_keys_mod.EvaluationPointAttempt.create(evaluation_point.frame.token)
+        report = evaluation_keys_mod.EvaluationPointClaimReport(
+            frame=evaluation_point.frame,
             attempt=attempt,
             child_count=0,
         )
 
         with workflow_run(seed=17):
-            with broker_mod._function_stochastic_scope() as parent:
-                parent.register_managed_work_items(request.work_items)
-                parent.reserve_remote_managed_attempt(
-                    item.frame,
+            with evaluation_keys_mod._function_stochastic_scope() as parent:
+                parent.register_evaluation_points(request.evaluation_points)
+                parent.reserve_remote_evaluation_point_attempt(
+                    evaluation_point.frame,
                     attempt,
                     parent_authority=False,
                 )
-                parent.abort_remote_managed_attempt(attempt)
+                parent.abort_remote_evaluation_point_attempt(attempt)
 
             with pytest.raises(RuntimeError, match="sealed"):
                 parent.accept_remote_claim_report(report)
 
-        state = parent._managed_claims.by_token[item.frame.token]
+        state = parent._evaluation_point_claims.by_token[evaluation_point.frame.token]
         assert state.effect_claims_by_identity == {}
         assert parent._effects_by_identity == {}
 
@@ -1435,33 +1453,37 @@ class TestRemoteReportTransactions:
     )
     def test_invalid_remote_report_leaves_parent_ledgers_unchanged(self, violation):
         request = make_request(calls=[{}], func=lambda: None)
-        item = request.work_items[0]
+        evaluation_point = request.evaluation_points[0]
 
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
-            parent.register_managed_work_items(request.work_items)
-            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
-            envelope = parent.reserve_remote_managed_attempt(
-                item.frame,
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
+            parent.register_evaluation_points(request.evaluation_points)
+            attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
+                evaluation_point.frame.token
+            )
+            envelope = parent.reserve_remote_evaluation_point_attempt(
+                evaluation_point.frame,
                 attempt,
                 parent_authority=True,
             )
             assert envelope is not None
             report_attempt = attempt
-            report_frame = item.frame
+            report_frame = evaluation_point.frame
             child_segment = ("child", 0)
             parent_path = None
-            unit_segment = None
+            point_segment = None
             if violation == "attempt":
-                report_attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+                report_attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
+                    evaluation_point.frame.token
+                )
             elif violation == "frame":
-                report_frame = managed_mod.ManagedUnitFrame(
-                    unit_segment=managed_mod.sweep_unit_segment((9,)),
-                    token=item.frame.token,
+                report_frame = evaluation_keys_mod.EvaluationPointFrame(
+                    point_segment=evaluation_keys_mod.sweep_cell_point_segment((9,)),
+                    token=evaluation_point.frame.token,
                 )
             elif violation == "prefix":
                 parent_path = (("invocation", 9),)
             elif violation == "unit":
-                unit_segment = managed_mod.sweep_unit_segment((9,))
+                point_segment = evaluation_keys_mod.sweep_cell_point_segment((9,))
             elif violation == "child-segment":
                 child_segment = ("scope", 0)
             elif violation == "child-range":
@@ -1471,16 +1493,16 @@ class TestRemoteReportTransactions:
                 envelope,
                 child_segment=child_segment,
                 parent_path=parent_path,
-                unit_segment=unit_segment,
+                point_segment=point_segment,
             )
-            report = managed_mod.ManagedClaimReport(
+            report = evaluation_keys_mod.EvaluationPointClaimReport(
                 frame=report_frame,
                 attempt=report_attempt,
                 child_count=1,
                 effects=(effect,),
                 successful_effects=(effect,),
             )
-            state = parent._managed_claims.by_token[item.frame.token]
+            state = parent._evaluation_point_claims.by_token[evaluation_point.frame.token]
             before_seen = set(state.seen_attempts)
 
             with pytest.raises(RuntimeError, match=r"remote|occurrence|child"):
@@ -1491,26 +1513,28 @@ class TestRemoteReportTransactions:
             assert parent._effects_by_identity == {}
             assert state.seen_attempts == before_seen
             assert state.active_attempt == attempt.attempt_token
-            parent.abort_remote_managed_attempt(attempt)
+            parent.abort_remote_evaluation_point_attempt(attempt)
 
     def test_rootless_probe_report_cannot_inject_claims(self):
         request = make_request(calls=[{}], func=lambda: None)
-        item = request.work_items[0]
+        evaluation_point = request.evaluation_points[0]
 
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
-            parent.register_managed_work_items(request.work_items)
-            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
+            parent.register_evaluation_points(request.evaluation_points)
+            attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
+                evaluation_point.frame.token
+            )
             assert (
-                parent.reserve_remote_managed_attempt(
-                    item.frame,
+                parent.reserve_remote_evaluation_point_attempt(
+                    evaluation_point.frame,
                     attempt,
                     parent_authority=False,
                 )
                 is None
             )
-            effect = make_managed_effect()
-            report = managed_mod.ManagedClaimReport(
-                frame=item.frame,
+            effect = make_effect_claim()
+            report = evaluation_keys_mod.EvaluationPointClaimReport(
+                frame=evaluation_point.frame,
                 attempt=attempt,
                 child_count=1,
                 effects=(effect,),
@@ -1519,11 +1543,11 @@ class TestRemoteReportTransactions:
             with pytest.raises(RuntimeError, match=r"rootless.*cannot report"):
                 parent.accept_remote_claim_report(report)
 
-            state = parent._managed_claims.by_token[item.frame.token]
+            state = parent._evaluation_point_claims.by_token[evaluation_point.frame.token]
             assert state.effect_claims_by_identity == {}
             assert state.child_invocations == []
             assert parent._effects_by_identity == {}
-            parent.abort_remote_managed_attempt(attempt)
+            parent.abort_remote_evaluation_point_attempt(attempt)
 
     @pytest.mark.parametrize(
         ("violation", "exception", "match"),
@@ -1537,7 +1561,7 @@ class TestRemoteReportTransactions:
             pytest.param(
                 "namespace",
                 RuntimeError,
-                "outside its managed unit namespace",
+                "outside its evaluation point namespace",
                 id="namespace",
             ),
             pytest.param(
@@ -1597,21 +1621,23 @@ class TestRemoteReportTransactions:
         match,
     ):
         request = make_request(calls=[{}], func=lambda: None)
-        item = request.work_items[0]
+        evaluation_point = request.evaluation_points[0]
 
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
-            parent.register_managed_work_items(request.work_items)
-            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
-            envelope = parent.reserve_remote_managed_attempt(
-                item.frame,
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
+            parent.register_evaluation_points(request.evaluation_points)
+            attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
+                evaluation_point.frame.token
+            )
+            envelope = parent.reserve_remote_evaluation_point_attempt(
+                evaluation_point.frame,
                 attempt,
                 parent_authority=True,
             )
             assert envelope is not None
             first = make_remote_effect(envelope, source_index=0)
             second = make_remote_effect(envelope, source_index=1)
-            report = managed_mod.ManagedClaimReport(
-                frame=item.frame,
+            report = evaluation_keys_mod.EvaluationPointClaimReport(
+                frame=evaluation_point.frame,
                 attempt=attempt,
                 child_count=1,
                 effects=(first, second),
@@ -1625,7 +1651,7 @@ class TestRemoteReportTransactions:
                 object.__setattr__(
                     first,
                     "occurrence_path",
-                    (("invocation", 99), item.frame.unit_segment, ("child", 0)),
+                    (("invocation", 99), evaluation_point.frame.point_segment, ("child", 0)),
                 )
             elif violation == "duplicate-identity":
                 object.__setattr__(report, "effects", (first, first))
@@ -1641,16 +1667,16 @@ class TestRemoteReportTransactions:
                 object.__setattr__(
                     report,
                     "frame",
-                    managed_mod.ManagedUnitFrame(
-                        unit_segment=managed_mod.sweep_unit_segment((9,)),
-                        token=item.frame.token,
+                    evaluation_keys_mod.EvaluationPointFrame(
+                        point_segment=evaluation_keys_mod.sweep_cell_point_segment((9,)),
+                        token=evaluation_point.frame.token,
                     ),
                 )
             elif violation == "attempt":
                 object.__setattr__(
                     report,
                     "attempt",
-                    managed_mod.ManagedAttemptState.create(item.frame.token),
+                    evaluation_keys_mod.EvaluationPointAttempt.create(evaluation_point.frame.token),
                 )
             elif violation == "child-count":
                 object.__setattr__(report, "child_count", -1)
@@ -1659,8 +1685,8 @@ class TestRemoteReportTransactions:
             else:
                 object.__setattr__(second, "stochastic_source_id", ["invalid"])
 
-            state = parent._managed_claims.by_token[item.frame.token]
-            before_managed = (
+            state = parent._evaluation_point_claims.by_token[evaluation_point.frame.token]
+            before_evaluation_point = (
                 dict(state.effect_claims_by_identity),
                 tuple(state.child_invocations),
                 set(state.active_effect_identities),
@@ -1682,18 +1708,18 @@ class TestRemoteReportTransactions:
                 state.active_transport,
                 state.active_parent_occurrence_path,
                 state.status,
-            ) == before_managed
+            ) == before_evaluation_point
             assert parent._effects_by_identity == before_recipe
-            parent.abort_remote_managed_attempt(attempt)
+            parent.abort_remote_evaluation_point_attempt(attempt)
 
     def test_report_construction_revalidates_existing_effect_instances(self):
-        frame = make_managed_frame()
-        attempt = make_managed_attempt()
-        effect = make_managed_effect()
+        frame = make_evaluation_point_frame()
+        attempt = make_evaluation_point_attempt()
+        effect = make_effect_claim()
         object.__setattr__(effect, "sample_shape", (-1,))
 
         with pytest.raises(ValueError, match="sample shape dimensions must be non-negative"):
-            managed_mod.ManagedClaimReport(
+            evaluation_keys_mod.EvaluationPointClaimReport(
                 frame=frame,
                 attempt=attempt,
                 child_count=0,
@@ -1702,20 +1728,22 @@ class TestRemoteReportTransactions:
 
     def test_pickled_remote_report_is_revalidated_and_committed(self):
         request = make_request(calls=[{}], func=lambda: None)
-        item = request.work_items[0]
+        evaluation_point = request.evaluation_points[0]
 
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
-            parent.register_managed_work_items(request.work_items)
-            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
-            envelope = parent.reserve_remote_managed_attempt(
-                item.frame,
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
+            parent.register_evaluation_points(request.evaluation_points)
+            attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
+                evaluation_point.frame.token
+            )
+            envelope = parent.reserve_remote_evaluation_point_attempt(
+                evaluation_point.frame,
                 attempt,
                 parent_authority=True,
             )
             assert envelope is not None
             effect = make_remote_effect(envelope)
-            report = managed_mod.ManagedClaimReport(
-                frame=item.frame,
+            report = evaluation_keys_mod.EvaluationPointClaimReport(
+                frame=evaluation_point.frame,
                 attempt=attempt,
                 child_count=1,
                 effects=(effect,),
@@ -1725,20 +1753,22 @@ class TestRemoteReportTransactions:
             transported = pickle.loads(pickle.dumps(report))
             parent.accept_remote_claim_report(transported)
 
-            state = parent._managed_claims.by_token[item.frame.token]
-            assert state.status is broker_mod._ManagedUnitStatus.JOINED
+            state = parent._evaluation_point_claims.by_token[evaluation_point.frame.token]
+            assert state.status is evaluation_keys_mod._EvaluationPointStatus.JOINED
             assert tuple(state.effect_claims_by_identity.values()) == (effect,)
             assert tuple(parent._effects_by_identity.values()) == (effect,)
 
     def test_valid_remote_report_commits_all_ledgers_together(self):
         request = make_request(calls=[{}], func=lambda: None)
-        item = request.work_items[0]
+        evaluation_point = request.evaluation_points[0]
 
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
-            parent.register_managed_work_items(request.work_items)
-            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
-            envelope = parent.reserve_remote_managed_attempt(
-                item.frame,
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
+            parent.register_evaluation_points(request.evaluation_points)
+            attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
+                evaluation_point.frame.token
+            )
+            envelope = parent.reserve_remote_evaluation_point_attempt(
+                evaluation_point.frame,
                 attempt,
                 parent_authority=True,
             )
@@ -1747,8 +1777,8 @@ class TestRemoteReportTransactions:
                 make_remote_effect(envelope, source_index=0),
                 make_remote_effect(envelope, source_index=1),
             )
-            report = managed_mod.ManagedClaimReport(
-                frame=item.frame,
+            report = evaluation_keys_mod.EvaluationPointClaimReport(
+                frame=evaluation_point.frame,
                 attempt=attempt,
                 child_count=1,
                 effects=effects,
@@ -1757,8 +1787,8 @@ class TestRemoteReportTransactions:
 
             parent.accept_remote_claim_report(report)
 
-            state = parent._managed_claims.by_token[item.frame.token]
-            assert state.status is broker_mod._ManagedUnitStatus.JOINED
+            state = parent._evaluation_point_claims.by_token[evaluation_point.frame.token]
+            assert state.status is evaluation_keys_mod._EvaluationPointStatus.JOINED
             assert state.active_attempt is None
             assert len(state.effect_claims_by_identity) == 2
             assert len(state.child_invocations) == 1
@@ -1768,26 +1798,28 @@ class TestRemoteReportTransactions:
         with workflow_run(seed=17):
             recorded = sample(Normal("value", loc=0.0, scale=1.0))
         replay_state = replay_mod._validate_provenance(recorded.provenance)
-        expected = replay_state.expected_events[0].managed_effect()
+        expected = replay_state.expected_events[0].effect_claim()
         unexpected = replace(
             expected,
             stochastic_source_id=("source-group", 99),
         )
         request = make_request(calls=[{}], func=lambda: None)
-        item = request.work_items[0]
+        evaluation_point = request.evaluation_points[0]
 
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
             parent._replay_state = replay_state
-            parent.register_managed_work_items(request.work_items)
-            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
-            envelope = parent.reserve_remote_managed_attempt(
-                item.frame,
+            parent.register_evaluation_points(request.evaluation_points)
+            attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
+                evaluation_point.frame.token
+            )
+            envelope = parent.reserve_remote_evaluation_point_attempt(
+                evaluation_point.frame,
                 attempt,
                 parent_authority=True,
             )
             assert envelope is not None
-            report = managed_mod.ManagedClaimReport(
-                frame=item.frame,
+            report = evaluation_keys_mod.EvaluationPointClaimReport(
+                frame=evaluation_point.frame,
                 attempt=attempt,
                 child_count=1,
                 effects=(expected, unexpected),
@@ -1799,15 +1831,15 @@ class TestRemoteReportTransactions:
             ):
                 parent.accept_remote_claim_report(report)
 
-            state = parent._managed_claims.by_token[item.frame.token]
+            state = parent._evaluation_point_claims.by_token[evaluation_point.frame.token]
             assert state.effect_claims_by_identity == {}
             assert state.child_invocations == []
             assert parent._effects_by_identity == {}
             assert all(
-                claim.work_item_token is None and not claim.attempt_tokens
+                claim.evaluation_point_token is None and not claim.attempt_tokens
                 for claim in replay_state.claims.values()
             )
-            parent.abort_remote_managed_attempt(attempt)
+            parent.abort_remote_evaluation_point_attempt(attempt)
 
 
 class TestSequentialExecution:
@@ -1867,7 +1899,7 @@ class TestThreadExecution:
                 calls=[{"value": 0}, {"value": 1}],
                 func=func,
             )
-            with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+            with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope():
                 return execution_mod.execute_many(request)
 
         expected = run("sequential", claim_in_order)
@@ -1899,7 +1931,7 @@ class TestThreadExecution:
             execution_mod.execute_many(request)
 
 
-class TestManagedSubmissionGuards:
+class TestEvaluationPointSubmissionGuards:
     @pytest.mark.parametrize(
         "entry_name",
         ["thread", "map_task", "prefect_task", "prefect_flow"],
@@ -1910,7 +1942,7 @@ class TestManagedSubmissionGuards:
             pytest.param(
                 context_mod._workflow_probe,
                 context_mod._StochasticProbeSignal,
-                "managed submission",
+                "evaluation point submission",
                 id="probe",
             ),
             pytest.param(
@@ -2019,13 +2051,12 @@ class TestPrefectMapping:
         assert execution_mod.map_task(request) == [2, 3, 4]
 
     def test_prefect_worker_revalidates_pickled_payload_before_callable(self):
-        item = make_request(calls=[{"x": 1}]).work_items[0]
-        payload = managed_mod.ManagedPrefectPayload(
-            item=item,
-            attempt=managed_mod.ManagedAttemptState.create(item.frame.token),
-            provenance_mode=ProvenanceMode.FULL,
+        evaluation_point = make_request(calls=[{"x": 1}]).evaluation_points[0]
+        payload = evaluation_keys_mod.EvaluationPointPrefectPayload(
+            evaluation_point=evaluation_point,
+            attempt=evaluation_keys_mod.EvaluationPointAttempt.create(evaluation_point.frame.token),
         )
-        object.__setattr__(item, "values", (("x", 1), ("x", 2)))
+        object.__setattr__(evaluation_point, "arguments", (("x", 1), ("x", 2)))
         transported = pickle.loads(pickle.dumps(payload))
         func = Mock(return_value=2)
 
@@ -2034,50 +2065,57 @@ class TestPrefectMapping:
 
         func.assert_not_called()
 
-    def test_prefect_worker_uses_transported_provenance_mode(self):
-        item = make_request(calls=[{}], func=lambda: None).work_items[0]
-        payload = managed_mod.ManagedPrefectPayload(
-            item=item,
-            attempt=managed_mod.ManagedAttemptState.create(item.frame.token),
-            provenance_mode=ProvenanceMode.OFF,
+    @pytest.mark.parametrize("mode_source", ["block", "session snapshot"])
+    def test_a_prefect_worker_takes_the_provenance_mode_of_the_carried_context(self, mode_source):
+        evaluation_point = make_request(calls=[{}], func=lambda: None).evaluation_points[0]
+        payload = evaluation_keys_mod.EvaluationPointPrefectPayload(
+            evaluation_point=evaluation_point,
+            attempt=evaluation_keys_mod.EvaluationPointAttempt.create(evaluation_point.frame.token),
+        )
+        call_context = _CallContext().child_for_call(
+            entry_method_name="__call__",
+            function_label="body",
+            resolved_controls={},
+            session_config_values={"provenance": {"mode": ProvenanceMode.OFF}},
+        )
+        if mode_source == "block":
+            call_context = replace(call_context, session_config_values={}).with_config_block(
+                {"provenance": {"mode": ProvenanceMode.OFF}}
+            )
+        run_payload_under_call_context = _ContextBoundFunction(
+            partial(execution_mod._execute_prefect_payload, context_mod._active_provenance_mode),
+            call_context.evaluation_context(),
+        )
+        transported_run, transported_payload = pickle.loads(
+            pickle.dumps((run_payload_under_call_context, payload))
         )
 
-        outcome = execution_mod._execute_prefect_payload(
-            context_mod._active_provenance_mode,
-            pickle.loads(pickle.dumps(payload)),
-        )
+        # A fresh thread starts with no context, as a worker process does.
+        config.provenance.mode = ProvenanceMode.FULL
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            outcome = pool.submit(transported_run, transported_payload).result()
 
         assert outcome.error is None
-        assert outcome.value is ProvenanceMode.OFF
+        assert outcome.output is ProvenanceMode.OFF
 
-    def test_prefect_worker_rejects_invalid_transported_provenance_mode(self):
-        item = make_request(calls=[{}], func=lambda: None).work_items[0]
-        payload = managed_mod.ManagedPrefectPayload(
-            item=item,
-            attempt=managed_mod.ManagedAttemptState.create(item.frame.token),
-            provenance_mode=ProvenanceMode.FULL,
-        )
-        object.__setattr__(payload, "provenance_mode", "full")
-        transported = pickle.loads(pickle.dumps(payload))
-        func = Mock(return_value=None)
-
-        with pytest.raises(TypeError, match="require a provenance mode"):
-            execution_mod._execute_prefect_payload(func, transported)
-
-        func.assert_not_called()
+    def test_a_prefect_payload_carries_no_provenance_mode(self):
+        payload_field_names = {
+            payload_field.name
+            for payload_field in fields(evaluation_keys_mod.EvaluationPointPrefectPayload)
+        }
+        assert "provenance_mode" not in payload_field_names
 
     def test_prefect_worker_revalidates_nested_parent_authority_before_callable(self):
-        item = make_request(calls=[{"x": 1}]).work_items[0]
-        attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
-        effect = make_managed_effect()
-        payload = managed_mod.ManagedPrefectPayload(
-            item=item,
+        evaluation_point = make_request(calls=[{"x": 1}]).evaluation_points[0]
+        attempt = evaluation_keys_mod.EvaluationPointAttempt.create(evaluation_point.frame.token)
+        effect = make_effect_claim()
+        payload = evaluation_keys_mod.EvaluationPointPrefectPayload(
+            evaluation_point=evaluation_point,
             attempt=attempt,
-            provenance_mode=ProvenanceMode.FULL,
-            parent=managed_mod.ManagedParentEnvelope(
+            parent_envelope=evaluation_keys_mod.EvaluationPointParentEnvelope(
                 root_words=(0, 17),
                 parent_occurrence_path=(("invocation", 0),),
-                frame=item.frame,
+                frame=evaluation_point.frame,
                 attempt=attempt,
                 retry_effects=(effect,),
             ),
@@ -2105,7 +2143,7 @@ class TestPrefectMapping:
     )
     def test_parent_revalidates_pickled_outcome_against_payload(self, violation):
         request = make_request(calls=[{"x": 1}])
-        item = request.work_items[0]
+        evaluation_point = request.evaluation_points[0]
 
         class ReturningTask:
             def __init__(self, outcome):
@@ -2115,49 +2153,56 @@ class TestPrefectMapping:
                 assert kwargs_by_param["payload"]
                 return [FakeFuture(self.outcome)]
 
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
-            parent.register_managed_work_items(request.work_items)
-            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
-            envelope = parent.reserve_remote_managed_attempt(
-                item.frame,
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
+            parent.register_evaluation_points(request.evaluation_points)
+            attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
+                evaluation_point.frame.token
+            )
+            envelope = parent.reserve_remote_evaluation_point_attempt(
+                evaluation_point.frame,
                 attempt,
                 parent_authority=violation == "authorized-coordination",
             )
-            payload = managed_mod.ManagedPrefectPayload(
-                item=item,
+            payload = evaluation_keys_mod.EvaluationPointPrefectPayload(
+                evaluation_point=evaluation_point,
                 attempt=attempt,
-                provenance_mode=ProvenanceMode.FULL,
-                parent=envelope,
+                parent_envelope=envelope,
             )
-            report = managed_mod.ManagedClaimReport(item.frame, attempt, 0)
-            outcome = managed_mod.ManagedExecutionOutcome(
-                index=item.index,
-                value=2,
+            report = evaluation_keys_mod.EvaluationPointClaimReport(
+                evaluation_point.frame, attempt, 0
+            )
+            outcome = evaluation_keys_mod.EvaluationPointOutcome(
+                index=evaluation_point.index,
+                output=2,
                 report=report,
             )
             if violation == "index":
                 object.__setattr__(outcome, "index", 9)
             elif violation == "frame":
-                other_frame = managed_mod.ManagedUnitFrame(
-                    unit_segment=managed_mod.sweep_unit_segment((9,)),
-                    token=item.frame.token,
+                other_frame = evaluation_keys_mod.EvaluationPointFrame(
+                    point_segment=evaluation_keys_mod.sweep_cell_point_segment((9,)),
+                    token=evaluation_point.frame.token,
                 )
                 object.__setattr__(
                     outcome,
                     "report",
-                    managed_mod.ManagedClaimReport(other_frame, attempt, 0),
+                    evaluation_keys_mod.EvaluationPointClaimReport(other_frame, attempt, 0),
                 )
             elif violation == "attempt":
-                other_attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+                other_attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
+                    evaluation_point.frame.token
+                )
                 object.__setattr__(
                     outcome,
                     "report",
-                    managed_mod.ManagedClaimReport(item.frame, other_attempt, 0),
+                    evaluation_keys_mod.EvaluationPointClaimReport(
+                        evaluation_point.frame, other_attempt, 0
+                    ),
                 )
             elif violation == "effect":
-                effect = make_managed_effect()
-                effect_report = managed_mod.ManagedClaimReport(
-                    item.frame,
+                effect = make_effect_claim()
+                effect_report = evaluation_keys_mod.EvaluationPointClaimReport(
+                    evaluation_point.frame,
                     attempt,
                     0,
                     effects=(effect,),
@@ -2172,14 +2217,16 @@ class TestPrefectMapping:
                 object.__setattr__(
                     outcome,
                     "report",
-                    managed_mod.ManagedClaimReport(item.frame, attempt, 1),
+                    evaluation_keys_mod.EvaluationPointClaimReport(
+                        evaluation_point.frame, attempt, 1
+                    ),
                 )
             else:
                 object.__setattr__(outcome, "value", None)
                 object.__setattr__(outcome, "coordination_required", True)
 
             transported = pickle.loads(pickle.dumps(outcome))
-            state = parent._managed_claims.by_token[item.frame.token]
+            state = parent._evaluation_point_claims.by_token[evaluation_point.frame.token]
             before = (
                 state.status,
                 state.active_attempt,
@@ -2203,7 +2250,7 @@ class TestPrefectMapping:
                     dict(parent._effects_by_identity),
                 ) == before
             finally:
-                parent.abort_remote_managed_attempt(attempt)
+                parent.abort_remote_evaluation_point_attempt(attempt)
 
     def test_prefect_worker_failure_aborts_parent_reservation(self, monkeypatch):
         class CrashingFuture:
@@ -2228,12 +2275,14 @@ class TestPrefectMapping:
         monkeypatch.setattr(execution_mod, "flow", fake_flow)
         request = make_request(mode="prefect_task", calls=[{}], func=lambda: None)
 
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
             with pytest.raises(RuntimeError, match="worker crashed"):
                 execution_mod.execute_many(request)
-            state = parent._managed_claims.by_token[request.work_items[0].frame.token]
+            state = parent._evaluation_point_claims.by_token[
+                request.evaluation_points[0].frame.token
+            ]
 
-        assert state.status is broker_mod._ManagedUnitStatus.JOINED
+        assert state.status is evaluation_keys_mod._EvaluationPointStatus.JOINED
         assert state.active_attempt is None
         assert len(state.seen_attempts) == 1
 
@@ -2248,7 +2297,7 @@ class TestPrefectMapping:
         with (
             patch("probpipe.functions._context._os_urandom") as urandom,
             workflow_run(),
-            broker_mod._function_stochastic_scope(),
+            evaluation_keys_mod._function_stochastic_scope(),
         ):
             assert execution_mod.execute_many(request) == [2, 3]
 
@@ -2270,18 +2319,20 @@ class TestPrefectMapping:
                 return_value=bytes.fromhex("0123456789abcdef"),
             ) as urandom,
             workflow_run(),
-            broker_mod._function_stochastic_scope() as parent,
+            evaluation_keys_mod._function_stochastic_scope() as parent,
         ):
             result = execution_mod.execute_many(request)[0]
-            item = request.work_items[0]
-            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
-            envelope = parent.reserve_remote_managed_attempt(
-                item.frame,
+            evaluation_point = request.evaluation_points[0]
+            attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
+                evaluation_point.frame.token
+            )
+            envelope = parent.reserve_remote_evaluation_point_attempt(
+                evaluation_point.frame,
                 attempt,
                 parent_authority=True,
             )
             assert envelope is not None
-            parent.abort_remote_managed_attempt(attempt)
+            parent.abort_remote_evaluation_point_attempt(attempt)
 
         assert result
         assert envelope.parent_occurrence_path == (("invocation", 0),)
@@ -2289,7 +2340,7 @@ class TestPrefectMapping:
         urandom.assert_called_once_with(8)
         assert FakeMappedTask.map_calls == 2
 
-    def test_prefect_probe_survives_nested_managed_thread(self, monkeypatch):
+    def test_prefect_probe_survives_a_nested_thread_evaluation_point(self, monkeypatch):
         monkeypatch.setattr(execution_mod, "task", fake_task)
         monkeypatch.setattr(execution_mod, "flow", fake_flow)
         threaded_claim = Function(
@@ -2299,13 +2350,13 @@ class TestPrefectMapping:
             label="threaded_claim",
         )
 
-        def claim_in_managed_thread():
+        def claim_in_evaluation_point_thread():
             return threaded_claim()
 
         request = make_request(
             mode="prefect_task",
             calls=[{}],
-            func=claim_in_managed_thread,
+            func=claim_in_evaluation_point_thread,
         )
         with (
             patch(
@@ -2313,10 +2364,12 @@ class TestPrefectMapping:
                 return_value=bytes.fromhex("0123456789abcdef"),
             ) as urandom,
             workflow_run(seed=17),
-            broker_mod._function_stochastic_scope() as parent,
+            evaluation_keys_mod._function_stochastic_scope() as parent,
         ):
             result = execution_mod.execute_many(request)[0]
-            state = parent._managed_claims.by_token[request.work_items[0].frame.token]
+            state = parent._evaluation_point_claims.by_token[
+                request.evaluation_points[0].frame.token
+            ]
 
         assert result is not None
         assert len(parent._effects_by_identity) == 1
@@ -2351,9 +2404,11 @@ class TestPrefectMapping:
             calls=[{}],
             func=handle_probe,
         )
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
             result = execution_mod.execute_many(request)[0]
-            state = parent._managed_claims.by_token[request.work_items[0].frame.token]
+            state = parent._evaluation_point_claims.by_token[
+                request.evaluation_points[0].frame.token
+            ]
 
         assert isinstance(result, tuple)
         assert len(parent._effects_by_identity) == 1
@@ -2374,16 +2429,18 @@ class TestPrefectMapping:
             calls=[{}],
             func=fail_after_claim,
         )
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
             with pytest.raises(RuntimeError, match="remote failure"):
                 execution_mod.execute_many(request)
-            snapshot = broker_mod._snapshot_active_recipe_state()
-            claim_state = parent._managed_claims.by_token[request.work_items[0].frame.token]
+            snapshot = evaluation_keys_mod._snapshot_active_recipe_state()
+            claim_state = parent._evaluation_point_claims.by_token[
+                request.evaluation_points[0].frame.token
+            ]
 
         assert snapshot is None
         assert len(claim_state.effect_claims_by_identity) == 1
 
-    def test_prefect_retry_reuses_work_item_token_and_key(self, monkeypatch):
+    def test_prefect_retry_reuses_evaluation_point_token_and_key(self, monkeypatch):
         monkeypatch.setattr(execution_mod, "task", fake_task)
         monkeypatch.setattr(execution_mod, "flow", fake_flow)
         monkeypatch.setattr(execution_mod, "_prefect_retry_policy", lambda: (1, 0.0))
@@ -2401,10 +2458,12 @@ class TestPrefectMapping:
             calls=[{}],
             func=fail_once_after_claim,
         )
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
             retried = execution_mod.execute_many(request)[0]
-            snapshot = broker_mod._snapshot_active_recipe_state()
-            claim_state = parent._managed_claims.by_token[request.work_items[0].frame.token]
+            snapshot = evaluation_keys_mod._snapshot_active_recipe_state()
+            claim_state = parent._evaluation_point_claims.by_token[
+                request.evaluation_points[0].frame.token
+            ]
 
         assert seen == [retried, retried]
         assert snapshot is not None
@@ -2488,10 +2547,12 @@ class TestPrefectMapping:
         with (
             patch.object(execution_mod, "sleep") as sleep,
             workflow_run(seed=17),
-            broker_mod._function_stochastic_scope() as parent,
+            evaluation_keys_mod._function_stochastic_scope() as parent,
         ):
             result = execution_mod.execute_many(request)[0]
-            claim_state = parent._managed_claims.by_token[request.work_items[0].frame.token]
+            claim_state = parent._evaluation_point_claims.by_token[
+                request.evaluation_points[0].frame.token
+            ]
 
         assert seen == [result] * 4
         assert len(parent._effects_by_identity) == 1
@@ -2516,16 +2577,16 @@ class TestPrefectMapping:
         with (
             patch("probpipe.functions._context._os_urandom") as urandom,
             workflow_run(),
-            broker_mod._function_stochastic_scope(),
+            evaluation_keys_mod._function_stochastic_scope(),
         ):
             assert execution_mod.execute_many(request) == [1]
-            snapshot = broker_mod._snapshot_active_recipe_state()
+            snapshot = evaluation_keys_mod._snapshot_active_recipe_state()
 
         assert snapshot is None
         urandom.assert_not_called()
         assert FakeMappedTask.map_calls == 2
 
-    def test_managed_keys_match_across_sequential_thread_and_prefect(self, monkeypatch):
+    def test_evaluation_point_keys_match_across_sequential_thread_and_prefect(self, monkeypatch):
         monkeypatch.setattr(execution_mod, "task", fake_task)
         monkeypatch.setattr(execution_mod, "flow", fake_flow)
 
@@ -2535,7 +2596,7 @@ class TestPrefectMapping:
                 calls=[{}],
                 func=_claim_automatic_words,
             )
-            with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+            with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope():
                 return execution_mod.execute_many(request)[0]
 
         assert run("sequential") == run("thread") == run("prefect_task")
@@ -2561,23 +2622,24 @@ class TestPrefectMapping:
 
     def test_prefect_transport_payload_is_pickleable(self):
         request = make_request(calls=[{}], func=_claim_automatic_words)
-        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
-            parent.register_managed_work_items(request.work_items)
-            item = request.work_items[0]
-            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
-            envelope = parent.reserve_remote_managed_attempt(
-                item.frame,
+        with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
+            parent.register_evaluation_points(request.evaluation_points)
+            evaluation_point = request.evaluation_points[0]
+            attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
+                evaluation_point.frame.token
+            )
+            envelope = parent.reserve_remote_evaluation_point_attempt(
+                evaluation_point.frame,
                 attempt,
                 parent_authority=True,
             )
             assert envelope is not None
-            payload = managed_mod.ManagedPrefectPayload(
-                item=item,
+            payload = evaluation_keys_mod.EvaluationPointPrefectPayload(
+                evaluation_point=evaluation_point,
                 attempt=attempt,
-                provenance_mode=ProvenanceMode.FULL,
-                parent=envelope,
+                parent_envelope=envelope,
             )
-            parent.abort_remote_managed_attempt(attempt)
+            parent.abort_remote_evaluation_point_attempt(attempt)
 
         assert pickle.loads(pickle.dumps(payload)) == payload
 
@@ -2662,7 +2724,8 @@ class TestFunctionExecutionConfig:
 
         assert (
             node_mod._make_execution_config(
-                wf,
+                wf.label,
+                wf.options,
             ).mode
             == "thread"
         )
@@ -2671,7 +2734,8 @@ class TestFunctionExecutionConfig:
         wf = Function(add_one, label="add_one", dispatch="thread", max_workers=3)
 
         execution = node_mod._make_execution_config(
-            wf,
+            wf.label,
+            wf.options,
         )
 
         assert execution.mode == "thread"
@@ -2681,7 +2745,8 @@ class TestFunctionExecutionConfig:
         wf = Function(add_one, label="add_one", dispatch="thread", max_workers=True)
 
         execution = node_mod._make_execution_config(
-            wf,
+            wf.label,
+            wf.options,
         )
 
         assert execution.mode == "thread"
@@ -2692,7 +2757,8 @@ class TestFunctionExecutionConfig:
             wf = Function(add_one, label="add_one", dispatch="auto", max_workers=3)
 
         execution = node_mod._make_execution_config(
-            wf,
+            wf.label,
+            wf.options,
         )
 
         assert execution.mode == "sequential"
@@ -2718,7 +2784,8 @@ class TestFunctionExecutionConfig:
             wf = Function(add_one, label="add_one", dispatch="sequential", max_workers=3)
 
         execution = node_mod._make_execution_config(
-            wf,
+            wf.label,
+            wf.options,
         )
 
         assert execution.mode == "sequential"
@@ -2739,7 +2806,8 @@ class TestFunctionExecutionConfig:
 
         with pytest.warns(UserWarning, match="do not control Prefect scheduling"):
             execution = node_mod._make_execution_config(
-                wf,
+                wf.label,
+                wf.options,
             )
 
         assert execution.mode == "prefect_task"
@@ -2753,7 +2821,7 @@ class TestFunctionExecutionConfig:
         # (effective_workflow_kind also gates on node_mod.flow, not just task).
         pytest.importorskip("prefect")
         monkeypatch.setattr(node_mod, "task", object())
-        prefect_config.workflow_kind = WorkflowKind.FLOW
+        config.prefect.workflow_kind = WorkflowKind.FLOW
         with pytest.warns(UserWarning, match="max_workers configures only"):
             wf = Function(
                 add_one,
@@ -2764,7 +2832,8 @@ class TestFunctionExecutionConfig:
 
         with pytest.warns(UserWarning, match="do not control Prefect scheduling"):
             execution = node_mod._make_execution_config(
-                wf,
+                wf.label,
+                wf.options,
             )
 
         assert execution.mode == "prefect_flow"
@@ -2781,7 +2850,8 @@ class TestFunctionExecutionConfig:
             )
 
         execution = node_mod._make_execution_config(
-            wf,
+            wf.label,
+            wf.options,
         )
 
         assert execution.mode == "sequential"
@@ -2799,7 +2869,7 @@ class TestFunctionExecutionConfig:
                 dispatch="jax",
                 workflow_kind=WorkflowKind.OFF,
                 max_workers=3,
-                n_broadcast_samples=8,
+                max_evaluations=8,
                 output_spec=OutputSpec(add_one=None),
             )
 
@@ -2816,7 +2886,7 @@ class TestFunctionExecutionConfig:
 
         def fake_execute_many(request):
             seen_modes.append(request.execution.mode)
-            return [request.func(**request.work_items[0].call_values())]
+            return [request.func(**request.evaluation_points[0].call_arguments())]
 
         monkeypatch.setattr(node_mod, "task", object())
         monkeypatch.setattr(execution_mod, "execute_many", fake_execute_many)

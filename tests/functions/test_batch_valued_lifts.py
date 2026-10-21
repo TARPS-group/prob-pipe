@@ -43,7 +43,7 @@ class TestBatchValuedLifts:
     @pytest.mark.parametrize("dispatch", ["auto", "sequential", "thread"])
     @pytest.mark.parametrize("include_inputs", [False, True])
     def test_exact_lifts_keep_whole_events_and_weighted_inputs(self, dispatch, include_inputs):
-        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), [1.0, 3.0], component="beta")
+        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), [1.0, 3.0], output_name="beta")
         trajectory = Function(
             _trajectory,
             output_spec=OutputSpec(trajectory=None),
@@ -58,7 +58,7 @@ class TestBatchValuedLifts:
         np.testing.assert_allclose(law.weights, [0.25, 0.75])
         assert law.atoms.level_names[0] == "trajectory"
         if include_inputs:
-            assert set(law.event_spec.components) == {"beta", "trajectory"}
+            assert set(law.event_spec.outputs) == {"beta", "trajectory"}
             paths = law.atoms["trajectory"]
             assert paths.level_names == ("trajectory", "time")
             for row in draws:
@@ -66,8 +66,8 @@ class TestBatchValuedLifts:
                     row["trajectory"].raw, row["beta"] * jnp.arange(1.0, 4.0)
                 )
         else:
-            assert isinstance(law.event_spec.spec, BatchSpec)
-            assert law.event_spec.spec.level_names == ("time",)
+            assert isinstance(law.event_spec.term_spec, BatchSpec)
+            assert law.event_spec.term_spec.level_names == ("time",)
             assert draws.level_names == ("sample", "time")
             np.testing.assert_array_equal(law.atoms.raw, [[2, 4, 6], [5, 10, 15]])
 
@@ -76,7 +76,7 @@ class TestBatchValuedLifts:
     def test_a_second_lift_receives_the_batch_kind(self, sampled, include_inputs):
         trajectory = Function(_trajectory, output_spec=OutputSpec(trajectory=None))
 
-        @function(dispatch="auto", n_broadcast_samples=5, include_inputs=include_inputs)
+        @function(dispatch="auto", max_evaluations=5, include_inputs=include_inputs)
         def total(path: NumericArrayBatch):
             assert isinstance(path, NumericArrayBatch)
             return jnp.sum(path.raw)
@@ -84,7 +84,7 @@ class TestBatchValuedLifts:
         source = (
             Normal("beta", 0.0, 1.0)
             if sampled
-            else EmpiricalDistribution(jnp.array([2.0, 5.0]), [1.0, 3.0], component="beta")
+            else EmpiricalDistribution(jnp.array([2.0, 5.0]), [1.0, 3.0], output_name="beta")
         )
         with workflow_run(seed=2):
             first = trajectory(source)
@@ -98,20 +98,18 @@ class TestBatchValuedLifts:
 
     @pytest.mark.parametrize("include_inputs", [False, True])
     @pytest.mark.parametrize("declared", [False, True])
-    def test_a_component_collision_requires_a_distinct_output_component(
-        self, declared, include_inputs
-    ):
+    def test_an_output_collision_requires_a_distinct_output(self, declared, include_inputs):
         def time(beta):
             return _trajectory(beta)
 
-        source = EmpiricalDistribution(jnp.array([2.0]), component="beta")
+        source = EmpiricalDistribution(jnp.array([2.0]), output_name="beta")
         bad = Function(
             time,
             output_spec=OutputSpec(time=None) if declared else None,
             dispatch="sequential",
             include_inputs=include_inputs,
         )
-        message = r"level 'time'.*\['time'\].*OutputSpec with a distinct output component"
+        message = r"level 'time'.*\['time'\].*OutputSpec with a distinct output"
         with workflow_run(seed=0), pytest.raises(ResultSchemaError, match=message):
             bad(source)
 
@@ -120,16 +118,16 @@ class TestBatchValuedLifts:
         with pytest.raises(ValueError, match=r"atom level 'time'.*levels \['time'\]"):
             EmpiricalDistribution(jnp.ones((4, 3)), event_spec=event, level="time")
 
-    def test_non_batch_outputs_use_their_component_as_the_atom_level(self):
+    def test_non_batch_outputs_use_their_output_name_as_the_atom_level(self):
         wrapped = Function(lambda x: x + 1, output_spec=OutputSpec(score=None), label="alias")
         with workflow_run(seed=0):
-            law = wrapped(EmpiricalDistribution(jnp.array([2.0]), component="beta"))
+            law = wrapped(EmpiricalDistribution(jnp.array([2.0]), output_name="beta"))
         assert law.atoms.level_names == ("score",)
 
 
 class TestBatchValuedLiftMoments:
     def test_a_weighted_trajectory_law_has_elementwise_moments(self):
-        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), [0.25, 0.75], component="beta")
+        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), [0.25, 0.75], output_name="beta")
         trajectory = Function(
             _trajectory, output_spec=OutputSpec(trajectory=None), dispatch="sequential"
         )
@@ -152,7 +150,7 @@ def _trajectory_law(include_inputs):
         _trajectory,
         output_spec=OutputSpec(trajectory=None),
         include_inputs=include_inputs,
-        n_broadcast_samples=6,
+        max_evaluations=6,
     )
     return wrapped(Normal("beta", 0.0, 1.0))
 
@@ -210,7 +208,7 @@ class TestBatchValuedFieldSampling:
 
         wrapped = Function(trajectory, include_inputs=True, dispatch="sequential")
         with workflow_run(seed=0):
-            law = wrapped(EmpiricalDistribution(jnp.array([2.0, 5.0]), component="beta"))
+            law = wrapped(EmpiricalDistribution(jnp.array([2.0, 5.0]), output_name="beta"))
             single = sample(law["trajectory"], sample_shape)
             selected = sample(law[("beta", "trajectory")], sample_shape)
         levels = ("sample", "time") if sample_shape else ("time",)
@@ -240,16 +238,16 @@ class TestLiftsOverBatchValuedFields:
         source = (
             Normal("beta", 0.0, 1.0)
             if sampled
-            else EmpiricalDistribution(jnp.array([2.0, 5.0]), [1.0, 3.0], component="beta")
+            else EmpiricalDistribution(jnp.array([2.0, 5.0]), [1.0, 3.0], output_name="beta")
         )
         joint = Function(
             _trajectory,
             output_spec=OutputSpec(trajectory=None),
             include_inputs=True,
-            n_broadcast_samples=5,
+            max_evaluations=5,
         )
-        total = Function(_total, dispatch=dispatch, n_broadcast_samples=5)
-        gap = Function(_gap, dispatch=dispatch, n_broadcast_samples=5)
+        total = Function(_total, dispatch=dispatch, max_evaluations=5)
+        gap = Function(_gap, dispatch=dispatch, max_evaluations=5)
         with workflow_run(seed=0):
             law = joint(source)
             totals = total(law["trajectory"])
@@ -266,11 +264,11 @@ class TestLiftsOverBatchValuedFields:
             assert isinstance(traj, NumericArrayBatch)
             return jnp.sum(traj.raw)
 
-        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), component="beta")
+        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), output_name="beta")
         with workflow_run(seed=0):
             law = Function(summary, dispatch="sequential")(source)
             totals = Function(total, dispatch="sequential")(law["traj"])
-        assert isinstance(law.event_spec.spec["traj"], BatchSpec)
+        assert isinstance(law.event_spec.term_spec["traj"], BatchSpec)
         np.testing.assert_allclose(totals.atoms.raw, [12.0, 30.0])
 
 
@@ -284,7 +282,7 @@ class TestSampleLevelCollision:
             self._on_sample, output_spec=OutputSpec(trajectory=None), dispatch="sequential"
         )
         with workflow_run(seed=0):
-            law = wrapped(EmpiricalDistribution(jnp.array([2.0, 5.0]), component="beta"))
+            law = wrapped(EmpiricalDistribution(jnp.array([2.0, 5.0]), output_name="beta"))
             assert sample(law).level_names == ("sample",)
             with pytest.raises(ApplicabilityError, match=r"level 'sample'.*Rename the event's"):
                 sample(law, 2)
@@ -295,7 +293,7 @@ class TestSampleLevelCollision:
         )
         scales = NumericArrayBatch(jnp.array([1.0, 10.0]), "horizon", label="scale")
         with workflow_run(seed=0):
-            laws = wrapped(EmpiricalDistribution(jnp.array([2.0]), component="beta"), scales)
+            laws = wrapped(EmpiricalDistribution(jnp.array([2.0]), output_name="beta"), scales)
             assert isinstance(laws, DistributionBatch)
             assert sample(laws).level_names == ("horizon", "sample")
             with pytest.raises(ApplicabilityError, match=r"level 'sample'.*Rename the event's"):
@@ -311,7 +309,7 @@ class TestBatchOutputComposition:
 
         wrapped = Function(trajectory, include_inputs=True, dispatch="sequential")
         with workflow_run(seed=0):
-            law = wrapped(EmpiricalDistribution(jnp.array([2.0, 5.0]), component="beta"))
+            law = wrapped(EmpiricalDistribution(jnp.array([2.0, 5.0]), output_name="beta"))
             draws = sample(law, 3)
         paths = law.atoms["trajectory"]
         assert paths.level_names == ("trajectory", "time")
@@ -326,7 +324,7 @@ class TestBatchOutputComposition:
             _trajectory,
             output_spec=OutputSpec(trajectory=None),
             dispatch="sequential",
-            n_broadcast_samples=5,
+            max_evaluations=5,
         )
         source = Normal("beta", 0.0, 1.0)
         with workflow_run(seed=4):
@@ -349,7 +347,7 @@ class TestObjectBatchEvents:
 
         wrapped = Function(payload, dispatch="sequential", include_inputs=include_inputs)
         with workflow_run(seed=0):
-            law = wrapped(EmpiricalDistribution(jnp.array([2.0]), component="x"))
+            law = wrapped(EmpiricalDistribution(jnp.array([2.0]), output_name="x"))
             drawn = sample(law)
         assert law.num_atoms == 1
         if include_inputs:
@@ -368,12 +366,12 @@ class TestBatchOutputDeclarations:
         declared = OutputSpec(trajectory=BatchSpec(NumericArraySpec(()), time="n"))
         wrapped = Function(_trajectory, output_spec=declared, dispatch="sequential")
         with workflow_run(seed=0):
-            law = wrapped(EmpiricalDistribution(jnp.array([2.0]), component="beta"))
-        assert law.event_spec.spec.axis_groups == ((3,),)
-        assert law.event_spec.spec.element_spec.dtype == jnp.float32
+            law = wrapped(EmpiricalDistribution(jnp.array([2.0]), output_name="beta"))
+        assert law.event_spec.term_spec.axis_groups == ((3,),)
+        assert law.event_spec.term_spec.element_spec.dtype == jnp.float32
         assert wrapped.output_spec is declared
-        assert wrapped.output_spec.spec.axis_groups == (("n",),)
-        assert wrapped.output_spec.spec.element_spec.dtype is None
+        assert wrapped.output_spec.term_spec.axis_groups == (("n",),)
+        assert wrapped.output_spec.term_spec.element_spec.dtype is None
 
     @pytest.mark.parametrize("element", [NumericArraySpec((), jnp.float32), OpaqueSpec()])
     def test_an_empty_sweep_of_a_batch_output_has_no_batch_form(self, element):
@@ -390,7 +388,7 @@ class TestBatchOutputDeclarations:
             return NumericArrayBatch(jnp.ones(size), level, label="path")
 
         wrapped = Function(trajectory, dispatch="sequential")
-        source = EmpiricalDistribution(jnp.array([0.0, 1.0]), component="x")
+        source = EmpiricalDistribution(jnp.array([0.0, 1.0]), output_name="x")
         with workflow_run(seed=0), pytest.raises(ResultSchemaError):
             wrapped(source)
 
@@ -408,11 +406,11 @@ class TestBatchValuedDrawsArriveRaw:
             return body(value)
 
         with workflow_run(seed=0):
-            lifted = Function(record, dispatch=dispatch, n_broadcast_samples=6)(law)
+            lifted = Function(record, dispatch=dispatch, max_evaluations=6)(law)
         return seen, lifted
 
     def test_a_bootstrap_replicate_arrives_as_an_array(self):
-        source = EmpiricalDistribution(jnp.array([1.0, 5.0, 9.0]), component="y")
+        source = EmpiricalDistribution(jnp.array([1.0, 5.0, 9.0]), output_name="y")
         replicate = BootstrapReplicateDistribution("b", source, 4)
         seen, means = self._received(lambda b: b.mean(), replicate)
         assert all(isinstance(b, jax.Array) and b.shape == (4,) for b in seen)
@@ -421,7 +419,7 @@ class TestBatchValuedDrawsArriveRaw:
 
     @pytest.mark.parametrize("include_inputs", [False, True])
     def test_an_unannotated_parameter_receives_the_raw_trajectory(self, include_inputs):
-        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), [0.25, 0.75], component="beta")
+        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), [0.25, 0.75], output_name="beta")
         trajectory = Function(
             _trajectory,
             output_spec=OutputSpec(trajectory=None),
@@ -436,7 +434,7 @@ class TestBatchValuedDrawsArriveRaw:
 
     @pytest.mark.parametrize("annotation", [NumericArrayBatch, Batch, NumericArrayBatch | None])
     def test_a_batch_annotation_receives_the_batch(self, annotation):
-        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), [0.25, 0.75], component="beta")
+        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), [0.25, 0.75], output_name="beta")
         trajectory = Function(_trajectory, output_spec=OutputSpec(trajectory=None))
         seen = []
 
@@ -452,7 +450,7 @@ class TestBatchValuedDrawsArriveRaw:
         np.testing.assert_allclose(totals.atoms.raw, [12.0, 30.0], rtol=1e-6)
 
     def test_an_array_annotation_receives_the_raw_trajectory(self):
-        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), component="beta")
+        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), output_name="beta")
         trajectory = Function(_trajectory, output_spec=OutputSpec(trajectory=None))
         seen = []
 
@@ -480,7 +478,7 @@ class TestBatchValuedDrawsArriveRaw:
 
         if annotated:
             total.__annotations__["path"] = RecordBatch
-        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), component="beta")
+        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), output_name="beta")
         with workflow_run(seed=0):
             law = Function(trajectory, dispatch="sequential")(source)
             totals = Function(total, dispatch="sequential")(law)
@@ -513,12 +511,12 @@ class TestNestedBatchValuedInputs:
 
         if annotated:
             total.__annotations__["p"] = NumericArrayBatch
-        wrapped = Function(total, dispatch=dispatch, include_inputs=True, n_broadcast_samples=5)
+        wrapped = Function(total, dispatch=dispatch, include_inputs=True, max_evaluations=5)
         with workflow_run(seed=0):
             law = wrapped(replicate)
             drawn = sample(law)
 
-        assert law.event_spec.spec["p"] == BatchSpec(
+        assert law.event_spec.term_spec["p"] == BatchSpec(
             NumericArraySpec((), jnp.float32), replicate=2, time=3
         )
         assert law.atoms["p"].level_names == ("total", "replicate", "time")
@@ -553,7 +551,9 @@ def _assert_same(mapped, rowwise):
 def _sources():
     return {
         "sampled": Normal("beta", 0.0, 1.0),
-        "enumerated": EmpiricalDistribution(jnp.array([2.0, 5.0]), [0.25, 0.75], component="beta"),
+        "enumerated": EmpiricalDistribution(
+            jnp.array([2.0, 5.0]), [0.25, 0.75], output_name="beta"
+        ),
     }
 
 
@@ -563,7 +563,7 @@ class TestMappedBatchValuedLifts:
     @staticmethod
     def _lift(body, law, dispatch, **controls):
         with workflow_run(seed=3):
-            return Function(body, dispatch=dispatch, n_broadcast_samples=7, **controls)(law)
+            return Function(body, dispatch=dispatch, max_evaluations=7, **controls)(law)
 
     @pytest.mark.parametrize("dispatch", ["auto", "jax"])
     @pytest.mark.parametrize("include_inputs", [False, True])
@@ -617,8 +617,8 @@ class TestMappedBatchValuedLifts:
         for dispatch in ("jax", "sequential"):
             calls.clear()
             with workflow_run(seed=0):
-                law = Function(trajectory, dispatch=dispatch, n_broadcast_samples=50)(source)
-                totals = Function(total, dispatch=dispatch, n_broadcast_samples=50)(law)
+                law = Function(trajectory, dispatch=dispatch, max_evaluations=50)(source)
+                totals = Function(total, dispatch=dispatch, max_evaluations=50)(law)
             if dispatch == "jax":
                 # One probe trace and one mapped trace for each lift.
                 assert calls.count("first") <= 2 and calls.count("second") <= 2
@@ -633,9 +633,9 @@ class TestMappedBatchValuedLifts:
             _trajectory,
             output_spec=OutputSpec(trajectory=None),
             include_inputs=True,
-            n_broadcast_samples=5,
+            max_evaluations=5,
         )
-        total = Function(lambda path: jnp.sum(path), dispatch=dispatch, n_broadcast_samples=5)
+        total = Function(lambda path: jnp.sum(path), dispatch=dispatch, max_evaluations=5)
         with workflow_run(seed=0):
             law = joint(Normal("beta", 0.0, 1.0))
             if dispatch == "jax":
@@ -656,7 +656,7 @@ class TestMappedBatchValuedLifts:
         def summary(beta):
             return Record.from_fields(scale=2.0 * beta, traj=_trajectory(beta))
 
-        wrapped = Function(summary, dispatch=dispatch, n_broadcast_samples=5)
+        wrapped = Function(summary, dispatch=dispatch, max_evaluations=5)
         with workflow_run(seed=0):
             if dispatch == "jax":
                 message = (

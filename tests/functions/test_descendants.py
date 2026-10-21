@@ -50,13 +50,13 @@ from probpipe.values import _binding
 from tests._ops import mean, variance
 
 
-def _stochastic_plan(values, n_broadcast_samples=16):
+def _stochastic_plan(values, max_evaluations=16):
     signature = inspect.Signature(
         [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in values]
     )
     signature_info = _binding.make_signature_info_from_signature(signature)
     broadcast_plan = build_broadcast_plan(values=values, signature_info=signature_info)
-    return build_stochastic_plan(values, broadcast_plan, n_broadcast_samples)
+    return build_stochastic_plan(values, broadcast_plan, max_evaluations)
 
 
 class _RecordingNormal(Normal):
@@ -84,12 +84,12 @@ def _joint():
 
 
 def _raw_mean(law):
-    """The mean of *law* at its one leaf, whatever its packaging."""
+    """The mean of *law* at its one leaf, whatever its form."""
     return np.asarray(jax.tree.leaves(mean.using(raw=True)(law))[0])
 
 
 def _raw_variance(law):
-    """The variance of *law* at its one leaf, whatever its packaging."""
+    """The variance of *law* at its one leaf, whatever its form."""
     return np.asarray(jax.tree.leaves(variance.using(raw=True)(law))[0])
 
 
@@ -186,7 +186,7 @@ class TestFieldViews:
         workflow = Function(
             lambda joint, x: joint["x"] - x,
             dispatch=dispatch,
-            n_broadcast_samples=16,
+            max_evaluations=16,
             label="difference",
             output_spec=OutputSpec(difference=None),
         )
@@ -202,7 +202,7 @@ class TestFieldViews:
         workflow = Function(
             lambda a, b: a - b,
             dispatch="sequential",
-            n_broadcast_samples=16,
+            max_evaluations=16,
             label="difference",
             output_spec=OutputSpec(difference=None),
         )
@@ -220,7 +220,7 @@ def _difference():
     return Function(
         lambda a, b: a - b,
         dispatch="sequential",
-        n_broadcast_samples=16,
+        max_evaluations=16,
         label="difference",
         output_spec=OutputSpec(difference=None),
     )
@@ -436,7 +436,7 @@ class TestRenamedLaws:
         workflow = Function(
             lambda a, b: a["mu"] - b.at_path("population")["mu"],
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             label="difference",
             output_spec=OutputSpec(difference=None),
         )
@@ -469,7 +469,7 @@ class TestRenamedLaws:
         workflow = Function(
             difference,
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             label="difference",
             output_spec=OutputSpec(difference=None),
         )
@@ -559,7 +559,7 @@ class TestCopies:
         law = _FreeNormal()
         workflow = Function(
             lambda a, b: a - b,
-            n_broadcast_samples=8,
+            max_evaluations=8,
             label="difference",
             output_spec=OutputSpec(difference=None),
         )
@@ -831,7 +831,7 @@ class TestLifts:
                 (exp_base - jnp.exp(base), shifted_base - (base + 2.0))
             ),
             dispatch=dispatch,
-            n_broadcast_samples=16,
+            max_evaluations=16,
             label="function",
             output_spec=OutputSpec(function=None),
         )
@@ -850,7 +850,7 @@ class TestLifts:
         workflow = Function(
             lambda value: value,
             dispatch="sequential",
-            n_broadcast_samples=14,
+            max_evaluations=14,
             label="function",
             output_spec=OutputSpec(function=None),
         )
@@ -867,7 +867,7 @@ class TestLifts:
             workflow = Function(
                 lambda base, exp_base: exp_base - jnp.exp(base),
                 dispatch=dispatch,
-                n_broadcast_samples=16,
+                max_evaluations=16,
                 label="difference",
                 output_spec=OutputSpec(difference=None),
             )
@@ -879,13 +879,13 @@ class TestLifts:
 
     def test_an_exact_empirical_root_and_its_transform_enumerate_without_sampling(self):
         root = EmpiricalDistribution(
-            jnp.asarray([1.0, 4.0]), weights=jnp.asarray([0.2, 0.8]), component="base"
+            jnp.asarray([1.0, 4.0]), weights=jnp.asarray([0.2, 0.8]), output_name="base"
         )
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
         workflow = Function(
             lambda base, exp_base: exp_base - jnp.exp(base),
             dispatch="sequential",
-            n_broadcast_samples=16,
+            max_evaluations=16,
             label="function",
             output_spec=OutputSpec(function=None),
         )
@@ -897,13 +897,13 @@ class TestLifts:
 
     def test_a_transform_passed_before_its_empirical_root_enumerates(self):
         root = EmpiricalDistribution(
-            jnp.asarray([1.0, 4.0]), weights=jnp.asarray([0.2, 0.8]), component="base"
+            jnp.asarray([1.0, 4.0]), weights=jnp.asarray([0.2, 0.8]), output_name="base"
         )
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
         workflow = Function(
             lambda exp_base, base: exp_base - jnp.exp(base),
             dispatch="sequential",
-            n_broadcast_samples=16,
+            max_evaluations=16,
             label="function",
             output_spec=OutputSpec(function=None),
         )
@@ -932,7 +932,7 @@ class TestLifts:
                 (joint["x"] - x_value, exp_x - jnp.exp(x_value))
             ),
             dispatch="sequential",
-            n_broadcast_samples=16,
+            max_evaluations=16,
             label="function",
             output_spec=OutputSpec(function=None),
         )
@@ -959,7 +959,7 @@ class TestLifts:
         workflow = Function(
             lambda row, base, exp_base: exp_base - jnp.exp(base),
             dispatch=dispatch,
-            n_broadcast_samples=12,
+            max_evaluations=12,
             label="function",
             output_spec=OutputSpec(function=None),
         )
@@ -981,7 +981,7 @@ class TestEmpiricalRootWeights:
         workflow = Function(
             lambda a, b: b - jnp.exp(a),
             dispatch="sequential",
-            n_broadcast_samples=64,
+            max_evaluations=64,
             label="difference",
             output_spec=OutputSpec(difference=None),
         )
@@ -995,14 +995,14 @@ class TestEmpiricalRootWeights:
         root = EmpiricalDistribution(
             jnp.asarray([1.0, 4.0]),
             weights=jnp.asarray([0.2, 0.8]),
-            component="base",
+            output_name="base",
         )
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
         workflow = Function(
             lambda base, exp_base: exp_base - jnp.exp(base),
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=16,
+            max_evaluations=16,
             include_inputs=True,
             output_spec=OutputSpec(function=None),
         )
@@ -1038,7 +1038,7 @@ class TestEmpiricalRootWeights:
             ),
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=16,
+            max_evaluations=16,
             include_inputs=True,
             output_spec=OutputSpec(function=None),
         )
@@ -1053,7 +1053,7 @@ class TestEmpiricalRootWeights:
         exact_root = EmpiricalDistribution(
             jnp.asarray([1.0, 4.0]),
             weights=jnp.asarray([0.2, 0.8]),
-            component="exact",
+            output_name="exact",
         )
         exponentiated = BijectorTransformedDistribution("exponentiated", exact_root, tfb.Exp())
         sampled_calls = []
@@ -1062,7 +1062,7 @@ class TestEmpiricalRootWeights:
             lambda exact, exp_exact, noise: jnp.stack((exp_exact - jnp.exp(exact), noise)),
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=12,
+            max_evaluations=12,
             include_inputs=True,
             output_spec=OutputSpec(function=None),
         )

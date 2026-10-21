@@ -134,17 +134,17 @@ def _column(statistic: _Statistic, d: Distribution) -> Record:
     """The statistic of *d* as a record over the law's event paths.
 
     A record is the term the statistic returns, and an array, which a law of one
-    whole term gives, is held under the law's component.
+    whole term gives, is held under the law's output.
     """
     value = statistic.compute(d)
     if isinstance(value, NumericRecord):
         return value
-    components = tuple(d.event_spec.components)
-    if isinstance(value, NumericArray) and len(components) == 1:
-        return Record({components[0]: value})
+    outputs = tuple(d.event_spec.outputs)
+    if isinstance(value, NumericArray) and len(outputs) == 1:
+        return Record({outputs[0]: value})
     raise TypeError(
         f"summarize: the statistic {statistic.name!r} must return a numeric value over the "
-        f"components {list(components)} of the law, got {type_name(value)}"
+        f"outputs {list(outputs)} of the law, got {type_name(value)}"
     )
 
 
@@ -342,7 +342,7 @@ def summarize(
     The result is a ``NumericRecord`` nested by statistic: each top-level field
     is the term that the statistic returns for *d*, over the law's event paths,
     so ``summarize(d)["sd/mu"]`` is the standard deviation of ``mu``. A law of
-    one whole term holds each statistic under its component, as ``mean/theta``.
+    one whole term holds each statistic under its output, as ``mean/theta``.
     The record displays as a table with one row for each path and one column
     for each statistic, under the label ``summary of`` and the law's notation.
     The line below the table states how each statistic was computed:
@@ -350,7 +350,7 @@ def summarize(
     statistic's provenance records it, and, for an MCMC posterior, ``MCMC``
     with its chains and draws. The record's provenance records those
     descriptions. ``pd.DataFrame(summarize(d).raw)`` gives the table of a law
-    whose components are scalars as a DataFrame.
+    whose outputs are scalars as a DataFrame.
 
     The default columns are:
 
@@ -410,7 +410,7 @@ def summarize(
         If *d* is not a ``Distribution`` or a ``DistributionBatch``, *interval* is
         not a real number, a statistic is neither a callable nor a mapping of
         names to callables, or a statistic returns a value that is not numeric
-        over the law's components.
+        over the law's outputs.
     ValueError
         If *interval* is not strictly between 0 and 1, a callable's name is not
         an identifier, a name is empty, has ``/``, or names another statistic,

@@ -46,13 +46,13 @@ __all__ = [
     "VALUE_INDENT",
     "WIDTH",
     "call_repr",
-    "format_components",
     "format_default",
     "format_dtype",
     "format_entries",
     "format_levels",
     "format_names",
     "format_notation",
+    "format_outputs",
     "format_rows",
     "format_signature",
     "format_value",
@@ -594,7 +594,7 @@ def grouped_label(label: str) -> str:
 
 
 def format_signature(
-    components: Iterable[str],
+    outputs: Iterable[str],
     given: Iterable[str] = (),
     fixed: Iterable[str] = (),
     defaults: Mapping[str, str] | None = None,
@@ -603,21 +603,21 @@ def format_signature(
 
     Parameters
     ----------
-    components : iterable of str
-        A law's or a kernel's event components, or a function's parameters, in
+    outputs : iterable of str
+        A law's or a kernel's outputs, or a function's parameters, in
         declaration order.
     given : iterable of str, optional
-        A kernel's given slots, in declaration order.
+        A kernel's inputs, in declaration order.
     fixed : iterable of str, optional
         The paths fixed at given values.
     defaults : Mapping[str, str], optional
-        The formatted default of each given slot or parameter that has one,
+        The formatted default of each input or parameter that has one,
         as :func:`format_default` gives it.
 
     Returns
     -------
     str
-        The components joined by ``", "``, then `` | `` and the given slots when
+        The outputs joined by ``", "``, then `` | `` and the inputs when
         there are any, then ``; `` and the fixed paths when there are any, as
         ``y, mu``, ``y | beta``, or ``y | sigma; beta``. A name with a default
         reads ``name=value``, as ``y | K, n0=50.0``.
@@ -627,7 +627,7 @@ def format_signature(
     def entry(name: str) -> str:
         return f"{name}={defaults[name]}" if name in defaults else name
 
-    text = ", ".join(entry(name) for name in components)
+    text = ", ".join(entry(name) for name in outputs)
     given, fixed = list(given), list(fixed)
     if given:
         text = f"{text} | {', '.join(entry(name) for name in given)}"
@@ -637,7 +637,7 @@ def format_signature(
 
 
 def format_default(value: Any) -> str:
-    """The default of a given slot or a parameter as a signature shows it.
+    """The default of an input or a parameter as a signature shows it.
 
     A number, a string, ``None``, or an array of no axes reads as its value,
     as ``50.0``, and any other value as ``…``, since its entries would not
@@ -650,23 +650,23 @@ def format_default(value: Any) -> str:
     return ELLIPSIS
 
 
-def format_components(components: Iterable[str]) -> str:
-    """Several components as one label: one as it is, as ``mu``, and several in parentheses, as ``(y, mu)``.
+def format_outputs(outputs: Iterable[str]) -> str:
+    """Several outputs as one label, as ``mu`` for one and ``(y, mu)`` for several.
 
-    A draw's components read this way before its ``~``, and the atoms of a
-    posterior are labeled this way by its components.
+    A draw's outputs read this way before its ``~``, and the atoms of a
+    posterior are labeled this way by its outputs.
 
     Parameters
     ----------
-    components : iterable of str
-        A law's event components, in declaration order.
+    outputs : iterable of str
+        A law's outputs, in declaration order.
 
     Returns
     -------
     str
-        The one component, or the components joined by ``", "`` in parentheses.
+        The one output, or the outputs joined by ``", "`` in parentheses.
     """
-    names = list(components)
+    names = list(outputs)
     return names[0] if len(names) == 1 else f"({', '.join(names)})"
 
 

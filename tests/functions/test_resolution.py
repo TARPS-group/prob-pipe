@@ -72,7 +72,7 @@ def _recording(annotation: Any) -> tuple[Function, list[Any]]:
         body.__annotations__ = {"x": annotation}
     return Function(
         body,
-        n_broadcast_samples=6,
+        max_evaluations=6,
         dispatch="sequential",
         label="body",
         output_spec=OutputSpec(result=None),
@@ -357,7 +357,7 @@ class TestTheFloorsAgreeWithTheDirectCall:
             error = error_of(lambda: wrapped(value))
 
         assert (info.feasible is True and info.method_name == "sampling_lift") is sampled
-        drawn = error is None and len(seen) == wrapped.options["n_broadcast_samples"]
+        drawn = error is None and len(seen) == wrapped.options["max_evaluations"]
         assert (drawn and not any(isinstance(x, Distribution) for x in seen)) is sampled
 
 
@@ -368,7 +368,7 @@ class TestTheDirectCall:
         registry.register(_ClosedForm(exact=True, priority=0))
         monkeypatch.setattr(_rules, "evaluation_rule_registry", registry)
 
-        @function(n_broadcast_samples=6, dispatch="sequential")
+        @function(max_evaluations=6, dispatch="sequential")
         def identity(x):
             return x
 
@@ -414,7 +414,7 @@ class TestTheDirectCall:
 
     def test_the_selected_route_is_recorded_in_provenance(self):
         @function(
-            n_broadcast_samples=6,
+            max_evaluations=6,
             dispatch="sequential",
             output_spec=OutputSpec(identity=None),
         )
@@ -462,6 +462,7 @@ class _Scaling:
 
     label = route_name = "scaling"
     methods = None
+    collects_calls = False
 
     def probe(self, call: Any, result: Any) -> Feasibility:
         return Feasibility(True, "applies")
@@ -503,11 +504,11 @@ class TestARoutedPointShowsOnlyPassedArguments:
             {"x": 3.0, "k": 2.0},
             routed.options,
             routed._route_candidates(routed.options),
-            passed=passed,
+            explicit_parameter_names=passed,
         )
         assert term.label == ("_scale(3.0, 2.0)" if "k" in passed else "_scale(3.0)")
 
     def test_a_lift_over_a_law_runs_each_point_by_the_route(self):
         with workflow_run(seed=0):
-            law = _Routed(_scale, n_broadcast_samples=8)(standard_normal())
-        assert tuple(law.event_spec.components) == ("_scale",)
+            law = _Routed(_scale, max_evaluations=8)(standard_normal())
+        assert tuple(law.event_spec.outputs) == ("_scale",)

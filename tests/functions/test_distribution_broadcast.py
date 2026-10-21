@@ -23,6 +23,7 @@ from probpipe import (
     Record,
     RecordBatch,
     ResultSchemaError,
+    config,
     function,
     positive,
     sample,
@@ -30,7 +31,7 @@ from probpipe import (
 )
 from probpipe.core._record_batch import _batch_class_for
 from probpipe.core._record_spec import _reshaped_template
-from probpipe.core._specs import OutputSpec
+from probpipe.core._specs import OutputSpec, _has_record_outputs
 from probpipe.core.config import WorkflowKind
 from probpipe.distributions import (
     ConditionalDistribution,
@@ -119,13 +120,13 @@ def _ref(name: str) -> _binding.FunctionInputRef:
     return _binding.FunctionInputRef(name)
 
 
-def _stochastic_plan(values, n_broadcast_samples):
+def _stochastic_plan(values, max_evaluations):
     signature = inspect.Signature(
         [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in values]
     )
     signature_info = _binding.make_signature_info_from_signature(signature)
     broadcast_plan = build_broadcast_plan(values=values, signature_info=signature_info)
-    return build_stochastic_plan(values, broadcast_plan, n_broadcast_samples)
+    return build_stochastic_plan(values, broadcast_plan, max_evaluations)
 
 
 class _RecordingNormal(Normal):
@@ -213,7 +214,7 @@ class TestExecuteDistributionBroadcast:
             lambda left, right: left - right,
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=12,
+            max_evaluations=12,
             output_spec=OutputSpec(function=None),
         )
 
@@ -254,7 +255,7 @@ class TestExecuteDistributionBroadcast:
         shared = EmpiricalDistribution(
             jnp.asarray([1.0, 4.0]),
             weights=jnp.asarray([0.2, 0.8]),
-            component="shared",
+            output_name="shared",
         )
         values = {"first": shared, "second": shared}
 
@@ -327,7 +328,10 @@ class TestExecuteDistributionBroadcast:
 
         def fake_execute_many(request):
             seen["request"] = request
-            return [request.func(**item.call_values()) for item in request.work_items]
+            return [
+                request.func(**evaluation_point.call_arguments())
+                for evaluation_point in request.evaluation_points
+            ]
 
         monkeypatch.setattr(
             _broadcast._execution,
@@ -355,13 +359,19 @@ class TestExecuteDistributionBroadcast:
         assert isinstance(result, EmpiricalDistribution)
         assert request.func is shift
         assert request.execution is execution
-        assert len(request.work_items) == 5
-        assert all(item.call_values()["offset"] == 2.0 for item in request.work_items)
-        assert all(not isinstance(item.call_values()["x"], Normal) for item in request.work_items)
+        assert len(request.evaluation_points) == 5
+        assert all(
+            evaluation_point.call_arguments()["offset"] == 2.0
+            for evaluation_point in request.evaluation_points
+        )
+        assert all(
+            not isinstance(evaluation_point.call_arguments()["x"], Normal)
+            for evaluation_point in request.evaluation_points
+        )
         assert result.provenance.metadata == {
             "dispatch": "thread",
             "orchestrate": "off",
-            "n_samples": 5,
+            "max_evaluations": 5,
             "func": "shift",
             "broadcast_args": ["x"],
         }
@@ -371,12 +381,12 @@ class TestExecuteDistributionBroadcast:
             "x": EmpiricalDistribution(
                 jnp.asarray([[1.0], [2.0]]),
                 weights=jnp.asarray([0.25, 0.75]),
-                component="x",
+                output_name="x",
             ),
             "y": EmpiricalDistribution(
                 jnp.asarray([[10.0], [20.0]]),
                 weights=jnp.asarray([0.4, 0.6]),
-                component="y",
+                output_name="y",
             ),
         }
 
@@ -420,7 +430,7 @@ class TestExecuteDistributionBroadcast:
         )
 
     def test_exact_empirical_size_must_match_the_frozen_plan(self):
-        empirical = EmpiricalDistribution(jnp.asarray([1.0, 2.0, 3.0]), component="x")
+        empirical = EmpiricalDistribution(jnp.asarray([1.0, 2.0, 3.0]), output_name="x")
         values = {"x": empirical}
         plan = _stochastic_plan(values, 8)
         atoms = NumericArrayBatch(
@@ -525,7 +535,7 @@ class TestExecuteDistributionBroadcast:
             label="identity",
             dispatch=dispatch,
             workflow_kind=workflow_kind,
-            n_broadcast_samples=5,
+            max_evaluations=5,
         )
         commit_invocation = _context._commit_stochastic_invocation
 
@@ -590,7 +600,7 @@ class TestExecuteDistributionBroadcast:
         values = {
             "exact": EmpiricalDistribution(
                 jnp.asarray([1.0, 2.0]),
-                component="exact",
+                output_name="exact",
             ),
             "sampled": _RecordingNormal(sampled_calls, label="sampled"),
         }
@@ -619,25 +629,25 @@ class TestExecuteDistributionBroadcast:
         assert events[0].stochastic_source_id == ("source-group", 1)
 
     @pytest.mark.parametrize(
-        ("n_broadcast_samples", "error_type", "message"),
+        ("max_evaluations", "error_type", "message"),
         [
-            (True, TypeError, "n_broadcast_samples must be an integer"),
-            (False, TypeError, "n_broadcast_samples must be an integer"),
-            (2.5, TypeError, "n_broadcast_samples must be an integer"),
-            (0, ValueError, "n_broadcast_samples must be a positive integer"),
-            (-1, ValueError, "n_broadcast_samples must be a positive integer"),
+            (True, TypeError, "max_evaluations must be an integer"),
+            (False, TypeError, "max_evaluations must be an integer"),
+            (2.5, TypeError, "max_evaluations must be an integer"),
+            (0, ValueError, "max_evaluations must be a positive integer"),
+            (-1, ValueError, "max_evaluations must be a positive integer"),
         ],
     )
-    def test_invalid_n_broadcast_samples_raise(
+    def test_invalid_max_evaluations_raise(
         self,
-        n_broadcast_samples,
+        max_evaluations,
         error_type,
         message,
     ):
         values = {"x": Normal("x", loc=0.0, scale=1.0)}
         invalid_plan = replace(
             _stochastic_plan(values, 5),
-            n_broadcast_samples=n_broadcast_samples,
+            max_evaluations=max_evaluations,
         )
 
         with pytest.raises(error_type, match=message):
@@ -656,10 +666,10 @@ class TestExecuteDistributionBroadcast:
                 workflow_kind=WorkflowKind.OFF,
             )
 
-    def test_low_n_broadcast_samples_warns(self):
+    def test_low_max_evaluations_warns(self):
         values = {"x": Normal("x", loc=0.0, scale=1.0)}
         plan = _stochastic_plan(values, 3)
-        with pytest.warns(UserWarning, match="n_broadcast_samples=3 is too low"):
+        with pytest.warns(UserWarning, match="max_evaluations=3 is too low"):
             result = _broadcast.execute_distribution_broadcast(
                 func=lambda x: x,
                 values=values,
@@ -777,7 +787,7 @@ class TestCoSamplingThroughACall:
             lambda a, b: a - b,
             label="function",
             dispatch=controls.pop("dispatch", "sequential"),
-            n_broadcast_samples=controls.pop("n_broadcast_samples", 8),
+            max_evaluations=controls.pop("max_evaluations", 8),
             **controls,
         )
 
@@ -841,17 +851,17 @@ class TestCoSamplingThroughACall:
 
         assert not np.allclose(np.asarray(result.atoms), 0.0)
 
-    @pytest.mark.parametrize("n_broadcast_samples", [16, 8, 3])
-    def test_an_empirical_passed_twice_enumerates_one_axis(self, n_broadcast_samples):
+    @pytest.mark.parametrize("max_evaluations", [16, 8, 3])
+    def test_an_empirical_passed_twice_enumerates_one_axis(self, max_evaluations):
         """One enumeration axis per group: the diagonal, not the squared grid.
 
         Parameterized across the budget because the old behaviour degraded
-        differently as ``n_broadcast_samples`` fell below the product size —
+        differently as ``max_evaluations`` fell below the product size —
         enumerating both, then enumerating one and sampling the other.
         """
-        empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="e")
+        empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), output_name="e")
         result = self._run(
-            self._difference(n_broadcast_samples=n_broadcast_samples),
+            self._difference(max_evaluations=max_evaluations),
             empirical,
             empirical,
         )
@@ -871,7 +881,7 @@ class TestCoSamplingThroughACall:
             lambda a: a["x"],
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -884,7 +894,7 @@ class TestCoSamplingThroughACall:
             lambda a, b: a["x"] - b,
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -910,7 +920,7 @@ class TestCoSamplingThroughACall:
             lambda a: a["y"],
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -933,7 +943,7 @@ class TestCoSamplingThroughACall:
             lambda a: a.at_path("group")["y"],
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -957,7 +967,7 @@ class TestCoSamplingThroughACall:
             lambda a, b: a["y"] - b.at_path("group")["y"],
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -969,7 +979,7 @@ class TestCoSamplingThroughACall:
         """The joint over a record-valued input is a distribution, so it samples.
 
         Reading ``.atoms`` goes through the output marginal and says nothing
-        about the joint: resampling gathers rows from every component, and a
+        about the joint: resampling gathers rows from every output, and a
         record-valued input carries its rows in fields rather than along a shape.
         """
         empirical = _empirical_of_rows(
@@ -983,7 +993,7 @@ class TestCoSamplingThroughACall:
             lambda a: a["y"],
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             include_inputs=True,
             output_spec=OutputSpec(function=None),
         )
@@ -1023,7 +1033,7 @@ class TestCoSamplingThroughACall:
             lambda a: a["y"],
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(function=None),
         )
 
@@ -1065,7 +1075,7 @@ class TestCoSamplingThroughACall:
             lambda a: a["group/y"],
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=6,
+            max_evaluations=6,
             include_inputs=True,
             output_spec=OutputSpec(function=None),
         )
@@ -1089,7 +1099,7 @@ class TestCoSamplingThroughACall:
             lambda a: a["group/y"],
             label="function",
             dispatch=dispatch,
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -1106,14 +1116,14 @@ class TestCoSamplingThroughACall:
             lambda a: a["group/y"],
             label="function",
             dispatch="jax",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
         sequential = Function(
             lambda a: a["group/y"],
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -1134,7 +1144,7 @@ class TestCoSamplingThroughACall:
             lambda a, b: a["y"] - b["y"],
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -1145,7 +1155,7 @@ class TestCoSamplingThroughACall:
 
     def test_an_aliased_empirical_counts_its_weight_once(self):
         """Weights are per group, so an alias does not square them."""
-        empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="e")
+        empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), output_name="e")
         result = self._run(self._difference(include_inputs=True), empirical, empirical)
 
         np.testing.assert_allclose(np.asarray(result.weights), np.full(3, 1 / 3))
@@ -1160,9 +1170,9 @@ class TestTheDrawsOfALargeEmpiricalLaw:
             return x
 
         with workflow_run(seed=0):
-            result = identity(EmpiricalDistribution(jnp.arange(1000.0), component="x"))
+            result = identity(EmpiricalDistribution(jnp.arange(1000.0), output_name="x"))
         values = np.asarray(result.atoms).ravel()
-        assert result.num_atoms == Function.DEFAULT_N_BROADCAST_SAMPLES
+        assert result.num_atoms == config.sampling.max_evaluations
         assert len(np.unique(values)) == result.num_atoms
 
     def test_more_draws_than_atoms_take_each_atom_equally_often(self):
@@ -1174,8 +1184,8 @@ class TestTheDrawsOfALargeEmpiricalLaw:
 
         with workflow_run(seed=0):
             result = pair(
-                EmpiricalDistribution(jnp.arange(20.0), component="a"),
-                EmpiricalDistribution(100.0 + jnp.arange(20.0), component="b"),
+                EmpiricalDistribution(jnp.arange(20.0), output_name="a"),
+                EmpiricalDistribution(100.0 + jnp.arange(20.0), output_name="b"),
             )
         sampled = np.asarray(result.atoms)[:, 1]
         assert result.num_atoms == 240
@@ -1192,7 +1202,7 @@ class TestTheDrawsOfALargeEmpiricalLaw:
         weights = weights / weights.sum()
         with workflow_run(seed=0):
             result = identity(
-                EmpiricalDistribution(jnp.arange(1000.0), weights=weights, component="w")
+                EmpiricalDistribution(jnp.arange(1000.0), weights=weights, output_name="w")
             )
         drawn = np.bincount(np.asarray(result.atoms).ravel().astype(int), minlength=1000)
         expected = result.num_atoms * np.asarray(weights)
@@ -1289,7 +1299,7 @@ class TestTheProbeModelsItsExecutorsTransform:
             body,
             label="body",
             dispatch=controls.pop("dispatch", "auto"),
-            n_broadcast_samples=controls.pop("n_broadcast_samples", 8),
+            max_evaluations=controls.pop("max_evaluations", 8),
             **controls,
         )
 
@@ -1330,7 +1340,7 @@ class TestTheProbeModelsItsExecutorsTransform:
         doubles = Function(
             lambda x: x * 2.0,
             label="function",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -1359,8 +1369,8 @@ class TestTheProbeModelsItsExecutorsTransform:
                 level_name="k",
             )
 
-        broadcast = Function(body, label="body", n_broadcast_samples=8)
-        sequential = Function(body, label="body", dispatch="sequential", n_broadcast_samples=8)
+        broadcast = Function(body, label="body", max_evaluations=8)
+        sequential = Function(body, label="body", dispatch="sequential", max_evaluations=8)
         first = Normal("x", loc=0.0, scale=1.0)
         second = Normal("y", loc=3.0, scale=1.0)
 
@@ -1380,14 +1390,14 @@ class TestTheProbeModelsItsExecutorsTransform:
         third = Function(
             lambda v: v[2],
             label="function",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
         sequential = Function(
             lambda v: v[2],
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -1411,7 +1421,7 @@ class TestTheProbeModelsItsExecutorsTransform:
         difference = Function(
             lambda a, b: a - b,
             label="function",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -1421,19 +1431,19 @@ class TestTheProbeModelsItsExecutorsTransform:
         )
 
     def test_the_views_of_a_dependent_joint_are_probed(self, caplog):
-        """The root's resolved component metadata supplies the probe dtypes."""
+        """The root's resolved output metadata supplies the probe dtypes."""
         joint = _ShiftKernel() * Normal("z", loc=0.0, scale=1.0)
         difference = Function(
             lambda a, b: a - b,
             label="function",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
         sequential = Function(
             lambda a, b: a - b,
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -1455,14 +1465,14 @@ class TestTheProbeModelsItsExecutorsTransform:
         totals = Function(
             lambda r: r["a"] + r["b"],
             label="function",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
         sequential = Function(
             lambda r: r["a"] + r["b"],
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -1486,14 +1496,14 @@ class TestTheProbeModelsItsExecutorsTransform:
         totals = Function(
             lambda r: r["a"] + r["b"],
             label="function",
-            n_broadcast_samples=6,
+            max_evaluations=6,
             output_spec=OutputSpec(function=None),
         )
         sequential = Function(
             lambda r: r["a"] + r["b"],
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=6,
+            max_evaluations=6,
             output_spec=OutputSpec(function=None),
         )
 
@@ -1535,7 +1545,7 @@ class TestTheProbeModelsItsExecutorsTransform:
             ],
             level_name="row",
         )
-        nested = Function(body, label="body", n_broadcast_samples=8)
+        nested = Function(body, label="body", max_evaluations=8)
 
         with caplog.at_level(logging.INFO, logger="probpipe.functions._function"):
             result = self._run(nested, rows, Normal("x", loc=0.0, scale=1.0))
@@ -1563,14 +1573,14 @@ class TestTheProbeModelsItsExecutorsTransform:
         doubles = Function(
             double,
             label="function",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
         sequential = Function(
             double,
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -1607,7 +1617,7 @@ class TestAnEnumerationRunsInOneMappedCall:
     @staticmethod
     def _arrays(n: int, weights=None) -> EmpiricalDistribution:
         return EmpiricalDistribution(
-            jnp.linspace(0.5, 1.5, 2 * n).reshape(n, 2), weights, component="theta"
+            jnp.linspace(0.5, 1.5, 2 * n).reshape(n, 2), weights, output_name="theta"
         )
 
     @staticmethod
@@ -1636,10 +1646,10 @@ class TestAnEnumerationRunsInOneMappedCall:
     def test_the_body_runs_as_often_for_a_thousand_atoms_as_for_five(self, make):
         make = getattr(self, make)
         calls: list = []
-        result = self._counted(calls, n_broadcast_samples=1000)(make(1000))
+        result = self._counted(calls, max_evaluations=1000)(make(1000))
         thousand = len(calls)
         calls.clear()
-        self._counted(calls, n_broadcast_samples=1000)(make(5))
+        self._counted(calls, max_evaluations=1000)(make(5))
 
         assert len(calls) == thousand < 5
         assert result.num_atoms == 1000
@@ -1651,7 +1661,7 @@ class TestAnEnumerationRunsInOneMappedCall:
         """Two weighted laws enumerate their product, each combination weighted by both atoms."""
         theta = getattr(self, make)(4, jnp.array([0.1, 0.2, 0.3, 0.4]))
         scale = EmpiricalDistribution(
-            jnp.array([1.0, 2.0, 3.0]), jnp.array([0.5, 0.3, 0.2]), component="scale"
+            jnp.array([1.0, 2.0, 3.0]), jnp.array([0.5, 0.3, 0.2]), output_name="scale"
         )
         mapped_calls: list = []
         sequential_calls: list = []
@@ -1665,13 +1675,13 @@ class TestAnEnumerationRunsInOneMappedCall:
 
         mapped = Function(
             scaled(mapped_calls),
-            n_broadcast_samples=12,
+            max_evaluations=12,
             label="scaled",
             output_spec=OutputSpec(scaled=None),
         )(theta, scale)
         sequential = Function(
             scaled(sequential_calls),
-            n_broadcast_samples=12,
+            max_evaluations=12,
             dispatch="sequential",
             label="scaled",
             output_spec=OutputSpec(scaled=None),
@@ -1690,10 +1700,10 @@ class TestAnEnumerationRunsInOneMappedCall:
         for dispatch in ("auto", "sequential"):
             calls: list = []
             joint[dispatch] = self._counted(
-                calls, n_broadcast_samples=6, dispatch=dispatch, include_inputs=True
+                calls, max_evaluations=6, dispatch=dispatch, include_inputs=True
             )(theta)
 
-        assert list(joint["auto"].event_spec.components) == ["theta", "trajectory"]
+        assert list(joint["auto"].event_spec.outputs) == ["theta", "trajectory"]
         for path in ("theta/a", "theta/b", "trajectory"):
             np.testing.assert_allclose(
                 _drawn(joint["auto"], path), _drawn(joint["sequential"], path), rtol=1e-6
@@ -1718,7 +1728,7 @@ class TestAnEnumerationRunsInOneMappedCall:
             with workflow_run(seed=3):
                 laws[dispatch] = Function(
                     body,
-                    n_broadcast_samples=30,
+                    max_evaluations=30,
                     dispatch=dispatch,
                     label="f",
                     output_spec=OutputSpec(f=None),
@@ -1734,19 +1744,19 @@ class TestAnEnumerationRunsInOneMappedCall:
         )
 
     @pytest.mark.parametrize(
-        ("n_broadcast_samples", "route"),
+        ("max_evaluations", "route"),
         [(8, "empirical_enumeration"), (4, "sampling_lift")],
     )
-    def test_atoms_whose_declaration_leaves_the_dtype_open_map(self, n_broadcast_samples, route):
+    def test_atoms_whose_declaration_leaves_the_dtype_open_map(self, max_evaluations, route):
         """The probe reads an open dtype from the stored atoms, whether the lift enumerates or samples."""
         theta = self._records(8)
         assert set(theta.dtypes.values()) == {None}
         calls: list = []
 
         with workflow_run(seed=0):
-            result = self._counted(calls, n_broadcast_samples=n_broadcast_samples)(theta)
+            result = self._counted(calls, max_evaluations=max_evaluations)(theta)
 
-        assert len(calls) < n_broadcast_samples
+        assert len(calls) < max_evaluations
         assert result.provenance.metadata["route"] == route
         assert result.provenance.metadata["dispatch"] == "jax"
 
@@ -1768,7 +1778,7 @@ class TestAnEnumerationRunsInOneMappedCall:
 
             laws[dispatch] = Function(
                 body,
-                n_broadcast_samples=3,
+                max_evaluations=3,
                 dispatch=dispatch,
                 label="f",
                 output_spec=OutputSpec(f=None),
@@ -1796,7 +1806,7 @@ class TestAnEnumerationRunsInOneMappedCall:
                     "atom",
                     label="labels",
                 ),
-                component="s",
+                output_name="s",
             )
         laws = [Normal("x", loc=float(loc), scale=1.0) for loc in range(3)]
         return EmpiricalDistribution(
@@ -1805,7 +1815,7 @@ class TestAnEnumerationRunsInOneMappedCall:
                 "law",
                 label="laws",
             ),
-            component="laws",
+            output_name="laws",
         )
 
     @pytest.mark.parametrize("kind", ["opaque", "laws"])
@@ -1817,9 +1827,7 @@ class TestAnEnumerationRunsInOneMappedCall:
             return jnp.asarray(1.0)
 
         law = self._object_atoms(kind)
-        result = Function(body, n_broadcast_samples=3, label="f", output_spec=OutputSpec(f=None))(
-            law
-        )
+        result = Function(body, max_evaluations=3, label="f", output_spec=OutputSpec(f=None))(law)
 
         # The body receives each stored atom itself, once.
         atoms = law._atoms_at(np.arange(3))
@@ -1835,11 +1843,11 @@ class TestAnEnumerationRunsInOneMappedCall:
             return jnp.asarray(float(theta[0]) ** 2)
 
         result = Function(
-            untraceable, n_broadcast_samples=4, label="f", output_spec=OutputSpec(f=None)
+            untraceable, max_evaluations=4, label="f", output_spec=OutputSpec(f=None)
         )(theta)
         sequential = Function(
             untraceable,
-            n_broadcast_samples=4,
+            max_evaluations=4,
             dispatch="sequential",
             label="f",
             output_spec=OutputSpec(f=None),
@@ -1859,7 +1867,7 @@ class TestAnEnumerationRunsInOneMappedCall:
         with pytest.raises(ValueError, match="dispatch='jax' failed while tracing"):
             Function(
                 body,
-                n_broadcast_samples=4,
+                max_evaluations=4,
                 dispatch="jax",
                 label="f",
             )(law)
@@ -1877,7 +1885,7 @@ class TestAnEnumerationRunsInOneMappedCall:
         wrapped = Function(
             body,
             output_spec=OutputSpec(f=NumericArraySpec((), support=positive)),
-            n_broadcast_samples=50,
+            max_evaluations=50,
             dispatch=dispatch,
             label="f",
         )
@@ -1897,7 +1905,7 @@ class TestARecordReturnLiftsToARecordLaw:
 
     @pytest.fixture
     def transform(self):
-        @function(n_broadcast_samples=128, dispatch="sequential")
+        @function(max_evaluations=128, dispatch="sequential")
         def transform(x, y):
             return Record(
                 {"sum": x + y, "diff": x - y},
@@ -1917,15 +1925,15 @@ class TestARecordReturnLiftsToARecordLaw:
         with workflow_run(seed=0):
             result = transform(**self._laws())
         assert isinstance(result, EmpiricalDistribution)
-        assert result.event_spec.exposes_record
-        assert list(result.event_spec.components) == ["sum", "diff"]
+        assert _has_record_outputs(result.event_spec)
+        assert list(result.event_spec.outputs) == ["sum", "diff"]
 
     def test_the_mean_and_variance_are_per_field(self, transform):
         with workflow_run(seed=0):
             result = transform(**self._laws())
         means, variances = result._mean(), result._variance()
         # sum ~ N(3, 0.02) and diff ~ N(-1, 0.02) for independent x and y.
-        tolerance = 3.0 * np.sqrt(0.02) / np.sqrt(Function.DEFAULT_N_BROADCAST_SAMPLES)
+        tolerance = 3.0 * np.sqrt(0.02) / np.sqrt(config.sampling.max_evaluations)
         np.testing.assert_allclose(float(means["sum"]), 3.0, atol=tolerance)
         np.testing.assert_allclose(float(means["diff"]), -1.0, atol=tolerance)
         np.testing.assert_allclose(float(variances["sum"]), 0.02, atol=0.02)
@@ -1941,7 +1949,7 @@ class TestARecordReturnLiftsToARecordLaw:
 
 
 class TestALiftOfALawValuedFunction:
-    """A lift of a function declared to return a law holds each law under its component."""
+    """A lift of a function declared to return a law holds each law under its output."""
 
     @staticmethod
     def _kernel():
@@ -1952,15 +1960,15 @@ class TestALiftOfALawValuedFunction:
             kernel,
             output_spec=OutputSpec(DistributionSpec(OutputSpec(y=NumericArraySpec(())))),
             dispatch="sequential",
-            n_broadcast_samples=6,
+            max_evaluations=6,
         )
 
     def test_the_law_of_laws_names_the_callable(self):
         with workflow_run(seed=0):
             law = self._kernel()(Normal("x", 0.0, 1.0))
-        assert tuple(law.event_spec.components) == ("kernel",)
+        assert tuple(law.event_spec.outputs) == ("kernel",)
 
     def test_include_inputs_joins_the_draw_and_the_law(self):
         with workflow_run(seed=0):
             law = self._kernel().using(include_inputs=True)(Normal("x", 0.0, 1.0))
-        assert tuple(law.event_spec.components) == ("x", "kernel")
+        assert tuple(law.event_spec.outputs) == ("x", "kernel")

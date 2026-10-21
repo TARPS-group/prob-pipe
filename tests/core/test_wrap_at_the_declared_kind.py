@@ -183,7 +183,7 @@ class TestASampleShapeGetsADrawLevel:
         assert drawn[2].shape == ()
 
     def test_a_joint_draws_a_batch_of_records_under_its_declaration(self):
-        """A law whose draws are a mapping of columns draws the batch its declaration names."""
+        """A law whose draws are a mapping of columns draws the batch its event spec names."""
         from probpipe import NumericRecordBatch
 
         law = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)
@@ -192,7 +192,7 @@ class TestASampleShapeGetsADrawLevel:
 
         assert isinstance(drawn, NumericRecordBatch)
         assert (drawn.batch_shape, drawn.level_names) == ((4,), ("sample",))
-        assert drawn.element_spec == law.event_spec.spec
+        assert drawn.element_spec == law.event_spec.term_spec
 
     def test_one_draw_of_a_joint_is_a_record_under_its_declaration(self):
         law = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)
@@ -200,7 +200,7 @@ class TestASampleShapeGetsADrawLevel:
         drawn = sample(law)
 
         assert isinstance(drawn, Record)
-        assert drawn.spec == law.event_spec.spec
+        assert drawn.spec == law.event_spec.term_spec
 
 
 class TestAnEmptyReturnKeepsItsHostsKind:

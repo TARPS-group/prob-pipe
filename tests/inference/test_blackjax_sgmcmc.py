@@ -209,7 +209,7 @@ class TestCheck:
         prior = MultivariateNormal("x", loc=jnp.zeros(2), cov=jnp.eye(2))
         likelihood = ObservationKernel(
             "y",
-            {"x": prior.event_spec.spec},
+            {"x": prior.event_spec.term_spec},
             NumericArraySpec((5, 2)),
             lambda x: tfd.Independent(tfd.Normal(jnp.broadcast_to(x, (5, 2)), 1.0), 2),
         )

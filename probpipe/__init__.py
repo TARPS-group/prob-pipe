@@ -69,9 +69,7 @@ from probpipe.core._specs import (
 from probpipe.core.config import (
     ProvenanceMode,
     WorkflowKind,
-    notation_config,
-    prefect_config,
-    provenance_config,
+    config,
 )
 from probpipe.core.constraints import (
     Constraint,
@@ -224,7 +222,6 @@ from probpipe.values import (
     SupportsLogDetJacobian,
     is_differentiable,
     is_invertible,
-    set_default_n_broadcast_samples,
 )
 
 __all__ = [
@@ -342,6 +339,7 @@ __all__ = [
     "condition_on",
     "condition_on_nutpie",
     "conditional_distribution",
+    "config",
     "convert",
     "converter_registry",
     "cov",
@@ -370,15 +368,12 @@ __all__ = [
     "mixture",
     "non_negative",
     "non_negative_integer",
-    "notation_config",
     "operation_registry",
     "positive",
     "positive_definite",
     "predictive_check",
-    "prefect_config",
     "prob",
     "provenance_ancestors",
-    "provenance_config",
     "provenance_dag",
     "pushforward",
     "quantile",
@@ -391,7 +386,6 @@ __all__ = [
     "replay_run",
     "rwmh",
     "sample",
-    "set_default_n_broadcast_samples",
     "simplex",
     "sphere",
     "standard_deviation",

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`ConversionInfo.samples` is renamed `claims_random_events`.** It is `True`
+  when executing the conversion claims a workflow-owned random event, such as a
+  draw from the source, so the result depends on the workflow seed, and `False`
+  when the result is a deterministic function of the source and the converter
+  options. Replace `info.samples` with `info.claims_random_events`, and pass
+  `claims_random_events=` where a converter's `check` passed `samples=`.
 - **`raw` is a property on every term.** Replace `x.raw()` with `x.raw`, and
   search your code for `.raw(` to find the calls. The `raw` of a `Function`,
   an `Operation`, or a `Bijector` is a callable, so an old `f.raw()` calls the
@@ -957,7 +963,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `UnmanagedConcurrentWorkflowEntryError`, `ReplayCompatibilityError`, and
   `ReplayUnsupportedCallableError`.
 
-  A top-level workflow snapshots `provenance_config.mode` on entry. Nested
+  A top-level workflow snapshots `config.provenance.mode` on entry. Nested
   scopes and managed workers inherit that value, and configuration changes
   made during execution apply only to the next top-level workflow.
 
@@ -1074,7 +1080,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`Function` controls now live outside user call kwargs.**
   `@function(...)` configures definition-time controls, and
   `workflow.using(...)(...)` is the call-time override API for
-  `seed`, `n_broadcast_samples`, and `include_inputs`. Wrapped
+  `seed`, `max_evaluations`, and `include_inputs`. Wrapped
   functions may now declare and receive those names as ordinary
   parameters. Passing those names as call kwargs no longer configures
   ProbPipe controls; use `workflow.using(...)(...)` instead.
@@ -1265,7 +1271,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     invariant.
 
 - **Prefect orchestration is now opt-in** (#182). The shipped global
-  default for `prefect_config.workflow_kind` is `WorkflowKind.OFF`
+  default for `config.prefect.workflow_kind` is `WorkflowKind.OFF`
   instead of the prior `WorkflowKind.DEFAULT` (which auto-promoted to
   `TASK` whenever Prefect was importable). The old behaviour silently
   enabled Prefect for any environment with Prefect on `sys.path` —
@@ -1277,7 +1283,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   ```python
   import probpipe
-  probpipe.prefect_config.workflow_kind = probpipe.WorkflowKind.TASK
+  probpipe.config.prefect.workflow_kind = probpipe.WorkflowKind.TASK
   ```
 
   Or via the new `PROBPIPE_WORKFLOW_KIND` environment variable
@@ -1517,6 +1523,169 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``BroadcastDistribution``, ``ProbabilisticModel``, ``SimpleModel``,
   ``SimpleGenerativeModel``, ``PyMCModel``, ``StanModel``). No backward
   alias.
+- **`n_broadcast_samples` is split into `max_evaluations` and `num_samples`.**
+  `max_evaluations` is the maximum number of times a call lifted over laws
+  evaluates its function, 256 by default. The lift enumerates the empirical
+  arguments whose combinations of atoms number at most `max_evaluations` and
+  samples the others within that count. `num_samples` is the number of Monte
+  Carlo draws of a summary, such as `mean` or `quantile`, and of a converter
+  that draws, 1024 by default, so the default Monte Carlo estimates change. `expectation(d, f)` evaluates `f` at most `num_samples`
+  times, and `convert.using(num_samples=n)` and an argument's conversion take
+  the call's `num_samples` unless the converter's `num_samples` option is given.
+  `probpipe.config.sampling` holds both defaults and replaces
+  `set_default_n_broadcast_samples` and `Function.DEFAULT_N_BROADCAST_SAMPLES`,
+  and the environment variables `PROBPIPE_SAMPLING_MAX_EVALUATIONS` and
+  `PROBPIPE_SAMPLING_NUM_SAMPLES` set their initial values. A call's provenance
+  records `num_samples` whenever its routes drew Monte Carlo samples, including
+  the variance of `standard_deviation`, and a lift's provenance records
+  `max_evaluations` where it recorded `n_samples` or `k`. The old name raises
+  `TypeError` as an unknown control. A replay recipe records its plan under
+  `probpipe.stochastic_plan/v2`, so `replay_run` refuses a result recorded
+  earlier and asks for it to be recorded again. Migrate each use as follows:
+  - a lifted function or `pushforward`: `f.using(n_broadcast_samples=n)` becomes
+    `f.using(max_evaluations=n)`;
+  - a summary, `expectation` included: `mean.using(n_broadcast_samples=n)`
+    becomes `mean.using(num_samples=n)`;
+  - the session's default: `set_default_n_broadcast_samples(n)` becomes
+    `probpipe.config.sampling.max_evaluations = n` for lifts and
+    `probpipe.config.sampling.num_samples = n` for summaries.
+- **The settings objects are sections of `probpipe.config`.** `config` holds
+  four sections, which keep their classes, checks, and environment variables,
+  and `config.reset()` resets all four. The top-level names
+  `notation_config`, `provenance_config`, and `prefect_config` are removed,
+  with no alias. Migrate each as follows:
+  - `probpipe.notation_config` becomes `probpipe.config.notation`;
+  - `probpipe.provenance_config` becomes `probpipe.config.provenance`;
+  - `probpipe.prefect_config` becomes `probpipe.config.prefect`.
+
+  A `using` block sets temporary values, for one section as
+  `with probpipe.config.sampling.using(num_samples=4096):` and for several as
+  `with probpipe.config.using(sampling={"num_samples": 4096}, notation={"max_depth": 12}):`.
+  The previous values apply again when the block exits, an error included, and
+  blocks nest. A view's own control, which `f.using(...)` sets, wins over a
+  block, which wins over the session's value. A block applies to the work that a call
+  inside it dispatches to worker threads or Prefect workers, and to no other
+  thread. An unknown section or setting raises `TypeError` naming the known
+  ones, and a value is checked as an assignment checks it. Blocks close in the
+  reverse order of opening. A block that a generator holds open can break that
+  order in two ways, and each raises `RuntimeError`: a block closed while a call
+  opened inside it still runs keeps applying until the call ends, and a call or
+  a block that ends while a block opened inside it is still open closes that
+  block with it. Either way no closed block applies afterwards.
+- **A derived operation is computed by its formula, through its derived route.**
+  The formula of a derived operation is the equation that defines it, such as
+  `prob = exp ∘ log_prob`. Its derived route runs the formula and is registered
+  under the name `derived`. `@operation` takes `derived_route_check=`, the
+  derived route's own feasibility check, and `derived_route=`, and an
+  operation and its summary hold the formula as `formula`. The names with
+  `identity` are removed, with no alias. `@operation(conditions=...)` is
+  renamed `@operation(applicability_checks=...)`: these checks apply to every
+  call, read the operands' declarations, and raise `ApplicabilityError`. A call's
+  provenance and check report name the route `derived`, so code that reads the
+  route sees a new value: `standard_deviation(d).provenance.metadata["route"]`
+  was `"identity"` and is now `"derived"`. Migrate each use as follows:
+  - `@operation(identity_check=check)` becomes `@operation(derived_route_check=check)`;
+  - `@operation(conditions=checks)` becomes `@operation(applicability_checks=checks)`;
+  - `@operation(identity_route=route)` becomes `@operation(derived_route=route)`;
+  - `op.identity` and `op.summary().identity` become `op.formula` and
+    `op.summary().formula`;
+  - `op.using(method="identity")` becomes `op.using(method="derived")`;
+  - a check of `metadata["route"] == "identity"` becomes
+    `metadata["route"] == "derived"`.
+- **Seeded draws made inside a ProbPipe call change once.** The key of a
+  workflow-owned draw made inside a call is derived from strings that name
+  the call's evaluation point, and these strings now say "evaluation point"
+  where they said "managed". The same code at the same seed therefore draws
+  other values: a `sample`, a Monte Carlo summary, and a draw in a function's
+  body all change, while the draws a lift makes of its input laws do not. A
+  replay record written before this change is refused, so record the result
+  again to replay it. The same call before and after:
+
+  ```python
+  with workflow_run(seed=7):
+      draws = sample(Normal("x", 0.0, 1.0), 3)
+  # before: [-0.523403, 1.038044, -1.069435]
+  # after:  [0.80094, 0.327328, -0.465379]
+  ```
+- **"Slot" becomes "input" and "component" becomes "output", in names,
+  messages, and documentation.** An *input* is a named place where a function or
+  a conditional distribution receives a value, and an *output* is a name under
+  which a term's value can be read and passed on to an input of the same name.
+  "Component" now means only a component law of a `MixtureDistribution`. The
+  input, output, and event "declarations" are now input, output, and event
+  *specs*. No name has an alias:
+
+  | Before | After |
+  |---|---|
+  | `output_spec.spec`, `x.event_spec.spec` | `output_spec.term_spec`, `x.event_spec.term_spec` |
+  | `output_spec.with_spec(spec)`, `output_spec.with_spec(spec=spec)` | `output_spec.with_term_spec(spec)`, whose argument is positional only |
+  | `output_spec.components` | `output_spec.outputs` |
+  | `output_spec.exposes_record` | removed; `output_spec.outputs` lists the outputs, a record's top-level names in the positional form `OutputSpec(RecordSpec(...))` and the one name of the keyword form `OutputSpec(x=...)` |
+  | `OutputSpec.default(spec, component="x")`, `OutputSpec.default(spec=..., component=...)` | `OutputSpec.default(spec, output_name="x")`, `OutputSpec.default(term_spec=..., output_name=...)` |
+  | `Normal(component="x", ...)` and every family's first parameter `component` | `Normal(output_name="x", ...)`; a positional name, as `Normal("x", 0.0, 1.0)`, is unchanged |
+  | `EmpiricalDistribution(..., component="theta")`, `distribution(..., component="x")`, and the first parameter `component` of `KDEDistribution`, `BootstrapDistribution`, `BootstrapReplicateDistribution`, `BijectorTransformedDistribution`, `LinearPushforwardDistribution`, `RandomFunction`, and `RandomMeasure` | `output_name="theta"`, `output_name="x"`, and `output_name` |
+  | `factor(d, component_name)` | `factor(d, output_name)` |
+  | the route `method="by_component"` of `mean`, `variance`, and `quantile` | `method="by_output"`, and `provenance.metadata["route"]` reads `"by_output"` |
+  | the key `"components"` of each block in that route's `provenance.metadata["blocks"]` | `"outputs"` |
+  | the route `"bind_given_slots"` of `condition_on` on a conditional distribution | `"bind_inputs"`, also in `provenance.metadata["route"]` |
+  | the page `docs/api/declarations.md` | `docs/api/input_and_output_specs.md` |
+
+  For example, `Normal("mu", 0.0, 1.0).event_spec.components` becomes
+  `Normal("mu", 0.0, 1.0).event_spec.outputs`, and
+  `variance.using(method="by_component")(d)` becomes
+  `variance.using(method="by_output")(d)`.
+
+  The route names change silently for code that reads them. For a conditional
+  distribution `k` with the input `mu`, the same call gives another value:
+
+  ```python
+  condition_on(k, {"mu": 0.3}).provenance.metadata["route"]
+  # before: 'bind_given_slots'
+  # after:  'bind_inputs'
+  variance.using(method="by_output")(d).provenance.metadata["route"]
+  # before (with method="by_component"): 'by_component'
+  # after:  'by_output'
+  ```
+- **The provenance mode is fixed for a workflow run.** The outermost
+  `workflow_run` takes the mode in effect when it opens, and a call outside
+  every `workflow_run` takes it when the call opens. Inside the run, a
+  `config.provenance.using` block, a `config.using(provenance=...)` block, an
+  assignment to `config.provenance.mode`, or a `reset` that would set another
+  mode raises `RuntimeError`, naming the run's mode. Before, the block or the
+  assignment was ignored for the run's provenance while
+  `config.provenance.mode` read the new value. One that sets the run's own mode
+  is accepted. Set the mode before the run opens:
+
+  ```python
+  # before: provenance was recorded although the block read OFF
+  with workflow_run(seed=1):
+      with config.provenance.using(mode=ProvenanceMode.OFF):
+          y = f(x)
+  # after: the block raises; set the mode before the run opens
+  with config.provenance.using(mode=ProvenanceMode.OFF), workflow_run(seed=1):
+      y = f(x)
+  ```
+- **The work a call dispatches reads the session's settings as they were when
+  the outermost call opened.** Inside a function's body and the other work a
+  call evaluates, under `dispatch="sequential"` and `"thread"` and in Prefect
+  tasks, a setting that no `using` block sets reads the session's value from a
+  snapshot that the outermost call takes when it opens. Before, a worker read
+  the session's current value. A session assignment made while a call runs
+  therefore reaches none of that call's work, and it applies from the next call
+  on. The `prefect` section is the exception, and is read as it stands. The
+  same call before and after:
+
+  ```python
+  @function(dispatch="thread", max_workers=1)
+  def body(x):
+      if float(x) == 0.0:
+          config.sampling.num_samples = 7
+      return config.sampling.num_samples
+
+  body(NumericArrayBatch(jnp.arange(3.0), "x", label="xs"))
+  # before: [7, 7, 7]
+  # after:  [1024, 1024, 1024]
+  ```
 
 ### Added
 
@@ -1562,8 +1731,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `2.0` and `√2` without mapping `sqrt` over the fields of `variance`. A random
   function's is its pointwise standard deviation function, and the result is
   labeled `√𝕍[(mu, tau) ~ d]`. It is defined as `sqrt(variance(d))`, so it takes
-  the routes of `variance`, and `exact_only` and `n_broadcast_samples` set on it
-  pass to `variance`.
+  the routes of `variance`, and `exact_only`, `max_evaluations`, and
+  `num_samples` set on it pass to `variance`.
 - **A derived operation's `method` error names the operation that has the
   route.** `standard_deviation.using(method="monte_carlo")` raises
   `ResolutionError` saying that `standard_deviation` does not pass `method` on
@@ -1597,11 +1766,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `exact_only=True`, the error names the components that have an exact
   summary and the calls on their views that compute it. `cov` keeps the
   Monte Carlo fallback for a dependent joint.
-- **`notation_config.max_depth` sets how many nested levels a label or a
+- **`config.notation.max_depth` sets how many nested levels a label or a
   notation shows.** A label derived from other terms, such as
   `E[f(beta ~ model; y)]`, and the notation of a law nest one level for each
   value or law they are computed from. A rendering shows at most
-  `notation_config.max_depth` levels, 8 by default or the value of the
+  `config.notation.max_depth` levels, 8 by default or the value of the
   environment variable `PROBPIPE_NOTATION_MAX_DEPTH`, and at most 64, the
   number of levels a stored expression keeps. A part nested deeper
   shows as its label, the name of a law or a function, or as `…` for a value,
@@ -2233,8 +2402,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uniform and non-uniform weights so the estimator is continuous in the
   weights.
 
-- **`ProvenanceMode` enum and `provenance_config` singleton for lineage-tracking
-  control.** Three modes are available: `FULL` retains live references to every
+- **`ProvenanceMode` enum and the `config.provenance` section for
+  lineage-tracking control.** Three modes are available: `FULL` retains live references to every
   parent distribution (good for interactive debugging); `LIGHTWEIGHT` (the new
   default) stores only `ParentInfo` descriptors — type name, distribution label,
   and the parent's own provenance chain — so parent data arrays are free to be
@@ -2243,7 +2412,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```python
   import probpipe
   from probpipe import ProvenanceMode
-  probpipe.provenance_config.mode = ProvenanceMode.FULL  # for debugging
+  probpipe.config.provenance.mode = ProvenanceMode.FULL  # for debugging
   ```
 
 - **`ParentInfo` descriptor** (new public export).  A frozen dataclass carrying
@@ -2264,7 +2433,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   future cross-run `cache_key_fn` can fail closed on weak inputs.
 
 - **`Provenance.create()` factory classmethod.**  Centralises mode-checking:
-  reads `provenance_config.mode`, wraps each parent in a `ParentInfo`, and
+  reads `config.provenance.mode`, wraps each parent in a `ParentInfo`, and
   returns `None` in OFF mode.  All ~15 provenance assembly sites in the
   codebase now route through this single entry point, so mode behavior is
   uniform everywhere.
@@ -2597,6 +2766,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A converter's `check` states only its promise.** It leaves `method_name`
+  and `exact` unset on the `ConversionInfo` it returns, and the converter
+  registry sets both from the registration. A converter that passes both still
+  works, since the registry replaces them.
 - **A parametric family and a joint's conditional factors reuse their
   compiled code across calls.** A family samples, scores, and takes quantiles
   through compiled programs that a later call with the same parameter shapes
@@ -3201,7 +3374,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ancestor.obj                                 # None — parent may be GC'd
 
   # To restore live-object access, opt in to FULL mode
-  probpipe.provenance_config.mode = ProvenanceMode.FULL
+  probpipe.config.provenance.mode = ProvenanceMode.FULL
   ancestor = provenance_ancestors(result)[0]
   ancestor.obj                                 # live Distribution
   ancestor.obj.sample(key, (10,))              # works
@@ -3524,6 +3697,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A nested numeric sweep checks once whether its function traces with JAX and
   shares that check across its cells. Each cell keeps its own check when its
   swept values must stay fixed or when the sweep is over stored objects.
+- **`apply` and `check` inside a call use their own `num_samples`.** The
+  routes that `f.apply(...)` runs, or that `f.check(...)` probes, inside
+  another call read the `num_samples` that `f`'s own controls, a
+  `config.using` block, or the session give, as `f(...)` does, so a converter
+  that draws takes that count. They read the enclosing call's count before.
 
 ### Removed (breaking)
 
@@ -3577,7 +3755,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   about ArviZ. Google Colab preinstalls PyMC 5, so every notebook's Colab
   install cell, and the minimal Colab command of the installation page, also
   installs `pymc>=6.2`, and pip no longer reports a dependency conflict.
-- **A derived operation passes `exact_only` and `n_broadcast_samples` to the
+- **A derived operation passes `exact_only` and its counts to the
   functions its identity calls.** `prob.using(exact_only=True)(Normal("x",
   0.0, 2.0), 0.0)` used to raise `ResolutionError` and now returns the exact
   density, because the `log_prob` that `prob` calls selects only exact routes.
@@ -3587,11 +3765,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when a call inside it has only an approximate route, and when it is declared
   without an `identity_check`, which the message names. The conversion of an
   argument inside the identity follows its parameter's `conversions` control,
-  as in a direct call. A derived operation's `n_broadcast_samples` used to be
-  dropped at its identity's calls, which drew their own default, and now sets
-  their draws when the derived call sets it, unless the identity sets its own
-  on the call. The other controls stay each call's own. A composite identity,
-  such as `expectation`'s, runs each of its steps under the same two controls.
+  as in a direct call. A derived operation's `max_evaluations` and
+  `num_samples` used to be dropped at its identity's calls, which drew their
+  own default, and now set their evaluations and draws when the derived call
+  sets them, unless the identity sets its own on the call. The other controls
+  stay each call's own. A composite identity, such as `expectation`'s, runs each
+  of its steps under the same controls.
   A call under `exact_only` on an operation without an exact route says so,
   where it said that no route is registered.
 - **A SciPy distribution with a location or scale its family does not hold
@@ -3828,7 +4007,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   produced ones where the declaration leaves them unset, a declared symbolic
   dimension binds to the produced size, and a record unifies field by field.
 - **An exact lift over an empirical law runs in one `vmap`.** A function lifted
-  over an empirical law with at most `n_broadcast_samples` atoms is evaluated at
+  over an empirical law with at most `max_evaluations` atoms is evaluated at
   every combination of atoms, and these evaluations ran in a Python loop even
   when the call traces, so a body that runs `jax.lax.scan` was traced again for
   each atom. A 22-step population trajectory over a 2,000-atom posterior took

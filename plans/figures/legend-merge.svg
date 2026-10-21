@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="659" height="334" viewBox="0 0 659 334" role="img">
+  <title>How a figure shows a merge</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#424a53"/>
+    </marker>
+    <marker id="arrow-fault" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#cf222e"/>
+    </marker>
+  </defs>
+  <rect x="0.5" y="0.5" width="658" height="333" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <g transform="translate(-2.0,18.0)">
+    <rect x="20.0" y="0.0" width="112.0" height="58.0" rx="8" fill="#fff0f7" stroke="#bf3989" stroke-width="1.6"/>
+    <rect x="30.0" y="7.0" width="49.3" height="17.0" rx="8.5" fill="#bf3989" stroke="#bf3989" stroke-width="1"/>
+    <text x="54.6" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">kernel</text>
+    <text x="87.3" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">a</text>
+    <text x="120.0" y="45.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="end">x</text>
+    <circle cx="132.0" cy="41.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
+    <rect x="200.0" y="0.0" width="112.0" height="58.0" rx="8" fill="#f6f0ff" stroke="#8250df" stroke-width="1.6"/>
+    <rect x="210.0" y="7.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
+    <text x="225.8" y="19.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
+    <text x="249.6" y="20.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">b</text>
+    <text x="212.0" y="45.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">x</text>
+    <circle cx="200.0" cy="41.0" r="4.5" fill="#8250df" stroke="#8250df" stroke-width="1.6"/>
+    <path d="M 195.5,41.0 L 138.5,41.0" fill="none" stroke="#424a53" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <text x="330.0" y="24.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">In a &amp; b, a wire runs from an output of b</text>
+    <text x="330.0" y="42.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">to the input of a with the same name.</text>
+    <rect x="20.0" y="84.0" width="270.0" height="64.0" rx="14" fill="none" stroke="#6e7781" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <rect x="40.0" y="94.0" width="70.0" height="44.0" rx="8" fill="#fff0f7" stroke="#bf3989" stroke-width="1.6"/>
+    <circle cx="110.0" cy="116.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
+    <rect x="170.0" y="94.0" width="70.0" height="44.0" rx="8" fill="#fff0f7" stroke="#bf3989" stroke-width="1.6"/>
+    <circle cx="240.0" cy="116.0" r="4.5" fill="#bf3989" stroke="#bf3989" stroke-width="1.6"/>
+    <path d="M 283.5,96.0 L 130.0,96.0 L 130.0,116.0 L 116.5,116.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <path d="M 258.0,96.0 L 258.0,116.0 L 246.5,116.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <circle cx="258.0" cy="96.0" r="3" fill="#424a53" stroke="#424a53" stroke-width="1"/>
+    <circle cx="290.0" cy="96.0" r="4.5" fill="#6e7781" stroke="#6e7781" stroke-width="1.6"/>
+    <text x="330.0" y="102.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">The result is a dashed boundary with its</text>
+    <text x="330.0" y="120.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">ports on its edges. A port that fans out</text>
+    <text x="330.0" y="138.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">to both operands is a shared input.</text>
+    <rect x="40.0" y="174.0" width="112.0" height="58.0" rx="8" fill="#f6f0ff" stroke="#8250df" stroke-width="1.6"/>
+    <rect x="50.0" y="181.0" width="31.6" height="17.0" rx="8.5" fill="#8250df" stroke="#8250df" stroke-width="1"/>
+    <text x="65.8" y="193.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">law</text>
+    <text x="89.6" y="194.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">a &amp; c</text>
+    <text x="140.0" y="219.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="end" font-style="italic">sigma</text>
+    <circle cx="152.0" cy="215.0" r="5.3" fill="#ffffff" stroke="#8250df" stroke-width="1.6" stroke-dasharray="2.2 1.8"/>
+    <text x="330.0" y="189.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">A dashed port is a factor input: an input a</text>
+    <text x="330.0" y="207.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">factor of a law still takes, which a later</text>
+    <text x="330.0" y="225.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">merge can feed or share.</text>
+    <rect x="20.0" y="258.0" width="270.0" height="40.0" rx="14" fill="none" stroke="#cf222e" stroke-width="2.2" stroke-dasharray="6 4"/>
+    <circle cx="46.0" cy="278.0" r="10" fill="#cf222e" stroke="#cf222e" stroke-width="1"/>
+    <path d="M 41.5,282.5 L 50.5,273.5" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M 41.5,273.5 L 50.5,282.5" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+    <text x="66.0" y="282.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="bold" fill="#cf222e" text-anchor="start">refused</text>
+    <circle cx="150.0" cy="278.0" r="4.5" fill="#cf222e" stroke="#cf222e" stroke-width="1.6"/>
+    <text x="160.0" y="282.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#cf222e" text-anchor="start">the fault</text>
+    <text x="330.0" y="273.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">A refused merge has a red boundary and a</text>
+    <text x="330.0" y="291.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">red cross; what breaks the rule is red.</text>
+  </g>
+</svg>

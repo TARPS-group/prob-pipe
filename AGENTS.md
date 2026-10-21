@@ -13,6 +13,7 @@ The design reference in `design/` describes the target state, and the documents 
 | Task | Document that owns its rules |
 |---|---|
 | Any change to `probpipe/` | `CONTRACTS.md`: the contract directives every PR follows |
+| A step of the contracts push of October 2026 | `plans/README.md`: its directives, steps, and handoffs |
 | A coding convention, such as naming, imports, or test layout | `STYLE_GUIDE.md` |
 | The contract of an abstraction or an operation | its section of `design/`, listed in `design/README.md` |
 | A term of art, or the canonical name of a recurring concept | `design/glossary.md` |
@@ -80,3 +81,4 @@ These checks run without being asked:
 - the advisory CI jobs: the type check, the design ledger report, and the PR hygiene check of the title, branch, and body;
 - `tests/docs/`: each citation of the rule documents and the agent files exists, this file stays within 120 lines, and each CHANGELOG release has one heading per change type;
 - `tests/test_version.py`: the two `pyproject.toml` files share one version.
+- while `plans/` exists, the push-status job: a PR into `dev/overhaul` needs a `step:<step>` or `push:*` label, and the job rewrites the tracking issue from the labels (`plans/README.md` § Status).

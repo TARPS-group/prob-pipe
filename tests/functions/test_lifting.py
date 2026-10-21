@@ -87,7 +87,7 @@ def _kind_of(body_annotation: Any, argument: Any) -> Any:
     body.__annotations__ = {"x": body_annotation}
     wrapped = Function(
         body,
-        n_broadcast_samples=6,
+        max_evaluations=6,
         dispatch="sequential",
         label="body",
         output_spec=OutputSpec(body=None),
@@ -98,7 +98,7 @@ def _kind_of(body_annotation: Any, argument: Any) -> Any:
 
 class TestTheTrigger:
     def test_a_distribution_at_an_unannotated_parameter_is_lifted(self):
-        @function(n_broadcast_samples=6, dispatch="sequential", output_spec=OutputSpec(square=None))
+        @function(max_evaluations=6, dispatch="sequential", output_spec=OutputSpec(square=None))
         def square(x):
             return x * x
 
@@ -177,7 +177,7 @@ class TestTheTrigger:
 
     @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto", "jax"])
     def test_a_function_annotation_lifts_in_check_and_execution(self, dispatch):
-        @function(dispatch=dispatch, n_broadcast_samples=6)
+        @function(dispatch=dispatch, max_evaluations=6)
         def square(x: Function):
             return x * x
 
@@ -244,7 +244,7 @@ class TestTheTrigger:
         assert seen == [rows]
 
     def test_a_batch_and_a_distribution_give_a_sweep_of_broadcasts(self):
-        @function(n_broadcast_samples=6, dispatch="sequential", output_spec=OutputSpec(shift=None))
+        @function(max_evaluations=6, dispatch="sequential", output_spec=OutputSpec(shift=None))
         def shift(a, z):
             return a + z
 
@@ -255,7 +255,7 @@ class TestTheTrigger:
         assert float(np.mean(atom_leaves(result[1])[0])) > 5.0
 
     def test_a_nested_sweep_returns_a_batch_of_laws(self):
-        @function(n_broadcast_samples=6, dispatch="sequential", output_spec=OutputSpec(shift=None))
+        @function(max_evaluations=6, dispatch="sequential", output_spec=OutputSpec(shift=None))
         def shift(a, z):
             return a + z
 
@@ -278,7 +278,7 @@ class TestTheDraw:
     def test_a_record_draw_arrives_as_a_record(self):
         seen = []
 
-        @function(n_broadcast_samples=6, dispatch="sequential", output_spec=OutputSpec(record=None))
+        @function(max_evaluations=6, dispatch="sequential", output_spec=OutputSpec(record=None))
         def record(theta):
             seen.append(theta)
             return 0.0
@@ -291,7 +291,7 @@ class TestTheDraw:
     def test_a_one_field_record_draw_arrives_as_a_record(self):
         seen = []
 
-        @function(n_broadcast_samples=6, dispatch="sequential", output_spec=OutputSpec(record=None))
+        @function(max_evaluations=6, dispatch="sequential", output_spec=OutputSpec(record=None))
         def record(theta):
             seen.append(theta)
             return 0.0
@@ -301,10 +301,10 @@ class TestTheDraw:
 
         assert all(isinstance(draw, Record) for draw in seen)
 
-    def test_explicit_binding_reads_the_receiving_parameter_not_the_component(self):
+    def test_explicit_binding_reads_the_receiving_parameter_not_the_output(self):
         seen = []
 
-        @function(n_broadcast_samples=6, dispatch="sequential", output_spec=OutputSpec(weigh=None))
+        @function(max_evaluations=6, dispatch="sequential", output_spec=OutputSpec(weigh=None))
         def weigh(theta):
             seen.append(theta)
             return theta["a"] + theta["b"]
@@ -313,7 +313,7 @@ class TestTheDraw:
         with workflow_run(seed=0):
             result = weigh(theta=law)
 
-        assert "theta" not in law.event_spec.components
+        assert "theta" not in law.event_spec.outputs
         assert isinstance(result, Distribution)
         assert all(set(draw.keys()) == {"a", "b"} for draw in seen)
 
@@ -327,7 +327,7 @@ class TestTheDraw:
             seen.append(weights)
             return weights["a"] * mu + weights["b"]
 
-        law = EmpiricalDistribution(jnp.array([1.0, 2.0, 4.0]), component="mu", label="prior")
+        law = EmpiricalDistribution(jnp.array([1.0, 2.0, 4.0]), output_name="mu", label="prior")
         result = affine(weights, law)
 
         assert all(received is weights for received in seen)
@@ -457,7 +457,7 @@ class TestARawClassAnnotation:
 
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
     def test_each_draw_of_a_lifted_law_arrives_as_a_jax_array(self, dispatch):
-        wrapped, seen = _receiving({"x": jax.Array}, n_broadcast_samples=6, dispatch=dispatch)
+        wrapped, seen = _receiving({"x": jax.Array}, max_evaluations=6, dispatch=dispatch)
 
         with workflow_run(seed=0):
             wrapped(standard_normal())
@@ -620,7 +620,7 @@ class TestARawClassAnnotation:
 class TestGrouping:
     def test_one_distribution_passed_twice_is_one_group(self):
         @function(
-            n_broadcast_samples=8,
+            max_evaluations=8,
             dispatch="sequential",
             output_spec=OutputSpec(difference=None),
         )
@@ -636,7 +636,7 @@ class TestGrouping:
 
     def test_sibling_views_of_one_parent_co_sample(self):
         @function(
-            n_broadcast_samples=8,
+            max_evaluations=8,
             dispatch="sequential",
             output_spec=OutputSpec(residual=None),
         )
@@ -652,7 +652,7 @@ class TestGrouping:
 
     def test_a_parent_and_its_own_view_co_sample(self):
         @function(
-            n_broadcast_samples=8,
+            max_evaluations=8,
             dispatch="sequential",
             output_spec=OutputSpec(residual=None),
         )
@@ -668,7 +668,7 @@ class TestGrouping:
 
     def test_laws_with_no_common_ancestor_sample_independently(self):
         @function(
-            n_broadcast_samples=16,
+            max_evaluations=16,
             dispatch="sequential",
             output_spec=OutputSpec(difference=None),
         )
@@ -894,11 +894,11 @@ class TestSingletonAlignment:
 
     @pytest.mark.parametrize("dispatch", ["auto", "jax", "sequential"])
     def test_a_nested_broadcast_repeats_singleton_values_per_sweep_cell(self, dispatch):
-        @function(n_broadcast_samples=6, dispatch=dispatch)
+        @function(max_evaluations=6, dispatch=dispatch)
         def add(x, y, z):
             return x + y + z
 
-        law = EmpiricalDistribution(jnp.array([0.0, 2.0]), component="z")
+        law = EmpiricalDistribution(jnp.array([0.0, 2.0]), output_name="z")
         with workflow_run(seed=7):
             result = add(_batch([1.0]), _batch([10.0, 20.0]), law)
 

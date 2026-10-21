@@ -31,8 +31,8 @@ def _run_x64(snippet: str) -> str:
         import jax
         jax.config.update("jax_enable_x64", True)
         import jax.numpy as jnp
-        from probpipe import WorkflowKind, prefect_config
-        prefect_config.workflow_kind = WorkflowKind.OFF
+        from probpipe import WorkflowKind, config
+        config.prefect.workflow_kind = WorkflowKind.OFF
         """
     ) + textwrap.dedent(snippet)
     result = subprocess.run(
@@ -176,7 +176,7 @@ def test_x64_empirical_distribution_preserves_dtype():
         """
         from probpipe import EmpiricalDistribution
         samples = jnp.array([[1.0], [2.0], [3.0]])  # float64 under x64
-        d = EmpiricalDistribution(samples, component="x")
+        d = EmpiricalDistribution(samples, output_name="x")
         assert d.atoms.raw.dtype == jnp.float64, d.atoms.raw.dtype
         assert d.dtype == jnp.float64
         print('OK')
@@ -295,7 +295,7 @@ def test_x64_kde_distribution():
         import jax
 
         samples = jnp.linspace(-2.0, 2.0, 50)
-        kde = KDEDistribution(samples, component='kde')
+        kde = KDEDistribution(samples, output_name='kde')
         assert kde.dtype == jnp.float64
         assert ops.sample(kde).dtype == jnp.float64
         assert ops.log_prob(kde, 0.5).dtype == jnp.float64
@@ -375,7 +375,7 @@ def test_x64_bootstrap_replicate():
         import jax
 
         evals = jnp.linspace(0.0, 1.0, 10)
-        b = BootstrapReplicateDistribution('b', EmpiricalDistribution(evals, component='e'))
+        b = BootstrapReplicateDistribution('b', EmpiricalDistribution(evals, output_name='e'))
         assert jnp.asarray(b._sample(jax.random.key(0))).dtype == jnp.float64
         print('OK')
         """

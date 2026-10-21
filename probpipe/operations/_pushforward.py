@@ -7,7 +7,7 @@ annotated ``Distribution`` or ``Any`` (V.5). Its route is the evaluation-rule
 registry, keyed on the map's and the law's types, from which the direct call
 also selects.
 
-The two applicability conditions of the pushforward, which ``expectation``
+The two applicability checks of the pushforward, which ``expectation``
 shares, are defined here: the map's open parameter admits a draw of the law,
 and its fixed arguments are constants.
 """
@@ -150,7 +150,7 @@ def _call_at(
 
 
 # ---------------------------------------------------------------------------
-# The applicability conditions
+# The applicability checks
 # ---------------------------------------------------------------------------
 
 #: Each kind a message names, in plain words, the more specific kinds first.
@@ -205,9 +205,9 @@ def _arm_takes(arm: Any) -> str:
 def _domain_refusal(f: Function, parameter: str, event: TermSpec, fixed: Mapping[str, Any]) -> str:
     """Why the open *parameter* of *f* cannot take a draw declared by *event*, or ``""``.
 
-    Each declaration the parameter carries must admit the draw: its slot of
+    Each declaration the parameter carries must admit the draw: its spec in
     *f*'s ``input_spec``, unified with the draw together with the fixed
-    arguments' slots; its role, for an operation; and otherwise its annotation,
+    arguments' specs; its role, for an operation; and otherwise its annotation,
     whose arms are read by :func:`_arm_admits`.
     """
     draw = f"the draw is {_kind_words(type(event))}"
@@ -246,7 +246,7 @@ def _domain_refusal(f: Function, parameter: str, event: TermSpec, fixed: Mapping
 def _event_of(d: Any) -> TermSpec | None:
     """The spec of one draw of the law *d* declares, or ``None`` when it declares none."""
     event = getattr(d, "event_spec", None)
-    return getattr(event, "spec", None)
+    return getattr(event, "term_spec", None)
 
 
 def _lifted_fixed_argument(f: Function, fixed: Mapping[str, Any]) -> str:
@@ -268,8 +268,8 @@ def _lifted_fixed_argument(f: Function, fixed: Mapping[str, Any]) -> str:
     return ""
 
 
-def _integrand_conditions(subject: str) -> tuple[Callable[..., Any], Callable[..., Any]]:
-    """The two applicability conditions of an operation that integrates or pushes forward a map.
+def _integrand_applicability_checks(subject: str) -> tuple[Callable[..., Any], Callable[..., Any]]:
+    """The two applicability checks of an operation that integrates or pushes forward a map.
 
     Parameters
     ----------
@@ -347,7 +347,7 @@ def _mapped_expression() -> None:
 @operation(
     result=_pushforward_result,
     roles={"f": (FunctionSpec,)},
-    conditions=_integrand_conditions("pushforward"),
+    applicability_checks=_integrand_applicability_checks("pushforward"),
     label=_map_output_label,
 )
 def pushforward(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = None):
@@ -406,15 +406,16 @@ def pushforward(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
 #: control ``include_inputs`` is not among them, since it would make the result
 #: the law of the map's inputs and outputs together.
 _FORWARDED_CONTROLS = (
-    "n_broadcast_samples",
+    "max_evaluations",
     "dispatch",
     "max_workers",
     "workflow_kind",
     "method_options",
 )
 
-#: The map's own controls that the map built around it keeps.
-_MAP_CONTROLS = ("n_broadcast_samples", "dispatch", "max_workers", "workflow_kind")
+#: The map's own controls that the map built around it keeps, when the map sets
+#: them; the others resolve when the new map's call opens.
+_MAP_CONTROLS = ("max_evaluations", "dispatch", "max_workers", "workflow_kind")
 
 
 def _draw_map(
@@ -429,7 +430,7 @@ def _draw_map(
     calls *f* on it with the fixed arguments. A map whose parameter is annotated
     ``Any`` is applied to the draw with schema validation, so it traces; any other is called
     as a direct call, so the draw goes through its admission, conversions, and
-    routes. The new map keeps *f*'s label, output declaration, and sample count.
+    routes. The new map keeps *f*'s label, output spec, and ``max_evaluations``.
     """
     operation = isinstance(f, Operation)
     if not operation and _plan.lift_at(f, parameter, d) == "broadcast":
@@ -452,7 +453,7 @@ def _draw_map(
         label=f.label,
         output_spec=f.output_spec,
         output_label=f.output_label,
-        **{name: f.options[name] for name in _MAP_CONTROLS},
+        **{name: f._options[name] for name in _MAP_CONTROLS if name in f._options},
     )
     return mapped, parameter, {}
 
@@ -500,7 +501,8 @@ class _EvaluationRules(_RegistryRoute):
         """The controls the caller set on the operation, which the call of the map takes over its own.
 
         A control the caller left unset keeps the map's value, so a map
-        constructed with its own sample count draws that many.
+        constructed with its own ``max_evaluations`` is evaluated at most that
+        many times.
         """
         set_controls = call.operation._options
         return {name: set_controls[name] for name in self._forwarded if name in set_controls}

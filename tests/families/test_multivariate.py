@@ -107,15 +107,15 @@ class TestGeneric:
     def test_name_set(self):
         d = Dirichlet("alpha", concentration=[1.0, 2.0, 3.0], label="prior")
         assert d.label == "prior"
-        assert list(d.event_spec.components) == ["alpha"]
+        assert list(d.event_spec.outputs) == ["alpha"]
 
         m = Multinomial("counts", total_count=10, probs=[0.2, 0.3, 0.5], label="likelihood")
         assert m.label == "likelihood"
-        assert list(m.event_spec.components) == ["counts"]
+        assert list(m.event_spec.outputs) == ["counts"]
 
         w = Wishart("sigma", df=5.0, scale_tril=jnp.eye(3), label="precision_prior")
         assert w.label == "precision_prior"
-        assert list(w.event_spec.components) == ["sigma"]
+        assert list(w.event_spec.outputs) == ["sigma"]
 
         v = VonMisesFisher("dir", mean_direction=[1.0, 0.0, 0.0], concentration=5.0)
         assert v.label == "VonMisesFisher"

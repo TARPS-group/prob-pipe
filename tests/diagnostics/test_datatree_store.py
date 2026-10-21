@@ -216,7 +216,7 @@ class TestToNamedPosteriorDataset:
         assert ds["alpha"].shape == (2, 50)
 
     def test_a_law_without_chains_is_refused(self):
-        law = EmpiricalDistribution(np.array([1.0, 2.0]), component="x")
+        law = EmpiricalDistribution(np.array([1.0, 2.0]), output_name="x")
         with pytest.raises(ValueError, match="levels"):
             to_named_posterior_dataset(law)
 

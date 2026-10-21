@@ -16,8 +16,8 @@ import jax.numpy as jnp
 from .._weights import Weights
 from ..core._dispatch import Feasibility
 from ..core._numeric_record_batch import NumericRecordBatch
-from ..core._repr import format_components
-from ..core._specs import OutputSpec
+from ..core._repr import format_outputs
+from ..core._specs import OutputSpec, _has_record_outputs
 from ..distributions._capabilities import SupportsConditionalLogProb
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
@@ -68,22 +68,22 @@ def _flat_atoms(prior: EmpiricalDistribution) -> jnp.ndarray:
 
 
 def _target_atoms(prior: EmpiricalDistribution, declaration: OutputSpec) -> Any:
-    """The atoms of *prior* packaged as the target's *declaration* packages its event.
+    """The atoms of *prior* in the form the target's output spec *declaration* gives its event.
 
-    A prior over a record keeps its atoms, whose fields are the declaration's
-    components. A prior over one array, whose component the declaration exposes
+    A prior over a record keeps its atoms, whose fields are the outputs of
+    *declaration*. A prior over one array, whose output *declaration* names
     as a field, becomes a one-field record batch on one level.
     """
     expected = prior.event_spec
-    if declaration.exposes_record == expected.exposes_record and tuple(
-        declaration.components
-    ) == tuple(expected.components):
+    if _has_record_outputs(declaration) == _has_record_outputs(expected) and tuple(
+        declaration.outputs
+    ) == tuple(expected.outputs):
         return prior.atoms
-    (component,) = declaration.components
+    (output_name,) = declaration.outputs
     levels = prior.atoms.level_names
     level = levels[0] if len(levels) == 1 else "atom"
     return NumericRecordBatch(
-        {component: prior._rows},
+        {output_name: prior._rows},
         (level,),
         axes_per_level=(1,),
         label=prior.label,
@@ -193,9 +193,9 @@ class EmpiricalReweightingMethod(InferenceMethod):
             )
         weights = Weights(log_weights=log_weights)
         atoms = _target_atoms(prior, target.event_spec)
-        # The posterior's atoms are labeled by its components, as an inference
+        # The posterior's atoms are labeled by its outputs, as an inference
         # method's are.
-        atoms_label = format_components(target.event_spec.components)
+        atoms_label = format_outputs(target.event_spec.outputs)
         if atoms.label != atoms_label:
             atoms = atoms.with_label(atoms_label)
         result = EmpiricalDistribution(

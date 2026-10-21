@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import EmpiricalDistribution, Function, Normal, OutputSpec, function, workflow_run
+from probpipe.core._specs import _has_record_outputs
 from probpipe.functions import _call
 from probpipe.values import _binding
 
@@ -76,7 +77,7 @@ def _resolve_call(
 
 
 class TestWorkflowCallHelpers:
-    def test_input_refs_use_one_subscript_for_variadic_slots(self):
+    def test_input_refs_use_one_subscript_for_variadic_inputs(self):
         def collect(head, *items, **extras):
             return head, items, extras
 
@@ -187,23 +188,23 @@ class TestWorkflowCallHelpers:
 
     def test_unbindable_workflow_control_name_raises_like_python(self, identity_func):
         with pytest.raises(TypeError, match="unexpected keyword argument"):
-            _resolve_call(identity_func, "value", n_broadcast_samples=6)
+            _resolve_call(identity_func, "value", max_evaluations=6)
 
     def test_control_like_names_bind_when_declared(self):
-        def identity(x, n_broadcast_samples, include_inputs, seed):
+        def identity(x, max_evaluations, include_inputs, seed):
             return x
 
         call = _resolve_call(
             identity,
             "value",
-            n_broadcast_samples=6,
+            max_evaluations=6,
             include_inputs=True,
             seed=123,
         )
 
         assert call == {
             "x": "value",
-            "n_broadcast_samples": 6,
+            "max_evaluations": 6,
             "include_inputs": True,
             "seed": 123,
         }
@@ -299,20 +300,20 @@ class TestCallOptions:
         wf = Function(
             identity_func,
             label="identity_func",
-            n_broadcast_samples=20,
+            max_evaluations=20,
             dispatch="sequential",
             output_spec=OutputSpec(identity_func=None),
         )
 
         with workflow_run(seed=42):
             result = wf.using(
-                n_broadcast_samples=6,
+                max_evaluations=6,
                 include_inputs=True,
             )(normal_dist)
 
         assert isinstance(result, EmpiricalDistribution)
         assert result.num_atoms == 6
-        assert result.event_spec.exposes_record
+        assert _has_record_outputs(result.event_spec)
 
     def test_workflow_run_reproduces_sampling_state_for_a_call(
         self,
@@ -322,7 +323,7 @@ class TestCallOptions:
         wf = Function(
             identity_func,
             label="identity_func",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             dispatch="sequential",
             output_spec=OutputSpec(identity_func=None),
         )

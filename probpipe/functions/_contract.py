@@ -1,4 +1,4 @@
-"""Unify Function input slots against planned lifted elements."""
+"""Unify Function inputs against planned lifted elements."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def _lifted_element_spec(
     if isinstance(value, Batch):
         return value.element_spec
     if isinstance(value, Distribution):
-        return value.event_spec.spec
+        return value.event_spec.term_spec
     raise ValueError(
         f"Function {function_name!r} input {name!r} states no element specification for "
         f"lifting: a {type(value).__name__} reports neither an element_spec nor an "
@@ -42,7 +42,7 @@ def _bind_planned_function_inputs(
     function_name : str
         The function's label, which the messages name.
     input_spec : InputSpec or None
-        The declared input slots; ``None`` binds nothing.
+        The declared inputs; ``None`` binds nothing.
     values : Mapping of str to Any
         The arguments by parameter name, before the call lifts any of them.
     lifted_names : set of str
@@ -52,24 +52,25 @@ def _bind_planned_function_inputs(
     Returns
     -------
     input_spec : InputSpec or None
-        The declared slots with the shared dimensions bound, or ``None`` when
-        no slot is declared.
+        The declared inputs with the shared dimensions bound, or ``None`` when
+        no input is declared.
     bindings : dict of str to int
         The size bound to each shared dimension.
 
     Raises
     ------
     ApplicabilityError
-        If the arguments' slots are not the declared ones, or an argument, the
+        If the arguments' names are not the declared inputs, or an argument, the
         event of a law the call lifts, or the element of a batch it sweeps does
-        not unify with its slot, the dimensions shared across slots included.
+        not unify with its input, the dimensions shared across inputs included.
     """
     if input_spec is None:
         return None, {}
     context = f"Function {function_name!r} input"
     if input_spec.keys() != values.keys():
         raise ApplicabilityError(
-            f"{context} slots {sorted(values)} do not match the declared slots {sorted(input_spec)}"
+            f"Function {function_name!r} receives arguments at the inputs {sorted(values)}, "
+            f"which do not match the declared inputs {sorted(input_spec)}"
         )
     bindings: dict[str, int] = {}
     try:

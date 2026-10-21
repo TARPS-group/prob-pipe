@@ -23,6 +23,7 @@ import numpy as np
 from ..core._batch import Batch
 from ..core._spec_base import TermSpec
 from ..core._specs import OutputSpec
+from ..core.config import _checked_count
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..values import _binding
@@ -184,7 +185,7 @@ class StochasticPlan:
     arg_refs: tuple[_binding.FunctionInputRef, ...]
     source_groups: tuple[StochasticSourceGroup, ...]
     logical_units: tuple[LogicalUnit, ...]
-    n_broadcast_samples: int
+    max_evaluations: int
     sample_shape: tuple[int, ...] | None
     exact_group_order: tuple[int, ...]
     exact_combination_order: tuple[tuple[int, ...], ...]
@@ -341,14 +342,14 @@ def build_broadcast_plan(
 
 
 def require_empty_sweep_output(plan: BroadcastPlan, output_spec: OutputSpec | None) -> None:
-    """Require a complete output declaration when a sweep has no evaluations.
+    """Require a complete output spec when a sweep has no evaluations.
 
     Parameters
     ----------
     plan : BroadcastPlan
         The call's lifting regime and sweep shape.
     output_spec : OutputSpec or None
-        The output declaration after dimensions shared with inputs bind.
+        The output spec after dimensions shared with inputs bind.
 
     Raises
     ------
@@ -357,14 +358,18 @@ def require_empty_sweep_output(plan: BroadcastPlan, output_spec: OutputSpec | No
         unbound, since no returned value can complete its declaration.
     """
     if plan.regime in ("sweep", "nested") and plan.n_sweep == 0:
-        if output_spec is None or output_spec.spec is None or not output_spec.spec.is_concrete:
+        if (
+            output_spec is None
+            or output_spec.term_spec is None
+            or not output_spec.term_spec.is_concrete
+        ):
             raise ValueError("An empty sweep requires a concrete output_spec")
 
 
 def build_stochastic_plan(
     values: Mapping[str, Any],
     broadcast_plan: BroadcastPlan,
-    n_broadcast_samples: int,
+    max_evaluations: int,
     *,
     enumerate_every_group: bool = True,
 ) -> StochasticPlan | None:
@@ -372,15 +377,18 @@ def build_stochastic_plan(
 
     A co-sampling group whose root is an empirical law is enumerated when its
     atoms, multiplied by the other enumerated groups', number at most
-    *n_broadcast_samples*, smallest groups first. Without
-    *enumerate_every_group* a plan in which every group would enumerate samples
-    every group instead, as the sampling lift does when it is selected by name
-    over the exact enumeration.
+    *max_evaluations*, smallest groups first. The other groups are sampled:
+    *max_evaluations* joint draws when no group enumerates, and otherwise
+    ``max_evaluations // n`` draws, at least one, for each of the ``n``
+    enumerated combinations. The plan therefore evaluates the function at most
+    *max_evaluations* times. Without *enumerate_every_group* a plan in which
+    every group would enumerate samples every group instead, as the sampling
+    lift does when it is selected by name over the exact enumeration.
     """
     if broadcast_plan.regime in ("none", "sweep"):
         return None
 
-    _validate_stochastic_sample_count(n_broadcast_samples)
+    _checked_count(max_evaluations, "max_evaluations")
     arg_refs = tuple(broadcast_plan.dist_args)
     grouped_consumers, source_values, runtime_samplers, runtime_evaluators, runtime_events = (
         _group_stochastic_sources(
@@ -393,7 +401,7 @@ def build_stochastic_plan(
     candidates = [
         (index, source)
         for index, source in enumerate(source_values)
-        if isinstance(source, EmpiricalDistribution) and source.num_atoms <= n_broadcast_samples
+        if isinstance(source, EmpiricalDistribution) and source.num_atoms <= max_evaluations
     ]
     candidates.sort(key=lambda pair: pair[1].num_atoms)
 
@@ -402,7 +410,7 @@ def build_stochastic_plan(
     exact_product = 1
     for index, source in candidates:
         size = source.num_atoms
-        if exact_product * size <= n_broadcast_samples:
+        if exact_product * size <= max_evaluations:
             exact_group_indices.append(index)
             exact_sizes[index] = size
             exact_product *= size
@@ -445,21 +453,21 @@ def build_stochastic_plan(
         sample_shape = None
     elif exact_group_order:
         evaluation_mode = "mixed_exact_sampled"
-        repetitions_per_combination = max(1, n_broadcast_samples // exact_product)
+        repetitions_per_combination = max(1, max_evaluations // exact_product)
         n_evaluations = exact_product * repetitions_per_combination
         sample_shape = (n_evaluations,)
     else:
         evaluation_mode = "sampled"
-        repetitions_per_combination = n_broadcast_samples
-        n_evaluations = n_broadcast_samples
-        sample_shape = (n_broadcast_samples,)
+        repetitions_per_combination = max_evaluations
+        n_evaluations = max_evaluations
+        sample_shape = (max_evaluations,)
 
     return StochasticPlan(
         evaluation_mode=evaluation_mode,
         arg_refs=arg_refs,
         source_groups=source_groups,
         logical_units=logical_units,
-        n_broadcast_samples=n_broadcast_samples,
+        max_evaluations=max_evaluations,
         sample_shape=sample_shape,
         exact_group_order=exact_group_order,
         exact_combination_order=exact_combination_order,
@@ -521,7 +529,7 @@ def _group_stochastic_sources(
             )
         )
         runtime_evaluators[group_index].append(captured.evaluator)
-        runtime_events[group_index].append(value.event_spec.spec)
+        runtime_events[group_index].append(value.event_spec.term_spec)
 
     return grouped_consumers, source_values, runtime_samplers, runtime_evaluators, runtime_events
 
@@ -540,15 +548,6 @@ def _build_logical_units(broadcast_plan: BroadcastPlan) -> tuple[LogicalUnit, ..
             cartesian_product(*(range(axis) for axis in broadcast_plan.sweep_batch_shape))
         )
     )
-
-
-def _validate_stochastic_sample_count(n_broadcast_samples: int) -> None:
-    if isinstance(n_broadcast_samples, bool) or not isinstance(n_broadcast_samples, int):
-        raise TypeError(f"n_broadcast_samples must be an integer; got {n_broadcast_samples!r}")
-    if n_broadcast_samples <= 0:
-        raise ValueError(
-            f"n_broadcast_samples must be a positive integer; got {n_broadcast_samples!r}"
-        )
 
 
 def group_by_alignment(

@@ -43,7 +43,7 @@ def _check_setup():
     prior = Normal("mu", 0.0, 1.0)
     likelihood = conditional_distribution(
         lambda mu: Normal("y", mu * jnp.ones(6), 1.0),
-        given_spec=prior.event_spec.components,
+        given_spec=prior.event_spec.outputs,
         label="y_given_mu",
     )
     return likelihood, prior
@@ -118,7 +118,7 @@ class TestPredictiveCheckBroker:
 
         commit.assert_not_called()
 
-    def test_a_missing_given_slot_fails_before_event_commit(self):
+    def test_a_missing_input_fails_before_event_commit(self):
         likelihood, _ = _check_setup()
         other = Normal("tau", 0.0, 1.0)
 
@@ -146,7 +146,7 @@ class _FakeConditionOn:
 
     def __call__(self, d, given):
         self.observations.append(np.asarray(given["y"]))
-        return EmpiricalDistribution(jnp.zeros((4, 1)), component="beta")
+        return EmpiricalDistribution(jnp.zeros((4, 1)), output_name="beta")
 
     def using(self, *, method=None, method_options=None):
         def fit(d, given):
@@ -161,7 +161,7 @@ def _conjugate_calibration(**options):
     prior = Normal("mu", 0.0, 1.0)
     likelihood = conditional_distribution(
         lambda mu: Normal("y", mu * jnp.ones(3), 1.0),
-        given_spec=prior.event_spec.components,
+        given_spec=prior.event_spec.outputs,
         label="y_given_mu",
     )
     exact = conditional_distribution(
@@ -308,8 +308,8 @@ class TestSimulationBasedCalibrationBroker:
 
         commit.assert_not_called()
 
-    def test_a_posterior_whose_slots_miss_the_observed_fields_fails_before_event_commit(self):
-        other_slot = conditional_distribution(
+    def test_a_posterior_whose_inputs_miss_the_observed_fields_fails_before_event_commit(self):
+        other_input = conditional_distribution(
             lambda x, z: Normal("beta", x + z, 1.0),
             given_spec={"x": NumericArraySpec(()), "z": NumericArraySpec(())},
             label="posterior",
@@ -317,12 +317,12 @@ class TestSimulationBasedCalibrationBroker:
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
-            pytest.raises(ValueError, match="given slots"),
+            pytest.raises(ValueError, match="inputs"),
         ):
             simulation_based_calibration(
                 self._model(),
                 observed="y",
-                posterior=other_slot,
+                posterior=other_input,
                 num_simulations=2,
                 num_posterior_draws=4,
             )
