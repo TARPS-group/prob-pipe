@@ -5,12 +5,15 @@ inside a call of a ``Function``, with the call's context open and a key broker
 of its own, through the one dispatcher, ``_run_on_chosen_executor``.
 """
 
+import os
 import threading
 import traceback
 import warnings
 from contextlib import contextmanager
 from dataclasses import replace
+from types import MappingProxyType
 
+import cloudpickle
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -18,6 +21,8 @@ import pytest
 
 from probpipe import (
     EvaluationError,
+    EvaluationExecutor,
+    EvaluationOutcomes,
     EvaluationPoints,
     Normal,
     NumericArraySpec,
@@ -40,7 +45,7 @@ from probpipe.core._call_context import (
     current_call_context,
 )
 from probpipe.core._execution_claims import ExecutionClaims
-from probpipe.core._executors import _PROCESS_POOLS, _run_on_chosen_executor
+from probpipe.core._executors import _PROCESS_POOLS, _run_on_chosen_executor, _run_on_executor
 from probpipe.functions._execution import _requester_workflow_scope
 from probpipe.values._function_base import _child_context_for_call
 
@@ -191,8 +196,8 @@ class TestNamingAnExecutor:
         ):
             pass
         assert str(raised.value) == (
-            "condition_on was given executor_options without an executor. Name the executor "
-            "the options belong to, as executor='thread'"
+            "condition_on was given executor_options {'max_workers': 2} without an executor. "
+            "Name the executor the options belong to, as executor='thread'"
         )
 
     def test_a_refusing_executor_named_for_the_callable_raises(self):
@@ -267,11 +272,13 @@ class TestInheritingAnExecutor:
             _run_on_chosen_executor(_evaluation_points(holds_a_lock))
             _run_on_chosen_executor(_evaluation_points(holds_a_lock))
         fallback_warnings = [
-            warning for warning in caught if "inherited from" in str(warning.message)
+            warning
+            for warning in caught
+            if "cannot run the evaluation points" in str(warning.message)
         ]
         assert len(fallback_warnings) == 1
         assert str(fallback_warnings[0].message).startswith(
-            "executor 'process', inherited from condition_on, cannot run the evaluation points of "
+            "executor 'process', named on condition_on, cannot run the evaluation points of "
             "'simulate' (its callable cannot be pickled"
         )
         assert [
@@ -518,11 +525,10 @@ class TestTheEvaluationLog:
                 set_record.origin,
                 set_record.set_ordinal,
                 set_record.num_evaluation_points,
-                set_record.num_runs,
                 set_record.failed_point_indices,
             )
             for set_record in call_context.evaluation_log.set_records
-        ] == [("simulate", 0, 3, 3, ()), ("simulate", 1, 4, 4, (0,)), ("other", 0, 2, 2, ())]
+        ] == [("simulate", 0, 3, ()), ("simulate", 1, 4, (0,)), ("other", 0, 2, ())]
 
     def test_a_failed_evaluation_point_names_its_set_in_its_identity(self):
         def fail_at_zero(x, scale):
@@ -540,3 +546,153 @@ class TestTheEvaluationLog:
             assert (
                 replace(call_context, in_evaluation_point=True) != call_context.evaluation_context()
             )
+
+
+class _PicklingTwiceExecutor(EvaluationExecutor):
+    """Ships each chunk twice, as an executor that retries a lost chunk does, and runs the second copy."""
+
+    name = "pickling_twice"
+
+    def check(self, evaluation_points, /):
+        return evaluation_points.shipping_check()
+
+    def execute(self, evaluation_points, /):
+        shared_payload = evaluation_points.shared_payload()
+        chunk_outcomes = []
+        for chunk in evaluation_points.chunks(chunk_size=2):
+            cloudpickle.dumps(chunk)
+            retried_chunk = cloudpickle.loads(cloudpickle.dumps(chunk))
+            chunk_outcomes.append(retried_chunk.run(shared_payload))
+        return EvaluationOutcomes.merge(chunk_outcomes)
+
+
+class _LocalAfterShippingExecutor(EvaluationExecutor):
+    """Ships each chunk, then runs it in the calling process, as after a lost remote run."""
+
+    name = "local_after_shipping"
+
+    def check(self, evaluation_points, /):
+        return evaluation_points.shipping_check()
+
+    def execute(self, evaluation_points, /):
+        shared_payload = evaluation_points.shared_payload()
+        chunk_outcomes = []
+        for chunk in evaluation_points.chunks(chunk_size=2):
+            cloudpickle.dumps(chunk)
+            chunk_outcomes.append(chunk.run(shared_payload))
+        return EvaluationOutcomes.merge(chunk_outcomes)
+
+
+class TestShippingAChunkAgain:
+    @pytest.mark.parametrize("executor", [_PicklingTwiceExecutor(), _LocalAfterShippingExecutor()])
+    def test_a_retried_chunk_draws_with_the_same_keys(self, executor):
+        reference_outputs, _ = _run_set(_simulate_with_a_nested_draw, seed=5)
+        with workflow_run(seed=5), requester_call(_requester()):
+            outcomes = _run_on_executor(
+                _evaluation_points(_simulate_with_a_nested_draw), executor, {}
+            )
+        assert dict(outcomes.failures) == {}
+        for output, reference_output in zip(outcomes.outputs, reference_outputs, strict=True):
+            np.testing.assert_array_equal(output, reference_output)
+
+
+class _SolverError(Exception):
+    """An exception whose class pickles but whose instances do not unpickle."""
+
+    def __init__(self, message, exit_code):
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+def _return_a_lock_at_one(x, scale):
+    return threading.Lock() if x[0] == 2.0 else scale * np.sum(x)
+
+
+def _raise_an_unpicklable_error_at_one(x, scale):
+    if x[0] == 2.0:
+        raise _SolverError("the solver exited", 3)
+    return scale * np.sum(x)
+
+
+def _end_the_worker_at_one(x, scale):
+    if x[0] == 2.0:
+        os._exit(1)
+    return scale * np.sum(x)
+
+
+def _stacked_scaled_sums(x, scale):
+    return np.asarray(scale) * np.sum(np.asarray(x), axis=1)
+
+
+#: The controls that run a requester's sets on two worker processes.
+_ON_TWO_WORKER_PROCESSES = MappingProxyType(
+    {"executor": "process", "executor_options": MappingProxyType({"max_workers": 2})}
+)
+
+
+class TestFailuresInWorkerProcesses:
+    def test_an_output_that_cannot_be_sent_back_fails_its_evaluation_point_only(self):
+        with pytest.raises(EvaluationError) as raised:
+            _run_set(
+                _return_a_lock_at_one, num_points=4, requester_controls=_ON_TWO_WORKER_PROCESSES
+            )
+        error = raised.value
+        assert [(failure.point_index, failure.kind) for failure in error.failures] == [(1, "error")]
+        assert "its output, a lock, cannot be sent back from the worker process" in (
+            error.failures[0].message
+        )
+        assert error.outputs[0] == 2.0 and error.outputs[2] == 18.0
+
+    def test_an_exception_that_cannot_be_rebuilt_arrives_without_it(self):
+        with pytest.raises(EvaluationError) as raised:
+            _run_set(
+                _raise_an_unpicklable_error_at_one,
+                num_points=4,
+                requester_controls=_ON_TWO_WORKER_PROCESSES,
+            )
+        failure = raised.value.failures[0]
+        assert (failure.point_index, failure.error_type, failure.message, failure.error) == (
+            1,
+            "_SolverError",
+            "the solver exited",
+            None,
+        )
+
+    def test_a_worker_that_dies_loses_its_chunk_and_the_next_call_starts_a_new_pool(self):
+        with pytest.raises(EvaluationError) as raised:
+            _run_set(
+                _end_the_worker_at_one, num_points=4, requester_controls=_ON_TWO_WORKER_PROCESSES
+            )
+        assert {failure.kind for failure in raised.value.failures} == {"lost"}
+        outputs, _ = _run_set(
+            _opaque_sum, num_points=4, requester_controls=_ON_TWO_WORKER_PROCESSES
+        )
+        assert list(outputs) == [2.0, 10.0, 18.0, 26.0]
+
+    def test_a_vectorized_callable_runs_in_worker_processes(self):
+        outputs, set_record = _run_set(
+            _stacked_scaled_sums,
+            requester_controls=_ON_TWO_WORKER_PROCESSES,
+            claims=ExecutionClaims(traceable=False, vectorized=True),
+        )
+        assert set_record.executor_name == "process"
+        assert [float(output) for output in outputs] == [2.0, 10.0, 18.0, 26.0, 34.0, 42.0]
+
+
+class TestTheDrawCountsOfEvaluationPoints:
+    @pytest.mark.parametrize("executor_name", ["sequential", "thread", "process"])
+    def test_a_failed_evaluation_points_counts_are_dropped(self, executor_name):
+        def note_then_fail_at_two(x, scale):
+            point_index = int(x[0]) // 2
+            _note_num_samples_used(point_index + 1)
+            if point_index == 2:
+                raise ValueError("failed after noting its draws")
+            return scale
+
+        controls = {"executor": executor_name}
+        if executor_name != "sequential":
+            controls["executor_options"] = {"max_workers": 2}
+        with workflow_run(seed=0), requester_call(_requester(**controls)) as call_context:
+            with pytest.raises(EvaluationError):
+                _run_on_chosen_executor(_evaluation_points(note_then_fail_at_two, num_points=4))
+            assert call_context.num_samples_used.num_samples_values == frozenset({1, 2, 4})

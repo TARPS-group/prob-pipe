@@ -23,7 +23,7 @@ Provides:
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, fields, replace
@@ -94,9 +94,13 @@ class _ExecutionChoice:
         when an enclosing call passed it down; ``"automatic"`` when nobody
         named one.
     applies_only_to : object or None
-        The ``Function`` the choice was named for, or ``None`` when it covers
-        every opaque callable of the call, as a choice named on an operation
-        does. The choice is the callable's own only for this ``Function``.
+        The ``Function`` the choice was named for, on its decorator or its
+        ``using``, or ``None`` when the choice was named on an operation and
+        covers every opaque callable of its call. A set of evaluation points
+        that a ``Function``'s call builds is of that ``Function``'s callable,
+        so an executor that cannot run it raises rather than falling back; a
+        callback that finds the choice through a call token compares the
+        ``Function`` it runs with this one.
     named_on : str or None
         The label of the call that named the executor, which a warning about
         an inherited executor names; ``None`` for automatic selection.
@@ -288,8 +292,14 @@ class _CallContext:
             passed_controls = MappingProxyType(dict(passed_controls))
         return replace(self, passed_controls=passed_controls)
 
-    def with_fresh_call_accumulators(self) -> _CallContext:
+    def with_fresh_call_accumulators(self, *, collects_calls: bool = False) -> _CallContext:
         """This context with a new, empty ``num_samples_used`` and ``evaluation_log``.
+
+        Parameters
+        ----------
+        collects_calls : bool, optional
+            Whether the calls made directly within the new scope merge into
+            its accumulators; ``False`` by default.
 
         Returns
         -------
@@ -297,7 +307,15 @@ class _CallContext:
             A copy whose accumulators are a new :class:`_NumSamplesUsed` and a
             new :class:`_EvaluationLog`.
         """
-        return replace(self, num_samples_used=_NumSamplesUsed(), evaluation_log=_EvaluationLog())
+        return replace(
+            self,
+            num_samples_used=_NumSamplesUsed(collects_calls=collects_calls),
+            evaluation_log=_EvaluationLog(),
+        )
+
+    def collects_calls(self) -> bool:
+        """Whether the calls made directly within this context merge into its accumulators."""
+        return self.num_samples_used is not None and self.num_samples_used.collects_calls
 
     def child_for_call(
         self,
@@ -515,8 +533,8 @@ class _NumSamplesUsed:
     their own counts.
 
     Only :meth:`_CallContext.with_fresh_call_accumulators` creates one, and
-    only :func:`_collecting_call_accumulators` and the run of an evaluation
-    point merge one into another, when its scope ends without an error. The
+    only :func:`_merge_noted_into` adds what one scope noted to another's,
+    when the scope ends without an error. The
     numbers are guarded by a lock, so worker threads may note into one at once.
     A pickled one arrives empty, with a lock of its own and the same
     ``collects_calls``, and what a worker process notes into it comes back
@@ -567,12 +585,6 @@ class _NumSamplesUsed:
         with self._lock:
             self._num_samples_values.add(num_samples)
 
-    def merge_from(self, scope_num_samples_used: _NumSamplesUsed) -> None:
-        """Add the numbers that *scope_num_samples_used* noted to this one's."""
-        noted_in_scope = scope_num_samples_used.num_samples_values
-        with self._lock:
-            self._num_samples_values |= noted_in_scope
-
     def __reduce__(self) -> tuple[Any, ...]:
         """Pickle as a new, empty value with the same ``collects_calls`` and a lock of its own."""
         return (_empty_num_samples_used, (self.collects_calls,))
@@ -595,8 +607,6 @@ class _EvaluationSetRecord:
         The options that executor received.
     num_evaluation_points : int
         The number of its evaluation points.
-    num_runs : int
-        The number of times the callable ran for them.
     failed_point_indices : tuple of int
         The point indices of the evaluation points that failed, in order.
     """
@@ -606,7 +616,6 @@ class _EvaluationSetRecord:
     executor_name: str
     executor_options: Mapping[str, Any]
     num_evaluation_points: int
-    num_runs: int
     failed_point_indices: tuple[int, ...]
 
 
@@ -619,7 +628,7 @@ class _EvaluationLog:
     the call's warnings were given, so each is given once per call.
 
     Only :meth:`_CallContext.with_fresh_call_accumulators` creates one, and it
-    merges as ``num_samples_used`` does (:func:`_collecting_call_accumulators`).
+    merges as ``num_samples_used`` does (:func:`_merge_noted_into`).
     Its contents are guarded by a lock. A pickled one arrives new and empty,
     and what a worker process records into it comes back with the outcomes of
     its evaluation points.
@@ -666,12 +675,6 @@ class _EvaluationLog:
         with self._lock:
             self._set_records.append(set_record)
 
-    def merge_from(self, scope_evaluation_log: _EvaluationLog) -> None:
-        """Add the sets that *scope_evaluation_log* recorded to this one's."""
-        recorded_in_scope = scope_evaluation_log.set_records
-        with self._lock:
-            self._set_records.extend(recorded_in_scope)
-
     def is_first_warning(self, warning_key: Any) -> bool:
         """Whether the call has not given the warning *warning_key* yet, which this then records."""
         with self._lock:
@@ -712,25 +715,36 @@ def _collecting_call_accumulators(merge_rule: _MergeRule) -> Iterator[_CallConte
     """
     enclosing_context = current_call_context()
     enclosing_num_samples_used = enclosing_context.num_samples_used
-    collecting_context = enclosing_context.with_fresh_call_accumulators()
-    if merge_rule == "always" and enclosing_num_samples_used is not None:
-        cast(
-            _NumSamplesUsed, collecting_context.num_samples_used
-        ).collects_calls = enclosing_num_samples_used.collects_calls
+    collecting_context = enclosing_context.with_fresh_call_accumulators(
+        collects_calls=merge_rule == "always" and enclosing_context.collects_calls()
+    )
     with _under_call_context(collecting_context):
         yield collecting_context
     if enclosing_num_samples_used is not None and (
         merge_rule == "always" or enclosing_num_samples_used.collects_calls
     ):
-        _merge_call_accumulators(collecting_context, into=enclosing_context)
+        _merge_noted_into(
+            enclosing_context,
+            cast(_NumSamplesUsed, collecting_context.num_samples_used).num_samples_values,
+            cast(_EvaluationLog, collecting_context.evaluation_log).set_records,
+        )
 
 
-def _merge_call_accumulators(scope_context: _CallContext, *, into: _CallContext) -> None:
-    """Merge the accumulators of *scope_context* into those of the context *into*, where it has them."""
-    if into.num_samples_used is not None and scope_context.num_samples_used is not None:
-        into.num_samples_used.merge_from(scope_context.num_samples_used)
-    if into.evaluation_log is not None and scope_context.evaluation_log is not None:
-        into.evaluation_log.merge_from(scope_context.evaluation_log)
+def _merge_noted_into(
+    call_context: _CallContext,
+    num_samples_values: Iterable[int],
+    set_records: Iterable[_EvaluationSetRecord],
+) -> None:
+    """Add the numbers of draws and the sets of evaluation points a scope noted to *call_context*'s accumulators.
+
+    A context without accumulators, as a ``check``'s, takes none.
+    """
+    if call_context.num_samples_used is not None:
+        for num_samples in num_samples_values:
+            call_context.num_samples_used.note(num_samples)
+    if call_context.evaluation_log is not None:
+        for set_record in set_records:
+            call_context.evaluation_log.record(set_record)
 
 
 def _note_num_samples_used(num_samples: int) -> None:

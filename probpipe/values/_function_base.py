@@ -888,8 +888,9 @@ def _resolve_execution_choice(
         if executor_name is None:
             if executor_options and function_view._options_need_named_executor:
                 raise ValueError(
-                    f"{function_view.label} was given executor_options without an executor. "
-                    "Name the executor the options belong to, as executor='thread'"
+                    f"{function_view.label} was given executor_options "
+                    f"{dict(executor_options)!r} without an executor. Name the executor the "
+                    "options belong to, as executor='thread'"
                 )
         else:
             _check_executor_reads_options(_requested_executor(executor_name), executor_options)
@@ -1050,7 +1051,9 @@ class Function(TrackedTerm, Annotated):
           ``"thread"`` or a cluster executor a user registers; None, the
           default, inherits an enclosing call's executor or else selects one
           automatically. A function JAX can trace is always compiled by
-          ``"jax"``.
+          ``"jax"``. Interim: a lifted call and a sweep still run by
+          ``dispatch`` until they move onto executors, so for now a call only
+          checks the executor's name and options when it opens.
         - ``executor_options`` (Mapping or None): the options of the executor
           named with them, or of the automatically selected one when no
           executor is named, such as ``{"max_workers": 8}``; the executor
@@ -1397,21 +1400,31 @@ class Function(TrackedTerm, Annotated):
             If the copy's ``max_workers`` is set with a dispatch other than
             ``"thread"``, pointing at the caller's line.
         """
-        unknown = controls.keys() - _CONTROL_DEFAULTS.keys()
-        if unknown:
-            raise _unknown_controls(unknown)
+        unknown_control_names = controls.keys() - _CONTROL_DEFAULTS.keys()
+        if unknown_control_names:
+            raise _unknown_controls(unknown_control_names)
         # Only set controls are stored, so dropping one makes it read its default.
-        reset = {name for name, value in controls.items() if value is None}
+        reset_control_names = {
+            control_name for control_name, value in controls.items() if value is None
+        }
         if controls.keys() & _EXECUTION_CHOICE_CONTROLS:
             # The executor and its options are one unit, so options never pair
             # with an executor named in another layer.
-            reset |= _EXECUTION_CHOICE_CONTROLS - controls.keys()
-        kept = {name: value for name, value in self._options.items() if name not in reset}
-        revisions = {name: value for name, value in controls.items() if value is not None}
-        options = _set_controls(self._control_defaults(), kept, revisions, self.signature)
-        clone = self._shallow_copy()
-        object.__setattr__(clone, "_options", MappingProxyType(options))
-        return clone
+            reset_control_names |= _EXECUTION_CHOICE_CONTROLS - controls.keys()
+        kept_controls = {
+            control_name: value
+            for control_name, value in self._options.items()
+            if control_name not in reset_control_names
+        }
+        control_revisions = {
+            control_name: value for control_name, value in controls.items() if value is not None
+        }
+        validated_controls = _set_controls(
+            self._control_defaults(), kept_controls, control_revisions, self.signature
+        )
+        revised_view = self._shallow_copy()
+        object.__setattr__(revised_view, "_options", MappingProxyType(validated_controls))
+        return revised_view
 
     def _inheriting(self, passed_controls: Mapping[str, Any]) -> Self:
         """This view under the controls a derived route passes down.
@@ -1817,16 +1830,16 @@ def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) 
         raise TypeError(f"method must be a non-empty string or None; got {method!r}")
     executor = options["executor"]
     if executor is not None and (not isinstance(executor, str) or not executor):
-        raise TypeError(f"executor must be a non-empty string or None; got {executor!r}")
+        raise TypeError(f"executor must be a non-empty string or None, got {executor!r}")
     executor_options = options["executor_options"]
     if not isinstance(executor_options, Mapping):
         raise TypeError(
-            "executor_options must map option names to their values; "
+            "executor_options must map option names to their values, "
             f"got {type(executor_options).__name__}"
         )
-    for name in executor_options:
-        if not isinstance(name, str) or not name:
-            raise TypeError(f"executor_options keys must be non-empty strings; got {name!r}")
+    for option_name in executor_options:
+        if not isinstance(option_name, str) or not option_name:
+            raise TypeError(f"executor_options keys must be non-empty strings, got {option_name!r}")
     conversions = options["conversions"]
     if not isinstance(conversions, Mapping):
         raise TypeError(

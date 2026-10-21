@@ -49,12 +49,17 @@ class TestBuildingASet:
         assert len(_points(_scaled_sum, num_points=7)) == 7
 
     def test_varying_arguments_with_different_numbers_of_rows_are_refused(self):
-        with pytest.raises(ValueError, match="different numbers of rows"):
+        with pytest.raises(ValueError) as raised:
             EvaluationPoints(
                 _scaled_sum,
-                varying={"x": np.zeros((3, 2)), "y": np.zeros(4)},
+                varying={"x": np.zeros((3, 2)), "y": np.zeros(4), "z": 1.0},
                 origin="fn",
             )
+        assert str(raised.value) == (
+            "cannot build evaluation points of 'fn' from varying arguments with different "
+            "numbers of rows: x has 3 rows, y has 4 rows, z has no leading axis. Stack every "
+            "varying argument with one row per evaluation point on its leading axis"
+        )
 
     def test_a_set_without_varying_arguments_is_refused(self):
         with pytest.raises(ValueError, match="without varying arguments"):
@@ -95,10 +100,15 @@ class TestChunks:
         with pytest.raises(ValueError, match="both chunk_size and num_chunks"):
             _points(_scaled_sum).chunks(chunk_size=2, num_chunks=2)
 
-    @pytest.mark.parametrize("bad_count", [0, -1, 1.5, True])
-    def test_a_count_that_is_not_a_positive_integer_is_refused(self, bad_count):
-        with pytest.raises(ValueError, match="must be a positive integer"):
+    @pytest.mark.parametrize("bad_count", [0, -1])
+    def test_a_count_below_one_is_refused(self, bad_count):
+        with pytest.raises(ValueError, match="chunk_size must be a positive integer"):
             _points(_scaled_sum).chunks(chunk_size=bad_count)
+
+    @pytest.mark.parametrize("bad_count", [1.5, True])
+    def test_a_count_that_is_not_an_integer_is_refused(self, bad_count):
+        with pytest.raises(TypeError, match="num_chunks must be an integer"):
+            _points(_scaled_sum).chunks(num_chunks=bad_count)
 
     def test_running_the_chunks_gives_each_output_in_point_order(self):
         outcomes = _run(_points(_scaled_sum), chunk_size=2)
@@ -185,7 +195,7 @@ class TestTheOutputCheck:
         )
         assert set(outcomes.failures) == {3}
         assert outcomes.failures[3].kind == "invalid"
-        assert "the output of 'fn' at evaluation point 3" in outcomes.failures[3].message
+        assert outcomes.failures[3].message.startswith("the output of 'fn'")
 
     def test_a_mapping_returned_for_a_record_is_laid_out_in_the_declared_order(self):
         def unordered_mapping(x, scale):
@@ -255,7 +265,10 @@ class TestVectorizedCallables:
             )
         )
         assert len(outcomes.failures) == 5
-        assert "one row per evaluation point" in outcomes.failures[0].message
+        assert outcomes.failures[0].message == (
+            "'fn' claims vectorized=True but returned an output that has 1 row for 5 "
+            "evaluation points. Return the outputs stacked with one row per evaluation point"
+        )
 
 
 class TestEvaluationError:

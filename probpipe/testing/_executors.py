@@ -12,12 +12,13 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ..core._call_context import _note_num_samples_used, _NumSamplesUsed, current_call_context
 from ..core._evaluation_points import EvaluationOutcomes, EvaluationPoints
 from ..core._execution_claims import NO_CLAIMS, ExecutionClaims
 from ..core._executors import EvaluationExecutor, _run_on_executor, executor_registry
@@ -41,7 +42,8 @@ def check_executor(executor: EvaluationExecutor) -> None:
     simulator that draws from the workflow inside each evaluation point,
     evaluation points that raise, an output that does not match its output
     spec, a callable that takes a whole chunk at once, a callable that reads
-    the call's settings, and a callable JAX can trace. They run with 64-bit
+    the call's settings and notes a draw count, a callable that makes a
+    ProbPipe call of its own, and a callable JAX can trace. They run with 64-bit
     floats on and ``jax_threefry_partitionable`` flipped, so an executor that
     runs work in another process must carry the parent's JAX settings; both
     settings are restored when the check ends. A set the executor's ``check``
@@ -50,8 +52,8 @@ def check_executor(executor: EvaluationExecutor) -> None:
     An executor passes when, for each set it runs, it returns one outcome per
     evaluation point in order, each output equal to the ``sequential`` one,
     bit for bit, or within a relative tolerance of ``1e-6`` for a set JAX
-    compiles, and each failure at the same evaluation point with the same
-    kind.
+    compiles, each failure at the same evaluation point with the same kind,
+    and the draw counts its evaluation points noted brought back to the call.
 
     Parameters
     ----------
@@ -74,23 +76,46 @@ def check_executor(executor: EvaluationExecutor) -> None:
     sets_run = []
     with _flipped_parent_jax_settings():
         for conformance_set in _CONFORMANCE_SETS:
-            executor_outcomes = conformance_set.outcomes_on(executor)
-            if executor_outcomes is None:
+            executor_run = conformance_set.run_on(executor)
+            if executor_run is None:
                 continue
-            reference_outcomes = conformance_set.outcomes_on(reference_executor)
-            assert reference_outcomes is not None
-            conformance_set.check_reference(reference_outcomes)
-            conformance_set.check_agreement(executor.name, executor_outcomes, reference_outcomes)
+            reference_run = conformance_set.run_on(reference_executor)
+            if reference_run is None:
+                raise RuntimeError(
+                    f"the sequential executor refused check_executor's set "
+                    f"{conformance_set.name!r}. This is a fault of check_executor, not of the "
+                    "executor"
+                )
+            conformance_set.check_reference(reference_run.outcomes)
+            conformance_set.check_agreement(executor.name, executor_run, reference_run)
             sets_run.append(conformance_set.name)
-    assert sets_run, (
+    _require(
+        bool(sets_run),
         f"executor {executor.name!r} cannot run any of check_executor's sets of evaluation "
-        "points. Its check must accept at least one of them"
+        "points. Its check must accept at least one of them",
     )
 
 
 # ---------------------------------------------------------------------------
 # The conformance sets
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _ConformanceRun:
+    """What one run of a conformance set gives: its outcomes, and the draw counts that reached its call.
+
+    Attributes
+    ----------
+    outcomes : EvaluationOutcomes
+        The set's outcomes.
+    noted_num_samples : frozenset of int
+        The numbers of draws its evaluation points noted, as the call that
+        asked for them received them.
+    """
+
+    outcomes: EvaluationOutcomes
+    noted_num_samples: frozenset[int]
 
 
 @dataclass(frozen=True)
@@ -139,20 +164,29 @@ class _ConformanceSet:
             traceable=self.claims.traceable,
         )
 
-    def outcomes_on(self, executor: EvaluationExecutor) -> EvaluationOutcomes | None:
-        """The set's outcomes on *executor*, or ``None`` when its check refuses the set."""
+    def run_on(self, executor: EvaluationExecutor) -> _ConformanceRun | None:
+        """The set's run on *executor*, or ``None`` when its check refuses the set."""
         from ..core.config import config
         from ..functions._context import workflow_run
         from ..functions._execution import _requester_workflow_scope
         from ..functions._function import function
 
-        def ask_for_evaluations() -> EvaluationOutcomes | None:
+        def ask_for_evaluations() -> _ConformanceRun | None:
             with _requester_workflow_scope():
                 evaluation_points = self.evaluation_points()
-                if executor.check(evaluation_points).feasible is not True:
+                try:
+                    is_feasible = executor.check(evaluation_points).feasible is True
+                except BaseException:
+                    evaluation_points._point_scopes.close()
+                    raise
+                if not is_feasible:
                     evaluation_points._point_scopes.close()
                     return None
-                return _run_on_executor(evaluation_points, executor, {})
+                outcomes = _run_on_executor(evaluation_points, executor, {})
+                noted_num_samples = cast(
+                    _NumSamplesUsed, current_call_context().num_samples_used
+                ).num_samples_values
+                return _ConformanceRun(outcomes, noted_num_samples)
 
         requester = function(ask_for_evaluations, label=f"check_executor: {self.name}")
         with (
@@ -182,16 +216,24 @@ class _ConformanceSet:
     def check_agreement(
         self,
         executor_name: str,
-        executor_outcomes: EvaluationOutcomes,
-        reference_outcomes: EvaluationOutcomes,
+        executor_run: _ConformanceRun,
+        reference_run: _ConformanceRun,
     ) -> None:
-        """Raise if *executor_outcomes* differ from the ``sequential`` executor's."""
+        """Raise if *executor_run* differs from the ``sequential`` executor's run."""
         where = f"executor {executor_name!r}, on {self.name}"
-        assert executor_outcomes.start == 0 and len(executor_outcomes.outputs) == len(
-            reference_outcomes.outputs
-        ), (
+        executor_outcomes, reference_outcomes = executor_run.outcomes, reference_run.outcomes
+        _require(
+            executor_run.noted_num_samples == reference_run.noted_num_samples,
+            f"{where}, brought back the draw counts {sorted(executor_run.noted_num_samples)} "
+            f"that its evaluation points noted where sequential brings back "
+            f"{sorted(reference_run.noted_num_samples)}; return the outcomes that each chunk's "
+            "run gives, merged with EvaluationOutcomes.merge",
+        )
+        _require(
+            executor_outcomes.start == 0
+            and len(executor_outcomes.outputs) == len(reference_outcomes.outputs),
             f"{where}, returned {len(executor_outcomes.outputs)} outcomes starting at "
-            f"{executor_outcomes.start} for {len(reference_outcomes.outputs)} evaluation points"
+            f"{executor_outcomes.start} for {len(reference_outcomes.outputs)} evaluation points",
         )
         executor_failures = {
             point_index: failure.kind for point_index, failure in executor_outcomes.failures.items()
@@ -200,9 +242,10 @@ class _ConformanceSet:
             point_index: failure.kind
             for point_index, failure in reference_outcomes.failures.items()
         }
-        assert executor_failures == reference_failures, (
+        _require(
+            executor_failures == reference_failures,
             f"{where}, reported the failures {executor_failures} where sequential reports "
-            f"{reference_failures}"
+            f"{reference_failures}",
         )
         for point_index, (executor_output, reference_output) in enumerate(
             zip(executor_outcomes.outputs, reference_outcomes.outputs, strict=True)
@@ -211,18 +254,20 @@ class _ConformanceSet:
                 continue
             executor_array = np.asarray(executor_output)
             reference_array = np.asarray(reference_output)
-            assert executor_array.dtype == reference_array.dtype, (
+            _require(
+                executor_array.dtype == reference_array.dtype,
                 f"{where}, returned dtype {executor_array.dtype} at evaluation point "
                 f"{point_index} where sequential returns {reference_array.dtype}; a worker must "
-                "run under the parent's JAX settings"
+                "run under the parent's JAX settings",
             )
             if self.compiled:
                 agrees = np.allclose(executor_array, reference_array, rtol=1e-6, atol=0.0)
             else:
                 agrees = np.array_equal(executor_array, reference_array)
-            assert agrees, (
+            _require(
+                agrees,
                 f"{where}, returned {executor_array!r} at evaluation point {point_index} where "
-                f"sequential returns {reference_array!r}"
+                f"sequential returns {reference_array!r}",
             )
 
 
@@ -260,10 +305,23 @@ def _simulate_a_whole_chunk(theta: Any, point_index: Any, scale: Any) -> np.ndar
 
 
 def _read_the_call_settings(theta: Any, point_index: Any, scale: Any) -> np.ndarray:
-    """A callable that returns the ``num_samples`` that the call's settings give it."""
+    """A callable that returns the ``num_samples`` that the call's settings give it, and notes a draw count of its own."""
     from ..core.config import config
 
+    _note_num_samples_used(int(point_index) + 1)
     return np.asarray(float(config.sampling.num_samples)) + np.asarray(theta)
+
+
+def _make_a_probpipe_call(theta: Any, point_index: Any, scale: Any) -> np.ndarray:
+    """A callable that makes a ProbPipe call of its own, which draws and reads the call's settings."""
+    from .. import Normal, function, sample
+    from ..core.config import config
+
+    def nested_simulation(location: Any) -> Any:
+        return np.asarray(sample(Normal("nested", location, 1.0))) + config.sampling.num_samples
+
+    nested_call = function(nested_simulation, label="nested_simulation").using(raw=True)
+    return np.asarray(scale) * np.asarray(nested_call(float(np.asarray(theta)[0])))
 
 
 def _traceable_growth(theta: Any, point_index: Any, scale: Any) -> Any:
@@ -292,6 +350,7 @@ _CONFORMANCE_SETS = (
         claims=ExecutionClaims(traceable=False, vectorized=True),
     ),
     _ConformanceSet("a callable that reads the call's settings", _read_the_call_settings),
+    _ConformanceSet("a callable that makes a ProbPipe call of its own", _make_a_probpipe_call),
     _ConformanceSet(
         "a callable JAX can trace",
         _traceable_growth,
@@ -313,3 +372,9 @@ def _flipped_parent_jax_settings() -> Iterator[None]:
     finally:
         jax.config.update("jax_threefry_partitionable", partitionable_before)
         jax.config.update("jax_enable_x64", x64_before)
+
+
+def _require(condition: bool, broken_rule: str) -> None:
+    """Raise ``AssertionError`` naming *broken_rule* unless *condition* holds, also under ``python -O``."""
+    if not condition:
+        raise AssertionError(broken_rule)

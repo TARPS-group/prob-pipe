@@ -75,3 +75,40 @@ def test_the_check_restores_the_parents_jax_settings():
     settings_before = (jax.config.jax_enable_x64, jax.config.jax_threefry_partitionable)
     check_executor(executor_registry.get_method("sequential"))
     assert (jax.config.jax_enable_x64, jax.config.jax_threefry_partitionable) == settings_before
+
+
+class _RebuildingExecutor(EvaluationExecutor):
+    """An executor that breaks the contract: it rebuilds each chunk's outcomes and drops what was noted."""
+
+    name = "rebuilding"
+
+    def check(self, evaluation_points, /):
+        return Feasibility(feasible=True)
+
+    def execute(self, evaluation_points, /):
+        outcomes = evaluation_points.chunks()[0].run(evaluation_points.shared_payload())
+        return EvaluationOutcomes(
+            start=outcomes.start, outputs=outcomes.outputs, failures=outcomes.failures
+        )
+
+
+class _BrokenCheckExecutor(EvaluationExecutor):
+    """An executor whose own check raises."""
+
+    name = "broken_check"
+
+    def check(self, evaluation_points, /):
+        raise AttributeError("the executor's check has a bug")
+
+    def execute(self, evaluation_points, /):
+        raise AssertionError("never run")
+
+
+def test_an_executor_that_drops_the_noted_draw_counts_fails():
+    with pytest.raises(AssertionError, match="brought back the draw counts"):
+        check_executor(_RebuildingExecutor())
+
+
+def test_an_error_in_the_executors_check_reaches_the_caller():
+    with pytest.raises(AttributeError, match="the executor's check has a bug"):
+        check_executor(_BrokenCheckExecutor())

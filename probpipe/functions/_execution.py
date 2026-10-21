@@ -13,6 +13,7 @@ replay record stores and a replay checks.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable, Generator, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager, contextmanager
@@ -968,14 +969,21 @@ class _WorkflowEvaluationPointScopes:
         )
         if self._parent_broker is not None:
             self._parent_broker.register_evaluation_points(self._issued_points)
-        self._reserved_attempts: list[EvaluationPointAttempt] = []
-        self._reported_attempts: set[bytes] = set()
+        self._attempts_lock = threading.Lock()
+        self._outstanding_attempts: dict[int, EvaluationPointAttempt] = {}
 
-    def point_scope(self, point_index: int) -> AbstractContextManager[None]:
-        """The scope evaluation point *point_index* runs in, in the calling process."""
-        return _evaluation_point_scope(
+    @contextmanager
+    def point_scope(self, point_index: int) -> Generator[None, None, None]:
+        """The scope evaluation point *point_index* runs in, in the calling process.
+
+        A reservation the evaluation point holds from a chunk sent elsewhere
+        is released first, since the evaluation point now runs here.
+        """
+        self._release_outstanding_attempt(point_index)
+        with _evaluation_point_scope(
             self._issued_points[point_index], self._parent_frame, self._parent_broker
-        )
+        ):
+            yield
 
     def vectorized_scope(self) -> AbstractContextManager[None]:
         """The scope one call on stacked evaluation points runs in, which refuses workflow draws."""
@@ -986,17 +994,24 @@ class _WorkflowEvaluationPointScopes:
         return _context._workflow_jax_runtime_guard()
 
     def shipped(self, point_indices: range) -> _ShippedEvaluationPointScopes:
-        """Scopes for *point_indices* that pickle, each reserved as an attempt with the call's broker."""
+        """Scopes for *point_indices* that pickle, each reserved as an attempt with the call's broker.
+
+        Shipping an evaluation point again, as an executor that retries a
+        chunk does, releases its earlier reservation, so the new attempt is a
+        retry with the same keys.
+        """
         reserved_points: dict[int, tuple[IssuedEvaluationPoint, EvaluationPointAttempt, Any]] = {}
         for point_index in point_indices:
             issued_point = self._issued_points[point_index]
             attempt = EvaluationPointAttempt.create(issued_point.frame.token)
             parent_envelope = None
             if self._parent_broker is not None:
+                self._release_outstanding_attempt(point_index)
                 parent_envelope = self._parent_broker.reserve_remote_evaluation_point_attempt(
                     issued_point.frame, attempt, parent_authority=True
                 )
-                self._reserved_attempts.append(attempt)
+                with self._attempts_lock:
+                    self._outstanding_attempts[point_index] = attempt
             reserved_points[point_index] = (issued_point, attempt, parent_envelope)
         return _ShippedEvaluationPointScopes(reserved_points)
 
@@ -1005,21 +1020,42 @@ class _WorkflowEvaluationPointScopes:
         return ()
 
     def accept_claim_reports(self, claim_reports: Iterable[EvaluationPointClaimReport]) -> None:
-        """Add the claims that runs in other processes made to the call's record of draws."""
+        """Add the claims that runs in other processes made to the call's record of draws.
+
+        A report of an attempt that a later shipping replaced is ignored, since
+        its reservation was released.
+        """
         for claim_report in claim_reports:
+            with self._attempts_lock:
+                reported_point = next(
+                    (
+                        point_index
+                        for point_index, attempt in self._outstanding_attempts.items()
+                        if attempt.attempt_token == claim_report.attempt.attempt_token
+                    ),
+                    None,
+                )
+                if reported_point is None:
+                    continue
+                del self._outstanding_attempts[reported_point]
             if self._parent_broker is not None:
                 self._parent_broker.accept_remote_claim_report(claim_report)
-            self._reported_attempts.add(claim_report.attempt.attempt_token)
 
     def close(self) -> None:
         """Release every reservation no report answered, and check that every evaluation point joined."""
         if self._parent_broker is None:
             return
-        for attempt in self._reserved_attempts:
-            if attempt.attempt_token not in self._reported_attempts:
-                self._parent_broker.abort_remote_evaluation_point_attempt(attempt)
+        for point_index in list(self._outstanding_attempts):
+            self._release_outstanding_attempt(point_index)
         self._parent_broker.cancel_unstarted_evaluation_points(self._issued_points)
         self._parent_broker.assert_evaluation_points_joined(self._issued_points)
+
+    def _release_outstanding_attempt(self, point_index: int) -> None:
+        """Release the reservation evaluation point *point_index* holds for a run elsewhere, if any."""
+        with self._attempts_lock:
+            outstanding_attempt = self._outstanding_attempts.pop(point_index, None)
+        if outstanding_attempt is not None and self._parent_broker is not None:
+            self._parent_broker.abort_remote_evaluation_point_attempt(outstanding_attempt)
 
 
 class _ShippedEvaluationPointScopes:
@@ -1108,7 +1144,9 @@ def _requester_workflow_scope() -> Generator[None, None, None]:
         yield
 
 
-def _evaluation_point_scopes(num_evaluation_points: int, set_position: int) -> Any:
+def _evaluation_point_scopes(
+    num_evaluation_points: int, set_position: int
+) -> _WorkflowEvaluationPointScopes | _UnscopedEvaluationPoints:
     """The workflow scopes of a new set of evaluation points, built under the running call.
 
     Inside a route probe or a JAX body, where workflow draws are refused, the

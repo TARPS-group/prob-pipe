@@ -38,9 +38,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ._array_backend import _is_numeric_leaf
+from .._messages import count
+from ._array_backend import _is_numeric_leaf, _numpy_dtype_of
 from ._call_context import (
-    _CallContext,
     _collecting_call_accumulators,
     _EvaluationLog,
     _EvaluationSetRecord,
@@ -53,6 +53,7 @@ from ._execution_claims import NO_CLAIMS, ExecutionClaims
 from ._record_spec import RecordSpec
 from ._spec_base import NumericArraySpec, OpaqueSpec, TermSpec
 from ._specs import OutputSpec
+from .config import _checked_count
 
 __all__ = [
     "EvaluationChunk",
@@ -115,10 +116,22 @@ class EvaluationPoints:
         The word for one evaluation point in messages, such as ``"draw"`` or
         ``"grid point"``.
 
+    Attributes
+    ----------
+    origin : str
+        The name of the callable or of the site.
+    claims : ExecutionClaims
+        The callable's execution claims.
+    output_spec : OutputSpec or None
+        The callable's output spec.
+    point_noun : str
+        The word for one evaluation point in messages.
+
     Raises
     ------
     ValueError
-        If the varying arguments do not all have the same number of rows.
+        If there are no varying arguments, or they do not all have the same
+        number of rows.
 
     Examples
     --------
@@ -136,6 +149,7 @@ class EvaluationPoints:
     origin: str
     claims: ExecutionClaims
     output_spec: OutputSpec | None
+    point_noun: str
 
     def __init__(
         self,
@@ -207,8 +221,10 @@ class EvaluationPoints:
         Raises
         ------
         ValueError
-            If both *chunk_size* and *num_chunks* are given, or either is not a
-            positive integer.
+            If both *chunk_size* and *num_chunks* are given, or either is less
+            than 1.
+        TypeError
+            If *chunk_size* or *num_chunks* is not an integer.
         """
         if chunk_size is not None and num_chunks is not None:
             raise ValueError(
@@ -218,17 +234,17 @@ class EvaluationPoints:
         if num_points == 0:
             return []
         if chunk_size is not None:
-            _checked_positive_integer(chunk_size, "chunk_size")
+            _checked_count(chunk_size, "chunk_size")
             starts = range(0, num_points, chunk_size)
             bounds = [(start, min(start + chunk_size, num_points)) for start in starts]
         else:
             if num_chunks is not None:
-                _checked_positive_integer(num_chunks, "num_chunks")
-            chunk_count = min(num_chunks or 1, num_points)
-            base_size, remainder = divmod(num_points, chunk_count)
+                _checked_count(num_chunks, "num_chunks")
+            num_chunks_cut = min(num_chunks or 1, num_points)
+            base_size, remainder = divmod(num_points, num_chunks_cut)
             bounds = []
             start = 0
-            for chunk_index in range(chunk_count):
+            for chunk_index in range(num_chunks_cut):
                 stop = start + base_size + (1 if chunk_index < remainder else 0)
                 bounds.append((start, stop))
                 start = stop
@@ -237,9 +253,9 @@ class EvaluationPoints:
     def shared_payload(self) -> SharedPayload:
         """The callable and the arguments every evaluation point shares.
 
-        An executor sends it once to each worker that runs chunks of this set,
-        and passes it to :meth:`EvaluationChunk.run`; an executor that runs
-        chunks in the calling process passes it without copying.
+        An executor passes it to :meth:`EvaluationChunk.run`: one that runs
+        chunks in the calling process passes it without copying, and one that
+        sends chunks to other processes sends it with them.
 
         Returns
         -------
@@ -336,7 +352,10 @@ class EvaluationChunk:
     A chunk pickles, so an executor may run it in another process or on
     another machine; a pickled chunk carries only its own evaluation points'
     arguments and the settings of the call that asked for them. Running it
-    does the same wherever it runs.
+    does the same wherever it runs. Pickling a chunk reserves its evaluation
+    points' random keys with the call that asked for them, and pickling it
+    again, as an executor that retries a lost chunk does, replaces that
+    reservation, so the retry draws with the same keys.
 
     Parameters
     ----------
@@ -400,7 +419,9 @@ class EvaluationChunk:
         EvaluationOutcomes
             One outcome per evaluation point of the chunk, in order.
         """
-        chunk_context = _context_with_fresh_accumulators(self._evaluation_context)
+        chunk_context = self._evaluation_context.with_fresh_call_accumulators(
+            collects_calls=self._evaluation_context.collects_calls()
+        )
         with _under_call_context(chunk_context):
             if self._vectorized:
                 point_results = self._run_vectorized(shared_payload)
@@ -409,32 +430,17 @@ class EvaluationChunk:
                     self._run_point(shared_payload, point_index)
                     for point_index in range(self.start, self.stop)
                 ]
-        outputs: list[Any] = []
-        failures: dict[int, EvaluationFailure] = {}
-        lossy_casts: set[tuple[str, str]] = set()
-        for point_index, point_result in zip(range(self.start, self.stop), point_results):
-            if isinstance(point_result, EvaluationFailure):
-                failures[point_index] = point_result
-                outputs.append(None)
-            else:
-                checked_output, point_lossy_casts = point_result
-                outputs.append(checked_output)
-                lossy_casts |= point_lossy_casts
-        return EvaluationOutcomes(
-            start=self.start,
-            outputs=tuple(outputs),
-            failures=MappingProxyType(failures),
-            _noted_num_samples=cast(
+        return _assembled_outcomes(
+            self.start,
+            point_results,
+            noted_num_samples=cast(
                 _NumSamplesUsed, chunk_context.num_samples_used
             ).num_samples_values,
-            _noted_set_records=cast(_EvaluationLog, chunk_context.evaluation_log).set_records,
-            _claim_reports=tuple(self._point_scopes.claim_reports()),
-            _lossy_casts=frozenset(lossy_casts),
+            noted_set_records=cast(_EvaluationLog, chunk_context.evaluation_log).set_records,
+            claim_reports=tuple(self._point_scopes.claim_reports()),
         )
 
-    def _run_point(
-        self, shared_payload: SharedPayload, point_index: int
-    ) -> tuple[Any, frozenset[tuple[str, str]]] | EvaluationFailure:
+    def _run_point(self, shared_payload: SharedPayload, point_index: int) -> _PointResult:
         """The checked output of one evaluation point, or its failure.
 
         The evaluation point notes into accumulators of its own, which merge
@@ -448,17 +454,13 @@ class EvaluationChunk:
                 output = shared_payload.fn(
                     **shared_payload.shared_arguments, **self._arguments_at(point_index)
                 )
-                return _checked_point_output(
-                    output, self._output_spec, self._output_path(point_index)
-                )
+                return _checked_point_output(output, self._output_spec, _output_path(self._origin))
         except _InvalidPointOutput as invalid_output:
             return self._failure(point_index, "invalid", invalid_output.check_error)
         except Exception as error:
             return self._failure(point_index, "error", error)
 
-    def _run_vectorized(
-        self, shared_payload: SharedPayload
-    ) -> list[tuple[Any, frozenset[tuple[str, str]]] | EvaluationFailure]:
+    def _run_vectorized(self, shared_payload: SharedPayload) -> list[_PointResult]:
         """The checked outputs of the chunk's evaluation points, from one call on the stacked arguments."""
         num_rows = len(self)
         try:
@@ -473,19 +475,13 @@ class EvaluationChunk:
                 self._failure(point_index, "error", error)
                 for point_index in range(self.start, self.stop)
             ]
-        point_results: list[tuple[Any, frozenset[tuple[str, str]]] | EvaluationFailure] = []
-        for point_index, output_row in zip(range(self.start, self.stop), output_rows):
-            try:
-                point_results.append(
-                    _checked_point_output(
-                        output_row, self._output_spec, self._output_path(point_index)
-                    )
-                )
-            except _InvalidPointOutput as invalid_output:
-                point_results.append(
-                    self._failure(point_index, "invalid", invalid_output.check_error)
-                )
-        return point_results
+        return _checked_row_results(
+            output_rows,
+            range(self.start, self.stop),
+            self._output_spec,
+            origin=self._origin,
+            set_ordinal=self._set_ordinal,
+        )
 
     def _arguments_at(self, point_index: int) -> dict[str, Any]:
         """The varying arguments of evaluation point *point_index*."""
@@ -503,20 +499,9 @@ class EvaluationChunk:
             return self._arguments_source._arguments_in(self.start, self.stop)
         return dict(self._arguments_source)
 
-    def _output_path(self, point_index: int) -> str:
-        """How a message names the output of evaluation point *point_index*."""
-        return f"the output of {self._origin!r} at {self._point_noun} {point_index}"
-
     def _failure(self, point_index: int, kind: FailureKind, error: Exception) -> EvaluationFailure:
         """The failure of evaluation point *point_index*, of *kind*, caused by *error*."""
-        return EvaluationFailure(
-            point_index=point_index,
-            point_identity=(self._origin, self._set_ordinal, point_index),
-            kind=kind,
-            error_type=type(error).__qualname__,
-            message=str(error),
-            error=error,
-        )
+        return _point_failure(self._origin, self._set_ordinal, point_index, kind, error)
 
     def __reduce__(self) -> tuple[Any, ...]:
         """Pickle the chunk with its own evaluation points' arguments, to run in another process.
@@ -575,11 +560,11 @@ class EvaluationFailure:
     error: Exception | None
 
     def __reduce__(self) -> tuple[Any, ...]:
-        """Pickle the failure, leaving out an exception that does not pickle."""
+        """Pickle the failure, leaving out an exception that does not survive pickling and unpickling."""
         error = self.error
         if error is not None:
             try:
-                cloudpickle.dumps(error)
+                cloudpickle.loads(cloudpickle.dumps(error))
             except Exception:
                 error = None
         return (
@@ -640,13 +625,8 @@ class EvaluationOutcomes:
             A ``"lost"`` failure for each evaluation point of *chunk*.
         """
         failures = {
-            point_index: EvaluationFailure(
-                point_index=point_index,
-                point_identity=(chunk._origin, chunk._set_ordinal, point_index),
-                kind="lost",
-                error_type="",
-                message=reason,
-                error=None,
+            point_index: _point_failure(
+                chunk._origin, chunk._set_ordinal, point_index, "lost", reason
             )
             for point_index in range(chunk.start, chunk.stop)
         }
@@ -890,6 +870,93 @@ class _InvalidPointOutput(Exception):
         self.check_error = check_error
 
 
+#: What one evaluation point's run gives: its checked output with the casts
+#: that lost precision, or its failure.
+_PointResult = tuple[Any, frozenset[tuple[str, str]]] | EvaluationFailure
+
+
+def _point_failure(
+    origin: str, set_ordinal: int, point_index: int, kind: FailureKind, cause: Exception | str
+) -> EvaluationFailure:
+    """The failure of evaluation point *point_index* of a set, of *kind*, caused by *cause*.
+
+    *cause* is the exception that caused it, or for a lost evaluation point the
+    reason the infrastructure gave.
+    """
+    if isinstance(cause, str):
+        return EvaluationFailure(
+            point_index, (origin, set_ordinal, point_index), kind, "", cause, None
+        )
+    return EvaluationFailure(
+        point_index,
+        (origin, set_ordinal, point_index),
+        kind,
+        type(cause).__qualname__,
+        str(cause),
+        cause,
+    )
+
+
+def _output_path(origin: str) -> str:
+    """How a message names an output of *origin*."""
+    return f"the output of {origin!r}"
+
+
+def _checked_row_results(
+    output_rows: Iterable[Any],
+    point_indices: Iterable[int],
+    output_spec: OutputSpec | None,
+    *,
+    origin: str,
+    set_ordinal: int,
+) -> list[_PointResult]:
+    """Each row of a stacked output checked against *output_spec*, or the failure of its evaluation point."""
+    point_results: list[_PointResult] = []
+    for point_index, output_row in zip(point_indices, output_rows, strict=True):
+        try:
+            point_results.append(
+                _checked_point_output(output_row, output_spec, _output_path(origin))
+            )
+        except _InvalidPointOutput as invalid_output:
+            point_results.append(
+                _point_failure(
+                    origin, set_ordinal, point_index, "invalid", invalid_output.check_error
+                )
+            )
+    return point_results
+
+
+def _assembled_outcomes(
+    start: int,
+    point_results: Iterable[_PointResult],
+    *,
+    noted_num_samples: frozenset[int] = frozenset(),
+    noted_set_records: tuple[_EvaluationSetRecord, ...] = (),
+    claim_reports: tuple[Any, ...] = (),
+) -> EvaluationOutcomes:
+    """The outcomes of the evaluation points from *start* on, from each one's result, in order."""
+    outputs: list[Any] = []
+    failures: dict[int, EvaluationFailure] = {}
+    lossy_casts: set[tuple[str, str]] = set()
+    for point_index, point_result in enumerate(point_results, start=start):
+        if isinstance(point_result, EvaluationFailure):
+            failures[point_index] = point_result
+            outputs.append(None)
+        else:
+            checked_output, point_lossy_casts = point_result
+            outputs.append(checked_output)
+            lossy_casts |= point_lossy_casts
+    return EvaluationOutcomes(
+        start=start,
+        outputs=tuple(outputs),
+        failures=MappingProxyType(failures),
+        _noted_num_samples=noted_num_samples,
+        _noted_set_records=noted_set_records,
+        _claim_reports=claim_reports,
+        _lossy_casts=frozenset(lossy_casts),
+    )
+
+
 def _checked_point_output(
     output: Any, output_spec: OutputSpec | None, output_path: str
 ) -> tuple[Any, frozenset[tuple[str, str]]]:
@@ -950,15 +1017,20 @@ def _cast_to_declared(output: Any, term_spec: TermSpec, lossy_casts: set[tuple[s
         return Record(laid_out_fields)
     if not isinstance(term_spec, NumericArraySpec) or term_spec.dtype is None:
         return output
-    actual_dtype = np.result_type(output)
+    actual_dtype = _numpy_dtype_of(output)
     declared_dtype = np.dtype(term_spec.dtype)
-    if actual_dtype == declared_dtype:
+    if actual_dtype is None or actual_dtype == declared_dtype:
+        return output
+    if isinstance(output, jax.Array):
+        cast_output: Any = jnp.asarray(output, dtype=declared_dtype)
+    elif isinstance(output, (np.ndarray, np.generic, bool, int, float, complex)):
+        cast_output = np.asarray(output).astype(declared_dtype)
+    else:
+        # A container of another array backend keeps its own dtype.
         return output
     if not np.can_cast(actual_dtype, declared_dtype, casting="safe"):
         lossy_casts.add((str(actual_dtype), str(declared_dtype)))
-    if isinstance(output, jax.Array):
-        return jnp.asarray(output, dtype=declared_dtype)
-    return np.asarray(output).astype(declared_dtype)
+    return cast_output
 
 
 def _holds_only_values(term_spec: TermSpec | None) -> bool:
@@ -974,35 +1046,40 @@ def _holds_only_values(term_spec: TermSpec | None) -> bool:
     return False
 
 
-def _context_with_fresh_accumulators(evaluation_context: _CallContext) -> _CallContext:
-    """*evaluation_context* with new accumulators that collect calls when its call's do."""
-    enclosing_num_samples_used = evaluation_context.num_samples_used
-    fresh_context = evaluation_context.with_fresh_call_accumulators()
-    if enclosing_num_samples_used is not None and fresh_context.num_samples_used is not None:
-        fresh_context.num_samples_used.collects_calls = enclosing_num_samples_used.collects_calls
-    return fresh_context
-
-
 def _num_rows(varying: Mapping[str, Any], origin: str) -> int:
     """The number of rows every array leaf of *varying* has on its leading axis."""
-    row_counts = {
-        np.shape(leaf)[0] if np.ndim(leaf) > 0 else None
-        for stacked_values in varying.values()
-        for leaf in jax.tree.leaves(stacked_values)
+    row_counts_by_argument = {
+        argument_name: {
+            np.shape(leaf)[0] if np.ndim(leaf) > 0 else 0
+            for leaf in jax.tree.leaves(stacked_values)
+        }
+        for argument_name, stacked_values in varying.items()
     }
+    row_counts = set().union(*row_counts_by_argument.values())
     if not row_counts:
         raise ValueError(
             f"cannot build evaluation points of {origin!r} without varying arguments. "
             "Give each argument that differs between evaluation points, stacked on a "
             "leading axis"
         )
-    if None in row_counts or len(row_counts) != 1:
-        raise ValueError(
-            f"the varying arguments of {origin!r} have different numbers of rows, "
-            f"{sorted(count for count in row_counts if count is not None)}. Stack every "
-            "varying argument with one row per evaluation point"
+    if len(row_counts) != 1 or 0 in row_counts:
+        described_counts = ", ".join(
+            f"{argument_name} {_described_row_counts(argument_row_counts)}"
+            for argument_name, argument_row_counts in row_counts_by_argument.items()
         )
-    return int(cast(int, next(iter(row_counts))))
+        raise ValueError(
+            f"cannot build evaluation points of {origin!r} from varying arguments with "
+            f"different numbers of rows: {described_counts}. Stack every varying argument "
+            "with one row per evaluation point on its leading axis"
+        )
+    return next(iter(row_counts))
+
+
+def _described_row_counts(row_counts: set[int]) -> str:
+    """*row_counts* in a message: ``"has 3 rows"``, or ``"has no leading axis"`` for a scalar."""
+    if row_counts == {0}:
+        return "has no leading axis"
+    return "has " + " and ".join(count(row_count, "row") for row_count in sorted(row_counts))
 
 
 def _stacked_shared_arguments(shared_arguments: Mapping[str, Any], num_rows: int) -> dict[str, Any]:
@@ -1026,24 +1103,18 @@ def _stacked_shared_arguments(shared_arguments: Mapping[str, Any], num_rows: int
 def _output_rows(stacked_output: Any, num_rows: int, origin: str) -> list[Any]:
     """The *num_rows* rows of a vectorized callable's stacked output."""
     leaf_row_counts = {
-        np.shape(leaf)[0] if np.ndim(leaf) > 0 else None for leaf in jax.tree.leaves(stacked_output)
+        np.shape(leaf)[0] if np.ndim(leaf) > 0 else 0 for leaf in jax.tree.leaves(stacked_output)
     }
     if leaf_row_counts != {num_rows}:
         raise ValueError(
-            f"{origin!r} claims vectorized=True but returned an output whose leading axes "
-            f"have {sorted(str(count) for count in leaf_row_counts)} rows for {num_rows} "
-            "evaluation points. Return the outputs stacked with one row per evaluation point"
+            f"{origin!r} claims vectorized=True but returned an output that "
+            f"{_described_row_counts(leaf_row_counts)} for {num_rows} evaluation points. "
+            "Return the outputs stacked with one row per evaluation point"
         )
     return [
         jax.tree.map(lambda leaf, row_index=row: leaf[row_index], stacked_output)
         for row in range(num_rows)
     ]
-
-
-def _checked_positive_integer(count: Any, count_name: str) -> None:
-    """Raise if *count* is not a positive integer."""
-    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
-        raise ValueError(f"{count_name} must be a positive integer, got {count!r}")
 
 
 def _unpickled_shared_payload(

@@ -1039,17 +1039,8 @@ class UnshippableSettingError(RuntimeError):
     A value that cannot be pickled, such as an object that holds a lock, is
     sent as a placeholder, and reading it in the worker raises this error. The
     ``prefect`` section is never sent, so a call in a worker process runs
-    without Prefect orchestration.
-
-    Examples
-    --------
-    A setting whose value holds a lock, read inside work that the ``process``
-    executor runs, raises::
-
-        UnshippableSettingError: config.notation.max_depth holds a Formatter that could
-        not be sent to this worker process (TypeError: cannot pickle '_thread.lock'
-        object). Set it inside the work the worker runs, or use an executor that runs
-        in the calling process
+    without Prefect orchestration. The message names the setting, the class
+    of its value, and why pickling failed.
     """
 
 

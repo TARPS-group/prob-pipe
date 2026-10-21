@@ -190,6 +190,7 @@ An executor decides how the evaluations a call asks for run: one after another, 
 It never decides what they compute, so changing the executor changes no result beyond the last bit of rounding.
 The evaluations of one callable that one request asks for, such as 200 runs of a simulator at 200 parameter values, form one `EvaluationPoints`, and an executor runs it by its chunks.
 A user names an executor on a `Function`, as `simulate.using(executor="thread", executor_options={"max_workers": 8})`.
+For now a lifted call and a sweep still run by their `dispatch` control, and a call only checks the executor's name and options; they move onto executors in a coming change.
 
 ProbPipe ships four executors in `executor_registry`:
 
@@ -201,9 +202,10 @@ ProbPipe ships four executors in `executor_registry`:
 `thread` and `process` run only when named, since user code may not be safe to run in several threads or to send to another process.
 
 A new executor subclasses `EvaluationExecutor`, sets its `name` and `description`, and implements `check` and `execute`.
-Its options are the keyword-only parameters of `execute`, which `check` takes too.
+Its options are the parameters of `execute` after the set of evaluation points, which `check` takes too.
 `execute` runs every chunk, passing each the set's shared payload, and returns one outcome per evaluation point in order; `EvaluationOutcomes.merge` restores that order from chunks that finished in any order.
 A chunk pickles, so an executor may run it in another process or on another machine, and `shipping_check()` reports whether the set can be sent.
+Pickling a chunk again, to retry it after its first run was lost, gives the retry the same random keys.
 An executor that runs chunks elsewhere returns `EvaluationOutcomes.lost(chunk, reason)` for a chunk that never finished.
 An executor with no `priority` runs only when named.
 `check_executor`, in `probpipe.testing`, checks an executor against the contract before it is registered:
@@ -224,21 +226,27 @@ class SlurmExecutor(EvaluationExecutor):
     name = "slurm"
     description = "Run chunks of evaluation points as Slurm array jobs."
 
-    def check(self, evaluation_points, /, *, n_jobs=1, partition="short"):
+    def check(self, evaluation_points, /, *, n_jobs=1, partition="short", retries=0):
         return evaluation_points.shipping_check()
 
-    def execute(self, evaluation_points, /, *, n_jobs=1, partition="short"):
+    def execute(self, evaluation_points, /, *, n_jobs=1, partition="short", retries=0):
         cluster = submitit.AutoExecutor(folder="slurm_logs")
         cluster.update_parameters(slurm_partition=partition)
         shared_payload = evaluation_points.shared_payload()
-        chunks = evaluation_points.chunks(num_chunks=n_jobs)
-        jobs = cluster.map_array(run_chunk, chunks, [shared_payload] * len(chunks))
-        chunk_outcomes = []
-        for chunk, job in zip(chunks, jobs):
-            try:
-                chunk_outcomes.append(job.result())
-            except Exception as job_error:
-                chunk_outcomes.append(EvaluationOutcomes.lost(chunk, str(job_error)))
+        pending_chunks = evaluation_points.chunks(num_chunks=n_jobs)
+        chunk_outcomes, failed_jobs = [], []
+        for _ in range(retries + 1):
+            jobs = cluster.map_array(run_chunk, pending_chunks, [shared_payload] * len(pending_chunks))
+            failed_jobs = []
+            for chunk, job in zip(pending_chunks, jobs):
+                try:
+                    chunk_outcomes.append(job.result())   # errors of user code are in the outcomes
+                except Exception as job_error:            # the job itself died
+                    failed_jobs.append((chunk, job_error))
+            pending_chunks = [chunk for chunk, _ in failed_jobs]
+            if not pending_chunks:
+                break
+        chunk_outcomes += [EvaluationOutcomes.lost(chunk, str(job_error)) for chunk, job_error in failed_jobs]
         return EvaluationOutcomes.merge(chunk_outcomes)
 
 

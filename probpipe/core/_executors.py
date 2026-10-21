@@ -26,13 +26,22 @@ import threading
 import warnings
 from abc import abstractmethod
 from collections.abc import Mapping
+from dataclasses import replace
+from types import MappingProxyType
 from typing import Any, cast
 
 import cloudpickle
 import jax
 
 from .._messages import unknown_names
-from ._call_context import _ExecutionChoice, _jax_settings_snapshot, current_call_context
+from ._call_context import (
+    _EvaluationLog,
+    _EvaluationSetRecord,
+    _ExecutionChoice,
+    _jax_settings_snapshot,
+    _merge_noted_into,
+    current_call_context,
+)
 from ._catalog import registry_catalog
 from ._dispatch import (
     Feasibility,
@@ -41,16 +50,18 @@ from ._dispatch import (
     UnaryDispatchRegistry,
 )
 from ._evaluation_points import (
+    EvaluationChunk,
     EvaluationError,
-    EvaluationFailure,
     EvaluationOutcomes,
     EvaluationPoints,
     SharedPayload,
-    _checked_point_output,
+    _assembled_outcomes,
+    _checked_row_results,
     _holds_only_values,
-    _InvalidPointOutput,
+    _point_failure,
     _warn_lossy_casts,
 )
+from .config import _checked_count
 
 __all__ = ["EvaluationExecutor", "executor_registry"]
 
@@ -64,7 +75,8 @@ class EvaluationExecutor(UnaryDispatchMethod):
     :meth:`execute`, which :meth:`check` takes too; ProbPipe refuses an option
     that :meth:`execute` does not take before it calls either. An executor
     passes ``probpipe.testing.check_executor`` when it runs every evaluation
-    point once, returns the outcomes in order, and changes no argument.
+    point through its chunks' ``run``, returns the outcomes in order with what
+    the evaluation points noted, and changes no argument.
 
     Attributes
     ----------
@@ -262,7 +274,9 @@ def _run_on_executor(
         evaluation_points._point_scopes.accept_claim_reports(evaluation_outcomes._claim_reports)
     finally:
         evaluation_points._point_scopes.close()
-    _merge_outcome_accumulators(evaluation_outcomes, call_context)
+    _merge_noted_into(
+        call_context, evaluation_outcomes._noted_num_samples, evaluation_outcomes._noted_set_records
+    )
     if call_context.evaluation_log is not None:
         call_context.evaluation_log.record(
             _set_record(evaluation_points, executor.name, executor_options, evaluation_outcomes)
@@ -319,40 +333,32 @@ class _JaxExecutor(EvaluationExecutor):
         def evaluate_one_point(varying_arguments: Mapping[str, Any]) -> Any:
             return shared_payload.fn(**shared_payload.shared_arguments, **varying_arguments)
 
+        origin = evaluation_points.origin
+        set_ordinal = evaluation_points._set_ordinal
         try:
             with evaluation_points._point_scopes.mapped_scope():
                 stacked_outputs = jax.vmap(evaluate_one_point)(dict(evaluation_points._varying))
         except Exception as error:
-            failures = {
-                point_index: _point_failure(evaluation_points, point_index, "error", error)
-                for point_index in range(num_points)
-            }
-            return EvaluationOutcomes(start=0, outputs=(None,) * num_points, failures=failures)
-        outputs: list[Any] = []
-        failures = {}
-        lossy_casts: set[tuple[str, str]] = set()
-        for point_index in range(num_points):
-            output = jax.tree.map(lambda leaf, row=point_index: leaf[row], stacked_outputs)
-            try:
-                checked_output, point_lossy_casts = _checked_point_output(
-                    output,
-                    evaluation_points.output_spec,
-                    f"the output of {evaluation_points.origin!r} at "
-                    f"{evaluation_points.point_noun} {point_index}",
-                )
-            except _InvalidPointOutput as invalid_output:
-                failures[point_index] = _point_failure(
-                    evaluation_points, point_index, "invalid", invalid_output.check_error
-                )
-                outputs.append(None)
-                continue
-            outputs.append(checked_output)
-            lossy_casts |= point_lossy_casts
-        return EvaluationOutcomes(
-            start=0,
-            outputs=tuple(outputs),
-            failures=failures,
-            _lossy_casts=frozenset(lossy_casts),
+            return _assembled_outcomes(
+                0,
+                [
+                    _point_failure(origin, set_ordinal, point_index, "error", error)
+                    for point_index in range(num_points)
+                ],
+            )
+        output_rows = [
+            jax.tree.map(lambda leaf, row_index=point_index: leaf[row_index], stacked_outputs)
+            for point_index in range(num_points)
+        ]
+        return _assembled_outcomes(
+            0,
+            _checked_row_results(
+                output_rows,
+                range(num_points),
+                evaluation_points.output_spec,
+                origin=origin,
+                set_ordinal=set_ordinal,
+            ),
         )
 
 
@@ -414,7 +420,7 @@ class _ThreadExecutor(EvaluationExecutor):
         max_workers: int | None = None,
         chunk_size: int | None = None,
     ) -> EvaluationOutcomes:
-        worker_count = _checked_worker_count(max_workers, self.name)
+        worker_count = _checked_worker_count(max_workers)
         chunks = _parallel_chunks(evaluation_points, chunk_size, worker_count)
         shared_payload = evaluation_points.shared_payload()
         with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as pool:
@@ -454,7 +460,7 @@ class _ProcessExecutor(EvaluationExecutor):
         chunk_size: int | None = None,
         start_method: str = "spawn",
     ) -> EvaluationOutcomes:
-        worker_count = _checked_worker_count(max_workers, self.name)
+        worker_count = _checked_worker_count(max_workers)
         jax_settings = evaluation_points._call_context.jax_settings or _jax_settings_snapshot()
         pool = _process_pool(jax_settings, start_method, worker_count)
         shipped_payload = cloudpickle.dumps(evaluation_points.shared_payload())
@@ -464,14 +470,12 @@ class _ProcessExecutor(EvaluationExecutor):
             for chunk in chunks
         ]
         chunk_outcomes = []
-        for chunk, shipped_outcomes in submitted_chunks:
-            try:
-                chunk_outcomes.append(cloudpickle.loads(shipped_outcomes.result()))
-            except concurrent.futures.process.BrokenProcessPool as pool_error:
-                _discard_process_pool(pool)
-                chunk_outcomes.append(
-                    EvaluationOutcomes.lost(chunk, f"a worker died: {pool_error}")
-                )
+        try:
+            for chunk, outcomes_future in submitted_chunks:
+                chunk_outcomes.append(_received_outcomes(chunk, outcomes_future, pool))
+        finally:
+            for _, outcomes_future in submitted_chunks:
+                outcomes_future.cancel()
         return EvaluationOutcomes.merge(chunk_outcomes)
 
 
@@ -493,7 +497,7 @@ registry_catalog.register(executor_registry)
 def _chosen_executor(
     evaluation_points: EvaluationPoints,
     execution_choice: _ExecutionChoice,
-    evaluation_log: Any,
+    evaluation_log: _EvaluationLog | None,
 ) -> tuple[EvaluationExecutor, dict[str, Any]]:
     """The executor that runs *evaluation_points* under *execution_choice*, with its options."""
     jax_executor = executor_registry.get_method("jax")
@@ -507,16 +511,17 @@ def _chosen_executor(
         feasibility = named_executor.check(evaluation_points, **execution_choice.executor_options)
         if feasibility.feasible:
             return named_executor, dict(execution_choice.executor_options)
-        fallback_executor = _automatically_selected_executor(evaluation_points)
         if _is_named_for_the_callable(execution_choice):
             raise ResolutionError(
                 f"executor {executor_name!r} cannot run the evaluation points of "
                 f"{evaluation_points.origin!r}: {feasibility.description}. Name another executor"
             )
+        fallback_executor = _automatically_selected_executor(evaluation_points)
+        how_named = "inherited from" if execution_choice.source == "inherited" else "named on"
         warning_key = ("fallback", executor_name, evaluation_points.origin)
         if evaluation_log is None or evaluation_log.is_first_warning(warning_key):
             warnings.warn(
-                f"executor {executor_name!r}, inherited from {execution_choice.named_on}, cannot "
+                f"executor {executor_name!r}, {how_named} {execution_choice.named_on}, cannot "
                 f"run the evaluation points of {evaluation_points.origin!r} "
                 f"({feasibility.description}), so they run on {fallback_executor.name!r} instead",
                 UserWarning,
@@ -600,65 +605,49 @@ def _check_outcomes_cover(
         )
 
 
-def _merge_outcome_accumulators(evaluation_outcomes: EvaluationOutcomes, call_context: Any) -> None:
-    """Add what the evaluation points noted to the call's accumulators."""
-    if call_context.num_samples_used is not None:
-        for num_samples in evaluation_outcomes._noted_num_samples:
-            call_context.num_samples_used.note(num_samples)
-    if call_context.evaluation_log is not None:
-        for set_record in evaluation_outcomes._noted_set_records:
-            call_context.evaluation_log.record(set_record)
-
-
 def _set_record(
     evaluation_points: EvaluationPoints,
     executor_name: str,
     executor_options: Mapping[str, Any],
     evaluation_outcomes: EvaluationOutcomes,
-) -> Any:
-    """The record of one set of evaluation points that the call's provenance reports."""
-    from ._call_context import _EvaluationSetRecord
-
+) -> _EvaluationSetRecord:
+    """The record of one set of evaluation points that the call's evaluation log keeps."""
     return _EvaluationSetRecord(
         origin=evaluation_points.origin,
         set_ordinal=evaluation_points._set_ordinal,
         executor_name=executor_name,
         executor_options=dict(executor_options),
         num_evaluation_points=len(evaluation_points),
-        num_runs=len(evaluation_points),
         failed_point_indices=tuple(sorted(evaluation_outcomes.failures)),
     )
 
 
-def _point_failure(
-    evaluation_points: EvaluationPoints, point_index: int, kind: Any, error: Exception
-) -> EvaluationFailure:
-    """The failure of evaluation point *point_index* of *evaluation_points*."""
-    return EvaluationFailure(
-        point_index=point_index,
-        point_identity=evaluation_points._point_identity(point_index),
-        kind=kind,
-        error_type=type(error).__qualname__,
-        message=str(error),
-        error=error,
-    )
+def _checked_worker_count(max_workers: Any) -> int:
+    """*max_workers*, or the number of processors when it is ``None``.
 
+    Parameters
+    ----------
+    max_workers : Any
+        The executor's ``max_workers`` option.
 
-def _checked_worker_count(max_workers: Any, executor_name: str) -> int:
-    """*max_workers*, or the number of processors when it is ``None``; raises if it is not a positive integer."""
+    Returns
+    -------
+    int
+        The number of workers.
+
+    Raises
+    ------
+    TypeError, ValueError
+        If *max_workers* is not a positive integer.
+    """
     if max_workers is None:
         return os.cpu_count() or 1
-    if isinstance(max_workers, bool) or not isinstance(max_workers, int) or max_workers < 1:
-        raise ValueError(
-            f"executor {executor_name!r} needs max_workers to be a positive integer, "
-            f"got {max_workers!r}"
-        )
-    return max_workers
+    return _checked_count(max_workers, "max_workers")
 
 
 def _parallel_chunks(
     evaluation_points: EvaluationPoints, chunk_size: int | None, worker_count: int
-) -> list[Any]:
+) -> list[EvaluationChunk]:
     """The chunks a parallel executor runs: of *chunk_size*, or one for each worker."""
     if chunk_size is not None:
         return evaluation_points.chunks(chunk_size=chunk_size)
@@ -712,7 +701,64 @@ def _apply_jax_settings(jax_settings: Mapping[str, Any]) -> None:
 
 
 def _run_shipped_chunk(shipped_chunk: bytes, shipped_payload: bytes) -> bytes:
-    """Run a pickled chunk in a worker process, and return its pickled outcomes."""
+    """Run a pickled chunk in a worker process, and return its pickled outcomes.
+
+    An output that cannot be sent back fails its evaluation point, so the
+    other evaluation points' outcomes still reach the calling process.
+    """
     chunk = cloudpickle.loads(shipped_chunk)
     shared_payload: SharedPayload = cloudpickle.loads(shipped_payload)
-    return cloudpickle.dumps(chunk.run(shared_payload))
+    chunk_outcomes = chunk.run(shared_payload)
+    try:
+        return cloudpickle.dumps(chunk_outcomes)
+    except Exception:
+        return cloudpickle.dumps(_with_unshippable_outputs_failed(chunk, chunk_outcomes))
+
+
+def _with_unshippable_outputs_failed(
+    chunk: EvaluationChunk, chunk_outcomes: EvaluationOutcomes
+) -> EvaluationOutcomes:
+    """*chunk_outcomes* with each output that cannot be pickled replaced by its evaluation point's failure."""
+    outputs = list(chunk_outcomes.outputs)
+    failures = dict(chunk_outcomes.failures)
+    for point_index, output in enumerate(chunk_outcomes.outputs, start=chunk_outcomes.start):
+        if point_index in failures:
+            continue
+        try:
+            cloudpickle.dumps(output)
+        except Exception as pickling_error:
+            outputs[point_index - chunk_outcomes.start] = None
+            failures[point_index] = chunk._failure(
+                point_index,
+                "error",
+                TypeError(
+                    f"its output, a {type(output).__name__}, cannot be sent back from the worker "
+                    f"process ({type(pickling_error).__name__}: {pickling_error}). Return arrays "
+                    "or other values that pickle, or use an executor that runs in the calling "
+                    "process"
+                ),
+            )
+    return replace(chunk_outcomes, outputs=tuple(outputs), failures=MappingProxyType(failures))
+
+
+def _received_outcomes(
+    chunk: EvaluationChunk,
+    outcomes_future: concurrent.futures.Future[bytes],
+    pool: concurrent.futures.ProcessPoolExecutor,
+) -> EvaluationOutcomes:
+    """The outcomes of *chunk*, which a worker process ran, or its evaluation points lost.
+
+    A worker that died loses the chunk and takes its pool with it, so the next
+    call starts a new pool.
+    """
+    try:
+        return cloudpickle.loads(outcomes_future.result())
+    except concurrent.futures.process.BrokenProcessPool as pool_error:
+        _discard_process_pool(pool)
+        return EvaluationOutcomes.lost(chunk, f"a worker process died: {pool_error}")
+    except Exception as receiving_error:
+        return EvaluationOutcomes.lost(
+            chunk,
+            "its outcomes could not be received from the worker process "
+            f"({type(receiving_error).__name__}: {receiving_error})",
+        )
