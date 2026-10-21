@@ -1,6 +1,6 @@
 """One law of each catalog family whose default label is its class name.
 
-Each entry builds the law over the component ``x`` and passes its keyword
+Each entry builds the law over the output ``x`` and passes its keyword
 arguments to the family's constructor, so a test builds the law under its
 default label or under a ``label=`` it chooses.
 """
@@ -46,9 +46,9 @@ FAMILIES: dict[str, Callable[..., Any]] = {
     "Wishart": lambda **kw: probpipe.Wishart("x", 4.0, scale_tril=jnp.eye(2), **kw),
     "VonMisesFisher": lambda **kw: probpipe.VonMisesFisher("x", jnp.array([0.0, 1.0]), 2.0, **kw),
     "KDEDistribution": lambda **kw: KDEDistribution(
-        jnp.array([0.0, 1.0, 3.0]), 0.5, component="x", **kw
+        jnp.array([0.0, 1.0, 3.0]), 0.5, output_name="x", **kw
     ),
     "KDEDistribution under a rule": lambda **kw: KDEDistribution(
-        jnp.array([0.0, 1.0, 3.0]), weights=jnp.array([0.5, 0.25, 0.25]), component="x", **kw
+        jnp.array([0.0, 1.0, 3.0]), weights=jnp.array([0.5, 0.25, 0.25]), output_name="x", **kw
     ),
 }

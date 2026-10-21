@@ -23,7 +23,7 @@ from tests._posterior import posterior_of
 
 
 def test_extract_draws_reads_an_empirical_law_and_refuses_others():
-    empirical = EmpiricalDistribution(jnp.array([4.0, 5.0]), component="x")
+    empirical = EmpiricalDistribution(jnp.array([4.0, 5.0]), output_name="x")
     np.testing.assert_array_equal(extract_draws(empirical)["x"], [4.0, 5.0])
 
     with pytest.raises(TypeError, match="cannot extract draws"):
@@ -112,7 +112,7 @@ def test_to_arviz_dataset_refuses_var_names_that_are_not_names(var_names, match)
 
 def test_to_arviz_dataset_prepends_chain_for_matrix_valued_params():
     omega = np.arange(24.0).reshape(4, 2, 3)
-    post = EmpiricalDistribution(jnp.asarray(omega), component="omega")
+    post = EmpiricalDistribution(jnp.asarray(omega), output_name="omega")
 
     ds = to_arviz_dataset(post)
 
@@ -156,7 +156,7 @@ def test_to_arviz_dataset_requires_xarray(monkeypatch):
     monkeypatch.setattr(arviz_bridge, "xr", None)
 
     with pytest.raises(ImportError, match="xarray is required"):
-        to_arviz_dataset(EmpiricalDistribution(jnp.array([1.0]), component="x"))
+        to_arviz_dataset(EmpiricalDistribution(jnp.array([1.0]), output_name="x"))
 
 
 def test_check_arviz_installed_reports_missing_dependencies(monkeypatch):

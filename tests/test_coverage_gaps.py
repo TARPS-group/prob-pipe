@@ -42,7 +42,7 @@ class TestEmpiricalSubsampling:
         samples = jax.random.normal(key, (50, 2))
         weights = jax.random.uniform(jax.random.PRNGKey(1), (50,))
         weights = weights / jnp.sum(weights)
-        ed = EmpiricalDistribution(samples, weights=weights, component="x")
+        ed = EmpiricalDistribution(samples, weights=weights, output_name="x")
         C = cov(ed)
         assert C.shape == (2, 2)
         assert jnp.all(jnp.isfinite(C))
@@ -85,7 +85,7 @@ class TestTransformedNonTFP:
     def td(self):
         key = jax.random.PRNGKey(0)
         samples = jax.random.normal(key, (100, 2))
-        emp = EmpiricalDistribution(samples, component="x")
+        emp = EmpiricalDistribution(samples, output_name="x")
         return BijectorTransformedDistribution("transformed", emp, tfb.Exp())
 
     def test_base_property(self, td):

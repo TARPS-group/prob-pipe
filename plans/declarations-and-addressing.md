@@ -474,6 +474,18 @@ For a function from `x` to `{y, z}`, the outputs are `y` and `z` (case 1), and t
 > 4. **No name is both the name of an output at the root and a path.** An object with an output at the root has no paths, since its value type has none; every other output's name is the path of a child. So every output name other than a root name is a path of the object and of its samples, and a root name never collides with a path.
 > 5. **Outputs are not chosen.** They are determined by the object's value type, through the five cases; the one exception is the name of an output at the root, which the object states.
 
+Many operations read an object's outputs as one record: a model's or a posterior's parameters, the value a merge places in its result (§ 5.5), the fields a conditioning value supplies.
+That record exists only where the outputs determine the object (requirement 2).
+
+> [!IMPORTANT]
+> **Definition (record of the outputs).** The *record of the outputs* of an object is the record type with one field per output, in the outputs' order, each typed by its output's type; its value is the record of the output values (§ 3.2).
+> An object whose value type is a record type has that record type; an object with an output at the root `n` of a base type `B` has `{n: B}`.
+> An object with no outputs because its value type is a law or kernel type (case 5), such as a function that returns a law or a batch of laws, has no record of its outputs: asking for it is refused, and the refusal says to wrap the object under a name (Definition (wrap)).
+> A batch of records has the record of its outputs, each field typed by its marginal batch's type (case 4).
+
+> [!NOTE]
+> **Consequence** (of the definition and requirement 2). An object without outputs never has an empty record of its outputs: "no outputs" in case 5 means that the object cannot be read by name, not that it is empty, so treating it as the empty record would silently drop the object.
+
 <details>
 <summary>Technical note: why a function's return value can give outputs and a law cannot</summary>
 
@@ -1859,7 +1871,7 @@ class OutputSpec:
 Two `OutputSpec`s are equal when they have the same type, field order included, and, for an output at the root, the same name; an `OutputSpec` equals only another `OutputSpec`, and the hash agrees with equality.
 `OutputSpec` keeps `is_concrete`, `with_dim_sizes`, and `with_dim_names`; its free dimension names are `term_spec.free_dims`.
 A law's `event_spec=` argument is read by III.7's rule: a bare `RecordSpec` is the positional form, and an event over a base type needs its name, in the keyword form.
-Code outside `core/_specs.py` reads the form through one private helper, `_root_output_name(O)`, which returns the name of the output at the root, or `None`.
+Code outside `core/_specs.py` reads the form through one private helper, `_root_output_name(O)`, which returns the name of the output at the root, or `None`, and reads the record of the outputs (§ 3.2) through one private helper, `_output_record(O)`, which refuses an output spec over a law or kernel type with a message that says to wrap the values under a name.
 
 ### 11.2 An output whose type is not known yet
 
@@ -3251,6 +3263,10 @@ The items below were found while applying the final review of 2026-10-20.
 51. **The name of `b[p]`.** The batch that a path selects from a batch was called its *column*, a word the design also uses for one array of a batch's columnar storage and for one column of a displayed table, and a word for a table, though a batch of laws or of functions holds no table. *Reading:* the maintainer renamed it the *marginal batch* on 2026-10-20 (`decisions.md`), after the coupled marginal `d[p]` of a law: for samples of `d`, the marginal batch at `p` holds samples of `d[p]`. "Column" keeps its storage and table senses (B.2, technical note). No rule changed.
 52. **A law's selection, and merging two of them.** The selection `d[p]` of a law was a *view*, a word for where data is stored, and `marginal(d, p)` was *detached*, which II.4 uses for `raw`. Two selections of one law merged as independent laws, since a merge could not tell them from independent laws. *Reading:* the maintainer decided on 2026-10-20 (`decisions.md`) that `d[p]` is the **coupled marginal**, of class `CoupledMarginal`, and `marginal(d, p)` the **standalone marginal**; two laws are coupled when they have one root ancestor, the relation by which a lift draws laws together; and a merge refuses coupled operands (§ 5.3, condition 9), so neither a silent product nor a joint is returned. The standalone marginal is the law of the coupled one only when computed exactly. A kernel's selection is its coupled marginal too, and whether coupling survives binding is open (`deferred.md`).
 
+The item below was found while implementing S2a on 2026-10-20.
+
+51. **The record of an object's outputs.** Several operations read an object's outputs as one record (a model's or a posterior's parameters, a conditioning value, a merge's value), and the plan had S2a write it as `RecordSpec(O.outputs)`. For an output spec over a law or kernel type that is a record of one sample's fields under T1, and the empty record once S2b-out gives such a spec no outputs, while § 3.2's requirement 2 says such an object cannot be read by name at all. *Decided 2026-10-20 by the maintainer:* § 3.2 defines the record of the outputs, which exists exactly when the object has outputs and is refused, with the advice to wrap, for a law or kernel type; Part II reads it through one helper, `_output_record`; S2a keeps today's behaviour (`_output_record` refusing a batch type too, until S4b, and `_single_output_name` keeping T1's reading, until S2b-out), and the done-conditions of S2a, S2b-out, and S4b, with T1 and T4, state each change. S2a states the definition in `design/` II.2, with a note on the interim refusal, and adds *record of the outputs* to the glossary, since S0 merged before the gap was found.
+
 ## B. Implementation plan and sequencing
 
 **Key.** Step codes S0, S1, S2a, S2b-out, S2b-in, S3, S4a, S4b, and G1a to G5 are this design's steps, and E0 to E6, P0b, PV, and PL the execution plan's, listed in [`README.md`](README.md) § Steps; T1 to T33 are the transition rules of B.4, without T25 and T26, which held until a rename after the workshop and went when the rename moved into S2a; N1 to N32 are the queued questions of [`decisions.md`](decisions.md), pending or settled; O1 to O16, R1 to R6, and Q1 to Q6 are the decision records of Appendix D.2; "fact N" is fact N of the inputs and outputs proposal's Appendix E (D.5).
@@ -3432,7 +3448,7 @@ m["G"]["mu"]         # KeyError: paths do not chain at the name (T16)
 
 | # | Until | Applies to | From | Why |
 | --- | --- | --- | --- | --- |
-| T1 | S2b-out: an output spec over a law or kernel type has the fields of one sample as outputs, typed by one sample's values: `OutputSpec(law_spec).outputs` is `{mu: NumericArraySpec(()), tau: ...}`. A merge accepts such an operand: for a law `ll` over laws, declared positionally, `ll & Normal("z", 0.0, 1.0)` builds, and sampling it raises `ResultSchemaError` | output specs positional over a law or kernel type; merges of laws and kernels | — | today's reading (fact 11); S2b-out gives an output spec over a law or kernel type no outputs, and condition 2 of § 5.3 refuses it |
+| T1 | S2b-out: an output spec over a law or kernel type has the fields of one sample as outputs, typed by one sample's values: `OutputSpec(law_spec).outputs` is `{mu: NumericArraySpec(()), tau: ...}`. A merge accepts such an operand: for a law `ll` over laws, declared positionally, `ll & Normal("z", 0.0, 1.0)` builds, and sampling it raises `ResultSchemaError`. From S2a, the private `_single_output_name` reads that one sample's output, so for `ll` over a law over an array named `x`, `ll["x"]` is the law of `x` | output specs positional over a law or kernel type; merges of laws and kernels; `_single_output_name` and its callers in `distributions/` | — | today's reading (fact 11); S2b-out gives an output spec over a law or kernel type no outputs, and condition 2 of § 5.3 refuses it |
 | T2 | S2b-out: `merge` on records is deep: `Record({"g": {"b": 1.0}}).merge(Record({"g": {"c": 2.0}}))` is `{g: {b, c}}` | `NamedTree`, `Record`, `RecordSpec`, `RecordBatch` | — | today's rule (fact 5); S2b-out makes it shallow, so S3's `&` is a rename |
 | T33 | S2b-in: record conformance and unification, and the check of a record against a record type, ignore field order: `RecordSpec(y=(), x=())` conforms to `RecordSpec(x=(), y=())`, although the two types are unequal; a `Record` built as `{y, x}` conforms to it and keeps its own order; a raw mapping `{"y": 0.0, "x": 1.0}` is laid out as `{x, y}` when a function returns it, but reaches a function's body or a kernel in the caller's order when given for an input | `RecordSpec._bind_dims_from_spec`, `_bind_dims_from_value`, and their callers; call-time inputs (`functions/_contract.py`) and conditioning values (`operations/_given.py`) | — | today's rule (A.2 item 21); S2b-in applies § 5.9 |
 
@@ -3446,7 +3462,7 @@ m["G"]["mu"]         # KeyError: paths do not chain at the name (T16)
 
 | # | Until S4b | Applies to | From | Why |
 | --- | --- | --- | --- | --- |
-| T4 | A batch stores only its element's type, so no base element's name: for samples from `Normal("mu", 0.0, 1.0)`, `samples[["mu"]]` raises `KeyError`, and the name cannot be renamed. A batch of records has its marginal batches as outputs, typed by the element's fields, not by the marginal batches' `BatchSpec`s | every batch; `OutputSpec(bt.spec)` | — | today's `BatchSpec` (fact 11) |
+| T4 | A batch stores only its element's type, so no base element's name: for samples from `Normal("mu", 0.0, 1.0)`, `samples[["mu"]]` raises `KeyError`, and the name cannot be renamed. A batch of records has its marginal batches as outputs, typed by the element's fields, not by the marginal batches' `BatchSpec`s, and `_output_record` refuses an output spec over a batch type | every batch; `OutputSpec(bt.spec)`; `_output_record` | — | today's `BatchSpec` (fact 11) |
 
 #### Rules that end at G1a
 
@@ -3633,7 +3649,9 @@ V.6 and III.3 state the reading of a bare `output_spec`. `STYLE_GUIDE.md` does n
 
 *Delivers:*
 - `spec` becomes `term_spec` and `with_spec` becomes `with_term_spec` on `OutputSpec`, and `exposes_record` goes;
-- one private helper, `_root_output_name(output_spec) -> str | None` in `core/_specs.py`, returns the root name or `None`, replacing `_whole_term_component` (20 lines of 4 modules of `distributions/`) and every read of `_component_name` outside `core/_specs.py`; the 7 callers of `_components_record` use `RecordSpec(O.outputs)`, and the helper goes;
+- one private helper, `_root_output_name(output_spec) -> str | None` in `core/_specs.py`, returns the root name or `None`, replacing every read of `_component_name` outside `core/_specs.py`;
+- `_whole_term_component` (20 lines of 4 modules of `distributions/`) moves to `core/_specs.py` as `_single_output_name`, with today's reading: `None` when the outputs are a record's fields, and otherwise the one output, which T1 still gives an output spec positional over a law, a kernel, or a batch; it differs from `_root_output_name` only there, and S2b-out replaces it with `_root_output_name` (corrected 2026-10-20: the earlier text replaced it with `_root_output_name` at once, which changed T1's readings in a mechanical step);
+- `_components_record` becomes `_output_record` in `core/_specs.py`, the one reader of the record of an object's outputs (§ 3.2), used by its 7 callers; it keeps today's refusal of an output spec positional over a law, a kernel, or a batch, whose message says to wrap the values under a name, and the refusal of a batch ends with S4b (T4) (corrected 2026-10-20: the earlier text had the callers use `RecordSpec(O.outputs)`, which builds a record from a law's sample fields under T1, and an empty record after S2b-out, where the design refuses);
 - the words and names C.2 marks S2a, in the code, its docstrings and messages, the User Guide, the docs page, and any text of `design/` that a step merged after S0 wrote in the old words: "slot" becomes "input", "component" becomes "output", and "input declaration", "output declaration", and "event declaration" become "input spec", "output spec", and "event spec"; `components` becomes `outputs`, `component=` becomes `output_name=`, `factor`'s `component_name` becomes `output_name`, the private names become `_exposed_outputs`, `_output_name`, `_outputs_of`, `_callable_output_name`, and `_ByOutput`, and `docs/api/declarations.md` becomes `docs/api/input_and_output_specs.md`; "component" keeps only a mixture's component laws (B.2);
 - a CHANGELOG entry that maps each renamed name to its new name.
 
@@ -3642,9 +3660,10 @@ A script renames the code names. The words in prose are judged by sense, since "
 *Files:* `core/_specs.py`, `core/_fingerprint.py`, and every reader of the renamed names in `probpipe/`, `tests/`, and `docs/` apart from `docs/tutorials/` (at `6f8859fc`: `.event_spec.spec` on 99 lines of `probpipe/` and 199 of `tests/`; `.output_spec.spec` on 4 and 24; `exposes_record` on 33 and 31; `._component_name` on 19 lines of 6 modules); `_whole_term_component` in `distributions/_distribution.py`, `_factored.py`, `_views.py`, `_empirical.py`; `operations/_moments.py` (`_ByComponent`); the User Guide notebooks; `docs/api/declarations.md`, renamed.
 *Demonstration:* `p.event_spec.term_spec` is the `RecordSpec` of a sample, `p.event_spec.outputs` holds `mu` and `tau`, and `p.event_spec.spec` and `p.event_spec.components` raise `AttributeError`.
 *Done when:*
-- `probpipe/`, `tests/`, and `docs/` contain no `._component_name` outside `core/_specs.py`, no `_whole_term_component`, no `_components_record`, no `exposes_record`, no `.spec` or `with_spec` on an `OutputSpec`, no `.components` on an `OutputSpec` or a batch, and no `component=` or `component_name`;
+- `probpipe/`, `tests/`, and `docs/` contain no `._component_name` outside `core/_specs.py`, no `_whole_term_component`, no `_components_record`, no `RecordSpec(O.outputs)` standing for `_output_record(O)`, no `exposes_record`, no `.spec` or `with_spec` on an `OutputSpec`, no `.components` on an `OutputSpec` or a batch, and no `component=` or `component_name`;
 - no "slot", "component", "input declaration", "output declaration", or "event declaration" remains in the senses C.2 maps, in those trees or in `design/`, and the PR lists each remaining occurrence by sense;
 - docstrings and messages saying "packaging", "packaged", or "map-like kind", such as `InputSpec`'s, are updated;
+- `_output_record(OutputSpec(law_spec))` raises `TypeError` saying to wrap, and for a law `ll` over laws declared positionally over a law over an array named `x`, `ll["x"]` gives the same result as before S2a (T1);
 - the User Guide notebooks run, and the full suite passes.
 
 #### S2b-out: the operations on output specs
@@ -3657,7 +3676,7 @@ S2b is split by output and input specs (decided 2026-10-20, N5): S3, S4b, and E4
 | --- | --- | --- |
 | `OutputSpec.__getitem__`, `__contains__`, `without`, `__and__`, `__iter__`'s refusal | `core/_specs.py`, `distributions/_views.py` | `_view_declaration`'s 2 call sites (`distributions/_views.py:1057`, `:1063`) move to `O[s]`, apart from one path to a group (T5) and one to a held field (T19) |
 | the joint's event through `&` | `distributions/_factored.py` | `_factor_graph` |
-| an output spec over a law or kernel type has no outputs | `core/_specs.py` (`_exposed_outputs`, 3 call sites) | 3 tests change (fact 21) |
+| an output spec over a law or kernel type has no outputs | `core/_specs.py` (`_exposed_outputs`, 3 call sites; `_single_output_name` goes) | 3 tests change (fact 21); `_single_output_name`'s 16 call sites in `distributions/` read `_root_output_name` |
 | shallow record merge | `core/named_tree.py`, `core/record.py`, `core/_record_batch.py` | 3 library call sites; 2 tests and 1 message test change (fact 5) |
 
 With S2b-out's two new behaviours, the empty outputs and the shallow merge, patched in, every User Guide and Get Started notebook that runs here passed, and neither behaviour was exercised (fact 45).
@@ -3672,6 +3691,8 @@ Typing a batch's outputs by their marginal batches waits for S4b, the `condition
 - `OutputSpec(law_spec).outputs == {}`, and a function whose output spec wraps a law under `params` has `output_spec["params"] == OutputSpec(law_spec)`;
 - a law `ll` whose event is positional over a law builds, with `ll.event_spec.outputs == {}`; `ll * Normal("z", 0.0, 1.0)` raises `TypeError` whose message says to wrap the laws it is over under a name; `ll` with them wrapped merges;
 - `Normal("z", 0.0, 1.0) * gp` still merges, as T15 states;
+- `_single_output_name` is gone, its callers read `_root_output_name`, and for `ll` over a law over an array named `x`, `ll["x"]` raises `KeyError` with § 12.1's message, since `x` names the inner law's output at the root and is not a path of `ll` (§ 2.3, § 4.2);
+- `_output_record(OutputSpec(law_spec))` still raises `TypeError` saying to wrap, and no caller reads the record of the outputs as `RecordSpec(O.outputs)`, which would be the empty record once a law type has no outputs (§ 3.2, Definition (record of the outputs));
 - `Record({"g": {"b": 1.0}}).merge(Record({"g": {"c": 2.0}}))` raises `ValueError`, as do `RecordSpec.merge` and `RecordBatch.merge` on a shared top-level name;
 - tests cover each error of selection, removal, and merge on output specs (§ 19), and check I6 and I16 for outputs;
 - the User Guide notebooks run, and the full suite passes.
@@ -3761,7 +3782,7 @@ It rewrites every reader of `element_spec`, hence announced.
 *Done when:*
 - `sample(Normal("mu", 0.0, 1.0), sample_shape=4).spec.element_spec == OutputSpec(mu=...)`;
 - for `dd = sample(d, sample_shape=4)`, `dd["a"].spec.element_spec == OutputSpec(a=...)` and `dd["g"]`'s is `OutputSpec(RecordSpec(b=..., c=...))`, while `d["g"]` is as T6 states;
-- `OutputSpec(dd.spec).outputs["a"]` is the `BatchSpec` of the marginal batch at `a`;
+- `OutputSpec(dd.spec).outputs["a"]` is the `BatchSpec` of the marginal batch at `a`, and `_output_record(OutputSpec(dd.spec))` is the `RecordSpec` of the marginal batches' `BatchSpec`s (§ 3.2, Definition (record of the outputs));
 - `sample(Normal("x", 0.0, 1.0), sample_shape=4)[["x"]]` is a `RecordBatch` of `{x}`;
 - for `x` a batch of samples from `Normal("x", 0.0, 1.0)`, `x.rename(x="y").element_spec == OutputSpec(y=...)`, with an unchanged fingerprint;
 - `x.spec != y.spec` for batches of samples from `Normal("x", 0.0, 1.0)` and `Normal("y", 0.0, 1.0)`, while `x == y` holds for equal values;
@@ -3926,8 +3947,9 @@ Today `*` merges laws and kernels, as `k * p`.
 | the code of `&` | `distributions/_composition.py`, route `"compose"`, `_can_compose`, `_compose`, `_composed_expression` | `_merge.py`, route `"merge"` | S3 |
 | the type in an output spec | `OutputSpec.spec`, `with_spec` | `term_spec`, `with_term_spec` | S2a |
 | whether an output spec's outputs are a record's children | `exposes_record` | removed: the type decides | S2a |
-| the root name, privately | `_whole_term_component`, reads of `_component_name` | `_root_output_name` | S2a |
-| converting outputs to a record | `_components_record` | `RecordSpec(O.outputs)` | S2a |
+| the root name, privately | reads of `_component_name` | `_root_output_name` | S2a |
+| the one output under T1, privately | `_whole_term_component` | `_single_output_name`, then `_root_output_name` | S2a, S2b-out |
+| the record of the outputs, privately | `_components_record` | `_output_record`, refusing a law type | S2a |
 | `marginal`'s parameter | `marginal(d, field)` | `marginal(d, paths)` | S1 |
 | the outputs of an output spec | `O.components` | `O.outputs` | S2a |
 | the name of a family's root output | `component=`, `factor(d, component_name)`, `OutputSpec.default(component=)` | `output_name=` | S2a |

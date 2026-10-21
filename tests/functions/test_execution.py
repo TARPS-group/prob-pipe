@@ -82,7 +82,7 @@ class TestExecutionContract:
 
     def test_an_exact_plan_is_jax_capable_and_rowwise_capable(self):
         plan = _plan(
-            {"x": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), component="x")},
+            {"x": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), output_name="x")},
             max_evaluations=8,
         )
         assert plan.evaluation_mode == "exact"
@@ -149,7 +149,7 @@ class TestExecutionContract:
     def test_execution_request_rejects_plan_drift_before_broker_or_user_code(self):
         sampled_plan = _plan({"x": Normal("x", loc=0.0, scale=1.0)})
         exact_plan = _plan(
-            {"x": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), component="x")},
+            {"x": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), output_name="x")},
             max_evaluations=8,
         )
         contract = _execution.make_execution_contract(

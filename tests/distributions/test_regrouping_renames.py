@@ -1,10 +1,10 @@
-"""A rename that gathers a joint's components under a node regroups their factors (IV.1).
+"""A rename that gathers a joint's outputs under a node regroups their factors (IV.1).
 
 Each gathering node becomes one factor of the renamed joint: a packaged
-sub-joint of the factors that produce the gathered components, whose event is
-the node as one component holding their record, labeled as ``*`` labels the
-joint of those factors. A factor that consumes a gathered component conditions
-on the sub-joint through its renamed given slot, which holds the node's whole
+sub-joint of the factors that produce the gathered outputs, whose event is
+the node as one output holding their record, labeled as ``*`` labels the
+joint of those factors. A factor that consumes a gathered output conditions
+on the sub-joint through its renamed input, which holds the node's whole
 record. The joint stays factored, so conditioning on a node, and the factor,
 the view, and the marginal at a node, take the factored routes. A gathering
 whose groups condition on one another in a cycle renames at the joint's
@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 from probpipe import HalfCauchy, LogNormal, Normal, OutputSpec, RecordSpec, workflow_run
+from probpipe.core._specs import _has_record_outputs
 from probpipe.distributions import (
     FactoredConditionalDistribution,
     FactoredDistribution,
@@ -36,10 +37,10 @@ from tests._ops import condition_on, factor, log_prob, marginal, mean, sample
 
 J = 8
 
-#: The renames that gather the non-centered prior's components into two groups.
+#: The renames that gather the non-centered prior's outputs into two groups.
 NON_CENTERED = {"mu": "population/mu", "tau": "population/tau", "theta_tilde": "groups/theta_tilde"}
 
-#: The renames that gather the centered prior's components into two groups.
+#: The renames that gather the centered prior's outputs into two groups.
 CENTERED = {"mu": "population/mu", "tau": "population/tau", "theta": "groups/theta"}
 
 
@@ -62,8 +63,8 @@ def _school_effects(mu, tau) -> Normal:
 
 def _centered() -> FactoredDistribution:
     """The centered prior, whose school effects condition on ``mu`` and ``tau``."""
-    slots = {"mu": _mu().event_spec.spec, "tau": _tau().event_spec.spec}
-    theta = conditional_distribution(_school_effects, given_spec=slots, label="theta")
+    inputs = {"mu": _mu().event_spec.term_spec, "tau": _tau().event_spec.term_spec}
+    theta = conditional_distribution(_school_effects, given_spec=inputs, label="theta")
     return theta * _mu() * _tau()
 
 
@@ -97,12 +98,12 @@ class TestTheRegroupedJoint:
         prior = make().with_path_names(renames)
         assert isinstance(prior, FactoredDistribution)
         assert isinstance(prior, SupportsFactors)
-        assert set(prior.event_spec.components) == {"population", "groups"}
+        assert set(prior.event_spec.outputs) == {"population", "groups"}
         assert len(prior.factors) == 2
         population = factor(prior, "population")
         assert isinstance(population, FactoredDistribution)
         assert population.event_spec == OutputSpec(
-            population=RecordSpec(mu=_mu().event_spec.spec, tau=_tau().event_spec.spec)
+            population=RecordSpec(mu=_mu().event_spec.term_spec, tau=_tau().event_spec.term_spec)
         )
         assert [part.label for part in population.factors] == ["mu", "tau"]
         assert population.label == "mu·tau"
@@ -110,25 +111,25 @@ class TestTheRegroupedJoint:
     def test_a_group_of_one_factor_packages_it(self):
         groups = factor(_non_centered().with_path_names(NON_CENTERED), "groups")
         assert isinstance(groups, FactoredDistribution)
-        assert not groups.event_spec.exposes_record
-        assert list(groups.event_spec.components) == ["groups"]
-        assert list(groups.event_spec.spec.children) == ["theta_tilde"]
+        assert not _has_record_outputs(groups.event_spec)
+        assert list(groups.event_spec.outputs) == ["groups"]
+        assert list(groups.event_spec.term_spec.children) == ["theta_tilde"]
         assert groups.label == "theta_tilde"
 
-    def test_a_consumer_conditions_on_the_sub_joint_through_its_renamed_slot(self):
+    def test_a_consumer_conditions_on_the_sub_joint_through_its_renamed_input(self):
         groups = factor(_centered().with_path_names(CENTERED), "groups")
         assert isinstance(groups, FactoredConditionalDistribution)
         assert list(groups.given_spec) == ["population"]
         assert list(groups.given_spec["population"].children) == ["mu", "tau"]
-        assert list(groups.event_spec.components) == ["groups"]
+        assert list(groups.event_spec.outputs) == ["groups"]
 
-    def test_a_consumer_slot_follows_the_record_order_of_the_sub_joint(self):
+    def test_a_consumer_input_follows_the_record_order_of_the_sub_joint(self):
         renames = {"tau": "population/tau", "mu": "population/mu", "theta": "groups/theta"}
         prior = _centered().with_path_names(renames)
         groups = factor(prior, "groups")
         population = factor(prior, "population")
         assert list(groups.given_spec["population"].children) == list(
-            population.event_spec.spec.children
+            population.event_spec.term_spec.children
         )
 
     @pytest.mark.parametrize(("make", "renames", "field"), _MODELS)
@@ -165,7 +166,7 @@ class TestTheRegroupedJoint:
     def test_a_joint_of_a_packaged_factor_keeps_it_whole(self):
         population = factor(_non_centered().with_path_names(NON_CENTERED), "population")
         joint = population * Normal("sigma", 0.0, 1.0)
-        assert [list(part.event_spec.components) for part in joint.factors] == [
+        assert [list(part.event_spec.outputs) for part in joint.factors] == [
             ["population"],
             ["sigma"],
         ]
@@ -180,7 +181,7 @@ class TestTheFactoredRoutes:
         assert (report.route, report.exact) == ("slice", True)
         posterior = condition_on(prior, given)
         assert "method" not in posterior.provenance.metadata
-        assert list(posterior.event_spec.components) == ["groups"]
+        assert list(posterior.event_spec.outputs) == ["groups"]
         expected = 1.0 if field == "theta" else 0.0
         np.testing.assert_allclose(jnp.asarray(posterior._mean()[field]), expected)
 
@@ -268,12 +269,12 @@ class TestACycle:
     def _chain() -> FactoredDistribution:
         theta = conditional_distribution(
             lambda tau: Normal("theta", 0.0, tau),
-            given_spec={"tau": LogNormal("tau", 0.0, 1.0).event_spec.spec},
+            given_spec={"tau": LogNormal("tau", 0.0, 1.0).event_spec.term_spec},
             label="theta",
         )
         tau = conditional_distribution(
             lambda mu: LogNormal("tau", mu, 1.0),
-            given_spec={"mu": Normal("mu", 0.0, 1.0).event_spec.spec},
+            given_spec={"mu": Normal("mu", 0.0, 1.0).event_spec.term_spec},
             label="tau",
         )
         return theta * tau * Normal("mu", 0.0, 1.0)
@@ -281,7 +282,7 @@ class TestACycle:
     def test_it_keeps_the_boundary_rename(self):
         renamed = self._chain().with_path_names(_CHAIN_RENAMES)
         assert not isinstance(renamed, SupportsFactors)
-        assert set(renamed.event_spec.components) == {"g", "tau"}
+        assert set(renamed.event_spec.outputs) == {"g", "tau"}
 
     def test_it_samples_and_scores_as_the_original(self):
         original = self._chain()

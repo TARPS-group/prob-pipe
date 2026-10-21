@@ -161,7 +161,7 @@ def _nutpie_posterior(
         param_names = list(model._conditioned_param_names(pymc_build))
         event_spec = OutputSpec(model._parameter_record_for(pymc_build, param_names))
     else:
-        param_names = list(model.event_spec.components)
+        param_names = list(model.event_spec.outputs)
         event_spec = None
 
     trace = nutpie.sample(
@@ -174,7 +174,7 @@ def _nutpie_posterior(
     )
     if event_spec is None:
         shapes = {name: np.shape(trace.posterior[name].values)[2:] for name in param_names}
-        event_spec = OutputSpec(_parameter_record_at(model.event_spec.spec, shapes))
+        event_spec = OutputSpec(_parameter_record_at(model.event_spec.term_spec, shapes))
 
     # Extract the parameters alone, in nutpie's natural ``data_vars`` order
     # (it sorts alphabetically); ``field_order`` lets make_posterior realign

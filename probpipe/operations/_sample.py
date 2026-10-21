@@ -1,10 +1,10 @@
 """The sample operation: one draw, or a batch of draws, of a distribution.
 
-``sample(d)`` returns one draw at the kind the law's event declaration names,
+``sample(d)`` returns one draw at the kind the law's event spec names,
 and a non-empty ``sample_shape`` prepends batch axes on a level named
 ``sample``, returning the batch form of that kind. The draw's key is a
 workflow-owned random event, so the operation takes no key. A draw is labeled
-by its components, ``~``, and the law's label, as ``mu ~ prior``, followed by
+by its outputs, ``~``, and the law's label, as ``mu ~ prior``, followed by
 the paths the law holds fixed, as ``mu ~ model; y``, and a batch of draws
 takes the label of one draw.
 """
@@ -55,7 +55,7 @@ def _record_batch(value: Any, call: BoundCall, result: OutputSpec | None) -> Any
     """
     if call.controls["raw"] or not isinstance(value, Mapping) or result is None:
         return value
-    spec = result.spec
+    spec = result.term_spec
     if isinstance(spec, BatchSpec):
         spec = _flat_batch_spec(spec)
     if not isinstance(spec, BatchSpec) or not isinstance(spec.element_spec, RecordSpec):
@@ -95,29 +95,29 @@ def _sample_shape(sample_shape: Any) -> tuple[int, ...]:
 
 
 def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
-    """A draw and a batch of draws carry the law's event components, the batch on a level named sample.
+    """A draw and a batch of draws carry the law's outputs, the batch on a level named sample.
 
-    The returned kind is read from ``event_spec.spec``, so an array and a
+    The returned kind is read from ``event_spec.term_spec``, so an array and a
     one-field record stay distinct under every sample shape.
 
     Parameters
     ----------
     d : DistributionSpec
-        The law's spec, whose event declaration one draw takes.
+        The law's spec, whose event spec one draw takes.
     sample_shape : int or sequence of int
         The sample shape as the caller gave it.
 
     Returns
     -------
     OutputSpec
-        ``d.event_spec`` for an empty shape, and otherwise that declaration with
-        its spec replaced by the batch spec over the sample axes followed by
+        ``d.event_spec`` for an empty shape, and otherwise that event spec with
+        its term spec replaced by the batch spec over the sample axes followed by
         any batch levels that belong to one event.
 
     Raises
     ------
     ApplicabilityError
-        If *sample_shape* is malformed, the declaration has free dimensions,
+        If *sample_shape* is malformed, the event spec has free dimensions,
         which a draw has no value to bind, or a non-empty *sample_shape* meets
         a batch-valued event that already has a level named ``sample``.
     """
@@ -131,15 +131,15 @@ def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
         )
     if not shape:
         return d.event_spec
-    event = d.event_spec.spec
+    event = d.event_spec.term_spec
     if isinstance(event, BatchSpec) and SAMPLE_LEVEL in event.level_names:
         raise ApplicabilityError(
             f"sample: sample_shape={shape} adds the level {SAMPLE_LEVEL!r}, but each draw is "
             f"already a batch on the levels {list(event.level_names)}. Rename the event's level "
             f"{SAMPLE_LEVEL!r}, such as in the function that returns the batch."
         )
-    return d.event_spec._with_spec(
-        _flat_batch_spec(BatchSpec(d.event_spec.spec, {SAMPLE_LEVEL: shape}))
+    return d.event_spec._with_term_spec(
+        _flat_batch_spec(BatchSpec(d.event_spec.term_spec, {SAMPLE_LEVEL: shape}))
     )
 
 
@@ -158,10 +158,10 @@ def sample(d: Distribution, sample_shape: SizesLike = ()):
     Returns
     -------
     TrackedTerm
-        One draw at the kind the event declaration names, such as a
+        One draw at the kind the event spec names, such as a
         ``NumericArray`` or a ``Record``; or, for a non-empty *sample_shape*, the
         batch form of that kind with the leading axes on a level named
-        ``sample``. A draw keeps *d*'s components and is labeled by them, ``~``,
+        ``sample``. A draw keeps *d*'s outputs and is labeled by them, ``~``,
         and *d*'s label, as ``mu ~ prior`` or ``(y, mu) ~ model``, followed by
         ``;`` and the paths *d* holds fixed, as ``mu ~ model; y``. A batch of
         draws takes the label of one draw, so its element is labeled
@@ -174,7 +174,7 @@ def sample(d: Distribution, sample_shape: SizesLike = ()):
     Raises
     ------
     ApplicabilityError
-        If *sample_shape* is malformed, the declaration has free dimensions, or
+        If *sample_shape* is malformed, the event spec has free dimensions, or
         a non-empty *sample_shape* meets a batch-valued event that already has
         a level named ``sample``.
     ResolutionError
@@ -191,7 +191,7 @@ def _draw(call: BoundCall, result: OutputSpec | None) -> Any:
     """
     d, shape = call.operands["d"], _sample_shape(call.operands["sample_shape"])
     draws = _workflow_draws(d, shape, operation_kind="sample", execution_mode="sampled")
-    if isinstance(d.event_spec.spec, FunctionSpec):
+    if isinstance(d.event_spec.term_spec, FunctionSpec):
         return _function_draws(draws, shape)
     return _record_batch(draws, call, result)
 
@@ -227,7 +227,7 @@ sample.capability_route(
 
 
 def _drawn_expression(d: Any) -> Expression:
-    """The expression of a draw from *d*: its components drawn from *d*, as ``mu ~ prior`` (II.4)."""
+    """The expression of a draw from *d*: its outputs drawn from *d*, as ``mu ~ prior`` (II.4)."""
     return draw_of(d)
 
 

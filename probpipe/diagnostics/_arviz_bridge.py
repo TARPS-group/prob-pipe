@@ -51,7 +51,7 @@ def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
 
     The posterior is an ``EmpiricalDistribution``, such as the result of
     ``condition_on``, whose atoms along one axis give one variable per leaf
-    path, or one under the component of an array event.
+    path, or, for an array event, one under the name of the law's one output.
 
     Parameters
     ----------
@@ -73,8 +73,8 @@ def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
         rows = posterior._rows
         if isinstance(rows, dict):
             return {path: np.asarray(column) for path, column in rows.items()}
-        (component,) = posterior.event_spec.components
-        return {component: np.asarray(rows)}
+        (output_name,) = posterior.event_spec.outputs
+        return {output_name: np.asarray(rows)}
 
     raise TypeError(
         f"cannot extract draws: the posterior must be an EmpiricalDistribution; "

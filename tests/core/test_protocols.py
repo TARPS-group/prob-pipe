@@ -60,13 +60,13 @@ def normal():
 @pytest.fixture
 def empirical():
     samples = jax.random.normal(jax.random.PRNGKey(0), (100, 2))
-    return EmpiricalDistribution(samples, component="x")
+    return EmpiricalDistribution(samples, output_name="x")
 
 
 @pytest.fixture
 def bootstrap():
     data = jax.random.normal(jax.random.PRNGKey(1), (50,))
-    return BootstrapDistribution("bootstrap", EmpiricalDistribution(data, component="y"))
+    return BootstrapDistribution("bootstrap", EmpiricalDistribution(data, output_name="y"))
 
 
 @pytest.fixture
@@ -85,11 +85,11 @@ class TestSupportsSampling:
     @pytest.mark.parametrize(
         "dist_cls,kwargs",
         [
-            (Normal, {"loc": 0.0, "scale": 1.0, "component": "x"}),
-            (Beta, {"alpha": 2.0, "beta": 5.0, "component": "b"}),
-            (Gamma, {"concentration": 3.0, "rate": 1.0, "component": "g"}),
-            (Bernoulli, {"probs": 0.5, "component": "d"}),
-            (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2), "component": "z"}),
+            (Normal, {"loc": 0.0, "scale": 1.0, "output_name": "x"}),
+            (Beta, {"alpha": 2.0, "beta": 5.0, "output_name": "b"}),
+            (Gamma, {"concentration": 3.0, "rate": 1.0, "output_name": "g"}),
+            (Bernoulli, {"probs": 0.5, "output_name": "d"}),
+            (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2), "output_name": "z"}),
         ],
     )
     def test_tfp_distributions(self, dist_cls, kwargs):
@@ -131,9 +131,9 @@ class TestSupportsLogProb:
     @pytest.mark.parametrize(
         "dist_cls,kwargs",
         [
-            (Normal, {"loc": 0.0, "scale": 1.0, "component": "x"}),
-            (Beta, {"alpha": 2.0, "beta": 5.0, "component": "b"}),
-            (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2), "component": "z"}),
+            (Normal, {"loc": 0.0, "scale": 1.0, "output_name": "x"}),
+            (Beta, {"alpha": 2.0, "beta": 5.0, "output_name": "b"}),
+            (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2), "output_name": "z"}),
         ],
     )
     def test_tfp_distributions(self, dist_cls, kwargs):
@@ -213,7 +213,7 @@ class TestSupportsMean:
                 "atom",
                 label="labels",
             ),
-            component="x",
+            output_name="x",
         )
         assert not isinstance(dist, SupportsMean)
         assert not isinstance(dist, SupportsVariance)
@@ -221,7 +221,7 @@ class TestSupportsMean:
 
     def test_array_empirical(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100, 2))
-        dist = EmpiricalDistribution(samples, component="x")
+        dist = EmpiricalDistribution(samples, output_name="x")
         assert isinstance(dist, SupportsMean)
         assert isinstance(dist, SupportsVariance)
         assert isinstance(dist, SupportsCovariance)
@@ -273,16 +273,16 @@ class TestConditioningCapabilities:
 
 
 # ---------------------------------------------------------------------------
-# Named components (duck-typing check)
+# Named outputs (duck-typing check)
 # ---------------------------------------------------------------------------
 
 
-class TestNamedComponents:
-    def test_joint_components_are_its_factors_names(self, joint):
-        assert tuple(joint.event_spec.components) == ("x", "y")
+class TestNamedOutputs:
+    def test_joint_outputs_are_its_factors_names(self, joint):
+        assert tuple(joint.event_spec.outputs) == ("x", "y")
 
-    def test_normal_components_have_its_name(self, normal):
-        assert tuple(normal.event_spec.components) == ("x",)
+    def test_normal_outputs_have_its_name(self, normal):
+        assert tuple(normal.event_spec.outputs) == ("x",)
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +343,7 @@ class TestSampleReturnTypeConvention:
 
     - Numeric distributions return ``Array`` (sample_shape + event_shape).
     - Record-based joints return the raw form, the mapping of their
-      components with the sample axes leading; the ``sample`` operation
+      outputs with the sample axes leading; the ``sample`` operation
       returns a ``Record`` / ``NumericRecord`` for an unbatched draw
       (``sample_shape == ()``) and a ``NumericRecordBatch`` for a batched
       draw.
@@ -381,9 +381,9 @@ class TestSampleReturnTypeConvention:
         distributions = [
             Normal("x", loc=0.0, scale=1.0),
             Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0),
-            EmpiricalDistribution(jnp.arange(5.0), component="x"),
+            EmpiricalDistribution(jnp.arange(5.0), output_name="x"),
             BootstrapDistribution(
-                "bootstrap", EmpiricalDistribution(jnp.arange(5.0), component="y")
+                "bootstrap", EmpiricalDistribution(jnp.arange(5.0), output_name="y")
             ),
         ]
         for d in distributions:
@@ -467,7 +467,7 @@ class TestTransformedDistributionDynamicProtocols:
 class TestJointDynamicProtocols:
     """A joint's protocol claims match its factors'."""
 
-    def test_all_tfp_components_all_protocols(self):
+    def test_all_tfp_factors_all_protocols(self):
         joint = Normal("z", loc=0.0, scale=1.0) * Normal("x", loc=0.0, scale=1.0)
         assert isinstance(joint, SupportsSampling)
         assert isinstance(joint, SupportsLogProb)
@@ -475,16 +475,16 @@ class TestJointDynamicProtocols:
         assert isinstance(joint, SupportsVariance)
         assert isinstance(joint, SupportsExactConditioning)
 
-    def test_empirical_component_drops_log_prob(self):
+    def test_an_empirical_factor_drops_log_prob(self):
         """``EmpiricalDistribution`` lacks ``SupportsLogProb``; a
         joint containing one should not claim it."""
-        boot = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="b")
+        boot = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), output_name="b")
         joint = boot * Normal("z", loc=0.0, scale=1.0)
         # Sampling is always available; a joint that is not Gaussian claims no
         # conditioning capability, so the inference registry conditions it.
         assert isinstance(joint, SupportsSampling)
         assert not isinstance(joint, SupportsExactConditioning)
-        # MRO-level claims reflect missing log-prob on a component.
+        # MRO-level claims reflect missing log-prob on a factor.
         assert SupportsLogProb not in type(joint).__mro__
 
 

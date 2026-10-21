@@ -1,4 +1,4 @@
-"""Every distribution stores a complete event declaration, and draws what it declares."""
+"""Every distribution stores a complete event spec, and draws what it declares."""
 
 from __future__ import annotations
 
@@ -234,14 +234,14 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     Multinomial: lambda: Multinomial("x", 4.0, probs=jnp.array([0.2, 0.3, 0.5])),
     Wishart: lambda: Wishart("x", 4.0, scale_tril=jnp.eye(2)),
     VonMisesFisher: lambda: VonMisesFisher("x", jnp.array([0.0, 1.0]), 2.0),
-    KDEDistribution: lambda: KDEDistribution(jnp.arange(6.0).reshape(3, 2), component="kde"),
+    KDEDistribution: lambda: KDEDistribution(jnp.arange(6.0).reshape(3, 2), output_name="kde"),
     EmpiricalDistribution: lambda: EmpiricalDistribution(
         OpaqueBatch(
             ["a", "b"],
             "e",
             label="labels",
         ),
-        component="e",
+        output_name="e",
     ),
     BootstrapReplicateDistribution: lambda: BootstrapReplicateDistribution(
         "b", Normal("x", 0.0, 1.0), replicate_size=3
@@ -444,7 +444,9 @@ class TestDeclaration:
     @pytest.mark.parametrize(("cls", "make"), _rows())
     def test_numeric_membership_follows_the_declaration(self, cls, make):
         law = make()
-        assert isinstance(law, NumericDistribution) is isinstance(law.event_spec.spec, NumericSpec)
+        assert isinstance(law, NumericDistribution) is isinstance(
+            law.event_spec.term_spec, NumericSpec
+        )
 
     @pytest.mark.parametrize(("cls", "make"), _rows())
     def test_a_law_has_the_numeric_views_when_it_is_numeric(self, cls, make):
@@ -458,11 +460,11 @@ class TestDeclaration:
         law = make()
         if not isinstance(law, SupportsSampling):
             pytest.skip("the law does not sample")
-        assert law.event_spec.spec.is_valid(sample(law))
+        assert law.event_spec.term_spec.is_valid(sample(law))
 
 
 class TestRoundTrips:
-    """A round trip of a relabeled law keeps its label and its declaration."""
+    """A round trip of a relabeled law keeps its label and its event spec."""
 
     @pytest.mark.parametrize(("cls", "make"), _rows(_PICKLE_FAILURES))
     def test_pickle(self, cls, make):

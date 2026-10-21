@@ -1620,7 +1620,7 @@ def _evaluation_point_stochastic_scope(
     *,
     attempt: EvaluationPointAttempt | None = None,
 ) -> Generator[EvaluationPointAttempt, None, None]:
-    """Install one retry attempt and an empty child-broker slot."""
+    """Install one retry attempt, with no child broker yet."""
     if attempt is None:
         attempt = EvaluationPointAttempt.create(frame.token)
     parent_broker.validate_evaluation_point_attempt_preflight(attempt, frame)

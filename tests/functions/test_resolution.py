@@ -511,4 +511,4 @@ class TestARoutedPointShowsOnlyPassedArguments:
     def test_a_lift_over_a_law_runs_each_point_by_the_route(self):
         with workflow_run(seed=0):
             law = _Routed(_scale, max_evaluations=8)(standard_normal())
-        assert tuple(law.event_spec.components) == ("_scale",)
+        assert tuple(law.event_spec.outputs) == ("_scale",)
