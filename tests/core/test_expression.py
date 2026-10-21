@@ -50,8 +50,8 @@ def _prior() -> Normal:
     return Normal("mu", 0.0, 1.0, label="prior")
 
 
-def _named(label: str, *components: str) -> Named:
-    return Named(label, Signature(components))
+def _named(label: str, *outputs: str) -> Named:
+    return Named(label, Signature(outputs))
 
 
 class TestNodes:
@@ -147,11 +147,11 @@ class TestRendering:
     @pytest.mark.parametrize(
         ("expression", "label"),
         [
-            pytest.param(Draw(("mu",), _named("prior", "mu")), "mu ~ prior", id="one-component"),
+            pytest.param(Draw(("mu",), _named("prior", "mu")), "mu ~ prior", id="one-output"),
             pytest.param(
                 Draw(("y", "mu"), _named("model", "y", "mu")),
                 "(y, mu) ~ model",
-                id="several-components",
+                id="several-outputs",
             ),
             pytest.param(
                 Draw(("mu",), Conditioned(_named("model", "y", "mu"), ("y",))),

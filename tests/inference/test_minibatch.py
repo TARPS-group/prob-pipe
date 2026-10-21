@@ -117,7 +117,7 @@ class TestConstruction:
     def test_the_parameters_of_a_prior_that_is_no_distribution_are_opaque(
         self, likelihood, response
     ):
-        """The measure and its draws declare them under one component."""
+        """The measure and its draws declare them under one output."""
 
         class _LogDensity:
             def _log_prob(self, value):
@@ -134,14 +134,14 @@ class TestConstruction:
             label="measure",
         )
         draw = m._draw_one(jax.random.PRNGKey(0))
-        assert m.event_spec.spec.event_spec == draw.event_spec
+        assert m.event_spec.term_spec.event_spec == draw.event_spec
         assert draw.event_spec == OutputSpec(parameters=OpaqueSpec())
 
     def test_construction_rejects_a_likelihood_that_scores_no_subset(self, prior, response):
         """A kernel that cannot score a subset of its observations is rejected."""
         whole = ObservationKernel(
             "y",
-            {"beta": prior.event_spec.spec},
+            {"beta": prior.event_spec.term_spec},
             NumericArraySpec((200,)),
             lambda beta: tfd.Independent(tfd.Normal(jnp.zeros(200) + beta[0], 1.0), 1),
         )

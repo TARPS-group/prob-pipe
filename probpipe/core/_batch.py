@@ -91,7 +91,7 @@ from ._repr import (
 )
 from ._shapes import LevelsLike, ShapeLike, _as_dim, _as_levels, _as_paths, _as_positions
 from ._spec_base import OpaqueSpec, _agree, _unify_array_shape, _unify_specs
-from ._specs import NumericArraySpec, TermSpec, _check_component_name
+from ._specs import NumericArraySpec, TermSpec, _check_output_name
 from .provenance import Provenance
 from .tracked import TrackedTerm
 
@@ -143,7 +143,7 @@ class BatchSpec(TermSpec):
         Positional-only, and given only when no level is given as a keyword.
     **level_shapes : int, str, or sequence of int or str
         The levels as keywords, outermost first, each mapping a level name to the
-        shape of its axes. A level name follows the rule for component names, so
+        shape of its axes. A level name follows the rule for output names, so
         it is any non-empty string without ``/``. Every level holds at least one
         axis, and each axis size is a non-negative integer or a symbolic
         dimension name, which is a Python identifier.
@@ -296,7 +296,7 @@ class BatchSpec(TermSpec):
                 raise TypeError(
                     f"BatchSpec level names must be str, got {type_name(level_name)} {level_name!r}"
                 )
-            _check_component_name(level_name, context="BatchSpec level names")
+            _check_output_name(level_name, context="BatchSpec level names")
             if not group:
                 raise ValueError(
                     f"BatchSpec level {level_name!r} must have at least one axis, got ()"
@@ -695,7 +695,7 @@ class Batch[E](TrackedTerm, ABC):
             # them as empty names would describe the wrong problem.
             if not isinstance(new, str):
                 raise TypeError(f"level names must be strings, got {type(new).__name__}: {new!r}")
-            _check_component_name(new, context="level names")
+            _check_output_name(new, context="level names")
 
         renamed = tuple(renames.get(old, old) for old in self.level_names)
         if len(set(renamed)) != len(renamed):

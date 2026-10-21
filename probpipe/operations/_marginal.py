@@ -2,8 +2,8 @@
 
 ``marginal(d, paths)`` returns the detached marginal at a path or a list of
 paths, a standalone law with no reference back to ``d``, unlike the
-correlation-preserving view ``d[paths]``. ``factor(d, component_name)`` returns
-the detached building-block factor of a joint that produces the named component.
+correlation-preserving view ``d[paths]``. ``factor(d, output_name)`` returns
+the detached building-block factor of a joint that produces the named output.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def _read_marginal_paths(event_spec: OutputSpec, label: str, paths: Any) -> str 
     Parameters
     ----------
     event_spec : OutputSpec
-        The law's event declaration.
+        The law's event spec.
     label : str
         The law's label, which the error messages name.
     paths : Any
@@ -69,13 +69,13 @@ def _marginal_result(d: DistributionSpec, paths: Any) -> OutputSpec:
     """A law over the node at the path, or over the nodes at the list of paths.
 
     One path gives the node whole under the path's last name, and a list of
-    paths a law whose event exposes the record that keeps each node at its
-    own path, in the law's order.
+    paths a law over the record that keeps each node at its own path, in the
+    law's order.
 
     Parameters
     ----------
     d : DistributionSpec
-        The law's spec, whose event declaration holds the selected nodes.
+        The law's spec, whose event spec holds the selected nodes.
     paths : str, or list or tuple of str
         An event path, or a list of paths whose nodes the marginal draws
         jointly.
@@ -83,8 +83,8 @@ def _marginal_result(d: DistributionSpec, paths: Any) -> OutputSpec:
     Returns
     -------
     OutputSpec
-        The declaration of the marginal law as one whole term, whose spec is a
-        ``DistributionSpec`` over the selected nodes.
+        The output spec of the marginal law, in the positional form over a
+        ``DistributionSpec`` of the selected nodes.
 
     Raises
     ------
@@ -104,7 +104,7 @@ def _marginal_expression(d: Any, paths: Any) -> Expression:
     """The expression of the marginal of *d* at *paths*: the factors it is, or *d* selected at *paths*.
 
     A marginal over the whole events of some factors of a joint, none of which
-    conditions on a component outside them, is the product of those factors,
+    conditions on an output outside them, is the product of those factors,
     so ``marginal(location * scale, "tau")`` is ``scale`` and takes its label.
     Several such factors form a product without a label, in the joint's
     order, as ``marginal(model, ["b", "a"])`` is ``a·b``. The factors of a
@@ -210,41 +210,37 @@ marginal.capability_route(
 marginal.fallback_route("monte_carlo", check=_can_sample, execute=_empirical_marginal, exact=False)
 
 
-def _names_a_component(d: Any, component_name: str) -> bool:
-    """The name is an output component of the law."""
-    return component_name in d.event_spec.components
+def _names_an_output(d: Any, output_name: str) -> bool:
+    """The name is an output of the law."""
+    return output_name in d.event_spec.outputs
 
 
-def _factor_result(d: Any, component_name: str) -> None:
-    """None: the returned factor, a law or a kernel for a dependent edge, carries its declaration."""
+def _factor_result(d: Any, output_name: str) -> None:
+    """None: the returned factor, a law or a kernel for a dependent edge, carries its own spec."""
     return None
 
 
-def _factor_of(d: Any, component_name: str) -> Any:
-    """The factor of *d* whose event declaration has the component, or None."""
+def _factor_of(d: Any, output_name: str) -> Any:
+    """The factor of *d* whose event spec has the output, or None."""
     return next(
-        (
-            part
-            for part in getattr(d, "factors", ())
-            if component_name in part.event_spec.components
-        ),
+        (part for part in getattr(d, "factors", ()) if output_name in part.event_spec.outputs),
         None,
     )
 
 
-def _factor_expression(d: Any, component_name: str) -> Expression:
+def _factor_expression(d: Any, output_name: str) -> Expression:
     """The factor's own expression, which the detached factor keeps; the joint's without one."""
-    part = _factor_of(d, component_name)
+    part = _factor_of(d, output_name)
     return (d if part is None else part)._embedded_expression()
 
 
 @operation(
     result=_factor_result,
-    applicability_checks=(_names_a_component,),
+    applicability_checks=(_names_an_output,),
     roles={"d": (DistributionSpec, ConditionalDistributionSpec)},
 )
-def factor(d: Distribution, component_name: str):
-    """The complete factor of the joint *d* that produces the component *component_name*.
+def factor(d: Distribution, output_name: str):
+    """The complete factor of the joint *d* that produces the output *output_name*.
 
     The factor is detached from *d*, so a lift draws a factor that is a law
     independently of *d* and of the laws *d* is built from (V.5, VI.8).
@@ -253,8 +249,8 @@ def factor(d: Distribution, component_name: str):
     ----------
     d : Distribution or ConditionalDistribution
         A factored joint.
-    component_name : str
-        One of the joint's output components.
+    output_name : str
+        One of the joint's outputs.
 
     Returns
     -------
@@ -265,26 +261,26 @@ def factor(d: Distribution, component_name: str):
     Raises
     ------
     ApplicabilityError
-        If *component_name* is not an output component of *d*.
+        If *output_name* is not an output of *d*.
     ResolutionError
         If *d* exposes no factors.
     """
 
 
 def _can_find_factor(call: BoundCall, result: OutputSpec | None) -> Any:
-    """One of the joint's factors produces the named component."""
-    return _factor_of(call.operands["d"], call.operands["component_name"]) is not None
+    """One of the joint's factors produces the named output."""
+    return _factor_of(call.operands["d"], call.operands["output_name"]) is not None
 
 
 def _detached_factor(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The factor whose event declaration has the named component, detached as a raw form is.
+    """The factor whose event spec has the named output, detached as a raw form is.
 
     A factor can record a batch it was an element of or a law it renames, which
     a lift reads to draw it with that law. The detached factor, a law or a
     kernel, records neither. The result boundary then records the call's
     provenance on it.
     """
-    return _detached_term(_factor_of(call.operands["d"], call.operands["component_name"]))
+    return _detached_term(_factor_of(call.operands["d"], call.operands["output_name"]))
 
 
 factor.capability_route(

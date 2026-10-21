@@ -3,7 +3,7 @@
 # Values and records
 
 This page documents the value kinds, such as `Record` and `NumericArray`, their batches, and the linear operators.
-The specs that declare these values are on [Declarations](declarations.md), and the callable kind `Function` is on [Functions](functions.md).
+The specs that declare these values are on [Input and output specs](input_and_output_specs.md), and the callable kind `Function` is on [Functions](functions.md).
 
 ## Records
 

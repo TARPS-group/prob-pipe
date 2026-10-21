@@ -1,11 +1,10 @@
-"""Executable declaration examples from design II.2 and shared dimension contracts."""
+"""Executable input and output spec examples from design II.2 and shared dimension contracts."""
 
 from __future__ import annotations
 
 import copy
 import pickle
 from dataclasses import FrozenInstanceError
-from types import SimpleNamespace
 
 import jax
 import jax.numpy as jnp
@@ -15,9 +14,12 @@ import pytest
 from probpipe import (
     BatchSpec,
     Distribution,
+    DistributionBatch,
     DistributionSpec,
+    EmpiricalDistribution,
     FunctionSpec,
     InputSpec,
+    Normal,
     NumericArraySpec,
     NumericRecordSpec,
     NumericSpec,
@@ -28,7 +30,12 @@ from probpipe import (
     TermSpec,
     positive,
 )
-from probpipe.core._specs import _components_record
+from probpipe.core._specs import (
+    _has_record_outputs,
+    _output_record,
+    _root_output_name,
+    _single_output_name,
+)
 
 
 @pytest.fixture
@@ -48,60 +55,58 @@ class TestOutputSpec:
         beta = NumericArraySpec((3,))
         sigma = NumericArraySpec(())
         whole = OutputSpec(beta=beta)
-        assert whole.spec is beta
-        assert dict(whole.components) == {"beta": beta}
+        assert whole.term_spec is beta
+        assert dict(whole.outputs) == {"beta": beta}
 
         hole = OutputSpec(beta=None)
-        assert hole.spec is None
-        assert dict(hole.components) == {"beta": None}
+        assert hole.term_spec is None
+        assert dict(hole.outputs) == {"beta": None}
         assert not hole.is_concrete
 
         exposed = OutputSpec(RecordSpec(beta=beta))
-        assert isinstance(exposed.spec, RecordSpec)
-        assert exposed.spec != whole.spec
-        assert dict(exposed.components) == dict(whole.components)
+        assert isinstance(exposed.term_spec, RecordSpec)
+        assert exposed.term_spec != whole.term_spec
+        assert dict(exposed.outputs) == dict(whole.outputs)
         assert exposed != whole
 
-        # Two keywords would make packaging depend on how many names there are.
+        # Two keywords would make the form depend on how many names there are.
         with pytest.raises(TypeError, match="takes one keyword"):
             OutputSpec(beta=beta, sigma=sigma)
         exposed_two = OutputSpec(RecordSpec(beta=beta, sigma=sigma))
-        assert list(exposed_two.components) == ["beta", "sigma"]
-        assert exposed_two.exposes_record and not whole.exposes_record
+        assert list(exposed_two.outputs) == ["beta", "sigma"]
+        assert _has_record_outputs(exposed_two) and not _has_record_outputs(whole)
 
         parameters = RecordSpec(beta=beta, sigma=sigma)
         wrapped = OutputSpec(parameters=parameters)
-        assert wrapped.spec is parameters
-        assert dict(wrapped.components) == {"parameters": parameters}
+        assert wrapped.term_spec is parameters
+        assert dict(wrapped.outputs) == {"parameters": parameters}
         assert wrapped != OutputSpec(parameters)
 
     def test_output_exposure_is_immediate_and_keeps_higher_order_kinds(self):
         nested = RecordSpec(beta=(3,), sigma=())
         law = DistributionSpec(nested)
         exposed = OutputSpec(RecordSpec(parameters=nested, law=law))
-        assert list(exposed.components) == ["parameters", "law"]
-        assert exposed.components["parameters"] is nested
-        assert exposed.components["law"] is law
-        assert list(OutputSpec(posterior=law).components) == ["posterior"]
+        assert list(exposed.outputs) == ["parameters", "law"]
+        assert exposed.outputs["parameters"] is nested
+        assert exposed.outputs["law"] is law
+        assert list(OutputSpec(posterior=law).outputs) == ["posterior"]
 
-    def test_a_law_or_a_batch_exposes_its_components(self):
+    def test_a_law_or_a_batch_exposes_its_outputs(self):
         record = RecordSpec(mu=(), tau=())
         law = OutputSpec(DistributionSpec(OutputSpec(record)))
-        assert (list(law.components), law.exposes_record) == (["mu", "tau"], False)
-        assert law.with_path_names({"mu": "center"}).spec == DistributionSpec(
+        assert (list(law.outputs), _has_record_outputs(law)) == (["mu", "tau"], False)
+        assert law.with_path_names({"mu": "center"}).term_spec == DistributionSpec(
             OutputSpec(record.with_path_names({"mu": "center"}))
         )
         batch = OutputSpec(BatchSpec(record, sample=3))
-        assert (list(batch.components), batch.exposes_record) == (["mu", "tau"], False)
-        assert batch.with_path_names({"mu": "center"}).spec == BatchSpec(
+        assert (list(batch.outputs), _has_record_outputs(batch)) == (["mu", "tau"], False)
+        assert batch.with_path_names({"mu": "center"}).term_spec == BatchSpec(
             record.with_path_names({"mu": "center"}), sample=3
         )
-        with pytest.raises(TypeError, match=r"with_spec\(\) needs a DistributionSpec"):
-            law.with_spec(record)
-        with pytest.raises(TypeError, match="a record or a single named value"):
-            _components_record(law)
+        with pytest.raises(TypeError, match=r"with_term_spec\(\) needs a DistributionSpec"):
+            law.with_term_spec(record)
 
-    def test_a_batch_of_arrays_exposes_no_components(self):
+    def test_a_batch_of_arrays_exposes_no_outputs(self):
         with pytest.raises(TypeError):
             OutputSpec(BatchSpec(NumericArraySpec(()), sample=3))
 
@@ -110,13 +115,13 @@ class TestOutputSpec:
         with pytest.raises(TypeError, match=r"OpaqueSpec\(\)"):
             RecordSpec(payload=None)
         output = OutputSpec(RecordSpec(payload=OpaqueSpec()))
-        assert isinstance(output.components["payload"], OpaqueSpec)
+        assert isinstance(output.outputs["payload"], OpaqueSpec)
         assert output.is_concrete
 
     def test_output_empty_record_is_explicit(self):
         output = OutputSpec(RecordSpec())
-        assert isinstance(output.spec, RecordSpec)
-        assert dict(output.components) == {}
+        assert isinstance(output.term_spec, RecordSpec)
+        assert dict(output.outputs) == {}
         with pytest.raises(ValueError):
             OutputSpec()
 
@@ -132,90 +137,189 @@ class TestOutputSpec:
             with pytest.raises(TypeError):
                 OutputSpec(*args, **kwargs)
 
-    def test_output_dimension_transforms_preserve_exposure_and_holes(self):
+    def test_output_dimension_transforms_preserve_the_form_and_unspecified_types(self):
         spec = RecordSpec(x=("n",))
         for output in (OutputSpec(parameters=spec), OutputSpec(spec)):
             renamed = output.with_dim_names(n="m").with_dim_sizes(m=3)
-            assert list(renamed.components) == list(output.components)
-            assert renamed.spec == RecordSpec(x=(3,))
+            assert list(renamed.outputs) == list(output.outputs)
+            assert renamed.term_spec == RecordSpec(x=(3,))
         hole = OutputSpec(beta=None)
         assert hole.with_dim_sizes(n=3).with_dim_names(n="m") == hole
 
-    def test_the_components_record_of_each_form(self):
-        assert _components_record(OutputSpec(theta=NumericArraySpec(()))) == RecordSpec(theta=())
-        assert _components_record(OutputSpec(RecordSpec(a=()))) == RecordSpec(a=())
+    def test_the_record_of_the_outputs_of_each_form(self):
+        assert RecordSpec(OutputSpec(theta=NumericArraySpec(())).outputs) == RecordSpec(theta=())
+        assert RecordSpec(OutputSpec(RecordSpec(a=())).outputs) == RecordSpec(a=())
 
-    def test_an_exposed_term_that_is_no_record_is_refused(self):
-        # The constructor refuses one, so only a malformed declaration holds it.
-        malformed = SimpleNamespace(exposes_record=True, spec=NumericArraySpec(()))
-        with pytest.raises(TypeError, match="expected an output that is a record"):
-            _components_record(malformed)
+
+class TestTheFinalNames:
+    """``term_spec``, ``outputs``, ``with_term_spec``, and ``output_name=`` replace the old names."""
+
+    def test_the_term_spec_and_the_outputs_of_each_form(self):
+        record = RecordSpec(mu=(), tau=())
+        positional = OutputSpec(record)
+        keyword = OutputSpec(x=NumericArraySpec(()))
+        assert positional.term_spec is record
+        assert list(positional.outputs) == ["mu", "tau"]
+        assert list(positional.outputs.values()) == list(record.children.values())
+        assert keyword.term_spec == NumericArraySpec(())
+        assert list(keyword.outputs.items()) == [("x", NumericArraySpec(()))]
+
+    def test_with_term_spec_completes_an_unspecified_type_given_positionally(self):
+        completed = OutputSpec(mean=None).with_term_spec(NumericArraySpec((3,)))
+        assert completed == OutputSpec(mean=NumericArraySpec((3,)))
+        with pytest.raises(TypeError, match="positional"):
+            OutputSpec(mean=None).with_term_spec(term_spec=NumericArraySpec(()))
+
+    def test_default_takes_the_output_name(self):
+        array = NumericArraySpec(())
+        assert OutputSpec.default(array, output_name="x") == OutputSpec(x=array)
+        assert OutputSpec.default(term_spec=array, output_name="x") == OutputSpec(x=array)
+        with pytest.raises(TypeError, match="component"):
+            OutputSpec.default(array, component="x")
+
+    @pytest.mark.parametrize("old_name", ["spec", "components", "exposes_record", "with_spec"])
+    @pytest.mark.parametrize(
+        "output_spec",
+        [
+            pytest.param(OutputSpec(x=NumericArraySpec(())), id="keyword"),
+            pytest.param(OutputSpec(RecordSpec(mu=(), tau=())), id="positional"),
+            pytest.param(Normal("mu", 0.0, 1.0).event_spec, id="event-spec"),
+        ],
+    )
+    def test_the_old_names_are_gone(self, output_spec, old_name):
+        with pytest.raises(AttributeError, match=old_name):
+            getattr(output_spec, old_name)
+
+    def test_a_family_takes_its_output_name(self):
+        assert Normal(output_name="x", loc=0.0, scale=1.0).event_spec == OutputSpec(
+            x=Normal("x", 0.0, 1.0).event_spec.term_spec
+        )
+        with pytest.raises(TypeError, match="component"):
+            Normal(component="x", loc=0.0, scale=1.0)
+
+
+class TestTheReadersOfAnOutputSpec:
+    """The private helpers through which code outside ``core/_specs.py`` reads an output spec."""
+
+    @staticmethod
+    def _law_over_laws():
+        """A law over laws, declared in the positional form over a law over an array ``x``."""
+        laws = DistributionBatch([Normal("x", 0.0, 1.0), Normal("x", 1.0, 2.0)], "law")
+        return EmpiricalDistribution(laws, event_spec=OutputSpec(laws.element_spec))
+
+    def test_each_form_has_its_root_name_and_its_record_form(self):
+        record = OutputSpec(RecordSpec(a=()))
+        keyword = OutputSpec(x=NumericArraySpec(()))
+        law_positional = OutputSpec(Normal("mu", 0.0, 1.0).spec)
+        assert (_root_output_name(record), _has_record_outputs(record)) == (None, True)
+        assert (_root_output_name(keyword), _has_record_outputs(keyword)) == ("x", False)
+        assert (_root_output_name(law_positional), _has_record_outputs(law_positional)) == (
+            None,
+            False,
+        )
+
+    def test_the_record_of_the_outputs_of_a_record_and_of_a_named_value(self):
+        assert _output_record(OutputSpec(RecordSpec(a=(), b=(2,)))) == RecordSpec(a=(), b=(2,))
+        assert _output_record(OutputSpec(theta=NumericArraySpec((3,)))) == RecordSpec(
+            theta=NumericArraySpec((3,))
+        )
+
+    @pytest.mark.parametrize(
+        ("output_spec", "described"),
+        [
+            pytest.param(OutputSpec(Normal("mu", 0.0, 1.0).spec), "distributions", id="law"),
+            pytest.param(
+                OutputSpec(BatchSpec(RecordSpec(mu=(), tau=()), sample=3)), "batches", id="batch"
+            ),
+        ],
+    )
+    def test_the_record_of_the_outputs_is_refused_where_outputs_do_not_read_the_values(
+        self, output_spec, described
+    ):
+        # A batch of records has the record of its marginal batches' types once batch outputs
+        # are typed by their marginal batches; until then it is refused, as before.
+        with pytest.raises(TypeError, match=f"describes {described}.*wrap them under a name"):
+            _output_record(output_spec)
+
+    def test_the_single_output_of_each_form(self):
+        assert _single_output_name(OutputSpec(RecordSpec(a=(), b=()))) is None
+        assert _single_output_name(OutputSpec(x=NumericArraySpec(()))) == "x"
+        # The positional form over a law still has the outputs of one draw of that law.
+        assert _single_output_name(OutputSpec(Normal("mu", 0.0, 1.0).spec)) == "mu"
+
+    def test_a_law_over_laws_is_indexed_by_its_draws_one_output(self):
+        # Until an output spec over a law has no outputs, the name of the drawn laws' output
+        # selects the law itself; afterwards it is not a path, and this raises KeyError.
+        law_over_laws = self._law_over_laws()
+        assert law_over_laws["x"].label == law_over_laws.label
+        with pytest.raises(TypeError, match="wrap them under a name"):
+            _output_record(law_over_laws.event_spec)
 
 
 class TestOutputSpecCompletion:
     def test_default_exposes_a_record_and_names_any_other_term(self):
         record = RecordSpec(beta=NumericArraySpec(()))
-        assert OutputSpec.default(record, component="posterior") == OutputSpec(record)
+        assert OutputSpec.default(record, output_name="posterior") == OutputSpec(record)
         array = NumericArraySpec((3,))
-        assert OutputSpec.default(array, component="beta") == OutputSpec(beta=array)
+        assert OutputSpec.default(array, output_name="beta") == OutputSpec(beta=array)
 
-    def test_with_spec_fills_a_hole_under_the_declared_name(self):
+    def test_with_term_spec_fills_an_unspecified_type_under_the_declared_name(self):
         array = NumericArraySpec((3,), jnp.float32)
-        assert OutputSpec(beta=None).with_spec(array) == OutputSpec(beta=array)
+        assert OutputSpec(beta=None).with_term_spec(array) == OutputSpec(beta=array)
 
-    def test_with_spec_keeps_the_produced_spec_when_the_declared_one_unifies(self):
-        # The declaration sets only the shape; the producer's dtype stands.
+    def test_with_term_spec_keeps_the_produced_spec_when_the_declared_one_unifies(self):
+        # The output spec sets only the shape; the producer's dtype stands.
         produced = NumericArraySpec((3,), jnp.float32)
-        assert OutputSpec(beta=NumericArraySpec((3,))).with_spec(produced) == OutputSpec(
+        assert OutputSpec(beta=NumericArraySpec((3,))).with_term_spec(produced) == OutputSpec(
             beta=produced
         )
 
-    def test_with_spec_keeps_the_declared_dtype_and_support(self):
+    def test_with_term_spec_keeps_the_declared_dtype_and_support(self):
         declared = NumericArraySpec(("k",), jnp.float32, positive)
-        assert OutputSpec(beta=declared).with_spec(NumericArraySpec((3,))) == OutputSpec(
+        assert OutputSpec(beta=declared).with_term_spec(NumericArraySpec((3,))) == OutputSpec(
             beta=NumericArraySpec((3,), jnp.float32, positive)
         )
         # A produced dtype that casts to the declared one does not replace it.
         produced = NumericArraySpec((3,), jnp.float64)
-        assert OutputSpec(beta=declared).with_spec(produced) == OutputSpec(
+        assert OutputSpec(beta=declared).with_term_spec(produced) == OutputSpec(
             beta=NumericArraySpec((3,), jnp.float32, positive)
         )
 
-    def test_with_spec_unifies_a_record_field_by_field(self):
+    def test_with_term_spec_unifies_a_record_field_by_field(self):
         declared = RecordSpec(a=NumericArraySpec((), jnp.float32), b=NumericArraySpec(("k",)))
         produced = RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec((2,), jnp.float32))
-        assert OutputSpec(declared).with_spec(produced) == OutputSpec(
+        assert OutputSpec(declared).with_term_spec(produced) == OutputSpec(
             RecordSpec(a=NumericArraySpec((), jnp.float32), b=NumericArraySpec((2,), jnp.float32))
         )
 
-    def test_with_spec_rejects_a_spec_that_does_not_unify(self):
+    def test_with_term_spec_rejects_a_spec_that_does_not_unify(self):
         with pytest.raises(ValueError, match="has dimension 3, expected 2"):
-            OutputSpec(beta=NumericArraySpec((2,))).with_spec(NumericArraySpec((3,)))
+            OutputSpec(beta=NumericArraySpec((2,))).with_term_spec(NumericArraySpec((3,)))
 
-    def test_with_spec_names_the_node_that_does_not_unify_by_its_path(self):
+    def test_with_term_spec_names_the_node_that_does_not_unify_by_its_path(self):
         with pytest.raises(ValueError, match=r"^beta has dimension 3"):
-            OutputSpec(beta=NumericArraySpec((2,))).with_spec(NumericArraySpec((3,)))
+            OutputSpec(beta=NumericArraySpec((2,))).with_term_spec(NumericArraySpec((3,)))
         whole = OutputSpec(params=RecordSpec(a=NumericArraySpec((2,))))
         with pytest.raises(ValueError, match=r"^params/a has dimension 3"):
-            whole.with_spec(RecordSpec(a=NumericArraySpec((3,))))
-        # An exposed record's fields are its components, so a path starts at a field.
+            whole.with_term_spec(RecordSpec(a=NumericArraySpec((3,))))
+        # In the positional form the record's fields are the outputs, so a path starts at a field.
         exposed = OutputSpec(RecordSpec(a=NumericArraySpec((2,))))
         with pytest.raises(ValueError, match=r"^a has dimension 3"):
-            exposed.with_spec(RecordSpec(a=NumericArraySpec((3,))))
+            exposed.with_term_spec(RecordSpec(a=NumericArraySpec((3,))))
         with pytest.raises(
             ValueError,
             match=r"^fields do not match the declared fields: missing \['a'\], unexpected \['b'\]",
         ):
-            exposed.with_spec(RecordSpec(b=NumericArraySpec((2,))))
+            exposed.with_term_spec(RecordSpec(b=NumericArraySpec((2,))))
 
-    def test_with_spec_keeps_an_exposed_record_exposed(self):
+    def test_with_term_spec_keeps_an_exposed_record_exposed(self):
         produced = RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec((2,)))
         declared = OutputSpec(RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec((2,))))
-        assert declared.with_spec(produced) == OutputSpec(produced)
+        assert declared.with_term_spec(produced) == OutputSpec(produced)
         with pytest.raises(TypeError, match="needs a RecordSpec"):
-            declared.with_spec(NumericArraySpec(()))
+            declared.with_term_spec(NumericArraySpec(()))
 
-    def test_a_whole_term_is_renamed_by_its_component(self):
+    def test_a_whole_term_is_renamed_by_its_output(self):
         array = NumericArraySpec(())
         assert OutputSpec(prior=array).with_path_names(prior="beta") == OutputSpec(beta=array)
         assert OutputSpec(prior=None).with_path_names(prior="beta") == OutputSpec(beta=None)
@@ -223,12 +327,12 @@ class TestOutputSpecCompletion:
             OutputSpec(prior=array).with_path_names(sigma="s")
         with pytest.raises(KeyError):
             OutputSpec(prior=array).with_path_names({"prior/x": "y"})
-        # The component is renamed in place: moving it into a group would
-        # change the packaging, so a path target raises.
+        # The output is renamed in place: moving it into a group would
+        # change the form, so a path target raises.
         with pytest.raises(ValueError, match="cannot move it into a group"):
             OutputSpec(prior=array).with_path_names(prior="group/beta")
 
-    def test_a_whole_record_renames_its_fields_through_its_component(self):
+    def test_a_whole_record_renames_its_fields_through_its_output(self):
         record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
         renamed = OutputSpec(parameters=record).with_path_names({"parameters/beta": "parameters/b"})
         assert renamed == OutputSpec(parameters=record.with_path_names(beta="b"))
@@ -238,8 +342,8 @@ class TestOutputSpecCompletion:
         with pytest.raises(KeyError):
             OutputSpec(parameters=record).with_path_names(beta="b")
 
-    def test_a_component_and_a_field_below_it_are_renamed_in_two_calls(self):
-        # Each target is a new exact path, so renaming the component to theta
+    def test_an_output_and_a_field_below_it_are_renamed_in_two_calls(self):
+        # Each target is a new exact path, so renaming the output to theta
         # and its field to theta/b in one call gives one target inside another.
         record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
         with pytest.raises(ValueError, match="overlap"):
@@ -247,7 +351,7 @@ class TestOutputSpecCompletion:
                 {"parameters": "theta", "parameters/beta": "theta/b"}
             )
 
-    def test_both_packagings_of_one_interface_take_the_same_paths(self):
+    def test_both_forms_of_one_interface_take_the_same_paths(self):
         inner = RecordSpec(beta=NumericArraySpec(()))
         renames = {"parameters/beta": "parameters/b"}
         renamed_inner = RecordSpec(b=NumericArraySpec(()))
@@ -258,7 +362,7 @@ class TestOutputSpecCompletion:
             RecordSpec(theta=renamed_inner)
         )
 
-    def test_a_component_and_a_field_of_one_name_have_distinct_paths(self):
+    def test_an_output_and_a_field_of_one_name_have_distinct_paths(self):
         record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
         declaration = OutputSpec(beta=record)
         assert declaration.with_path_names(beta="b") == OutputSpec(b=record)
@@ -266,7 +370,7 @@ class TestOutputSpecCompletion:
             beta=record.with_path_names(beta="b")
         )
 
-    def test_a_whole_record_moves_a_field_within_its_component(self):
+    def test_a_whole_record_moves_a_field_within_its_output(self):
         record = RecordSpec(a=NumericArraySpec(()), g=RecordSpec(b=NumericArraySpec(())))
         moved = OutputSpec(p=record).with_path_names({"p/a": "p/g/a"})
         assert moved == OutputSpec(
@@ -276,12 +380,12 @@ class TestOutputSpecCompletion:
     @pytest.mark.parametrize(
         "renames",
         [
-            pytest.param({"p/a": "a"}, id="a-field-out-of-the-component"),
-            pytest.param({"p/a": "p"}, id="a-field-onto-the-component"),
-            pytest.param({"p": "q", "p/a": "p/a2"}, id="a-field-under-the-old-component"),
+            pytest.param({"p/a": "a"}, id="a-field-out-of-the-output"),
+            pytest.param({"p/a": "p"}, id="a-field-onto-the-output"),
+            pytest.param({"p": "q", "p/a": "p/a2"}, id="a-field-under-the-old-output"),
         ],
     )
-    def test_a_whole_record_keeps_its_fields_under_its_component(self, renames):
+    def test_a_whole_record_keeps_its_fields_under_its_output(self, renames):
         record = RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec(()))
         with pytest.raises(ValueError, match="must stay under"):
             OutputSpec(p=record).with_path_names(renames)
@@ -299,29 +403,29 @@ class TestOutputSpecCompletion:
         record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
         renamed = OutputSpec(record).with_path_names(beta="b")
         assert renamed == OutputSpec(record.with_path_names(beta="b"))
-        assert renamed.exposes_record
+        assert _has_record_outputs(renamed)
         nested = OutputSpec(RecordSpec(g=RecordSpec(mu=NumericArraySpec(()))))
-        assert tuple(nested.with_path_names({"g/mu": "g/m"}).components) == ("g",)
+        assert tuple(nested.with_path_names({"g/mu": "g/m"}).outputs) == ("g",)
         with pytest.raises(KeyError):
             nested.with_path_names(mu="m")
 
-    def test_an_exposed_record_moves_fields_across_its_components(self):
+    def test_an_exposed_record_moves_fields_across_its_outputs(self):
         scalar = NumericArraySpec(())
         declaration = OutputSpec(RecordSpec(g=RecordSpec(mu=scalar, sigma=scalar), y=scalar))
         out = declaration.with_path_names({"g/mu": "mu"})
         assert out == OutputSpec(RecordSpec(g=RecordSpec(sigma=scalar), y=scalar, mu=scalar))
         into = declaration.with_path_names({"y": "g/y"})
         assert into == OutputSpec(RecordSpec(g=RecordSpec(mu=scalar, sigma=scalar, y=scalar)))
-        assert into.exposes_record
-        # A component the moves empty is removed.
+        assert _has_record_outputs(into)
+        # An output that the moves leave empty is removed.
         emptied = OutputSpec(RecordSpec(g=RecordSpec(mu=scalar))).with_path_names({"g/mu": "m"})
-        assert tuple(emptied.components) == ("m",)
+        assert tuple(emptied.outputs) == ("m",)
 
 
 class TestDeclarationConstruction:
     @pytest.mark.parametrize(
         ("decl", "field"),
-        [(InputSpec(x=NumericArraySpec(())), "_slots"), (OutputSpec(x=None), "_term_spec")],
+        [(InputSpec(x=NumericArraySpec(())), "_inputs"), (OutputSpec(x=None), "_term_spec")],
     )
     def test_declarations_reject_attribute_mutation(self, decl, field):
         original = getattr(decl, field)
@@ -338,32 +442,32 @@ class TestDeclarationConstruction:
         assert getattr(decl, field) is original
         assert not hasattr(decl, "unknown_attribute")
 
-    @pytest.mark.parametrize("name", ["name", "spec", "components", "record_spec", "slots"])
-    def test_constructor_keywords_are_component_names(self, name):
+    @pytest.mark.parametrize("name", ["name", "term_spec", "outputs", "record_spec", "inputs"])
+    def test_constructor_keywords_are_output_names(self, name):
         spec = NumericArraySpec(())
-        assert dict(OutputSpec(**{name: spec}).components) == {name: spec}
+        assert dict(OutputSpec(**{name: spec}).outputs) == {name: spec}
         assert InputSpec(**{name: spec})[name] is spec
 
     @pytest.mark.parametrize("name", ["a/b", "", "two words", "1x", "class"])
-    def test_input_slot_names_are_python_identifiers(self, name):
-        with pytest.raises(ValueError, match="input slot names must be Python identifiers"):
+    def test_input_names_are_python_identifiers(self, name):
+        with pytest.raises(ValueError, match="input names must be Python identifiers"):
             InputSpec({name: NumericArraySpec(())})
 
     @pytest.mark.parametrize("name", ["two words", "1x", "class", "post-1", "*args[0]"])
-    def test_a_component_name_follows_the_field_rule(self, name):
-        # A component that binds a Python parameter must be an identifier, which
-        # binding checks; the declaration accepts any field name.
+    def test_an_output_name_follows_the_field_rule(self, name):
+        # An output that binds a Python parameter must be an identifier, which
+        # binding checks; the output spec accepts any field name.
         spec = NumericArraySpec(())
-        assert list(OutputSpec(**{name: spec}).components) == [name]
-        assert list(OutputSpec(RecordSpec({name: spec})).components) == [name]
+        assert list(OutputSpec(**{name: spec}).outputs) == [name]
+        assert list(OutputSpec(RecordSpec({name: spec})).outputs) == [name]
 
     @pytest.mark.parametrize("name", ["a/b", ""])
-    def test_a_component_name_is_non_empty_without_a_slash(self, name):
-        with pytest.raises(ValueError, match="component names must be non-empty"):
+    def test_an_output_name_is_non_empty_without_a_slash(self, name):
+        with pytest.raises(ValueError, match="output names must be non-empty"):
             OutputSpec(**{name: NumericArraySpec(())})
 
     @pytest.mark.parametrize("value", [None, (), {}, 1, "spec"])
-    def test_input_slots_require_specs(self, value):
+    def test_inputs_require_specs(self, value):
         with pytest.raises(TypeError):
             InputSpec(x=value)
 
@@ -378,7 +482,7 @@ class TestDeclarationConstruction:
             InputSpec(source, y=OpaqueSpec())
         for output in (OutputSpec(x=source["x"]), OutputSpec(RecordSpec(x=()))):
             with pytest.raises(TypeError):
-                output.components["x"] = OpaqueSpec()
+                output.outputs["x"] = OpaqueSpec()
             with pytest.raises(FrozenInstanceError):
                 output._term_spec = OpaqueSpec()
 
@@ -404,7 +508,7 @@ class TestDeclarationRoundTrips:
     def test_declarations_can_be_static_jit_arguments(self):
         @jax.jit(static_argnames="spec")
         def total(x, spec):
-            assert spec.spec.is_valid(x)
+            assert spec.term_spec.is_valid(x)
             return jnp.sum(x)
 
         spec = OutputSpec(x=NumericArraySpec((3,)))
@@ -480,8 +584,8 @@ class TestDimensionBinding:
         with pytest.raises(ValueError, match=value_error):
             expected.bind_dims_from_value(actual_value)
 
-    def test_shared_symbol_scope_across_input_slots_and_nested_batch(self):
-        slots = InputSpec(
+    def test_shared_symbol_scope_across_inputs_and_nested_batch(self):
+        inputs = InputSpec(
             data=NumericArraySpec(("n",)),
             batch=BatchSpec(NumericArraySpec(("n",)), draw="n"),
         )
@@ -489,11 +593,11 @@ class TestDimensionBinding:
             data=NumericArraySpec((3,)),
             batch=BatchSpec(NumericArraySpec((3,)), draw=3),
         )
-        assert slots.bind_dims_from_spec(actual) == actual
+        assert inputs.bind_dims_from_spec(actual) == actual
         conflict = InputSpec(dict(actual) | {"data": NumericArraySpec((4,))})
         with pytest.raises(ValueError, match="already bound"):
-            slots.bind_dims_from_spec(conflict)
-        assert slots.free_dims == {"n"}
+            inputs.bind_dims_from_spec(conflict)
+        assert inputs.free_dims == {"n"}
 
     def test_bind_from_value_and_spec_preserves_declared_metadata(self):
         expected = RecordSpec(x=NumericArraySpec(("n",), dtype="float64"), y=("n",))
@@ -522,9 +626,9 @@ class TestDimensionBinding:
         assert renamed["batch"].axis_groups == (("n",),)
         assert renamed["batch"].element_spec.shape == ("m",)
         assert renamed["batch"].level_names == ("draw",)
-        assert renamed["law"].event_spec.components["x"].shape == ("m",)
+        assert renamed["law"].event_spec.outputs["x"].shape == ("m",)
         assert renamed["function"].input_spec["x"].shape == ("n",)
-        assert renamed["function"].output_spec.spec.shape == ("m",)
+        assert renamed["function"].output_spec.term_spec.shape == ("m",)
         assert spec["data"].shape == ("n", "m")
         for value in (None, 2):
             with pytest.raises(TypeError):
@@ -620,7 +724,7 @@ class TestSpecKinds:
                 "law",
                 label="labels",
             ),
-            component="law",
+            output_name="law",
         )
         schema = RecordSpec.infer_from({"law": law})
         assert schema["law"] == law.spec
@@ -687,7 +791,7 @@ class TestDistributionSchemaAvailability:
         law = declared_law(template)
         inferred = RecordSpec.infer_from({"law": law})
         assert inferred["law"] == DistributionSpec(template)
-        assert inferred["law"].event_spec.spec is template
+        assert inferred["law"].event_spec.term_spec is template
         record = Record(
             {"law": law},
             label="r",
@@ -697,7 +801,7 @@ class TestDistributionSchemaAvailability:
 
 
 class TestInputSpec:
-    def test_optional_slots_are_part_of_the_declaration(self):
+    def test_optional_inputs_are_part_of_the_declaration(self):
         array = NumericArraySpec(())
         inputs = InputSpec(a=array, b=array).with_optional("b")
         assert inputs.required == ("a",)
@@ -706,7 +810,7 @@ class TestInputSpec:
         assert hash(inputs) != hash(InputSpec(a=array, b=array))
         assert repr(inputs).endswith(".with_optional('b')")
 
-    def test_an_optional_slot_stays_optional(self):
+    def test_an_optional_input_stays_optional(self):
         inputs = InputSpec(a=NumericArraySpec(("n",)), b=NumericArraySpec(())).with_optional("b")
         assert inputs.with_dim_sizes(n=2).optional == {"b"}
         assert inputs.with_dim_names(n="m").optional == {"b"}
@@ -715,19 +819,19 @@ class TestInputSpec:
         assert inputs.without("a").optional == {"b"}
         assert inputs.without("b").optional == frozenset()
 
-    def test_marking_slots_optional_accumulates(self):
+    def test_marking_inputs_optional_accumulates(self):
         array = NumericArraySpec(())
         inputs = InputSpec(a=array, b=array, c=array).with_optional("a").with_optional("c")
         assert inputs.optional == {"a", "c"}
         assert inputs.required == ("b",)
 
-    def test_an_input_spec_with_optional_slots_pickles(self):
+    def test_an_input_spec_with_optional_inputs_pickles(self):
         import pickle
 
         inputs = InputSpec(a=NumericArraySpec(()), b=NumericArraySpec(())).with_optional("b")
         assert pickle.loads(pickle.dumps(inputs)) == inputs
 
-    def test_marking_an_unknown_slot_optional_raises(self):
+    def test_marking_an_unknown_input_optional_raises(self):
         with pytest.raises(KeyError, match="'c'"):
             InputSpec(a=NumericArraySpec(())).with_optional("c")
 
@@ -743,7 +847,7 @@ class TestInputSpec:
         ):
             InputSpec(x=OpaqueSpec()).bind_dims_from_spec({"x": OpaqueSpec()})
 
-    def test_inputs_follow_mapping_equality_while_preserving_slot_order(self):
+    def test_inputs_follow_mapping_equality_while_preserving_input_order(self):
         array = NumericArraySpec(())
         left = InputSpec(x=array, y=OpaqueSpec())
         right = InputSpec(y=OpaqueSpec(), x=array)
@@ -753,7 +857,7 @@ class TestInputSpec:
         assert list(left) == ["x", "y"]
         assert list(right) == ["y", "x"]
 
-    def test_binding_values_preserves_slots_metadata_and_the_declaration(self):
+    def test_binding_values_preserves_inputs_metadata_and_the_declaration(self):
         from probpipe.core.constraints import positive
 
         array = NumericArraySpec(("n",), dtype="float64", support=positive)
@@ -774,12 +878,12 @@ class TestInputSpec:
         assert inputs.free_dims == {"n"}
 
     @pytest.mark.parametrize("values", [{}, {"x": np.ones(3), "extra": 1}])
-    def test_binding_requires_exact_slot_names(self, values):
+    def test_binding_requires_exact_input_names(self, values):
         inputs = InputSpec(x=NumericArraySpec(("n",)))
-        with pytest.raises(ValueError, match="slots"):
+        with pytest.raises(ValueError, match="inputs"):
             inputs.bind_dims_from_value(values)
         actual = InputSpec({name: NumericArraySpec(()) for name in values})
-        with pytest.raises(ValueError, match="slots"):
+        with pytest.raises(ValueError, match="inputs"):
             inputs.bind_dims_from_spec(actual)
 
     def test_empty_mapping_and_dimension_transforms(self):
@@ -824,7 +928,7 @@ class TestRecordValueValidation:
                 spec.bind_dims_from_value(value)
         assert spec.free_dims == {"n"}
 
-    def test_a_spec_in_a_value_slot_does_not_stand_in_for_an_array(self):
+    def test_a_spec_in_a_value_field_does_not_stand_in_for_an_array(self):
         spec = RecordSpec(x=(3,))
         values = {"x": NumericArraySpec((3,))}
         assert not spec.is_valid(values)
@@ -904,7 +1008,7 @@ class TestNestedValueBinding:
             actual = law(size)
 
         # Both kinds bind by unification; function binding reads the available
-        # declarations without checking callable compatibility.
+        # input and output specs without checking callable compatibility.
         dtype = "float64" if kind == "function" else None
         symbolic = spec_type(RecordSpec(x=NumericArraySpec(("n",), dtype=dtype)))
         fixed = spec_type(RecordSpec(x=NumericArraySpec((3,), dtype=dtype)))
@@ -966,7 +1070,7 @@ class TestNestedValueBinding:
     def test_concrete_distribution_values_match_by_unification(
         self, wrap_binding, declared_law, declared, actual, matches
     ):
-        """A law matches when its declaration unifies with the declared one.
+        """A law matches when its event spec unifies with the declared one.
 
         An unset dtype accepts any dtype and a set one a same-kind cast, sizes must
         agree, and support is not compared.
@@ -1148,15 +1252,15 @@ class TestDeclarationMessages:
         with pytest.raises(TypeError, match=r"cannot take a NumericArraySpec positionally; name"):
             OutputSpec(NumericArraySpec(()))
 
-    def test_a_shape_tuple_slot_is_told_to_use_an_array_spec(self):
-        with pytest.raises(TypeError, match=r"input slot 'x' needs a TermSpec, got tuple; use Num"):
+    def test_a_shape_tuple_input_is_told_to_use_an_array_spec(self):
+        with pytest.raises(TypeError, match=r"input 'x' needs a TermSpec, got tuple; use Num"):
             InputSpec(x=(3,))
 
-    def test_an_unknown_optional_slot_lists_the_slots(self):
-        with pytest.raises(KeyError, match=r"unknown slot 'y'; available slots: \['x'\]"):
+    def test_an_unknown_optional_input_lists_the_inputs(self):
+        with pytest.raises(KeyError, match=r"unknown input 'y'; available inputs: \['x'\]"):
             InputSpec(x=NumericArraySpec(())).with_optional("y")
 
-    def test_binding_values_names_the_missing_and_unexpected_slots(self):
+    def test_binding_values_names_the_missing_and_unexpected_inputs(self):
         spec = InputSpec(x=OpaqueSpec(), y=OpaqueSpec())
         with pytest.raises(ValueError, match=r"missing \['y'\], unexpected \['z'\]$"):
             spec.bind_dims_from_value({"x": 1.0, "z": 2.0})

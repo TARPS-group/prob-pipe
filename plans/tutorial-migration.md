@@ -55,6 +55,11 @@ In the examples, `x` is a law over `{a, b, c, sigma}`, `ke` a kernel `ke(e | sig
 | `component=`, `factor(d, component_name)`, `OutputSpec.default(component=)` | `output_name=`, `factor(d, output_name)`, `OutputSpec.default(output_name=)` | S2a | no |
 | "slot", "component", "input declaration", "output declaration", "event declaration" in messages and docs | "input", "output", "input spec", "output spec", "event spec"; "component" keeps only a mixture's component laws | S2a | no |
 | the page `docs/api/declarations.md` | `docs/api/input_and_output_specs.md` | S2a | no |
+| a family's first parameter `component`, as `Normal(component="x", ...)`; `EmpiricalDistribution(..., component=)`, `distribution(..., component=)` | `output_name`, as `Normal(output_name="x", ...)`; the positional `Normal("x", 0.0, 1.0)` is unchanged | S2a | no |
+| `mean.using(method="by_component")`, likewise `variance` and `quantile`; the route `"by_component"` in `provenance.metadata["route"]` | `method="by_output"`; the route `"by_output"` | S2a | the provenance route: yes |
+| the route `"bind_given_slots"` of `condition_on` on a kernel, in `provenance.metadata["route"]` and a method report's `route` | `"bind_inputs"` | S2a | yes |
+| the key `"components"` of each block of `provenance.metadata["blocks"]` under the route `by_output` | `"outputs"` | S2a | yes |
+| `output_spec.with_spec(spec=...)`; `OutputSpec.default(spec=..., ...)` | `output_spec.with_term_spec(...)`, positional only; `OutputSpec.default(term_spec=..., output_name=...)` | S2a | no |
 
 ## Output specs and inputs
 

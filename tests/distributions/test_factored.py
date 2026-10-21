@@ -1,8 +1,8 @@
 """Factored distributions: joints that carry the ordered list of their factors.
 
 A factored joint holds its factors in conditional-first order and derives the
-rest from them. Its event declaration is an exposed record over the factors'
-components; sampling and the densities are the intersection of the factors'
+rest from them. Its event spec takes the positional form, a record over the
+factors' outputs; sampling and the densities are the intersection of the factors'
 capabilities; the moments are present exactly when an edge-free joint's factors
 all have them; and the marginal is exact per path, by the factor graph. A
 conditional joint binds its givens in every factor that names them.
@@ -44,6 +44,7 @@ from probpipe import (
     conditional_distribution,
 )
 from probpipe.core._dispatch import Feasibility
+from probpipe.core._specs import _has_record_outputs
 from probpipe.distributions import (
     ConditionalDistribution,
     ConditionalNumericDistribution,
@@ -123,7 +124,7 @@ def _exp_x(values: Mapping[str, Any]) -> Any:
 class NormalKernel(ConditionalDistribution):
     """``K(given, ·) = Normal(loc(given), scale)``, a law over the kernel's own whole-term event.
 
-    Binding some of the given slots returns the kernel over the rest, which
+    Binding some of the inputs returns the kernel over the rest, which
     keeps the values bound so far.
     """
 
@@ -151,13 +152,17 @@ class NormalKernel(ConditionalDistribution):
 
     def _condition_on(self, given, /, **options):
         values = {**self._bound, **dict(given.items())}
-        rest = {slot: spec for slot, spec in self.given_spec.items() if slot not in values}
+        rest = {
+            input_name: spec
+            for input_name, spec in self.given_spec.items()
+            if input_name not in values
+        }
         if rest:
             return type(self)(
                 self.label, rest, self.event_spec, loc=self._loc, scale=self._scale, bound=values
             )
-        (component,) = self.event_spec.components
-        return Normal(component, self._loc(values), self._scale, label=self.label)
+        (output_name,) = self.event_spec.outputs
+        return Normal(output_name, self._loc(values), self._scale, label=self.label)
 
 
 class SamplingKernel(NormalKernel, SupportsConditionalSampling):
@@ -178,7 +183,7 @@ class ScoringKernel(NormalKernel, SupportsConditionalLogProb):
 class NormKernel(NormalKernel, SupportsConditionalLogProb):
     """``y | beta ~ Normal(‖beta‖, sigma)``, whose location reduces over every axis of ``beta``.
 
-    The scale is the given ``sigma`` when the kernel has that slot, and one
+    The scale is the given ``sigma`` when the kernel has that input, and one
     otherwise. Called once on a batch of betas it would take the norm of the
     whole batch, so it scores a batch correctly only when called value by value.
     """
@@ -210,14 +215,17 @@ class FullKernel(SamplingKernel, ScoringKernel, MomentKernel):
 
 
 class RenamingKernel(NormalKernel):
-    """A kernel whose bound law declares a component other than the kernel's own."""
+    """A kernel whose bound law declares an output other than the kernel's own."""
 
     def _condition_on(self, given, /, **kwargs):
         return Normal("elsewhere", 0.0, 1.0, label=self.label)
 
 
 class MarginalKernel(NormalKernel, SupportsConditionalMarginals):
-    """A kernel over an exposed record whose conditional marginal is exact at every path."""
+    """A kernel over a record in the positional form.
+
+    Its conditional marginal is exact at every path.
+    """
 
     def _condition_on(self, given, /, **kwargs):
         return Law(
@@ -271,7 +279,7 @@ class MarginalLaw(Law, SupportsMarginals):
     """A law whose marginal is exact at the paths it lists, and rejected at any other.
 
     It records each path it marginalizes. The marginal at one path is a law
-    over the node under a component named by the path's last name, and the
+    over the node under an output named by the path's last name, and the
     marginal at a list of paths, exact when each is listed, is a law over the
     record that keeps each node at its path.
     """
@@ -418,7 +426,7 @@ class LengthKernel(NormalKernel, SupportsConditionalSampling, SupportsConditiona
 
 
 def _labeled_joint() -> FactoredDistribution:
-    """``y | label`` composed with the law of ``label``, an opaque component."""
+    """``y | label`` composed with the law of ``label``, an opaque output."""
     kernel = LengthKernel("lik", {"label": OpaqueSpec()}, OutputSpec(y=SCALAR))
     return kernel * LabelLaw(
         OutputSpec(label=OpaqueSpec()),
@@ -447,17 +455,17 @@ def _likelihood(kernel: type[NormalKernel] = NormalKernel, **options: Any) -> No
 
 
 def _prior(scale: float = 1.0) -> Normal:
-    """A normal law labeled ``prior`` whose component is ``beta``."""
+    """A normal law labeled ``prior`` whose output is ``beta``."""
     return Normal("beta", 0.0, scale, label="prior")
 
 
-def _law(label: str, component: str, spec: Any = SCALAR, law: type[Law] = Law) -> Law:
-    """A law labeled *label* whose whole-term component is *component*."""
-    return law(event_spec=OutputSpec(**{component: spec}), label=label)
+def _law(label: str, output_name: str, spec: Any = SCALAR, law: type[Law] = Law) -> Law:
+    """A law labeled *label* whose whole-term output is *output_name*."""
+    return law(event_spec=OutputSpec(**{output_name: spec}), label=label)
 
 
 def _pair(label: str = "pair", law: type[Law] = Law, **options: Any) -> Law:
-    """A law over an exposed record of the fields ``a`` and ``b``."""
+    """A law over a record of the fields ``a`` and ``b``, in the positional form."""
     return law(event_spec=OutputSpec(RecordSpec(a=SCALAR, b=SCALAR)), label=label, **options)
 
 
@@ -574,55 +582,55 @@ class TestConstruction:
         with pytest.raises(
             ValueError,
             match=re.escape(
-                "the field 'beta' is produced by both factor 0 ('prior') and factor 1 ('prior'); "
+                "the output 'beta' is produced by both factor 0 ('prior') and factor 1 ('prior'); "
                 "rename it in one of them with with_path_names({'beta': ...}), or build one of "
-                "them with another component, as Normal('beta_2', ...)"
+                "them with another output, as Normal('beta_2', ...)"
             ),
         ):
             FactoredDistribution([_prior(), _prior()], label="model")
 
 
-# -- The event declaration --------------------------------------------------------
+# -- The event spec ---------------------------------------------------------------
 
 
 class TestEventDeclaration:
-    """An exposed record over the factors' components, in factor order, each factor's order kept."""
+    """The positional form: the factors' outputs in factor order, each factor's own order kept."""
 
-    def test_the_event_is_an_exposed_record_of_every_factor_component(self):
+    def test_the_event_is_an_exposed_record_of_every_factor_output(self):
         joint = _likelihood() * _prior() * _law("other", "c")
-        assert joint.event_spec.exposes_record
-        assert isinstance(joint.event_spec.spec, RecordSpec)
-        assert list(joint.event_spec.components) == ["y", "beta", "c"]
+        assert _has_record_outputs(joint.event_spec)
+        assert isinstance(joint.event_spec.term_spec, RecordSpec)
+        assert list(joint.event_spec.outputs) == ["y", "beta", "c"]
 
-    def test_each_component_keeps_its_factor_spec(self):
+    def test_each_output_keeps_its_factor_spec(self):
         lik, prior = _likelihood(), _prior()
-        components = (lik * prior).event_spec.components
-        assert components["y"] == lik.event_spec.components["y"]
-        assert components["beta"] == prior.event_spec.components["beta"]
+        outputs = (lik * prior).event_spec.outputs
+        assert outputs["y"] == lik.event_spec.outputs["y"]
+        assert outputs["beta"] == prior.event_spec.outputs["beta"]
 
-    def test_each_factor_keeps_its_component_order(self):
+    def test_each_factor_keeps_its_output_order(self):
         unsorted = Law(
             OutputSpec(RecordSpec(zeta=SCALAR, alpha=SCALAR)),
             label="unsorted",
         )
         joint = _law("m", "m") * unsorted * _law("a", "a")
-        assert list(joint.event_spec.components) == ["m", "zeta", "alpha", "a"]
+        assert list(joint.event_spec.outputs) == ["m", "zeta", "alpha", "a"]
 
     def test_a_single_whole_term_factor_is_exposed_as_a_record(self):
         joint = FactoredDistribution(
             [Normal("a", 0.0, 1.0)],
             label="model",
         )
-        assert joint.event_spec.exposes_record
-        assert list(joint.event_spec.components) == ["a"]
+        assert _has_record_outputs(joint.event_spec)
+        assert list(joint.event_spec.outputs) == ["a"]
 
-    def test_a_whole_record_factor_contributes_one_component(self):
+    def test_a_whole_record_factor_contributes_one_output(self):
         params = RecordSpec(u=SCALAR, v=SCALAR)
         joint = _law("a", "a") * _law("p", "params", params)
-        assert list(joint.event_spec.components) == ["a", "params"]
-        assert joint.event_spec.components["params"] == params
+        assert list(joint.event_spec.outputs) == ["a", "params"]
+        assert joint.event_spec.outputs["params"] == params
 
-    def test_the_joint_keeps_each_factor_packaging(self):
+    def test_the_joint_keeps_each_factor_form(self):
         exposed = Law(
             OutputSpec(RecordSpec(beta=SCALAR)),
             label="exposed",
@@ -633,8 +641,8 @@ class TestEventDeclaration:
         )
         via_exposed, via_whole = _likelihood() * exposed, _likelihood() * whole
         assert via_exposed.event_spec == via_whole.event_spec
-        assert via_exposed.factors[1].event_spec.exposes_record
-        assert not via_whole.factors[1].event_spec.exposes_record
+        assert _has_record_outputs(via_exposed.factors[1].event_spec)
+        assert not _has_record_outputs(via_whole.factors[1].event_spec)
 
     def test_a_factor_that_produces_nothing_is_kept_among_the_factors(self):
         potential = Law(
@@ -643,9 +651,9 @@ class TestEventDeclaration:
         )
         joint = _likelihood() * _prior() * potential
         assert joint.factors[-1] is potential
-        assert list(joint.event_spec.components) == ["y", "beta"]
+        assert list(joint.event_spec.outputs) == ["y", "beta"]
 
-    def test_the_numeric_views_read_each_component_of_the_joint(self):
+    def test_the_numeric_views_read_each_output_of_the_joint(self):
         from probpipe import Gamma, positive, real
 
         joint = Normal("a", 0.0, 1.0) * Gamma("g", 2.0, 1.0)
@@ -815,7 +823,7 @@ class TestMomentCapabilities:
         expected = jnp.zeros((3, 3)).at[0, 0].set(9.0).at[1:, 1:].set(cov)
         assert jnp.allclose(joint_cov.to_dense(), expected)
 
-    def test_a_record_factor_contributes_each_of_its_components(self):
+    def test_a_record_factor_contributes_each_of_its_outputs(self):
         joint = PairMomentLaw(
             OutputSpec(RecordSpec(a=SCALAR, b=SCALAR)),
             label="pair",
@@ -825,7 +833,7 @@ class TestMomentCapabilities:
         assert [float(mean[c]) for c in mean] == [1.0, 2.0, 5.0]
         assert [float(variance[c]) for c in variance] == [3.0, 4.0, 1.0]
 
-    def test_an_edge_free_quantile_is_assembled_per_component(self):
+    def test_an_edge_free_quantile_is_assembled_per_output(self):
         first = ShiftedQuantileLaw("first", OutputSpec(a=SCALAR), 1.0)
         second = ShiftedQuantileLaw("second", OutputSpec(b=SCALAR), 10.0)
         levels = jnp.array([0.25, 0.5])
@@ -842,7 +850,7 @@ class TestMomentCapabilities:
             label="rows",
         )
         record = EmpiricalDistribution(atoms, jnp.array([0.5, 0.25, 0.25]), label="post")
-        theta = EmpiricalDistribution(jnp.array([4.0, 5.0, 6.0]), component="theta")
+        theta = EmpiricalDistribution(jnp.array([4.0, 5.0, 6.0]), output_name="theta")
         levels = jnp.array([0.25, 0.75])
         quantiles = FactoredDistribution(
             [record, theta],
@@ -865,7 +873,7 @@ class TestMomentCapabilities:
         )
         field = _SoleField(EmpiricalDistribution(atoms, label="one"))
         levels = jnp.array([0.25, 0.5])
-        expected = EmpiricalDistribution(column, component="x")._quantile(levels)
+        expected = EmpiricalDistribution(column, output_name="x")._quantile(levels)
         assert jnp.allclose(field._quantile(levels), expected)
         assert jnp.shape(field._quantile(0.5)) == ()
 
@@ -918,7 +926,7 @@ class TestMarginalGuard:
         joint = _likelihood() * _prior() * _law("other", "c")
         assert joint._marginal_guard(("y", "beta")).feasible is True
 
-    def test_a_component_whose_ancestor_is_another_factor_is_rejected(self):
+    def test_an_output_whose_ancestor_is_another_factor_is_rejected(self):
         report = (_likelihood() * _prior())._marginal_guard("y")
         assert report.feasible is False
         assert report.description
@@ -955,7 +963,7 @@ class TestMarginalGuard:
     @pytest.mark.parametrize(
         "path",
         [
-            pytest.param("gamma", id="unknown-component"),
+            pytest.param("gamma", id="unknown-output"),
             pytest.param("a/zzz", id="below-a-leaf"),
             pytest.param(("a", "gamma"), id="in-a-selection"),
         ],
@@ -1034,18 +1042,18 @@ class TestMarginalValues:
         marginal = (lik * prior * _law("other", "c"))._marginal(("y", "beta"))
         assert isinstance(marginal, SupportsFactors)
         assert marginal.factors == (lik, prior)
-        assert list(marginal.event_spec.components) == ["y", "beta"]
+        assert list(marginal.event_spec.outputs) == ["y", "beta"]
 
     def test_the_marginal_of_an_edge_free_group_is_an_exposed_record_of_it(self):
         joint = _law("u", "a") * _law("v", "b") * _law("w", "c")
         marginal = joint._marginal(("a", "c"))
-        assert marginal.event_spec.exposes_record
-        assert list(marginal.event_spec.components) == ["a", "c"]
+        assert _has_record_outputs(marginal.event_spec)
+        assert list(marginal.event_spec.outputs) == ["a", "c"]
 
     def test_a_marginal_at_a_list_of_paths_follows_the_joint_order(self):
         joint = Normal("x", 0.0, 1.0) * Normal("z", 5.0, 2.0)
         marginal = joint._marginal(("z", "x"))
-        assert list(marginal.event_spec.components) == ["x", "z"]
+        assert list(marginal.event_spec.outputs) == ["x", "z"]
         assert marginal.event_spec == FieldView(joint, ("z", "x")).event_spec
         assert list(marginal._mean()) == ["x", "z"]
         assert jnp.allclose(marginal._cov().to_dense(), jnp.diag(jnp.array([1.0, 4.0])))
@@ -1057,8 +1065,8 @@ class TestMarginalValues:
         joint = Normal("t1", 0.0, 1.0) * Normal("t2", 0.0, 2.0) * Normal("mu", 0.0, 1.0)
         hier = joint.with_path_names({"t1": "s1/theta", "t2": "s2/theta"})
         marginal = hier._marginal(("s2/theta", "s1/theta"))
-        real = Normal("x", 0.0, 1.0).event_spec.spec
-        assert marginal.event_spec.spec == RecordSpec(
+        real = Normal("x", 0.0, 1.0).event_spec.term_spec
+        assert marginal.event_spec.term_spec == RecordSpec(
             s1=RecordSpec(theta=real), s2=RecordSpec(theta=real)
         )
         variance = marginal._variance()
@@ -1069,13 +1077,13 @@ class TestMarginalValues:
         joint = Normal("a", 0.0, 1.0) * Normal("c", 0.0, 3.0) * Normal("e", 0.0, 1.0)
         grouped = joint.with_path_names({"c": "g/c", "e": "g/e"})
         marginal = grouped._marginal(("a", "g/c"))
-        real = Normal("x", 0.0, 1.0).event_spec.spec
-        assert marginal.event_spec.spec == RecordSpec(a=real, g=RecordSpec(c=real))
+        real = Normal("x", 0.0, 1.0).event_spec.term_spec
+        assert marginal.event_spec.term_spec == RecordSpec(a=real, g=RecordSpec(c=real))
         assert jnp.allclose(marginal._variance()["g"]["c"], 9.0)
 
     def test_a_sub_joint_selected_against_its_factor_order_keeps_the_factor_order(self):
         marginal = (_likelihood() * _prior())._marginal(("beta", "y"))
-        assert list(marginal.event_spec.components) == ["y", "beta"]
+        assert list(marginal.event_spec.outputs) == ["y", "beta"]
 
     def test_the_marginal_inside_one_factor_is_that_factor_marginal(self):
         pair = _pair(law=MarginalLaw, exact=("a",))
@@ -1094,13 +1102,13 @@ class TestMarginalValues:
         marginal = joint._marginal(("c", "a"))
         assert isinstance(marginal, FactoredDistribution)
         assert [factor.label for factor in marginal.factors] == ["u", "w"]
-        assert list(marginal.event_spec.components) == ["a", "c"]
+        assert list(marginal.event_spec.outputs) == ["a", "c"]
         assert marginal.notation == "u(a)·w(c)"
 
     def test_a_dependent_pair_named_producer_first_keeps_the_factor_order(self):
         joint = (_likelihood() * _prior()).with_label("model")
         marginal = joint._marginal(("beta", "y"))
-        assert list(marginal.event_spec.components) == ["y", "beta"]
+        assert list(marginal.event_spec.outputs) == ["y", "beta"]
         assert marginal.notation == "lik(y | beta)·prior(beta)"
 
     @pytest.mark.parametrize(
@@ -1128,10 +1136,10 @@ class TestMarginalValues:
     def test_a_selection_of_one_whole_term_is_an_exposed_record(self):
         prior = _prior()
         marginal = (_likelihood() * prior)._marginal(("beta",))
-        assert marginal.event_spec == OutputSpec(RecordSpec(beta=prior.event_spec.spec))
+        assert marginal.event_spec == OutputSpec(RecordSpec(beta=prior.event_spec.term_spec))
         assert marginal.factors == (prior,)
 
-    def test_a_selection_of_a_record_factor_components_is_that_factor_under_the_paths(self):
+    def test_a_selection_of_a_record_factor_outputs_is_that_factor_under_the_paths(self):
         pair = _pair()
         joint = pair * _law("other", "c")
         marginal = joint._marginal(("a", "b"))
@@ -1141,7 +1149,7 @@ class TestMarginalValues:
     @pytest.mark.parametrize(
         "path",
         [
-            pytest.param("gamma", id="unknown-component"),
+            pytest.param("gamma", id="unknown-output"),
             pytest.param("beta/zzz", id="below-a-leaf"),
             pytest.param(("beta", "gamma"), id="in-a-selection"),
             pytest.param("", id="empty"),
@@ -1198,7 +1206,7 @@ class TestConditioning:
         _, prior, joint = _sigma_model()
         bound = joint._condition_on({"sigma": 1.0})
         assert isinstance(bound, FactoredDistribution)
-        assert list(bound.event_spec.components) == ["y", "beta"]
+        assert list(bound.event_spec.outputs) == ["y", "beta"]
         kernel, kept = bound.factors
         assert kept is prior
         assert isinstance(kernel, ConditionalDistribution)
@@ -1209,7 +1217,7 @@ class TestConditioning:
         bound = (kernel * _law("other", "b"))._condition_on({"s1": 1.0})
         assert isinstance(bound, FactoredConditionalDistribution)
         assert list(bound.given_spec) == ["s2"]
-        assert list(bound.event_spec.components) == ["a", "b"]
+        assert list(bound.event_spec.outputs) == ["a", "b"]
 
     def test_binding_in_two_steps_equals_binding_at_once(self):
         kernel = NormalKernel("k", {"s1": SCALAR, "s2": SCALAR}, OutputSpec(a=SCALAR))
@@ -1223,7 +1231,7 @@ class TestConditioning:
         _, _, joint = _sigma_model()
         assert isinstance(joint._condition_on({"sigma": 1.0}), FactoredDistribution)
 
-    def test_a_keyword_is_an_option_and_binds_no_slot(self):
+    def test_a_keyword_is_an_option_and_binds_no_input(self):
         _, _, joint = _sigma_model()
         unbound = joint._condition_on({}, sigma=1.0)
         assert isinstance(unbound, FactoredConditionalDistribution)
@@ -1247,9 +1255,9 @@ class TestConditioning:
         assert float(bound.factors[0].loc) == 0.25
 
     @pytest.mark.parametrize("name", ["beta", "y", "gamma"])
-    def test_a_name_that_is_not_a_given_slot_of_the_joint_raises(self, name):
+    def test_a_name_that_is_not_an_input_of_the_joint_raises(self, name):
         _, _, joint = _sigma_model()
-        with pytest.raises(KeyError, match=_mentions(f"'{name}'", "given slot")):
+        with pytest.raises(KeyError, match=_mentions(f"'{name}'", "input")):
             joint._condition_on({name: 0.0})
 
     def test_the_bound_joint_derives_its_capabilities_from_the_bound_factors(self):
@@ -1269,14 +1277,14 @@ class TestConditioning:
 
 
 class TestNumericMarkers:
-    """Membership in each factored numeric marker is read from the joint's declarations."""
+    """Membership in each factored numeric marker is read from the joint's specs."""
 
     def test_a_joint_with_a_numeric_event_is_a_factored_numeric_distribution(self):
         joint = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
         assert isinstance(joint, FactoredNumericDistribution)
         assert isinstance(joint, NumericDistribution)
 
-    def test_a_non_numeric_component_leaves_the_joint_outside_the_marker(self):
+    def test_a_non_numeric_output_leaves_the_joint_outside_the_marker(self):
         joint = Normal("a", 0.0, 1.0) * _law("o", "o", OpaqueSpec())
         assert not isinstance(joint, FactoredNumericDistribution)
         assert not isinstance(joint, NumericDistribution)
@@ -1323,7 +1331,7 @@ class TestNumericMarkers:
             label="model",
         )
         assert isinstance(joint, NumericJoint)
-        assert tuple(joint.factors[0].event_spec.components) == ("a",)
+        assert tuple(joint.factors[0].event_spec.outputs) == ("a",)
 
     def test_a_class_inheriting_the_marker_has_its_claim_checked(self):
         with pytest.raises(TypeError, match="inherits FactoredNumericDistribution"):
@@ -1355,13 +1363,17 @@ class TestDimensionTransforms:
         bound = joint.with_dim_sizes(n=3)
         assert isinstance(bound, FactoredDistribution)
         assert bound.label == joint.label
-        assert [factor.event_spec.spec.shape for factor in bound.factors] == [(3,), (3,), ()]
-        assert bound.event_spec.spec.free_dims == frozenset()
+        assert [factor.event_spec.term_spec.shape for factor in bound.factors] == [(3,), (3,), ()]
+        assert bound.event_spec.term_spec.free_dims == frozenset()
 
     def test_renaming_a_dimension_renames_it_in_every_factor(self):
         renamed = _symbolic_joint().with_dim_names(n="m")
-        assert [factor.event_spec.spec.shape for factor in renamed.factors] == [("m",), ("m",), ()]
-        assert renamed.event_spec.spec.free_dims == {"m"}
+        assert [factor.event_spec.term_spec.shape for factor in renamed.factors] == [
+            ("m",),
+            ("m",),
+            (),
+        ]
+        assert renamed.event_spec.term_spec.free_dims == {"m"}
 
     def test_the_declaration_follows_the_transformed_factors(self):
         bound = _symbolic_joint().with_dim_sizes(n=3)
@@ -1381,31 +1393,35 @@ class TestDimensionTransforms:
         joint = _symbolic_joint()
         joint.with_dim_sizes(n=3)
         joint.with_dim_names(n="m")
-        assert joint.event_spec.spec.free_dims == {"n"}
-        assert [factor.event_spec.spec.shape for factor in joint.factors] == [("n",), ("n",), ()]
+        assert joint.event_spec.term_spec.free_dims == {"n"}
+        assert [factor.event_spec.term_spec.shape for factor in joint.factors] == [
+            ("n",),
+            ("n",),
+            (),
+        ]
 
     def test_binding_a_conditional_joint_dimension_binds_it_in_every_factor(self):
         bound = _symbolic_conditional_joint().with_dim_sizes(n=3)
         assert bound.given_spec["x"].shape == (3,)
-        assert [factor.event_spec.spec.shape for factor in bound.factors] == [(3,), (3,)]
+        assert [factor.event_spec.term_spec.shape for factor in bound.factors] == [(3,), (3,)]
         assert bound.factors[0].given_spec["x"].shape == (3,)
 
     def test_renaming_a_conditional_joint_dimension_renames_it_in_every_factor(self):
         renamed = _symbolic_conditional_joint().with_dim_names(n="m")
         assert renamed.given_spec["x"].shape == ("m",)
-        assert [factor.event_spec.spec.shape for factor in renamed.factors] == [("m",), ("m",)]
+        assert [factor.event_spec.term_spec.shape for factor in renamed.factors] == [("m",), ("m",)]
 
 
 class TestPathRenames:
-    """A joint renames a component through the factors that produce and consume it."""
+    """A joint renames an output through the factors that produce and consume it."""
 
-    def test_renaming_a_component_renames_its_producer_and_its_consumers(self):
+    def test_renaming_an_output_renames_its_producer_and_its_consumers(self):
         renamed = (_likelihood() * _prior()).with_path_names(beta="theta")
         assert isinstance(renamed, FactoredDistribution)
-        assert list(renamed.event_spec.components) == ["y", "theta"]
+        assert list(renamed.event_spec.outputs) == ["y", "theta"]
         consumer, producer = renamed.factors
         assert list(consumer.given_spec) == ["theta"]
-        assert list(producer.event_spec.components) == ["theta"]
+        assert list(producer.event_spec.outputs) == ["theta"]
 
     def test_renaming_an_unmet_given_renames_it_in_every_factor_that_names_it(self):
         lik = NormalKernel("lik", {"beta": SCALAR, "sigma": SCALAR}, OutputSpec(y=SCALAR))
@@ -1428,16 +1444,16 @@ class TestPathRenames:
         ]
         assert [info.label for info in renamed.provenance.parents] == [joint.label]
 
-    def test_gathering_components_of_two_factors_regroups_them(self, key):
+    def test_gathering_outputs_of_two_factors_regroups_them(self, key):
         """The node ``g`` is one factor: the sub-joint of the two factors, packaged as ``g``."""
         joint = Normal("a", 0.0, 1.0, label="a") * Normal("b", 2.0, 1.0, label="b")
         renamed = joint.with_path_names({"a": "g/a", "b": "g/b"})
         assert isinstance(renamed, SupportsFactors)
-        assert list(renamed.event_spec.components) == ["g"]
+        assert list(renamed.event_spec.outputs) == ["g"]
         (group,) = renamed.factors
         assert [part.label for part in group.factors] == ["a", "b"]
-        assert list(group.event_spec.components) == ["g"]
-        assert not group.event_spec.exposes_record
+        assert list(group.event_spec.outputs) == ["g"]
+        assert not _has_record_outputs(group.event_spec)
         assert list(renamed._sample(key)["g"]) == ["a", "b"]
 
 
@@ -1452,7 +1468,7 @@ class TestNotation:
         assert str(joint) == joint.notation == "lik(y | beta)·prior(beta)"
         assert joint.label == "lik·prior"
 
-    def test_a_relabeled_joint_reads_by_its_label_and_its_components(self):
+    def test_a_relabeled_joint_reads_by_its_label_and_its_outputs(self):
         model = (_likelihood() * _prior()).with_label("model")
         assert model.notation == "model(y, beta)"
 
@@ -1594,7 +1610,7 @@ def _assert_same_joint(restored: Any, joint: Any) -> None:
 
 
 class TestRoundTrips:
-    """A pickled or copied joint keeps its label, declarations, factors, and capabilities."""
+    """A pickled or copied joint keeps its label, specs, factors, and capabilities."""
 
     @pytest.mark.parametrize("make", _JOINTS)
     def test_pickle(self, make):
@@ -1610,22 +1626,22 @@ class TestRoundTrips:
         _, _, joint = _sigma_model()
         bound = pickle.loads(pickle.dumps(joint))._condition_on({"sigma": 1.0})
         assert isinstance(bound, FactoredDistribution)
-        assert list(bound.event_spec.components) == ["y", "beta"]
+        assert list(bound.event_spec.outputs) == ["y", "beta"]
 
 
 # -- Joint sampling and densities -------------------------------------------------
 
 
 class TestJointSampling:
-    """A draw extracts each factor's components from its one draw, in canonical factor order."""
+    """A draw extracts each factor's outputs from its one draw, in canonical factor order."""
 
-    def test_a_draw_holds_every_component_in_canonical_order(self):
+    def test_a_draw_holds_every_output_in_canonical_order(self):
         joint = _likelihood(SamplingKernel) * _prior() * Normal("c", 0.0, 1.0)
         draw = joint._sample(jax.random.PRNGKey(0))
-        assert joint.event_spec.spec.is_valid(draw)
+        assert joint.event_spec.term_spec.is_valid(draw)
         assert list(draw.keys()) == ["y", "beta", "c"]
 
-    def test_a_draw_extracts_components_by_each_factor_packaging(self):
+    def test_a_draw_extracts_outputs_by_each_factor_form(self):
         fields = OutputSpec(RecordSpec(a=SCALAR, b=SCALAR))
         exposed = PointLaw("exposed", fields, {"a": jnp.asarray(1.0), "b": jnp.asarray(2.0)})
         params = OutputSpec(params=RecordSpec(u=SCALAR, v=SCALAR))
@@ -1642,7 +1658,7 @@ class TestJointSampling:
         assert jnp.allclose(draw["y1"], draw["beta"], atol=1e-4)
         assert jnp.allclose(draw["y2"], draw["beta"], atol=1e-4)
 
-    def test_a_sample_shape_prepends_batch_axes_to_every_component(self):
+    def test_a_sample_shape_prepends_batch_axes_to_every_output(self):
         draws = (_likelihood(SamplingKernel) * _prior())._sample(jax.random.PRNGKey(2), (4,))
         assert jnp.shape(draws["y"]) == jnp.shape(draws["beta"]) == (4,)
 
@@ -1684,7 +1700,7 @@ class TestJointSampling:
         assert jnp.shape(draws["y"]) == jnp.shape(draws["beta"]) == (5,)
         assert jnp.allclose(draws["y"], draws["beta"] + 10.0, atol=1e-4)
 
-    def test_a_kernel_on_an_opaque_component_draws_once_per_draw(self):
+    def test_a_kernel_on_an_opaque_output_draws_once_per_draw(self):
         joint = _labeled_joint()
         assert _capability_guard(joint, "_sample").feasible is True
         draws = joint._sample(jax.random.PRNGKey(9), (2, 3))
@@ -1724,10 +1740,10 @@ class TestJointDensity:
         )
         (beta_value,) = exposed.scored
         (gamma_value,) = whole.scored
-        assert exposed.event_spec.spec.is_valid(beta_value)
+        assert exposed.event_spec.term_spec.is_valid(beta_value)
         assert not SCALAR.is_valid(beta_value)
-        assert whole.event_spec.spec.is_valid(gamma_value)
-        assert not exposed.event_spec.spec.is_valid(gamma_value)
+        assert whole.event_spec.term_spec.is_valid(gamma_value)
+        assert not exposed.event_spec.term_spec.is_valid(gamma_value)
 
     def test_a_conditional_joint_scores_under_its_given(self):
         lik = ScoringKernel("lik", {"beta": SCALAR, "sigma": SCALAR}, OutputSpec(y=SCALAR))
@@ -1796,7 +1812,7 @@ class TestJointDensity:
         )
         assert jnp.allclose(scores, expected)
 
-    def test_a_kernel_on_an_opaque_component_scores_value_by_value(self):
+    def test_a_kernel_on_an_opaque_output_scores_value_by_value(self):
         y = jnp.array([1.0, 2.0, 0.0])
         values = {"y": y, "label": np.array(["a", "bb", "ccc"], dtype=object)}
         scores = _labeled_joint()._log_prob(values)
@@ -1815,7 +1831,7 @@ def _counts_model() -> FactoredDistribution:
     """A population path over 8 steps, written with ``lax.scan``, observed as Poisson counts."""
     prior = Normal("r", 0.4, 0.05) * Normal("K", 100.0, 5.0)
 
-    @conditional_distribution(given_spec=prior.event_spec.spec, label="counts")
+    @conditional_distribution(given_spec=prior.event_spec.term_spec, label="counts")
     def counts(r, K, n0=20.0):
         def step(n, _):
             following = n * jnp.exp(r * (1.0 - n / K))
@@ -1889,9 +1905,9 @@ class TestCompiledFactorCalls:
         # a wrong key or parameter, off by order 1, exceeds. A count can change where a
         # rate differs in its last digit, so most counts, not all, must agree.
         assert np.mean(np.asarray(draws["y"]) == np.asarray(uncompiled["y"])) >= 0.95
-        for component in ("r", "K"):
+        for output_name in ("r", "K"):
             np.testing.assert_allclose(
-                draws[component], uncompiled[component], rtol=2e-6, atol=2e-6
+                draws[output_name], uncompiled[output_name], rtol=2e-6, atol=2e-6
             )
         np.testing.assert_allclose(model._log_prob(draws), uncompiled_scores, rtol=2e-6, atol=2e-6)
 
@@ -2011,8 +2027,8 @@ class TestCompiledFactorCalls:
         key = jax.random.PRNGKey(10)
         draws = joint._conditional_sample({"sigma": 1.0}, key, (4,))
         restored = how(joint)._conditional_sample({"sigma": 1.0}, key, (4,))
-        for component in draws:
-            np.testing.assert_array_equal(restored[component], draws[component])
+        for output_name in draws:
+            np.testing.assert_array_equal(restored[output_name], draws[output_name])
 
     @pytest.mark.parametrize(
         "offset",
@@ -2047,7 +2063,7 @@ class TestCompiledFactorCalls:
 
 
 class TestFusedGiven:
-    """A conditional joint's capabilities take a value for every given slot, and only those."""
+    """A conditional joint's capabilities take a value for every input, and only those."""
 
     @pytest.mark.parametrize(
         "call",
@@ -2063,15 +2079,15 @@ class TestFusedGiven:
         ],
     )
     @pytest.mark.parametrize(
-        ("given", "slot"),
+        ("given", "input_name"),
         [
             pytest.param({}, "sigma", id="missing"),
             pytest.param({"sigma": 1.0, "tau": 1.0}, "tau", id="unknown"),
         ],
     )
-    def test_a_given_that_omits_or_adds_a_slot_raises(self, call, given, slot):
+    def test_a_given_that_omits_or_adds_an_input_raises(self, call, given, input_name):
         lik = FullKernel("lik", {"beta": SCALAR, "sigma": SCALAR}, OutputSpec(y=SCALAR))
-        with pytest.raises(KeyError, match=_mentions(f"'{slot}'", "'lik·prior'")):
+        with pytest.raises(KeyError, match=_mentions(f"'{input_name}'", "'lik·prior'")):
             call(lik * _prior(), given)
 
     def test_a_record_given_binds_by_its_fields(self):

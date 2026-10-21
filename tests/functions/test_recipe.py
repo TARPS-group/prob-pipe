@@ -240,7 +240,7 @@ class TestWorkflowRecipeRecording:
             output_spec=OutputSpec(_identity=None),
         )
         exact = exact_workflow(
-            value=EmpiricalDistribution(jnp.asarray([1.0, 2.0]), component="exact")
+            value=EmpiricalDistribution(jnp.asarray([1.0, 2.0]), output_name="exact")
         )
 
         assert deterministic.provenance.controls == {}
@@ -264,7 +264,7 @@ class TestWorkflowRecipeRecording:
         )
         with workflow_run(seed=9):
             result = workflow(
-                left=EmpiricalDistribution(jnp.asarray([1.0, 2.0]), component="left"),
+                left=EmpiricalDistribution(jnp.asarray([1.0, 2.0]), output_name="left"),
                 right=Normal("right", loc=0.0, scale=1.0),
             )
 
@@ -525,16 +525,16 @@ class TestWorkflowCallableAnchor:
     @pytest.mark.parametrize(
         "declaration",
         [None, OutputSpec(value=NumericArraySpec(())), NumericArraySpec(())],
-        ids=["undeclared", "explicit-component", "default-component"],
+        ids=["undeclared", "explicit-output", "default-output"],
     )
     def test_an_output_label_changes_no_anchor(self, declaration):
-        """Changing output aliases and component names leaves the callable anchor unchanged."""
+        """Changing output aliases and output names leaves the callable anchor unchanged."""
         first = Function(
             replayable_identity,
             output_label="first",
             output_spec=declaration
             if isinstance(declaration, OutputSpec) or declaration is None
-            else OutputSpec.default(declaration, component="first"),
+            else OutputSpec.default(declaration, output_name="first"),
             label="identity",
         )
         second = Function(
@@ -542,7 +542,7 @@ class TestWorkflowCallableAnchor:
             output_label="second",
             output_spec=declaration
             if isinstance(declaration, OutputSpec) or declaration is None
-            else OutputSpec.default(declaration, component="second"),
+            else OutputSpec.default(declaration, output_name="second"),
             label="identity",
         )
         anchor = _callable.capture_function_anchor(first)
@@ -554,7 +554,7 @@ class TestWorkflowCallableAnchor:
             == _callable.capture_function_anchor(first.with_label("display")).controls()
         )
 
-    @pytest.mark.parametrize("change", ["shape", "kind", "packaging", "declaration"])
+    @pytest.mark.parametrize("change", ["shape", "kind", "form", "output_spec"])
     def test_output_contract_participates_in_callable_anchor(self, change):
         declaration = OutputSpec(bundle=RecordSpec(field=()))
         baseline = Function(
@@ -566,8 +566,8 @@ class TestWorkflowCallableAnchor:
         declarations = {
             "shape": OutputSpec(bundle=RecordSpec(field=(2,))),
             "kind": OutputSpec(bundle=OpaqueSpec()),
-            "packaging": OutputSpec(RecordSpec(field=())),
-            "declaration": None,
+            "form": OutputSpec(RecordSpec(field=())),
+            "output_spec": None,
         }
         changed = Function(
             replayable_identity,

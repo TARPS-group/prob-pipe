@@ -106,13 +106,13 @@ def condition_on_nutpie(model, data=None, *, num_results=1000, num_warmup=500, .
 
 Treat a public `Function` as an immutable, first-class `TrackedTerm` / `Annotated`
 computation term. Its construction-time `inspect.Signature` is the Python
-calling contract; optional `input_spec: InputSpec` and `output_spec: OutputSpec` declarations
-are authoritative schemas but never derive or replace that signature. Use
+calling contract; an optional input spec, `input_spec: InputSpec`, and output spec,
+`output_spec: OutputSpec`, are authoritative schemas but never derive or replace that signature. Use
 `apply(*args, **kwargs)` for one raw evaluation with binding and schema checks.
 Use `__call__` for distribution lifting, array sweeps, orchestration, result
 wrapping, and Function-first provenance. Results derive an application expression;
-explicit `output_label` supplies a display alias. Declare whole-term output
-components with `OutputSpec`, independently of labels. A raw implementation's
+explicit `output_label` supplies a display alias. Declare a function's outputs
+with `OutputSpec`, independently of labels. A raw implementation's
 own label survives `apply`, while a normal call describes its independent result.
 
 If an implementation returns an existing `Record`, `RecordBatch`, or
@@ -120,8 +120,8 @@ If an implementation returns an existing `Record`, `RecordBatch`, or
 shallow result copy that shares value data and specs, owns a separate
 annotations container, and receives only the current call's provenance. Do not
 restore identity-through behavior at the workflow boundary. Variadic Functions
-without an input declaration are supported: the planner treats every `*args`
-element and `**kwargs` entry as an independent slot while reconstructing the
+without an input spec are supported: the planner treats every `*args`
+element and `**kwargs` entry as an independent input while reconstructing the
 original `BoundArguments` before invoking user code.
 
 Exception: the learned-likelihood factories `learn_amortized_likelihood` and
@@ -387,7 +387,7 @@ example when helpful:
 ```python
 """The sample operation: one draw, or a batch of draws, of a distribution.
 
-``sample(d)`` returns one draw at the kind the law's event declaration names,
+``sample(d)`` returns one draw at the kind the law's event spec names,
 and a non-empty ``sample_shape`` prepends batch axes on a level named
 ``sample``, returning the batch form of that kind.
 
@@ -409,8 +409,8 @@ class Normal(TFPDistribution):
 
     Parameters
     ----------
-    component : str
-        The component of the law's event.
+    output_name : str
+        The name of the law's one output, which names its draws.
     loc : array-like
         Mean of the distribution.
     scale : array-like
@@ -443,7 +443,7 @@ def sample(d: Distribution, sample_shape: tuple[int, ...] = ()):
     Returns
     -------
     TrackedTerm
-        One draw at the kind the event declaration names; or, for a non-empty
+        One draw at the kind the event spec names; or, for a non-empty
         *sample_shape*, the batch form of that kind.
 
     Raises
@@ -743,7 +743,7 @@ baseline** — never the code path under test:
 - an exact reference computation run through the same pipeline (e.g.,
   judging a learned likelihood by comparing its NUTS posterior against
   NUTS run with the *true* likelihood on the same model — this isolates
-  the component's error from sampler and prior effects);
+  the learned likelihood's error from sampler and prior effects);
 - a known invariant (support membership, symmetry, positive
   definiteness, simplex sums, `log_prob`/`prob` consistency);
 - central finite differences for gradients.
@@ -754,7 +754,7 @@ location and spread** (e.g., posterior mean *and* std against the
 analytic values), not just point recovery.
 
 **Tolerances are measured, not guessed.** For stochastic or trained
-components, run the test's exact configuration across several seeds
+estimators, run the test's exact configuration across several seeds
 (3–4 is typically enough), then set the bound to cover the observed
 spread with roughly 2–3× margin. Seed everything that can be seeded —
 training, simulation, sampling — so a given environment is exactly
@@ -827,7 +827,7 @@ glossary vocabulary explains the design to a reader who needs a fix.
    the caller passed. A term is fine when the public API or the user
    guide uses it, such as `ConditionalDistribution` or `sample_shape`. Describe
    any other term in plain words, which includes design terms of
-   `design/glossary.md` such as packaging, whole term, and kernel.
+   `design/glossary.md` such as value type, factor inputs, and kernel.
 4. **Show no private names.** A message names nothing with a leading
    underscore and no type the caller never sees, such as the class of a JAX
    array. A `NotImplementedError` says what is unsupported in public
@@ -856,8 +856,8 @@ Each pair below shows a message that breaks these rules and its rewrite.
 
 ```text
 # Explains the design (rules 1-3)
-with_path_names() keeps the packaging, so the whole term's component 'mu' is renamed in place, not moved to 'population/mu'
-cannot rename 'mu' to 'population/mu': with_path_names() can rename a single-component output but cannot move it into a group. Choose a name without '/'.
+with_path_names() keeps the form, so the value type's root output 'mu' is renamed in place, not moved to 'population/mu'
+cannot rename 'mu' to 'population/mu': with_path_names() can rename the output of the keyword form but cannot move it into a group. Choose a name without '/'.
 
 # Inverted lookup with no fix (rules 1 and 5)
 not levels of this batch: ['test']; have ['quantile']
@@ -876,8 +876,8 @@ _ensure_matrix: Required 3 columns. Got 2.
 A must have 3 columns, got shape (3, 2)
 
 # Repeated route name (rule 9)
-bind_given_slots (exact methods): route 'bind_given_slots' declined: the conditioned object is not a kernel
-bind_given_slots (exact methods): Normal is not a ConditionalDistribution
+bind_inputs (exact methods): route 'bind_inputs' declined: the conditioned object is not a kernel
+bind_inputs (exact methods): Normal is not a ConditionalDistribution
 ```
 
 A protocol check that fails raises `TypeError` and names the missing

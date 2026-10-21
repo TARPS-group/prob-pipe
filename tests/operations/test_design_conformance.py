@@ -89,14 +89,10 @@ _PROSE = {
 }
 
 #: Declarations the implementation does not match yet, with the change each awaits.
-_PENDING: dict[str, str] = {
-    "factor": "VI.8 names the parameter output_name; the code names it component_name",
-}
+_PENDING: dict[str, str] = {}
 
 #: Routes VI.0's code blocks construct that the implementation names otherwise, with the change each awaits.
-_PENDING_ROUTES: dict[str, str] = {
-    "bind_inputs": "VI.0 names condition_on's binding route bind_inputs; the code names it bind_given_slots",
-}
+_PENDING_ROUTES: dict[str, str] = {}
 
 #: Names the package exports that Part VI does not declare, with where each is declared.
 _DECLARED_ELSEWHERE = {

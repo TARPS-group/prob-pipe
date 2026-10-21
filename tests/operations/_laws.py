@@ -118,7 +118,7 @@ class Vector(Distribution, SupportsSampling):
 
 
 class Pair(Distribution, SupportsSampling, SupportsMean):
-    """A law drawing an exposed record of a scalar ``a`` and a vector ``b``."""
+    """A law drawing a record, in the positional form, of a scalar ``a`` and a vector ``b``."""
 
     def __init__(self, label: str) -> None:
         super().__init__(
@@ -293,34 +293,36 @@ def _given_values(given: Any) -> dict[str, Any]:
 
 
 class Kernel(ConditionalDistribution):
-    """The kernel ``y | slots ~ Normal(offset + sum of the slots, 1)``, whose event is ``y``.
+    """The kernel ``y | inputs ~ Normal(offset + sum of the inputs, 1)``, whose event is ``y``.
 
-    The component is fixed at construction, so a partly bound kernel and the law it
+    The output name is fixed at construction, so a partly bound kernel and the law it
     returns keep it whatever the kernel's label becomes.
     """
 
     def __init__(
         self,
         label: str = "y",
-        slots: tuple[str, ...] = ("mu",),
+        inputs: tuple[str, ...] = ("mu",),
         offset: float = 0.0,
-        component: str | None = None,
+        output_name: str | None = None,
     ) -> None:
-        self.component = label if component is None else component
+        self.output_name = label if output_name is None else output_name
         super().__init__(
-            {slot: REAL for slot in slots},
-            OutputSpec(**{self.component: REAL}),
+            {input_name: REAL for input_name in inputs},
+            OutputSpec(**{self.output_name: REAL}),
             label=label,
         )
-        self.slots, self.offset = tuple(slots), float(offset)
+        self.inputs, self.offset = tuple(inputs), float(offset)
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         values = _given_values(given)
-        left = tuple(slot for slot in self.slots if slot not in values)
-        offset = self.offset + sum(float(values[slot]) for slot in self.slots if slot in values)
+        left = tuple(input_name for input_name in self.inputs if input_name not in values)
+        offset = self.offset + sum(
+            float(values[input_name]) for input_name in self.inputs if input_name in values
+        )
         if left:
-            return Kernel(self.label, left, offset, self.component)
-        return Gaussian(self.component, offset, 1.0)
+            return Kernel(self.label, left, offset, self.output_name)
+        return Gaussian(self.output_name, offset, 1.0)
 
 
 class ExactPosterior(Distribution, SupportsSampling, SupportsExactConditioning):

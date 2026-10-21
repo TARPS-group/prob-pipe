@@ -144,7 +144,7 @@ class TestValues:
         assert isinstance(record.raw["law"], tfd.Normal)
 
     def test_a_law_held_as_a_leaf_is_detached(self):
-        law = EmpiricalDistribution(jnp.arange(3.0), component="e").with_provenance(
+        law = EmpiricalDistribution(jnp.arange(3.0), output_name="e").with_provenance(
             Provenance.create("made", parents=[])
         )
         record = Record(
@@ -323,7 +323,7 @@ class TestDistributions:
         assert _element_source(element.raw) is None
 
     def test_an_empirical_law_keeps_its_atoms(self):
-        law = EmpiricalDistribution(jnp.arange(4.0), component="e")
+        law = EmpiricalDistribution(jnp.arange(4.0), output_name="e")
         detached = law.raw
         assert isinstance(detached, EmpiricalDistribution)
         np.testing.assert_array_equal(detached.atoms.raw, law.atoms.raw)
@@ -362,7 +362,7 @@ class TestTheRawFormIsShared:
         assert "raw" not in transient_memo(view)
 
     def test_a_record_reads_the_same_leaves_into_a_new_mapping(self):
-        law = EmpiricalDistribution(jnp.arange(3.0), component="e")
+        law = EmpiricalDistribution(jnp.arange(3.0), output_name="e")
         record = Record(
             {"g": {"law": law, "x": jnp.ones(2)}, "label": "A"},
             label="r",

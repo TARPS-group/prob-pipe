@@ -27,8 +27,8 @@ class TestUnknownNames:
         assert message == "unknown fields ['a', 'b']; available fields: ['x', 'y']"
 
     def test_nothing_available(self):
-        message = unknown_names("given slot", ["y"], [])
-        assert message == "unknown given slot 'y'; there are no given slots"
+        message = unknown_names("input", ["y"], [])
+        assert message == "unknown input 'y'; there are no inputs"
 
     def test_irregular_plural(self):
         message = unknown_names("batch axis", ["k"], ["n"], plural="batch axes")

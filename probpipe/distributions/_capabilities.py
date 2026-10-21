@@ -243,13 +243,13 @@ class SupportsMarginals(Protocol):
 
     ``_marginal(path)`` returns a standalone ``Distribution`` over the node at
     ``path``, an event path of this law, with no reference back to it. One path,
-    a ``str``, gives the node whole under a component named by the path's last
+    a ``str``, gives the node whole under an output named by the path's last
     name, and a path that names a group gives the group of fields under it. A
     tuple of paths, which names at least one path, no path twice, and no path
-    inside another, gives a law whose event exposes the record that keeps each
-    node at its own path, in this law's canonical order whatever the order of
-    the tuple. The marginal is labeled as the ``marginal`` operation labels it, so
-    a law without factors gives its marginals its own label. Support may
+    inside another, gives a law over the record that keeps each node at its own
+    path, in this law's canonical order whatever the order of the tuple. The
+    marginal is labeled as the ``marginal`` operation labels it, so a law
+    without factors gives its marginals its own label. Support may
     depend on the path, so a class whose marginal is exact only at some paths
     defines the guard ``_marginal_guard(path)``.
 

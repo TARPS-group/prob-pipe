@@ -539,7 +539,7 @@ class TestLevelNames:
 
     @pytest.mark.parametrize("name", ["my level", "mean(mu)", "[model] | y", "3"])
     def test_a_level_name_is_any_non_empty_string_without_a_slash(self, name):
-        """A level name follows the rule for component names."""
+        """A level name follows the rule for output names."""
         assert _spec([(2,)], [name]).level_names == (name,)
 
     def test_a_level_name_containing_a_slash_raises(self):

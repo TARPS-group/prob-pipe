@@ -59,7 +59,7 @@ class ParentInfo:
         Best-effort 16-character digest populated by
         :meth:`Provenance.create`. ``None`` only when fingerprinting raises an
         unexpected error. Consult ``fingerprint_is_weak`` before treating it
-        as a portable cache-key component. Excluded from equality and hashing:
+        as part of a portable cache key. Excluded from equality and hashing:
         descriptor identity is structural (``type_name`` / ``label`` /
         ``provenance``), so a digest must not perturb ancestor-set dedup.
     parent : Any or None
@@ -67,7 +67,7 @@ class ParentInfo:
         ``None`` in LIGHTWEIGHT so the object's data can be garbage-collected.
         Excluded from equality and hashing.
     fingerprint_is_weak : bool
-        Whether the digest contains a process-local identity component. Weak
+        Whether the digest contains a process-local object identity. Weak
         fingerprints remain useful for distinguishing live objects in one
         process but must not be reused as portable content keys. Excluded from
         equality and hashing.

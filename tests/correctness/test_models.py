@@ -7,8 +7,8 @@ moments bounded by four standard errors.
 
 - GLM likelihoods composed with priors: the joint density, the prior
   predictive, and the Gaussian case's posterior against its closed form,
-  including a design left as a given slot;
-- ``PyMCModel``: the prior predictive, covariates as given slots, the
+  including a design left as an input;
+- ``PyMCModel``: the prior predictive, covariates as inputs, the
   normalized density against PyMC's ``logp``, and the unnormalized density
   and the posterior of a model with a potential;
 - a law of an unnormalized density from ``distribution``: sampling, conversion,
@@ -164,16 +164,16 @@ class TestGLM:
             posterior = condition_on.using(method_options=FIT)(case.model, case.data)
         assert_matches(posterior, case.reference, label="the default route on gaussian_linear")
 
-    def test_a_design_left_unbound_is_a_given_slot_of_the_joint(self):
+    def test_a_design_left_unbound_is_an_input_of_the_joint(self):
         likelihood = glm_likelihood("y", GaussianFamily(), dispersion=1.0)
         joint = likelihood * MultivariateNormal("beta", jnp.zeros(2), cov=jnp.eye(2))
         assert isinstance(joint, FactoredConditionalDistribution)
         assert list(joint.given_spec) == ["X"]
         bound = condition_on(joint, {"X": _X})
-        assert bound.event_spec.spec["y"].shape == (5,)
+        assert bound.event_spec.term_spec["y"].shape == (5,)
 
     def test_binding_the_design_and_the_response_gives_the_closed_form_posterior(self):
-        """One call binds the design as a given slot and conditions on the response.
+        """One call binds the design as an input and conditions on the response.
 
         The design is bound first and the response conditioned by Bayes'
         rule, so the result is the Gaussian closed form; the fit takes a few
@@ -260,13 +260,13 @@ class TestPyMCModel:
             float(expected), rel=1e-5
         )
 
-    def test_a_covariate_is_a_given_slot_and_binding_it_returns_the_joint(self):
+    def test_a_covariate_is_an_input_and_binding_it_returns_the_joint(self):
         kernel = PyMCModel(_regression, label="regression")
         assert isinstance(kernel, ConditionalDistribution)
         assert list(kernel.given_spec) == ["x"]
         law = condition_on(kernel, {"x": np.linspace(-1, 1, 6)})
         assert isinstance(law, PyMCModel)
-        assert law.event_spec.spec["y"].shape == (6,)
+        assert law.event_spec.term_spec["y"].shape == (6,)
 
     def test_binding_the_covariate_and_the_response_gives_the_closed_form_posterior(self):
         """``beta ~ N(0, 1)`` and ``y ~ N(beta x, 1)`` give ``beta | y ~ N(xᵀy / (1 + xᵀx), 1 / (1 + xᵀx))``.
@@ -350,7 +350,7 @@ class TestPyMCModel:
         case = canonical.case("beta_bernoulli")
         pymc = case.pymc_model()
         value = {"theta": np.float32(0.3), "y": np.asarray(case.data["y"], np.float32)}
-        assert pymc.event_spec.spec["y"].dtype == np.dtype(jnp.result_type(int))
+        assert pymc.event_spec.term_spec["y"].dtype == np.dtype(jnp.result_type(int))
         expected = (
             scipy.stats.beta.logpdf(0.3, 1, 1)
             + scipy.stats.bernoulli.logpmf(np.asarray(value["y"]), 0.3).sum()
@@ -414,7 +414,7 @@ class TestUnnormalizedDensity:
                 law, sample_shape=(50,)
             )
         assert draws.batch_shape == (50,)
-        assert draws.element_spec == law.event_spec.spec
+        assert draws.element_spec == law.event_spec.term_spec
         with workflow_run(seed=14):
             normalized = convert.using(method="blackjax_nuts", method_options=FIT)(
                 law, EmpiricalDistribution
@@ -469,7 +469,9 @@ class TestUnnormalizedDensity:
 def _chain():
     """``x ~ N(1, 2)`` and ``y | x ~ N(2x + 1, 0.5)``: ``𝔼[y] = 3``, ``Var y = 16.25``, ``Cov = 8``."""
     x = Normal("x", 1.0, 2.0)
-    y = ObservationKernel("y", {"x": x.event_spec.spec}, REAL, lambda x: tfd.Normal(2 * x + 1, 0.5))
+    y = ObservationKernel(
+        "y", {"x": x.event_spec.term_spec}, REAL, lambda x: tfd.Normal(2 * x + 1, 0.5)
+    )
     return y * x
 
 
@@ -506,9 +508,9 @@ class TestFactoredJoints:
         _within_mcse([means["x"], means["y"]], [1.0, 3.0], [2.0, np.sqrt(16.25)])
 
     def test_the_mean_of_a_dependent_joint_is_exact_at_its_root_factor(self):
-        """``by_component`` gives ``E[x] = 1`` and ``Var x = 4`` exactly, and estimates ``y``."""
+        """``by_output`` gives ``E[x] = 1`` and ``Var x = 4`` exactly, and estimates ``y``."""
         joint = _chain()
-        assert mean.check(joint).route == "by_component"
+        assert mean.check(joint).route == "by_output"
         with workflow_run(seed=17):
             means = mean.using(num_samples=DRAWS, raw=True)(joint)
             variances = variance.using(num_samples=DRAWS, raw=True)(joint)

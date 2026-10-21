@@ -44,7 +44,7 @@ def _value(term: Any) -> float:
 
 def _bootstrap() -> BootstrapDistribution:
     """A random measure: a draw is the empirical law of three draws of the atoms 0, 1, 2."""
-    return BootstrapDistribution("D", EmpiricalDistribution(jnp.arange(3.0), component="y"), 3)
+    return BootstrapDistribution("D", EmpiricalDistribution(jnp.arange(3.0), output_name="y"), 3)
 
 
 def test_the_route_is_the_evaluation_rule_registry():
@@ -122,7 +122,7 @@ def test_the_fixed_arguments_bind_the_other_parameters():
     def shift(x, offset):
         return x + offset
 
-    atoms = EmpiricalDistribution(jnp.array([0.0, 1.0]), component="x")
+    atoms = EmpiricalDistribution(jnp.array([0.0, 1.0]), output_name="x")
     law = pushforward(atoms, shift, fixed_args={"offset": 2.0})
     assert _value(mean(law)) == pytest.approx(2.5)
 
@@ -146,7 +146,7 @@ def test_a_map_left_with_no_open_parameter_is_refused_without_naming_others():
 
 def _weighted_atoms():
     return EmpiricalDistribution(
-        jnp.array([0.0, 1.0, 2.0]), weights=jnp.array([0.2, 0.3, 0.5]), component="e"
+        jnp.array([0.0, 1.0, 2.0]), weights=jnp.array([0.2, 0.3, 0.5]), output_name="e"
     )
 
 
@@ -283,7 +283,7 @@ class _KeyedRule(BinaryDispatchMethod):
         return Feasibility(True)
 
     def execute(self, f, operand, /, **call):
-        return EmpiricalDistribution(jnp.array([7.0]), component="keyed")
+        return EmpiricalDistribution(jnp.array([7.0]), output_name="keyed")
 
 
 def test_a_rule_keyed_on_the_maps_type_applies_where_the_direct_call_samples(monkeypatch):
@@ -318,8 +318,8 @@ class TestTheOperand:
     def test_a_batch_of_laws_gives_the_batch_of_their_pushforwards(self):
         laws = DistributionBatch(
             [
-                EmpiricalDistribution(jnp.array([0.0, 1.0]), component="x"),
-                EmpiricalDistribution(jnp.array([2.0, 4.0]), component="x"),
+                EmpiricalDistribution(jnp.array([0.0, 1.0]), output_name="x"),
+                EmpiricalDistribution(jnp.array([2.0, 4.0]), output_name="x"),
             ],
             "law",
             label="laws",
@@ -330,7 +330,7 @@ class TestTheOperand:
 
     def test_a_kernel_with_given_is_conditioned_first(self):
         kernel = conditional_distribution(
-            lambda mu: EmpiricalDistribution(jnp.stack([mu, mu + 2.0]), component="y"),
+            lambda mu: EmpiricalDistribution(jnp.stack([mu, mu + 2.0]), output_name="y"),
             given_spec={"mu": REAL},
         )
         with workflow_run(seed=0):
@@ -417,7 +417,7 @@ class TestTheDomainCondition:
             label="dot",
             input_spec={"x": NumericArraySpec(("n",)), "w": NumericArraySpec(("n",))},
         )
-        laws = EmpiricalDistribution(jnp.ones((3, 2)), component="x")
+        laws = EmpiricalDistribution(jnp.ones((3, 2)), output_name="x")
         with pytest.raises(
             ApplicabilityError, match=r"fixed_args\['w'\] does not match the input_spec"
         ):
@@ -528,7 +528,7 @@ def test_any_map_preserves_shared_input_output_dimensions(dispatch, output_size)
         input_spec={"x": NumericArraySpec(("n",))},
         output_spec=NumericArraySpec(("n",)),
     )
-    law = EmpiricalDistribution(jnp.ones((2, 2)), component="x")
+    law = EmpiricalDistribution(jnp.ones((2, 2)), output_name="x")
     op = pushforward.using(dispatch=dispatch)
     if output_size == 3:
         with pytest.raises(ValueError) as error:
@@ -537,5 +537,5 @@ def test_any_map_preserves_shared_input_output_dimensions(dispatch, output_size)
         assert "already bound to 2" in str(cause)
     else:
         result = op(law, fn)
-        assert result.event_spec.spec.shape == (2,)
+        assert result.event_spec.term_spec.shape == (2,)
         assert jnp.array_equal(mean(result).raw, jnp.ones(2))

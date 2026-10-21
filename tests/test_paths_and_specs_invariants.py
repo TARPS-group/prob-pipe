@@ -174,7 +174,7 @@ def test_i7_a_view_and_a_marginal_at_a_list_of_paths_are_one_law():
     for law, paths in [(_grouped(), ["g/c", "a"]), (_hier(), ("s2/theta", "s1/theta"))]:
         view, detached = law[paths], marginal(law, paths)
         assert view.event_spec == detached.event_spec
-        for leaf in view.event_spec.spec:
+        for leaf in view.event_spec.term_spec:
             np.testing.assert_allclose(
                 variance(view)[leaf].raw, variance(detached)[leaf].raw, rtol=1e-6
             )
@@ -186,7 +186,7 @@ def test_i7_a_view_and_a_marginal_at_a_list_of_paths_are_one_law():
 def test_i8_draws_of_a_list_of_paths_condition_back():
     grouped = _grouped()
     conditioned = condition_on(grouped, _sample(grouped[["a", "g/c"]]))
-    assert conditioned.event_spec.spec.keys() == ("g/e",)
+    assert conditioned.event_spec.term_spec.keys() == ("g/e",)
 
 
 def test_i9_one_path_gives_the_node_and_a_list_a_record_that_holds_it():
@@ -194,9 +194,9 @@ def test_i9_one_path_gives_the_node_and_a_list_a_record_that_holds_it():
     draw = _sample(_grouped())
     assert draw["g"].keys() == ("c", "e")
     assert draw[["g"]].keys() == ("g/c", "g/e")
-    assert _grouped()[["g"]].event_spec.spec.keys() == ("g/c", "g/e")
+    assert _grouped()[["g"]].event_spec.term_spec.keys() == ("g/c", "g/e")
     x = Normal("x", 0.0, 1.0)
-    assert x[["x"]].event_spec == OutputSpec(RecordSpec(x=x.event_spec.spec))
+    assert x[["x"]].event_spec == OutputSpec(RecordSpec(x=x.event_spec.term_spec))
 
 
 @pytest.mark.pending(reason="S4: a batch stores its elements' output name", raises=KeyError)
@@ -246,10 +246,10 @@ def test_i11_conditioning_removes_what_it_fixes():
     assert condition_on(prior, {"mu": 0.1}).event_spec == prior.event_spec.without("mu")
 
 
-@pytest.mark.pending(reason="G3: the accessor of the term at a component", raises=AttributeError)
-def test_i12_the_term_at_a_component():
+@pytest.mark.pending(reason="G3: the accessor of the term at an output", raises=AttributeError)
+def test_i12_the_term_at_an_output():
     grouped = _grouped()
-    assert grouped.component("g").event_spec == grouped["g"].event_spec
+    assert grouped.output_name("g").event_spec == grouped["g"].event_spec
 
 
 @pytest.mark.pending(reason="G3: [] on a Function", raises=TypeError)
@@ -268,13 +268,13 @@ def test_i14_indexing_keeps_inputs():
 def test_i15_a_kernels_sides_are_disjoint():
     """I15 for kernels, which holds today."""
     lik = _lik()
-    assert not set(lik.given_spec) & set(lik.event_spec.components)
+    assert not set(lik.given_spec) & set(lik.event_spec.outputs)
 
 
 @pytest.mark.pending(reason="S3: & merges laws and kernels", raises=TypeError)
 def test_i15_a_merges_sides_are_disjoint():
     model = _lik() & _prior()
-    assert not set(getattr(model, "given_spec", {})) & set(model.event_spec.components)
+    assert not set(getattr(model, "given_spec", {})) & set(model.event_spec.outputs)
 
 
 @pytest.mark.pending(reason="S2b: & on output specs", raises=TypeError)

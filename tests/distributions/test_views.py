@@ -1,10 +1,10 @@
 """A field view is the law of one event path of its parent.
 
-``FieldView(parent, path)`` declares the node at ``path`` whole, under a
-component named by the path's final segment, is labeled by the path, and holds a
-reference to its parent. A tuple of paths selects several nodes as an exposed
-record of them. Indexing a view joins the view's path to the key after the view's
-component. A view claims each capability its parent's can derive: a projection
+``FieldView(parent, path)`` declares the node at ``path`` whole, under an
+output named by the path's final segment, is labeled by the path, and holds a
+reference to its parent. A tuple of paths selects several nodes as a record of
+them in the positional form. Indexing a view joins the view's path to the key after the view's
+output. A view claims each capability its parent's can derive: a projection
 when the parent has it, covariance and quantiles only at a numeric node, and the
 densities and marginals when the parent has marginals. Each derived capability
 carries the parent's guard for the call it makes, and computes from the parent's
@@ -46,6 +46,7 @@ from probpipe import (
     RecordSpec,
 )
 from probpipe.core._dispatch import Feasibility, MathematicalDomainError
+from probpipe.core._specs import _has_record_outputs
 from probpipe.distributions import (
     ConditionalDistribution,
     Distribution,
@@ -82,21 +83,21 @@ from probpipe.operations._moments import mean
 from tests._fixed_paths import with_fixed_paths
 from tests._posterior import posterior_of
 
-# -- Declarations -------------------------------------------------------------
+# -- Event specs --------------------------------------------------------------
 
 #: The declared spec of a scalar normal draw, so that a scalar node of a double
-#: matches the declaration of a normal marginal.
-_REAL = Normal("x", 0.0, 1.0).event_spec.spec
+#: matches the event spec of a normal marginal.
+_REAL = Normal("x", 0.0, 1.0).event_spec.term_spec
 
-#: A numeric exposed record: a group two levels deep, and a vector beside it.
+#: A numeric record in the positional form: a group two levels deep, and a vector beside it.
 _EVENT = OutputSpec(RecordSpec(model=RecordSpec(theta=RecordSpec(mu=_REAL, tau=(2,))), y=(3,)))
 
-#: A mixed exposed record: an opaque leaf, a numeric leaf, and a mixed group.
+#: A mixed record in the positional form: an opaque leaf, a numeric leaf, and a mixed group.
 _MIXED = OutputSpec(
     RecordSpec(label=OpaqueSpec(), x=(2,), group=RecordSpec(tag=OpaqueSpec(), w=()))
 )
 
-#: A whole record term, whose paths start with its component.
+#: A whole record term, whose paths start with its output.
 _WHOLE = OutputSpec(parameters=RecordSpec(beta=(2,), sigma=()))
 
 _MEAN = jnp.array([1.0, 2.0, 3.0])
@@ -188,10 +189,10 @@ class _UnguardedMarginalLaw(_Law, SupportsMarginals):
             return product.with_path_names(
                 {f"nodes/node{index}": each for index, each in enumerate(path)}
             )
-        component = path.rsplit("/", 1)[-1]
+        output_name = path.rsplit("/", 1)[-1]
         if self.scores:
-            return Normal(component, 0.0, 1.0)
-        return _Law(component, OutputSpec(**{component: _REAL}))
+            return Normal(output_name, 0.0, 1.0)
+        return _Law(output_name, OutputSpec(**{output_name: _REAL}))
 
 
 class _MarginalLaw(_UnguardedMarginalLaw):
@@ -336,13 +337,13 @@ class _NumericLaw(
             return NumericRecordBatch(
                 fields,
                 "sample",
-                element_spec=self.event_spec.spec,
+                element_spec=self.event_spec.term_spec,
                 axes_per_level=(len(sample_shape),),
                 label=self.label,
             )
         return Record(
             fields,
-            event_template=self.event_spec.spec,
+            event_template=self.event_spec.term_spec,
             label=self.label,
         )
 
@@ -539,7 +540,7 @@ class TestDeclaration:
     ):
         view = FieldView(_Law("parent", event_spec), path)
         assert view.event_spec == declaration
-        assert not view.event_spec.exposes_record
+        assert not _has_record_outputs(view.event_spec)
         assert view.spec == DistributionSpec(declaration)
 
     @pytest.mark.parametrize(("event_spec", "path"), _PATHS)
@@ -598,11 +599,11 @@ _MALFORMED_PATHS = [
 ]
 
 _NOT_EVENT_PATHS = [
-    pytest.param(_EVENT, "z", id="unknown-component"),
-    pytest.param(_EVENT, "theta", id="field-without-its-component"),
+    pytest.param(_EVENT, "z", id="unknown-output"),
+    pytest.param(_EVENT, "theta", id="field-without-its-output"),
     pytest.param(_EVENT, "model/phi", id="unknown-field"),
     pytest.param(_EVENT, "y/0", id="below-a-leaf"),
-    pytest.param(_WHOLE, "beta", id="whole-term-field-without-its-component"),
+    pytest.param(_WHOLE, "beta", id="whole-term-field-without-its-output"),
     pytest.param(_WHOLE, "parameters/beta/0", id="below-a-whole-term-leaf"),
     pytest.param(OutputSpec(x=NumericArraySpec((3,))), "x/0", id="below-a-whole-array"),
 ]
@@ -648,7 +649,7 @@ class TestPaths:
 
 class TestIndexing:
     @pytest.mark.parametrize("path", ["model", "model/theta", "y"])
-    def test_a_view_at_its_own_component_is_itself(self, path):
+    def test_a_view_at_its_own_output_is_itself(self, path):
         view = FieldView(_Law("parent", _EVENT), path)
         assert view[path.rsplit("/", 1)[-1]] is view
 
@@ -691,11 +692,11 @@ class TestIndexing:
         with pytest.raises(ValueError, match=r"the path is empty|has an empty name"):
             view[key]
 
-    def test_a_view_renamed_by_label_is_still_addressed_by_its_component(self):
+    def test_a_view_renamed_by_label_is_still_addressed_by_its_output(self):
         view = FieldView(_Law("parent", _EVENT), "model/theta").with_label("coefficients")
         assert view["theta"] is view
 
-    def test_a_view_renamed_by_path_is_addressed_by_its_new_component(self):
+    def test_a_view_renamed_by_path_is_addressed_by_its_new_output(self):
         view = FieldView(_Law("parent", _EVENT), "y").with_path_names(y="obs")
         assert view["obs"] is view
         with pytest.raises(KeyError):
@@ -704,16 +705,16 @@ class TestIndexing:
     def test_a_list_of_paths_of_a_view_keeps_the_paths_of_the_view(self):
         view = FieldView(_Law("parent", _EVENT), "model/theta")
         selection = view[("theta/tau", "theta/mu")]
-        assert selection.event_spec.exposes_record
-        assert list(selection.event_spec.components) == ["theta"]
+        assert _has_record_outputs(selection.event_spec)
+        assert list(selection.event_spec.outputs) == ["theta"]
         # The view's order, whatever the order of the list.
-        assert selection.event_spec.spec == RecordSpec(theta=RecordSpec(mu=_REAL, tau=(2,)))
+        assert selection.event_spec.term_spec == RecordSpec(theta=RecordSpec(mu=_REAL, tau=(2,)))
 
     def test_a_list_of_paths_whose_last_names_collide_keeps_both(self):
         twins = RecordSpec(g=RecordSpec(a=RecordSpec(x=()), b=RecordSpec(x=())))
         view = FieldView(_Law("parent", OutputSpec(twins)), "g")
         selection = view[("g/a/x", "g/b/x")]
-        assert selection.event_spec.spec == twins
+        assert selection.event_spec.term_spec == twins
 
     def test_a_list_of_paths_reads_its_parent_at_them_under_the_view_label(self):
         parent = _Law("parent", _EVENT)
@@ -802,7 +803,7 @@ class TestIndexing:
         assert view.parent is parent
         assert view.path == "a"
 
-    def test_indexing_a_whole_record_below_its_component_returns_a_field_view(self):
+    def test_indexing_a_whole_record_below_its_output_returns_a_field_view(self):
         parent = _Law("parent", _WHOLE)
         view = parent["parameters/beta"]
         assert isinstance(view, FieldView)
@@ -865,7 +866,7 @@ class TestCapabilityDerivation:
 
     def test_a_joint_reports_the_claims_of_the_factors_a_marginal_keeps(self):
         joint = Normal("a", 0.0, 1.0) * EmpiricalDistribution(
-            jnp.array([0.0, 1.0, 3.0]), component="b"
+            jnp.array([0.0, 1.0, 3.0]), output_name="b"
         )
         assert _claimed(joint["a"]) >= _DENSITIES
         assert not _DENSITIES & _claimed(joint["b"])
@@ -913,7 +914,7 @@ class TestCapabilityDerivation:
     def test_a_view_of_a_library_law_claims_what_the_table_derives(self, make, path):
         parent = make()
         view = FieldView(parent, path)
-        numeric = isinstance(view.event_spec.spec, NumericSpec)
+        numeric = isinstance(view.event_spec.term_spec, NumericSpec)
         report = _marginal_claims(parent, path)
         assert _claimed(view) == _derived(_claimed(parent), report, numeric=numeric)
 
@@ -1113,11 +1114,11 @@ class TestDerivedBehavior:
         parent = EmpiricalDistribution(atoms, label="post")
         quantiles = FieldView(parent, "a")._quantile(q)
         assert jnp.shape(quantiles) == shape
-        expected = EmpiricalDistribution(jnp.array([3.0, 1.0, 2.0]), component="a")._quantile(q)
+        expected = EmpiricalDistribution(jnp.array([3.0, 1.0, 2.0]), output_name="a")._quantile(q)
         assert jnp.allclose(quantiles, expected)
 
     def test_a_selection_of_a_whole_array_keeps_every_level(self):
-        parent = EmpiricalDistribution(jnp.array([4.0, 1.0, 3.0, 2.0]), component="theta")
+        parent = EmpiricalDistribution(jnp.array([4.0, 1.0, 3.0, 2.0]), output_name="theta")
         levels = jnp.array([0.25, 0.5, 1.0])
         quantiles = FieldView(parent, ("theta",))._quantile(levels)
         assert list(quantiles) == ["theta"]
@@ -1195,7 +1196,7 @@ class TestDerivedBehavior:
         marginal = FieldView(parent, "model/theta")._marginal("theta/mu")
         assert parent.marginal_calls == ["model/theta/mu"]
         assert not isinstance(marginal, FieldView)
-        assert list(marginal.event_spec.components) == ["mu"]
+        assert list(marginal.event_spec.outputs) == ["mu"]
 
     def test_the_view_marginal_keeps_the_view_label(self):
         parent = _UnguardedMarginalLaw("parent", _EVENT)
@@ -1231,7 +1232,7 @@ class TestDerivedBehavior:
         assert jnp.array_equal(draws["c"], parent_draws["c"])
         assert jnp.array_equal(draws["b"], parent_draws["b"])
 
-    def test_a_view_of_a_whole_record_at_its_component_draws_the_term(self, key):
+    def test_a_view_of_a_whole_record_at_its_output_draws_the_term(self, key):
         parent = _WholeLaw("parent")
         draw = FieldView(parent, "parameters")._sample(key)
         assert isinstance(draw, dict) and list(draw) == ["beta", "sigma"]
@@ -1286,12 +1287,12 @@ class TestDerivedBehavior:
         with pytest.raises(TypeError, match="no normalized density"):
             view._log_prob(0.5)
 
-    def test_the_marginal_at_a_renamed_component_is_named_by_it(self):
+    def test_the_marginal_at_a_renamed_output_is_named_by_it(self):
         parent = _UnguardedMarginalLaw("parent", _EVENT)
         view = FieldView(parent, "model/theta/mu").with_path_names(mu="location")
         marginal = view._marginal("location")
         assert parent.marginal_calls == ["model/theta/mu"]
-        assert list(marginal.event_spec.components) == ["location"]
+        assert list(marginal.event_spec.outputs) == ["location"]
 
     def test_the_marginal_at_a_path_that_is_not_a_view_path_raises_key_error(self):
         view = FieldView(_UnguardedMarginalLaw("parent", _EVENT), "model/theta")
@@ -1368,16 +1369,16 @@ class TestTheViewOfAWeightedLaw:
 
 
 class TestNotation:
-    """A view reads as the detached marginal at its path: its label followed by its components."""
+    """A view reads as the detached marginal at its path: its label followed by its outputs."""
 
-    def test_a_view_reads_by_its_parents_label_and_its_component(self):
+    def test_a_view_reads_by_its_parents_label_and_its_output(self):
         model = _dependent_joint().with_label("model")
         assert str(model["y"]) == model["y"].notation == "model(y)"
 
     def test_a_view_of_a_nested_path_reads_by_the_final_segment(self):
         assert FieldView(_Law("parent", _EVENT), "model/theta").notation == "parent(theta)"
 
-    def test_a_list_of_paths_reads_by_its_components_in_the_parent_order(self):
+    def test_a_list_of_paths_reads_by_its_outputs_in_the_parent_order(self):
         view = FieldView(_Law("parent", _EVENT), ("y", "model/theta"))
         assert view.notation == "parent(model/theta, y)"
 
@@ -1404,7 +1405,7 @@ class TestNotation:
 
     def test_the_detached_marginal_keeps_the_fixed_paths(self):
         joint = Normal("a", 0.0, 1.0, label="a") * EmpiricalDistribution(
-            jnp.array([0.0, 1.0, 3.0]), component="b", label="b"
+            jnp.array([0.0, 1.0, 3.0]), output_name="b", label="b"
         )
         parent = with_fixed_paths(joint.with_label("model"), "obs")
         detached = parent["b"].raw
@@ -1557,7 +1558,7 @@ class TestTheRawFormOfAView:
 
     def test_a_view_of_a_law_without_a_backend_gives_the_detached_marginal(self):
         joint = Normal("a", 0.0, 1.0, label="a") * EmpiricalDistribution(
-            jnp.array([0.0, 1.0, 3.0]), component="b", label="b"
+            jnp.array([0.0, 1.0, 3.0]), output_name="b", label="b"
         )
         view = joint.with_label("model")["b"]
         raw = view.raw
@@ -1582,7 +1583,7 @@ class TestSelections:
 
     def test_the_declaration_admits_a_selection_draw(self, key):
         selection = FieldView(_NumericLaw("parent"), self._PATHS)
-        assert selection.event_spec.spec.is_valid(selection._sample(key))
+        assert selection.event_spec.term_spec.is_valid(selection._sample(key))
 
     def test_a_batched_list_view_draw_is_the_nested_mapping_of_the_parent_columns(self, key):
         parent = _NumericLaw("parent")
@@ -1631,13 +1632,13 @@ class TestSelections:
         parent = _UnguardedMarginalLaw("parent", _EVENT)
         marginal = FieldView(parent, self._PATHS)._marginal("model/theta/mu")
         assert parent.marginal_calls == ["model/theta/mu"]
-        assert list(marginal.event_spec.components) == ["mu"]
+        assert list(marginal.event_spec.outputs) == ["mu"]
 
     def test_the_marginal_at_paths_of_a_list_view_is_the_parent_marginal_at_them(self):
         parent = _UnguardedMarginalLaw("parent", _EVENT)
         marginal = FieldView(parent, self._PATHS)._marginal(("y", "model/theta/mu"))
         assert parent.marginal_calls == [("model/theta/mu", "y")]
-        assert list(marginal.event_spec.components) == ["model", "y"]
+        assert list(marginal.event_spec.outputs) == ["model", "y"]
 
     def test_the_marginal_at_a_group_the_list_cut_down_takes_the_group(self):
         joint = Normal("a", 0.0, 1.0) * Normal("c", 0.0, 1.0) * Normal("e", 0.0, 2.0)

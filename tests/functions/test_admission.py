@@ -129,7 +129,7 @@ class TestWrap:
 
         assert seen[0] is array
 
-    def test_a_raw_collection_wraps_as_opaque_and_fails_a_numeric_slot(self):
+    def test_a_raw_collection_wraps_as_opaque_and_fails_a_numeric_input(self):
         wrapped = Function(
             lambda x: x,
             input_spec={"x": NumericArraySpec((2,))},
@@ -306,8 +306,8 @@ class TestAdmission:
         assert seen == [kernel]
 
     @pytest.mark.parametrize("annotation", [Any, _AnyAlias], ids=["Any", "alias"])
-    @pytest.mark.parametrize("slot", ["parameter", "variadic positional", "variadic keyword"])
-    def test_a_kernel_at_a_slot_annotated_any_passes(self, slot, annotation):
+    @pytest.mark.parametrize("input_kind", ["parameter", "variadic positional", "variadic keyword"])
+    def test_a_kernel_at_an_input_annotated_any_passes(self, input_kind, annotation):
         seen = []
 
         def at_parameter(proposal):
@@ -326,20 +326,20 @@ class TestAdmission:
         at_args.__annotations__ = {"proposals": annotation}
         at_options.__annotations__ = {"options": annotation}
         kernel = _kernel()
-        if slot == "variadic keyword":
+        if input_kind == "variadic keyword":
             Function(
                 at_options,
                 label="body",
             )(proposal=kernel)
         else:
             Function(
-                at_parameter if slot == "parameter" else at_args,
+                at_parameter if input_kind == "parameter" else at_args,
                 label="body",
             )(kernel)
 
         assert len(seen) == 1 and seen[0] is kernel
 
-    def test_a_kernel_at_an_unannotated_variadic_slot_is_refused(self):
+    def test_a_kernel_at_an_unannotated_variadic_input_is_refused(self):
         def at_options(**options):
             return 0.0
 

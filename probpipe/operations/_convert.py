@@ -2,7 +2,7 @@
 
 ``convert(d, target)`` returns a distribution of the requested class, or one
 claiming the requested capability protocol, carrying ``d``'s event
-declaration. A source that already satisfies the target returns under fresh
+spec. A source that already satisfies the target returns under fresh
 identity, and any other conversion is the converter registry's. The result
 keeps ``d``'s support unless the converter option ``check_support=False``
 overrides the support check. The result then has the converted law's own
@@ -40,7 +40,7 @@ def _is_target(target: Any) -> Feasibility:
 
 
 def _convert_result(d: DistributionSpec, target: Any) -> OutputSpec:
-    """The converted law, which exposes the source's event declaration."""
+    """The converted law, under the source's event spec."""
     return OutputSpec(DistributionSpec(d.event_spec))
 
 
@@ -56,9 +56,9 @@ def _open_support(spec: TermSpec) -> TermSpec:
 class _Conversion(Operation):
     """The convert operation, whose planning reads the converter option ``check_support``.
 
-    The result rule declares the source's event declaration with its support.
+    The result rule declares the source's event spec with its support.
     A call whose ``method_options`` set ``check_support=False`` overrides the
-    support check. Its planning leaves each support of that declaration open,
+    support check. Its planning leaves each support of that event spec open,
     so the result has the converted law's own support.
 
     Parameters
@@ -71,7 +71,7 @@ class _Conversion(Operation):
         super().__init__(declaration, result=_convert_result, applicability_checks=(_is_target,))
 
     def _plan(self, call: BoundCall) -> tuple[OutputSpec | None, tuple[str, ...]]:
-        """The result rule's declaration, with each support open under ``check_support=False``.
+        """The result rule's output spec, with each support open under ``check_support=False``.
 
         Parameters
         ----------
@@ -82,7 +82,7 @@ class _Conversion(Operation):
         Returns
         -------
         result : OutputSpec or None
-            The declaration, or ``None`` when the declarations leave it open.
+            The output spec, or ``None`` when the operands' specs leave it open.
         deferred : tuple of str
             The checks deferred to the return, as :meth:`Operation._plan` gives
             them.
@@ -95,9 +95,9 @@ class _Conversion(Operation):
         result, deferred = super()._plan(call)
         if result is None or call.controls["method_options"].get("check_support", True):
             return result, deferred
-        # The result rule declares a law, and a law's event declaration has no type hole.
-        event = cast(DistributionSpec, result.spec).event_spec
-        opened = event._with_spec(_open_support(cast(TermSpec, event.spec)))
+        # The result rule declares a law, and a law's event spec always has a known type.
+        event = cast(DistributionSpec, result.term_spec).event_spec
+        opened = event._with_term_spec(_open_support(cast(TermSpec, event.term_spec)))
         return OutputSpec(DistributionSpec(opened)), deferred
 
 
@@ -125,7 +125,7 @@ def convert(d: Distribution, target: type):
     -------
     Distribution
         A law of the target class, or claiming the target protocol, with *d*'s
-        event declaration. Under ``check_support=False`` its support is the
+        event spec. Under ``check_support=False`` its support is the
         converted law's own, such as the support of a fitted family.
 
     Raises
@@ -135,7 +135,7 @@ def convert(d: Distribution, target: type):
     ResolutionError
         If *d* does not satisfy *target* and no converter applies.
     ValueError
-        If the converted law does not carry *d*'s event declaration, which
+        If the converted law does not carry *d*'s event spec, which
         includes its support unless ``check_support=False``.
     """
 

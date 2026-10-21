@@ -70,7 +70,7 @@ def _field_paths(term):
         return term.keys()
     if hasattr(term, "element_spec"):
         return term.element_spec.keys()
-    return term.event_spec.spec.keys()
+    return term.event_spec.term_spec.keys()
 
 
 @pytest.fixture(params=list(_TERMS), ids=list(_TERMS))
@@ -194,9 +194,9 @@ class TestOnePathOrAList:
     def test_a_law_indexed_by_several_paths_keeps_their_paths(self):
         hier = _hier()
         view = hier["s1/theta", "s2/theta"]
-        assert view.event_spec.spec == RecordSpec(
-            s1=RecordSpec(theta=Normal("x", 0.0, 1.0).event_spec.spec),
-            s2=RecordSpec(theta=Normal("x", 0.0, 1.0).event_spec.spec),
+        assert view.event_spec.term_spec == RecordSpec(
+            s1=RecordSpec(theta=Normal("x", 0.0, 1.0).event_spec.term_spec),
+            s2=RecordSpec(theta=Normal("x", 0.0, 1.0).event_spec.term_spec),
         )
         draw = _sample(view, seed=1)
         assert draw.keys() == ("s1/theta", "s2/theta")
@@ -204,7 +204,7 @@ class TestOnePathOrAList:
 
     def test_a_list_of_one_whole_term_name_keeps_todays_record(self):
         x = Normal("x", 0.0, 1.0)
-        assert x[["x"]].event_spec.spec == RecordSpec(x=x.event_spec.spec)
+        assert x[["x"]].event_spec.term_spec == RecordSpec(x=x.event_spec.term_spec)
         assert x["x"] is x
 
 
@@ -230,13 +230,13 @@ class TestMarginal:
         grouped = _grouped()
         detached, view = marginal(grouped, paths), grouped[paths]
         assert detached.event_spec == view.event_spec
-        assert detached.event_spec.spec.keys() == ("a", "g/c")
+        assert detached.event_spec.term_spec.keys() == ("a", "g/c")
         np.testing.assert_allclose(variance(detached)["g/c"], 4.0, rtol=1e-6)
         np.testing.assert_allclose(mean(detached)["g/c"], mean(view)["g/c"], rtol=1e-6)
 
     def test_paths_with_one_last_name_keep_their_groups(self):
         detached = marginal(_hier(), ["s2/theta", "s1/theta"])
-        assert detached.event_spec.spec.keys() == ("s1/theta", "s2/theta")
+        assert detached.event_spec.term_spec.keys() == ("s1/theta", "s2/theta")
         np.testing.assert_allclose(variance(detached)["s1/theta"], 1.0, rtol=1e-6)
 
 

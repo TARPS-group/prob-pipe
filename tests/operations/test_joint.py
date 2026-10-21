@@ -26,12 +26,12 @@ class TestJoint:
         likelihood, prior = Kernel("y", ("slope",)), Gaussian("slope")
         assert joint.check(likelihood, prior).result is None
 
-    def test_a_rename_connects_a_producer_to_the_slot_its_consumer_names(self):
+    def test_a_rename_connects_a_producer_to_the_input_its_consumer_names(self):
         likelihood, prior = Kernel("y", ("slope",)), Gaussian("beta")
         assert isinstance(joint(likelihood, prior), ConditionalDistribution)
         realigned = joint(likelihood, prior, beta="slope")
         assert isinstance(realigned, FactoredDistribution)
-        assert set(realigned.event_spec.components) == {"y", "slope"}
+        assert set(realigned.event_spec.outputs) == {"y", "slope"}
 
     def test_the_joint_is_labeled_as_composition_labels_it(self):
         likelihood, prior = Kernel("y", ("slope",)), Gaussian("beta")

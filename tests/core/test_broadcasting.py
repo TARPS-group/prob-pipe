@@ -82,7 +82,7 @@ class TestBroadcastingBasic:
         with workflow_run(seed=2):
             result = w(x=mvn)
         assert isinstance(result, EmpiricalDistribution)
-        assert result.event_spec.spec.vector_size == 1
+        assert result.event_spec.term_spec.vector_size == 1
 
     def test_positional_args(self):
         """Function accepts positional arguments."""
@@ -121,7 +121,7 @@ class TestBroadcastingBasic:
         g = Normal("x", loc=1.0, scale=0.5)
         with workflow_run(seed=0):
             result = w(x=g)
-        assert list(result.event_spec.components) == ["double_it"]
+        assert list(result.event_spec.outputs) == ["double_it"]
 
 
 class TestBroadcastingMultipleArgs:
@@ -306,7 +306,7 @@ class TestBroadcastingEnumeration:
 
         samples = jnp.array([[1.0], [2.0], [3.0]])
         weights = jnp.array([0.2, 0.3, 0.5])
-        ed = EmpiricalDistribution(samples, weights, component="x")
+        ed = EmpiricalDistribution(samples, weights, output_name="x")
 
         w = Function(
             identity,
@@ -323,8 +323,8 @@ class TestBroadcastingEnumeration:
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
 
-        ed1 = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), component="x")
-        ed2 = EmpiricalDistribution(jnp.array([[10.0], [20.0], [30.0]]), component="x")
+        ed1 = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), output_name="x")
+        ed2 = EmpiricalDistribution(jnp.array([[10.0], [20.0], [30.0]]), output_name="x")
 
         w = Function(
             add_them,
@@ -342,12 +342,12 @@ class TestBroadcastingEnumeration:
         def sum_three(a: jnp.ndarray, b: jnp.ndarray, c: jnp.ndarray) -> jnp.ndarray:
             return a + b + c
 
-        ed_small = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), component="x")  # n=2
+        ed_small = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), output_name="x")  # n=2
         ed_medium = EmpiricalDistribution(
-            jnp.arange(5).reshape(-1, 1).astype(jnp.float32), component="x"
+            jnp.arange(5).reshape(-1, 1).astype(jnp.float32), output_name="x"
         )  # n=5
         ed_large = EmpiricalDistribution(
-            jnp.arange(20).reshape(-1, 1).astype(jnp.float32), component="x"
+            jnp.arange(20).reshape(-1, 1).astype(jnp.float32), output_name="x"
         )  # n=20
 
         w = Function(
@@ -366,7 +366,7 @@ class TestBroadcastingEnumeration:
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
 
-        ed = EmpiricalDistribution(jnp.array([[1.0], [2.0], [3.0]]), component="x")
+        ed = EmpiricalDistribution(jnp.array([[1.0], [2.0], [3.0]]), output_name="x")
         g = Normal("b", loc=0.0, scale=1.0)
 
         w = Function(
@@ -388,7 +388,7 @@ class TestBroadcastingEnumeration:
             return x
 
         samples = jnp.array([[1.0], [2.0], [3.0]])
-        ed = EmpiricalDistribution(samples, component="x")
+        ed = EmpiricalDistribution(samples, output_name="x")
 
         w = Function(
             identity,
@@ -399,7 +399,7 @@ class TestBroadcastingEnumeration:
         )
         result = w.using(include_inputs=True)(x=ed)
         assert isinstance(result, EmpiricalDistribution)
-        assert "x" in result.event_spec.components
+        assert "x" in result.event_spec.outputs
         # Each draw of the array law is an array, and stays one in the joint.
         assert result._rows["x"].shape == (3, 1)
         # Output should match input (identity function)
@@ -521,7 +521,7 @@ class TestBroadcastingJAX:
         with workflow_run(seed=24):
             result = w(x=mvn)
         assert result.num_atoms == 30
-        assert result.event_spec.spec.vector_size == 2
+        assert result.event_spec.term_spec.vector_size == 2
         mean = jnp.mean(np.asarray(result.atoms), axis=0)
         np.testing.assert_allclose(mean, jnp.array([2.0, 3.0]), atol=0.2)
 
@@ -542,7 +542,7 @@ class TestBroadcastingJAX:
         with workflow_run(seed=20):
             result = w.using(include_inputs=True)(x=g)
         assert isinstance(result, EmpiricalDistribution)
-        assert "x" in result.event_spec.components
+        assert "x" in result.event_spec.outputs
         assert result._rows["x"].shape[0] == 30
         # Output should be 2x input
         np.testing.assert_allclose(result._rows["double_it"], result._rows["x"] * 2, atol=1e-5)
@@ -703,7 +703,7 @@ class TestIncludeInputsArgument:
         with workflow_run(seed=0):
             result = w(x=g)
         assert isinstance(result, EmpiricalDistribution)
-        assert "x" in result.event_spec.components
+        assert "x" in result.event_spec.outputs
         assert result.num_atoms == 20
 
     def test_include_inputs_at_call_time(self):
@@ -721,7 +721,7 @@ class TestIncludeInputsArgument:
         with workflow_run(seed=0):
             result = w.using(include_inputs=True)(x=g)
         assert isinstance(result, EmpiricalDistribution)
-        assert "x" in result.event_spec.components
+        assert "x" in result.event_spec.outputs
 
     def test_default_no_input_samples(self):
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
@@ -738,9 +738,9 @@ class TestIncludeInputsArgument:
         with workflow_run(seed=0):
             result = w(x=g)
         assert isinstance(result, EmpiricalDistribution)
-        assert "x" not in result.event_spec.components
+        assert "x" not in result.event_spec.outputs
 
-    def test_include_inputs_has_named_components(self):
+    def test_include_inputs_has_named_outputs(self):
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
 
@@ -756,9 +756,9 @@ class TestIncludeInputsArgument:
         with workflow_run(seed=0):
             result = w.using(include_inputs=True)(a=g1, b=g2)
         assert isinstance(result, EmpiricalDistribution)
-        assert list(result.event_spec.components) == ["a", "b", "add_them"]
+        assert list(result.event_spec.outputs) == ["a", "b", "add_them"]
 
-    def test_include_inputs_refuses_a_parameter_named_as_a_component(self):
+    def test_include_inputs_refuses_a_parameter_named_as_an_output(self):
         def mu(mu):
             return 2.0 * mu
 
@@ -768,7 +768,7 @@ class TestIncludeInputsArgument:
             pytest.raises(
                 ApplicabilityError,
                 match=r"^include_inputs=True cannot add parameter 'mu' to the output of 'mu', "
-                r"which already has a component with that name; rename the parameter, or pass "
+                r"which already has an output with that name; rename the parameter, or pass "
                 r"output_spec=OutputSpec\(output=None\) to hold the output under a name no "
                 r"parameter has$",
             ),
@@ -783,15 +783,15 @@ class TestIncludeInputsArgument:
         )
         with workflow_run(seed=0):
             result = renamed(Normal("m", loc=0.0, scale=1.0))
-        assert list(result.event_spec.components) == ["mu", "output"]
+        assert list(result.event_spec.outputs) == ["mu", "output"]
 
 
 # ---------------------------------------------------------------------------
-# Named components (require include_inputs=True)
+# Named outputs (require include_inputs=True)
 # ---------------------------------------------------------------------------
 
 
-class TestNamedComponents:
+class TestNamedOutputs:
     def test_fields(self):
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
@@ -807,7 +807,7 @@ class TestNamedComponents:
         g2 = Normal("b", loc=2.0, scale=0.1)
         with workflow_run(seed=0):
             result = w.using(include_inputs=True)(a=g1, b=g2)
-        assert list(result.event_spec.components) == ["a", "b", "add_them"]
+        assert list(result.event_spec.outputs) == ["a", "b", "add_them"]
 
     def test_getitem_input(self):
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
@@ -880,8 +880,8 @@ class TestDispatchConsistency:
         def add_them(a, b):
             return a + b
 
-        ed1 = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), component="x")
-        ed2 = EmpiricalDistribution(jnp.array([[10.0], [20.0], [30.0]]), component="x")
+        ed1 = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), output_name="x")
+        ed2 = EmpiricalDistribution(jnp.array([[10.0], [20.0], [30.0]]), output_name="x")
 
         results = {m: self._run(m, add_them, a=ed1, b=ed2) for m in self.ROWWISE_DISPATCH_MODES}
         # Same size (2 x 3 = 6) in every mode - regression guard.
@@ -913,10 +913,10 @@ class TestDispatchConsistency:
             return a + b
 
         ed1 = EmpiricalDistribution(
-            jnp.array([[1.0], [2.0]]), weights=jnp.array([0.8, 0.2]), component="x"
+            jnp.array([[1.0], [2.0]]), weights=jnp.array([0.8, 0.2]), output_name="x"
         )
         ed2 = EmpiricalDistribution(
-            jnp.array([[10.0], [20.0]]), weights=jnp.array([0.25, 0.75]), component="x"
+            jnp.array([[10.0], [20.0]]), weights=jnp.array([0.25, 0.75]), output_name="x"
         )
         expected_weights = sorted(
             [
@@ -943,7 +943,7 @@ class TestDispatchConsistency:
         def add_them(a, b):
             return a + b
 
-        ed = EmpiricalDistribution(jnp.array([[1.0], [2.0], [3.0]]), component="x")
+        ed = EmpiricalDistribution(jnp.array([[1.0], [2.0], [3.0]]), output_name="x")
         g = Normal("b", loc=0.0, scale=1.0)
 
         samples = []
@@ -967,7 +967,7 @@ class TestDispatchConsistency:
             return x
 
         big = EmpiricalDistribution(
-            jnp.arange(200).reshape(-1, 1).astype(jnp.float32), component="x"
+            jnp.arange(200).reshape(-1, 1).astype(jnp.float32), output_name="x"
         )
         for mode in self.SAMPLE_DISPATCH_MODES:
             with workflow_run(seed=0):
@@ -997,10 +997,10 @@ class TestDispatchConsistency:
             return a + b
 
         ed1 = EmpiricalDistribution(
-            jnp.array([[1.0], [2.0]]), weights=jnp.array([0.8, 0.2]), component="x"
+            jnp.array([[1.0], [2.0]]), weights=jnp.array([0.8, 0.2]), output_name="x"
         )
         ed2 = EmpiricalDistribution(
-            jnp.array([[10.0], [20.0]]), weights=jnp.array([0.25, 0.75]), component="x"
+            jnp.array([[10.0], [20.0]]), weights=jnp.array([0.25, 0.75]), output_name="x"
         )
         mapped = self._run("jax", add_them, a=ed1, b=ed2, max_evaluations=20)
         sequential = self._run("sequential", add_them, a=ed1, b=ed2, max_evaluations=20)

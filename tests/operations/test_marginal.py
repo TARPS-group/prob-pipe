@@ -46,7 +46,7 @@ class TestMarginal:
     def test_the_declaration_is_the_node_under_the_path_s_final_segment(self):
         result = marginal.check(Marginalizing("law"), "a").result
         assert result == OutputSpec(DistributionSpec(OutputSpec(a=REAL)))
-        assert dict(result.components) == {"a": REAL}
+        assert dict(result.outputs) == {"a": REAL}
 
     def test_several_paths_declare_an_exposed_record_of_the_nodes(self):
         result = marginal.check(Marginalizing("law"), ("a", "b")).result
@@ -129,7 +129,7 @@ class TestMarginal:
 
 
 class TestTheMarginalsNotation:
-    """A marginal reads by its label and its own components, and keeps the law's fixed paths."""
+    """A marginal reads by its label and its own outputs, and keeps the law's fixed paths."""
 
     def test_the_marginal_keeps_the_paths_the_law_holds_fixed(self):
         law = Marginalizing("law")
@@ -155,12 +155,12 @@ class TestTheMarginalsNotation:
         joint = (Gaussian("a") * Gaussian("b") * Gaussian("c")).with_label("model")
         result = marginal(joint, ["b", "a"])
         assert (result.label, result.notation) == ("a·b", "a(a)·b(b)")
-        assert list(result.event_spec.components) == ["a", "b"]
+        assert list(result.event_spec.outputs) == ["a", "b"]
 
     def test_a_dependent_pair_named_producer_first_reads_in_the_joint_order(self):
         joint = (Kernel("y", ("beta",)) * Gaussian("beta")).with_label("model")
         result = marginal(joint, ("beta", "y"))
-        assert list(result.event_spec.components) == ["y", "beta"]
+        assert list(result.event_spec.outputs) == ["y", "beta"]
         assert result.notation == "y(y | beta)·beta(beta)"
 
     def test_a_marginal_of_a_conditioned_joint_keeps_its_fixed_paths(self):
@@ -170,8 +170,8 @@ class TestTheMarginalsNotation:
         assert marginal(conditioned, ("a", "b")).notation == "(a·b)(a, b; c)"
 
 
-class TestOptionalSlots:
-    """A factor whose optional slots no factor produces is closed, at its defaults."""
+class TestOptionalInputs:
+    """A factor whose optional inputs no factor produces is closed, at its defaults."""
 
     def test_the_marginal_of_such_a_factor_is_its_law_at_the_defaults(self):
         from probpipe import Normal, conditional_distribution
@@ -189,9 +189,9 @@ class TestOptionalSlots:
         joint = (kernel * Normal("mu", 0.0, 1.0)).with_path_names({"y": "obs"})
         law = marginal(joint, "obs")
         assert isinstance(law, Distribution)
-        assert list(law.event_spec.components) == ["obs"]
+        assert list(law.event_spec.outputs) == ["obs"]
 
-    def test_a_factor_whose_optional_slot_is_produced_is_not_closed(self):
+    def test_a_factor_whose_optional_input_is_produced_is_not_closed(self):
         from probpipe import HalfNormal, Normal, conditional_distribution
 
         kernel = conditional_distribution(lambda scale=2.0: Normal("y", 0.0, scale), label="lik")
@@ -272,14 +272,16 @@ class TestFactor:
         assert factor.check(joint, "beta").result is None
         assert factor(joint, "beta").event_spec == Gaussian("beta").event_spec
 
-    def test_factor_returns_the_factor_producing_the_component(self):
+    def test_factor_returns_the_factor_producing_the_output(self):
         joint = Kernel("y", ("beta",)) * Gaussian("beta", 2.0)
         prior = factor(joint, "beta")
         assert isinstance(prior, Gaussian) and prior.loc == 2.0
         assert isinstance(factor(joint, "y"), ConditionalDistribution)
 
     def test_the_factor_keeps_its_own_label(self):
-        joint = (Kernel("likelihood", ("beta",), component="y") * Gaussian("beta")).with_label("m")
+        joint = (Kernel("likelihood", ("beta",), output_name="y") * Gaussian("beta")).with_label(
+            "m"
+        )
         assert factor(joint, "y").label == "likelihood"
         assert factor(joint, "beta").label == "beta"
 
@@ -287,9 +289,9 @@ class TestFactor:
         joint = Kernel("y", ("beta",)) * Kernel("beta", ("alpha",))
         assert isinstance(factor(joint, "beta"), ConditionalDistribution)
 
-    def test_a_name_that_is_not_a_component_raises_applicability_error(self):
+    def test_a_name_that_is_not_an_output_raises_applicability_error(self):
         joint = Kernel("y", ("beta",)) * Gaussian("beta")
-        with pytest.raises(ApplicabilityError, match="output component"):
+        with pytest.raises(ApplicabilityError, match="output"):
             factor(joint, "gamma")
 
     def test_a_law_without_factors_raises_resolution_error(self):

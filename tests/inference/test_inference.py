@@ -3,7 +3,7 @@
 Covers:
 - make_posterior: an inference result's levels, annotations, warmup, and draws
 - make_posterior with a record target: named draws
-- FieldView: component views, select, broadcasting
+- FieldView: output views, select, broadcasting
 - rwmh Function: basic sampling with SupportsLogProb
 """
 
@@ -245,11 +245,11 @@ class TestMakePosteriorRecordTarget:
         assert tuple(draws.event_template.keys()) == ("r", "K", "phi")
         assert draws["r"].shape == (100,)
 
-    def test_the_atoms_are_labeled_by_the_components(self, posterior_with_template):
+    def test_the_atoms_are_labeled_by_the_outputs(self, posterior_with_template):
         assert posterior_with_template.atoms.label == "(r, K, phi)"
         assert posterior_with_template.atoms.at_levels(draw=0).label == "(r, K, phi)[draw=0]"
 
-    def test_the_atoms_of_one_component_are_labeled_by_it(self):
+    def test_the_atoms_of_one_output_are_labeled_by_it(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (10, 2))
         posterior = make_posterior(
             [chain], parents=(), method="test", event_spec=OutputSpec(beta=NumericArraySpec((2,)))
@@ -288,7 +288,7 @@ class TestMakePosteriorRecordTarget:
         assert draws.shape == (50, 3)
 
     def test_the_target_names_the_fields(self, posterior_with_template, template):
-        assert tuple(posterior_with_template.event_spec.components) == template.fields
+        assert tuple(posterior_with_template.event_spec.outputs) == template.fields
 
     @pytest.mark.parametrize("shape", [(), (2,)])
     def test_a_one_field_target_declares_the_fields_shape(self, shape):
@@ -296,7 +296,7 @@ class TestMakePosteriorRecordTarget:
         width = int(np.prod(shape))
         chains = [jnp.zeros((5, width)), jnp.ones((5, width))]
         post = make_posterior(chains, parents=(), method="test", event_spec=RecordSpec(theta=shape))
-        assert post.event_spec.spec["theta"].shape == shape
+        assert post.event_spec.term_spec["theta"].shape == shape
         assert flat_draws(post)["theta"].shape == (10, *shape)
         assert jnp.shape(post._mean()["theta"]) == shape
 
@@ -527,7 +527,7 @@ class TestMakePosteriorRecordTarget:
         ) * Normal("s", 0.0, 1.0)
         chain = jax.random.normal(jax.random.PRNGKey(0), (40, 3))
         post = make_posterior([chain], parents=(prior,), method="test", event_spec=prior.event_spec)
-        assert post["params/a"].event_spec.spec == prior.event_spec.spec["params/a"]
+        assert post["params/a"].event_spec.term_spec == prior.event_spec.term_spec["params/a"]
         assert convert(post, KDEDistribution).event_spec == prior.event_spec
 
     def test_a_nested_target_keeps_its_groups(self):
@@ -550,7 +550,7 @@ class TestMakePosteriorRecordTarget:
             event_spec=template,
         )
         expected_fields = ("params", "scale")
-        assert tuple(post.event_spec.components) == expected_fields
+        assert tuple(post.event_spec.outputs) == expected_fields
         assert post.event_spec == OutputSpec(template)
         # The atoms keep the nesting, in the chain's flat layout.
         np.testing.assert_allclose(post.atoms["params/b"][0], chain[:, 1])
@@ -625,7 +625,7 @@ class TestMakePosteriorRecordTarget:
             np.testing.assert_allclose(variables["scale"].values[0], draws[:, 2:])
         assert tree["posterior"]["scale"].dims == ("chain", "draw", "scale_dim_0")
 
-    def test_the_arviz_draws_of_a_whole_term_are_named_by_its_component(self):
+    def test_the_arviz_draws_of_a_whole_term_are_named_by_its_output(self):
         prior = MultivariateNormal("theta", loc=jnp.zeros(3), cov=jnp.eye(3))
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         post = make_posterior(
@@ -978,14 +978,14 @@ class TestPosteriorFieldView:
         with pytest.raises(KeyError):
             dist["nonexistent"]
 
-    def test_components(self, posterior):
-        assert tuple(posterior.event_spec.components) == ("K", "phi", "r")
+    def test_outputs(self, posterior):
+        assert tuple(posterior.event_spec.outputs) == ("K", "phi", "r")
 
     def test_a_posterior_without_a_target_is_a_whole_term(self):
-        """Without a target, each draw is one array under the component ``posterior``."""
+        """Without a target, each draw is one array under the output ``posterior``."""
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         dist = posterior_of([chain], label="x")
-        assert tuple(dist.event_spec.components) == ("posterior",)
+        assert tuple(dist.event_spec.outputs) == ("posterior",)
         assert dist.event_shape == (3,)
 
     def test_view_event_shape_scalar(self, posterior):
@@ -1040,7 +1040,7 @@ class TestPosteriorFieldView:
         """A view keeps its parent's label, and its event exposes the selected field."""
         for field in ("K", "phi", "r"):
             assert posterior[field].label == posterior.label
-            assert list(posterior[field].event_spec.components) == [field]
+            assert list(posterior[field].event_spec.outputs) == [field]
 
     def test_a_view_of_a_factored_joint_at_a_factor_takes_the_factor_label(self):
         """A view at a whole factor takes the factor's label, and its event exposes the field."""
@@ -1048,7 +1048,7 @@ class TestPosteriorFieldView:
             "y", loc=0.0, scale=1.0, label="py"
         )
         assert (p["x"].label, p["y"].label) == ("px", "py")
-        assert list(p["x"].event_spec.components) == ["x"]
+        assert list(p["x"].event_spec.outputs) == ["x"]
 
 
 class TestViewProtocolDuckTyping:
@@ -1098,7 +1098,7 @@ class TestViewProtocolDuckTyping:
         assert isinstance(view, SupportsMean)
         assert isinstance(view, SupportsVariance)
 
-    def test_view_log_prob_delegates_to_component(self):
+    def test_view_log_prob_delegates_to_factor(self):
         """A joint view's density is its factor's, the joint's marginal at the path."""
         import scipy.stats
 
@@ -1213,7 +1213,7 @@ class TestEndToEndValuesPipeline:
         prior = MultivariateNormal("params", loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
         likelihood = ObservationKernel(
             "y",
-            {"params": prior.event_spec.spec},
+            {"params": prior.event_spec.term_spec},
             NumericArraySpec((2,)),
             lambda params: tfd.Independent(tfd.Normal(params, 1.0), 1),
         )
@@ -1228,9 +1228,9 @@ class TestEndToEndValuesPipeline:
 
     def test_template_propagation(self, posterior):
         """The posterior is a law over the joint's unconditioned field, a record of params."""
-        assert tuple(posterior.event_spec.components) == ("params",)
-        assert posterior.event_spec.components["params"].shape == (2,)
-        assert posterior.event_spec.components["params"].dtype == jnp.asarray(0.0).dtype
+        assert tuple(posterior.event_spec.outputs) == ("params",)
+        assert posterior.event_spec.outputs["params"].shape == (2,)
+        assert posterior.event_spec.outputs["params"].dtype == jnp.asarray(0.0).dtype
 
     def test_draws_are_named_values(self, posterior):
         """draws() returns Record with correct field names and shapes."""

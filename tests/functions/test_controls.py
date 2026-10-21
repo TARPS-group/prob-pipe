@@ -510,7 +510,7 @@ class TestTheCountOfALift:
         ],
     )
     def test_enumeration_fits_under_max_evaluations(self, max_evaluations, route, atoms):
-        law = EmpiricalDistribution(jnp.arange(6.0), component="x")
+        law = EmpiricalDistribution(jnp.arange(6.0), output_name="x")
         identity = Function(_identity, label="identity", dispatch="sequential")
         with workflow_run(seed=0):
             pushed = identity.using(max_evaluations=max_evaluations, num_samples=1)(law)
@@ -526,7 +526,7 @@ class TestTheCountOfALift:
             return a + b
 
         added = Function(add, label="add", dispatch="sequential")
-        a = EmpiricalDistribution(jnp.arange(4.0), component="a")
+        a = EmpiricalDistribution(jnp.arange(4.0), output_name="a")
         with workflow_run(seed=0):
             law = added.using(max_evaluations=10, num_samples=3)(a, standard_normal("b"))
         assert law.num_atoms == len(calls) == 8
@@ -540,8 +540,8 @@ class TestTheCountOfALift:
             return a + b + c
 
         lifted = Function(total, label="total", dispatch="sequential")
-        a = EmpiricalDistribution(jnp.arange(3.0), component="a")
-        b = EmpiricalDistribution(jnp.arange(2.0), component="b")
+        a = EmpiricalDistribution(jnp.arange(3.0), output_name="a")
+        b = EmpiricalDistribution(jnp.arange(2.0), output_name="b")
         with workflow_run(seed=0):
             law = lifted.using(max_evaluations=max_evaluations)(a, b, standard_normal("c"))
         assert law.num_atoms == len(calls) <= max_evaluations

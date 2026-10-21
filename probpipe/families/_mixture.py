@@ -1,4 +1,4 @@
-"""The mixture family: a convex combination of laws over one event declaration.
+"""The mixture family: a convex combination of laws over one event spec.
 
 Provides:
   - ``MixtureDistribution`` – the finite mixture of its components, what
@@ -22,7 +22,7 @@ from ..core._object_batch import _collection_expression
 from ..core._record_spec import RecordSpec
 from ..core._repr import _MAX_SHOWN_ENTRIES, format_value, sequence_repr
 from ..core._spec_base import NumericArraySpec, TermSpec
-from ..core._specs import OutputSpec
+from ..core._specs import OutputSpec, _has_record_outputs
 from ..core.constraints import _known_equal
 from ..core.named_tree import _PATH_SEP, _unflatten_paths
 from ..distributions._capabilities import (
@@ -124,7 +124,7 @@ def _mixture_sample(
         rows = jnp.concatenate([jnp.asarray(leaf) for leaf in leaves])[order]
         return jnp.reshape(rows, (*shape, *rows.shape[1:]))
 
-    return _combined([draws for draws, _ in drawn], self.event_spec.spec, assembled)
+    return _combined([draws for draws, _ in drawn], self.event_spec.term_spec, assembled)
 
 
 def _drawn_from_every_component(
@@ -144,7 +144,7 @@ def _drawn_from_every_component(
             selected = jnp.where(mask, leaf, selected)
         return selected
 
-    return _combined(draws, self.event_spec.spec, chosen)
+    return _combined(draws, self.event_spec.term_spec, chosen)
 
 
 def _mixture_log_prob(self: MixtureDistribution, value: ArrayLike) -> Array:
@@ -160,12 +160,12 @@ def _mixture_log_prob(self: MixtureDistribution, value: ArrayLike) -> Array:
 def _mixture_mean(self: MixtureDistribution) -> Any:
     """The weighted mean ``Σ wᵢ mᵢ`` of the components' means, shaped like one draw."""
     means = [component._mean() for component in self._components]
-    return _combined(means, self.event_spec.spec, _weighted_sum(self._weights))
+    return _combined(means, self.event_spec.term_spec, _weighted_sum(self._weights))
 
 
 def _mixture_variance(self: MixtureDistribution) -> Any:
     """The variance ``Σ wᵢ (vᵢ + mᵢ²) − m²`` of each coordinate, shaped like one draw."""
-    spec = self.event_spec.spec
+    spec = self.event_spec.term_spec
     means = [component._mean() for component in self._components]
     second_moments = [
         _combined([mean, component._variance()], spec, lambda m, v: v + m**2)
@@ -178,7 +178,7 @@ def _mixture_variance(self: MixtureDistribution) -> Any:
 
 def _mixture_cov(self: MixtureDistribution) -> LinOp:
     """The covariance ``Σ wᵢ (Σᵢ + mᵢ mᵢᵀ) − m mᵀ`` of the flat coordinates, as a dense operator."""
-    spec = self.event_spec.spec
+    spec = self.event_spec.term_spec
     means = jnp.stack([_flat(component._mean(), spec) for component in self._components])
     covariances = jnp.stack(
         [jnp.asarray(component._cov().to_dense()) for component in self._components]
@@ -255,7 +255,7 @@ def _claims(components: Sequence[Distribution]) -> tuple[type, ...]:
 
 
 def _components(components: Sequence[Distribution]) -> tuple[Distribution, ...]:
-    """*components* as a tuple, checked to be at least one law sharing one event declaration.
+    """*components* as a tuple, checked to be at least one law sharing one event spec.
 
     Parameters
     ----------
@@ -301,19 +301,19 @@ def _component_mismatch(first: Distribution, other: Distribution, index: int) ->
     """The message for component *index*, *other*, drawing a different event than component 0."""
     head = "MixtureDistribution components must draw the same event"
     expected, actual = first.event_spec, other.event_spec
-    if expected.exposes_record != actual.exposes_record:
+    if _has_record_outputs(expected) != _has_record_outputs(actual):
         return (
             f"{head}: component 0 ({first.label!r}) draws {_drawn(expected)} but "
             f"component {index} ({other.label!r}) draws {_drawn(actual)}"
         )
-    if tuple(expected.components) != tuple(actual.components):
+    if tuple(expected.outputs) != tuple(actual.outputs):
         return (
-            f"{head}: component 0 ({first.label!r}) has components "
-            f"{list(expected.components)} but component {index} ({other.label!r}) has "
-            f"{list(actual.components)}. Rename them with with_path_names() so they match."
+            f"{head}: component 0 ({first.label!r}) has the outputs "
+            f"{list(expected.outputs)} but component {index} ({other.label!r}) has "
+            f"{list(actual.outputs)}. Rename them with with_path_names() so they match."
         )
-    for name, spec in expected.components.items():
-        mismatch = _first_mismatch(spec, actual.components[name], name)
+    for name, spec in expected.outputs.items():
+        mismatch = _first_mismatch(spec, actual.outputs[name], name)
         if mismatch is not None:
             path, left, right = mismatch
             return (
@@ -324,10 +324,10 @@ def _component_mismatch(first: Distribution, other: Distribution, index: int) ->
 
 
 def _drawn(declaration: OutputSpec) -> str:
-    """What a law with *declaration* draws, in a mixture's mismatch message."""
-    if declaration.exposes_record:
-        return f"a record with fields {list(declaration.components)}"
-    (name,) = declaration.components
+    """What a law with the event spec *declaration* draws, in a mixture's mismatch message."""
+    if _has_record_outputs(declaration):
+        return f"a record with fields {list(declaration.outputs)}"
+    (name,) = declaration.outputs
     return f"a single value {name!r}"
 
 
@@ -379,9 +379,9 @@ def _joined(specs: Sequence[TermSpec]) -> TermSpec:
 
 
 def _declaration(laws: Sequence[Distribution]) -> OutputSpec:
-    """The event declaration of the mixture of *laws*, which share their packaging and kinds."""
+    """The event spec of the mixture of *laws*, which share their outputs, form, and kinds."""
     first = laws[0].event_spec
-    return first._with_spec(_joined([law.event_spec.spec for law in laws]))
+    return first._with_term_spec(_joined([law.event_spec.term_spec for law in laws]))
 
 
 def _weights(weights: ArrayLike, count: int) -> Array:
@@ -431,16 +431,16 @@ _SHOWN_COMPONENTS = _MAX_SHOWN_ENTRIES
 
 
 class MixtureDistribution(Distribution):
-    """A convex combination of component laws that share one event declaration.
+    """A convex combination of component laws that share one event spec.
 
-    The components share one event declaration, which includes the component
-    names, the kind, and the packaging, while their labels may differ; a leaf
-    whose components declare different dtypes or supports leaves them
-    undeclared in the mixture's declaration. The
-    mixture samples when every component samples, choosing a component by the
-    weights and then drawing from it, and it has a normalized log-density, the
-    weighted log-sum-exp of the components', when every component has one. Its
-    moments combine componentwise when every component provides them: the
+    The components share one event spec, which includes the output names, the
+    kind, and the form, keyword or positional, while their labels may differ; a
+    leaf whose components declare different dtypes or supports leaves them
+    undeclared in the mixture's event spec. The mixture samples when every
+    component samples, choosing a component by the weights and then drawing
+    from it, and it has a normalized log-density, the weighted log-sum-exp of
+    the components', when every component has one. Its
+    moments combine entry by entry when every component provides them: the
     mean is ``Σ wᵢ mᵢ``, the variance ``Σ wᵢ (vᵢ + mᵢ²) − m²``, and the
     covariance of the flat coordinates ``Σ wᵢ (Σᵢ + mᵢ mᵢᵀ) − m mᵀ``. Each of
     these capabilities carries the components' guards of the methods it calls.
@@ -448,7 +448,7 @@ class MixtureDistribution(Distribution):
     Parameters
     ----------
     components : Sequence[Distribution]
-        The component laws, at least one, sharing one event declaration.
+        The component laws, at least one, sharing one event spec.
     weights : Array
         One nonnegative weight per component, summing to one.
     label : str, optional
@@ -468,8 +468,8 @@ class MixtureDistribution(Distribution):
 
     _capability_table: ClassVar = _MIXTURE_CAPABILITIES
 
-    #: The constructor takes no component, so the repr shows none.
-    _repr_component: ClassVar[str | None] = None
+    #: The constructor takes no output name, so the repr shows none.
+    _repr_output_name: ClassVar[str | None] = None
 
     _components: tuple[Distribution, ...]
     _weights: Array

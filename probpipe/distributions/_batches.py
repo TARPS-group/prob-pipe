@@ -1,9 +1,9 @@
 """The batch forms of the two distribution kinds.
 
 Provides:
-  - ``DistributionBatch`` – separate laws sharing one event declaration.
-  - ``ConditionalDistributionBatch`` – separate kernels sharing one given
-    declaration and one event declaration.
+  - ``DistributionBatch`` – separate laws sharing one event spec.
+  - ``ConditionalDistributionBatch`` – separate kernels sharing one input
+    spec and one event spec.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def _first_element_spec(store: np.ndarray, kind: type, owner: str) -> object:
     Raises
     ------
     ValueError
-        If *store* holds no element, so there is no declaration to share.
+        If *store* holds no element, so there is no element spec to share.
     TypeError
         If the first element is not an instance of *kind*.
     """
@@ -65,7 +65,7 @@ def _first_element_spec(store: np.ndarray, kind: type, owner: str) -> object:
 
 
 class DistributionBatch(_ObjectBatch[Distribution]):
-    """``N`` separate distributions sharing one event declaration, along batch axes.
+    """``N`` separate distributions sharing one event spec, along batch axes.
 
     A ``DistributionBatch`` is a collection of separate measures, distinct from
     one joint law over a product space, as a batch of draws is distinct from one
@@ -90,7 +90,7 @@ class DistributionBatch(_ObjectBatch[Distribution]):
         of several axes reads as one flat list, and its repr gives the levels.
     element_spec : DistributionSpec, optional
         What every element satisfies. Defaults to the first element's spec, so
-        the elements share its event declaration.
+        the elements share its event spec.
     axes_per_level : int or sequence of int, optional
         How many axes each level holds, outermost first (a single int is one level's
         count). Defaults to one axis per level.
@@ -101,7 +101,7 @@ class DistributionBatch(_ObjectBatch[Distribution]):
     ------
     TypeError
         If *element_spec* is not a ``DistributionSpec``, or an element is not a
-        ``Distribution`` whose declaration unifies with it, naming the position;
+        ``Distribution`` whose event spec unifies with it, naming the position;
         or *label* is omitted and there are no elements.
     ValueError
         If *elements* is empty and *element_spec* is omitted, or the axes and
@@ -117,7 +117,7 @@ class DistributionBatch(_ObjectBatch[Distribution]):
 
     __slots__ = ()
 
-    _element_rule = "be a Distribution whose event declaration matches the batch's"
+    _element_rule = "be a Distribution whose event spec matches the batch's"
 
     def __init__(
         self,
@@ -160,7 +160,7 @@ class DistributionBatch(_ObjectBatch[Distribution]):
         ------
         TypeError
             If *element_spec* is not a ``DistributionSpec``, the first element is
-            not a ``Distribution``, or a law's declaration departs from the spec.
+            not a ``Distribution``, or a law's event spec departs from the spec's.
         ValueError
             If *element_spec* is omitted and *store* holds no law.
         """
@@ -184,7 +184,7 @@ class DistributionBatch(_ObjectBatch[Distribution]):
 
     @property
     def event_spec(self) -> OutputSpec:
-        """The event declaration the elements share, a view on ``spec``."""
+        """The event spec the elements share, a view on ``spec``."""
         return self.element_spec.event_spec
 
     def _own_signature(self) -> Signature:
@@ -193,7 +193,7 @@ class DistributionBatch(_ObjectBatch[Distribution]):
         A batch of laws reads as one law under the batch's label, so a draw of
         it is labeled ``effect ~ schools`` and a score ``log schools(effect)``.
         """
-        return Signature(tuple(self.event_spec.components))
+        return Signature(tuple(self.event_spec.outputs))
 
     def __str__(self) -> str:
         """The batch's notation and its levels, as ``schools(effect) over school``.
@@ -224,10 +224,10 @@ def _batch_notation(batch: DistributionBatch | ConditionalDistributionBatch) -> 
 
 
 def _check_declarations(store: np.ndarray, element_spec: DistributionSpec) -> None:
-    """Raise ``TypeError`` for the first law of *store* whose declaration departs from *element_spec*.
+    """Raise ``TypeError`` for the first law of *store* departing from *element_spec*'s event spec.
 
-    The message names the position and how the law's declaration departs, such
-    as the components each declares. An element that is not a law, or a
+    The message names the position and how the law's event spec departs, such
+    as the outputs each declares. An element that is not a law, or a
     departure this reading does not name, is left to the batch's own check.
 
     Parameters
@@ -252,7 +252,7 @@ def _check_declarations(store: np.ndarray, element_spec: DistributionSpec) -> No
         if difference is not None:
             raise TypeError(
                 f"element {position} of the DistributionBatch does not match the batch's "
-                f"declaration: {difference}"
+                f"event spec: {difference}"
             )
 
 
@@ -262,9 +262,9 @@ def _element_source(law: Distribution) -> Distribution | None:
 
 
 class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
-    """``N`` separate conditional distributions sharing their declarations, along batch axes.
+    """``N`` separate conditional distributions along batch axes.
 
-    The elements share one given declaration and one event declaration. It is
+    The elements share one input spec and one event spec. It is
     the batch form of ``ConditionalDistributionSpec``-valued terms. As for
     :class:`DistributionBatch`, ``batch[i]`` is a view of the stored kernel under
     the label derived from the position, with provenance recording the batch and
@@ -309,7 +309,7 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
 
     __slots__ = ()
 
-    _element_rule = "be a ConditionalDistribution whose declarations match the batch's"
+    _element_rule = "be a ConditionalDistribution whose input and event specs match the batch's"
 
     def __init__(
         self,
@@ -377,17 +377,17 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
 
     @property
     def given_spec(self) -> InputSpec:
-        """The given declaration the elements share, a view on ``spec``."""
+        """The input spec the elements share, a view on ``spec``."""
         return self.element_spec.given_spec
 
     @property
     def event_spec(self) -> OutputSpec:
-        """The event declaration the elements share, a view on ``spec``."""
+        """The event spec the elements share, a view on ``spec``."""
         return self.element_spec.event_spec
 
     def _own_signature(self) -> Signature:
-        """The signature the elements share: their event components, then their given slots."""
-        return Signature(tuple(self.event_spec.components), tuple(self.given_spec))
+        """The signature the elements share: their event outputs, then their inputs."""
+        return Signature(tuple(self.event_spec.outputs), tuple(self.given_spec))
 
     def __str__(self) -> str:
         """The batch's notation and its levels, as ``glm(y | beta) over dataset``."""

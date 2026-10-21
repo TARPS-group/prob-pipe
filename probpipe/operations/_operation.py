@@ -11,7 +11,7 @@ which reads three declarations from the operation at its steps:
    passes whole, a batch or a law over an admitted kind is lifted, and any
    other argument is refused.
 2. **Planning** checks the **applicability checks** and runs the **result
-   rule**, which derives the declaration of each point's result from the
+   rule**, which derives the output spec of each point's result from the
    operands' specs and from the parameters that select rather than supply,
    such as a field path; the return validates the result against it.
 3. **Resolution** selects one **route** among the operation's candidates, in
@@ -214,8 +214,8 @@ def _call_label(call: BoundCall) -> str:
     """The label the result of *call* takes, as its operation derives it (II.4).
 
     A route reads it to label a term it builds before the result boundary
-    gives the result its expression. The label names the term and is never a
-    component or a level name, since a derived label may hold ``~``, a space,
+    gives the result its expression. The label names the term and is never an
+    output name or a level name, since a derived label may hold ``~``, a space,
     ``;``, or ``/``.
     """
     return call.operation._derived_label(call.operands)
@@ -244,7 +244,7 @@ def _assembled(
     call : BoundCall
         The call the route realizes.
     result : OutputSpec or None
-        The call's result declaration.
+        The output spec of the call's result.
     parents : iterable of TrackedTerm
         The terms the parts were computed from.
     metadata : Mapping of str to Any
@@ -322,7 +322,7 @@ class OperationRoute(Protocol):
     exact: bool | None
 
     def check(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
-        """Whether this route realizes *call*, whose result declaration is *result*."""
+        """Whether this route realizes *call*, whose result's output spec is *result*."""
         ...
 
     def execute(self, call: BoundCall, result: OutputSpec | None) -> Any:
@@ -645,8 +645,8 @@ class _DelegatingRoute(_Route, ABC):
         """The route's report for *call*, restricted to exact implementations under *exact_only*.
 
         A feasible report states the exactness of what it selected, as a
-        ``MethodInfo`` or a ``PointReport`` does. *result* is the call's result
-        declaration, as :meth:`check` receives it, and *method* names a method
+        ``MethodInfo`` or a ``PointReport`` does. *result* is the output spec of
+        the call's result, as :meth:`check` receives it, and *method* names a method
         of a registry route's registry, ``None`` for any other route.
         """
 
@@ -1191,7 +1191,7 @@ def _kind_names(kinds: Iterable[type]) -> str:
 class _GivenCandidate:
     """The conditional route, deferred until the kernel's law is available.
 
-    Feasibility means the given slots can be bound. Normalization, the resulting
+    Feasibility means the inputs can be bound. Normalization, the resulting
     law's capability checks, and operation fidelity are deferred, and its exactness is unknown
     until the delegated operation executes. The kernel is never applied by a
     check. This candidate is the last fallback, after every route served by the
@@ -1205,7 +1205,7 @@ class _GivenCandidate:
     collects_calls = True
 
     def probe(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
-        """Check slot binding without constructing or normalizing the kernel's law."""
+        """Check input binding without constructing or normalizing the kernel's law."""
         from ._given import _GivenLaw
 
         subject = call.operands[call.operation._given_subject]
@@ -1213,21 +1213,21 @@ class _GivenCandidate:
             return Feasibility(False, "the operand has no given values")
         if isinstance(subject.given, StandIn):
             return Feasibility(None, pending=("conditional delegation needs the given values",))
-        from ._condition import _BIND_GIVEN_SLOTS, condition_on
+        from ._condition import _BIND_INPUTS, condition_on
 
         binding = BoundCall(
             condition_on,
             MappingProxyType({"d": subject.kernel, "given": subject.given}),
             call.controls,
         )
-        report = _BIND_GIVEN_SLOTS.check(binding)
+        report = _BIND_INPUTS.check(binding)
         if report.feasible is not True:
             return report
-        exact = _BIND_GIVEN_SLOTS.exact(binding)
+        exact = _BIND_INPUTS.exact(binding)
         if call.controls["exact_only"] and not exact:
             return Feasibility(
                 False,
-                "binding the given slots runs approximate conditioning "
+                "binding the inputs runs approximate conditioning "
                 "(SupportsApproximateConditioning), which exact_only excludes",
             )
         return PointReport(
@@ -1264,7 +1264,7 @@ class Operation(Function):
     Calling it runs the engine's stack, whose admission, planning, resolution,
     and return steps read the declarations below: each argument is admitted and
     lifted by its role, the applicability checks and the result rule derive
-    each point's result declaration, the engine selects a route among the
+    the output spec of each point's result, the engine selects a route among the
     operation's candidates, and the return wraps the route's raw result at the
     declared kind. A parameter annotated ``Any`` takes its argument as it
     arrives, with no lifting, so its role only narrows what it admits. The
@@ -1275,7 +1275,7 @@ class Operation(Function):
     A subject annotated ``Distribution`` automatically adds keyword-only
     ``given=None`` unless the declaration already names ``given`` or a role
     overrides the subject's kind. A complete given supplies a conditional
-    operand's required slots and binds its symbolic dimensions before planning
+    operand's required inputs and binds its symbolic dimensions before planning
     the result. Routes use the kernel's declared conditional twins, including
     sampling-based fallbacks and derived routes. If no such route applies,
     delegation applies the operation to ``condition_on(subject, given)`` at execution.
@@ -1297,11 +1297,11 @@ class Operation(Function):
         The result rule. Its parameters are parameters of *declaration*; it
         receives each supplying operand's spec and each selecting parameter's
         value, and returns the result's ``OutputSpec``, or ``None`` when the
-        declarations leave the result open.
+        operands' specs leave the result open.
     applicability_checks : iterable of callable
         Checks that the operation applies to a call at all, whatever route
         serves it. Each runs before any route is chosen and before the result
-        rule, and is called like the result rule, with the declarations of the
+        rule, and is called like the result rule, with the specs of the
         parameters it names and never their values, except that a parameter
         whose role names ``FunctionSpec`` alone receives the map itself, whose
         annotations, roles, and ``input_spec`` are declared static information
@@ -1408,7 +1408,7 @@ class Operation(Function):
             object.__setattr__(self, "__signature__", signature)
             given_doc = (
                 "    given : Record or Mapping[str, Any], optional\n"
-                "        Complete values of a conditional operand's required slots. The\n"
+                "        Complete values of a conditional operand's required inputs. The\n"
                 "        declared conditional capabilities serve applicable routes; otherwise\n"
                 "        the operation applies after condition_on at execution, and check\n"
                 "        defers the resulting law's capabilities and fidelity. A RecordBatch\n"
@@ -1941,7 +1941,7 @@ class Operation(Function):
     def _plan_route_inputs(
         self, argument_values: Mapping[str, Any], controls: Mapping[str, Any]
     ) -> tuple[BoundCall, OutputSpec | None, tuple[str, ...]]:
-        """The bound call of one point, its result declaration, and the checks deferred to return.
+        """The bound call of one point, its result's output spec, and the checks deferred to return.
 
         Parameters
         ----------
@@ -1957,8 +1957,8 @@ class Operation(Function):
         call : BoundCall
             The bound call over *argument_values* and *controls*.
         result_declaration : OutputSpec or None
-            The result's declaration, or ``None`` when the declarations leave it
-            open.
+            The result's output spec, or ``None`` when the operands' specs leave
+            it open.
         deferred : tuple of str
             A description of each check that only the return can settle, such as
             an applicability check that needs values not yet known.
@@ -1996,7 +1996,7 @@ class Operation(Function):
         return call, result_declaration, deferred
 
     def _plan(self, call: BoundCall) -> tuple[OutputSpec | None, tuple[str, ...]]:
-        """Check the applicability checks, then derive the result's declaration.
+        """Check the applicability checks, then derive the result's output spec.
 
         Parameters
         ----------
@@ -2007,8 +2007,8 @@ class Operation(Function):
         Returns
         -------
         tuple
-            The declaration, or ``None`` when the declarations leave it open, and
-            the checks deferred to the return.
+            The output spec, or ``None`` when the operands' specs leave it open,
+            and the checks deferred to the return.
 
         Raises
         ------
@@ -2041,7 +2041,7 @@ class Operation(Function):
                 f"the result rule of {self.label!r} returned {result!r}; it returns an "
                 f"OutputSpec or None"
             )
-        if result is None or result.spec is None:
+        if result is None or result.term_spec is None:
             deferred.append(_COMPLETED_AT_RETURN)
         return result, tuple(deferred)
 
@@ -2292,7 +2292,7 @@ def _workflow_draws(
     draws = _descendants.sample_captured_consumer(captured, key, sample_shape)
     if captured.root is d:
         return draws
-    return _drawn_form(draws, d.event_spec.spec, sample_shape)
+    return _drawn_form(draws, d.event_spec.term_spec, sample_shape)
 
 
 # ---------------------------------------------------------------------------

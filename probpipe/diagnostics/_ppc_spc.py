@@ -231,7 +231,7 @@ def _ppc_op(
     Parameters
     ----------
     posterior : Distribution
-        Prior or posterior over the kernel's given slots.
+        Prior or posterior over the kernel's inputs.
 
     test_fns : callable or sequence of callables
         One or more test statistics mapping data to a scalar.
@@ -423,7 +423,7 @@ def add_ppc(
     Parameters
     ----------
     posterior : Distribution
-        Prior or posterior over the kernel's given slots.
+        Prior or posterior over the kernel's inputs.
     test_fns : callable or sequence of callables
         One or more test statistics mapping data to a scalar.
     observed_data : optional
@@ -443,11 +443,12 @@ def add_ppc(
         sample, *test_fns* is neither a callable nor an iterable, a test
         function is not callable, or *n_replications* is not an integer.
     ValueError
-        If *posterior* does not produce every given slot of *kernel*, naming
-        the missing slots; if *posterior* produces a component that *kernel*
-        produces; if *test_fns* is empty or holds two test functions of the
-        same name; or if *n_replications* is not positive. Use distinct named
-        functions instead of multiple lambdas so result keys cannot collide.
+        If *posterior* has no output for some input of *kernel*, naming
+        the missing inputs; if *posterior* has an output of the same name as
+        an output of *kernel*; if *test_fns* is empty or holds two test
+        functions of the same name; or if *n_replications* is not positive.
+        Use distinct named functions instead of multiple lambdas so result
+        keys cannot collide.
     """
     payload = _ppc_op(
         posterior,

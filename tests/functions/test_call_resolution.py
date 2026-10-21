@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import EmpiricalDistribution, Function, Normal, OutputSpec, function, workflow_run
+from probpipe.core._specs import _has_record_outputs
 from probpipe.functions import _call
 from probpipe.values import _binding
 
@@ -76,7 +77,7 @@ def _resolve_call(
 
 
 class TestWorkflowCallHelpers:
-    def test_input_refs_use_one_subscript_for_variadic_slots(self):
+    def test_input_refs_use_one_subscript_for_variadic_inputs(self):
         def collect(head, *items, **extras):
             return head, items, extras
 
@@ -312,7 +313,7 @@ class TestCallOptions:
 
         assert isinstance(result, EmpiricalDistribution)
         assert result.num_atoms == 6
-        assert result.event_spec.exposes_record
+        assert _has_record_outputs(result.event_spec)
 
     def test_workflow_run_reproduces_sampling_state_for_a_call(
         self,
