@@ -54,10 +54,10 @@ from ..operations._inference_target import (
     ModelFactors,
     _as_inference_target,
     _described,
-    _flat_record,
+    _flat_record_spec,
     _flat_unflatten,
     _no_flat_layout,
-    _one_array,
+    _one_array_spec,
     _reshape_to,
     _UnnormalizedConditional,
 )
@@ -249,15 +249,17 @@ def observed_target(model: Any, observed: Any) -> Any:
     """The target of normalizing *model* at *observed*, as ``probpipe.condition_on`` passes them.
 
     A law with no data is the target of conditioning it on nothing, and an
-    object that is neither a law nor a kernel is returned as it is. Data keyed by the model's inputs and fields form the exact stage of
-    ``condition_on`` (VI.6): a kernel binds the inputs its data name first, as
-    the ``bind_inputs`` route does, and the data of the fields it produces then
-    form the unnormalized conditional of the result, whose joint and given values a
-    method reads back. A law that binding leaves unnormalized, with no data
-    left, is the target of conditioning it on nothing. Data that name no field, such as one array for
-    a whole program, form the unnormalized conditional of the model at those
-    data, from which :func:`observed_parts` reads them back, and so do data
-    that only bind a kernel to a normalized law, which no method normalizes.
+    object that is neither a law nor a kernel is returned as it is. Data keyed
+    by the model's inputs and fields form the exact stage of ``condition_on``
+    (VI.6): a kernel binds the inputs its data name first, as the
+    ``bind_inputs`` route does, and the data of the fields it produces then
+    form the unnormalized conditional of the result, whose joint and given
+    values a method reads back. A law that binding leaves unnormalized, with no
+    data left, is the target of conditioning it on nothing. Data that name no
+    field, such as one array for a whole program, form the unnormalized
+    conditional of the model at those data, from which :func:`observed_parts`
+    reads them back, and so do data that only bind a kernel to a normalized
+    law, which no method normalizes.
     """
     if observed is None and isinstance(model, Distribution):
         return _as_inference_target(model)
@@ -351,12 +353,12 @@ def flat_vector(value: Any) -> Array:
 def _declared_vector(law: Any, draw: Record | Mapping[str, Any]) -> Array:
     """*draw*, a record draw of *law*, as one flat vector laid out as *law* declares its leaves.
 
-    The leaves follow the canonical order of the numeric record :func:`_flat_record`
+    The leaves follow the canonical order of the numeric record :func:`_flat_record_spec`
     names, which :func:`_flat_unflatten` reads back, whatever order the draw's own
     mapping keeps. A law that declares no such record lays the draw out as
     :func:`flat_vector` does.
     """
-    record = _flat_record(law)
+    record = _flat_record_spec(law)
     if record is None:
         return flat_vector(draw)
     value = (
@@ -443,10 +445,10 @@ def likelihood_flat(factors: ModelFactors) -> Callable[[Array], Array]:
 def flat_density(dist: Any) -> Callable[[Array], Array]:
     """*dist*'s unnormalized log-density at a flat vector.
 
-    The vector is unflattened to the numeric record :func:`_flat_record` names,
+    The vector is unflattened to the numeric record :func:`_flat_record_spec` names,
     and taken as it is for any other law.
     """
-    record = _flat_record(dist)
+    record = _flat_record_spec(dist)
     if record is None:
         return dist._unnormalized_log_prob
 
@@ -564,7 +566,7 @@ def get_init_state(
                 exc_info=True,
             )
 
-    record = _flat_record(prior)
+    record = _flat_record_spec(prior)
     if record is not None:
         draw = _joint_draw(prior, key, record)
         if draw is not None:
@@ -673,7 +675,7 @@ def build_target_log_prob_flat(
 
         return target_flat, flat_init
 
-    record = _flat_record(prior)
+    record = _flat_record_spec(prior)
     if record is not None:
 
         def target_unflattened(theta_flat: Array) -> Array:
@@ -696,10 +698,10 @@ def _flat_leaves(law: Any) -> list[tuple[tuple[int, ...], Any]] | None:
         if isinstance(spec, NumericArraySpec):
             return [(tuple(spec.shape), spec.support)]
         return None
-    record = _flat_record(law)
+    record = _flat_record_spec(law)
     if record is not None:
         return [(tuple(record[path].shape), record[path].support) for path in record]
-    array = _one_array(law)
+    array = _one_array_spec(law)
     if array is not None:
         return [(tuple(array.shape), array.support)]
     return None

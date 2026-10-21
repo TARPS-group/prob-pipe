@@ -12,10 +12,11 @@ import numpy as np
 
 from ..core._dispatch import Feasibility
 from ..custom_types import PRNGKey
+from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..families._programs import _StanPosterior
 from ..operations._condition import InferenceMethod
-from ..operations._inference_target import InferenceTarget, _UnnormalizedConditional
+from ..operations._inference_target import InferenceTarget
 from ._approximate_distribution import make_posterior
 from ._inference_utils import integer_seed, joint_and_given
 
@@ -58,7 +59,7 @@ class CmdStanNutsMethod(InferenceMethod):
         return "cmdstan_nuts"
 
     def supported_types(self) -> tuple[type, ...]:
-        return (_UnnormalizedConditional,)
+        return (Distribution,)
 
     @property
     def priority(self) -> int:
@@ -79,7 +80,7 @@ class CmdStanNutsMethod(InferenceMethod):
         return Feasibility(feasible=True)
 
     def execute(
-        self, target: InferenceTarget, /, *, key: PRNGKey, **kwargs: Any
+        self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any
     ) -> EmpiricalDistribution:
         """Stan's NUTS on the target's program at its data, through cmdstanpy.
 
@@ -87,12 +88,12 @@ class CmdStanNutsMethod(InferenceMethod):
         draws of the parameter blocks alone, each in its own shape, and no
         sampler, transformed, or generated column.
         """
-        self._check_options(kwargs)
+        self._check_options(options)
         cmdstanpy = _import_cmdstanpy()
 
-        num_results = kwargs.get("num_results", 1000)
-        num_warmup = kwargs.get("num_warmup", 1000)
-        num_chains = kwargs.get("num_chains", 4)
+        num_results = options.get("num_results", 1000)
+        num_warmup = options.get("num_warmup", 1000)
+        num_chains = options.get("num_chains", 4)
         random_seed = integer_seed(key)
         program_posterior, _ = joint_and_given(target)
 

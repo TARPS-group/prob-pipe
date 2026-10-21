@@ -1707,10 +1707,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   required keyword, which `condition_on` derives for each run from the
   enclosing `workflow_run`; the private `run_seed` is removed. Every target is
   an `InferenceTarget`: a law that is itself unnormalized arrives as the
-  target of conditioning it on nothing, so a method that recognized a law by
-  its class, such as a program's posterior, reads it from `target.joint`. A
-  posterior's provenance names the target as its parent, and the target's
-  names the law. Seeded draws of the built-in methods are unchanged.
+  target of conditioning it on nothing. A method that recognized a law by its
+  class, such as a program's posterior, now lists `Distribution` in
+  `supported_types`, since a method that lists only the law's class is never
+  selected, and reads the law from `target.joint` in `check`. A posterior's
+  provenance names the target as its parent, and the target's names the law. Seeded draws of the built-in methods are unchanged.
 
   ```python
   # before
@@ -2900,7 +2901,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The interface of an inference target is public.** `probpipe.inference`
   exports `InferenceTarget`, the protocol every inference method receives:
   the model as `joint`, the observed values as `given`, the model's prior and
-  likelihood as `factors()`, which return a `ModelFactors`, and the target's
+  likelihood as `factors()`, which returns a `ModelFactors`, and the target's
   unnormalized log-density at a position in its flat layout as
   `log_density`, read back as a draw by `unflatten`. `make_posterior` builds a
   method's result from chains of positions. [A new inference method](docs/api/extending.md)

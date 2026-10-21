@@ -14,7 +14,12 @@ import pytest
 
 nutpie = pytest.importorskip("nutpie")
 
-from probpipe import EmpiricalDistribution, NumericArraySpec, workflow_run
+from probpipe import (
+    EmpiricalDistribution,
+    NumericArraySpec,
+    inference_method_registry,
+    workflow_run,
+)
 from probpipe.core.constraints import real
 from probpipe.inference._nutpie import (
     _compile_for_nutpie,
@@ -186,7 +191,6 @@ class TestMethodOptions:
 
     def _sampled_with(self, tmp_path, **options):
         from probpipe.families import StanModel
-        from probpipe.inference._nutpie import NutpieNutsMethod
 
         program = tmp_path / "program.stan"
         program.write_text("parameters { real mu; } model { }")
@@ -195,8 +199,8 @@ class TestMethodOptions:
             patch.object(nutpie, "compile_stan_model", _compile_stan_model),
             patch.object(nutpie, "sample", return_value=_stan_trace()) as sample,
         ):
-            NutpieNutsMethod().execute(
-                posterior, key=jax.random.key(0), num_results=3, num_chains=2, **options
+            inference_method_registry.execute(
+                posterior, method="nutpie_nuts", num_results=3, num_chains=2, **options
             )
         return sample.call_args.kwargs
 

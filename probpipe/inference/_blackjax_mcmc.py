@@ -355,22 +355,22 @@ class _BlackJAXMCMCMethod(InferenceMethod):
         return Feasibility(feasible=True)
 
     def execute(
-        self, target: InferenceTarget, /, *, key: PRNGKey, **kwargs: Any
+        self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any
     ) -> EmpiricalDistribution:
         """Chains of the BlackJAX kernel on the flat form of the target's unnormalized density."""
-        self._check_options(kwargs)
+        self._check_options(options)
         model, observed = observed_parts(target)
         target_flat, flat_init = build_target_log_prob_flat(
             model,
             observed,
-            init=kwargs.get("init"),
+            init=options.get("init"),
             random_seed=key,
         )
-        num_results: int = kwargs.get("num_results", 1000)
-        num_warmup: int = kwargs.get("num_warmup", 500)
-        num_chains: int = kwargs.get("num_chains", 4)
-        step_size: float = kwargs.get("step_size", 0.1)
-        num_integration_steps: int = kwargs.get("num_integration_steps", 10)
+        num_results: int = options.get("num_results", 1000)
+        num_warmup: int = options.get("num_warmup", 500)
+        num_chains: int = options.get("num_chains", 4)
+        step_size: float = options.get("step_size", 0.1)
+        num_integration_steps: int = options.get("num_integration_steps", 10)
 
         density, init, constrain = unconstrained_chain(target_flat, flat_init, model)
         chains, sample_stats = _run_blackjax_chains(

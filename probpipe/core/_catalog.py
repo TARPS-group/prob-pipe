@@ -196,7 +196,7 @@ class RegistryCatalog:
     >>> "inference" in probpipe.registry_catalog
     True
     >>> print(probpipe.registry_catalog.describe("inference"))  # doctest: +SKIP
-    inference  (dispatch) — Inference methods for condition_on, keyed on the target's type.
+    inference  (dispatch) — Inference methods for condition_on, each given an inference target.
     ...
     """
 

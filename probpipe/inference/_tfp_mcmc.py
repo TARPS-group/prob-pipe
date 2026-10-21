@@ -16,7 +16,7 @@ from ..distributions._capabilities import SupportsUnnormalizedLogProb
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..operations._condition import InferenceMethod
-from ..operations._inference_target import InferenceTarget, _flat_record
+from ..operations._inference_target import InferenceTarget, _flat_record_spec
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
     UNTRACEABLE_DENSITY,
@@ -42,7 +42,7 @@ def _run_tfp_chains(
     num_chains: int,
     step_size: float,
     target_accept_prob: float,
-    random_seed: int,
+    random_seed: int | PRNGKey,
 ) -> tuple[list[Array], dict[str, np.ndarray]]:
     """Run TFP-backed MCMC chains.
 
@@ -117,7 +117,7 @@ def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, np.ndarray]
 
 
 def _chain_target(
-    model: Any, observed: Any, *, init: Any, random_seed: int
+    model: Any, observed: Any, *, init: Any, random_seed: int | PRNGKey
 ) -> tuple[Callable[[Array], Array], Array]:
     """The log-density at a chain state, and the initial state.
 
@@ -125,7 +125,7 @@ def _chain_target(
     declares a numeric record it has no flat view of is scored at that state
     unflattened, and any other at the state as it is.
     """
-    if _flat_record(model) is not None:
+    if _flat_record_spec(model) is not None:
         return build_target_log_prob_flat(model, observed, init=init, random_seed=random_seed)
     return (
         build_target_log_prob(model, observed),
@@ -192,7 +192,7 @@ class _TFPGradientMethod(InferenceMethod):
         return Feasibility(feasible=True)
 
     def execute(
-        self, target: InferenceTarget, /, *, key: PRNGKey, **kwargs: Any
+        self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any
     ) -> EmpiricalDistribution:
         """Chains of the TFP kernel on the target's unnormalized density.
 
@@ -203,7 +203,7 @@ class _TFPGradientMethod(InferenceMethod):
             unnormalized conditional at data its joint does not declare as fields.
         key : PRNGKey
             The run's random key.
-        **kwargs : Any
+        **options : Any
             The call's ``method_options``, which :func:`TFPNutsMethod` lists.
 
         Returns
@@ -216,19 +216,19 @@ class _TFPGradientMethod(InferenceMethod):
         ValueError
             If ``target_accept_prob`` is not strictly between 0 and 1.
         """
-        self._check_options(kwargs)
-        target_accept_prob = kwargs.get("target_accept_prob", 0.75)
+        self._check_options(options)
+        target_accept_prob = options.get("target_accept_prob", 0.75)
         if not 0.0 < target_accept_prob < 1.0:
             raise ValueError(
                 f"target_accept_prob must be strictly between 0 and 1; got {target_accept_prob!r}"
             )
         model, observed = observed_parts(target)
-        density, init = _chain_target(model, observed, init=kwargs.get("init"), random_seed=key)
+        density, init = _chain_target(model, observed, init=options.get("init"), random_seed=key)
         density, init, constrain = unconstrained_chain(density, init, model)
 
-        num_results = kwargs.get("num_results", 1000)
-        num_warmup = kwargs.get("num_warmup", 500)
-        num_chains = kwargs.get("num_chains", 4)
+        num_results = options.get("num_results", 1000)
+        num_warmup = options.get("num_warmup", 500)
+        num_chains = options.get("num_chains", 4)
 
         chains, sample_stats = _run_tfp_chains(
             density,
@@ -237,7 +237,7 @@ class _TFPGradientMethod(InferenceMethod):
             num_results=num_results,
             num_warmup=num_warmup,
             num_chains=num_chains,
-            step_size=kwargs.get("step_size", 0.1),
+            step_size=options.get("step_size", 0.1),
             target_accept_prob=target_accept_prob,
             random_seed=key,
         )

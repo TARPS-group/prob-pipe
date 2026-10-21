@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 import jax
@@ -78,6 +79,18 @@ class _ProgramLike(Distribution):
         return -jnp.sum(jnp.asarray(value["theta"]) ** 2)
 
 
+class _WithOpaqueLeaf(Distribution):
+    """A law over a record with a leaf that is not numeric, which no flat layout holds."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            OutputSpec(RecordSpec(a=NumericArraySpec(()), b=OpaqueSpec())), label="opaque"
+        )
+
+    def _unnormalized_log_prob(self, value: Any) -> Any:
+        return jnp.zeros(())
+
+
 class TestMakePosteriorOfATarget:
     """The posterior a method returns: its target's event, laid out as the target lays out positions."""
 
@@ -126,19 +139,41 @@ class TestMakePosteriorOfATarget:
 
     def test_parameter_shapes_must_give_every_output(self):
         target = observed_target(_ProgramLike(), None)
-        with pytest.raises(ValueError, match=r"missing the shapes of \['sigma'\]"):
+        with pytest.raises(ValueError, match=r"it has no shape for \['sigma'\]"):
             make_posterior(
                 target, [jnp.zeros((2, 3))], method="test", parameter_shapes={"theta": (3,)}
             )
 
     def test_parameter_shapes_need_a_record_event(self):
         target = observed_target(Normal("x", jnp.zeros(2), 1.0), None)
-        with pytest.raises(TypeError, match="parameter_shapes gives the shapes of the fields"):
+        with pytest.raises(TypeError, match="its parameters are one NumericArraySpec"):
             make_posterior(target, [jnp.zeros((2, 2))], method="test", parameter_shapes={"x": (2,)})
 
-    def test_the_target_comes_first_and_the_method_by_keyword(self):
-        import inspect
+    def test_parameter_shapes_must_name_only_outputs(self):
+        target = observed_target(_ProgramLike(), None)
+        shapes = {"theta": (3,), "sigma": (), "zeta": (7,)}
+        with pytest.raises(ValueError, match=r"it names no parameter \['zeta'\]"):
+            make_posterior(target, [jnp.zeros((2, 4))], method="test", parameter_shapes=shapes)
 
+    def test_no_chains_raise(self):
+        with pytest.raises(ValueError, match="chains must hold at least one chain"):
+            make_posterior(_regression_target(), [], method="test")
+
+    def test_chains_of_different_lengths_raise(self):
+        chains = [jnp.zeros((4, 3)), jnp.zeros((5, 3))]
+        with pytest.raises(ValueError, match="all chains must have the same length"):
+            make_posterior(_regression_target(), chains, method="test")
+
+    def test_a_chain_not_in_the_targets_layout_raises(self):
+        with pytest.raises(ValueError, match="each draw has 2 values"):
+            make_posterior(_regression_target(), [jnp.zeros((4, 2))], method="test")
+
+    def test_a_target_with_a_leaf_that_is_no_numeric_array_raises(self):
+        target = observed_target(_WithOpaqueLeaf(), None)
+        with pytest.raises(ValueError, match=r"'b'.*its spec is OpaqueSpec"):
+            make_posterior(target, [jnp.zeros((4, 1))], method="test")
+
+    def test_the_target_comes_first_and_the_method_by_keyword(self):
         parameters = inspect.signature(make_posterior).parameters
         assert list(parameters)[:2] == ["target", "chains"]
         assert parameters["method"].kind is inspect.Parameter.KEYWORD_ONLY

@@ -9,10 +9,11 @@ import numpy as np
 
 from ..core._dispatch import Feasibility
 from ..custom_types import ArrayLike, PRNGKey
+from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..functions import function
 from ..operations._condition import InferenceMethod, _inference_run_key
-from ..operations._inference_target import InferenceTarget, _described, _UnnormalizedConditional
+from ..operations._inference_target import InferenceTarget, _described
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
     extract_chain_columns,
@@ -20,7 +21,6 @@ from ._inference_utils import (
     joint_and_given,
     observed_target,
     refuse_seed_keywords,
-    require_trace_variables,
 )
 from ._pymc_method import _pymc_parameter_shapes
 
@@ -173,12 +173,11 @@ def _nutpie_posterior(
     # nutpie sorts the trace's variables by name, so the parameters are extracted
     # by name, in the target's order, without a program's transformed and
     # generated variables.
-    require_trace_variables(trace, parameter_names)
+    chains, _ = _extract_chains(trace, num_chains, keep_names=parameter_names)
     if parameter_shapes is None:
         parameter_shapes = {
             name: np.shape(trace.posterior[name].values)[2:] for name in parameter_names
         }
-    chains, _ = _extract_chains(trace, num_chains, keep_names=parameter_names)
 
     return make_posterior(
         target,
@@ -249,8 +248,8 @@ def _extract_chains(
     keep_names : list of str or None
         If given, extract exactly these variables, in this order, instead
         of ``posterior.data_vars`` order (which nutpie sorts
-        alphabetically). Callers pass the parameter names, so the chain
-        columns align with the template and omit a Stan program's
+        alphabetically). Callers pass the target's parameters in its order, so the
+        chains are in the target's flat layout and omit a Stan program's
         transformed and generated variables.
 
     Returns
@@ -310,7 +309,7 @@ class NutpieNutsMethod(InferenceMethod):
         return "nutpie_nuts"
 
     def supported_types(self) -> tuple[type, ...]:
-        return (_UnnormalizedConditional,)
+        return (Distribution,)
 
     @property
     def priority(self) -> int:
@@ -342,13 +341,13 @@ class NutpieNutsMethod(InferenceMethod):
         return Feasibility(feasible=True)
 
     def execute(
-        self, target: InferenceTarget, /, *, key: PRNGKey, **kwargs: Any
+        self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any
     ) -> EmpiricalDistribution:
         """nutpie's NUTS on the program the target carries, at the observed values it binds.
 
         The posterior's provenance names the target as its parent.
         """
-        self._check_options(kwargs)
+        self._check_options(options)
         dist, observed = joint_and_given(target)
         seed = integer_seed(key)
-        return _nutpie_posterior(dist, observed, target, random_seed=seed, **kwargs)
+        return _nutpie_posterior(dist, observed, target, random_seed=seed, **options)

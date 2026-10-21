@@ -75,6 +75,7 @@ from ..core._dispatch import (
     MethodInfo,
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
+    _Registration,
 )
 from ..core._expression import Expression
 from ..core._record_batch import RecordBatch
@@ -260,13 +261,37 @@ def _install_observed_target(builder: Callable[[Any, Any], Any]) -> None:
     _observed_target = builder
 
 
-class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
+class _InferenceMethodRegistry(UnaryDispatchRegistry[InferenceMethod]):
     """The inference-method registry, whose methods take the target of the normalization stage.
 
-    A call with a second positional argument passes a model and the data it is
-    conditioned on, as ``probpipe.condition_on`` does, and dispatches on the
-    target the installed builder forms from them.
+    Every method receives an :class:`~probpipe.inference.InferenceTarget` and
+    the key of its run. A call with a second positional argument passes a
+    model and the data it is conditioned on, as ``probpipe.condition_on``
+    does, and dispatches on the target the installed builder forms from them;
+    a law passed alone is the target of conditioning it on nothing.
     """
+
+    def register(self, method: InferenceMethod) -> None:
+        """Register an inference method; see :meth:`UnaryDispatchRegistry.register`.
+
+        Parameters
+        ----------
+        method : InferenceMethod
+            The method to register.
+
+        Raises
+        ------
+        TypeError
+            If *method* is not an :class:`InferenceMethod`, whose ``execute``
+            receives the run's key, or as the base registry refuses it.
+        """
+        if not isinstance(method, InferenceMethod):
+            raise TypeError(
+                f"cannot register {type(method).__name__} as an inference method: it does not "
+                f"subclass InferenceMethod. Subclass InferenceMethod, whose execute receives the "
+                f"run's key"
+            )
+        super().register(method)
 
     def check(
         self, *args: Any, method: str | None = None, exact_only: bool = False, **kwargs: Any
@@ -309,7 +334,10 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
         return super().execute(*self._targets(args), method=method, exact_only=exact_only, **kwargs)
 
     def _run_selected(
-        self, registration: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+        self,
+        registration: _Registration[InferenceMethod],
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
     ) -> Any:
         """The selected method's result on the target, with the key of this run of the method."""
         return registration.method.execute(
@@ -390,11 +418,11 @@ def _inference_run_key(method_name: str) -> PRNGKey:
     )
 
 
-inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = _InferenceMethodRegistry(
+inference_method_registry: UnaryDispatchRegistry[InferenceMethod] = _InferenceMethodRegistry(
     name="inference",
-    description="Inference methods for condition_on, keyed on the target's type.",
+    description="Inference methods for condition_on, each given an inference target.",
 )
-"""The registry of the normalization stage of ``condition_on``, keyed on the target's type.
+"""The registry of the normalization stage of ``condition_on``, whose methods each receive an inference target.
 
 The methods of ``probpipe.inference`` register here.
 """

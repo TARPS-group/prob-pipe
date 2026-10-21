@@ -31,7 +31,7 @@ from ..custom_types import Array, ArrayLike
 from ..distributions._distribution import Distribution, _complete_event_spec
 from ..distributions._empirical import EmpiricalDistribution
 from ..families._programs import _parameter_record_at
-from ..operations._inference_target import InferenceTarget, _flat_record, _one_array
+from ..operations._inference_target import InferenceTarget
 
 __all__ = ["make_posterior"]
 
@@ -43,6 +43,98 @@ _FLAT_DRAWS = "params"
 
 #: The ArviZ groups whose flat draws an inference result names by leaf.
 _DRAW_GROUPS = ("posterior", "warmup")
+
+
+def make_posterior(
+    target: InferenceTarget,
+    chains: list[Array],
+    *,
+    method: str,
+    annotations: DataTree | None = None,
+    parameter_shapes: Mapping[str, tuple[int, ...]] | None = None,
+    weights: ArrayLike | Weights | None = None,
+    label: str = "posterior",
+    **meta: Any,
+) -> EmpiricalDistribution:
+    """The posterior an inference method returns: the empirical law of its draws of the target's parameters.
+
+    The result is an :class:`~probpipe.EmpiricalDistribution` labeled *label*,
+    whose atoms are the draws on the levels ``chain`` and ``draw``, labeled by
+    the target's outputs, as ``beta`` or ``(K, r, phi)``. Its event spec is
+    the target's, so a record of parameters keeps its fields' supports, shapes,
+    and nested groups. Each chain holds positions in the target's flat layout
+    (:class:`~probpipe.inference.InferenceTarget`), which the result reads back
+    as draws of the parameters. Its provenance names the method, with the
+    target as its parent. Its annotations are a ``DataTree`` whose root
+    attribute ``method`` is *method*, and which stores the method's
+    diagnostics, sample statistics, and warmup draws as ArviZ-compatible
+    groups under ``arviz/``.
+
+    Parameters
+    ----------
+    target : InferenceTarget
+        The target the method ran on.
+    chains : list of Array
+        Per-chain draws, each of shape ``(num_draws, size)`` in the target's
+        flat layout; the chains have equal lengths.
+    method : str
+        The inference method's name, by which the ``method`` control selects it,
+        such as ``"tfp_nuts"`` or ``"blackjax_rwmh"``.
+    annotations : DataTree or None
+        The method's diagnostics, sample statistics, and warmup draws, as
+        ArviZ groups of a ``DataTree``, such as ``sample_stats``. A
+        ``posterior`` or ``warmup`` group whose one variable ``params`` holds
+        positions of shape ``(chains, draws, size)`` is stored with one
+        variable per leaf of the result, named by its path with ``.`` between
+        the parts, since a ``DataTree`` variable has no ``/`` in its name.
+    parameter_shapes : Mapping of str to tuple of int, or None
+        The shape of each parameter as the run fixed it, by output, for a
+        target whose event leaves shapes for a program to fix when it runs,
+        such as a Stan model whose array sizes come from its data. It names
+        every output of the target and nothing else, and each parameter keeps
+        the dtype and the support the target declares.
+    weights : array-like, :class:`~probpipe.Weights`, or None
+        Per-draw importance weights across all chains in chain order, as SMC-ABC
+        returns them.
+    label : str
+        The result's label.
+    **meta
+        Further metadata recorded in the provenance.
+
+    Returns
+    -------
+    EmpiricalDistribution
+        The posterior, with its atoms on the levels ``chain`` and ``draw``,
+        labeled by its outputs.
+
+    Raises
+    ------
+    ValueError
+        If *chains* is empty or the chains differ in length, a draw's width is
+        not the target's flat size, or *parameter_shapes* misses an output of
+        the target or names one it does not have.
+    TypeError
+        If the target's event has a leaf that is not a numeric array, or
+        *parameter_shapes* is given for a target whose event is not a record.
+
+    Examples
+    --------
+    A method that draws positions of the target's parameters returns them as a
+    posterior::
+
+        chain = jnp.stack(positions)                     # (num_draws, size)
+        return make_posterior(target, [chain], method="my_method")
+    """
+    return _posterior_from_chains(
+        chains,
+        (target,),
+        method,
+        annotations=annotations,
+        event_spec=_target_event_spec(target, parameter_shapes),
+        weights=weights,
+        label=label,
+        **meta,
+    )
 
 
 def _non_numeric(path: str, spec: Any) -> str:
@@ -291,121 +383,29 @@ def _posterior_declaration(event_spec: OutputSpec | TermSpec) -> OutputSpec:
     return _complete_event_spec(event_spec)
 
 
-def make_posterior(
-    target: InferenceTarget,
-    chains: list[Array],
-    *,
-    method: str,
-    annotations: DataTree | None = None,
-    parameter_shapes: Mapping[str, tuple[int, ...]] | None = None,
-    weights: ArrayLike | Weights | None = None,
-    label: str = "posterior",
-    **meta: Any,
-) -> EmpiricalDistribution:
-    """The posterior an inference method returns: the empirical law of its draws of the target's parameters.
-
-    The result is an :class:`~probpipe.EmpiricalDistribution` labeled *label*,
-    whose atoms are the draws on the levels ``chain`` and ``draw``, labeled by
-    the target's outputs, as ``beta`` or ``(K, r, phi)``. Its event spec is
-    the target's, so a record of parameters keeps its fields' supports, shapes,
-    and nested groups. Each chain holds positions in the target's flat layout
-    (:class:`~probpipe.inference.InferenceTarget`), which the result reads back
-    as draws of the parameters. Its provenance names the method, with the
-    target as its parent. Its annotations are a ``DataTree`` whose root
-    attribute ``method`` is *method*, and which stores the method's
-    diagnostics, sample statistics, and warmup draws as ArviZ-compatible
-    groups under ``arviz/``.
-
-    Parameters
-    ----------
-    target : InferenceTarget
-        The target the method ran on.
-    chains : list of Array
-        Per-chain draws, each of shape ``(num_draws, size)`` in the target's
-        flat layout; the chains have equal lengths.
-    method : str
-        The inference method's name, by which the ``method`` control selects it,
-        such as ``"tfp_nuts"`` or ``"blackjax_rwmh"``.
-    annotations : DataTree or None
-        The method's diagnostics, sample statistics, and warmup draws. A
-        ``posterior`` or ``warmup`` group that holds the flat draws as its one
-        variable ``params``, as ``build_mcmc_datatree`` stores them, is stored
-        with one variable per leaf of the result, named by its path with ``.``
-        between the parts, since a ``DataTree`` variable has no ``/`` in its name.
-    parameter_shapes : Mapping of str to tuple of int, or None
-        The shape of each parameter as the run fixed it, by output, for a
-        target whose event leaves shapes for a program to fix when it runs,
-        such as a Stan model whose array sizes come from its data. Each
-        parameter keeps the dtype and the support the target declares.
-    weights : array-like, :class:`~probpipe.Weights`, or None
-        Per-draw importance weights across all chains in chain order, as SMC-ABC
-        returns them.
-    label : str
-        The result's label.
-    **meta
-        Further metadata recorded in the provenance.
-
-    Returns
-    -------
-    EmpiricalDistribution
-        The posterior, with its atoms on the levels ``chain`` and ``draw``,
-        labeled by its outputs.
-
-    Raises
-    ------
-    ValueError
-        If *chains* is empty or the chains differ in length, a draw's flat
-        width is not the target's flat size, or *parameter_shapes* does not
-        give the shape of every output of the target.
-    TypeError
-        If the target's event has a leaf that is not a numeric array, or
-        *parameter_shapes* is given for a target whose event is not a record.
-
-    Examples
-    --------
-    A method that draws positions of the target's parameters returns them as a
-    posterior::
-
-        chain = jnp.stack(positions)                     # (num_draws, size)
-        return make_posterior(target, [chain], method="my_method")
-    """
-    return _posterior_from_chains(
-        chains,
-        (target,),
-        method,
-        annotations=annotations,
-        event_spec=_target_event_spec(target, parameter_shapes),
-        weights=weights,
-        label=label,
-        **meta,
-    )
-
-
 def _target_event_spec(
     target: InferenceTarget, parameter_shapes: Mapping[str, tuple[int, ...]] | None
-) -> OutputSpec | None:
-    """The event spec of the posterior of *target*, with its parameters at *parameter_shapes*.
-
-    ``None`` for a target that no flat layout lays out, whose draws the result
-    then takes as one array each.
-    """
-    if parameter_shapes is not None:
-        record = target.event_spec.term_spec
-        if not isinstance(record, RecordSpec):
-            raise TypeError(
-                f"parameter_shapes gives the shapes of the fields of a record, but the event of "
-                f"{target.label!r} is a {type(record).__name__}"
-            )
-        missing = [name for name in record.fields if name not in parameter_shapes]
-        if missing:
-            raise ValueError(
-                f"parameter_shapes is missing the shapes of {missing}; give the shape of every "
-                f"output of {target.label!r}: {list(record.fields)}"
-            )
-        return OutputSpec(_parameter_record_at(record, parameter_shapes))
-    if _flat_record(target) is None and _one_array(target) is None:
-        return None
-    return target.event_spec
+) -> OutputSpec:
+    """The event spec of the posterior of *target*: the target's, with its parameters at *parameter_shapes*."""
+    if parameter_shapes is None:
+        return target.event_spec
+    record_spec = target.event_spec.term_spec
+    if not isinstance(record_spec, RecordSpec):
+        raise TypeError(
+            f"cannot apply parameter_shapes to {target.label!r}: its parameters are one "
+            f"{type(record_spec).__name__}, not a record of fields. Remove parameter_shapes"
+        )
+    missing = [name for name in record_spec.fields if name not in parameter_shapes]
+    unknown = [name for name in parameter_shapes if name not in record_spec.fields]
+    if missing or unknown:
+        problem = (
+            f"it has no shape for {missing}" if missing else f"it names no parameter {unknown}"
+        )
+        raise ValueError(
+            f"cannot apply parameter_shapes to {target.label!r}: {problem}. Give one shape for "
+            f"each of {list(record_spec.fields)}"
+        )
+    return OutputSpec(_parameter_record_at(record_spec, parameter_shapes))
 
 
 def _posterior_from_chains(
@@ -421,8 +421,7 @@ def _posterior_from_chains(
 ) -> EmpiricalDistribution:
     """The empirical law of an inference run's draws under *event_spec*, with its record of the run.
 
-    :func:`make_posterior` reads *event_spec* from the target, and the tests build
-    results without a target through it.
+    :func:`make_posterior` reads *event_spec* from the target.
 
     Parameters
     ----------

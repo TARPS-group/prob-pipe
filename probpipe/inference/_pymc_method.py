@@ -15,7 +15,7 @@ from ..custom_types import PRNGKey
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..operations._condition import InferenceMethod
-from ..operations._inference_target import InferenceTarget, _described, _UnnormalizedConditional
+from ..operations._inference_target import InferenceTarget, _described
 from ._approximate_distribution import _record_run, make_posterior
 from ._inference_utils import (
     extract_chain_columns,
@@ -72,7 +72,7 @@ class PyMCNutsMethod(InferenceMethod):
         return "pymc_nuts"
 
     def supported_types(self) -> tuple[type, ...]:
-        return (_UnnormalizedConditional,)
+        return (Distribution,)
 
     @property
     def priority(self) -> int:
@@ -88,26 +88,26 @@ class PyMCNutsMethod(InferenceMethod):
         return Feasibility(feasible=True)
 
     def execute(
-        self, target: InferenceTarget, /, *, key: PRNGKey, **kwargs: Any
+        self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any
     ) -> EmpiricalDistribution:
         """PyMC inference on the model the target carries, at the observed values it binds."""
-        self._check_options(kwargs)
+        self._check_options(options)
         from ..families._programs import _import_pymc
 
         pm = _import_pymc()
 
         dist, observed = joint_and_given(target)
 
-        num_results = kwargs.get("num_results", 1000)
-        num_warmup = kwargs.get("num_warmup", 500)
-        num_chains = kwargs.get("num_chains", 4)
+        num_results = options.get("num_results", 1000)
+        num_warmup = options.get("num_warmup", 500)
+        num_chains = options.get("num_chains", 4)
         # Multi-core sampling forces the "spawn" start method: this process
         # holds live JAX threads, and pymc's POSIX-"fork" default deadlocks
         # when a forked worker inherits a held thread lock. spawn pickles the
         # model to each worker; if the model is not picklable, pymc logs a
         # warning and falls back to single-process sampling — so multi-core
         # is the default without making serializability a hard requirement.
-        cores = kwargs.get("cores", min(num_chains, os.cpu_count() or 1))
+        cores = options.get("cores", min(num_chains, os.cpu_count() or 1))
         random_seed = integer_seed(key)
 
         model = dist._pymc_model(data=observed)
@@ -122,7 +122,7 @@ class PyMCNutsMethod(InferenceMethod):
                 cores=cores,
                 mp_ctx="spawn" if cores > 1 else None,
                 random_seed=random_seed,
-                progressbar=kwargs.get("progress_bar", True),
+                progressbar=options.get("progress_bar", True),
                 return_inferencedata=True,
                 nuts_sampler="pymc",
             )
@@ -192,7 +192,7 @@ class PyMCADVIMethod(InferenceMethod):
         return "pymc_advi"
 
     def supported_types(self) -> tuple[type, ...]:
-        return (_UnnormalizedConditional,)
+        return (Distribution,)
 
     @property
     def priority(self) -> int | None:
@@ -207,19 +207,19 @@ class PyMCADVIMethod(InferenceMethod):
             )
         return Feasibility(feasible=True)
 
-    def execute(self, target: InferenceTarget, /, *, key: PRNGKey, **kwargs: Any) -> Distribution:
+    def execute(self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any) -> Distribution:
         """PyMC variational inference on the model the target carries, at the observed values it binds."""
-        self._check_options(kwargs)
+        self._check_options(options)
         from ..families._programs import _import_pymc
 
         pm = _import_pymc()
 
         dist, observed = joint_and_given(target)
 
-        num_iterations = kwargs.get("num_iterations", 30000)
-        num_results = kwargs.get("num_results", 1000)
+        num_iterations = options.get("num_iterations", 30000)
+        num_results = options.get("num_results", 1000)
         fit_key, draws_key = jax.random.split(key)
-        vi_method = kwargs.get("vi_method", "advi")
+        vi_method = options.get("vi_method", "advi")
 
         model = dist._pymc_model(data=observed)
         # The parameters' shapes come from the build at the data, before fitting,
@@ -230,7 +230,7 @@ class PyMCADVIMethod(InferenceMethod):
                 n=num_iterations,
                 method=vi_method,
                 random_seed=integer_seed(fit_key),
-                progressbar=kwargs.get("progress_bar", True),
+                progressbar=options.get("progress_bar", True),
             )
         name = f"pymc_{vi_method}"
         if vi_method == "advi":
@@ -284,8 +284,9 @@ def _pymc_parameter_shapes(
     free_names = pymc_model._conditioned_param_names(model_build)
     if set(free_names) != set(names):
         raise ValueError(
-            f"the PyMC model leaves {list(free_names)} free at its data, but the parameters of "
-            f"{target.label!r} are {names}"
+            f"cannot run PyMC on {target.label!r}: the model's free variables at its data, "
+            f"{list(free_names)}, are not the target's parameters {names}. Condition the model "
+            f"on every observed variable it declares"
         )
     record = pymc_model._parameter_record_for(model_build, names)
     return {name: tuple(spec.shape) for name, spec in record.children.items()}

@@ -9,6 +9,7 @@ layout, and the model's prior and likelihood through it.
 from __future__ import annotations
 
 from collections.abc import Callable
+from math import prod
 from typing import Any, ClassVar, NamedTuple, Protocol, runtime_checkable
 
 import jax.numpy as jnp
@@ -127,6 +128,8 @@ class InferenceTarget(Protocol):
         TypeError
             If the model has no unnormalized log-density, or the target has no
             flat layout.
+        ValueError
+            If *position* does not hold one value of every parameter.
         """
         ...
 
@@ -150,6 +153,8 @@ class InferenceTarget(Protocol):
         ------
         TypeError
             If the target has no flat layout.
+        ValueError
+            If *position* does not hold one value of every parameter.
         """
         ...
 
@@ -383,8 +388,8 @@ def _as_inference_target(law: Distribution) -> _UnnormalizedConditional:
 # ---------------------------------------------------------------------------
 
 
-def _flat_record(law: Any) -> NumericRecordSpec | None:
-    """The numeric record a flat position over *law* lays out, or None when its outputs are no record's fields."""
+def _flat_record_spec(law: Any) -> NumericRecordSpec | None:
+    """The spec of the numeric record a position over *law* lays out, or None when its outputs are no record's fields."""
     output_spec = getattr(law, "event_spec", None)
     if not isinstance(output_spec, OutputSpec) or not _has_record_outputs(output_spec):
         return None
@@ -397,7 +402,8 @@ def _flat_unflatten(law: Any) -> Callable[[Array], Any]:
 
     A draw of one array is the position reshaped to the event, and a draw of a
     numeric record whose fields are the law's outputs is the record whose
-    leaves the position lays out in canonical order.
+    leaves the position lays out in canonical order. Positions may be stacked
+    on leading axes for a record; the last axis holds one position.
 
     Parameters
     ----------
@@ -407,7 +413,8 @@ def _flat_unflatten(law: Any) -> Callable[[Array], Any]:
     Returns
     -------
     callable
-        The map, whose record draws carry *law*'s label.
+        The map, whose record draws carry *law*'s label. It raises
+        ``ValueError`` for a position whose last axis is not the layout's size.
 
     Raises
     ------
@@ -415,20 +422,39 @@ def _flat_unflatten(law: Any) -> Callable[[Array], Any]:
         If *law* draws neither one numeric array of known shape nor a numeric
         record whose fields are its outputs.
     """
-    array = _one_array(law)
-    if array is not None:
-        return _reshape_to(array.shape)
-    record = _flat_record(law)
-    if record is None:
+    array_spec = _one_array_spec(law)
+    if array_spec is not None:
+        reshape_position = _reshape_to(array_spec.shape)
+        array_size = prod(array_spec.shape)
+
+        def unflatten_array(position: Array) -> Array:
+            _check_position_size(law, position, array_size)
+            return reshape_position(position)
+
+        return unflatten_array
+    record_spec = _flat_record_spec(law)
+    if record_spec is None:
         raise TypeError(_no_flat_layout(law))
 
     def unflatten_record(position: Array) -> Any:
-        return _reconstruct_from_vector(law.label, record, position)
+        _check_position_size(law, position, record_spec.vector_size)
+        return _reconstruct_from_vector(law.label, record_spec, position)
 
     return unflatten_record
 
 
-def _one_array(law: Any) -> NumericArraySpec | None:
+def _check_position_size(law: Any, position: Array, size: int) -> None:
+    """Refuse *position* unless its last axis holds the *size* values of a position over *law*."""
+    shape = jnp.shape(position)
+    if not shape or shape[-1] != size:
+        raise ValueError(
+            f"cannot read a position of shape {tuple(shape)} as a draw of {_described(law)}: "
+            f"a position holds its {size} parameter values on one axis. Pass an array of "
+            f"shape ({size},)"
+        )
+
+
+def _one_array_spec(law: Any) -> NumericArraySpec | None:
     """The spec of the one numeric array of a concrete shape *law* draws, or None."""
     output_spec = getattr(law, "event_spec", None)
     if not isinstance(law, Distribution) or output_spec is None or _has_record_outputs(output_spec):

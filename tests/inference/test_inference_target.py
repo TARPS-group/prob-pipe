@@ -11,6 +11,7 @@ at data it does not declare as fields. Each is checked against the contract of
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 import jax
@@ -274,6 +275,24 @@ class TestTheFlatLayout:
         with pytest.raises(TypeError, match="cannot lay out the draws"):
             target.log_density(jnp.zeros(3))
 
+    @pytest.mark.parametrize("length", [2, 4])
+    def test_a_position_of_the_wrong_length_raises_for_a_record(self, received_target, length):
+        target = received_target(_by_condition_on, _regression(), {"y": Y})
+        with pytest.raises(ValueError, match=r"a position holds its 3 parameter values"):
+            target.unflatten(jnp.zeros(length))
+        with pytest.raises(ValueError, match=r"Pass an array of shape \(3,\)"):
+            target.log_density(jnp.zeros(length))
+
+    def test_a_position_of_the_wrong_length_raises_for_an_array(self, received_target):
+        target = received_target(_by_the_registry, _UnnormalizedMatrix())
+        with pytest.raises(ValueError, match=r"a position holds its 4 parameter values"):
+            target.unflatten(jnp.zeros(3))
+
+    def test_a_scalar_is_no_position(self, received_target):
+        target = received_target(_by_the_registry, _UnnormalizedMatrix())
+        with pytest.raises(ValueError, match=r"cannot read a position of shape \(\)"):
+            target.unflatten(jnp.zeros(()))
+
     def test_a_target_without_a_density_refuses_log_density(self, received_target):
         target = received_target(_by_the_registry, _WithoutDensity())
         with pytest.raises(TypeError, match="unnormalized log-density"):
@@ -367,8 +386,6 @@ class TestTheRunKey:
 
     @pytest.mark.parametrize("method_name", inference_method_registry.list_methods())
     def test_every_registered_method_takes_the_key_as_a_required_keyword(self, method_name):
-        import inspect
-
         execute = inference_method_registry.get_method(method_name).execute
         key = inspect.signature(execute).parameters["key"]
         assert key.kind is inspect.Parameter.KEYWORD_ONLY
@@ -402,9 +419,31 @@ class TestTheRunKey:
         ],
     )
     def test_a_function_that_runs_inference_outside_the_registry_takes_no_key(self, function_name):
-        import inspect
-
         import probpipe.inference
 
         parameters = inspect.signature(getattr(probpipe.inference, function_name)).parameters
         assert "key" not in parameters
+
+
+class TestTheRegistry:
+    def test_it_refuses_a_method_that_takes_no_key(self):
+        from probpipe.inference import UnaryDispatchMethod
+
+        class _NoKey(UnaryDispatchMethod):
+            name = "no_key"
+            description = "No key."
+            exact = False
+
+            def supported_types(self):
+                return (object,)
+
+            def check(self, *args, **options):
+                return Feasibility(True)
+
+            def execute(self, *args, **options):
+                return None
+
+        registry = _InferenceMethodRegistry(name="refusing", description="Refuses.")
+        with pytest.raises(TypeError, match="cannot register _NoKey as an inference method"):
+            registry.register(_NoKey())
+        assert registry.list_methods() == []

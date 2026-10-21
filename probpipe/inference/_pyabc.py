@@ -16,13 +16,13 @@ from ..core._dispatch import Feasibility
 from ..custom_types import PRNGKey
 from ..distributions._capabilities import SupportsConditionalSampling
 from ..distributions._conditional import ConditionalDistribution
+from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..operations._condition import InferenceMethod
 from ..operations._inference_target import (
     InferenceTarget,
     _described,
     _flat_unflatten,
-    _UnnormalizedConditional,
 )
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
@@ -37,8 +37,6 @@ from ._inference_utils import (
 
 if TYPE_CHECKING:
     from xarray import DataTree
-
-    from ..distributions._distribution import Distribution
 
 
 # Key under which the simulated/observed vector lives in pyabc's sumstat dict.
@@ -266,7 +264,7 @@ class PyABCSMCMethod(InferenceMethod):
         return "pyabc_smcabc"
 
     def supported_types(self) -> tuple[type, ...]:
-        return (_UnnormalizedConditional,)
+        return (Distribution,)
 
     @property
     def priority(self) -> int:
@@ -308,7 +306,7 @@ class PyABCSMCMethod(InferenceMethod):
         return Feasibility(feasible=True)
 
     def execute(
-        self, target: InferenceTarget, /, *, key: PRNGKey, **kwargs: Any
+        self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any
     ) -> EmpiricalDistribution:
         """Run SMC-ABC and return a weighted posterior.
 
@@ -327,7 +325,7 @@ class PyABCSMCMethod(InferenceMethod):
             vector.
         key : PRNGKey
             The run's random key.
-        **kwargs : Any
+        **options : Any
             The call's ``method_options``:
 
             - ``n_particles`` (int, default 100): SMC population size.
@@ -381,22 +379,22 @@ class PyABCSMCMethod(InferenceMethod):
         TypeError
             If a keyword is none of the options above.
         """
-        self._check_options(kwargs)
+        self._check_options(options)
         factors = model_factors(target)
         prior = factors.prior
         simulator = factors.likelihood
 
-        n_particles = int(kwargs.get("n_particles", 100))
-        max_populations = int(kwargs.get("max_populations", 4))
-        eps_alpha = float(kwargs.get("eps_alpha", 0.5))
+        n_particles = int(options.get("n_particles", 100))
+        max_populations = int(options.get("max_populations", 4))
+        eps_alpha = float(options.get("eps_alpha", 0.5))
         random_seed = integer_seed(key)
-        summary_fn: _SummaryFn | None = kwargs.get("summary_fn")
-        distance_fn: _DistanceFn = kwargs.get("distance_fn") or _euclidean_distance
-        sampler = kwargs.get("sampler") or SingleCoreSampler()
-        eps = kwargs.get("eps")
+        summary_fn: _SummaryFn | None = options.get("summary_fn")
+        distance_fn: _DistanceFn = options.get("distance_fn") or _euclidean_distance
+        sampler = options.get("sampler") or SingleCoreSampler()
+        eps = options.get("eps")
         if eps is None:
             eps = pyabc.QuantileEpsilon(alpha=eps_alpha)
-        transitions = kwargs.get("transitions")
+        transitions = options.get("transitions")
 
         prior_key, sim_key0 = jax.random.split(jax.random.PRNGKey(random_seed))
         pyabc_prior = PyABCDistribution(prior, prior_key)
@@ -432,14 +430,14 @@ class PyABCSMCMethod(InferenceMethod):
         # Forward any caller-supplied stopping criteria to run(); pyabc's own
         # defaults apply for those omitted.
         run_kwargs = {
-            k: kwargs[k]
+            k: options[k]
             for k in (
                 "minimum_epsilon",
                 "min_acceptance_rate",
                 "max_total_nr_simulations",
                 "max_walltime",
             )
-            if k in kwargs
+            if k in options
         }
         # pyabc draws its perturbations from numpy's global RNG; seed it for a
         # reproducible run and restore the caller's state afterwards.

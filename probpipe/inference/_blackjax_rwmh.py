@@ -896,24 +896,24 @@ class BlackJAXRWMHMethod(InferenceMethod):
         return Feasibility(feasible=True)
 
     def execute(
-        self, target: InferenceTarget, /, *, key: PRNGKey, **kwargs: Any
+        self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any
     ) -> EmpiricalDistribution:
         """Random-walk chains on the target's parameters, scored by its prior and likelihood."""
-        self._check_options(kwargs)
+        self._check_options(options)
         dist, observed = observed_parts(target)
         return _rwmh(
             target,
             dist,
             observed,
             log_prob_fn=None,
-            num_results=kwargs.get("num_results", 1000),
-            num_warmup=kwargs.get("num_warmup", 500),
-            num_chains=kwargs.get("num_chains", 4),
-            step_size=kwargs.get("step_size", 0.1),
-            adapt=kwargs.get("adapt", True),
-            n_windows=kwargs.get("n_windows", 4),
-            proposal_cov=kwargs.get("proposal_cov"),
-            init=kwargs.get("init"),
+            num_results=options.get("num_results", 1000),
+            num_warmup=options.get("num_warmup", 500),
+            num_chains=options.get("num_chains", 4),
+            step_size=options.get("step_size", 0.1),
+            adapt=options.get("adapt", True),
+            n_windows=options.get("n_windows", 4),
+            proposal_cov=options.get("proposal_cov"),
+            init=options.get("init"),
             random_seed=key,
         )
 

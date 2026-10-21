@@ -27,7 +27,8 @@ A family that stores its laws at batched parameters in one backend object implem
 An inference method normalizes the target that `condition_on` forms when no exact route conditions a law, and it returns a normalized law over the target's event.
 It subclasses `InferenceMethod`, declares `name` and `supported_types`, implements `check` and `execute`, and registers with `inference_method_registry.register`.
 
-A method reads the model through its target, which is an `InferenceTarget`. The model is `target.joint`, the observed values are `target.given`, and `target.factors()` gives a merged model's prior and likelihood.
+A method reads the model through its target, which is an `InferenceTarget`. It reads the model as `target.joint` and the observed values as `target.given`, and `target.factors()` gives a merged model's prior and likelihood.
+Every target is an `InferenceTarget`, so a method's `supported_types` admits `Distribution`, and a method that runs one kind of model, such as a Stan program, recognizes it in `check` through `target.joint`.
 Most methods run on the target's density in its flat layout, where one position is a 1-D array that holds a value of every parameter: `target.log_density(position)` is the unnormalized log-density there, and `target.unflatten(position)` is the same parameters as a draw of the event.
 `execute` also receives the run's random key as the keyword `key`, which `condition_on` derives from the enclosing `workflow_run`, so a seed reproduces the run; a method draws all of its randomness from that key.
 `make_posterior` turns chains of positions into the posterior the method returns.
