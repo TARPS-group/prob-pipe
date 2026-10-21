@@ -2222,8 +2222,8 @@ class FactoredDistribution(Distribution, SupportsFactors):
             self._store_expression(expression, rendering)
 
     def _derived_traceability(self) -> Traceability:
-        """The meet of the factors' traceabilities: the joint traces when each factor does."""
-        return Traceability.meet(*(factor._traceability() for factor in self.factors))
+        """The least permissive of the factors' traceabilities: the joint traces when each factor does."""
+        return Traceability.least_permissive(*(factor._traceability() for factor in self.factors))
 
     @property
     def factors(self) -> tuple[Factor, ...]:
@@ -2368,8 +2368,8 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
             self._store_expression(expression, rendering)
 
     def _derived_traceability(self) -> Traceability:
-        """The meet of the factors' traceabilities: the joint traces when each factor does."""
-        return Traceability.meet(*(factor._traceability() for factor in self.factors))
+        """The least permissive of the factors' traceabilities: the joint traces when each factor does."""
+        return Traceability.least_permissive(*(factor._traceability() for factor in self.factors))
 
     @property
     def factors(self) -> tuple[Factor, ...]:

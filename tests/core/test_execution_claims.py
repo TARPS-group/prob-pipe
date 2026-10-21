@@ -24,14 +24,14 @@ from probpipe.core._spec_base import NumericArraySpec
 
 
 class TestTraceability:
-    def test_the_meet_is_the_least_permissive(self):
-        assert Traceability.meet() is Traceability.TRACEABLE
+    def test_the_least_permissive_comes_last_in_the_order_traceable_embeddable_host_only(self):
+        assert Traceability.least_permissive() is Traceability.TRACEABLE
         assert (
-            Traceability.meet(Traceability.TRACEABLE, Traceability.EMBEDDABLE)
+            Traceability.least_permissive(Traceability.TRACEABLE, Traceability.EMBEDDABLE)
             is Traceability.EMBEDDABLE
         )
         assert (
-            Traceability.meet(
+            Traceability.least_permissive(
                 Traceability.EMBEDDABLE, Traceability.HOST_ONLY, Traceability.TRACEABLE
             )
             is Traceability.HOST_ONLY
@@ -40,35 +40,35 @@ class TestTraceability:
 
 class TestProbeResults:
     def test_the_store_drops_the_least_recently_used_result_past_its_bound(self):
-        store = ProbeResults(max_entries=2)
-        store.put("a", ProbeResult(traces=True))
-        store.put("b", ProbeResult(traces=True))
-        store.get("a")
-        store.put("c", ProbeResult(traces=False))
-        assert store.get("b") is None
-        assert store.get("a") is not None
-        assert len(store) == 2
+        probe_results = ProbeResults(max_entries=2)
+        probe_results.store_result("a", ProbeResult(traces=True))
+        probe_results.store_result("b", ProbeResult(traces=True))
+        probe_results.stored_result("a")
+        probe_results.store_result("c", ProbeResult(traces=False))
+        assert probe_results.stored_result("b") is None
+        assert probe_results.stored_result("a") is not None
+        assert len(probe_results) == 2
 
     def test_a_pickled_store_arrives_empty_with_its_bound(self):
-        store = ProbeResults(max_entries=7)
-        store.put("a", ProbeResult(traces=True))
-        restored = pickle.loads(pickle.dumps(store))
+        probe_results = ProbeResults(max_entries=7)
+        probe_results.store_result("a", ProbeResult(traces=True))
+        restored = pickle.loads(pickle.dumps(probe_results))
         assert len(restored) == 0
         assert restored._max_entries == 7
 
 
 class TestProbe:
     def test_a_result_is_stored_by_input_structure(self):
-        store = ProbeResults()
+        probe_results = ProbeResults()
         traced = []
 
         def double(x):
             traced.append(x)
             return 2 * x
 
-        first = probe(store, double, jnp.ones(3), label="double")
-        probe(store, double, jnp.zeros(3), label="double")
-        probe(store, double, jnp.ones(4), label="double")
+        first = probe(probe_results, double, jnp.ones(3), label="double")
+        probe(probe_results, double, jnp.zeros(3), label="double")
+        probe(probe_results, double, jnp.ones(4), label="double")
         assert first.traces
         assert first.abstract_output == jax.ShapeDtypeStruct((3,), jnp.float32)
         assert len(traced) == 2
@@ -80,22 +80,24 @@ class TestProbe:
         assert result.error.__traceback__ is None
 
     def test_a_string_argument_enters_the_structure_by_its_value(self):
-        store = ProbeResults()
+        probe_results = ProbeResults()
 
         def scaled(arguments):
             x, unit = arguments
             return x * (100.0 if unit == "cm" else 1.0)
 
-        probe(store, scaled, (jnp.ones(2), "cm"), label="scaled")
-        probe(store, scaled, (jnp.ones(2), "m"), label="scaled")
-        probe(store, scaled, (jnp.ones(2), "cm"), label="scaled")
-        assert len(store) == 2
+        probe(probe_results, scaled, (jnp.ones(2), "cm"), label="scaled")
+        probe(probe_results, scaled, (jnp.ones(2), "m"), label="scaled")
+        probe(probe_results, scaled, (jnp.ones(2), "cm"), label="scaled")
+        assert len(probe_results) == 2
 
     def test_an_unhashable_argument_stores_nothing(self):
-        store = ProbeResults()
-        result = probe(store, lambda arguments: arguments[0], (jnp.ones(2), {"a"}), label="f")
+        probe_results = ProbeResults()
+        result = probe(
+            probe_results, lambda arguments: arguments[0], (jnp.ones(2), {"a"}), label="f"
+        )
         assert result.traces
-        assert len(store) == 0
+        assert len(probe_results) == 0
 
     def test_the_global_random_states_are_restored(self):
         np.random.seed(3)
@@ -114,7 +116,7 @@ class TestProbe:
         assert random.getstate() == python_state
 
 
-def _call(closure, arguments):
+def _call_closure(closure, arguments):
     return closure(arguments)
 
 
@@ -127,11 +129,21 @@ class TestProbeClosure:
         probe_results = ProbeResults()
         for captured in (jnp.ones(2), jnp.zeros(2), 3.0 * jnp.ones(2)):
             result = probe_closure(
-                probe_results, self._scaled_by(captured), _call, jnp.ones(2), label="f", role="f"
+                probe_results,
+                self._scaled_by(captured),
+                _call_closure,
+                jnp.ones(2),
+                label="f",
+                role="f",
             )
             assert result.traces
         probe_closure(
-            probe_results, self._scaled_by(jnp.ones(3)), _call, jnp.ones(3), label="f", role="f"
+            probe_results,
+            self._scaled_by(jnp.ones(3)),
+            _call_closure,
+            jnp.ones(3),
+            label="f",
+            role="f",
         )
         assert probe_attempts == [True, True]
 
@@ -144,13 +156,13 @@ class TestProbeClosure:
 
         probe_results = ProbeResults()
         three = probe_closure(
-            probe_results, sized_by(3), _call, jax.random.key(0), label="f", role="sample"
+            probe_results, sized_by(3), _call_closure, jax.random.key(0), label="f", role="sample"
         )
         five = probe_closure(
-            probe_results, sized_by(5), _call, jax.random.key(0), label="f", role="sample"
+            probe_results, sized_by(5), _call_closure, jax.random.key(0), label="f", role="sample"
         )
         again = probe_closure(
-            probe_results, sized_by(3), _call, jax.random.key(0), label="f", role="sample"
+            probe_results, sized_by(3), _call_closure, jax.random.key(0), label="f", role="sample"
         )
         assert three.abstract_output.shape == (3,)
         assert five.abstract_output.shape == (5,)
@@ -166,8 +178,8 @@ class TestProbeClosure:
             return lambda y: scale(y) * captured(y)
 
         probe_results = ProbeResults()
-        probe_closure(probe_results, make(jnp.sin), _call, jnp.ones(2), label="f", role="f")
-        probe_closure(probe_results, make(jnp.sin), _call, jnp.ones(2), label="f", role="f")
+        probe_closure(probe_results, make(jnp.sin), _call_closure, jnp.ones(2), label="f", role="f")
+        probe_closure(probe_results, make(jnp.sin), _call_closure, jnp.ones(2), label="f", role="f")
         assert probe_attempts == [True, True]
         assert len(probe_results) == 0
 

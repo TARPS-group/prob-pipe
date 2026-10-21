@@ -14,7 +14,8 @@ and its densities, and a law without a stated traceability probes its density.
 
 Provides:
   - :class:`ExecutionClaims` – the claims a ``Function`` states.
-  - :class:`Traceability` – traceable, embeddable, or host-only, with their meet.
+  - :class:`Traceability` – traceable, embeddable, or host-only, ordered from the
+    most permissive down.
   - :class:`ProbeResult` and :class:`ProbeResults` – a stored probe outcome, and
     the bounded store of them.
   - :func:`probe` – the one probe, with its rules for Python numbers and for the
@@ -143,7 +144,7 @@ def checked_execution_claims(
 class Traceability(enum.Enum):
     """How a computation may be run inside a JAX program, from the most permissive down.
 
-    The members are ordered, and :meth:`meet` gives the least permissive of
+    The members are ordered, and :meth:`least_permissive` gives the least permissive of
     several, which is the traceability of a computation built from them.
 
     Attributes
@@ -162,7 +163,7 @@ class Traceability(enum.Enum):
     HOST_ONLY = 0
 
     @classmethod
-    def meet(cls, *traceabilities: Traceability) -> Traceability:
+    def least_permissive(cls, *traceabilities: Traceability) -> Traceability:
         """The least permissive of *traceabilities*, ``TRACEABLE`` for none.
 
         Parameters
@@ -266,7 +267,7 @@ class ProbeResults:
         with self._lock:
             return len(self._results)
 
-    def get(self, cache_key: Hashable) -> ProbeResult | None:
+    def stored_result(self, cache_key: Hashable) -> ProbeResult | None:
         """The result stored under *cache_key*, or ``None``.
 
         Parameters
@@ -285,7 +286,7 @@ class ProbeResults:
                 self._results.move_to_end(cache_key)
             return stored_result
 
-    def put(self, cache_key: Hashable, probe_result: ProbeResult) -> None:
+    def store_result(self, cache_key: Hashable, probe_result: ProbeResult) -> None:
         """Store *probe_result* under *cache_key*, dropping the least recently used result past the bound.
 
         Parameters
@@ -360,17 +361,17 @@ def probe(
         if probe_results is None or data_form.structure is None
         else (cache_key_prefix, data_form.structure)
     )
-    stored_result = None if data_cache_key is None else probe_results.get(data_cache_key)
+    stored_result = None if data_cache_key is None else probe_results.stored_result(data_cache_key)
     if stored_result is not None and not stored_result.retry_with_static_ints:
         return stored_result
     if stored_result is None:
         data_result = _trace_once(traced_function, data_form, label)
         if data_result.traces or data_result.draws_global_random or not data_form.has_int_data:
             if data_cache_key is not None:
-                probe_results.put(data_cache_key, data_result)
+                probe_results.store_result(data_cache_key, data_result)
             return data_result
         if data_cache_key is not None:
-            probe_results.put(
+            probe_results.store_result(
                 data_cache_key, ProbeResult(traces=False, retry_with_static_ints=True)
             )
     static_form = _probe_arguments(arguments, ints_static=True)
@@ -379,7 +380,9 @@ def probe(
         if probe_results is None or static_form.structure is None
         else (cache_key_prefix, static_form.structure)
     )
-    stored_static_result = None if static_cache_key is None else probe_results.get(static_cache_key)
+    stored_static_result = (
+        None if static_cache_key is None else probe_results.stored_result(static_cache_key)
+    )
     if stored_static_result is not None:
         return stored_static_result
     static_attempt = _trace_once(traced_function, static_form, label)
@@ -392,7 +395,7 @@ def probe(
         draws_global_random=static_attempt.draws_global_random,
     )
     if static_cache_key is not None:
-        probe_results.put(static_cache_key, static_result)
+        probe_results.store_result(static_cache_key, static_result)
     return static_result
 
 
@@ -454,7 +457,9 @@ def probe_closure(
         )
     with_captures_as_data = probe(
         probe_results,
-        lambda probed_inputs: call_closure(captures.rebuild(probed_inputs[1]), probed_inputs[0]),
+        lambda probed_inputs: call_closure(
+            captures.closure_with_arrays(probed_inputs[1]), probed_inputs[0]
+        ),
         (arguments, captures.captured_arrays),
         label=label,
         cache_key_prefix=("captures as data", role, closure.__code__, captures.static_cache_key),
@@ -628,7 +633,7 @@ class _ProbeArguments:
         argument is neither an array nor hashable.
     data_leaves : tuple
         The leaves the probe traces, in leaf order.
-    rebuild : Callable
+    rebuild_arguments : Callable
         Rebuilds the arguments from values of the data leaves.
     has_int_data : bool
         Whether an integer scalar is among the data leaves.
@@ -636,7 +641,7 @@ class _ProbeArguments:
 
     structure: Hashable | None
     data_leaves: tuple[Any, ...]
-    rebuild: Callable[[tuple[Any, ...]], Any]
+    rebuild_arguments: Callable[[tuple[Any, ...]], Any]
     has_int_data: bool
 
 
@@ -673,7 +678,7 @@ def _probe_arguments(arguments: Any, *, ints_static: bool) -> _ProbeArguments:
             except _NoCacheKey:
                 structure_known = False
 
-    def rebuild(data_values: tuple[Any, ...]) -> Any:
+    def rebuild_arguments(data_values: tuple[Any, ...]) -> Any:
         rebuilt_leaves = list(leaves)
         for position, data_value in zip(data_positions, data_values, strict=True):
             rebuilt_leaves[position] = data_value
@@ -682,7 +687,7 @@ def _probe_arguments(arguments: Any, *, ints_static: bool) -> _ProbeArguments:
     return _ProbeArguments(
         structure=(treedef, tuple(leaf_cache_keys)) if structure_known else None,
         data_leaves=tuple(leaves[position] for position in data_positions),
-        rebuild=rebuild,
+        rebuild_arguments=rebuild_arguments,
         has_int_data=has_int_data,
     )
 
@@ -729,7 +734,7 @@ def _trace_once(
         # JAX would otherwise rebuild the tree with abstract leaves, which a
         # ProbPipe term in it cannot hold.
         output_leaves, output_tree = jax.tree.flatten(
-            traced_function(probe_arguments.rebuild(data_leaves))
+            traced_function(probe_arguments.rebuild_arguments(data_leaves))
         )
         output_trees.append(output_tree)
         return output_leaves
@@ -775,14 +780,14 @@ class _ClosureCaptures:
         and shape and dtype.
     value_cache_key : Hashable or None
         The captured arrays by their contents, or ``None`` when one is traced.
-    rebuild : Callable
+    closure_with_arrays : Callable
         A copy of the closure that captures other arrays in their places.
     """
 
     captured_arrays: tuple[Any, ...]
     static_cache_key: Hashable
     value_cache_key: Hashable | None
-    rebuild: Callable[[tuple[Any, ...]], Callable[..., Any]]
+    closure_with_arrays: Callable[[tuple[Any, ...]], Callable[..., Any]]
 
 
 def _closure_captures(closure: Callable[..., Any]) -> _ClosureCaptures | None:
@@ -810,7 +815,7 @@ def _closure_captures(closure: Callable[..., Any]) -> _ClosureCaptures | None:
         return None
     captured_arrays = tuple(cell_values[position] for position in array_positions)
 
-    def rebuild(replacement_arrays: tuple[Any, ...]) -> Callable[..., Any]:
+    def closure_with_arrays(replacement_arrays: tuple[Any, ...]) -> Callable[..., Any]:
         rebuilt_values = list(cell_values)
         for position, replacement in zip(array_positions, replacement_arrays, strict=True):
             rebuilt_values[position] = replacement
@@ -828,7 +833,7 @@ def _closure_captures(closure: Callable[..., Any]) -> _ClosureCaptures | None:
         captured_arrays=captured_arrays,
         static_cache_key=tuple(static_parts),
         value_cache_key=_array_contents_cache_key(captured_arrays),
-        rebuild=rebuild,
+        closure_with_arrays=closure_with_arrays,
     )
 
 

@@ -791,8 +791,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         It is traceable, embeddable, or host-only, and inference methods read it
         instead of tracing the law. The value is derived from the law's parts
         the first time it is read and kept for the law's life: a family is
-        traceable, a law built from other laws or kernels takes the meet of
-        theirs, and any other law is probed once, as
+        traceable, a law built from other laws or kernels takes the least
+        permissive of theirs, and any other law is probed once, as
         :meth:`_derived_traceability` states.
 
         Returns

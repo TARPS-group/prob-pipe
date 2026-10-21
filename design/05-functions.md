@@ -730,7 +730,7 @@ A law or a kernel has a **traceability**: traceable, embeddable, or host-only, t
 | a conditional at given values | its joint's |
 | any other law or kernel | its density probed once at a stand-in of one value, each dimension not yet bound of size one, or its sampler at one key when it has no density |
 
-The least of several is their meet, in the order traceable, embeddable, host-only.
+The least of several is the least permissive in the order traceable, embeddable, host-only.
 
 **The embedded call.** When a `Function` that is not traceable is called and at least one of its arguments is a JAX tracer, ProbPipe makes an **embedded call**, which runs the opaque code from inside the compiled JAX program:
 1. **Requirement.** The `Function` must be embeddable, so that the JAX program can be compiled before the callable runs. A host-only `Function` raises while it is traced, and the error names the rule its output spec fails, as in `'forward' cannot run inside a JAX program: its output spec sets no dtype; give NumericArraySpec((40,), "float32")`.

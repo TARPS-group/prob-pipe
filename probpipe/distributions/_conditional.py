@@ -621,7 +621,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         and kept for the kernel's life: a family is traceable, the kernel of a
         function takes the traceability of the law its function returned when
         the kernel was built, a kernel built from other kernels or laws takes
-        the meet of theirs, and any other kernel is probed once, as
+        the least permissive of theirs, and any other kernel is probed once, as
         :meth:`_derived_traceability` states.
 
         Returns

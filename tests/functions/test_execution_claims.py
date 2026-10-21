@@ -136,7 +136,9 @@ class TestTheProbe:
             stepped.using(max_evaluations=8)(_prior(), steps=3)
         # One attempt with the int as data, which fails, and one with it static.
         assert len(probe_attempts) == 2
-        static_result = stepped._probe_results.get(next(reversed(stepped._probe_results._results)))
+        static_result = stepped._probe_results.stored_result(
+            next(reversed(stepped._probe_results._results))
+        )
         assert static_result.traces and static_result.ints_static
         with workflow_run(seed=0):
             stepped.using(max_evaluations=8)(_prior(), steps=3)
