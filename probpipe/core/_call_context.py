@@ -97,12 +97,16 @@ class _ExecutionChoice:
         The ``Function`` the choice was named for, or ``None`` when it covers
         every opaque callable of the call, as a choice named on an operation
         does. The choice is the callable's own only for this ``Function``.
+    named_on : str or None
+        The label of the call that named the executor, which a warning about
+        an inherited executor names; ``None`` for automatic selection.
     """
 
     executor_name: str | None = None
     executor_options: Mapping[str, Any] = _NO_CONTROLS
     source: _ExecutionChoiceSource = "automatic"
     applies_only_to: Any = None
+    named_on: str | None = None
 
     def names_executor(self) -> bool:
         """Whether the choice names an executor rather than leaving it to automatic selection."""
@@ -117,6 +121,7 @@ class _ExecutionChoice:
                 _picklable(self.executor_options),
                 self.source,
                 self.applies_only_to,
+                self.named_on,
             ),
         )
 
@@ -837,10 +842,15 @@ def _unpickled_execution_choice(
     executor_options: Any,
     source: _ExecutionChoiceSource,
     applies_only_to: Any,
+    named_on: str | None,
 ) -> _ExecutionChoice:
     """The executor choice that :meth:`_ExecutionChoice.__reduce__` pickled."""
     return _ExecutionChoice(
-        executor_name, _restored_from_picklable(executor_options), source, applies_only_to
+        executor_name,
+        _restored_from_picklable(executor_options),
+        source,
+        applies_only_to,
+        named_on,
     )
 
 
