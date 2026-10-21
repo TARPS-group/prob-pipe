@@ -3,7 +3,7 @@
 Provides:
   - ``ExactGaussianRegression``: the joint of a Gaussian prior and a linear
     Gaussian observation, which claims exact conditioning on the observation;
-  - ``RecordObservationKernel``: an observation kernel whose given slots are
+  - ``RecordObservationKernel``: an observation kernel whose inputs are
     records;
   - ``Population``, ``Groups``, and ``schools_likelihood``: the eight-schools
     model with its parameters as a nested record, ``population/mu``,
@@ -198,11 +198,11 @@ def schools_likelihood() -> ObservationKernel:
 
 
 class RecordObservationKernel(ObservationKernel):
-    """An observation kernel whose given slots are records, read as nested mappings of raw leaves."""
+    """An observation kernel whose inputs are records, read as nested mappings of raw leaves."""
 
     def _law(self, given: Any) -> Distribution:
         top = dict(given.children if isinstance(given, Record) else given)
-        values = {slot: _fields(value) for slot, value in top.items()}
+        values = {input_name: _fields(value) for input_name, value in top.items()}
         return _Observations(
             self.label, self._build(**values), self._support, event_spec=self.event_spec
         )

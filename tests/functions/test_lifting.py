@@ -301,7 +301,7 @@ class TestTheDraw:
 
         assert all(isinstance(draw, Record) for draw in seen)
 
-    def test_explicit_binding_reads_the_receiving_parameter_not_the_component(self):
+    def test_explicit_binding_reads_the_receiving_parameter_not_the_output(self):
         seen = []
 
         @function(max_evaluations=6, dispatch="sequential", output_spec=OutputSpec(weigh=None))
@@ -313,7 +313,7 @@ class TestTheDraw:
         with workflow_run(seed=0):
             result = weigh(theta=law)
 
-        assert "theta" not in law.event_spec.components
+        assert "theta" not in law.event_spec.outputs
         assert isinstance(result, Distribution)
         assert all(set(draw.keys()) == {"a", "b"} for draw in seen)
 
@@ -327,7 +327,7 @@ class TestTheDraw:
             seen.append(weights)
             return weights["a"] * mu + weights["b"]
 
-        law = EmpiricalDistribution(jnp.array([1.0, 2.0, 4.0]), component="mu", label="prior")
+        law = EmpiricalDistribution(jnp.array([1.0, 2.0, 4.0]), output_name="mu", label="prior")
         result = affine(weights, law)
 
         # Every evaluation receives the record itself; the one trace that tests
@@ -903,7 +903,7 @@ class TestSingletonAlignment:
         def add(x, y, z):
             return x + y + z
 
-        law = EmpiricalDistribution(jnp.array([0.0, 2.0]), component="z")
+        law = EmpiricalDistribution(jnp.array([0.0, 2.0]), output_name="z")
         with workflow_run(seed=7):
             result = add(_batch([1.0]), _batch([10.0, 20.0]), law)
 

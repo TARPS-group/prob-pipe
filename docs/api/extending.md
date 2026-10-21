@@ -8,9 +8,9 @@ The registries that users query are documented on the pages of their topics: `in
 
 ## A new family
 
-A family subclasses `Distribution`, or `ConditionalDistribution` for a kernel, and passes its label and the declaration of one draw to the base constructor as `label` and `event_spec`.
-A draw that is one whole term is declared by an `OutputSpec` whose one keyword names its component, such as `OutputSpec(y=NumericArraySpec((22,)))`.
-A family's constructor takes the component as its first argument and the label as the optional keyword `label=`, which defaults to the class name.
+A family subclasses `Distribution`, or `ConditionalDistribution` for a kernel, and passes its label and the event spec of one draw to the base constructor as `label` and `event_spec`.
+A draw that is one whole term is declared by an `OutputSpec` whose one keyword names its output, such as `OutputSpec(y=NumericArraySpec((22,)))`.
+A family's constructor takes the output's name as its first argument and the label as the optional keyword `label=`, which defaults to the class name.
 So `Normal("mu", 0.0, 1.0)` is labeled `Normal`, and `Normal("mu", 0.0, 1.0, label="prior")` is labeled `prior`.
 A family over a TensorFlow Probability distribution subclasses `TFPDistribution`, which samples and scores through the backend distribution.
 A family claims a capability by defining its implementation method, such as `_sample` for `SupportsSampling` or `_mean` for `SupportsMean`, and claims a conditioning capability by inheriting `SupportsExactConditioning` or `SupportsApproximateConditioning`.
@@ -105,7 +105,7 @@ It subclasses `Converter` and defines five members:
 2. `exact`: whether the converted law is the source law in another representation;
 3. `supported_types`: the pair of the source types and the target types;
 4. `check`: the promise of a conversion as a `ConversionInfo`, computed without converting, which leaves `method_name` and `exact` for the registry to set from the registration;
-5. `execute`: the converted law, which carries the source's event declaration.
+5. `execute`: the converted law, which carries the source's event spec.
 
 `check` and `execute` receive a call's converter options as keywords, such as `num_samples`, and a converter's `execute` must raise `TypeError` for an option it does not read.
 `converter_registry.register` registers an instance, and `convert` and `with_conversion` then select among the registered converters.

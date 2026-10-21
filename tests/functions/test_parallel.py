@@ -3,6 +3,7 @@ from __future__ import annotations
 import pickle
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, fields, replace
+from functools import partial
 from threading import Barrier, Event
 from types import SimpleNamespace
 from typing import ClassVar
@@ -26,6 +27,7 @@ from probpipe import (
     sample,
     workflow_run,
 )
+from probpipe.core._call_context import _CallContext, _ContextBoundFunction
 from probpipe.core.config import ProvenanceMode, WorkflowKind, config
 
 
@@ -514,7 +516,6 @@ class TestEvaluationPointPayloadValidation:
                         evaluation_point_token=evaluation_keys_mod.EvaluationPointToken(b"z" * 16),
                         attempt_token=b"a" * 16,
                     ),
-                    provenance_mode=ProvenanceMode.FULL,
                 ),
                 ValueError,
                 "attempt must own its evaluation point",
@@ -1406,7 +1407,7 @@ class TestRemoteReportTransactions:
         )
 
         with (
-            context_mod._transported_workflow_frame((0, 99), ProvenanceMode.FULL),
+            context_mod._transported_workflow_frame((0, 99)),
             pytest.raises(RuntimeError, match="transport envelope"),
             evaluation_keys_mod._remote_evaluation_point_stochastic_scope(envelope, attempt),
         ):
@@ -2054,7 +2055,6 @@ class TestPrefectMapping:
         payload = evaluation_keys_mod.EvaluationPointPrefectPayload(
             evaluation_point=evaluation_point,
             attempt=evaluation_keys_mod.EvaluationPointAttempt.create(evaluation_point.frame.token),
-            provenance_mode=ProvenanceMode.FULL,
         )
         object.__setattr__(evaluation_point, "arguments", (("x", 1), ("x", 2)))
         transported = pickle.loads(pickle.dumps(payload))
@@ -2065,37 +2065,45 @@ class TestPrefectMapping:
 
         func.assert_not_called()
 
-    def test_prefect_worker_uses_transported_provenance_mode(self):
+    @pytest.mark.parametrize("mode_source", ["block", "session snapshot"])
+    def test_a_prefect_worker_takes_the_provenance_mode_of_the_carried_context(self, mode_source):
         evaluation_point = make_request(calls=[{}], func=lambda: None).evaluation_points[0]
         payload = evaluation_keys_mod.EvaluationPointPrefectPayload(
             evaluation_point=evaluation_point,
             attempt=evaluation_keys_mod.EvaluationPointAttempt.create(evaluation_point.frame.token),
-            provenance_mode=ProvenanceMode.OFF,
+        )
+        call_context = _CallContext().child_for_call(
+            entry_method_name="__call__",
+            function_label="body",
+            resolved_controls={},
+            session_config_values={"provenance": {"mode": ProvenanceMode.OFF}},
+        )
+        if mode_source == "block":
+            call_context = replace(call_context, session_config_values={}).with_config_block(
+                {"provenance": {"mode": ProvenanceMode.OFF}}
+            )
+        run_payload_under_call_context = _ContextBoundFunction(
+            partial(execution_mod._execute_prefect_payload, context_mod._active_provenance_mode),
+            call_context.evaluation_context(),
+        )
+        transported_run, transported_payload = pickle.loads(
+            pickle.dumps((run_payload_under_call_context, payload))
         )
 
-        outcome = execution_mod._execute_prefect_payload(
-            context_mod._active_provenance_mode,
-            pickle.loads(pickle.dumps(payload)),
-        )
+        # A fresh thread starts with no context, as a worker process does.
+        config.provenance.mode = ProvenanceMode.FULL
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            outcome = pool.submit(transported_run, transported_payload).result()
 
         assert outcome.error is None
         assert outcome.output is ProvenanceMode.OFF
 
-    def test_prefect_worker_rejects_invalid_transported_provenance_mode(self):
-        evaluation_point = make_request(calls=[{}], func=lambda: None).evaluation_points[0]
-        payload = evaluation_keys_mod.EvaluationPointPrefectPayload(
-            evaluation_point=evaluation_point,
-            attempt=evaluation_keys_mod.EvaluationPointAttempt.create(evaluation_point.frame.token),
-            provenance_mode=ProvenanceMode.FULL,
-        )
-        object.__setattr__(payload, "provenance_mode", "full")
-        transported = pickle.loads(pickle.dumps(payload))
-        func = Mock(return_value=None)
-
-        with pytest.raises(TypeError, match="require a provenance mode"):
-            execution_mod._execute_prefect_payload(func, transported)
-
-        func.assert_not_called()
+    def test_a_prefect_payload_carries_no_provenance_mode(self):
+        payload_field_names = {
+            payload_field.name
+            for payload_field in fields(evaluation_keys_mod.EvaluationPointPrefectPayload)
+        }
+        assert "provenance_mode" not in payload_field_names
 
     def test_prefect_worker_revalidates_nested_parent_authority_before_callable(self):
         evaluation_point = make_request(calls=[{"x": 1}]).evaluation_points[0]
@@ -2104,7 +2112,6 @@ class TestPrefectMapping:
         payload = evaluation_keys_mod.EvaluationPointPrefectPayload(
             evaluation_point=evaluation_point,
             attempt=attempt,
-            provenance_mode=ProvenanceMode.FULL,
             parent_envelope=evaluation_keys_mod.EvaluationPointParentEnvelope(
                 root_words=(0, 17),
                 parent_occurrence_path=(("invocation", 0),),
@@ -2159,7 +2166,6 @@ class TestPrefectMapping:
             payload = evaluation_keys_mod.EvaluationPointPrefectPayload(
                 evaluation_point=evaluation_point,
                 attempt=attempt,
-                provenance_mode=ProvenanceMode.FULL,
                 parent_envelope=envelope,
             )
             report = evaluation_keys_mod.EvaluationPointClaimReport(
@@ -2631,7 +2637,6 @@ class TestPrefectMapping:
             payload = evaluation_keys_mod.EvaluationPointPrefectPayload(
                 evaluation_point=evaluation_point,
                 attempt=attempt,
-                provenance_mode=ProvenanceMode.FULL,
                 parent_envelope=envelope,
             )
             parent.abort_remote_evaluation_point_attempt(attempt)

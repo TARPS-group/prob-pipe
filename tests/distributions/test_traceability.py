@@ -111,7 +111,7 @@ class TestDerivedFromParts:
             lambda mu: distribution(
                 unnormalized_log_prob=host_score,
                 event_spec=NumericArraySpec((), jnp.float32),
-                component="y",
+                output_name="y",
             ),
             given_spec={"mu": NumericArraySpec(())},
             label="k",
@@ -126,7 +126,7 @@ class TestLawsFromFunctions:
             lambda mu: distribution(
                 log_prob=lambda y: -0.5 * (y - mu) ** 2,
                 event_spec=NumericArraySpec((), jnp.float32),
-                component="y",
+                output_name="y",
             ),
             given_spec={"mu": NumericArraySpec((), jnp.float32)},
             label="k",
@@ -142,7 +142,7 @@ class TestLawsFromFunctions:
         law = distribution(
             sample=lambda key: np.float32(np.asarray(jax.random.key_data(key)).sum()),
             event_spec=NumericArraySpec((), jnp.float32),
-            component="x",
+            output_name="x",
         )
         assert law._traceability() is Traceability.HOST_ONLY
 
@@ -151,7 +151,7 @@ class TestLawsFromFunctions:
             sample=lambda key: np.float32(np.asarray(jax.random.key_data(key)).sum()),
             log_prob=lambda x: -0.5 * x**2,
             event_spec=NumericArraySpec((), jnp.float32),
-            component="mu",
+            output_name="mu",
         )
         assert law._traceability() is Traceability.TRACEABLE
 
@@ -163,9 +163,9 @@ class TestLawsFromFunctions:
                 event_spec=OutputSpec(x=None),
             )
 
-        assert law_of_size(3).event_spec.spec.shape == (3,)
-        assert law_of_size(5).event_spec.spec.shape == (5,)
-        assert law_of_size(3).event_spec.spec.shape == (3,)
+        assert law_of_size(3).event_spec.term_spec.shape == (3,)
+        assert law_of_size(5).event_spec.term_spec.shape == (5,)
+        assert law_of_size(3).event_spec.term_spec.shape == (3,)
 
 
 class TestInferenceReadsTheTraceability:
@@ -227,7 +227,7 @@ class TestInferenceReadsTheTraceability:
             ("traceable", _observation_kernel()),
             ("host_only", _host_observation_kernel()),
         ):
-            prior = EmpiricalDistribution(atoms, component="mu", label="prior")
+            prior = EmpiricalDistribution(atoms, output_name="mu", label="prior")
             posterior = condition_on.using(method="empirical_reweighting")(kernel * prior, {"y": Y})
             weights[name] = np.asarray(posterior.weights)
         np.testing.assert_allclose(weights["host_only"], weights["traceable"], rtol=1e-5)

@@ -241,13 +241,13 @@ def test_numeric_record_batch_cloudpickle_roundtrip():
 
 
 def test_empirical_distribution_pickle():
-    dist = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0, 4.0]), component="x")
+    dist = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0, 4.0]), output_name="x")
     dist2 = roundtrip(dist)
     assert dist2.num_atoms == 4
 
 
 def test_bootstrap_replicate_pickle():
-    base = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="x")
+    base = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), output_name="x")
     brd = BootstrapReplicateDistribution("x", base)
     brd2 = roundtrip(brd)
     # Verify it round-tripped as the right type and is callable

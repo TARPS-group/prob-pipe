@@ -133,20 +133,20 @@ _PROTOCOLS = {
 
 
 class TestTheEventDeclaration:
-    def test_event_spec_names_the_component_and_the_label_stays(self):
+    def test_event_spec_names_the_output_and_the_label_stays(self):
         prior = F.Normal("beta", 0.0, 1.0, label="prior")
         assert prior.label == "prior"
-        assert list(prior.event_spec.components) == ["beta"]
-        assert prior.event_spec.spec.shape == ()
+        assert list(prior.event_spec.outputs) == ["beta"]
+        assert prior.event_spec.term_spec.shape == ()
 
-    def test_the_component_defaults_to_the_label_captured_at_construction(self):
+    def test_the_output_defaults_to_the_label_captured_at_construction(self):
         law = F.Normal("x", 0.0, 1.0)
-        assert list(law.event_spec.components) == ["x"]
-        assert list(law.with_label("y").event_spec.components) == ["x"]
+        assert list(law.event_spec.outputs) == ["x"]
+        assert list(law.with_label("y").event_spec.outputs) == ["x"]
 
     def test_the_event_spec_is_derived_from_the_parameters(self):
         law = F.MultivariateNormal("z", jnp.zeros(3), cov=jnp.eye(3))
-        spec = law.event_spec.spec
+        spec = law.event_spec.term_spec
         assert spec.shape == (3,)
         assert spec.dtype == jnp.zeros(3).dtype
         assert spec.support is not None
@@ -163,7 +163,7 @@ class TestTheEventDeclaration:
 class TestTheAdapter:
     def test_the_adapter_wraps_a_backend_distribution(self):
         law = TFPDistribution("x", tfd.Normal(0.0, 1.0))
-        assert law.event_spec.spec.shape == ()
+        assert law.event_spec.term_spec.shape == ()
         assert float(law._log_prob(0.0)) == pytest.approx(-0.9189385, rel=1e-6)
         assert not isinstance(law, SupportsMean)
 
@@ -171,7 +171,7 @@ class TestTheAdapter:
     def test_one_draw_matches_the_declaration(self, name):
         law = _families()[name]
         draw = law._sample(jax.random.PRNGKey(0))
-        assert tuple(jnp.shape(draw)) == law.event_spec.spec.shape
+        assert tuple(jnp.shape(draw)) == law.event_spec.term_spec.shape
 
     @pytest.mark.parametrize("name", _NAMES)
     def test_each_family_claims_exactly_what_its_backend_computes(self, name):
@@ -201,7 +201,7 @@ class TestTheAdapter:
     def test_the_quantiles_put_the_levels_first(self, name):
         law = _families()[name]
         quantiles = law._quantile(jnp.array([0.25, 0.5, 0.75]))
-        assert quantiles.shape == (3, *law.event_spec.spec.shape)
+        assert quantiles.shape == (3, *law.event_spec.term_spec.shape)
         assert bool(jnp.all(jnp.diff(quantiles, axis=0) >= 0))
 
     def test_raw_is_the_backend_distribution(self):

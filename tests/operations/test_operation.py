@@ -80,7 +80,7 @@ _REGISTRY = OperationRegistry()
 
 
 def _event(d: DistributionSpec) -> OutputSpec:
-    """The law's own event declaration."""
+    """The law's own event spec."""
     return d.event_spec
 
 
@@ -426,7 +426,7 @@ class TestResultRule:
     def test_the_declaration_names_the_returned_kind(self):
         result = center(Gaussian("g", 2.0))
         assert type(result).__name__ == "NumericArray"
-        assert result.spec == Gaussian("g").event_spec.spec
+        assert result.spec == Gaussian("g").event_spec.term_spec
         assert float(jnp.asarray(result)) == 2.0
 
     def test_a_record_declaration_returns_a_record(self):
@@ -473,9 +473,9 @@ class TestResultRule:
         with pytest.raises(ValueError, match="shape"):
             toy(Gaussian("g"))
 
-    def test_a_type_hole_is_filled_from_the_returned_value(self):
+    def test_an_unspecified_type_is_filled_from_the_returned_value(self):
         def rule(d: Any) -> OutputSpec:
-            """A hole."""
+            """An output spec of unspecified type."""
             return OutputSpec(toy=None)
 
         toy = _toy(result=rule)

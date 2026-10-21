@@ -205,9 +205,9 @@ def _arm_takes(arm: Any) -> str:
 def _domain_refusal(f: Function, parameter: str, event: TermSpec, fixed: Mapping[str, Any]) -> str:
     """Why the open *parameter* of *f* cannot take a draw declared by *event*, or ``""``.
 
-    Each declaration the parameter carries must admit the draw: its slot of
+    Each declaration the parameter carries must admit the draw: its spec in
     *f*'s ``input_spec``, unified with the draw together with the fixed
-    arguments' slots; its role, for an operation; and otherwise its annotation,
+    arguments' specs; its role, for an operation; and otherwise its annotation,
     whose arms are read by :func:`_arm_admits`.
     """
     draw = f"the draw is {_kind_words(type(event))}"
@@ -246,7 +246,7 @@ def _domain_refusal(f: Function, parameter: str, event: TermSpec, fixed: Mapping
 def _event_of(d: Any) -> TermSpec | None:
     """The spec of one draw of the law *d* declares, or ``None`` when it declares none."""
     event = getattr(d, "event_spec", None)
-    return getattr(event, "spec", None)
+    return getattr(event, "term_spec", None)
 
 
 def _lifted_fixed_argument(f: Function, fixed: Mapping[str, Any]) -> str:
@@ -430,7 +430,7 @@ def _draw_map(
     calls *f* on it with the fixed arguments. A map whose parameter is annotated
     ``Any`` is applied to the draw with schema validation, so it traces; any other is called
     as a direct call, so the draw goes through its admission, conversions, and
-    routes. The new map keeps *f*'s label, output declaration, and ``max_evaluations``.
+    routes. The new map keeps *f*'s label, output spec, and ``max_evaluations``.
     """
     operation = isinstance(f, Operation)
     if not operation and _plan.lift_at(f, parameter, d) == "broadcast":

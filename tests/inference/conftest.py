@@ -111,7 +111,7 @@ def beta_bernoulli_model() -> BetaBernoulliModel:
     prior = Beta("theta", alpha, beta)
     likelihood = ObservationKernel(
         "y",
-        {"theta": prior.event_spec.spec},
+        {"theta": prior.event_spec.term_spec},
         NumericArraySpec((n,), jnp.float32, boolean),
         lambda theta: tfd.Independent(
             tfd.Bernoulli(probs=jnp.full(n, theta), dtype=jnp.float32), 1

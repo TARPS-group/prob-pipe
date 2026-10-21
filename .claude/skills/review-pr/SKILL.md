@@ -214,6 +214,12 @@ documentation:
 - Does the body's "Fit with the plan" section name the plan sections, the
   departures, the decisions recorded, and the code reused or removed, and does
   it match the diff?
+- Does the PR carry the label of its step, `step:<step>`, or `push:plans` for
+  a plans or design PR, or `push:outside` for a PR outside the push
+  (`plans/README.md` § Status)? Does the tracking issue have a comment with
+  its link, and one for each decision it took or work it postponed, naming
+  `decisions.md` or `deferred.md`? Does a PR that changes another step's scope
+  name that step in its comment? Report each missing item as blocking.
 - For a PR outside the push: does it change code that a pending step of
   `plans/README.md` § Steps rewrites? If so, note the overlap, so the two can be
   coordinated; it is not a defect of the PR.

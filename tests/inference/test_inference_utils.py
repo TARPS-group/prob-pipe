@@ -53,7 +53,7 @@ def _gaussian_mean(prior, n, scale=1.0):
     """``y_i ~ N(mu, scale^2)`` for ``n`` observations, times *prior* over ``mu``."""
     likelihood = ObservationKernel(
         "y",
-        dict(prior.event_spec.components),
+        dict(prior.event_spec.outputs),
         NumericArraySpec((n,)),
         lambda mu: tfd.Independent(tfd.Normal(jnp.broadcast_to(mu, (n,)), scale), 1),
     )
@@ -66,7 +66,7 @@ def small_model():
     prior = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=2.0, scale=0.5)
     likelihood = ObservationKernel(
         "y",
-        dict(prior.event_spec.components),
+        dict(prior.event_spec.outputs),
         NumericArraySpec((4,)),
         lambda a, b: tfd.Independent(tfd.Normal(jnp.zeros(4), 1.0), 1),
     )
@@ -81,7 +81,7 @@ class TestBuildTargetLogProbFlat:
         target_flat, flat_init, event_spec = build_target_log_prob_flat(small_model, None)
         # Round-trip: unflatten the flat init back to a Record and confirm
         # the two callables agree.
-        record_init = NumericRecord.from_vector(event_spec.spec, flat_init, label="nr")
+        record_init = NumericRecord.from_vector(event_spec.term_spec, flat_init, label="nr")
         np.testing.assert_allclose(
             float(target_flat(flat_init)),
             float(target_record(record_init)),
@@ -95,19 +95,19 @@ class TestBuildTargetLogProbFlat:
             observed=None,
         )
         # Both fields are scalar Normals: vector_size == 2.
-        assert flat_init.shape == (event_spec.spec.vector_size,) == (2,)
+        assert flat_init.shape == (event_spec.term_spec.vector_size,) == (2,)
 
-    def test_the_declared_component_order_is_preserved(self, small_model):
+    def test_the_declared_output_order_is_preserved(self, small_model):
         _, _, event_spec = build_target_log_prob_flat(small_model, observed=None)
         # The order of the joint's factors.
-        assert tuple(event_spec.components) == ("a", "b")
+        assert tuple(event_spec.outputs) == ("a", "b")
 
     def test_bare_distribution_falls_through_unwrapped(self):
         """A target with no Record-shaped prior round-trips its log-prob unchanged.
 
         For a bare ``SupportsLogProb`` whose ``_unnormalized_log_prob``
         already takes a flat array, ``build_target_log_prob_flat``
-        passes the callable through verbatim and returns no declaration.
+        passes the callable through verbatim and returns no event spec.
         This is the path BlackJAX MCMC uses
         for hand-rolled distributions that don't carry a Record-shaped
         prior.
@@ -161,7 +161,7 @@ class TestExtractEventSpec:
             posterior = inference_method_registry.execute(
                 _FlatTarget(), method=method, num_results=20, num_warmup=20, num_chains=1
             )
-        assert list(posterior.event_spec.components) == ["posterior"]
+        assert list(posterior.event_spec.outputs) == ["posterior"]
         assert isinstance(flat_draws(posterior), jax.Array)
 
 
@@ -290,8 +290,8 @@ class TestModelFactors:
 
     def test_the_factors_split_at_the_observed_fields(self, gaussian_target):
         factors = model_factors(gaussian_target)
-        assert list(factors.prior.event_spec.components) == ["mu"]
-        assert list(factors.likelihood.event_spec.components) == ["y"]
+        assert list(factors.prior.event_spec.outputs) == ["mu"]
+        assert list(factors.likelihood.event_spec.outputs) == ["y"]
         np.testing.assert_allclose(factors.observed, [1.0, -1.0, 0.5])
 
     def test_a_target_that_is_no_conditioned_joint_has_no_factors(self):
@@ -323,17 +323,17 @@ def _shifted(**given_spec):
     )
 
 
-class TestModelFactorsWithOptionalSlots:
-    """An optional slot of the likelihood takes its default unless the prior produces it."""
+class TestModelFactorsWithOptionalInputs:
+    """An optional input of the likelihood takes its default unless the prior produces it."""
 
-    def test_an_unmet_optional_slot_is_left_to_its_default(self):
+    def test_an_unmet_optional_input_is_left_to_its_default(self):
         factors = model_factors(observed_target(_shifted() * Normal("mu", 0.0, 1.0), {"y": Y}))
         # The prior is the whole-term law of mu, so its draw is the value itself.
         given = parameter_given(factors, jnp.asarray(1.0))
         assert list(given) == ["mu"]
         np.testing.assert_allclose(given["mu"], 1.0)
 
-    def test_the_prior_meets_an_optional_slot(self):
+    def test_the_prior_meets_an_optional_input(self):
         prior = Normal("mu", 0.0, 1.0) * Normal("shift", 0.0, 1.0)
         factors = model_factors(observed_target(_shifted() * prior, {"y": Y}))
         given = parameter_given(factors, {"mu": jnp.asarray(1.0), "shift": jnp.asarray(0.5)})

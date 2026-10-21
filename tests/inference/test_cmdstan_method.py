@@ -97,8 +97,10 @@ def test_the_posterior_keeps_the_parameter_record_chain_by_chain(fake_cmdstanpy,
         _posterior(tmp_path), num_results=3, num_warmup=1, num_chains=2
     )
     assert fake_cmdstanpy.data == {"N": 2, "y": [1.0, 2.0]}
-    assert tuple(result.event_spec.components) == ("mu", "theta")
-    assert result.event_spec.spec["theta"] == NumericArraySpec((2,), jnp.result_type(float), real)
+    assert tuple(result.event_spec.outputs) == ("mu", "theta")
+    assert result.event_spec.term_spec["theta"] == NumericArraySpec(
+        (2,), jnp.result_type(float), real
+    )
     np.testing.assert_array_equal(
         np.asarray(flat_chains(result)[1]), [[10, 100, 1000], [11, 101, 1001], [12, 102, 1002]]
     )
@@ -124,7 +126,7 @@ def test_condition_on_a_stan_model_returns_its_parameter_record(
     program.write_text(_PROGRAM)
     view = condition_on.using(method_options={"num_results": 3, "num_warmup": 1, "num_chains": 2})
     posterior = view(StanModel(str(program), label="program"), {"N": 2, "y": [1.0, 2.0]})
-    assert tuple(posterior.event_spec.components) == ("mu", "theta")
+    assert tuple(posterior.event_spec.outputs) == ("mu", "theta")
 
 
 def test_cmdstan_method_binds_arviz_base():

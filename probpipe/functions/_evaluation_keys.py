@@ -20,7 +20,6 @@ from enum import Enum
 from threading import Event, Lock
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
-from ..core.config import ProvenanceMode
 from ..custom_types import PRNGKey
 from . import _context
 from ._rng import _RandomEventPath, _validate_random_event_value
@@ -220,14 +219,12 @@ class EvaluationPointPrefectPayload:
 
     evaluation_point: IssuedEvaluationPoint
     attempt: EvaluationPointAttempt
-    provenance_mode: ProvenanceMode
     parent_envelope: EvaluationPointParentEnvelope | None = None
 
     def __post_init__(self) -> None:
         _validate_evaluation_point_prefect_payload_fields(
             evaluation_point=self.evaluation_point,
             attempt=self.attempt,
-            provenance_mode=self.provenance_mode,
             parent_envelope=self.parent_envelope,
         )
 
@@ -1623,7 +1620,7 @@ def _evaluation_point_stochastic_scope(
     *,
     attempt: EvaluationPointAttempt | None = None,
 ) -> Generator[EvaluationPointAttempt, None, None]:
-    """Install one retry attempt and an empty child-broker slot."""
+    """Install one retry attempt, with no child broker yet."""
     if attempt is None:
         attempt = EvaluationPointAttempt.create(frame.token)
     parent_broker.validate_evaluation_point_attempt_preflight(attempt, frame)
@@ -2046,7 +2043,6 @@ def _validate_evaluation_point_prefect_payload_fields(
     *,
     evaluation_point: object,
     attempt: object,
-    provenance_mode: object,
     parent_envelope: object,
 ) -> None:
     """Validate a complete worker payload, including its nested authority."""
@@ -2064,8 +2060,6 @@ def _validate_evaluation_point_prefect_payload_fields(
         evaluation_point_token=attempt.evaluation_point_token,
         attempt_token=attempt.attempt_token,
     )
-    if not isinstance(provenance_mode, ProvenanceMode):
-        raise TypeError("evaluation point Prefect payloads require a provenance mode")
     if parent_envelope is not None and not isinstance(
         parent_envelope, EvaluationPointParentEnvelope
     ):
@@ -2218,7 +2212,6 @@ def _validated_evaluation_point_prefect_payload_snapshot(
     return EvaluationPointPrefectPayload(
         evaluation_point=_validated_issued_evaluation_point_snapshot(payload.evaluation_point),
         attempt=_validated_evaluation_point_attempt_snapshot(payload.attempt),
-        provenance_mode=payload.provenance_mode,
         parent_envelope=(
             None
             if payload.parent_envelope is None

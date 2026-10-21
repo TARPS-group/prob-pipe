@@ -1,9 +1,9 @@
 """Contracts of the mixture family (VII.3).
 
 A ``MixtureDistribution`` is a convex combination of component laws over one
-shared event declaration. It samples when every component samples, it has the
+shared event spec. It samples when every component samples, it has the
 weighted log-sum-exp of the components' densities when every component has a
-density, and its moments combine componentwise when every component has them.
+density, and its moments combine entry by entry when every component has them.
 """
 
 from __future__ import annotations
@@ -39,14 +39,14 @@ from tests.operations._laws import Sampler
 
 
 def _components():
-    """Two bivariate normal laws over one declaration, the component ``x``."""
+    """Two bivariate normal laws over one event spec, the output ``x``."""
     return [
         MultivariateNormal("x", jnp.zeros(2), cov=jnp.eye(2), label="a"),
         MultivariateNormal("x", jnp.array([2.0, -1.0]), cov=2.0 * jnp.eye(2), label="b"),
     ]
 
 
-def test_the_components_share_one_event_declaration_and_labels_may_differ():
+def test_the_components_share_one_event_spec_and_labels_may_differ():
     first = Normal("x", 0.0, 1.0, label="a")
     second = Normal("x", 1.0, 1.0, label="b")
     mixture = MixtureDistribution([first, second], jnp.array([0.5, 0.5]), label="m")
@@ -54,7 +54,7 @@ def test_the_components_share_one_event_declaration_and_labels_may_differ():
     assert mixture.label == "m"
 
 
-def test_components_with_different_declarations_raise():
+def test_components_with_different_event_specs_raise():
     with pytest.raises(ValueError, match=r"must draw the same event.*Rename them with"):
         MixtureDistribution(
             [Normal("a", 0.0, 1.0), Normal("b", 0.0, 1.0)], jnp.array([0.5, 0.5]), label="m"
@@ -256,7 +256,7 @@ def test_the_monte_carlo_mean_of_a_law_over_laws_is_the_mixture_of_its_draws():
             "law",
             label="laws",
         ),
-        component="laws",
+        output_name="laws",
     )
     with workflow_run(seed=0):
         estimate = mean.using(num_samples=60)(laws)

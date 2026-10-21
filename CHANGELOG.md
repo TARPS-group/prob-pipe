@@ -1607,6 +1607,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   # before: [-0.523403, 1.038044, -1.069435]
   # after:  [0.80094, 0.327328, -0.465379]
   ```
+- **"Slot" becomes "input" and "component" becomes "output", in names,
+  messages, and documentation.** An *input* is a named place where a function or
+  a conditional distribution receives a value, and an *output* is a name under
+  which a term's value can be read and passed on to an input of the same name.
+  "Component" now means only a component law of a `MixtureDistribution`. The
+  input, output, and event "declarations" are now input, output, and event
+  *specs*. No name has an alias:
+
+  | Before | After |
+  |---|---|
+  | `output_spec.spec`, `x.event_spec.spec` | `output_spec.term_spec`, `x.event_spec.term_spec` |
+  | `output_spec.with_spec(spec)`, `output_spec.with_spec(spec=spec)` | `output_spec.with_term_spec(spec)`, whose argument is positional only |
+  | `output_spec.components` | `output_spec.outputs` |
+  | `output_spec.exposes_record` | removed; `output_spec.outputs` lists the outputs, a record's top-level names in the positional form `OutputSpec(RecordSpec(...))` and the one name of the keyword form `OutputSpec(x=...)` |
+  | `OutputSpec.default(spec, component="x")`, `OutputSpec.default(spec=..., component=...)` | `OutputSpec.default(spec, output_name="x")`, `OutputSpec.default(term_spec=..., output_name=...)` |
+  | `Normal(component="x", ...)` and every family's first parameter `component` | `Normal(output_name="x", ...)`; a positional name, as `Normal("x", 0.0, 1.0)`, is unchanged |
+  | `EmpiricalDistribution(..., component="theta")`, `distribution(..., component="x")`, and the first parameter `component` of `KDEDistribution`, `BootstrapDistribution`, `BootstrapReplicateDistribution`, `BijectorTransformedDistribution`, `LinearPushforwardDistribution`, `RandomFunction`, and `RandomMeasure` | `output_name="theta"`, `output_name="x"`, and `output_name` |
+  | `factor(d, component_name)` | `factor(d, output_name)` |
+  | the route `method="by_component"` of `mean`, `variance`, and `quantile` | `method="by_output"`, and `provenance.metadata["route"]` reads `"by_output"` |
+  | the key `"components"` of each block in that route's `provenance.metadata["blocks"]` | `"outputs"` |
+  | the route `"bind_given_slots"` of `condition_on` on a conditional distribution | `"bind_inputs"`, also in `provenance.metadata["route"]` |
+  | the page `docs/api/declarations.md` | `docs/api/input_and_output_specs.md` |
+
+  For example, `Normal("mu", 0.0, 1.0).event_spec.components` becomes
+  `Normal("mu", 0.0, 1.0).event_spec.outputs`, and
+  `variance.using(method="by_component")(d)` becomes
+  `variance.using(method="by_output")(d)`.
+
+  The route names change silently for code that reads them. For a conditional
+  distribution `k` with the input `mu`, the same call gives another value:
+
+  ```python
+  condition_on(k, {"mu": 0.3}).provenance.metadata["route"]
+  # before: 'bind_given_slots'
+  # after:  'bind_inputs'
+  variance.using(method="by_output")(d).provenance.metadata["route"]
+  # before (with method="by_component"): 'by_component'
+  # after:  'by_output'
+  ```
+- **The provenance mode is fixed for a workflow run.** The outermost
+  `workflow_run` takes the mode in effect when it opens, and a call outside
+  every `workflow_run` takes it when the call opens. Inside the run, a
+  `config.provenance.using` block, a `config.using(provenance=...)` block, an
+  assignment to `config.provenance.mode`, or a `reset` that would set another
+  mode raises `RuntimeError`, naming the run's mode. Before, the block or the
+  assignment was ignored for the run's provenance while
+  `config.provenance.mode` read the new value. One that sets the run's own mode
+  is accepted. Set the mode before the run opens:
+
+  ```python
+  # before: provenance was recorded although the block read OFF
+  with workflow_run(seed=1):
+      with config.provenance.using(mode=ProvenanceMode.OFF):
+          y = f(x)
+  # after: the block raises; set the mode before the run opens
+  with config.provenance.using(mode=ProvenanceMode.OFF), workflow_run(seed=1):
+      y = f(x)
+  ```
+- **The work a call dispatches reads the session's settings as they were when
+  the outermost call opened.** Inside a function's body and the other work a
+  call evaluates, under `dispatch="sequential"` and `"thread"` and in Prefect
+  tasks, a setting that no `using` block sets reads the session's value from a
+  snapshot that the outermost call takes when it opens. Before, a worker read
+  the session's current value. A session assignment made while a call runs
+  therefore reaches none of that call's work, and it applies from the next call
+  on. The `prefect` section is the exception, and is read as it stands. The
+  same call before and after:
+
+  ```python
+  @function(dispatch="thread", max_workers=1)
+  def body(x):
+      if float(x) == 0.0:
+          config.sampling.num_samples = 7
+      return config.sampling.num_samples
+
+  body(NumericArrayBatch(jnp.arange(3.0), "x", label="xs"))
+  # before: [7, 7, 7]
+  # after:  [1024, 1024, 1024]
+  ```
 
 - **A lifted function that draws from NumPy's or Python's global random
   generator gives each point its own noise, with a warning.** Before, JAX
