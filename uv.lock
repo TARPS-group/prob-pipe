@@ -3443,6 +3443,7 @@ source = { editable = "." }
 dependencies = [
     { name = "arviz" },
     { name = "blackjax" },
+    { name = "cloudpickle" },
     { name = "jax" },
     { name = "jaxlib" },
     { name = "tfp-nightly" },
@@ -3503,6 +3504,7 @@ requires-dist = [
     { name = "bayesflow", marker = "extra == 'bayesflow'", specifier = ">=2.0,<3" },
     { name = "blackjax", specifier = ">=1.4" },
     { name = "bridgestan", marker = "extra == 'stan'", specifier = ">=2.7" },
+    { name = "cloudpickle", specifier = ">=3" },
     { name = "cmdstanpy", marker = "extra == 'stan'", specifier = ">=1.2" },
     { name = "graphviz", marker = "extra == 'viz'" },
     { name = "ipykernel", marker = "extra == 'dev'" },

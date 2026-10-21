@@ -24,6 +24,9 @@ dependencies = [
   "tfp-nightly>=0.26.0.dev20260318",
   "blackjax>=1.4",
   "arviz>=1.1,<2.0",
+  # Sends closures and functions defined in a notebook to spawned worker
+  # processes by value, which the standard pickle refuses.
+  "cloudpickle>=3",
 ]
 
 [project.optional-dependencies]

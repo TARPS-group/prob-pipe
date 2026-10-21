@@ -34,6 +34,7 @@ __all__ = [
     "ProvenanceConfig",
     "ProvenanceMode",
     "SamplingConfig",
+    "UnshippableSettingError",
     "WorkflowKind",
     "config",
 ]
@@ -44,7 +45,7 @@ from types import MappingProxyType
 from typing import Any, ClassVar, Self
 
 from .._messages import unknown_names
-from ._call_context import _under_call_context, current_call_context
+from ._call_context import _under_call_context, _UnshippableSetting, current_call_context
 from ._expression import _STORED_DEPTH
 
 # ---------------------------------------------------------------------------
@@ -82,11 +83,11 @@ class _Section:
         call_context = current_call_context()
         section_block = call_context.config_blocks.get(self._name)
         if section_block is not None and setting_name in section_block:
-            return section_block[setting_name]
+            return _shipped_value(section_block[setting_name])
         if call_context.in_evaluation_point:
             section_snapshot = call_context.session_config_values.get(self._name)
             if section_snapshot is not None:
-                return section_snapshot[setting_name]
+                return _shipped_value(section_snapshot[setting_name])
         return getattr(self, f"_{setting_name}")
 
     def _session_values(self) -> dict[str, Any]:
@@ -1029,6 +1030,39 @@ def _refuse_changing_the_run_provenance_mode(requested_mode: ProvenanceMode, cal
         f"inside a workflow run under ProvenanceMode.{run_provenance_mode.name}. Set the mode "
         "before the workflow_run opens, or before the call if no workflow_run is open"
     )
+
+
+class UnshippableSettingError(RuntimeError):
+    """A ``config`` setting could not be sent to a worker process, and code there read it.
+
+    A call that runs work in another process sends its settings with the work.
+    A value that cannot be pickled, such as an object that holds a lock, is
+    sent as a placeholder, and reading it in the worker raises this error. The
+    ``prefect`` section is never sent, so a call in a worker process runs
+    without Prefect orchestration.
+
+    Examples
+    --------
+    A setting whose value holds a lock, read inside work that the ``process``
+    executor runs, raises::
+
+        UnshippableSettingError: config.notation.max_depth holds a Formatter that could
+        not be sent to this worker process (TypeError: cannot pickle '_thread.lock'
+        object). Set it inside the work the worker runs, or use an executor that runs
+        in the calling process
+    """
+
+
+def _shipped_value(setting_value: Any) -> Any:
+    """*setting_value*, read in a worker process: raises if it stands for a value that could not be sent."""
+    if isinstance(setting_value, _UnshippableSetting):
+        raise UnshippableSettingError(
+            f"config.{setting_value.section_name}.{setting_value.setting_name} holds a "
+            f"{setting_value.value_type_name} that could not be sent to this worker process "
+            f"({setting_value.pickling_error}). Set it inside the work the worker runs, or use "
+            "an executor that runs in the calling process"
+        )
+    return setting_value
 
 
 # Module-level singleton, built after the helpers its sections call.

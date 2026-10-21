@@ -11,7 +11,7 @@ import pytest
 from probpipe import Function, NumericArrayBatch, config, function
 from probpipe.core._call_context import (
     _carrying_call_context,
-    _collecting_num_samples_used,
+    _collecting_call_accumulators,
     _ContextBoundFunction,
     _note_num_samples_used,
     _NumSamplesUsed,
@@ -87,7 +87,7 @@ class TestDerivingAContext:
     def test_a_child_shares_its_parents_num_samples_used_and_a_check_takes_none(
         self, entry_method_name, keeps_parents
     ):
-        parent = current_call_context().with_fresh_num_samples_used()
+        parent = current_call_context().with_fresh_call_accumulators()
         child = parent.child_for_call(
             entry_method_name=entry_method_name, function_label="f", resolved_controls={}
         )
@@ -309,33 +309,33 @@ class TestNumSamplesUsed:
         assert num_samples_used.num_samples_values == {16, 64}
 
     def test_a_scope_merges_into_a_collecting_parent_only_on_success(self):
-        with _under_call_context(current_call_context().with_fresh_num_samples_used()):
+        with _under_call_context(current_call_context().with_fresh_call_accumulators()):
             parent_num_samples_used = current_call_context().num_samples_used
             parent_num_samples_used.collects_calls = True
-            with _collecting_num_samples_used("when_parent_collects"):
+            with _collecting_call_accumulators("when_parent_collects"):
                 _note_num_samples_used(8)
-            with pytest.raises(ValueError), _collecting_num_samples_used("always"):
+            with pytest.raises(ValueError), _collecting_call_accumulators("always"):
                 _note_num_samples_used(9)
                 raise ValueError("the scope failed")
         assert parent_num_samples_used.num_samples_values == {8}
 
     def test_a_call_scope_does_not_merge_into_a_parent_that_does_not_collect(self):
-        with _under_call_context(current_call_context().with_fresh_num_samples_used()):
+        with _under_call_context(current_call_context().with_fresh_call_accumulators()):
             parent_num_samples_used = current_call_context().num_samples_used
-            with _collecting_num_samples_used("when_parent_collects"):
+            with _collecting_call_accumulators("when_parent_collects"):
                 _note_num_samples_used(8)
-            with _collecting_num_samples_used("always") as scope_num_samples_used:
-                assert scope_num_samples_used.collects_calls is False
+            with _collecting_call_accumulators("always") as scope_context:
+                assert scope_context.num_samples_used.collects_calls is False
                 _note_num_samples_used(9)
         assert parent_num_samples_used.num_samples_values == {9}
 
-    def test_a_pickled_num_samples_used_arrives_new_and_empty(self):
+    def test_a_pickled_num_samples_used_arrives_empty_and_keeps_collecting_calls(self):
         num_samples_used = _NumSamplesUsed()
         num_samples_used.note(5)
         num_samples_used.collects_calls = True
         restored = pickle.loads(pickle.dumps(num_samples_used))
         assert restored.num_samples_values == frozenset()
-        assert restored.collects_calls is False
+        assert restored.collects_calls is True
 
     def test_threads_noting_at_once_lose_no_number(self):
         num_samples_used = _NumSamplesUsed()
@@ -391,7 +391,7 @@ class TestCarryingTheContextIntoWorkers:
             if num_samples < 0:
                 raise ValueError("the work failed")
 
-        with _under_call_context(current_call_context().with_fresh_num_samples_used()):
+        with _under_call_context(current_call_context().with_fresh_call_accumulators()):
             call_num_samples_used = current_call_context().num_samples_used
             carried = _carrying_call_context(noting)
             worker = threading.Thread(target=carried, args=(12,))
