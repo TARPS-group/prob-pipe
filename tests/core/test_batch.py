@@ -1422,17 +1422,18 @@ class TestIndexingDispatchesOnTheKeyType:
     """
 
     def test_a_path_reaches_the_elements_rather_than_an_axis(self, flat):
-        with pytest.raises(KeyError, match="it names no path inside the elements"):
+        with pytest.raises(KeyError, match="since its elements are single values with no paths"):
             flat["x"]
 
     def test_a_list_of_paths_reaches_the_elements_too(self, flat):
         with pytest.raises(
-            KeyError, match=r"by \('outer', 'a'\): it names no path inside the elements"
+            KeyError,
+            match=r"by \('outer', 'a'\), since its elements are single values with no paths",
         ):
             flat["outer", "a"]
 
     def test_the_refusal_says_the_batch_holds_the_values(self, flat):
-        with pytest.raises(KeyError, match=r"the batch already holds their values"):
+        with pytest.raises(KeyError, match=r"Read the values with \.raw"):
             flat["x"]
 
     def test_a_batch_whose_elements_have_fields_answers_a_path(self):
@@ -1463,7 +1464,7 @@ class TestIndexingDispatchesOnTheKeyType:
             nested[()]
 
     def test_a_list_of_positions_is_refused(self, flat):
-        with pytest.raises(TypeError, match="a list of positions is not supported"):
+        with pytest.raises(TypeError, match="cannot index a batch by a list of positions"):
             flat[[0, 2]]
 
     @pytest.mark.parametrize(

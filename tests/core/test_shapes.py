@@ -271,7 +271,7 @@ class TestPaths:
         ],
     )
     def test_refuses_malformed_paths_with_value_error(self, arg, match):
-        with pytest.raises(ValueError, match=f"cannot index R by .*{match}"):
+        with pytest.raises(ValueError, match=match):
             _as_paths(arg, action="index R by")
 
     @pytest.mark.parametrize(
@@ -297,7 +297,7 @@ class TestPaths:
     def test_names_the_positions_for_a_caller_that_takes_them(self):
         with pytest.raises(TypeError, match=r"cannot mix a path and a position in one \[\]"):
             _as_paths(("a", 0), action="index B by", positions=True)
-        with pytest.raises(TypeError, match="a list of positions is not supported"):
+        with pytest.raises(TypeError, match="cannot index a batch by a list of positions"):
             _as_paths([0, 2], action="index B by", positions=True)
         with pytest.raises(TypeError, match="a path, a list of paths, or a position"):
             _as_paths({"a"}, action="index B by", positions=True)

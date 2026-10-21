@@ -245,10 +245,14 @@ def _is_event_path(declaration: OutputSpec, path: Any) -> bool:
     """Whether *path* is a ``str`` and an event path of a law declared by *declaration*.
 
     The event paths are the paths of the record of the declaration's
-    outputs, so a whole term's output is one of them.
+    outputs, so a whole term's output is one of them. As an interim
+    implementation detail, the one output of an event spec positional over a
+    law also selects the law itself, until such a spec has no outputs.
     """
     if not isinstance(path, str):
         return False
+    if path == _single_output_name(declaration):
+        return True
     try:
         paths = _output_record(declaration)
     except TypeError:

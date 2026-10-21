@@ -235,7 +235,8 @@ class TestWithPathNames:
     )
     def test_a_missing_key_names_the_paths_the_tree_has(self, record, tree):
         with pytest.raises(
-            KeyError, match=r"'mu' is not a path of .*; its paths: \['x', 'g', 'g/mu', 'g/sigma'\]"
+            KeyError,
+            match=r"unknown path 'mu' in .*; available paths: \['x', 'g', 'g/mu', 'g/sigma'\]",
         ):
             tree(record).with_path_names(mu="loc")
 

@@ -112,7 +112,8 @@ class TestTheReaderErrors:
 
     def test_an_unknown_path_raises_key_error_listing_the_paths(self, term):
         with pytest.raises(
-            KeyError, match=r"'nope' is not a path of .*; its paths: \['a', 'g', 'g/c', 'g/e'\]"
+            KeyError,
+            match=r"unknown path 'nope' in .*; available paths: \['a', 'g', 'g/c', 'g/e'\]",
         ):
             term["nope"]
         with pytest.raises(KeyError, match="unknown path 'nope' in"):
@@ -129,7 +130,7 @@ class TestTheReaderErrors:
         site = Record({"habitat": {"forest": 0.7, "wetland": 0.3}, "count": 2.0}, label="site")
         with pytest.raises(
             KeyError,
-            match=r"'habitat/forst' is not a path of 'site'; its paths: \['habitat', "
+            match=r"unknown path 'habitat/forst' in 'site'; available paths: \['habitat', "
             r"'habitat/forest', 'habitat/wetland', 'count'\]",
         ):
             site["habitat/forst"]
@@ -157,8 +158,8 @@ class TestBatchPositions:
         draws = _sample(Normal("mu", 0.0, 1.0), sample_shape=4)
         with pytest.raises(
             KeyError,
-            match=r"it names no path inside the elements .* the batch already holds their "
-            r"values \(read them with .raw\)",
+            match=r"since its elements are single values with no paths\. Read the values with "
+            r"\.raw",
         ):
             draws["mu"]
 

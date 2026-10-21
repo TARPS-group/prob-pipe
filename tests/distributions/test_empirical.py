@@ -771,11 +771,11 @@ class TestMarginals:
 
     def test_a_path_that_is_not_an_event_path_raises_and_is_rejected(self):
         law = _record_law()
-        with pytest.raises(KeyError, match="'c' is not a path of 'post'"):
+        with pytest.raises(KeyError, match="unknown path 'c' in 'post'"):
             law._marginal("c")
         report = _capability_guard(law, "_marginal", "c")
         assert report.feasible is False
-        assert "is not a path of" in report.description
+        assert "unknown path" in report.description
 
     def test_the_marginal_is_exact_at_every_event_path(self):
         law = EmpiricalDistribution(_mixed_atoms(), label="m")

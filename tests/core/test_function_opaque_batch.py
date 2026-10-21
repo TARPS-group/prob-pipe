@@ -729,7 +729,7 @@ class TestPaths:
             functions["anything"]
 
     def test_opaque_elements_have_no_paths(self, labels):
-        with pytest.raises(KeyError, match="cannot index OpaqueBatch by 'anything'"):
+        with pytest.raises(KeyError, match="cannot index OpaqueBatch 's' by 'anything'"):
             labels["anything"]
         assert "anything" not in labels
         assert "north" not in labels  # membership never tests the elements

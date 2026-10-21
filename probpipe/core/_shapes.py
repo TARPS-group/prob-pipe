@@ -398,7 +398,9 @@ def _as_paths(arg: Any, *, action: str, positions: bool = False) -> str | tuple[
         return _checked_path(str(arg), action=action, given=arg)
     if isinstance(arg, (list, tuple)):
         if not arg:
-            raise ValueError(f"cannot {action} {arg!r}, since it names no paths. Give at least one")
+            raise ValueError(
+                f"cannot {action} {arg!r}, since it names no paths. Give at least one path"
+            )
         holds_position = any(_is_position(entry) for entry in arg)
         if holds_position and any(isinstance(entry, str) for entry in arg):
             raise TypeError(

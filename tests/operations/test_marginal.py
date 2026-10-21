@@ -64,7 +64,7 @@ class TestMarginal:
 
     def test_a_path_the_law_lacks_raises_applicability_error(self):
         with pytest.raises(
-            ApplicabilityError, match="'c' is not a path of 'law'; its paths: \\['a', 'b'\\]"
+            ApplicabilityError, match="unknown path 'c' in 'law'; available paths: \\['a', 'b'\\]"
         ):
             marginal(Marginalizing("law"), "c")
 
