@@ -792,18 +792,8 @@ def _in_child_call_context(
                 if parent_context.passed_controls is None
                 else self._inheriting(parent_context.passed_controls)
             )
-            is_root_call = parent_context.call_depth == 0
-            child_context = parent_context.child_for_call(
-                entry_method_name=entry_method_name,
-                function_label=function_view.label,
-                resolved_controls={
-                    name: value
-                    for name, value in function_view.options.items()
-                    if name not in _EXECUTION_CHOICE_CONTROLS
-                },
-                execution_choice=_resolve_execution_choice(function_view, parent_context),
-                session_config_values=config._session_values_snapshot() if is_root_call else None,
-                jax_settings=_jax_settings_snapshot() if is_root_call else None,
+            child_context = _child_context_for_call(
+                function_view, parent_context, entry_method_name=entry_method_name
             )
             with _open_call_context(child_context, entry_method_name=entry_method_name):
                 return entry_method(function_view, *args, **kwargs)
@@ -811,6 +801,38 @@ def _in_child_call_context(
         return run_in_child_call_context
 
     return decorate
+
+
+def _child_context_for_call(
+    function_view: Function,
+    parent_context: _CallContext,
+    *,
+    entry_method_name: Literal["__call__", "apply", "check"],
+) -> _CallContext:
+    """The context of a call of *function_view* opened in *parent_context*, which it does not install.
+
+    It holds the view's resolved controls, without ``executor`` and
+    ``executor_options``, and its executor choice; a root call also takes the
+    session's values and the JAX settings as they read now.
+
+    Raises
+    ------
+    ResolutionError, ValueError
+        As :func:`_resolve_execution_choice` raises.
+    """
+    is_root_call = parent_context.call_depth == 0
+    return parent_context.child_for_call(
+        entry_method_name=entry_method_name,
+        function_label=function_view.label,
+        resolved_controls={
+            name: value
+            for name, value in function_view.options.items()
+            if name not in _EXECUTION_CHOICE_CONTROLS
+        },
+        execution_choice=_resolve_execution_choice(function_view, parent_context),
+        session_config_values=config._session_values_snapshot() if is_root_call else None,
+        jax_settings=_jax_settings_snapshot() if is_root_call else None,
+    )
 
 
 def _resolve_execution_choice(

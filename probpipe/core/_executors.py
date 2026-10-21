@@ -157,7 +157,7 @@ class _ExecutorRegistry(UnaryDispatchRegistry[EvaluationExecutor]):
 
 #: The registry of executors, which the registry catalog lists.
 executor_registry: _ExecutorRegistry = _ExecutorRegistry(
-    name="executor",
+    name="executors",
     description="Executors that run sets of evaluation points: in order, on threads, in "
     "worker processes, or compiled by JAX",
 )

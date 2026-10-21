@@ -48,6 +48,15 @@ from probpipe.core._catalog import (
     registry_catalog,
 )
 from probpipe.core._dispatch import MathematicalDomainError, ResolutionError
+from probpipe.core._evaluation_points import (
+    EvaluationChunk,
+    EvaluationError,
+    EvaluationFailure,
+    EvaluationOutcomes,
+    EvaluationPoints,
+    SharedPayload,
+)
+from probpipe.core._executors import EvaluationExecutor, executor_registry
 from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric import Numeric
 from probpipe.core._numeric_array import NumericArray
@@ -68,6 +77,7 @@ from probpipe.core._specs import (
 )
 from probpipe.core.config import (
     ProvenanceMode,
+    UnshippableSettingError,
     WorkflowKind,
     config,
 )
@@ -251,6 +261,12 @@ __all__ = [
     "DistributionSpec",
     "EmpiricalDistribution",
     "EntrySummary",
+    "EvaluationChunk",
+    "EvaluationError",
+    "EvaluationExecutor",
+    "EvaluationFailure",
+    "EvaluationOutcomes",
+    "EvaluationPoints",
     "Exponential",
     "FullFactorialDesign",
     "Function",
@@ -304,6 +320,7 @@ __all__ = [
     "ResolutionError",
     "ResultKindError",
     "ResultSchemaError",
+    "SharedPayload",
     "StanModel",
     "StudentT",
     "SupportsApproximateConditioning",
@@ -329,6 +346,7 @@ __all__ = [
     "TruncatedNormal",
     "Uniform",
     "UnmanagedConcurrentWorkflowEntryError",
+    "UnshippableSettingError",
     "VonMisesFisher",
     "Weights",
     "Wishart",
@@ -346,6 +364,7 @@ __all__ = [
     "distribution",
     "elliptical_slice",
     "evaluation_rule_registry",
+    "executor_registry",
     "expectation",
     "factor",
     "function",

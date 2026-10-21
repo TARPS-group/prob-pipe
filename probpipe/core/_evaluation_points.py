@@ -38,6 +38,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ._array_backend import _is_numeric_leaf
 from ._call_context import (
     _CallContext,
     _collecting_call_accumulators,
@@ -951,10 +952,13 @@ def _num_rows(varying: Mapping[str, Any], origin: str) -> int:
 
 
 def _stacked_shared_arguments(shared_arguments: Mapping[str, Any], num_rows: int) -> dict[str, Any]:
-    """Each array leaf of *shared_arguments* as a read-only view repeated over *num_rows* rows."""
+    """Each numeric leaf of *shared_arguments* as a read-only view repeated over *num_rows* rows.
+
+    A leaf that is not numeric, such as a string, is passed once, unchanged.
+    """
 
     def stacked_leaf(leaf: Any) -> Any:
-        if np.ndim(leaf) == 0 and not hasattr(leaf, "shape"):
+        if not _is_numeric_leaf(leaf):
             return leaf
         host_array = np.asarray(leaf)
         return np.broadcast_to(host_array, (num_rows, *host_array.shape))
