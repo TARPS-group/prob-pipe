@@ -12,7 +12,7 @@ A source written "gaps" and an item, such as "gaps D8", names an item of `gaps-a
 | Work | Source |
 |---|---|
 | Grammar B for random measures, random functions and Gaussian processes, bootstrap laws, empirical laws of laws, and minibatched targets, each wrapping its draws under the name its constructor takes; then the refusal of the interim whole form, and the private event default goes (step G2) | `declarations-and-addressing.md` B.6; gaps D4 |
-| Paths through every kind, `Function[]`, the accessor `t.output(c)`, and views at held fields with no wrap (step G3) | `declarations-and-addressing.md` § 4.1, B.6 |
+| Paths through every kind, `Function[]`, the accessor `t.output(c)`, and coupled marginals at held fields with no wrap (step G3) | `declarations-and-addressing.md` § 4.1, B.6 |
 | `condition_on`'s result with the event spec `d.event_spec.without(*fixed)`, `law.without`, paths into a record input of an `InputSpec`, and the rule that only merge and rename keep factors (step G4) | `declarations-and-addressing.md` § 6.2, § 15, § 4.3, § 10, § 5.2, B.6 (T32) |
 | `[]` on batches of laws, on batches of functions, and on kernels (step G5) | `declarations-and-addressing.md` § 6.3, § 16, § 6.5, § 18, B.6 |
 | `&` on `Function`, where functions feed as point-mass kernels, and on batches other than `RecordBatch`, element by element | `declarations-and-addressing.md` § 6.4, § 17, B.6 |
@@ -27,7 +27,8 @@ From Appendix C.4 of the inputs and outputs proposal, merged into `declarations-
 | Work | Source |
 |---|---|
 | The point-mass reading of merges across categories: a record as the law of one draw, and a function as the kernel whose laws are point masses, so `lik & Record({"mu": 0.3})` and `f & d` have a meaning | `declarations-and-addressing.md` § 5.3 |
-| Refusing a merge of two views of one parent, or returning their joint view, since today `hier[["s1"]] & hier[["s2"]]` is the product of the marginals | `declarations-and-addressing.md` § 5.6 |
+| Whether coupling survives binding: whether `k["a"](w)` and `k["b"](w)`, two coupled marginals of a kernel bound at one input value, draw together | `declarations-and-addressing.md` A.2, item 52 |
+| `marginal` on batches and functions, which would equal `[]`, since neither kind's selection keeps a dependence that a standalone form drops | `declarations-and-addressing.md` A.2, item 52 |
 | A merge that sorts the flattened factors topologically, so a kernel can be added between two merged operands | `declarations-and-addressing.md` E, item 25; the proposal's Appendix D, item 18 |
 | The joint's spec for a shared input becomes the unification `U` instead of the first operand's spec; one test asserts today's choice | `declarations-and-addressing.md` § 2.1, § 5.3, D.2 Q4(d) |
 | A bug: `condition_on` of a joint kernel ignores an optional input that a merge feeds, as in `condition_on(lik_opt * s_prior, {"mu": 0.0})`; S3's rename carries it unchanged, and G4's rule that only merge and rename keep factors does not fix it, since the fed input does not remain | `declarations-and-addressing.md` § 5.5, C.3; fact 34 |
