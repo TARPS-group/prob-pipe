@@ -19,7 +19,11 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core import config as config_module
-from probpipe.core._call_context import _carrying_call_context, _note_num_samples_used
+from probpipe.core._call_context import (
+    _carrying_call_context,
+    _note_num_samples_used,
+    current_call_context,
+)
 from probpipe.core._expression import _STORED_DEPTH, Named, Operator, constant
 from probpipe.core.config import (
     _MAX_EVALUATIONS_ENV_VAR,
@@ -430,3 +434,112 @@ class TestTemporarySettings:
         assert restored_context.resolved_controls["method_options"] == {"budget": {"steps": 3}}
         assert isinstance(restored_context.resolved_controls["method_options"], MappingProxyType)
         assert restored_context.num_samples_used.num_samples_values == frozenset()
+
+
+class TestTheProvenanceModeIsFixedForARun:
+    """Inside a workflow run, nothing may change the provenance mode the run took when it opened."""
+
+    def test_a_block_that_changes_the_mode_inside_a_run_raises_naming_the_runs_mode(self):
+        config.provenance.mode = ProvenanceMode.FULL
+        with workflow_run(seed=1):
+            with (
+                pytest.raises(
+                    RuntimeError,
+                    match=(
+                        r"^config\.provenance\.using\(\): cannot set the provenance mode to "
+                        r"ProvenanceMode\.OFF inside a workflow run under ProvenanceMode\.FULL\. "
+                        r"Set the mode before the workflow_run opens"
+                    ),
+                ),
+                config.provenance.using(mode=ProvenanceMode.OFF),
+            ):
+                pass
+            assert "provenance" not in current_call_context().config_blocks
+            assert config.provenance.mode is ProvenanceMode.FULL
+
+    def test_a_block_of_several_sections_that_changes_the_mode_raises(self):
+        with workflow_run(seed=1):
+            with (
+                pytest.raises(RuntimeError, match=r"^config\.using\(\): cannot set"),
+                config.using(sampling={"num_samples": 7}, provenance={"mode": ProvenanceMode.OFF}),
+            ):
+                pass
+            assert config.sampling.num_samples == 1024
+
+    def test_a_config_using_block_of_the_provenance_section_alone_names_config_using(self):
+        with (
+            workflow_run(seed=1),
+            pytest.raises(RuntimeError, match=r"^config\.using\(\): cannot set"),
+            config.using(provenance={"mode": ProvenanceMode.OFF}),
+        ):
+            pass
+
+    def test_a_block_that_sets_the_runs_own_mode_is_accepted(self):
+        config.provenance.mode = ProvenanceMode.FULL
+        with workflow_run(seed=1), config.provenance.using(mode=ProvenanceMode.FULL):
+            assert mean(Normal("x", 0.0, 1.0)).provenance is not None
+
+    def test_the_run_takes_the_mode_of_a_block_around_it(self):
+        with config.provenance.using(mode=ProvenanceMode.OFF), workflow_run(seed=1):
+            with pytest.raises(RuntimeError, match=r"under ProvenanceMode\.OFF"):
+                config.provenance.mode = ProvenanceMode.FULL
+            assert mean(Normal("x", 0.0, 1.0)).provenance is None
+
+    def test_a_nested_run_keeps_the_outer_runs_mode(self):
+        with (
+            workflow_run(seed=1),
+            workflow_run(seed=2),
+            pytest.raises(RuntimeError, match=r"under ProvenanceMode\.LIGHTWEIGHT"),
+            config.provenance.using(mode=ProvenanceMode.FULL),
+        ):
+            pass
+
+    def test_a_block_in_the_body_of_a_call_outside_every_run_raises(self):
+        @function
+        def body(x):
+            with config.provenance.using(mode=ProvenanceMode.OFF):
+                return x
+
+        with pytest.raises(RuntimeError, match="before the call if no workflow_run is open"):
+            body(1.0)
+
+    def test_a_block_in_a_thread_point_of_a_run_raises(self):
+        @function(dispatch="thread", max_workers=2)
+        def body(x):
+            with config.provenance.using(mode=ProvenanceMode.OFF):
+                return x
+
+        with workflow_run(seed=1), pytest.raises(RuntimeError, match="cannot set"):
+            body(NumericArrayBatch(jnp.arange(2.0), "x", label="xs"))
+
+    def test_assigning_another_mode_inside_a_run_raises_and_keeps_the_session_value(self):
+        with workflow_run(seed=1):
+            with pytest.raises(
+                RuntimeError,
+                match=r"^config\.provenance\.mode: cannot set the provenance mode to ProvenanceMode\.FULL",
+            ):
+                config.provenance.mode = ProvenanceMode.FULL
+            config.provenance.mode = ProvenanceMode.LIGHTWEIGHT
+        assert config.provenance.mode is ProvenanceMode.LIGHTWEIGHT
+        config.provenance.mode = ProvenanceMode.FULL
+        assert config.provenance.mode is ProvenanceMode.FULL
+
+    def test_a_reset_that_would_change_the_mode_inside_a_run_raises_and_resets_nothing(self):
+        config.provenance.mode = ProvenanceMode.FULL
+        config.sampling.num_samples = 7
+        with workflow_run(seed=1):
+            with pytest.raises(RuntimeError, match=r"^config\.reset\(\): cannot set"):
+                config.reset()
+            assert config.sampling.num_samples == 7
+            with pytest.raises(RuntimeError, match=r"^config\.provenance\.reset\(\): cannot set"):
+                config.provenance.reset()
+            config.sampling.reset()
+            assert config.sampling.num_samples == 1024
+        config.reset()
+        assert config.provenance.mode is ProvenanceMode.LIGHTWEIGHT
+
+    def test_a_reset_that_keeps_the_runs_mode_is_accepted(self):
+        config.notation.max_depth = 3
+        with workflow_run(seed=1):
+            config.reset()
+        assert config.notation.max_depth == 8

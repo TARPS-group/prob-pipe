@@ -20,7 +20,6 @@ import probpipe.functions._rng as _rng
 from probpipe import (
     Function,
     Normal,
-    ProvenanceMode,
     UnmanagedConcurrentWorkflowEntryError,
     sample,
     workflow_run,
@@ -94,7 +93,7 @@ class TestWorkflowRunBoundary:
                 "probpipe.functions._context._os_urandom",
                 return_value=bytes.fromhex("0123456789abcdef"),
             ) as urandom,
-            _context._transported_workflow_frame(None, ProvenanceMode.FULL),
+            _context._transported_workflow_frame(None),
         ):
             frame = _context._capture_active_workflow_frame()
             assert frame is not None
@@ -309,7 +308,7 @@ class TestWorkflowAdmission:
         assert "UnmanagedConcurrentWorkflowEntryError" in probpipe.__all__
 
     def test_transported_root_is_not_reported_as_a_user_seed(self):
-        with _context._transported_workflow_frame((1, 2), ProvenanceMode.FULL):
+        with _context._transported_workflow_frame((1, 2)):
             frame = _context._capture_active_workflow_frame()
             assert frame is not None
             origin = _context._describe_rng_origin(frame)

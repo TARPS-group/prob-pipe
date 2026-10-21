@@ -56,24 +56,42 @@ class _Section:
     """A section of ``config``: named settings, each with a session value and a check.
 
     Reading a setting returns the value that the innermost active ``using``
-    block sets for it, and otherwise the session's value. Assigning a setting
-    checks the value and sets the session's value, which an active block that
-    sets the setting overrides until it exits.
+    block sets for it, and otherwise the session's value: inside the work a
+    call dispatches, the session's value when the outermost call opened.
+    Assigning a setting checks the value and sets the session's value, which
+    an active block that sets the setting overrides until it exits.
     """
 
     #: The section's name in ``config``, which the blocks are keyed by.
     _name: ClassVar[str]
+
+    #: Whether the work a call dispatches reads the section's session values
+    #: as they were when the outermost call opened, rather than as they are.
+    _is_in_session_snapshot: ClassVar[bool] = True
 
     #: The check of each setting, by name: it takes the value and the setting's
     #: name, and returns the value or raises as an assignment raises.
     _checks: ClassVar[Mapping[str, Callable[[Any, str], Any]]]
 
     def _value_in_effect(self, setting_name: str) -> Any:
-        """The value of *setting_name* that the innermost block sets, or else the session's value."""
-        section_block = current_call_context().config_blocks.get(self._name)
+        """The value of *setting_name* that the innermost block sets, or else the session's value.
+
+        Inside an evaluation point the session's value is the one in the
+        snapshot that the root call took, when it holds the section.
+        """
+        call_context = current_call_context()
+        section_block = call_context.config_blocks.get(self._name)
         if section_block is not None and setting_name in section_block:
             return section_block[setting_name]
+        if call_context.in_evaluation_point:
+            section_snapshot = call_context.session_config_values.get(self._name)
+            if section_snapshot is not None:
+                return section_snapshot[setting_name]
         return getattr(self, f"_{setting_name}")
+
+    def _session_values(self) -> dict[str, Any]:
+        """The session's value of each setting of the section, by setting name."""
+        return {setting_name: getattr(self, f"_{setting_name}") for setting_name in self._checks}
 
     def _checked_block_values(
         self, block_settings: Mapping[str, Any], caller: str
@@ -118,6 +136,7 @@ class _Section:
         The block's values apply to every read inside it, by the calls a
         ``Function`` dispatches to worker threads or Prefect workers included,
         and the previous values apply again when it exits, an error included.
+        Inside a workflow run, a block cannot change the provenance mode.
         Blocks nest, and an inner block's value wins. Blocks close in the
         reverse order of opening, and :class:`Config` states what happens when
         a generator that holds a block open breaks that order. A view's own control,
@@ -143,10 +162,13 @@ class _Section:
         ValueError
             If a value is inadmissible, as an assignment raises.
         RuntimeError
-            On exit, if the block closes out of order, as :class:`Config` states.
+            On entry, if the block sets a provenance mode other than that of the
+            workflow run open in this thread, naming the run's mode. On exit,
+            if the block closes out of order, as :class:`Config` states.
         """
-        checked_block_values = self._checked_block_values(settings, f"config.{self._name}.using()")
-        return _config_block({self._name: checked_block_values}, yields=self)
+        caller = f"config.{self._name}.using()"
+        checked_block_values = self._checked_block_values(settings, caller)
+        return _config_block({self._name: checked_block_values}, caller=caller, yields=self)
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +291,9 @@ class PrefectConfig(_Section):
     """
 
     _name = "prefect"
+    # A task runner need not pickle, so the work a call dispatches reads the
+    # section's current values rather than a snapshot that travels with it.
+    _is_in_session_snapshot = False
     _checks = MappingProxyType(
         {"workflow_kind": _checked_workflow_kind, "task_runner": lambda value, source: value}
     )
@@ -404,8 +429,20 @@ class ProvenanceConfig(_Section):
 
     The initial mode can also be set via the ``PROBPIPE_PROVENANCE_MODE``
     environment variable (``full``, ``lightweight``, or ``off``,
-    case-insensitive). A top-level workflow takes the mode in effect when it
-    is entered.
+    case-insensitive).
+
+    The mode is fixed for a workflow run. The outermost ``workflow_run`` takes
+    the mode in effect when it is entered, and a call outside every
+    ``workflow_run`` takes it when the call opens. Inside the run, a ``using``
+    block, an assignment, or a ``reset`` that would set another mode raises
+    ``RuntimeError``, naming the run's mode; one that sets the run's own mode
+    is accepted::
+
+        with probpipe.workflow_run(seed=0):
+            with probpipe.config.provenance.using(mode=ProvenanceMode.OFF):  # raises
+                ...
+
+    Set the mode before the run opens instead.
     """
 
     _name = "provenance"
@@ -418,17 +455,34 @@ class ProvenanceConfig(_Section):
         """Restore the session's mode to its default (re-reading the env var).
 
         An active ``using`` block that sets the mode still applies until it exits.
+
+        Raises
+        ------
+        RuntimeError
+            Inside a workflow run, if the default differs from the run's mode.
         """
-        self._mode: ProvenanceMode = _initial_provenance_mode()
+        initial_mode = _initial_provenance_mode()
+        _refuse_changing_the_run_provenance_mode(initial_mode, "config.provenance.reset()")
+        self._mode: ProvenanceMode = initial_mode
 
     @property
     def mode(self) -> ProvenanceMode:
-        """Current global provenance tracking mode."""
+        """Current global provenance tracking mode.
+
+        Raises
+        ------
+        TypeError
+            On assignment of a value that is not a ``ProvenanceMode``.
+        RuntimeError
+            On assignment inside a workflow run of a mode other than the run's.
+        """
         return self._value_in_effect("mode")
 
     @mode.setter
     def mode(self, value: ProvenanceMode) -> None:
-        self._mode = _checked_provenance_mode(value, "mode")
+        checked_mode = _checked_provenance_mode(value, "mode")
+        _refuse_changing_the_run_provenance_mode(checked_mode, "config.provenance.mode")
+        self._mode = checked_mode
 
 
 # ---------------------------------------------------------------------------
@@ -774,7 +828,12 @@ class Config:
     configured copy of ``f``, while ``config.using(...)`` is a context manager.
     A block applies in the thread that opens it and in the workers that
     ``Function`` calls inside it dispatch to, whether threads or Prefect
-    workers, and not in another thread. Assigning a setting inside a block sets
+    workers, and not in another thread. The work a call dispatches reads the
+    session's values as they were when the outermost call opened, except
+    those of ``prefect``, so a session assignment made while the call runs
+    reaches none of that work. Inside a workflow run, a block or an
+    assignment cannot change the provenance mode, as :class:`ProvenanceConfig`
+    states. Assigning a setting inside a block sets
     the session's value, which applies once the block exits, and
     :meth:`reset` inside a block restores the session's values while the block
     still applies. Blocks close in the reverse order of opening, and a block
@@ -849,7 +908,9 @@ class Config:
         ValueError
             As a section's ``using`` raises.
         RuntimeError
-            On exit, if the block closes out of order, as the class docstring states.
+            On entry, if the block sets a provenance mode other than that of the
+            workflow run open in this thread. On exit, if the block closes out
+            of order, as the class docstring states.
         """
         unknown = [name for name in sections if name not in self._sections]
         if unknown:
@@ -864,7 +925,7 @@ class Config:
             checked_config_values[name] = self._sections[name]._checked_block_values(
                 settings, f"config.using({name}=...)"
             )
-        return _config_block(checked_config_values, yields=self)
+        return _config_block(checked_config_values, caller="config.using()", yields=self)
 
     def reset(self) -> None:
         """Restore every section's session settings to their defaults, reading the environment variables again.
@@ -876,14 +937,25 @@ class Config:
         ValueError
             If an environment variable that a section reads is set to an
             inadmissible value, as each section's ``reset`` states.
+        RuntimeError
+            Inside a workflow run, if the default provenance mode differs from
+            the run's mode. No section is reset then.
         """
+        _refuse_changing_the_run_provenance_mode(_initial_provenance_mode(), "config.reset()")
         for section in self._sections.values():
             section.reset()
 
+    def _session_values_snapshot(self) -> dict[str, dict[str, Any]]:
+        """The session's values of every section but ``prefect``, by section name and then setting name.
 
-# Module-level singleton
-config = Config()
-"""The global settings of ProbPipe, an instance of ``Config``."""
+        A root call takes this snapshot when it opens, and the work it
+        dispatches reads it in place of the session's current values.
+        """
+        return {
+            section_name: section._session_values()
+            for section_name, section in self._sections.items()
+            if section._is_in_session_snapshot
+        }
 
 
 def _num_samples_in_effect() -> int:
@@ -895,12 +967,70 @@ def _num_samples_in_effect() -> int:
 
 
 @contextmanager
-def _config_block(config_values: Mapping[str, Mapping[str, Any]], *, yields: Any) -> Iterator[Any]:
+def _config_block(
+    config_values: Mapping[str, Mapping[str, Any]], *, caller: str, yields: Any
+) -> Iterator[Any]:
     """A block in which the checked *config_values* of each named section apply, yielding *yields*.
 
     The block installs the call context in effect with one more ``config``
     block, so its values merge over those of the enclosing blocks, and the
-    enclosing values apply again when it exits, an error included.
+    enclosing values apply again when it exits, an error included. A block
+    that would change the provenance mode of the open workflow run raises
+    when it is entered, before it installs anything, with a message that opens
+    with *caller*, the ``using`` call that opened the block.
     """
+    block_provenance_mode = config_values.get("provenance", {}).get("mode")
+    if block_provenance_mode is not None:
+        _refuse_changing_the_run_provenance_mode(block_provenance_mode, caller)
     with _under_call_context(current_call_context().with_config_block(config_values)):
         yield yields
+
+
+def _no_open_run_provenance_mode() -> ProvenanceMode | None:
+    """No workflow run is open, as before the workflow scopes register their reader."""
+    return None
+
+
+#: Reads the provenance mode of the workflow run open in the running thread,
+#: or ``None`` outside every run. The workflow scopes are defined above
+#: ``core``, so they register the reader when they are imported.
+_open_run_provenance_mode: Callable[[], ProvenanceMode | None] = _no_open_run_provenance_mode
+
+
+def _register_open_run_provenance_mode_reader(
+    open_run_provenance_mode: Callable[[], ProvenanceMode | None],
+) -> None:
+    """Register the reader of the open workflow run's provenance mode, which the workflow scopes define."""
+    global _open_run_provenance_mode
+    _open_run_provenance_mode = open_run_provenance_mode
+
+
+def _refuse_changing_the_run_provenance_mode(requested_mode: ProvenanceMode, caller: str) -> None:
+    """Raise if *caller* would set *requested_mode* inside a workflow run fixed to another mode.
+
+    Parameters
+    ----------
+    requested_mode : ProvenanceMode
+        The mode that a block, an assignment, or a reset would set.
+    caller : str
+        The block, the assignment, or the reset, which the message opens with.
+
+    Raises
+    ------
+    RuntimeError
+        If a workflow run is open in the running thread and its provenance mode
+        is not *requested_mode*.
+    """
+    run_provenance_mode = _open_run_provenance_mode()
+    if run_provenance_mode is None or run_provenance_mode is requested_mode:
+        return
+    raise RuntimeError(
+        f"{caller}: cannot set the provenance mode to ProvenanceMode.{requested_mode.name} "
+        f"inside a workflow run under ProvenanceMode.{run_provenance_mode.name}. Set the mode "
+        "before the workflow_run opens, or before the call if no workflow_run is open"
+    )
+
+
+# Module-level singleton, built after the helpers its sections call.
+config = Config()
+"""The global settings of ProbPipe, an instance of ``Config``."""

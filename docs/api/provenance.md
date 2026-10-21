@@ -30,5 +30,6 @@ Replay from a provenance record is on [Workflows and reproducibility](workflows.
 ## Provenance modes
 
 `config.provenance.mode` takes one of these modes, as [Settings](config.md) states.
+A `workflow_run` keeps the mode in effect when it opens, and changing the mode inside the run raises `RuntimeError`.
 
 ::: probpipe.ProvenanceMode

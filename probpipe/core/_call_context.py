@@ -35,6 +35,7 @@ _MergeRule = Literal["when_parent_collects", "always"]
 
 _NO_CONFIG_BLOCKS: Mapping[str, Mapping[str, Any]] = MappingProxyType({})
 _NO_CONTROLS: Mapping[str, Any] = MappingProxyType({})
+_NO_SESSION_CONFIG_VALUES: Mapping[str, Mapping[str, Any]] = MappingProxyType({})
 
 #: The passed controls below a call made under a passed ``exact_only``, which
 #: keep the ``exact_only`` alone.
@@ -68,7 +69,10 @@ class _CallContext:
     - A worker runs each piece of work it is given under the
       :meth:`evaluation_context` of the call that dispatched it, with a
       ``num_samples_used`` of the work's own, merged into the call's when the
-      work succeeds.
+      work succeeds. There a setting that no block sets reads
+      ``session_config_values``, the session's values when the root call
+      opened, so a session assignment made while the call runs reaches none
+      of its work.
 
     Transport:
 
@@ -78,7 +82,8 @@ class _CallContext:
       which installs it before the work runs.
     - Into a worker process, the same carrier is pickled. Its read-only
       mappings travel as plain dicts, nested ones included, and are read-only
-      again when unpickled, and its ``num_samples_used`` arrives new and empty.
+      again when unpickled, so ``session_config_values`` travels with it, and
+      its ``num_samples_used`` arrives new and empty.
 
     Invariants:
 
@@ -116,6 +121,15 @@ class _CallContext:
         which its provenance reports as ``num_samples``. A ``__call__`` has its
         own, an ``apply`` shares its enclosing call's, and a ``check`` has none.
         ``None`` outside every call.
+    session_config_values : Mapping[str, Mapping[str, Any]]
+        The session's values of every ``config`` section but ``prefect``, by
+        section name and then setting name, as they were when the root call
+        opened. A child call keeps its parent's. Inside an evaluation point a
+        setting that no block sets reads its value here, in place of the
+        session's current value. Empty outside every call.
+    in_evaluation_point : bool
+        Whether this is the context that a call's dispatched work runs under,
+        :meth:`evaluation_context`, or a context derived from one.
     """
 
     config_blocks: Mapping[str, Mapping[str, Any]] = _NO_CONFIG_BLOCKS
@@ -124,6 +138,8 @@ class _CallContext:
     function_label: str | None = None
     resolved_controls: Mapping[str, Any] = _NO_CONTROLS
     num_samples_used: _NumSamplesUsed | None = None
+    session_config_values: Mapping[str, Mapping[str, Any]] = _NO_SESSION_CONFIG_VALUES
+    in_evaluation_point: bool = False
 
     def with_config_block(self, config_values: Mapping[str, Mapping[str, Any]]) -> _CallContext:
         """This context under one more ``config`` block, which sets *config_values*.
@@ -181,6 +197,7 @@ class _CallContext:
         entry_method_name: _EntryMethodName,
         function_label: str,
         resolved_controls: Mapping[str, Any],
+        session_config_values: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> _CallContext:
         """The context of a call opened in this context, which it derives and does not install.
 
@@ -189,7 +206,9 @@ class _CallContext:
         the calls a formula makes directly, and is one call deeper. A
         ``__call__`` and an ``apply`` keep this context's ``num_samples_used``,
         which :func:`_open_call_context` replaces with a new one for a
-        ``__call__``, and a ``check`` has none, since it draws nothing.
+        ``__call__``, and a ``check`` has none, since it draws nothing. A root
+        call takes *session_config_values*, and every other call keeps this
+        context's.
 
         Parameters
         ----------
@@ -200,6 +219,9 @@ class _CallContext:
         resolved_controls : Mapping of str to Any
             The call's controls, resolved from its own controls, the passed
             controls, the ``config`` blocks, and the session.
+        session_config_values : Mapping of str to Mapping of str to Any, optional
+            The session's values of every section but ``prefect``, by section
+            name and then setting name, given only for a root call.
 
         Returns
         -------
@@ -207,6 +229,13 @@ class _CallContext:
             The child context.
         """
         keeps_exact_only = self.passed_controls is not None and self.passed_controls["exact_only"]
+        if session_config_values is not None:
+            session_config_values = MappingProxyType(
+                {
+                    section_name: MappingProxyType(dict(section_values))
+                    for section_name, section_values in session_config_values.items()
+                }
+            )
         return replace(
             self,
             passed_controls=_EXACT_ONLY_BELOW if keeps_exact_only else None,
@@ -214,19 +243,26 @@ class _CallContext:
             function_label=function_label,
             resolved_controls=MappingProxyType(dict(resolved_controls)),
             num_samples_used=None if entry_method_name == "check" else self.num_samples_used,
+            session_config_values=(
+                self.session_config_values
+                if session_config_values is None
+                else session_config_values
+            ),
         )
 
     def evaluation_context(self) -> _CallContext:
         """The context that the work a call dispatches to a worker runs under.
 
-        It is the call's context: every field it holds applies in the worker.
+        It is the call's context marked ``in_evaluation_point``, so a setting
+        that no block sets reads ``session_config_values`` there, whatever
+        worker runs the work and whenever it runs.
 
         Returns
         -------
         _CallContext
             The evaluation context.
         """
-        return self
+        return replace(self, in_evaluation_point=True)
 
     def is_root_call(self) -> bool:
         """Whether this is the context of a call opened outside every other call."""
