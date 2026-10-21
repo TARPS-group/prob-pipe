@@ -1792,7 +1792,7 @@ def _exposed_under(law: Distribution, output_name: str) -> Distribution:
     leaves = {
         leaf: leaf if whole else f"{output_name}{_PATH_SEP}{leaf}" for leaf in _leaf_paths(source)
     }
-    return _renamed_by_leaves(law, OutputSpec(RecordSpec({output_name: source.spec})), leaves)
+    return _renamed_by_leaves(law, OutputSpec(RecordSpec({output_name: source.term_spec})), leaves)
 
 
 def _renamed_by_leaves(
