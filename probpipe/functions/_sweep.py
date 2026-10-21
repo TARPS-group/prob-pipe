@@ -34,12 +34,12 @@ from ..core._opaque import Opaque
 from ..core._record_batch import RecordBatch, _MappedBatchColumns
 from ..core._repr import type_name
 from ..core._specs import OutputSpec, RecordSpec
-from ..core.config import WorkflowKind, prefect_config
+from ..core.config import WorkflowKind, config
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._distribution import Distribution
-from . import _broker, _context, _execution, _execution_contract, _plan, _recipe, _result
+from . import _context, _evaluation_keys, _execution, _plan, _recipe, _result
 from ._result import _make_stack, _row_at_its_kind
 
 
@@ -137,7 +137,7 @@ def execute_sweep(
             dist_args=dist_args,
             function_name=function_name,
             batch_shape=plan.sweep_batch_shape,
-            k=0,
+            max_evaluations=None,
             parents=provenance_parents,
             inputs=provenance_inputs,
             stochastic_plan=None,
@@ -178,7 +178,7 @@ def execute_sweep(
         dist_args=dist_args,
         function_name=function_name,
         batch_shape=plan.sweep_batch_shape,
-        k=stochastic_plan.n_broadcast_samples,
+        max_evaluations=stochastic_plan.max_evaluations,
         parents=provenance_parents,
         inputs=provenance_inputs,
         stochastic_plan=stochastic_plan,
@@ -271,12 +271,12 @@ def execute_sweep_rows(
         isinstance(_binding.input_ref_value(values, ref), _ObjectBatch) for ref in array_args
     )
     jax_structure_supported = not (has_object_batch or len(plan.array_groups) > 1)
-    jax_contract = _execution_contract.make_execution_contract(
+    jax_contract = _execution.make_execution_contract(
         evaluator="jax_vmap",
-        transport=_execution_contract.transport_for_workflow_kind(workflow_kind),
+        transport=_execution.transport_for_workflow_kind(workflow_kind),
         stochastic_plan=None,
     )
-    jax_supported = _execution_contract.supports_execution_contract(
+    jax_supported = _execution.supports_execution_contract(
         jax_contract,
         None,
         jax_structure_supported=jax_structure_supported,
@@ -294,7 +294,7 @@ def execute_sweep_rows(
     )
 
     if dispatch == "jax":
-        _broker._record_active_execution_contract(jax_contract)
+        _evaluation_keys._record_active_execution_contract(jax_contract)
         if requested_dispatch == "jax":
             require_jax_traceable(values, array_args)
         return execute_sweep_rows_jax(
@@ -320,19 +320,19 @@ def execute_sweep_rows(
     execution = make_execution_config()
     request = _execution.WorkflowExecutionRequest(
         func=func,
-        work_items=_execution.make_managed_work_items(
+        evaluation_points=_execution.issue_evaluation_points(
             per_row_values,
-            unit_segments=tuple(
-                _execution.sweep_unit_segment(tuple(coordinates))
+            point_segments=tuple(
+                _execution.sweep_cell_point_segment(tuple(coordinates))
                 for coordinates in cartesian_product(
                     *(range(axis) for axis in plan.sweep_batch_shape)
                 )
             ),
         ),
         execution=execution,
-        contract=_execution_contract.make_execution_contract(
+        contract=_execution.make_execution_contract(
             evaluator="rowwise",
-            transport=_execution_contract.transport_for_execution_mode(execution.mode),
+            transport=_execution.transport_for_execution_mode(execution.mode),
             stochastic_plan=None,
         ),
     )
@@ -505,7 +505,7 @@ def execute_sweep_rows_jax(
         if workflow_kind is WorkflowKind.TASK:
             run_vmap = task(name=f"{function_name}_vmap")(run_vmap)
         else:
-            runner = prefect_config.resolve_task_runner()
+            runner = config.prefect.resolve_task_runner()
             run_vmap = flow(
                 name=f"{function_name}_vmap",
                 **({"task_runner": runner} if runner is not None else {}),
@@ -520,7 +520,7 @@ def make_sweep_provenance(
     dist_args: list[_binding.FunctionInputRef],
     function_name: str,
     batch_shape: tuple[int, ...],
-    k: int,
+    max_evaluations: int | None,
     parents: list[TrackedTerm] | None = None,
     inputs: Mapping[str, Any] | None = None,
     stochastic_plan: _plan.StochasticPlan | None = None,
@@ -529,7 +529,9 @@ def make_sweep_provenance(
     """Build provenance metadata for pure and nested sweep outputs.
 
     ``parents`` carries tracked call-level lineage; ``inputs`` carries the
-    original resolved plain values rather than per-cell sweep values.
+    original resolved plain values rather than per-cell sweep values. A nested
+    sweep's metadata records the ``max_evaluations`` of the lift in each cell,
+    which a pure sweep, given ``None``, does not have.
     Returns ``None`` when :attr:`ProvenanceMode.OFF` is active.
     """
     regime = "nested" if dist_args else "stack"
@@ -548,7 +550,7 @@ def make_sweep_provenance(
         metadata={
             "func": function_name,
             "batch_shape": tuple(batch_shape),
-            "k": k,
+            **({} if max_evaluations is None else {"max_evaluations": max_evaluations}),
             "ra_args": [ref.label for ref in array_args],
             "dist_args": [ref.label for ref in dist_args],
             **(dict(route) if route is not None else {}),

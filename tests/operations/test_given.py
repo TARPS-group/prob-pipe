@@ -214,7 +214,7 @@ class TestConditionalOperations:
     def test_sampling_twins_serve_monte_carlo_without_constructing_a_law(self, operation, method):
         kernel = _Direct()
         args = (lambda y: y,) if operation is expectation else ()
-        options = {"n_broadcast_samples": 64}
+        options = {"num_samples": 64}
         if method is not None:
             options["method"] = "sampling_lift" if operation is expectation else method
         view = operation.using(**options)
@@ -228,9 +228,9 @@ class TestConditionalOperations:
 
     def test_the_standard_deviation_takes_the_variances_monte_carlo_route(self):
         kernel = _Direct()
-        view = standard_deviation.using(n_broadcast_samples=64)
+        view = standard_deviation.using(num_samples=64)
         report = view.check(kernel, given={"mu": 2.0})
-        assert (report.route, report.exact) == ("identity", False)
+        assert (report.route, report.exact) == ("derived", False)
         with workflow_run(seed=42):
             result = view(kernel, given={"mu": 2.0})
         assert jnp.isfinite(result)
@@ -347,7 +347,7 @@ class TestConditionalOperations:
         given = distribution(sample=lambda key: {"mu": 2.0}, event_spec=RecordSpec(mu=REAL))
         kernel = _Fallback()
         with workflow_run(seed=42):
-            result = mean.using(n_broadcast_samples=8)(kernel, given=given)
+            result = mean.using(num_samples=8)(kernel, given=given)
         np.testing.assert_allclose(mean(result), 2.0)
         assert kernel.calls
 

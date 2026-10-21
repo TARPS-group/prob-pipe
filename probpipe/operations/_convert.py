@@ -68,7 +68,7 @@ class _Conversion(Operation):
     """
 
     def __init__(self, declaration: Callable[..., Any]) -> None:
-        super().__init__(declaration, result=_convert_result, conditions=(_is_target,))
+        super().__init__(declaration, result=_convert_result, applicability_checks=(_is_target,))
 
     def _plan(self, call: BoundCall) -> tuple[OutputSpec | None, tuple[str, ...]]:
         """The result rule's declaration, with each support open under ``check_support=False``.
@@ -107,9 +107,12 @@ def convert(d: Distribution, target: type):
 
     ``using(method=..., exact_only=...)`` selects the converter, and
     ``using(method_options=...)`` sets the options the selected
-    converter reads, such as ``num_samples``. The converted law keeps *d*'s
-    support. A converter refuses a result on another support unless the option
-    ``check_support=False`` overrides the refusal.
+    converter reads, such as ``check_support``. A converter that draws, such
+    as moment matching, takes ``num_samples`` draws: its option of that name
+    when ``method_options`` gives one, and otherwise the call's
+    ``num_samples`` control, which the call's provenance then records. The
+    converted law keeps *d*'s support. A converter refuses a result on another
+    support unless the option ``check_support=False`` overrides the refusal.
 
     Parameters
     ----------

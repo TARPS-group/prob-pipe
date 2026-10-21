@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import jax
 import jax.extend.core
 
-from ..core.config import ProvenanceMode, provenance_config
+from ..core.config import ProvenanceMode, config
 from ..custom_types import PRNGKey
 from ._errors import UnmanagedConcurrentWorkflowEntryError
 from ._rng import (
@@ -32,14 +32,14 @@ from ._rng import (
 )
 
 if TYPE_CHECKING:
-    from ._broker import _RemoteCoordinationObservation
+    from ._evaluation_keys import _RemoteCoordinationObservation
 
 _WorkflowContextKind = Literal[
     "seeded",
     "anonymous",
     "ephemeral",
     "nested",
-    "managed",
+    "evaluation_point",
     "replay",
 ]
 
@@ -86,7 +86,7 @@ class _WorkflowFrameState:
     """Lazy materialization state kept behind an immutable frame binding."""
 
     path_prefix: _RandomEventPath | None = None
-    managed_unit_segment: _RandomEventPath | None = None
+    point_segment: _RandomEventPath | None = None
     root_words: tuple[int, int] | None = None
     remote_coordination_observation: _RemoteCoordinationObservation | None = None
     closed: bool = False
@@ -142,7 +142,7 @@ _ACTIVE_WORKFLOW_FRAME: ContextVar[_WorkflowFrame | None] = ContextVar(
 def _active_provenance_mode() -> ProvenanceMode:
     """Return the provenance mode fixed for the active workflow run."""
     frame = _ACTIVE_WORKFLOW_FRAME.get()
-    return provenance_config.mode if frame is None else frame.provenance_mode
+    return config.provenance.mode if frame is None else frame.provenance_mode
 
 
 @dataclass(slots=True)
@@ -165,9 +165,9 @@ _JAX_RUNTIME_GUARD: ContextVar[bool] = ContextVar(
 
 
 class _StochasticProbeSignal(RuntimeError):
-    """Signal that JAX probing reached workflow-owned randomness or managed submission.
+    """Signal that JAX probing reached workflow-owned randomness or evaluation point submission.
 
-    ``submission`` is True when the probe reached managed submission, so the
+    ``submission`` is True when the probe reached evaluation point submission, so the
     refusal can name thread or Prefect work rather than a draw.
     """
 
@@ -222,7 +222,7 @@ class _WorkflowRunScope:
         frame = _WorkflowFrame(
             kind=kind,
             seed_words=seed_words,
-            provenance_mode=(provenance_config.mode if parent is None else parent.provenance_mode),
+            provenance_mode=(config.provenance.mode if parent is None else parent.provenance_mode),
             parent=parent,
             owner=_current_workflow_owner(),
             state=_WorkflowFrameState(path_prefix=() if parent is None else None),
@@ -272,7 +272,7 @@ def workflow_run(seed: int | None = None) -> _WorkflowRunScope:
         If ``seed`` is outside ``[0, 2**64 - 1]``.
     UnmanagedConcurrentWorkflowEntryError
         If an active workflow context was copied into a foreign thread or
-        asyncio task without a ProbPipe-managed work-item frame.
+        asyncio task without a ProbPipe evaluation point frame.
 
     Notes
     -----
@@ -318,7 +318,7 @@ def _workflow_probe() -> Generator[None, None, None]:
 
 @contextmanager
 def _workflow_jax_runtime_guard() -> Generator[None, None, None]:
-    """Forbid omitted-key effects and managed submission inside actual JAX execution."""
+    """Forbid omitted-key effects and evaluation point submission inside actual JAX execution."""
     token = _JAX_RUNTIME_GUARD.set(True)
     try:
         yield
@@ -331,14 +331,14 @@ def _workflow_side_effects_forbidden() -> bool:
     return _STOCHASTIC_PROBE_STATE.get() is not None or _JAX_RUNTIME_GUARD.get()
 
 
-def _guard_managed_submission() -> None:
-    """Reject managed transport from a probe or an actual JAX body."""
+def _guard_evaluation_point_submission() -> None:
+    """Reject evaluation point transport from a probe or an actual JAX body."""
     probe_state = _STOCHASTIC_PROBE_STATE.get()
     if probe_state is not None:
         probe_state.effect_observed = True
         probe_state.submission_observed = True
         raise _StochasticProbeSignal(
-            "JAX route probing reached managed submission", submission=True
+            "JAX route probing reached evaluation point submission", submission=True
         )
     if _JAX_RUNTIME_GUARD.get():
         raise TypeError(JAX_SUBMISSION_MESSAGE)
@@ -422,7 +422,7 @@ def _commit_stochastic_invocation_in_frame(
 ) -> _WorkflowInvocation:
     """Commit in an explicit frame whose admission the caller already established.
 
-    Used after active-frame admission and by managed execution when a worker
+    Used after active-frame admission and by evaluation point execution when a worker
     lazily commits its parent broker's invocation. That parent frame can belong
     to another thread, so this helper does not repeat owner or JAX-probe checks.
     Path materialization still requires the frame to be open. Callers entering
@@ -447,10 +447,10 @@ def _materialize_path(frame: _WorkflowFrame) -> _RandomEventPath:
     with frame.state.lock:
         if frame.state.path_prefix is None:
             parent_path = _materialize_path(frame.parent)
-            if frame.state.managed_unit_segment is not None:
+            if frame.state.point_segment is not None:
                 frame.state.path_prefix = (
                     *parent_path,
-                    frame.state.managed_unit_segment,
+                    frame.state.point_segment,
                 )
             else:
                 scope_ordinal = frame.parent.ledger.commit()
@@ -462,17 +462,17 @@ def _materialize_descendant_path(
     frame: _WorkflowFrame,
     ancestor: _WorkflowFrame,
 ) -> _RandomEventPath:
-    """Return a lazily materialized path relative to one managed ancestor."""
+    """Return a lazily materialized path relative to one evaluation point ancestor."""
     cursor = frame
     while cursor is not ancestor:
         if cursor.parent is None:
-            raise RuntimeError("workflow frame is not below its managed work-item frame")
+            raise RuntimeError("workflow frame is not below its evaluation point frame")
         cursor = cursor.parent
 
     ancestor_path = _materialize_path(ancestor)
     descendant_path = _materialize_path(frame)
     if descendant_path[: len(ancestor_path)] != ancestor_path:
-        raise RuntimeError("workflow descendant path does not extend its managed ancestor")
+        raise RuntimeError("workflow descendant path does not extend its evaluation point ancestor")
     return descendant_path[len(ancestor_path) :]
 
 
@@ -534,7 +534,7 @@ def _close_workflow_frame(frame: _WorkflowFrame) -> None:
 
 
 def _capture_active_workflow_frame() -> _WorkflowFrame | None:
-    """Capture an admitted parent frame for managed work-item transport."""
+    """Capture an admitted parent frame for evaluation point transport."""
     frame = _ACTIVE_WORKFLOW_FRAME.get()
     _assert_workflow_admission(frame)
     return frame
@@ -543,7 +543,7 @@ def _capture_active_workflow_frame() -> _WorkflowFrame | None:
 def _find_remote_coordination_observation(
     frame: _WorkflowFrame | None,
 ) -> _RemoteCoordinationObservation | None:
-    """Find an attempt observation carried by this managed frame chain."""
+    """Find an attempt observation carried by this evaluation point frame chain."""
     cursor = frame
     while cursor is not None:
         with cursor.state.lock:
@@ -565,38 +565,40 @@ def _assert_transported_frame_consistency(
     _assert_workflow_admission(frame)
     with frame.state.lock:
         matches = (
-            frame.kind == "managed"
+            frame.kind == "evaluation_point"
             and frame.parent is None
             and frame.seed_words is None
             and frame.state.path_prefix == ()
             and frame.state.root_words == root_words
-            and frame.state.managed_unit_segment is None
+            and frame.state.point_segment is None
         )
     if not matches:
-        raise RuntimeError("remote managed workflow frame does not match its transport envelope")
+        raise RuntimeError(
+            "remote evaluation point workflow frame does not match its transport envelope"
+        )
 
 
 @contextmanager
-def _managed_work_item_scope(
+def _evaluation_point_frame_scope(
     parent: _WorkflowFrame,
-    unit_segment: _RandomEventPath,
+    point_segment: _RandomEventPath,
 ) -> Generator[None, None, None]:
-    """Install a thread/task-owned child frame for one managed work item."""
+    """Install a thread/task-owned child frame for one evaluation point."""
     _assert_workflow_frame_open(parent)
     frame = _WorkflowFrame(
-        kind="managed",
+        kind="evaluation_point",
         seed_words=None,
         provenance_mode=parent.provenance_mode,
         parent=parent,
         owner=_current_workflow_owner(),
-        state=_WorkflowFrameState(managed_unit_segment=unit_segment),
+        state=_WorkflowFrameState(point_segment=point_segment),
     )
     token = _ACTIVE_WORKFLOW_FRAME.set(frame)
     try:
         yield
     finally:
         if _ACTIVE_WORKFLOW_FRAME.get() is not frame:
-            raise RuntimeError("managed workflow frames must exit in nesting order")
+            raise RuntimeError("evaluation point workflow frames must exit in nesting order")
         _ACTIVE_WORKFLOW_FRAME.reset(token)
         _close_workflow_frame(frame)
 
@@ -608,7 +610,7 @@ def _transported_workflow_frame(
 ) -> Generator[None, None, None]:
     """Install a standalone worker frame from serializable parent authority."""
     frame = _WorkflowFrame(
-        kind="managed",
+        kind="evaluation_point",
         seed_words=None,
         provenance_mode=provenance_mode,
         parent=None,
@@ -634,7 +636,7 @@ def _replay_workflow_frame(root_words: tuple[int, int]) -> Generator[None, None,
     frame = _WorkflowFrame(
         kind="replay",
         seed_words=None,
-        provenance_mode=provenance_config.mode,
+        provenance_mode=config.provenance.mode,
         parent=None,
         owner=_current_workflow_owner(),
         state=_WorkflowFrameState(path_prefix=(), root_words=root_words),
@@ -662,12 +664,12 @@ def _resolve_root_words(frame: _WorkflowFrame) -> tuple[int, int]:
             elif frame.parent is not None:
                 frame.state.root_words = _resolve_root_words(frame.parent)
             else:
-                if frame.kind == "managed":
+                if frame.kind == "evaluation_point":
                     observation = frame.state.remote_coordination_observation
                     if observation is not None:
                         observation.observe_effect()
                     raise RuntimeError(
-                        "rootless managed workflow frame requires transported parent RNG authority"
+                        "rootless evaluation point workflow frame requires transported parent RNG authority"
                     )
                 entropy = _os_urandom(8)
                 if len(entropy) != 8:  # pragma: no cover - OS contract guard

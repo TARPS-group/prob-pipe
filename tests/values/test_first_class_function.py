@@ -605,7 +605,7 @@ class TestApplyContract:
             label="function",
             input_spec=InputSpec(RecordSpec(x=NumericArraySpec((), support=positive)).children),
             dispatch="sequential",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(function=None),
         )
 
@@ -634,7 +634,7 @@ class TestApplyContract:
             label="function",
             input_spec=InputSpec(RecordSpec(v=(3,)).children),
             dispatch="sequential",
-            n_broadcast_samples=5,
+            max_evaluations=5,
         )
         with pytest.raises(ApplicabilityError, match=r"accepts NumericArraySpec.*RecordSpec"):
             wrapped(v=law)
@@ -1121,7 +1121,7 @@ class TestSymbolicCalls:
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=OutputSpec(**RecordSpec(pair=(2,)).children),
             dispatch=dispatch,
-            n_broadcast_samples=8,
+            max_evaluations=8,
         )
 
         with workflow_run(seed=4):
@@ -1194,7 +1194,7 @@ class TestSymbolicCalls:
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=OutputSpec(**RecordSpec(y=NumericArraySpec((), support=positive)).children),
             dispatch="auto",
-            n_broadcast_samples=8,
+            max_evaluations=8,
         )
 
         with workflow_run(seed=11):
@@ -1215,7 +1215,7 @@ class TestSymbolicCalls:
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=OutputSpec(**RecordSpec(y=NumericArraySpec((), support=positive)).children),
             dispatch="jax",
-            n_broadcast_samples=8,
+            max_evaluations=8,
         )
 
         with workflow_run(seed=11):
@@ -1323,7 +1323,7 @@ class TestSymbolicCalls:
                 stats=RecordSpec(value=(), doubled=()),
             ),
             dispatch=dispatch,
-            n_broadcast_samples=8,
+            max_evaluations=8,
         )
 
         with workflow_run(seed=7):
@@ -1351,7 +1351,7 @@ class TestSymbolicCalls:
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=OutputSpec(function=DistributionSpec(OutputSpec(y=NumericArraySpec(())))),
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
         )
 
         with workflow_run(seed=3):
@@ -1374,7 +1374,7 @@ class TestSymbolicCalls:
                 function=DistributionSpec(OutputSpec(y=NumericArraySpec((), dtype="int32")))
             ),
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
         )
 
         with pytest.raises(
@@ -1432,7 +1432,7 @@ class TestSymbolicCalls:
             ),
             output_spec=RecordSpec(prediction=()),
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
         )
 
         with workflow_run(seed=5):
@@ -1613,11 +1613,11 @@ class TestDynamicImplementation:
 
 class TestReentrancyAndProvenance:
     def test_seeded_runs_are_repeatable_across_sequential_and_concurrent_calls(self):
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         wrapped = Function(
             lambda x: x + 1,
             label="function",
-            n_broadcast_samples=12,
+            max_evaluations=12,
             dispatch="sequential",
             output_spec=OutputSpec(function=None),
         )
@@ -1706,7 +1706,7 @@ class TestReentrancyAndProvenance:
             assert "result" not in stored.annotations
 
     def test_off_mode_still_copies_a_tracked_return(self):
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         stored = NumericRecord(
             {"value": 1.0},
             label="stored",
@@ -1723,7 +1723,7 @@ class TestReentrancyAndProvenance:
 
     @pytest.mark.parametrize("mode", [ProvenanceMode.FULL, ProvenanceMode.LIGHTWEIGHT])
     def test_dynamic_training_lineage_is_reachable_through_function_parent(self, mode):
-        probpipe.provenance_config.mode = mode
+        probpipe.config.provenance.mode = mode
         training_data = Record(
             {"x": 1.0},
             label="training",
@@ -1743,7 +1743,7 @@ class TestReentrancyAndProvenance:
         assert [ancestor.label for ancestor in ancestors] == ["fitted", "training"]
 
     def test_off_mode_attaches_no_call_provenance(self):
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
 
         result = Function(
             lambda x: x + 1,
@@ -1759,7 +1759,7 @@ class TestVariadicPlanning:
             lambda *items: items[0] + items[1],
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -1973,7 +1973,7 @@ class TestVariadicPlanning:
             label="function",
             bind={"items": (Normal("x", 0, 1), 2.0)},
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 
@@ -1988,7 +1988,7 @@ class TestVariadicPlanning:
             lambda **extras: extras["x"] + extras["offset"],
             label="function",
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             output_spec=OutputSpec(function=None),
         )
 

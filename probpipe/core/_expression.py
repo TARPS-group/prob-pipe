@@ -100,7 +100,7 @@ _WARNING_SKIP_PREFIXES = (os.path.dirname(os.path.dirname(__file__)) + os.sep,)
 #: The greatest depth of a stored expression. A node built over a child that
 #: nests this many levels stores a :class:`Truncated` node in its place, so a
 #: long derivation, such as a loop that adds to a value, never builds a tree
-#: too deep to copy, hash, or pickle. ``notation_config.max_depth``, which bounds
+#: too deep to copy, hash, or pickle. ``config.notation.max_depth``, which bounds
 #: what a rendering shows, is at most this bound, since a rendering of more
 #: levels would show no more.
 _STORED_DEPTH = 64
@@ -138,7 +138,7 @@ class Collapse:
     Attributes
     ----------
     max_depth : int
-        The ``notation_config.max_depth`` the rendering showed.
+        The ``config.notation.max_depth`` the rendering showed.
     beyond_depth : bool
         Whether the rendering collapsed a part nested deeper than *max_depth*,
         which a greater setting shows.
@@ -336,7 +336,7 @@ class Expression:
         )
 
     def render_label(self) -> str:
-        """The label this node renders, at the current ``notation_config.max_depth``.
+        """The label this node renders, at the current ``config.notation.max_depth``.
 
         The label of a law, a kernel, or a function is its name, and a value's
         label is its rendering.
@@ -349,7 +349,7 @@ class Expression:
         Returns
         -------
         str
-            The label, which shows at most ``notation_config.max_depth`` nested
+            The label, which shows at most ``config.notation.max_depth`` nested
             levels.
         """
         return self.label_rendering()[0]
@@ -393,14 +393,14 @@ class Expression:
         Returns
         -------
         str
-            The notation, which shows at most ``notation_config.max_depth``
+            The notation, which shows at most ``config.notation.max_depth``
             nested levels.
 
         Warns
         -----
         UserWarning
             When *warn* is true and the rendering collapses a part nested deeper
-            than ``notation_config.max_depth``, or shows less of a part that
+            than ``config.notation.max_depth``, or shows less of a part that
             storage truncated than the part rendered in full.
         """
         rendering = _Rendering(_max_depth())
@@ -1203,12 +1203,12 @@ def warn_collapsed(collapse: Collapse, *, stored: bool) -> None:
     Warns
     -----
     UserWarning
-        Always. A rendering that collapsed a part beyond ``notation_config.max_depth``
+        Always. A rendering that collapsed a part beyond ``config.notation.max_depth``
         names the setting, and for a stored label says to raise it before
         building the term. A rendering that showed a part storage truncated
         says that no setting shows that part.
     """
-    depth = f"notation_config.max_depth={collapse.max_depth} levels"
+    depth = f"config.notation.max_depth={collapse.max_depth} levels"
     stored_levels = f"the {_STORED_DEPTH} levels a term stores"
     shown_as = f"so its deeper parts show as their labels or {ELLIPSIS!r}"
     subject = "this label" if stored else "a label or notation"
@@ -1220,18 +1220,18 @@ def warn_collapsed(collapse: Collapse, *, stored: bool) -> None:
         shows = f"up to {_STORED_DEPTH} levels" if collapse.truncated else "them"
         message = (
             f"{subject} nests more than {setting}{limit}, {shown_as}. Raise "
-            f"notation_config.max_depth {fix}to show {shows}."
+            f"config.notation.max_depth {fix}to show {shows}."
         )
     else:
         message = (
             f"{subject} nests more than {stored_levels}, {shown_as} at any "
-            f"notation_config.max_depth"
+            f"config.notation.max_depth"
         )
     warnings.warn(message, UserWarning, skip_file_prefixes=_WARNING_SKIP_PREFIXES)
 
 
 def _max_depth() -> int:
-    """The number of nested levels a rendering shows, as ``notation_config`` sets it."""
-    from .config import notation_config
+    """The number of nested levels a rendering shows, as ``config.notation`` sets it."""
+    from .config import config
 
-    return notation_config.max_depth
+    return config.notation.max_depth

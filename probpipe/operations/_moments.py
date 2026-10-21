@@ -34,16 +34,19 @@ operation ``mean(pushforward(d, f))``, so the integrand receives draws of
 in closed form, and otherwise the route ``pushforward_mean`` builds the
 pushforward by an evaluation rule and takes its mean. Its method names are
 therefore the evaluation rules', and an integration rule registered with the
-evaluation-rule registry serves both operations.
+evaluation-rule registry serves both operations. The route spends the call's
+``num_samples`` as the pushforward's ``max_evaluations``, since each draw is
+one evaluation of the integrand.
 
 ``standard_deviation(d)`` is the derived operation ``sqrt(variance(d))``, taken
-coordinate by coordinate. Its one route is the body route of its identity, so
+coordinate by coordinate. Its one route is the body route of its formula, so
 the call takes the routes of ``variance``, ``by_component`` included, and the
-identity passes the call's ``exact_only`` and ``n_broadcast_samples`` to
-``variance``.
+derived route passes the call's ``exact_only``, ``max_evaluations``, and
+``num_samples`` to ``variance``.
 
 The draws of every Monte Carlo route are workflow-owned random events, and
-their number is the ``n_broadcast_samples`` control.
+their number is the ``num_samples`` control, which the call's provenance
+records.
 """
 
 from __future__ import annotations
@@ -60,6 +63,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._batch import Batch, BatchSpec, _flat_batch_spec
+from ..core._call_context import _collecting_num_samples_used, _note_num_samples_used
 from ..core._dispatch import (
     Feasibility,
     MathematicalDomainError,
@@ -121,7 +125,7 @@ from ._pushforward import (
     _bound_parameter,
     _call_at,
     _EvaluationRules,
-    _integrand_conditions,
+    _integrand_applicability_checks,
     _output_label,
     pushforward,
 )
@@ -407,13 +411,19 @@ def _can_average_squares(call: BoundCall, result: OutputSpec | None) -> Feasibil
 
 
 def _monte_carlo_draws(call: BoundCall, operation_kind: str) -> Any:
-    """``n_broadcast_samples`` workflow-owned draws of the law, the draw axis leading."""
-    return _workflow_draws(
+    """``num_samples`` workflow-owned draws of the law, the draw axis leading.
+
+    The count is noted as a ``num_samples`` the call used, so the call's provenance records it.
+    """
+    count = call.controls["num_samples"]
+    draws = _workflow_draws(
         call.operands["d"],
-        (call.controls["n_broadcast_samples"],),
+        (count,),
         operation_kind=operation_kind,
         execution_mode="monte_carlo",
     )
+    _note_num_samples_used(count)
+    return draws
 
 
 #: The label, the component, and the level of the empirical law of a fallback's draws.
@@ -627,7 +637,8 @@ class _ByComponent(_DelegatingRoute):
     component keeps the Monte Carlo fallback. It splits the top-level
     components only, so a record-valued component is one block, whose route its
     view selects. The result's provenance names, for each block, its
-    components, its route, and that route's exactness.
+    components, its route, that route's exactness, and the ``num_samples`` of a
+    block whose route drew Monte Carlo samples.
 
     Parameters
     ----------
@@ -799,22 +810,39 @@ class _ByComponent(_DelegatingRoute):
             actionable=True,
         )
 
-    def _run_block(self, call: BoundCall, block: _Block, exact_only: bool) -> tuple[Any, str, bool]:
-        """The raw summary of *block*, with the route that computed it and that route's exactness.
+    def _run_block(self, call: BoundCall, block: _Block, exact_only: bool) -> tuple[Any, dict]:
+        """The raw summary of *block*, with the metadata of how it was computed.
 
         The block is resolved and run as the operation runs a call on its view,
-        inside this call, so its draws are this call's own.
+        inside this call, so its draws count toward this call's. The metadata
+        names the block's components, the route that computed it, that route's
+        exactness, and, when the route drew Monte Carlo samples, their number
+        as ``num_samples``.
         """
         operation = call.operation
         controls = self._controls(call, exact_only)
-        point, declared, _ = operation._plan_point(self._values(call, block.view), controls)
+        route_inputs, result_declaration, _ = operation._plan_route_inputs(
+            self._values(call, block.view), controls
+        )
         candidates = operation._route_candidates(controls)
-        candidate, report = selected(operation.label, controls, candidates, point, declared)
-        value, settled_exactness = settled(candidate.run(point, declared, report))
+        candidate, report = selected(
+            operation.label, controls, candidates, route_inputs, result_declaration
+        )
+        with _collecting_num_samples_used("always") as block_num_samples_used:
+            block_value, settled_exactness = settled(
+                candidate.run(route_inputs, result_declaration, report)
+            )
         exactness = (
             candidate.exactness(report) if settled_exactness is None else settled_exactness
         ) is True
-        return value, candidate.route_name, exactness
+        block_metadata: dict[str, Any] = {
+            "components": list(block.components),
+            "route": candidate.route_name,
+            "exact": exactness,
+        }
+        if block_num_samples_used.provenance_num_samples is not None:
+            block_metadata["num_samples"] = block_num_samples_used.provenance_num_samples
+        return block_value, block_metadata
 
     def probe(
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
@@ -842,8 +870,8 @@ class _ByComponent(_DelegatingRoute):
         -------
         Any
             The summary keyed by the law's components, as a term whose
-            provenance records each block's components, route, and exactness;
-            under ``raw``, its raw form.
+            provenance records each block's components, route, exactness, and
+            Monte Carlo draws; under ``raw``, its raw form.
 
         Raises
         ------
@@ -860,24 +888,22 @@ class _ByComponent(_DelegatingRoute):
                 f"{call.operation.label}: route {self.name!r} does not apply: "
                 f"{partition.report.description}"
             )
-        values: dict[str, Any] = {}
-        records = []
+        component_values: dict[str, Any] = {}
+        blocks_metadata = []
         for block in partition.blocks:
-            value, route, exactness = self._run_block(call, block, exact_only)
-            values.update(_block_values(block.view, value))
-            records.append(
-                {"components": list(block.components), "route": route, "exact": exactness}
-            )
-        assembled = {c: values[c] for c in d.event_spec.components}
+            block_value, block_metadata = self._run_block(call, block, exact_only)
+            component_values.update(_block_values(block.view, block_value))
+            blocks_metadata.append(block_metadata)
+        assembled = {c: component_values[c] for c in d.event_spec.components}
         # A quantile at several levels is a batch of records, which
         # ``_record_batch`` assembles; any other value passes through it.
-        value = _record_batch(assembled, call, result)
+        summary_value = _record_batch(assembled, call, result)
         return _assembled(
-            value,
+            summary_value,
             call,
             result,
             parents=[d],
-            metadata={"route": self.name, "blocks": records},
+            metadata={"route": self.name, "blocks": blocks_metadata},
         )
 
 
@@ -940,7 +966,7 @@ mean.register_route(_ByComponent("mean"))
 mean.fallback_route("monte_carlo", check=_can_average, execute=_mc_mean, exact=False)
 
 
-@operation(result=_variance_result, conditions=(_event_typed_variance,))
+@operation(result=_variance_result, applicability_checks=(_event_typed_variance,))
 def variance(d: Distribution):
     """The variance of ``X ~ d``, a value shaped like one draw.
 
@@ -1024,8 +1050,8 @@ def _variance_applies(d: Any) -> Any:
 
 @operation(
     result=_standard_deviation_result,
-    conditions=(_event_typed_variance,),
-    identity_check=_variance_applies,
+    applicability_checks=(_event_typed_variance,),
+    derived_route_check=_variance_applies,
 )
 def standard_deviation(d: Distribution):
     """The standard deviation ``sqrt(variance(d))`` of ``X ~ d``, a value shaped like one draw.
@@ -1035,10 +1061,11 @@ def standard_deviation(d: Distribution):
     and a random function's is its pointwise standard deviation function.
 
     The call takes the routes of ``variance``: its closed form, its
-    ``by_component`` route, and its Monte Carlo fallback. ``exact_only`` and
-    ``n_broadcast_samples`` set on this operation pass to ``variance``, but
-    ``method`` does not, so a route of ``variance`` is chosen on
-    ``variance.using(method=...)``.
+    ``by_component`` route, and its Monte Carlo fallback. ``exact_only``,
+    ``max_evaluations``, and ``num_samples`` set on this operation pass to
+    ``variance``, but ``method`` does not, so a route of ``variance`` is chosen
+    on ``variance.using(method=...)``. When ``variance`` draws Monte Carlo
+    samples, the call's provenance records their number as ``num_samples``.
 
     Parameters
     ----------
@@ -1066,7 +1093,7 @@ def standard_deviation(d: Distribution):
     return _root(variance.using(raw=True)(d))
 
 
-@operation(result=_cov_result, conditions=(_numeric_event,))
+@operation(result=_cov_result, applicability_checks=(_numeric_event,))
 def cov(d: Distribution):
     """The covariance of the flattened draw of ``X ~ d``, a ``(size, size)`` array.
 
@@ -1112,7 +1139,7 @@ cov.capability_route(
 cov.fallback_route("monte_carlo", check=_can_sample, execute=_mc_cov, exact=False)
 
 
-@operation(result=_quantile_result, conditions=(_numeric_event,))
+@operation(result=_quantile_result, applicability_checks=(_numeric_event,))
 def quantile(d: Distribution, q: Any):
     """The per-coordinate quantiles of ``X ~ d`` at the levels *q*.
 
@@ -1175,21 +1202,35 @@ quantile.fallback_route("monte_carlo", check=_can_sample, execute=_mc_quantile, 
 
 
 class _PushforwardMean(_EvaluationRules):
-    """The identity of ``expectation``: a rule of ``pushforward`` builds the law ``f♯d``, and ``mean`` averages it.
+    """The derived route of ``expectation``: a rule of ``pushforward`` builds the law ``f♯d``, and ``mean`` averages it.
 
     The route runs ``pushforward``'s route and then ``mean`` on the law it
     returns, so its method names are the evaluation rules'. The engine runs both
-    steps in the scope of an identity (VI.0). The route ranks once, as an
-    identity: among the approximate routes, and under ``exact_only`` among the
+    steps in the scope of a derived route (VI.0). The route ranks once, as a
+    derived route: among the approximate routes, and under ``exact_only`` among the
     exact ones, with the rule and the mean both restricted to exact routes. The
     mean's route is chosen only once the law exists, so without ``exact_only``
     the probe reports the rule's exactness when it is approximate and leaves it
     open otherwise, which the call's report states as approximate, and it
     defers the mean's check; the run records the exactness of both steps.
+
+    Each draw of the law is one evaluation of the integrand, so the call's
+    resolved ``num_samples`` is the map's ``max_evaluations``, whatever the map
+    sets, and the call's own ``max_evaluations`` is not passed to the map. When
+    the sampling lift builds the law, the call's provenance records its
+    ``num_samples``.
     """
+
+    #: The controls the run forwards to the call of the map, besides the
+    #: ``max_evaluations`` that the call's ``num_samples`` gives.
+    _forwarded = tuple(name for name in _EvaluationRules._forwarded if name != "max_evaluations")
 
     def __init__(self) -> None:
         super().__init__("pushforward_mean")
+
+    def _forwarded_controls(self, call: BoundCall) -> dict[str, Any]:
+        """The controls the caller set, with the call's ``num_samples`` as the map's ``max_evaluations``."""
+        return super()._forwarded_controls(call) | {"max_evaluations": call.controls["num_samples"]}
 
     @property
     def condition(self) -> str:
@@ -1219,6 +1260,9 @@ class _PushforwardMean(_EvaluationRules):
     ) -> Any:
         """The mean of the pushforward law the selected rule returns, with the exactness of both steps."""
         law = super().run(call, result, method=method, exact_only=exact_only)
+        provenance = getattr(law, "provenance", None)
+        if provenance is not None and provenance.metadata.get("route") == "sampling_lift":
+            _note_num_samples_used(call.controls["num_samples"])
         averaged = mean(law)
         steps = (_recorded_exactness(law), _recorded_exactness(averaged))
         exact = False if False in steps else (True if steps == (True, True) else None)
@@ -1234,8 +1278,8 @@ def _recorded_exactness(term: Any) -> bool | None:
 @operation(
     result=_expectation_result,
     roles={"f": (FunctionSpec,)},
-    conditions=_integrand_conditions("expectation"),
-    identity_route=_PushforwardMean(),
+    applicability_checks=_integrand_applicability_checks("expectation"),
+    derived_route=_PushforwardMean(),
 )
 def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = None):
     """The expectation ``𝔼[f(X)]`` for ``X ~ d``, defined as ``mean(pushforward(d, f))``.
@@ -1245,7 +1289,10 @@ def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
     the expectation in closed form, and otherwise the route ``pushforward_mean``
     builds the pushforward by an evaluation rule, which
     ``using(method=...)`` names, and takes its mean. Under ``exact_only``
-    both steps are restricted to exact routes.
+    both steps are restricted to exact routes. The pushforward evaluates the
+    integrand at most ``num_samples`` times, the call's control, so
+    ``expectation.using(num_samples=n)`` sets the number of draws of a Monte
+    Carlo estimate, and the call's provenance records it.
 
     Parameters
     ----------

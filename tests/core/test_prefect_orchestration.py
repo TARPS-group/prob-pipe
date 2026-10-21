@@ -20,7 +20,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import probpipe.functions._broker as broker_mod
+import probpipe.functions._evaluation_keys as evaluation_keys_mod
 from probpipe import (
     Distribution,
     DistributionBatch,
@@ -30,6 +30,7 @@ from probpipe import (
     OutputSpec,
     ResolutionError,
     WorkflowKind,
+    config,
     mean,
     sample,
     workflow_run,
@@ -110,9 +111,9 @@ _PREFECT_RETRY_KEY_WORDS: list[tuple[int, int]] = []
 
 
 def _claim_key_and_fail_once():
-    key = broker_mod._resolve_automatic_key(
+    key = evaluation_keys_mod._resolve_automatic_key(
         None,
-        broker_mod._singleton_effect_plan(
+        evaluation_keys_mod._singleton_effect_plan(
             operation_kind="prefect-retry-conformance",
             execution_mode="sampled",
             sample_shape=(),
@@ -139,7 +140,7 @@ class TestPrefectRngConformance:
                     label="add_one",
                     workflow_kind=WorkflowKind.OFF,
                     dispatch="sequential",
-                    n_broadcast_samples=6,
+                    max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
                 False,
@@ -150,7 +151,7 @@ class TestPrefectRngConformance:
                     label="add_one",
                     workflow_kind=WorkflowKind.OFF,
                     dispatch="jax",
-                    n_broadcast_samples=6,
+                    max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
                 False,
@@ -162,7 +163,7 @@ class TestPrefectRngConformance:
                     workflow_kind=WorkflowKind.OFF,
                     dispatch="thread",
                     max_workers=2,
-                    n_broadcast_samples=6,
+                    max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
                 False,
@@ -173,7 +174,7 @@ class TestPrefectRngConformance:
                     label="add_one",
                     workflow_kind=WorkflowKind.TASK,
                     dispatch="sequential",
-                    n_broadcast_samples=6,
+                    max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
                 False,
@@ -184,7 +185,7 @@ class TestPrefectRngConformance:
                     label="add_one",
                     workflow_kind=WorkflowKind.TASK,
                     dispatch="jax",
-                    n_broadcast_samples=6,
+                    max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
                 False,
@@ -196,7 +197,7 @@ class TestPrefectRngConformance:
                     workflow_kind=WorkflowKind.TASK,
                     dispatch="thread",
                     max_workers=2,
-                    n_broadcast_samples=6,
+                    max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
                 True,
@@ -207,7 +208,7 @@ class TestPrefectRngConformance:
                     label="add_one",
                     workflow_kind=WorkflowKind.FLOW,
                     dispatch="sequential",
-                    n_broadcast_samples=6,
+                    max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
                 False,
@@ -218,7 +219,7 @@ class TestPrefectRngConformance:
                     label="add_one",
                     workflow_kind=WorkflowKind.FLOW,
                     dispatch="jax",
-                    n_broadcast_samples=6,
+                    max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
                 False,
@@ -266,7 +267,7 @@ class TestPrefectRngConformance:
         for result in results[1:]:
             np.testing.assert_array_equal(result, results[0])
 
-    def test_rootless_task_coordinates_nested_managed_thread(self):
+    def test_rootless_task_coordinates_a_nested_thread_evaluation_point(self):
         local = Function(
             _call_threaded_draw,
             workflow_kind=WorkflowKind.OFF,
@@ -345,7 +346,7 @@ class TestPrefectTaskRowWise:
             label="add_one",
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
-            n_broadcast_samples=30,
+            max_evaluations=30,
             output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=0):
@@ -359,7 +360,7 @@ class TestPrefectTaskRowWise:
             label="add_one",
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
-            n_broadcast_samples=200,
+            max_evaluations=200,
             output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=1):
@@ -377,7 +378,7 @@ class TestPrefectTaskRowWise:
             label="sum_xy",
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
-            n_broadcast_samples=30,
+            max_evaluations=30,
             output_spec=OutputSpec(sum_xy=None),
         )
         d2 = Normal("y", loc=2.0, scale=0.3)
@@ -401,7 +402,7 @@ class TestPrefectFlowRowWise:
             label="double_it",
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
-            n_broadcast_samples=25,
+            max_evaluations=25,
             output_spec=OutputSpec(double_it=None),
         )
         with workflow_run(seed=10):
@@ -415,7 +416,7 @@ class TestPrefectFlowRowWise:
             label="double_it",
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
-            n_broadcast_samples=200,
+            max_evaluations=200,
             output_spec=OutputSpec(double_it=None),
         )
         with workflow_run(seed=11):
@@ -442,7 +443,7 @@ class TestPrefectProvenance:
             label="add_one",
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
-            n_broadcast_samples=20,
+            max_evaluations=20,
             output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=40):
@@ -450,7 +451,7 @@ class TestPrefectProvenance:
         assert result.provenance is not None
         assert result.provenance.operation == "broadcast"
         assert result.provenance.metadata["orchestrate"] == "task"
-        assert result.provenance.metadata["n_samples"] == 20
+        assert result.provenance.metadata["max_evaluations"] == 20
 
     def test_flow_provenance(self, normal_dist):
         wf = Function(
@@ -458,7 +459,7 @@ class TestPrefectProvenance:
             label="add_one",
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
-            n_broadcast_samples=20,
+            max_evaluations=20,
             output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=41):
@@ -472,7 +473,7 @@ class TestPrefectProvenance:
             label="add_one",
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
-            n_broadcast_samples=20,
+            max_evaluations=20,
             output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=42):
@@ -532,7 +533,7 @@ class TestPrefectImportGuard:
             label="add_one",
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
-            n_broadcast_samples=10,
+            max_evaluations=10,
             output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=60), pytest.warns(UserWarning, match="Prefect is not installed"):
@@ -550,7 +551,7 @@ class TestPrefectImportGuard:
             label="add_one",
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
-            n_broadcast_samples=10,
+            max_evaluations=10,
             output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=61), pytest.warns(UserWarning, match="Prefect is not installed"):
@@ -568,7 +569,7 @@ class TestPrefectImportGuard:
             label="add_one",
             workflow_kind=WorkflowKind.TASK,
             dispatch="jax",
-            n_broadcast_samples=10,
+            max_evaluations=10,
             output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=62), pytest.warns(UserWarning, match="Prefect is not installed"):
@@ -577,7 +578,7 @@ class TestPrefectImportGuard:
 
 
 # ---------------------------------------------------------------------------
-# Controls a derived operation's identity passes to a Prefect constituent
+# Controls a derived route passes to a Prefect constituent
 # ---------------------------------------------------------------------------
 
 
@@ -587,7 +588,7 @@ def _mean_of_law(law: Distribution) -> Any:
 
 
 class TestInheritedControlsInPrefectTasks:
-    """Prefect's in-process task runner keeps the controls a derived operation's identity passes down.
+    """Prefect's in-process task runner keeps the controls a derived route passes down.
 
     A worker that receives the work function serialized is covered in
     ``tests/operations/test_operation.py``.
@@ -599,7 +600,7 @@ class TestInheritedControlsInPrefectTasks:
         ).using(raw=True)
 
         @operation(
-            result=lambda d: None, registry=OperationRegistry(), identity_check=lambda d: True
+            result=lambda d: None, registry=OperationRegistry(), derived_route_check=lambda d: True
         )
         def summed_means(d: Distribution):
             """The sum of the means of two copies of *d*."""
@@ -613,3 +614,16 @@ class TestInheritedControlsInPrefectTasks:
         ):
             summed_means.using(exact_only=True)(law)
         assert law.shapes == []
+
+
+class TestConfigBlocksInPrefectTasks:
+    """A ``config.using`` block applies to the work a call inside it dispatches to Prefect tasks."""
+
+    def test_a_block_sets_the_draws_of_a_summary_in_a_prefect_task(self):
+        inner = Function(
+            _mean_of_law, workflow_kind=WorkflowKind.TASK, dispatch="sequential"
+        ).using(raw=True)
+        first, second = Sampler("s", 1.0), Sampler("s", 2.0)
+        with workflow_run(seed=64), config.sampling.using(num_samples=37):
+            inner(DistributionBatch([first, second], "laws", label="laws"))
+        assert first.shapes == second.shapes == [(37,)]

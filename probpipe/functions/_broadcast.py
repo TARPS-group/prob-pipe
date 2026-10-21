@@ -41,7 +41,7 @@ from ..core._record_batch import (
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec
 from ..core._specs import OutputSpec
-from ..core.config import WorkflowKind, prefect_config
+from ..core.config import WorkflowKind, _checked_count, config
 from ..core.named_tree import _PATH_SEP, _unflatten_paths
 from ..core.provenance import Provenance
 from ..core.record import Record
@@ -52,10 +52,10 @@ from ..distributions._factored import _raw_record
 from ..values._binding import FunctionInputRef, input_ref_value, replace_input_refs
 from ..values._function_base import _NAMELESS_COMPONENT, _validate_stacked_output
 from . import _execution, _plan, _recipe
-from ._broker import _record_active_execution_contract
 from ._call import ApplicabilityError
 from ._context import _workflow_jax_runtime_guard
-from ._execution_contract import (
+from ._evaluation_keys import _record_active_execution_contract
+from ._execution import (
     make_execution_contract,
     supports_execution_contract,
     transport_for_execution_mode,
@@ -73,7 +73,8 @@ from ._result import (
     raw_form,
 )
 
-MIN_BROADCAST_SAMPLES = 5
+#: The fewest evaluations a lift draws without a warning that its result may be unreliable.
+MIN_EVALUATIONS = 5
 
 
 @dataclass(frozen=True)
@@ -134,8 +135,8 @@ def execute_distribution_broadcast(
     distribution-valued inputs, planned the lift, and selected its route. A plan
     whose every lifted group enumerates evaluates each combination of atoms once
     with the product of their weights, which is the exact pushforward; any other
-    plan draws ``n_broadcast_samples`` joint draws per co-sampling group,
-    enumerating the groups the plan enumerates, and is a stand-in for it. Under
+    plan enumerates the groups the plan enumerates and samples the others, at
+    most ``max_evaluations`` evaluations in all, and is a stand-in for it. Under
     the ``"jax"`` dispatch every evaluation runs in one ``jax.vmap``, with the
     evaluations and weights of the row-wise dispatch modes.
 
@@ -217,8 +218,8 @@ def execute_distribution_broadcast(
         one declaration.
     """
     broadcast_args = list(stochastic_plan.arg_refs)
-    n_broadcast_samples = stochastic_plan.n_broadcast_samples
-    _validate_n_broadcast_samples(n_broadcast_samples)
+    max_evaluations = stochastic_plan.max_evaluations
+    _validate_max_evaluations(max_evaluations)
 
     jax_contract = make_execution_contract(
         evaluator="jax_vmap",
@@ -287,7 +288,7 @@ def execute_distribution_broadcast(
         broadcast_args=broadcast_args,
         dispatch=dispatch,
         workflow_kind=workflow_kind,
-        n_broadcast_samples=n_broadcast_samples,
+        max_evaluations=max_evaluations,
         function_name=function_name,
         func=func,
         provenance_parents=provenance_parents,
@@ -609,20 +610,14 @@ def _prefixed(prefix: str, columns: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _validate_n_broadcast_samples(n_broadcast_samples: int) -> None:
-    if isinstance(n_broadcast_samples, bool) or not isinstance(n_broadcast_samples, int):
-        raise TypeError(f"n_broadcast_samples must be an integer; got {n_broadcast_samples!r}")
-
-    if n_broadcast_samples <= 0:
-        raise ValueError(
-            f"n_broadcast_samples must be a positive integer; got {n_broadcast_samples!r}"
-        )
-
-    if n_broadcast_samples < MIN_BROADCAST_SAMPLES:
+def _validate_max_evaluations(max_evaluations: int) -> None:
+    """Refuse a count that is not a positive integer, and warn below ``MIN_EVALUATIONS``."""
+    _checked_count(max_evaluations, "max_evaluations")
+    if max_evaluations < MIN_EVALUATIONS:
         warnings.warn(
-            f"n_broadcast_samples={n_broadcast_samples} is too low; "
+            f"max_evaluations={max_evaluations} is too low; "
             "results may be unreliable. "
-            f"Recommended minimum is {MIN_BROADCAST_SAMPLES}.",
+            f"Recommended minimum is {MIN_EVALUATIONS}.",
             stacklevel=2,
         )
 
@@ -633,7 +628,7 @@ def _make_broadcast_provenance(
     broadcast_args: Sequence[FunctionInputRef],
     dispatch: str,
     workflow_kind: WorkflowKind,
-    n_broadcast_samples: int,
+    max_evaluations: int,
     function_name: str,
     func: Callable[..., Any],
     provenance_parents: Sequence[TrackedTerm],
@@ -651,7 +646,7 @@ def _make_broadcast_provenance(
         metadata={
             "dispatch": dispatch,
             "orchestrate": workflow_kind.value,
-            "n_samples": n_broadcast_samples,
+            "max_evaluations": max_evaluations,
             "func": function_name or func.__name__,
             "broadcast_args": [ref.label for ref in broadcast_args],
             **(dict(route) if route is not None else {}),
@@ -873,7 +868,7 @@ def _mapped_evaluator(
     if workflow_kind == WorkflowKind.TASK:
         run_vmap = task(name=f"{function_name}_vmap")(run_vmap)
     elif workflow_kind == WorkflowKind.FLOW:
-        runner = prefect_config.resolve_task_runner()
+        runner = config.prefect.resolve_task_runner()
         run_vmap = flow(
             name=f"{function_name}_vmap",
             **({"task_runner": runner} if runner is not None else {}),
@@ -1000,10 +995,10 @@ def _broadcast_enumerate(
 
     request = _execution.WorkflowExecutionRequest(
         func=func,
-        work_items=_execution.make_managed_work_items(
+        evaluation_points=_execution.issue_evaluation_points(
             call_value_list,
-            unit_segments=tuple(
-                _execution.lifted_evaluation_unit_segment(
+            point_segments=tuple(
+                _execution.lifted_evaluation_point_segment(
                     logical_unit.logical_unit_id,
                     index,
                 )
@@ -1133,10 +1128,10 @@ def _broadcast_sample(
 
     request = _execution.WorkflowExecutionRequest(
         func=func,
-        work_items=_execution.make_managed_work_items(
+        evaluation_points=_execution.issue_evaluation_points(
             call_value_list,
-            unit_segments=tuple(
-                _execution.lifted_evaluation_unit_segment(
+            point_segments=tuple(
+                _execution.lifted_evaluation_point_segment(
                     logical_unit.logical_unit_id,
                     index,
                 )

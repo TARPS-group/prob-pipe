@@ -1,4 +1,4 @@
-"""Tests for the private workflow automatic-key broker."""
+"""Tests of the keys of evaluation points and the automatic-key broker."""
 
 from __future__ import annotations
 
@@ -13,9 +13,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import probpipe.functions._broker as broker_mod
 import probpipe.functions._context as context_mod
-import probpipe.functions._managed as managed_mod
+import probpipe.functions._evaluation_keys as evaluation_keys_mod
 import probpipe.functions._rng as rng_mod
 from probpipe import (
     Function,
@@ -29,10 +28,10 @@ from probpipe import (
     sample,
     workflow_run,
 )
-from probpipe.functions._broker import (
+from probpipe.functions._evaluation_keys import (
     StochasticEffectPlan,
     _function_stochastic_scope,
-    _managed_stochastic_scope,
+    _operation_stochastic_scope,
     _resolve_automatic_key,
 )
 from probpipe.functions._plan import PlannedRandomEvent
@@ -326,7 +325,7 @@ class TestAutomaticKeyOwnership:
 
     @pytest.mark.parametrize(
         "scope",
-        [_function_stochastic_scope, _managed_stochastic_scope],
+        [_function_stochastic_scope, _operation_stochastic_scope],
         ids=["function", "operation"],
     )
     def test_one_scope_rejects_duplicate_effect_before_second_derivation(self, scope):
@@ -357,7 +356,7 @@ class TestAutomaticKeyOwnership:
 
         assert derivations == 1
 
-    def test_managed_scope_uses_a_tagged_operation_occurrence(self):
+    def test_operation_scope_uses_a_tagged_operation_occurrence(self):
         with (
             patch(
                 "probpipe.functions._context._commit_stochastic_invocation",
@@ -367,37 +366,37 @@ class TestAutomaticKeyOwnership:
                 )._commit_stochastic_invocation,
             ) as commit,
             workflow_run(seed=7),
-            _managed_stochastic_scope(),
+            _operation_stochastic_scope(),
         ):
             _resolve_automatic_key(None, _plan())
 
         commit.assert_called_once_with("operation")
 
     def test_new_operation_scope_seals_its_broker(self):
-        with workflow_run(seed=7), _managed_stochastic_scope() as operation_broker:
-            assert operation_broker._lifecycle is broker_mod._BrokerLifecycle.OPEN
+        with workflow_run(seed=7), _operation_stochastic_scope() as operation_broker:
+            assert operation_broker._lifecycle is evaluation_keys_mod._BrokerLifecycle.OPEN
 
-        assert operation_broker._lifecycle is broker_mod._BrokerLifecycle.SEALED
+        assert operation_broker._lifecycle is evaluation_keys_mod._BrokerLifecycle.SEALED
 
     def test_new_operation_scope_seals_after_body_error(self):
         with (
             workflow_run(seed=7),
             pytest.raises(ValueError, match="body failed"),
-            _managed_stochastic_scope() as operation_broker,
+            _operation_stochastic_scope() as operation_broker,
         ):
             raise ValueError("body failed")
 
-        assert operation_broker._lifecycle is broker_mod._BrokerLifecycle.SEALED
+        assert operation_broker._lifecycle is evaluation_keys_mod._BrokerLifecycle.SEALED
 
     def test_reused_operation_scope_does_not_seal_its_owner(self):
         with workflow_run(seed=7), _function_stochastic_scope() as function_broker:
-            with _managed_stochastic_scope() as reused_broker:
+            with _operation_stochastic_scope() as reused_broker:
                 assert reused_broker is function_broker
 
-            assert function_broker._lifecycle is broker_mod._BrokerLifecycle.OPEN
+            assert function_broker._lifecycle is evaluation_keys_mod._BrokerLifecycle.OPEN
             _resolve_automatic_key(None, _plan())
 
-        assert function_broker._lifecycle is broker_mod._BrokerLifecycle.SEALED
+        assert function_broker._lifecycle is evaluation_keys_mod._BrokerLifecycle.SEALED
 
     def test_sealed_broker_rejects_new_effect_before_occurrence_commit(self):
         with workflow_run(seed=7):
@@ -413,28 +412,28 @@ class TestAutomaticKeyOwnership:
         commit.assert_not_called()
 
     def test_operation_scope_rejects_unjoined_nested_items(self):
-        items = managed_mod.make_managed_work_items(
+        items = evaluation_keys_mod.issue_evaluation_points(
             [{}],
-            unit_segments=(managed_mod.point_unit_segment(),),
+            point_segments=(evaluation_keys_mod.plain_call_point_segment(),),
         )
 
         with (
             workflow_run(seed=7),
-            pytest.raises(RuntimeError, match="before all managed work items join"),
-            _managed_stochastic_scope() as operation_broker,
+            pytest.raises(RuntimeError, match="before all evaluation points join"),
+            _operation_stochastic_scope() as operation_broker,
         ):
-            operation_broker.register_managed_work_items(items)
+            operation_broker.register_evaluation_points(items)
 
         assert operation_broker._effects_by_identity == {}
 
-    def test_bare_managed_scopes_receive_independent_ephemeral_roots(self):
+    def test_bare_operation_scopes_receive_independent_ephemeral_roots(self):
         with patch(
             "probpipe.functions._context._os_urandom",
             side_effect=[bytes(8), bytes.fromhex("0000000000000001")],
         ) as urandom:
-            with _managed_stochastic_scope():
+            with _operation_stochastic_scope():
                 first = _resolve_automatic_key(None, _plan())
-            with _managed_stochastic_scope():
+            with _operation_stochastic_scope():
                 second = _resolve_automatic_key(None, _plan())
 
         assert _key_words(first) != _key_words(second)
@@ -560,17 +559,17 @@ class TestFunctionBrokerScope:
         identity = Function(
             lambda value: value,
             label="function",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             dispatch="sequential",
             output_spec=OutputSpec(function=None),
         )
 
         with (
             patch(
-                "probpipe.functions._broker._AutomaticKeyBroker.key_for",
+                "probpipe.functions._evaluation_keys._AutomaticKeyBroker.key_for",
                 autospec=True,
                 wraps=__import__(
-                    "probpipe.functions._broker",
+                    "probpipe.functions._evaluation_keys",
                     fromlist=["_AutomaticKeyBroker"],
                 )._AutomaticKeyBroker.key_for,
             ) as key_for,
@@ -651,7 +650,7 @@ class TestCallerJaxTrace:
     def test_a_lifted_call_inside_the_callers_jit_raises(self):
         lifted = Function(
             lambda z: 2.0 * z,
-            n_broadcast_samples=8,
+            max_evaluations=8,
             dispatch="auto",
             label="affine",
         )
@@ -665,7 +664,7 @@ class TestCallerJaxTrace:
     def test_a_jax_dispatched_function_over_a_law_draws(self):
         lifted = Function(
             lambda z: 2.0 * z,
-            n_broadcast_samples=8,
+            max_evaluations=8,
             dispatch="jax",
             label="affine",
             output_spec=OutputSpec(affine=None),

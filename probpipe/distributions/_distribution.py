@@ -1343,7 +1343,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         and the law of a function lifted over laws reads as the function at
         draws of its inputs, as ``f(beta ~ model; y)``. The notation is a
         rendering of the law's expression, made each time it is shown, which
-        shows at most the current ``notation_config.max_depth`` nested levels.
+        shows at most the current ``config.notation.max_depth`` nested levels.
         No operation reads the notation.
         """
         return self._expression.render_notation(self._own_signature(), warn=True)

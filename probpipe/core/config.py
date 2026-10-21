@@ -1,21 +1,26 @@
-"""Global configuration for ProbPipe orchestration and provenance.
+"""The global settings of ProbPipe, grouped in the sections of ``config``.
 
-Provides:
-- ``WorkflowKind`` enum and ``PrefectConfig`` singleton (``prefect_config``)
-  controlling how ``Function`` instances dispatch work.
-- ``ProvenanceMode`` enum and ``ProvenanceConfig`` singleton
-  (``provenance_config``) controlling how much lineage history is retained.
-- ``NotationConfig`` singleton (``notation_config``) setting how many nested
-  levels a label or a notation shows.
+``config`` is the one ``Config``, and its sections are:
+
+- ``config.sampling``, a ``SamplingConfig``: the default evaluation and draw
+  counts of a call;
+- ``config.notation``, a ``NotationConfig``: how many nested levels a label or
+  a notation shows;
+- ``config.provenance``, a ``ProvenanceConfig``: how much lineage history a
+  provenance record keeps, a ``ProvenanceMode``;
+- ``config.prefect``, a ``PrefectConfig``: how a ``Function`` dispatches its
+  work, a ``WorkflowKind``, and the Prefect task runner.
 
 Users import from the top-level package::
 
     import probpipe
     from probpipe import WorkflowKind, ProvenanceMode
 
-    probpipe.prefect_config.workflow_kind = WorkflowKind.TASK
-    probpipe.provenance_config.mode = ProvenanceMode.FULL
-    probpipe.notation_config.max_depth = 12
+    probpipe.config.prefect.workflow_kind = WorkflowKind.TASK
+    probpipe.config.provenance.mode = ProvenanceMode.FULL
+    probpipe.config.notation.max_depth = 12
+    with probpipe.config.sampling.using(num_samples=4096):
+        ...
 """
 
 from __future__ import annotations
@@ -23,19 +28,126 @@ from __future__ import annotations
 import os
 
 __all__ = [
+    "Config",
     "NotationConfig",
     "PrefectConfig",
     "ProvenanceConfig",
     "ProvenanceMode",
+    "SamplingConfig",
     "WorkflowKind",
-    "notation_config",
-    "prefect_config",
-    "provenance_config",
+    "config",
 ]
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import AbstractContextManager, contextmanager
 from enum import Enum
-from typing import Any
+from types import MappingProxyType
+from typing import Any, ClassVar, Self
 
+from .._messages import unknown_names
+from ._call_context import _under_call_context, current_call_context
 from ._expression import _STORED_DEPTH
+
+# ---------------------------------------------------------------------------
+# Sections and their blocks
+# ---------------------------------------------------------------------------
+
+
+class _Section:
+    """A section of ``config``: named settings, each with a session value and a check.
+
+    Reading a setting returns the value that the innermost active ``using``
+    block sets for it, and otherwise the session's value. Assigning a setting
+    checks the value and sets the session's value, which an active block that
+    sets the setting overrides until it exits.
+    """
+
+    #: The section's name in ``config``, which the blocks are keyed by.
+    _name: ClassVar[str]
+
+    #: The check of each setting, by name: it takes the value and the setting's
+    #: name, and returns the value or raises as an assignment raises.
+    _checks: ClassVar[Mapping[str, Callable[[Any, str], Any]]]
+
+    def _value_in_effect(self, setting_name: str) -> Any:
+        """The value of *setting_name* that the innermost block sets, or else the session's value."""
+        section_block = current_call_context().config_blocks.get(self._name)
+        if section_block is not None and setting_name in section_block:
+            return section_block[setting_name]
+        return getattr(self, f"_{setting_name}")
+
+    def _checked_block_values(
+        self, block_settings: Mapping[str, Any], caller: str
+    ) -> dict[str, Any]:
+        """*block_settings* checked as an assignment checks them, for the block *caller* opens.
+
+        Parameters
+        ----------
+        block_settings : Mapping of str to Any
+            The temporary values, keyed by setting name.
+        caller : str
+            The call that opens the block, which the error messages open with.
+
+        Returns
+        -------
+        dict of str to Any
+            The checked values, keyed by setting name.
+
+        Raises
+        ------
+        TypeError
+            If a name is not a setting of the section, naming the settings, or
+            as the setting's assignment raises.
+        ValueError
+            As the setting's assignment raises.
+        """
+        unknown_setting_names = [
+            setting_name for setting_name in block_settings if setting_name not in self._checks
+        ]
+        if unknown_setting_names:
+            raise TypeError(
+                f"{caller}: {unknown_names('setting', unknown_setting_names, self._checks)}"
+            )
+        return {
+            setting_name: self._checks[setting_name](setting_value, setting_name)
+            for setting_name, setting_value in block_settings.items()
+        }
+
+    def using(self, **settings: Any) -> AbstractContextManager[Self]:
+        """A block in which *settings* replace the section's values, as ``with section.using(...):``.
+
+        The block's values apply to every read inside it, by the calls a
+        ``Function`` dispatches to worker threads or Prefect workers included,
+        and the previous values apply again when it exits, an error included.
+        Blocks nest, and an inner block's value wins. Blocks close in the
+        reverse order of opening, and :class:`Config` states what happens when
+        a generator that holds a block open breaks that order. A view's own control,
+        which ``f.using(...)`` sets, wins over a block, which wins over the
+        session's value. ``f.using(...)`` returns a reusable configured copy of ``f``,
+        while ``using`` here returns a context manager.
+
+        Parameters
+        ----------
+        **settings : Any
+            The temporary values, keyed by the section's setting names.
+
+        Returns
+        -------
+        AbstractContextManager
+            The block, which yields the section.
+
+        Raises
+        ------
+        TypeError
+            If a name is not a setting of the section, naming the settings, or
+            a value has the wrong type, as an assignment raises.
+        ValueError
+            If a value is inadmissible, as an assignment raises.
+        RuntimeError
+            On exit, if the block closes out of order, as :class:`Config` states.
+        """
+        checked_block_values = self._checked_block_values(settings, f"config.{self._name}.using()")
+        return _config_block({self._name: checked_block_values}, yields=self)
+
 
 # ---------------------------------------------------------------------------
 # WorkflowKind enum
@@ -50,7 +162,7 @@ class WorkflowKind(Enum):
     DEFAULT
         Inherit from global config; the shipped global default is
         ``OFF`` unless overridden via ``PROBPIPE_WORKFLOW_KIND`` or
-        explicit assignment to ``prefect_config.workflow_kind``. At
+        explicit assignment to ``config.prefect.workflow_kind``. At
         the per-instance level, ``DEFAULT`` means "inherit from
         global config".
     OFF
@@ -121,12 +233,19 @@ def _auto_detect_task_runner() -> Any:
     return None
 
 
+def _checked_workflow_kind(value: Any, source: str) -> WorkflowKind:
+    """*value* as a ``WorkflowKind`` member, which the setting *source* takes."""
+    if not isinstance(value, WorkflowKind):
+        raise TypeError(f"{source} must be a WorkflowKind enum member, got {type(value).__name__}")
+    return value
+
+
 # ---------------------------------------------------------------------------
-# PrefectConfig singleton
+# PrefectConfig: config.prefect
 # ---------------------------------------------------------------------------
 
 
-class PrefectConfig:
+class PrefectConfig(_Section):
     """Global Prefect orchestration settings.
 
     Attributes
@@ -140,7 +259,7 @@ class PrefectConfig:
         orchestration opt in explicitly::
 
             import probpipe
-            probpipe.prefect_config.workflow_kind = probpipe.WorkflowKind.TASK
+            probpipe.config.prefect.workflow_kind = probpipe.WorkflowKind.TASK
     task_runner : object or None
         Prefect task runner instance (e.g., ``RayTaskRunner()``).
         ``None`` means auto-detect: use ``RayTaskRunner`` if
@@ -149,33 +268,37 @@ class PrefectConfig:
         default.
     """
 
+    _name = "prefect"
+    _checks = MappingProxyType(
+        {"workflow_kind": _checked_workflow_kind, "task_runner": lambda value, source: value}
+    )
+
     def __init__(self) -> None:
         self.reset()
 
     # -- Public API ---------------------------------------------------------
 
     def reset(self) -> None:
-        """Restore all settings to defaults (re-reading the env var)."""
+        """Restore the session's settings to defaults (re-reading the env var).
+
+        An active ``using`` block that sets a setting still applies until it exits.
+        """
         self._workflow_kind: WorkflowKind = _initial_workflow_kind()
         self._task_runner: Any = None
 
     @property
     def workflow_kind(self) -> WorkflowKind:
         """Current global orchestration mode."""
-        return self._workflow_kind
+        return self._value_in_effect("workflow_kind")
 
     @workflow_kind.setter
     def workflow_kind(self, value: WorkflowKind) -> None:
-        if not isinstance(value, WorkflowKind):
-            raise TypeError(
-                f"workflow_kind must be a WorkflowKind enum member, got {type(value).__name__}"
-            )
-        self._workflow_kind = value
+        self._workflow_kind = _checked_workflow_kind(value, "workflow_kind")
 
     @property
     def task_runner(self) -> Any:
         """Explicit task runner, or ``None`` for auto-detection."""
-        return self._task_runner
+        return self._value_in_effect("task_runner")
 
     @task_runner.setter
     def task_runner(self, value: Any) -> None:
@@ -190,14 +313,10 @@ class PrefectConfig:
             A Prefect task runner instance, or ``None`` to use Prefect's
             built-in default.
         """
-        if self._task_runner is not None:
-            return self._task_runner
+        runner = self.task_runner
+        if runner is not None:
+            return runner
         return _auto_detect_task_runner()
-
-
-# Module-level singleton
-prefect_config = PrefectConfig()
-"""The global Prefect orchestration settings, an instance of ``PrefectConfig``."""
 
 
 # ---------------------------------------------------------------------------
@@ -258,12 +377,21 @@ def _initial_provenance_mode() -> ProvenanceMode:
         ) from e
 
 
+def _checked_provenance_mode(value: Any, source: str) -> ProvenanceMode:
+    """*value* as a ``ProvenanceMode`` member, which the setting *source* takes."""
+    if not isinstance(value, ProvenanceMode):
+        raise TypeError(
+            f"{source} must be a ProvenanceMode enum member, got {type(value).__name__}"
+        )
+    return value
+
+
 # ---------------------------------------------------------------------------
-# ProvenanceConfig singleton
+# ProvenanceConfig: config.provenance
 # ---------------------------------------------------------------------------
 
 
-class ProvenanceConfig:
+class ProvenanceConfig(_Section):
     """Global provenance tracking settings.
 
     Controls how much lineage history ``Function`` retains when
@@ -272,41 +400,39 @@ class ProvenanceConfig:
         import probpipe
         from probpipe import ProvenanceMode
 
-        probpipe.provenance_config.mode = ProvenanceMode.FULL  # for debugging
+        probpipe.config.provenance.mode = ProvenanceMode.FULL  # for debugging
 
     The initial mode can also be set via the ``PROBPIPE_PROVENANCE_MODE``
     environment variable (``full``, ``lightweight``, or ``off``,
-    case-insensitive).
+    case-insensitive). A top-level workflow takes the mode in effect when it
+    is entered.
     """
+
+    _name = "provenance"
+    _checks = MappingProxyType({"mode": _checked_provenance_mode})
 
     def __init__(self) -> None:
         self.reset()
 
     def reset(self) -> None:
-        """Restore all settings to defaults (re-reading the env var)."""
+        """Restore the session's mode to its default (re-reading the env var).
+
+        An active ``using`` block that sets the mode still applies until it exits.
+        """
         self._mode: ProvenanceMode = _initial_provenance_mode()
 
     @property
     def mode(self) -> ProvenanceMode:
         """Current global provenance tracking mode."""
-        return self._mode
+        return self._value_in_effect("mode")
 
     @mode.setter
     def mode(self, value: ProvenanceMode) -> None:
-        if not isinstance(value, ProvenanceMode):
-            raise TypeError(
-                f"mode must be a ProvenanceMode enum member, got {type(value).__name__}"
-            )
-        self._mode = value
-
-
-# Module-level singleton
-provenance_config = ProvenanceConfig()
-"""The global provenance tracking settings, an instance of ``ProvenanceConfig``."""
+        self._mode = _checked_provenance_mode(value, "mode")
 
 
 # ---------------------------------------------------------------------------
-# NotationConfig singleton
+# NotationConfig: config.notation
 # ---------------------------------------------------------------------------
 
 _NOTATION_MAX_DEPTH_ENV_VAR = "PROBPIPE_NOTATION_MAX_DEPTH"
@@ -370,7 +496,7 @@ def _initial_max_depth() -> int:
     return _checked_max_depth(value, _NOTATION_MAX_DEPTH_ENV_VAR)
 
 
-class NotationConfig:
+class NotationConfig(_Section):
     """Global settings of how labels and notations render.
 
     A tracked term's label and the notation of a law, a kernel, or a function
@@ -381,7 +507,7 @@ class NotationConfig:
 
         import probpipe
 
-        probpipe.notation_config.max_depth = 12
+        probpipe.config.notation.max_depth = 12
 
     The setting is global to the process. A term's label is rendered once,
     when the term is built, at the setting in effect then.
@@ -395,16 +521,24 @@ class NotationConfig:
     ------
     ValueError
         On construction, which reads ``PROBPIPE_NOTATION_MAX_DEPTH``, if the
-        variable is set to anything but an integer from 1 to 64. The module's
-        singleton is constructed when ``probpipe`` is imported, so the import
-        raises.
+        variable is set to anything but an integer from 1 to 64. The section
+        ``config.notation`` is constructed when ``probpipe`` is imported, so the
+        import raises.
     """
+
+    _name = "notation"
+    _checks = MappingProxyType(
+        {"max_depth": lambda value, source: _checked_max_depth(value, source)}
+    )
 
     def __init__(self) -> None:
         self.reset()
 
     def reset(self) -> None:
-        """Restore all settings to their defaults, reading ``PROBPIPE_NOTATION_MAX_DEPTH`` again.
+        """Restore the session's settings to their defaults, reading ``PROBPIPE_NOTATION_MAX_DEPTH`` again.
+
+        An active ``using`` block that sets ``max_depth`` still applies until it
+        exits.
 
         Raises
         ------
@@ -444,13 +578,329 @@ class NotationConfig:
             On assignment of an integer less than 1 or greater than 64, the
             number of levels a stored expression keeps.
         """
-        return self._max_depth
+        return self._value_in_effect("max_depth")
 
     @max_depth.setter
     def max_depth(self, value: int) -> None:
         self._max_depth = _checked_max_depth(value, "max_depth")
 
 
+# ---------------------------------------------------------------------------
+# SamplingConfig: config.sampling
+# ---------------------------------------------------------------------------
+
+_MAX_EVALUATIONS_ENV_VAR = "PROBPIPE_SAMPLING_MAX_EVALUATIONS"
+_NUM_SAMPLES_ENV_VAR = "PROBPIPE_SAMPLING_NUM_SAMPLES"
+
+#: The maximum number of evaluations of a lifted function by default.
+_DEFAULT_MAX_EVALUATIONS = 256
+
+#: The number of Monte Carlo draws of a summary or an approximate conversion by default.
+_DEFAULT_NUM_SAMPLES = 1024
+
+
+def _checked_count(value: Any, source: str) -> int:
+    """*value* as a count of evaluations or draws, a positive integer.
+
+    Every check of the controls ``max_evaluations`` and ``num_samples``, and of
+    their session defaults, words its message here.
+
+    Parameters
+    ----------
+    value : Any
+        The candidate count.
+    source : str
+        The name of the control or the setting, which the error messages open with.
+
+    Returns
+    -------
+    int
+        *value*.
+
+    Raises
+    ------
+    TypeError
+        If *value* is not an integer, a bool included.
+    ValueError
+        If *value* is less than 1.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{source} must be an integer, got {value!r}")
+    if value < 1:
+        raise ValueError(f"{source} must be a positive integer, got {value!r}")
+    return value
+
+
+def _initial_count(env_var: str, default: int) -> int:
+    """Resolve the initial value of a count from the environment variable *env_var*.
+
+    Unset gives *default*, and a value that is not a positive integer raises
+    ``ValueError``, so a typo in a deployment's configuration raises at import.
+    """
+    raw = os.environ.get(env_var)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"{env_var} must be a positive integer, got {raw!r}") from None
+    return _checked_count(value, env_var)
+
+
+class SamplingConfig(_Section):
+    """The session's defaults of the evaluation count of a lift and the draw count of an estimate.
+
+    Every ``Function`` and operation has two count controls, which
+    ``using`` sets for one view:
+
+    1. ``max_evaluations``: the maximum number of times a function lifted over
+       laws is evaluated, 256 by default.
+    2. ``num_samples``: the number of Monte Carlo draws of a summary, such as a
+       ``mean`` with no closed form, or of an approximate conversion, 1024 by
+       default.
+
+    A view that sets neither reads the defaults here when it runs, so a
+    setting governs the functions constructed before it::
+
+        import probpipe
+
+        probpipe.config.sampling.max_evaluations = 1000
+        probpipe.config.sampling.num_samples = 4096
+
+    The settings are global to the process. Their initial values can also be
+    set by the environment variables ``PROBPIPE_SAMPLING_MAX_EVALUATIONS`` and
+    ``PROBPIPE_SAMPLING_NUM_SAMPLES``.
+
+    Raises
+    ------
+    ValueError
+        On construction, which reads the two environment variables, if either is
+        set to anything but a positive integer. The singleton
+        ``probpipe.config.sampling`` is constructed when ``probpipe`` is
+        imported, so the import raises.
+    """
+
+    _name = "sampling"
+    _checks = MappingProxyType({"max_evaluations": _checked_count, "num_samples": _checked_count})
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        """Restore both session settings to their defaults, reading their environment variables again.
+
+        An active ``using`` block that sets a setting still applies until it exits.
+
+        Raises
+        ------
+        ValueError
+            If ``PROBPIPE_SAMPLING_MAX_EVALUATIONS`` or
+            ``PROBPIPE_SAMPLING_NUM_SAMPLES`` is set to anything but a positive
+            integer.
+        """
+        self._max_evaluations: int = _initial_count(
+            _MAX_EVALUATIONS_ENV_VAR, _DEFAULT_MAX_EVALUATIONS
+        )
+        self._num_samples: int = _initial_count(_NUM_SAMPLES_ENV_VAR, _DEFAULT_NUM_SAMPLES)
+
+    @property
+    def max_evaluations(self) -> int:
+        """The default of the ``max_evaluations`` control, 256 unless the environment sets another.
+
+        :class:`~probpipe.Function` states how a lift spends the count.
+
+        Raises
+        ------
+        TypeError
+            On assignment of a value that is not an integer, a bool included.
+        ValueError
+            On assignment of an integer less than 1.
+        """
+        return self._value_in_effect("max_evaluations")
+
+    @max_evaluations.setter
+    def max_evaluations(self, value: int) -> None:
+        self._max_evaluations = _checked_count(value, "max_evaluations")
+
+    @property
+    def num_samples(self) -> int:
+        """The default of the ``num_samples`` control, 1024 unless the environment sets another.
+
+        A converter that draws, such as moment matching, takes the converting
+        call's ``num_samples`` unless its own ``num_samples`` option is given.
+
+        Raises
+        ------
+        TypeError
+            On assignment of a value that is not an integer, a bool included.
+        ValueError
+            On assignment of an integer less than 1.
+        """
+        return self._value_in_effect("num_samples")
+
+    @num_samples.setter
+    def num_samples(self, value: int) -> None:
+        self._num_samples = _checked_count(value, "num_samples")
+
+
+class Config:
+    """The global settings of ProbPipe, grouped in sections.
+
+    The sections are:
+
+    1. :attr:`sampling`, a :class:`SamplingConfig`: the default evaluation and
+       draw counts of a call;
+    2. :attr:`notation`, a :class:`NotationConfig`: how many nested levels a
+       label or a notation shows;
+    3. :attr:`provenance`, a :class:`ProvenanceConfig`: how much lineage
+       history a provenance record keeps;
+    4. :attr:`prefect`, a :class:`PrefectConfig`: the orchestration of a
+       ``Function`` and the Prefect task runner.
+
+    Assigning a setting sets the session's value, which is global to the
+    process. A ``using`` block sets temporary values, for one section with
+    ``config.<section>.using(...)`` or for several with :meth:`using`::
+
+        import probpipe
+
+        probpipe.config.sampling.num_samples = 4096
+        with probpipe.config.using(sampling={"num_samples": 256}, notation={"max_depth": 12}):
+            ...
+        probpipe.config.reset()
+
+    A setting resolves from the session's value, then the innermost active
+    block, then a view's own control: ``f.using(num_samples=...)`` wins over a
+    block, which wins over the session. ``f.using(...)`` returns a reusable
+    configured copy of ``f``, while ``config.using(...)`` is a context manager.
+    A block applies in the thread that opens it and in the workers that
+    ``Function`` calls inside it dispatch to, whether threads or Prefect
+    workers, and not in another thread. Assigning a setting inside a block sets
+    the session's value, which applies once the block exits, and
+    :meth:`reset` inside a block restores the session's values while the block
+    still applies. Blocks close in the reverse order of opening, and a block
+    held open by a generator can break that order in two ways, each of which
+    raises ``RuntimeError``:
+
+    - a block closed while a call opened inside it still runs, as when that
+      call closes the generator, keeps applying until the call ends;
+    - a call or a block that ends while a block opened inside it is still
+      open, as when the generator outlives it, closes that block with it.
+
+    Either way no closed block applies afterwards. A call resolves its settings
+    when it opens. ProbPipe code
+    inside a user's own ``jax.jit`` keeps the values in effect while JAX traced
+    it.
+    """
+
+    def __init__(self) -> None:
+        self._sections: Mapping[str, _Section] = MappingProxyType(
+            {
+                "sampling": SamplingConfig(),
+                "notation": NotationConfig(),
+                "provenance": ProvenanceConfig(),
+                "prefect": PrefectConfig(),
+            }
+        )
+
+    @property
+    def sampling(self) -> SamplingConfig:
+        """The default evaluation count of a lift and the default draw count of an estimate."""
+        return self._sections["sampling"]  # type: ignore[return-value]
+
+    @property
+    def notation(self) -> NotationConfig:
+        """How many nested levels a label or a notation shows."""
+        return self._sections["notation"]  # type: ignore[return-value]
+
+    @property
+    def provenance(self) -> ProvenanceConfig:
+        """How much lineage history a provenance record keeps."""
+        return self._sections["provenance"]  # type: ignore[return-value]
+
+    @property
+    def prefect(self) -> PrefectConfig:
+        """The orchestration of a ``Function`` and the Prefect task runner."""
+        return self._sections["prefect"]  # type: ignore[return-value]
+
+    def using(self, **sections: Mapping[str, Any]) -> AbstractContextManager[Config]:
+        """A block in which the given settings of several sections replace their values.
+
+        ``config.using(sampling={"num_samples": 4096}, notation={"max_depth": 12})``
+        is the block of ``config.sampling.using(num_samples=4096)`` and
+        ``config.notation.using(max_depth=12)`` together. The class docstring
+        states how a block applies.
+
+        Parameters
+        ----------
+        **sections : Mapping of str to Any
+            The temporary values of each section, keyed by section name and
+            then by setting name.
+
+        Returns
+        -------
+        AbstractContextManager
+            The block, which yields ``config``.
+
+        Raises
+        ------
+        TypeError
+            If a name is not a section, naming the sections, if a section is
+            given anything but a mapping, or as a section's ``using`` raises.
+        ValueError
+            As a section's ``using`` raises.
+        RuntimeError
+            On exit, if the block closes out of order, as the class docstring states.
+        """
+        unknown = [name for name in sections if name not in self._sections]
+        if unknown:
+            raise TypeError(f"config.using(): {unknown_names('section', unknown, self._sections)}")
+        checked_config_values = {}
+        for name, settings in sections.items():
+            if not isinstance(settings, Mapping):
+                raise TypeError(
+                    f"config.using(): {name}= must be a mapping of settings, "
+                    f"got {type(settings).__name__}"
+                )
+            checked_config_values[name] = self._sections[name]._checked_block_values(
+                settings, f"config.using({name}=...)"
+            )
+        return _config_block(checked_config_values, yields=self)
+
+    def reset(self) -> None:
+        """Restore every section's session settings to their defaults, reading the environment variables again.
+
+        An active ``using`` block still applies until it exits.
+
+        Raises
+        ------
+        ValueError
+            If an environment variable that a section reads is set to an
+            inadmissible value, as each section's ``reset`` states.
+        """
+        for section in self._sections.values():
+            section.reset()
+
+
 # Module-level singleton
-notation_config = NotationConfig()
-"""The global notation settings, an instance of ``NotationConfig``."""
+config = Config()
+"""The global settings of ProbPipe, an instance of ``Config``."""
+
+
+def _num_samples_in_effect() -> int:
+    """The ``num_samples`` of the running call, or the session's value in effect outside every call."""
+    call_context = current_call_context()
+    if call_context.call_depth == 0:
+        return config.sampling.num_samples
+    return call_context.resolved_controls["num_samples"]
+
+
+@contextmanager
+def _config_block(config_values: Mapping[str, Mapping[str, Any]], *, yields: Any) -> Iterator[Any]:
+    """A block in which the checked *config_values* of each named section apply, yielding *yields*.
+
+    The block installs the call context in effect with one more ``config``
+    block, so its values merge over those of the enclosing blocks, and the
+    enclosing values apply again when it exits, an error included.
+    """
+    with _under_call_context(current_call_context().with_config_block(config_values)):
+        yield yields

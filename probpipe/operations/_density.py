@@ -302,7 +302,7 @@ def _unnormalized_log_prob_applies(d: Any, value: Any) -> CallReport:
     return unnormalized_log_prob.check(d, value)
 
 
-@operation(result=_prob_result, identity_check=_log_prob_applies)
+@operation(result=_prob_result, derived_route_check=_log_prob_applies)
 def prob(d: Distribution, value):
     """The density of *value* under *d*, defined as ``exp ∘ log_prob``.
 
@@ -332,7 +332,7 @@ def prob(d: Distribution, value):
     return jnp.exp(log_prob.using(raw=True)(d, value))
 
 
-@operation(result=_unnormalized_prob_result, identity_check=_unnormalized_log_prob_applies)
+@operation(result=_unnormalized_prob_result, derived_route_check=_unnormalized_log_prob_applies)
 def unnormalized_prob(d: Distribution, value):
     """The density of *value* under *d* up to a factor, defined as ``exp ∘ unnormalized_log_prob``.
 

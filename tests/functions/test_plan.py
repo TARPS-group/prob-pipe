@@ -68,11 +68,11 @@ def _plan(values, hints=None):
     return build_broadcast_plan(values=values, signature_info=signature_info)
 
 
-def _stochastic_plan(values, n_broadcast_samples=16):
+def _stochastic_plan(values, max_evaluations=16):
     return build_stochastic_plan(
         values,
         _plan(values),
-        n_broadcast_samples,
+        max_evaluations,
     )
 
 
@@ -290,7 +290,7 @@ class TestStochasticPlanStructure:
                 "a": Normal("a", loc=0.0, scale=1.0),
                 "b": Normal("b", loc=1.0, scale=1.0),
             },
-            n_broadcast_samples=12,
+            max_evaluations=12,
         )
 
         assert isinstance(plan, StochasticPlan)
@@ -311,7 +311,7 @@ class TestStochasticPlanStructure:
             ),
         )
         assert plan.logical_units == (LogicalUnit("singleton", 0, ()),)
-        assert plan.n_broadcast_samples == 12
+        assert plan.max_evaluations == 12
         assert plan.sample_shape == (12,)
         assert plan.exact_group_order == ()
         assert plan.exact_combination_order == ((),)
@@ -350,7 +350,7 @@ class TestStochasticPlanStructure:
             "noise": Normal("noise", loc=0.0, scale=1.0),
         }
 
-        plan = _stochastic_plan(values, n_broadcast_samples=7)
+        plan = _stochastic_plan(values, max_evaluations=7)
 
         assert plan.logical_units == tuple(
             LogicalUnit("canonical_sweep", flat_index, coordinates)
@@ -497,7 +497,7 @@ class TestStochasticEvaluationPlanning:
             "b": EmpiricalDistribution(jnp.asarray([10.0, 20.0, 30.0]), component="b"),
         }
 
-        plan = _stochastic_plan(values, n_broadcast_samples=10)
+        plan = _stochastic_plan(values, max_evaluations=10)
 
         assert plan.evaluation_mode == "exact"
         assert tuple(group.execution_mode for group in plan.source_groups) == (
@@ -526,7 +526,7 @@ class TestStochasticEvaluationPlanning:
             "sampled": Normal("sampled", loc=0.0, scale=1.0),
         }
 
-        plan = _stochastic_plan(values, n_broadcast_samples=23)
+        plan = _stochastic_plan(values, max_evaluations=23)
 
         assert plan.evaluation_mode == "mixed_exact_sampled"
         assert plan.exact_group_order == (1, 0)
@@ -546,7 +546,7 @@ class TestStochasticEvaluationPlanning:
     def test_over_budget_empirical_is_sampled(self):
         plan = _stochastic_plan(
             {"x": EmpiricalDistribution(jnp.arange(20.0), component="x")},
-            n_broadcast_samples=5,
+            max_evaluations=5,
         )
 
         assert plan.evaluation_mode == "sampled"
@@ -562,7 +562,7 @@ class TestStochasticEvaluationPlanning:
                 "second": EmpiricalDistribution(jnp.arange(3.0), component="second"),
                 "third": EmpiricalDistribution(jnp.arange(3.0), component="third"),
             },
-            n_broadcast_samples=10,
+            max_evaluations=10,
         )
 
         assert plan.exact_group_order == (0, 1)
@@ -582,8 +582,8 @@ class TestStochasticEvaluationPlanning:
             "b": Normal("b", loc=1.0, scale=1.0),
         }
 
-        small = _stochastic_plan(values, n_broadcast_samples=5)
-        large = _stochastic_plan(values, n_broadcast_samples=500)
+        small = _stochastic_plan(values, max_evaluations=5)
+        large = _stochastic_plan(values, max_evaluations=500)
 
         assert len(small.random_events) == 2 * 3
         assert small.random_events == large.random_events
@@ -591,25 +591,25 @@ class TestStochasticEvaluationPlanning:
         assert large.sample_shape == (500,)
 
     @pytest.mark.parametrize(
-        ("n_broadcast_samples", "error", "message"),
+        ("max_evaluations", "error", "message"),
         [
-            (True, TypeError, "n_broadcast_samples must be an integer"),
-            (False, TypeError, "n_broadcast_samples must be an integer"),
-            (2.5, TypeError, "n_broadcast_samples must be an integer"),
-            (0, ValueError, "n_broadcast_samples must be a positive integer"),
-            (-1, ValueError, "n_broadcast_samples must be a positive integer"),
+            (True, TypeError, "max_evaluations must be an integer"),
+            (False, TypeError, "max_evaluations must be an integer"),
+            (2.5, TypeError, "max_evaluations must be an integer"),
+            (0, ValueError, "max_evaluations must be a positive integer"),
+            (-1, ValueError, "max_evaluations must be a positive integer"),
         ],
     )
-    def test_invalid_sample_counts_fail_during_planning(
+    def test_invalid_evaluation_counts_fail_during_planning(
         self,
-        n_broadcast_samples,
+        max_evaluations,
         error,
         message,
     ):
         values = {"x": Normal("x", loc=0.0, scale=1.0)}
 
         with pytest.raises(error, match=message):
-            _stochastic_plan(values, n_broadcast_samples=n_broadcast_samples)
+            _stochastic_plan(values, max_evaluations=max_evaluations)
 
 
 class TestStochasticPlanPurity:

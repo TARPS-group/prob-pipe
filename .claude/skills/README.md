@@ -25,6 +25,8 @@ issues and consistency with ProbPipe conventions.
 - AI artifact comments (thinking-aloud comments, unnecessary narration)
 - General concerns (edge cases, backward compatibility, performance)
 - Code quality (simplification, dead code, JAX idioms)
+- When `plans/` exists, the PR's fit with the running multi-PR push: its step, the
+  standing directives of `plans/README.md`, and the settled decisions
 
 **Usage:**
 ```
