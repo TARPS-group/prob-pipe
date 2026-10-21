@@ -39,6 +39,7 @@ import numpy as np
 from blackjax.adaptation.mass_matrix import welford_algorithm
 
 from ..core._dispatch import Feasibility
+from ..core._execution_claims import Traceability, probe
 from ..custom_types import Array, ArrayLike
 from ..distributions._capabilities import SupportsUnnormalizedLogProb
 from ..distributions._distribution import Distribution
@@ -51,7 +52,6 @@ from ._inference_utils import (
     extract_event_spec,
     flat_density,
     get_init_state,
-    is_jax_traceable,
     no_density_reason,
     observed_parts,
     parallel_chain_map,
@@ -488,6 +488,7 @@ def _run_blackjax_rwmh(
     target_log_prob_fn: Callable[[Array], Array],
     init_state: Array,
     *,
+    traceable: bool,
     num_results: int,
     num_warmup: int,
     num_chains: int,
@@ -499,11 +500,10 @@ def _run_blackjax_rwmh(
 ) -> tuple[list[Array], list[Array] | None, dict[str, np.ndarray], float]:
     """Run ``num_chains`` BlackJAX RWMH chains. Returns chains + diagnostics.
 
-    Auto-routes to the fast path (``lax.scan`` + ``vmap``) when the
-    target is JAX-traceable at ``init_state``; otherwise falls back to
-    Python-loop execution (per chain).
+    Runs the fast path (``lax.scan`` + ``vmap``) when *traceable*, the
+    target's traceability, says JAX traces the target; otherwise runs each
+    chain in a Python loop.
     """
-    traceable = is_jax_traceable(target_log_prob_fn, init_state)
     key = as_prng_key(random_seed)
     chain_keys = jax.random.split(key, num_chains)
 
@@ -780,6 +780,7 @@ def _rwmh(
         target_log_prob = flat_density(dist)
 
     init_state = get_init_state(dist, init, random_seed=random_seed)
+    traceable = _target_traces(dist, log_prob_fn, data, init_state)
     if log_prob_fn is None or data is None:
         target_log_prob, init_state, constrain = unconstrained_chain(
             target_log_prob, init_state, dist
@@ -803,6 +804,7 @@ def _rwmh(
     chains, warmups, sample_stats, accept_rate = _run_blackjax_rwmh(
         target_log_prob,
         init_state,
+        traceable=traceable,
         num_results=num_results,
         num_warmup=num_warmup,
         num_chains=num_chains,
@@ -909,3 +911,25 @@ class BlackJAXRWMHMethod(InferenceMethod):
             init=kwargs.get("init"),
             random_seed=run_seed(self.name),
         )
+
+
+def _target_traces(
+    dist: Any, log_prob_fn: Any | None, data: ArrayLike | None, init_state: Array
+) -> bool:
+    """Whether JAX traces the RWMH target: *dist*'s density, plus *log_prob_fn* at *data* when given.
+
+    A law's traceability is read from the law (V.13). A log-likelihood the
+    caller passes as a plain function is probed once, at the initial state.
+    """
+    law_traces = (
+        dist._traceability() is Traceability.TRACEABLE
+        if isinstance(dist, Distribution)
+        else probe(
+            None, flat_density(dist), init_state, label=getattr(dist, "label", "rwmh")
+        ).traces
+    )
+    if not law_traces or log_prob_fn is None or data is None:
+        return law_traces
+    return probe(
+        None, lambda params: log_prob_fn(params, data), init_state, label="log_prob_fn"
+    ).traces

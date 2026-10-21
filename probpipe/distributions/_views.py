@@ -22,6 +22,7 @@ import numpy as np
 
 from ..core._batch import Batch, BatchSpec
 from ..core._dispatch import Feasibility, ResolutionError
+from ..core._execution_claims import Traceability
 from ..core._expression import (
     Expression,
     Product,
@@ -1081,6 +1082,10 @@ class FieldView(Distribution):
             Provenance.create("__getitem__", parents=[parent], metadata={"path": path})
         )
 
+    def _derived_traceability(self) -> Traceability:
+        """The parent's traceability, since every method of the view reads the parent."""
+        return self._parent._traceability()
+
     @property
     def parent(self) -> Distribution:
         """The law this view reads, which sibling views share."""
@@ -2079,6 +2084,10 @@ class _RenamedDistribution(Distribution):
 
     _capability_table = _RENAMED_CAPABILITIES
 
+    def _derived_traceability(self) -> Traceability:
+        """The parent's traceability, since a rename only translates values at the boundary."""
+        return self._parent._traceability()
+
     def __new__(
         cls,
         parent: Distribution,
@@ -2863,6 +2872,10 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
     """
 
     _capability_table = _RENAMED_KERNEL_CAPABILITIES
+
+    def _derived_traceability(self) -> Traceability:
+        """The parent's traceability, since a rename only translates values at the boundary."""
+        return self._parent._traceability()
 
     def __new__(
         cls,

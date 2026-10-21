@@ -24,6 +24,7 @@ from jax.scipy.linalg import block_diag
 from ..core._array_backend import _is_numeric_leaf
 from ..core._compilation import compiled_or_eager
 from ..core._dispatch import Feasibility, ResolutionError
+from ..core._execution_claims import Traceability
 from ..core._expression import (
     Named,
     Product,
@@ -2233,6 +2234,10 @@ class FactoredDistribution(Distribution, SupportsFactors):
         if expression is not None:
             self._store_expression(expression, rendering)
 
+    def _derived_traceability(self) -> Traceability:
+        """The least permissive of the factors' traceabilities: the joint traces when each factor does."""
+        return Traceability.least_permissive(*(factor._traceability() for factor in self.factors))
+
     @property
     def factors(self) -> tuple[Factor, ...]:
         """The factors, in conditional-first order."""
@@ -2374,6 +2379,10 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         object.__setattr__(self, "_graph", graph)
         if expression is not None:
             self._store_expression(expression, rendering)
+
+    def _derived_traceability(self) -> Traceability:
+        """The least permissive of the factors' traceabilities: the joint traces when each factor does."""
+        return Traceability.least_permissive(*(factor._traceability() for factor in self.factors))
 
     @property
     def factors(self) -> tuple[Factor, ...]:

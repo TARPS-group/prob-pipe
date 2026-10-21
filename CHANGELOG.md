@@ -1749,6 +1749,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a keyword, as `select("s1/theta", other="s2/theta")`. `RecordBatch.select`
   changes the same way.
 
+- **A lifted function that draws from NumPy's or Python's global random
+  generator gives each point its own noise, with a warning.** Before, JAX
+  traced it once and fixed one draw into the compiled program, so every point
+  received the same noise; now ProbPipe evaluates it one point at a time.
+
+  ```python
+  @function
+  def simulate(r):
+      return r + np.random.normal()
+
+  simulate.using(max_evaluations=5)(Normal("r", 0.0, 1.0))
+  # before: every draw's noise was the same number
+  # after:  each draw has its own noise, and a UserWarning names simulate
+  ```
+
 ### Added
 
 - **`summarize(d)` collects a law's standard summaries in one record that
@@ -2826,6 +2841,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   outer-to-inner order, so bootstrap replicates of trajectories support
   moments and `include_inputs=True` lifts.
 
+- **A `Function` states whether JAX can trace it.** `@function(traceable=True)`
+  and `Function(..., traceable=True)` state that JAX can trace the callable,
+  so a lifted call maps it with JAX without testing it first;
+  `traceable=False` states that it cannot, so it is never traced and a lifted
+  call evaluates it one point at a time; the default `None` states nothing.
+  `vectorized=True` states that the callable takes a stack of evaluation
+  points in one call. The claims are fixed for the `Function`'s life, and
+  every `using` copy keeps them.
+
+  ```python
+  @function(traceable=False)        # a solver called through subprocess
+  def forward(theta): ...
+  ```
+
 ### Changed
 
 - **A converter's `check` states only its promise.** It leaves `method_name`
@@ -3765,6 +3794,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `config.using` block, or the session give, as `f(...)` does, so a converter
   that draws takes that count. They read the enclosing call's count before.
 
+- **A `Function` that states nothing is traced once per input structure.**
+  A lifted call of a `Function` without a `traceable` claim traces its body
+  once for each structure of its inputs (their shapes, dtypes, and other
+  values) and stores the outcome, which later calls, `check`, and every
+  `using` copy read. A Python `float` argument is data, so a sweep over
+  `n0=10.0, 11.0, ...` traces once; an `int` used as a loop count is traced
+  again as a constant. `f.check(prior)` now runs that trace too, so it may run
+  the function's Python once, up to its first operation that needs a concrete
+  value. A body that branches in Python on an argument that is not lifted, or
+  on a swept value, now runs one point at a time, where before it was traced
+  again with that value fixed; the results are the same up to rounding.
+- **A false `traceable=True` claim raises an error naming the claim.** A
+  `Function` that claims `traceable=True` and fails while JAX traces it raises
+  `TypeError: 'forward' claims traceable=True, but tracing it failed: it
+  converts a traced value to NumPy (TracerArrayConversionError). Remove the
+  claim, or claim traceable=False`, chained to JAX's error, whether it is
+  traced by a lifted call or inside a kernel or a user's `jax.jit`.
+  `dispatch="jax"` on a `Function` that claims `traceable=False` raises
+  `ValueError`.
+- **Inference methods read the target's traceability instead of tracing it.**
+  A law or a kernel derives whether JAX can trace it from its parts and keeps
+  the answer: a family is traceable, a joint is traceable when each factor is,
+  and a law built from functions is traceable when its density traced, or its
+  sampler for a law without one. So `condition_on.check` and method selection
+  trace nothing for a model of families, NUTS, HMC, and elliptical slice
+  sampling refuse a target with a part JAX cannot trace, and random-walk
+  Metropolis runs such a target in a Python loop. The law that a kernel builds anew at each given value traces
+  its functions once, not at every application, unless its functions read
+  the values they capture, as `jnp.zeros(int(n))` does.
+
 ### Removed (breaking)
 
 - **`NumericArray.value`, `Opaque.value`, and `NumericArrayBatch.values` are
@@ -4523,6 +4582,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tutorial's SBI sections are flagged out of date until a replacement
   backend ships — its `condition_on` dispatch and NUTS material remain
   accurate.
+
+- **The private helper `is_jax_traceable` is removed** from
+  `probpipe.inference._inference_utils`. `f.check(x)` reports whether a lifted
+  call traces, and a law's or kernel's traceability decides how inference
+  runs it.
 
 ### Migration
 

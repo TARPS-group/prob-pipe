@@ -37,6 +37,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ..core._execution_claims import Traceability
 from ..core._numeric_record import _reconstruct_from_vector
 from ..core._record_spec import NumericRecordSpec
 from ..core._spec_base import NumericArraySpec
@@ -76,7 +77,6 @@ __all__ = [
     "flat_vector",
     "get_init_state",
     "integer_seed",
-    "is_jax_traceable",
     "joint_and_given",
     "likelihood_flat",
     "model_factors",
@@ -89,6 +89,7 @@ __all__ = [
     "refuse_seed_keywords",
     "run_chain_scan",
     "run_seed",
+    "traces_in_jax",
     "unconstrained_chain",
     "unconstrained_coordinates",
     "unfactored_model_reason",
@@ -186,25 +187,28 @@ def posterior_var_order(trace: Any, keep: Iterable[str]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# JAX-traceability probe
+# Traceability of the target
 # ---------------------------------------------------------------------------
 
 
-def is_jax_traceable(fn: Callable, init_state: jnp.ndarray) -> bool:
-    """Probe whether *fn* can be traced by JAX at *init_state*.
+#: Why a method that runs its target inside a JAX program cannot run it.
+UNTRACEABLE_DENSITY = "the log-density is not JAX-traceable"
 
-    Used by gradient-based MCMC ``check()`` methods to filter out
-    targets that would fail at ``execute()`` time. Costs ~one JAX
-    trace — note that ``jax.make_jaxpr`` does not populate the JIT
-    cache, so the subsequent ``lax.scan`` / ``vmap`` inside the
-    runner re-traces from scratch.
+
+def traces_in_jax(term: Any) -> bool:
+    """Whether JAX can trace the raw methods of the law or kernel *term*, as its traceability states (V.13).
+
+    Parameters
+    ----------
+    term : Distribution or ConditionalDistribution
+        The target, the model, or the likelihood a method runs.
+
+    Returns
+    -------
+    bool
+        ``True`` when *term* is traceable.
     """
-    try:
-        jax.make_jaxpr(fn)(init_state)
-        return True
-    except Exception:
-        logger.debug("is_jax_traceable: trace failed for %r", fn, exc_info=True)
-        return False
+    return term._traceability() is Traceability.TRACEABLE
 
 
 def as_prng_key(seed: int | Array) -> Array:

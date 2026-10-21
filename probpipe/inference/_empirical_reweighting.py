@@ -28,9 +28,9 @@ from ._inference_utils import (
     described,
     flat_record,
     flat_unflatten,
-    is_jax_traceable,
     model_factors,
     parameter_given,
+    traces_in_jax,
     unfactored_model_reason,
 )
 
@@ -181,7 +181,7 @@ class EmpiricalReweightingMethod(InferenceMethod):
             return likelihood._conditional_log_prob(given, factors.observed)
 
         atoms = _flat_atoms(prior)
-        if is_jax_traceable(log_likelihood, atoms[0]):
+        if traces_in_jax(likelihood):
             values = jax.vmap(log_likelihood)(atoms)
         else:
             values = jnp.stack([jnp.asarray(log_likelihood(theta)) for theta in atoms])

@@ -13,6 +13,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Self
 
+import jax
+import jax.numpy as jnp
+
 from ..core._specs import _has_record_outputs, _root_output_name, _single_output_name
 
 if TYPE_CHECKING:
@@ -23,6 +26,7 @@ if TYPE_CHECKING:
     from ._factored import FactoredConditionalDistribution, FactoredDistribution
     from ._views import _EventRenames
 
+from ..core._execution_claims import Traceability, probe, spec_stand_in
 from ..core._expression import _GENERIC_LAW_SYMBOL, Named, Signature
 from ..core._immutable import transient_memo
 from ..core._record_spec import RecordSpec
@@ -33,8 +37,9 @@ from ..core._specs import _VALUES_WITHOUT_RECORD, OutputSpec, _output_record
 from ..core.constraints import _known_equal
 from ..core.named_tree import _PATH_SEP
 from ..core.provenance import Provenance
+from ..core.record import Record
 from ..core.tracked import Annotated, TrackedTerm, _as_raw_form, _is_raw_form, _TrackedTermMeta
-from ._capabilities import _check_guards
+from ._capabilities import SupportsSampling, SupportsUnnormalizedLogProb, _check_guards
 
 # ---------------------------------------------------------------------------
 # The event spec: completion and class membership
@@ -873,6 +878,41 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
             )
         return spec.shape
 
+    def _traceability(self) -> Traceability:
+        """Whether JAX can trace this law's density, or its sampler when it has none (V.13).
+
+        It is traceable, embeddable, or host-only, and inference methods read it
+        instead of tracing the law. The value is derived from the law's parts
+        the first time it is read and kept for the law's life: a family is
+        traceable, a law built from other laws or kernels takes the least
+        permissive of theirs, and any other law is probed once, as
+        :meth:`_derived_traceability` states.
+
+        Returns
+        -------
+        Traceability
+            The law's traceability.
+        """
+        memo = transient_memo(self)
+        if "traceability" not in memo:
+            memo["traceability"] = self._derived_traceability()
+        return memo["traceability"]
+
+    def _derived_traceability(self) -> Traceability:
+        """The traceability of a law that states none: its density probed at one value of its event.
+
+        A dimension not yet bound stands in with size one. A law without a
+        density probes its sampler at one key instead, and one whose event has
+        no stand-in, such as a value that is not an array, is host-only. A subclass whose methods are JAX code, or are built from
+        parts that state their traceability, overrides this.
+
+        Returns
+        -------
+        Traceability
+            ``TRACEABLE`` when the probe traced, and ``HOST_ONLY`` otherwise.
+        """
+        return _probed_law_traceability(self)
+
     def __getattr__(self, name: str) -> Any:
         """Resolve a view of :class:`NumericDistribution` for a numeric law of another class.
 
@@ -1623,3 +1663,39 @@ class DistributionSpec(TermSpec):
         except ValueError:
             return False
         return True
+
+
+def _value_at_declared_kind(spec: TermSpec, record_label: str, value: Any) -> Any:
+    """*value* at the kind *spec* declares, as a function's body receives a draw.
+
+    A value of a record spec is a ``Record``, labeled *record_label* when it
+    is built here, and a value of an array spec is an array; a value of
+    another kind is passed as it is.
+    """
+    if isinstance(spec, RecordSpec):
+        return value if isinstance(value, Record) else Record(value, label=record_label)
+    if isinstance(spec, NumericArraySpec):
+        return jnp.asarray(value)
+    return value
+
+
+def _probed_law_traceability(law: Distribution) -> Traceability:
+    """*law*'s density traced at a stand-in of one value of its event, or its sampler at one key."""
+    spec = law.event_spec.term_spec
+    stand_in = spec_stand_in(spec, unbound_size=1)
+    if isinstance(law, SupportsUnnormalizedLogProb) and stand_in is not None:
+        probe_result = probe(
+            None,
+            lambda value: law._unnormalized_log_prob(
+                _value_at_declared_kind(spec, law.label, value)
+            ),
+            stand_in,
+            label=law.label,
+        )
+    elif isinstance(law, SupportsSampling):
+        probe_result = probe(
+            None, lambda key: law._sample(key, sample_shape=()), jax.random.key(0), label=law.label
+        )
+    else:
+        return Traceability.HOST_ONLY
+    return probe_result.traceability

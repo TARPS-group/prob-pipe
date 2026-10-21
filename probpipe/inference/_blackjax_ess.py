@@ -35,6 +35,10 @@ import numpy as np
 from ..core._dispatch import Feasibility
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
+from ..distributions._capabilities import (
+    SupportsConditionalUnnormalizedLogProb,
+    SupportsUnnormalizedLogProb,
+)
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import FactoredDistribution
@@ -46,12 +50,12 @@ from ._inference_utils import (
     build_mcmc_datatree,
     described,
     get_init_state,
-    is_jax_traceable,
     likelihood_flat,
     model_factors,
     observed_target,
     parallel_chain_map,
     run_seed,
+    traces_in_jax,
     unfactored_model_reason,
 )
 
@@ -333,19 +337,24 @@ class BlackJAXESSMethod(InferenceMethod):
                 feasible=False,
                 description=f"the prior must be Gaussian; got {described(factors.prior)}",
             )
-        # The runner traces the BlackJAX ESS step under ``lax.scan``;
-        # there's no eager fallback. Catching non-traceable likelihoods
-        # here lets auto-dispatch slide down to RWMH instead.
-        try:
-            if not is_jax_traceable(likelihood_flat(factors), jnp.asarray(gp[0])):
-                return Feasibility(
-                    feasible=False,
-                    description="the log-likelihood is not JAX-traceable",
-                )
-        except Exception as e:
+        likelihood = factors.likelihood
+        if not isinstance(
+            likelihood, SupportsConditionalUnnormalizedLogProb | SupportsUnnormalizedLogProb
+        ):
             return Feasibility(
                 feasible=False,
-                description=str(e),
+                description=(
+                    "the likelihood must have an unnormalized log-density "
+                    f"(SupportsConditionalUnnormalizedLogProb); got {described(likelihood)}"
+                ),
+            )
+        # The runner traces the BlackJAX ESS step under ``lax.scan``, with no
+        # eager fallback, so a likelihood JAX cannot trace leaves selection to
+        # RWMH.
+        if not traces_in_jax(likelihood):
+            return Feasibility(
+                feasible=False,
+                description="the log-likelihood is not JAX-traceable",
             )
         return Feasibility(feasible=True)
 
