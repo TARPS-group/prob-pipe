@@ -39,6 +39,10 @@ probpipe/
 │   ├── _compilation.py        #   compiled_or_eager: a compiled call that falls back to the eager call
 │   ├── _call_context.py       #   the call context: the per-call state a call carries into its workers (V.2)
 │   ├── _execution_claims.py   #   execution claims, the probe, and its stored results; traceability (V.13)
+│   ├── _evaluation_points.py  #   EvaluationPoints, EvaluationChunk, SharedPayload, EvaluationOutcomes,
+│   │                          #     EvaluationFailure, EvaluationError (V.9)
+│   ├── _executors.py          #   EvaluationExecutor, executor_registry and its built-in executors,
+│   │                          #     and the dispatcher that runs a set on its call's executor (V.9)
 │   └── _config.py             #   library configuration
 ├── values/                    # the value layer (III.1–III.6; LinOp, III.4, is in linalg/)
 │   ├── _numeric_array.py      #   NumericArray (III.1)
@@ -120,6 +124,7 @@ probpipe/
 ├── designs/                   # designs: batches materialized from per-field candidate sets, over any element spec
 ├── inference/                 # the registered inference methods (VI.6)
 ├── diagnostics/               # diagnostics over inference results
+├── testing/                   # check_executor, the conformance check of an executor (V.9)
 └── validation/                # predictive checks and model comparison
 ```
 

@@ -155,12 +155,16 @@ class _ExecutorRegistry(UnaryDispatchRegistry[EvaluationExecutor]):
         return unknown_names("executor", [name], sorted(self._by_name))
 
 
-#: The registry of executors, which the registry catalog lists.
 executor_registry: _ExecutorRegistry = _ExecutorRegistry(
     name="executors",
     description="Executors that run sets of evaluation points: in order, on threads, in "
     "worker processes, or compiled by JAX",
 )
+"""The registry of executors, from which a call chooses the one that runs its evaluations.
+
+It holds ``jax``, ``sequential``, ``thread``, and ``process``; register an
+executor of your own with ``executor_registry.register``.
+"""
 
 
 def _run_on_chosen_executor(evaluation_points: EvaluationPoints) -> tuple[Any, ...]:

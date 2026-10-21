@@ -346,6 +346,9 @@ class EvaluationChunk:
         One past the point index of its last evaluation point.
     """
 
+    start: int
+    stop: int
+
     def __init__(self, evaluation_points: EvaluationPoints, start: int, stop: int) -> None:
         self.start = start
         self.stop = stop
@@ -725,6 +728,9 @@ class EvaluationError(RuntimeError):
         EvaluationError: evaluation of 'forward' failed at 1 of 200 evaluation points:
         draw 17: CalledProcessError: Command '...' returned non-zero exit status 3.
     """
+
+    failures: tuple[EvaluationFailure, ...]
+    outputs: tuple[Any, ...]
 
     def __init__(
         self,

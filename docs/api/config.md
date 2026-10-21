@@ -52,3 +52,11 @@ probpipe.config.reset()
       show_root_full_path: true
       docstring_options:
         warn_unknown_params: false
+
+## Settings in worker processes
+
+Work that a call runs in another process, as the `process` executor does, carries the call's settings.
+The `prefect` section stays behind, so a call in a worker process runs without Prefect orchestration.
+A setting whose value cannot be pickled travels as a placeholder, and reading it in the worker raises `UnshippableSettingError`.
+
+::: probpipe.UnshippableSettingError

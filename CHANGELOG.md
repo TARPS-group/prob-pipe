@@ -2793,6 +2793,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   def forward(theta): ...
   ```
 
+- **Executors run the evaluations a call asks for.** `executor_registry` holds
+  `jax`, which maps a callable JAX can trace over every evaluation at once,
+  `sequential`, `thread`, and `process`, which runs chunks of evaluations in
+  worker processes started under the calling process's JAX settings and
+  settings in `config`. A draw made inside an evaluation takes the same random
+  key under every executor, so changing the executor changes no result. The
+  evaluations of one callable form one `EvaluationPoints`, which an executor
+  runs by its `EvaluationChunk`s; a user's executor subclasses
+  `EvaluationExecutor` and returns `EvaluationOutcomes`
+  (`docs/api/extending.md`).
+
+  ```python
+  from probpipe import executor_registry
+  executor_registry.list_methods()   # ['jax', 'sequential', 'thread', 'process']
+  ```
+
+- **The controls `executor` and `executor_options`.** `f.using(executor="thread",
+  executor_options={"max_workers": 8})` names the executor that runs the
+  evaluations of `f`'s calls, and the options that executor takes. The two are
+  set as one unit, and `using(executor=None)` removes the choice. A call
+  checks them when it opens: an executor that is not registered raises
+  `ResolutionError`, and an option the executor does not take raises
+  `ValueError`. Lifted calls and sweeps keep the `dispatch` control until they
+  move onto executors.
+
+- **`EvaluationError` names every failed evaluation.** A set of evaluations
+  runs every evaluation, keeps the outputs that succeeded, and then raises
+  `EvaluationError`, a `RuntimeError` chained to the first failure's
+  exception, whose `failures` give each failed evaluation's position, kind,
+  and error. An output that does not match the callable's output spec fails
+  its evaluation alone.
+
+- **`probpipe.testing.check_executor`** checks an executor against the
+  executor contract before it is registered: it runs fixed sets of
+  evaluations, including failing ones and draws nested in evaluations, under
+  64-bit floats, and compares each outcome with `sequential`'s.
+
+- **`UnshippableSettingError`.** Work sent to a worker process carries the
+  call's `config` settings, except the `prefect` section; a setting whose
+  value cannot be pickled travels as a placeholder, and reading it in the
+  worker raises `UnshippableSettingError`.
+
+- **`cloudpickle` is a direct dependency**, which the `process` executor uses
+  to send closures and functions defined in a notebook to worker processes.
+
 ### Changed
 
 - **A converter's `check` states only its promise.** It leaves `method_name`

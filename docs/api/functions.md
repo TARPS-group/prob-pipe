@@ -58,3 +58,10 @@ assert float(compute(1.0, scale=3.0)) == 12.0
 ::: probpipe.ResultKindError
 
 ::: probpipe.ResultSchemaError
+
+## Failed evaluations
+
+A call that evaluates a function many times, such as a call lifted over a distribution, runs every evaluation and keeps the outputs that succeeded.
+When some evaluations fail, the call then raises `EvaluationError`, which names each failed one and is chained to the first failure's exception.
+
+::: probpipe.EvaluationError
