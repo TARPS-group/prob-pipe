@@ -16,6 +16,7 @@ import pytest
 
 import probpipe.functions as functions
 import probpipe.values as values
+from probpipe.core import _execution_claims
 from probpipe.core import config as _config
 from probpipe.functions import (
     _call,
@@ -66,6 +67,7 @@ _MODULES = (
     _replay,
     _reparameterization,
     _config,
+    _execution_claims,
 )
 
 #: Names the code blocks define as worked examples rather than as declarations.

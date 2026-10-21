@@ -100,7 +100,7 @@ prediction = predict_impl(theta, x)
 
 A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_spec`, it returns one conforming to `output_spec`, with no tracking or lifting — the raw map that operations such as change of variables build on. `__call__` runs the **call handler**, which is the base's one extension point: on the base it is plain evaluation, and the engine layer (Part V) replaces it once, at import. The base also carries its **controls** (V.2), set at construction and revised functionally by `using`; the engine alone interprets them, at call time.
 
-A `Function` is constructed directly or using the `@function` decorator. `FunctionSpec`, which is the function kind's term spec, admits any callable.
+A `Function` is constructed directly or using the `@function` decorator. `FunctionSpec`, which is the function kind's term spec, admits any callable. Construction also takes the `Function`'s **execution claims** (V.13): `traceable` states whether JAX can trace the callable, `True`, `False`, or `None` for no statement, and `vectorized` states whether it takes a stack of evaluation points in one call. Unlike controls, claims are fixed for the `Function`'s life, and every copy `using` makes keeps them.
 
 ```python
 class FunctionSpec(TermSpec):      # the function kind's spec; is_valid accepts any callable
@@ -114,9 +114,12 @@ class Function(TrackedTerm):
                  input_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec | None = None,
                  output_spec: OutputSpec | TermSpec | None = None,
                  output_label: str | None = None,
+                 traceable: bool | None = None,
+                 vectorized: bool = False,
                  differentiable: NumericSpec | None = None,
                  bind: Mapping[str, Any] | None = None,
                  **controls) -> None: ...
+                 # traceable, vectorized: execution claims, fixed for the Function's life (V.13)
                  # differentiable: an optional differentiability claim (V.11)
                  # bind: arguments of the wrapped callable fixed at construction (V.3)
                  # controls: the controls' construction values (V.2)

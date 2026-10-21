@@ -663,6 +663,16 @@ def forward_batch(thetas): ...                 # thetas has shape (n, 2)
 def forward_with_adjoint(theta): ...
 ```
 
+The claims a `Function` holds are one value, which V.9's sets of evaluation points carry:
+
+```python
+@dataclass(frozen=True)
+class ExecutionClaims:
+    traceable: bool | None = None                # True, False, or None for no statement
+    vectorized: bool = False
+    differentiable: NumericSpec | None = None    # the claim of V.11
+```
+
 **The probe.** A **probe** is a trace made only to learn whether a callable traces, with `jax.make_jaxpr` on stand-ins for its inputs. A probe runs the callable's Python up to the first operation that fails on a tracer, so a callable with side effects claims `traceable=False`. ProbPipe keeps one **probe result** per `Function` and **input structure**, which is the tree structure that ProbPipe's canonical flatten gives for a call's arguments, with their shapes and dtypes, and the values of its non-numeric hashable arguments:
 
 | Claim | First call or first `check` for a new input structure | Later |
@@ -672,12 +682,12 @@ def forward_with_adjoint(theta): ...
 | `None` | one probe, whose outcome is stored | the stored outcome |
 
 Four rules keep the probe result sound:
-1. **Python numbers.** A Python `float` argument is a weakly typed array, so a sweep over `n0=10.0, 11.0, ...` reuses one probe result and one JAX program. A Python `int` is treated the same way when the probe succeeds with it as data. When the probe fails because the callable uses an `int` as a loop count or a shape, it runs once more with every `int` argument static, and the probe result records which form traced. The two attempts are one probe, so a callable is still probed at most once per input structure. A static `int`, a string, and any other hashable non-number are part of the input structure, and a lookup tries the input structure with `int`s as data first.
-2. **NumPy's global generator.** The probe compares the global states of NumPy's and Python's random generators before and after. A callable that drew from either is recorded as opaque, with the warning `'simulate' draws from NumPy's global random generator, so it is treated as opaque; its noise would otherwise be fixed into the compiled JAX program. Claim traceable=False`. A NumPy `Generator` that the callable creates or holds is not caught, so such a callable claims `traceable=False`.
-3. **Copies share the probe result.** The probe result belongs to the wrapped callable and its construction bindings, so the copies `using` makes share it. A law built from functions inside a kernel, which the kernel builds anew for every given value, keys its probe result by the code of its closure and the structure of the values the closure captures, so one probe serves every application of the kernel. A captured array counts by its shape and dtype, a captured hashable value by its value, and a captured `Function` by its identity and its claims. Any other captured value, a plain callable included, prevents sharing, so the closure is probed for itself.
+1. **Python numbers.** A Python `float` argument is a weakly typed array, so a sweep over `n0=10.0, 11.0, ...` reuses one probe result and one JAX program. An integer scalar, a Python `int` or a NumPy integer, is treated the same way when the probe succeeds with it as data. When the probe fails because the callable uses an `int` as a loop count or a shape, it runs once more with every integer scalar static, and the probe result records which form traced. The two attempts are one probe, so a callable is still probed at most once per input structure. A static `int`, a string, and any other hashable non-number are part of the input structure, and a lookup tries the input structure with `int`s as data first.
+2. **NumPy's global generator.** The probe compares the global states of NumPy's and Python's random generators before and after, and puts them back. A callable that drew from either is recorded as opaque, with the warning `'simulate' draws from NumPy's or Python's global random generator, so ProbPipe does not compile it with JAX. Draw from a JAX key instead, or pass traceable=False`. A NumPy `Generator` that the callable creates or holds is not caught, so such a callable claims `traceable=False`.
+3. **Copies share the probe result.** The probe result belongs to the wrapped callable and its construction bindings, so the copies `using` makes share it. A law built from functions inside a kernel, which the kernel builds anew for every given value, shares the probe results of its functions with every closure of the same code whose captured values have the same structure, so one probe serves every application of the kernel. The probe traces such a closure with its captured arrays as data, so its result holds for any captured arrays of the same shapes and dtypes. A closure that fails so because it reads a captured value, as `jnp.zeros(int(n))` does, is probed with its captured values as they are, and shares that result only with closures that capture equal values. A captured hashable value counts by its value, and a captured `Function` by its identity, since its claims are fixed. Any other captured value, a plain callable included, prevents sharing, so the closure is probed for itself.
 4. **`check` probes too.** `f.check(...)` runs the probe the call would run and stores its outcome, so `check` and the call choose the same executor and method. `check` may therefore run the callable's Python once.
 
-A false `traceable=True` claim is caught where the `Function` is called, even inside a larger trace. ProbPipe catches JAX's tracing errors and raises its own, chained to JAX's:
+A false `traceable=True` claim is caught where the `Function` is called, even inside a larger trace, a probe of another callable included. ProbPipe catches JAX's tracing errors and raises its own `TypeError`, chained to JAX's:
 
 ```text
 'forward' claims traceable=True, but tracing it failed: it converts a traced value to NumPy
@@ -707,6 +717,20 @@ Claims combine as the differentiability claim does (V.11):
 1. a view of a law at some of its paths keeps only the claims of the parts it views;
 2. a joint, a kernel, or a law built from functions traces when each of its JAX parts traces and each opaque `Function` inside it is embeddable;
 3. a value is differentiable through a chain of steps when every step on its path is, and an opaque step is differentiable only through a supplied derivative.
+
+A law or a kernel has a **traceability**: traceable, embeddable, or host-only, the state of its density, or of its sampler when it has no density, since that is what an inference method runs (VI.6). It derives it from its parts the first time it is read and keeps it:
+
+| Law or kernel | Its traceability |
+|---|---|
+| a family | traceable |
+| a joint | the least of its factors' |
+| a view or a rename | its parent's |
+| a law built from functions | its density's probe result, or its sampler's when it has no density |
+| the kernel of a function | the traceability of the law its function returned when the kernel was built, read by the construction's abstract evaluation (IV.4) |
+| a conditional at given values | its joint's |
+| any other law or kernel | its density probed once at a stand-in of one value, each dimension not yet bound of size one, or its sampler at one key when it has no density |
+
+The least of several is the least permissive in the order traceable, embeddable, host-only.
 
 **The embedded call.** When a `Function` that is not traceable is called and at least one of its arguments is a JAX tracer, ProbPipe makes an **embedded call**, which runs the opaque code from inside the compiled JAX program:
 1. **Requirement.** The `Function` must be embeddable, so that the JAX program can be compiled before the callable runs. A host-only `Function` raises while it is traced, and the error names the rule its output spec fails, as in `'forward' cannot run inside a JAX program: its output spec sets no dtype; give NumericArraySpec((40,), "float32")`.

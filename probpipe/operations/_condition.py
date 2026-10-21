@@ -75,6 +75,7 @@ from ..core._dispatch import (
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
+from ..core._execution_claims import Traceability
 from ..core._expression import Expression
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
@@ -537,6 +538,10 @@ class _UnnormalizedConditional(Distribution):
                 metadata={"stage": "exact", "route": "inference_methods"},
             )
         )
+
+    def _derived_traceability(self) -> Traceability:
+        """The joint's traceability, whose density this law reads at the given values."""
+        return self._joint._traceability()
 
     @property
     def joint(self) -> Distribution:

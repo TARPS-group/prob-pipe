@@ -167,10 +167,11 @@ class TestABatchOfArraysIsScoredInOneMappedCall:
         points = self._points(1000)
         scores = score(law, points)
         thousand = len(law.calls)
-        law.calls.clear()
-        score(law, self._points(5))
-        assert len(law.calls) == thousand < 5
-        assert all(jnp.shape(jnp.asarray(value)) == (3,) for value in law.calls)
+        # A law of its own, so the five values are traced as the thousand were.
+        law_of_five = CountedVector("v")
+        score(law_of_five, self._points(5))
+        assert len(law_of_five.calls) == thousand < 5
+        assert all(jnp.shape(jnp.asarray(value)) == (3,) for value in law_of_five.calls)
         assert (scores.level_names, scores.batch_shape) == (("point",), (1000,))
         np.testing.assert_allclose(
             np.asarray(scores.raw),
@@ -184,9 +185,9 @@ class TestABatchOfArraysIsScoredInOneMappedCall:
         law = CountedVector("v")
         score(law, self._points(1000))
         thousand = len(law.calls)
-        law.calls.clear()
-        scores = score(law, self._points(5))
-        assert len(law.calls) == thousand < 5
+        law_of_five = CountedVector("v")
+        scores = score(law_of_five, self._points(5))
+        assert len(law_of_five.calls) == thousand < 5
         assert bool(jnp.all(jnp.asarray(scores.raw) >= 0))
 
     @pytest.mark.parametrize("score", [log_prob, unnormalized_log_prob])

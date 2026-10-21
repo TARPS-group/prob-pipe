@@ -330,7 +330,12 @@ class TestTheDraw:
         law = EmpiricalDistribution(jnp.array([1.0, 2.0, 4.0]), output_name="mu", label="prior")
         result = affine(weights, law)
 
-        assert all(received is weights for received in seen)
+        # Every evaluation receives the record itself; the one trace that tests
+        # whether the body traces receives a record of the same structure.
+        evaluated = [
+            received for received in seen if not isinstance(received["a"], jax.core.Tracer)
+        ]
+        assert evaluated and all(received is weights for received in evaluated)
         assert str(result) == "affine(weights, mu ~ prior)"
         np.testing.assert_allclose(atom_leaves(result)[0], [3.0, 5.0, 9.0])
 
