@@ -196,7 +196,7 @@ The post-workshop work of both tracks is listed in `deferred.md`.
 
 The tracking issue, #601, shows each step's state, and `plans/status.py` writes it, so no box is ticked by hand. Each PR of a step carries the label `step:<step>`, such as `step:S2a`; a PR of the push that belongs to no step, such as a plans or design PR, carries `push:plans`; and a checkpoint PR carries `push:checkpoint` as well. From these labels the script writes each step's line: merged into `dev/overhaul`, in review, draft, or not started, with the box ticked once the step's PR has merged and none is open. It also lists the issue's comments that name `decisions.md` or `deferred.md` and were posted after the last checkpoint PR merged, which are the decisions and postponed work that those files do not hold yet, and the plans PRs. The issue's section "Waiting on the maintainer" is written by hand.
 
-Run `python3 plans/status.py` after opening a PR of the push, marking one ready for review, or merging one; `--dry-run` prints the body without writing it. Step PRs never edit § Steps, so parallel PRs do not conflict on this file.
+The CI workflow `push-status.yml` runs the script after every change to the state or labels of a PR into `dev/overhaul`, and fails a PR that carries none of `step:<step>`, `push:plans`, `push:checkpoint`, or `push:outside`, the label of a PR outside the push. Run `python3 plans/status.py` by hand after posting a comment the issue should list, or to see the body with `--dry-run`. Step PRs never edit § Steps, so parallel PRs do not conflict on this file.
 
 ## Starting a session on a step
 
@@ -211,7 +211,7 @@ Run `python3 plans/status.py` after opening a PR of the push, marking one ready 
 
 1. Open the PR into `dev/overhaul` as a draft, with a body that follows directives 4, 9, and 10 and the PR template. Its CHANGELOG entries go at the **end** of the existing section for their type, and never add a heading that `[Unreleased]` already has; each breaking change goes under `### Changed (breaking)` with a before-and-after line a user can copy, and a silent change shows the same call before and after (`execution-layer.md` § 13.1, `declarations-and-addressing.md` C.5).
 2. Run `/review-pr` on it, fix or answer each finding, and mark it ready for review (directive 13). If `plans/` is not on the PR's base, run `/review-pr` from a checkout of a branch that has `plans/`, or paste `plans/README.md` into the review's context, so the plan check runs.
-3. Label the PR `step:<step>`, or `push:plans` for a PR that belongs to no step, comment on the tracking issue with the PR link, and run `python3 plans/status.py`. A PR that changes the scope of another step, as a design or plans PR may, names that step in its comment.
+3. Label the PR `step:<step>`, or `push:plans` for a PR that belongs to no step, and comment on the tracking issue with the PR link; the push-status job then rewrites the issue. A PR that changes the scope of another step, as a design or plans PR may, names that step in its comment.
 4. Post any decision or question, and any postponed work, as a comment on the tracking issue (before it exists, in the PR body). A comment with a decision names `decisions.md`, and one with postponed work names `deferred.md`, so `plans/status.py` lists it until the checkpoint moves it. Step PRs do not edit `decisions.md` or `deferred.md`, which every parallel PR would otherwise conflict on: at each checkpoint, one small plans PR moves the comments into them. A plan correction that a step needs goes in that step's PR, in the section it corrects, and the checkpoint PR adds its revision-log row.
 5. Create the handoffs (below).
 
@@ -275,5 +275,6 @@ At a checkpoint:
 
 Steps S0 and E1 move the design into `design/`, which stays the single source of the target design; later steps update `design/` with their code.
 Before `plans/` is deleted, one PR re-evaluates the repository's rule documents against this push: `STYLE_GUIDE.md`, `CONTRACTS.md`, `CONTRIBUTING.md`, `AGENTS.md`, and the skills in `.claude/skills/`. It moves into them every directive of this file that proved useful and is not already there, such as the code-quality rules of directive 5 and the rule of directive 14, so the standards outlive the push. The same PR removes what the push added to the `review-pr` skill (its plan check and the matching line in `.claude/skills/README.md`), since `plans/` no longer exists.
+The same PR removes the push-status workflow (`.github/workflows/push-status.yml`), its test (`tests/ci/test_push_status.py`), the matching line of `AGENTS.md`, and the checks of the step labels in the `review-pr` and `check-pr` skills, and deletes the `step:*` and `push:*` labels.
 Once that PR has merged, every step before the workshop has merged, and the post-workshop work is recorded, `plans/` is deleted; git keeps its history.
 The items left in `deferred.md` become GitHub issues.
