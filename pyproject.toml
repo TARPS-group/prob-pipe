@@ -26,7 +26,7 @@ dependencies = [
   "arviz>=1.1,<2.0",
   # Sends closures and functions defined in a notebook to spawned worker
   # processes by value, which the standard pickle refuses.
-  "cloudpickle>=3",
+  "cloudpickle>=3.1.1",
 ]
 
 [project.optional-dependencies]
