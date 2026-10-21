@@ -60,7 +60,7 @@ def _bind_planned_function_inputs(
     Raises
     ------
     ApplicabilityError
-        If the arguments' inputs are not the declared ones, or an argument, the
+        If the arguments' names are not the declared inputs, or an argument, the
         event of a law the call lifts, or the element of a batch it sweeps does
         not unify with its input, the dimensions shared across inputs included.
     """
@@ -69,7 +69,8 @@ def _bind_planned_function_inputs(
     context = f"Function {function_name!r} input"
     if input_spec.keys() != values.keys():
         raise ApplicabilityError(
-            f"{context} inputs {sorted(values)} do not match the declared inputs {sorted(input_spec)}"
+            f"Function {function_name!r} receives arguments at the inputs {sorted(values)}, "
+            f"which do not match the declared inputs {sorted(input_spec)}"
         )
     bindings: dict[str, int] = {}
     try:

@@ -31,7 +31,7 @@ child nodes. No node holds a reference to a term. The node classes are these:
 
 Each node renders itself: it gives its label, its notation, and the text it
 collapses to, and it states the paths it holds fixed. A term reads the
-signature of its own expression from its declaration when it renders, so a
+signature of its own expression from its specs when it renders, so a
 stored expression never disagrees with its term. A node that has a law as a
 child records the law's signature, because the node holds no term.
 
@@ -108,12 +108,12 @@ _STORED_DEPTH = 64
 
 @dataclass(frozen=True, slots=True)
 class Signature:
-    """What a law, a kernel, or a function is over, as its declaration states it.
+    """What a law, a kernel, or a function is over, as its specs state it.
 
     Attributes
     ----------
     outputs : tuple of str
-        A law's or a kernel's event outputs, or a function's parameters, in
+        A law's or a kernel's outputs, or a function's parameters, in
         declaration order.
     given : tuple of str
         A kernel's inputs, in declaration order. A law and a function have
@@ -373,7 +373,7 @@ class Expression:
     def render_notation(self, own: Signature | None = None, *, warn: bool = False) -> str:
         """The notation this node renders.
 
-        *own* is the signature that the term's declaration states.
+        *own* is the signature that the term's specs state.
 
         A law, a kernel, or a function reads as its grouped label followed by its
         signature, which lists the fixed paths after ``;``, as ``model(mu; y)``. A
@@ -384,7 +384,7 @@ class Expression:
         Parameters
         ----------
         own : Signature or None, optional
-            The outputs and inputs that the term's declaration states,
+            The outputs and inputs that the term's specs state,
             which replace those the node records.
         warn : bool, optional
             Whether the rendering warns when it collapses a node, as the
@@ -510,7 +510,7 @@ class Named(_Signed):
     signature : Signature or None
         The signature of a law, a kernel, or a function, which the notation
         follows the label with. It is ``None`` for a value and for the
-        expression a term is constructed with, whose declaration supplies the
+        expression a term is constructed with, whose specs supply the
         signature. The expression that ``with_label`` gives a law or a kernel
         records the signature, so its notation keeps the defaulted inputs
         the law leaves free.
@@ -1141,7 +1141,7 @@ def _merged(held: tuple[str, ...], added: Iterable[str]) -> tuple[str, ...]:
 
 
 def draw_of(term: Any, outputs: Iterable[str] | None = None) -> Draw:
-    """A draw of *outputs* from the law *term*, by default every event output."""
+    """A draw of *outputs* from the law *term*, by default every output of its event."""
     names = tuple(term.event_spec.outputs) if outputs is None else tuple(outputs)
     return Draw(names, term._embedded_expression())
 

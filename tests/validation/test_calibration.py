@@ -35,10 +35,10 @@ from probpipe.distributions._capabilities import (
 from probpipe.families import GaussianFamily, glm_likelihood
 from probpipe.validation import SBCResult, interval_coverage, simulation_based_calibration
 from probpipe.validation._calibration import (
+    _entry_names,
     _flatten,
     _kolmogorov_sf,
     _ks_uniform,
-    _output_names,
     _ranks,
 )
 
@@ -266,14 +266,14 @@ class TestRanks:
         np.testing.assert_array_equal(np.asarray(_ranks(draws, jnp.array([-1.0]))), [0])
         np.testing.assert_array_equal(np.asarray(_ranks(draws, jnp.array([9.0]))), [4])
 
-    def test_per_output(self):
+    def test_per_entry(self):
         draws = jnp.array([[0.0, 10.0], [1.0, 20.0], [2.0, 30.0]])
         # col 0: 2 draws below 1.5; col 1: 0 draws below 5.0.
         np.testing.assert_array_equal(np.asarray(_ranks(draws, jnp.array([1.5, 5.0]))), [2, 0])
 
 
 class TestFlattening:
-    """The multi-field θ★ flattening + output-naming that ranks rely on."""
+    """The multi-field θ★ flattening + entry-naming that ranks rely on."""
 
     def test_flatten_honors_field_order(self):
         point = Record(
@@ -305,7 +305,7 @@ class TestFlattening:
             row = _flatten({"a": draws["a"][i], "b": draws["b"][i]}, spec)
             np.testing.assert_array_equal(np.asarray(rows[i]), np.asarray(row))
 
-    def test_output_names_expand_per_field(self):
+    def test_entry_names_expand_per_field(self):
         # A length-k field becomes field[0..k-1]; a scalar field keeps its name —
         # in posterior field order, matching the flat coordinates of its atoms.
         atoms = NumericRecordBatch(
@@ -315,11 +315,11 @@ class TestFlattening:
             label="r",
         )
         emp = EmpiricalDistribution(atoms, label="m")
-        assert _output_names(emp) == ("a[0]", "a[1]", "b")
+        assert _entry_names(emp) == ("a[0]", "a[1]", "b")
 
-    def test_a_whole_term_posterior_names_its_output(self):
+    def test_a_whole_term_posterior_names_its_entries(self):
         emp = EmpiricalDistribution(jnp.zeros((10, 2)), output_name="m")
-        assert _output_names(emp) == ("m[0]", "m[1]")
+        assert _entry_names(emp) == ("m[0]", "m[1]")
 
 
 class TestCoverage:
@@ -617,7 +617,7 @@ class TestSBCFit:
         assert isinstance(res, SBCResult)
         assert res.ranks.shape == (32, 2)
         assert res.ranks.min() >= 0 and res.ranks.max() <= res.num_posterior_draws
-        # param_names are per flattened component, aligned with the rank columns.
+        # param_names are per flattened entry, aligned with the rank columns.
         assert res.param_names == ("beta[0]", "beta[1]")
         assert len(res.param_names) == res.ranks.shape[1]
         # Well-specified model + NUTS → ranks ~ uniform. Measured across seeds 0–3

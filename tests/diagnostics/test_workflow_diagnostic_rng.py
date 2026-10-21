@@ -23,7 +23,7 @@ def _maximum(values):
 
 
 def _kernel(posterior):
-    """``y ~ Normal(alpha, 1)``, iid over four observations, given the posterior's inputs."""
+    """``y ~ Normal(alpha, 1)``, iid over four observations; its inputs are the posterior's outputs."""
     return conditional_distribution(
         lambda alpha, beta: Normal("y", alpha * jnp.ones(4), 1.0),
         given_spec=posterior.event_spec.outputs,

@@ -5,8 +5,8 @@ call resolution, normalization, planning, and route selection have identified
 the distribution regime. It draws or enumerates the lifted arguments, runs the
 function once per evaluation under the dispatch mode, and returns the
 pushforward as an :class:`~probpipe.EmpiricalDistribution` over the outputs,
-whose event spec is the function's completed output spec (V.6,
-V.10). With ``include_inputs`` the law is the joint empirical law of the lifted
+whose event spec is the function's completed output spec (V.6, V.10). With
+``include_inputs`` the law is the joint empirical law of the lifted
 inputs and the outputs.
 """
 
@@ -176,7 +176,7 @@ def execute_distribution_broadcast(
     output_label : str or None
         The result's display alias; the function's label by default.
     output_name : str
-        Default mathematical output, independent of display aliases.
+        The name of the default output, independent of display aliases.
     output_expression : Expression or None
         The result's expression, the function applied to draws of its
         inputs, which gives the result its label; *output_label* labels the
@@ -203,21 +203,23 @@ def execute_distribution_broadcast(
     Returns
     -------
     EmpiricalDistribution
-        Atoms on the output level, one per evaluation. The event spec is
+        Atoms on the level the output names, one per evaluation. The event spec is
         the completed output spec: a declared output completed by the
-        returned values, or else an exposed record for an undeclared record return.
-        An undeclared whole-term result uses the callable's original name. Under *include_inputs* the
-        event exposes one field per lifted parameter, holding its complete draw,
-        followed by the output's outputs.
+        returned values, or else, for an undeclared record return, the
+        positional form over the record.
+        An undeclared whole-term result uses the callable's original name.
+        Under *include_inputs* the event exposes one field per lifted
+        parameter, holding its complete draw, followed by the function's
+        outputs.
 
     Raises
     ------
     ApplicabilityError
-        If *include_inputs* is set and a lifted parameter shares its name with a
-        output of the output.
+        If *include_inputs* is set and a lifted parameter shares its name with
+        one of the outputs.
     ResultSchemaError
         If the outputs do not satisfy the output spec or do not agree on
-        one declaration.
+        one spec.
     """
     broadcast_args = list(stochastic_plan.arg_refs)
     max_evaluations = stochastic_plan.max_evaluations
@@ -314,12 +316,12 @@ def _lift_result(
 ) -> EmpiricalDistribution:
     """The empirical law of a lifted call's evaluations, under their weights.
 
-    The atoms are the outputs on the output level, and the event spec
-    is the completed output spec. A declaration that exposes a returned
-    law's outputs holds each law whole under *output_name* instead,
+    The atoms are the outputs on the level the output names, and the event spec
+    is the completed output spec. An output spec in the positional form
+    over a returned law holds each law whole under *output_name* instead,
     since each atom is a law. Under *include_inputs* each atom joins
     the draw of every lifted argument, under its parameter's label, to the
-    output's outputs.
+    function's outputs.
 
     Parameters
     ----------
@@ -327,7 +329,7 @@ def _lift_result(
         The lifted call's drawn inputs, outputs, and weights.
     values : mapping of str to Any
         The call's resolved arguments, from which each lifted law's event
-        declaration is read under *include_inputs*.
+        spec is read under *include_inputs*.
     broadcast_args : sequence of FunctionInputRef
         The references to the lifted arguments, in the order of their fields
         in a joint atom.
@@ -337,7 +339,7 @@ def _lift_result(
         The function's output spec with the call's shared dimensions
         bound, or ``None`` when the function declares no output.
     output_name : str
-        Default mathematical output, independent of display aliases.
+        The name of the default output, independent of display aliases.
     include_inputs : bool
         Whether the law is the joint law of the lifted inputs and the outputs.
 
@@ -376,11 +378,12 @@ def _output_atoms(
     output_spec: OutputSpec | None,
     output_name: str,
 ) -> tuple[Batch, OutputSpec]:
-    """The outputs as a batch on the output level, and the declaration they complete.
+    """The outputs as a batch on the level the output names, and the spec they complete.
 
-    A declared output completes to its declaration with the shared dimensions
-    bound by the outputs and any unspecified output type filled. An undeclared record exposes
-    its fields; an undeclared whole-term output uses *output_name*.
+    A declared output completes to its output spec with the shared dimensions
+    bound by the outputs and any unspecified type filled in. An undeclared
+    record exposes its fields as outputs; an undeclared whole-term output
+    uses *output_name*.
 
     Parameters
     ----------
@@ -390,12 +393,12 @@ def _output_atoms(
     count : int
         The number of evaluations.
     output_label : str
-        The batch's display alias, independent of its outputs.
+        The batch's display alias, independent of its output names.
     output_spec : OutputSpec or None
         The function's output spec with the call's shared dimensions
         bound, or ``None`` when the function declares no output.
     output_name : str
-        Default mathematical output, independent of display aliases.
+        The name of the default output, independent of display aliases.
 
     Returns
     -------
@@ -407,9 +410,9 @@ def _output_atoms(
     Raises
     ------
     ResultSchemaError
-        If the outputs do not satisfy the declaration or do not agree on one spec,
-        or an evaluation returns a batch with a level named like the output
-        output, which names the atom level.
+        If the outputs do not satisfy the output spec or do not agree on one spec,
+        or an evaluation returns a batch with a level of the output's name,
+        which names the atom level.
     """
     atom_level = (
         _root_output_name(output_spec) if output_spec is not None else None
@@ -430,10 +433,10 @@ def _output_atoms(
         returned = _returned_levels(rows)
         if atom_level in returned:
             raise ResultSchemaError(
-                f"the atoms of {output_label!r} lie on the level {atom_level!r} that the output "
-                f"output names, but the evaluations return batches on the levels "
+                f"the atoms of {output_label!r} lie on the level {atom_level!r} named by the "
+                f"output, but the evaluations return batches on the levels "
                 f"{list(returned)}, which include it. Pass an explicit OutputSpec with a distinct "
-                f"output, such as "
+                f"output name, such as "
                 f"output_spec=OutputSpec({_free_output(dict.fromkeys(returned))}=None)."
             )
         completed = None if output_spec is None else _aggregate_output_spec(output_spec, rows)
@@ -493,17 +496,18 @@ def _joint_atoms(
     broadcast_args: Sequence[FunctionInputRef],
     output_label: str,
 ) -> RecordBatch:
-    """The batch of joint atoms: each lifted argument's draw, then the output's outputs.
+    """The batch of joint atoms: each lifted argument's draw, then the returned values' outputs.
 
     Each lifted parameter contributes one field, under its label, holding its
     complete draw at the kind its law's event spec names, so a record
-    draw stays nested even when it has one field. The output contributes the
-    outputs *declaration* exposes.
+    draw stays nested even when it has one field. The returned values
+    contribute the outputs of *declaration*.
 
     Parameters
     ----------
     atoms : Batch
-        The outputs on the output level, as :func:`_output_atoms` returns them.
+        The outputs on the level the output names, as :func:`_output_atoms`
+        returns them.
     declaration : OutputSpec
         The completed output spec, as :func:`_output_atoms` returns it.
     draws : _LiftDraws
@@ -511,16 +515,16 @@ def _joint_atoms(
         argument's draws.
     values : mapping of str to Any
         The call's resolved arguments, from which each lifted law's event
-        declaration is read.
+        spec is read.
     broadcast_args : sequence of FunctionInputRef
         The references to the lifted arguments, in the order of their fields.
     output_label : str
-        The batch's label. The output's outputs come from *declaration*.
+        The batch's label. The function's outputs come from *declaration*.
 
     Returns
     -------
     RecordBatch
-        The joint atoms on the output level, labeled *output_label*.
+        The joint atoms on the level the output names, labeled *output_label*.
 
     Raises
     ------
@@ -745,7 +749,7 @@ def _stacked_draws(draws: Any, event: BatchSpec) -> Any:
         mapping of raw columns, or an object array of one batch per draw,
         possibly held in a tracked term.
     event : BatchSpec
-        The declaration of one draw.
+        The spec of one draw.
 
     Returns
     -------

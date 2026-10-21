@@ -302,7 +302,7 @@ class TestExecuteSweep:
 
         assert isinstance(result, DistributionBatch)
         assert result.batch_shape == (2,)
-        assert [float(mean(output_name)) for output_name in result] == [
+        assert [float(mean(law)) for law in result] == [
             0.0,
             1.0,
         ]
@@ -770,7 +770,7 @@ class TestNumericArraySweep:
         result = Function(lambda row: value, label="repeated", dispatch=dispatch)(source)
 
         assert isinstance(result, NumericArrayBatch)
-        # The rows are stored as one JAX array, whose dtype the declaration records.
+        # The rows are stored as one JAX array, whose dtype the element spec records.
         assert result.element_spec == NumericArraySpec(
             event_shape, dtype=np.float32, support=positive
         )
@@ -846,7 +846,7 @@ class TestNumericArraySweep:
         expected = np.asarray(source["x"]) * 2 + 1
         if event_shape:
             expected = np.stack([expected, expected + 1], axis=-1)
-        # The rows are stored as one JAX array, whose dtype the declaration records.
+        # The rows are stored as one JAX array, whose dtype the element spec records.
         expected_spec = NumericArraySpec(
             event_shape,
             dtype=np.float32,
@@ -897,7 +897,7 @@ class TestNumericArraySweep:
             numeric_sweep_source
         )
 
-        # The rows are stored as one JAX array, whose dtype the declaration records.
+        # The rows are stored as one JAX array, whose dtype the element spec records.
         assert result.raw.dtype == np.float32
         assert result.element_spec == NumericArraySpec((2,), dtype=np.float32, support=positive)
         assert result.axis_groups == numeric_sweep_source.axis_groups
@@ -1096,7 +1096,7 @@ class TestNumericArraySweep:
             _numeric_record_batch("x", range(2))
         )
 
-        # The rows are stored as one JAX array, whose dtype the declaration records.
+        # The rows are stored as one JAX array, whose dtype the element spec records.
         assert result.element_spec == NumericArraySpec((), dtype=np.float32)
         np.testing.assert_array_equal(np.asarray(result), [2.5, 1.0] if reverse else [1.0, 2.5])
 
@@ -1280,7 +1280,7 @@ class TestANestedSweepOfRecordRows:
 
 
 class TestARecordedDtypeIsTheStoredDtype:
-    """A sweep or a lift stacks its rows into one array, whose dtype its declaration records.
+    """A sweep or a lift stacks its rows into one array, whose dtype its spec records.
 
     JAX's 64-bit mode is off in the suite, so a 64-bit row is stored as a 32-bit one.
     """
@@ -1314,7 +1314,7 @@ class TestARecordedDtypeIsTheStoredDtype:
             OutputSpec(value=None),
             NumericArraySpec((3,), dtype="float64"),
         ],
-        ids=["undeclared", "shape-only", "type-hole", "float64"],
+        ids=["undeclared", "shape-only", "unspecified-type", "float64"],
     )
     def test_a_sweep_of_64_bit_rows_records_the_stored_dtype(self, dispatch, body, declaration):
         assert not jax.config.jax_enable_x64

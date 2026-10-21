@@ -183,13 +183,13 @@ def _replicate_level(source: Distribution, level: str | None) -> str:
     """The level a replicate's draws lie on.
 
     It defaults to the atom level of an empirical source with exactly one, and
-    otherwise to the source's output when the source has one output, as a
-    whole-term event does.
+    otherwise to the name of the source's output when the source has one
+    output, as a whole-term event does.
 
     Parameters
     ----------
     source : Distribution
-        The bootstrap's source, whose atom level or output gives the default.
+        The bootstrap's source, whose atom level or output name gives the default.
     level : str or None
         The requested level name, or None for the default.
 
@@ -204,7 +204,7 @@ def _replicate_level(source: Distribution, level: str | None) -> str:
         If *level* is not a string.
     ValueError
         If *level* is empty or contains ``/``, or is omitted for a source that
-        exposes a record of several outputs.
+        has several outputs.
     """
     if level is not None:
         if not isinstance(level, str):
@@ -249,13 +249,13 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
 
     **The event spec.** One draw is a batch of the source's event term on
     the replicate's level, so a replicate keeps the source's term kind. The
-    declaration is the law's own, derived from the source and the replicate
+    event spec is the law's own, derived from the source and the replicate
     size, under *output_name*.
 
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     source : Distribution
         The law the replicate draws from, which implements ``SupportsSampling``.
     replicate_size : int, optional
@@ -266,20 +266,21 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
     level : str, optional
         The level a replicate's draws lie on. It defaults to the source's atom
         level when the source is an empirical law with exactly one, and
-        otherwise to the source's output when the source has one, as a
-        whole-term event does.
+        otherwise to the name of the source's output when the source has one,
+        as a whole-term event does.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw.
+        An event spec naming *output_name*, which gives the type of one draw.
 
     Raises
     ------
     TypeError
         If *source* is not a law that samples, *output_name* or *level* is not a
         string, *label* is not a non-empty string, *replicate_size* is not an
-        integer, or *event_spec* is not an ``OutputSpec`` or exposes a record.
+        integer, or *event_spec* is not an ``OutputSpec`` or is in the
+        positional form over a record.
     ValueError
         If *replicate_size* is not positive or is omitted for a source without
-        atoms, *level* is omitted for a source exposing several outputs or is
+        atoms, *level* is omitted for a source with several outputs or is
         not a valid level name, *event_spec* names another output, or it
         declares a type that does not unify with the replicate's.
 
@@ -369,8 +370,8 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
     dataset.
 
     **The event spec.** One draw is declared as a law carrying the
-    source's complete event spec, so its output names and packaging
-    are the source's. The measure's own declaration is distinct: a whole term
+    source's complete event spec, so its outputs and their form are the
+    source's. The measure's own event spec is distinct: a whole term
     under *output_name*.
 
     **Capabilities.** The measure samples, and its mean, the marginalized law
@@ -381,7 +382,7 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
     Parameters
     ----------
     output_name : str
-        The output of the measure's event.
+        The name of the measure's one output, which names its draws.
     source : Distribution
         The law a replicate draws from, which implements ``SupportsSampling``.
     replicate_size : int, optional
@@ -394,7 +395,7 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
         The level the atoms of a drawn measure lie on, defaulting as for
         :class:`BootstrapReplicateDistribution`.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw.
+        An event spec naming *output_name*, which gives the type of one draw.
 
     Raises
     ------
@@ -1056,8 +1057,8 @@ class KDEDistribution(
     ``"silverman"``, and ``None`` selects Scott's rule. Both rules count Kish's
     effective sample size, so they stay sensible under importance weights.
 
-    **The event spec.** Record atoms expose their fields, and array atoms
-    form a whole-term event under *output_name*. An *event_spec* names the
+    **The event spec.** Each field of record atoms is an output of the law,
+    and array atoms form a whole-term event under *output_name*. An *event_spec* names the
     outputs, as for ``EmpiricalDistribution``. Every leaf is declared
     floating, on the real line.
 
@@ -1092,21 +1093,23 @@ class KDEDistribution(
     kernel : type of SmoothingKernel
         The smoothing kernel, ``GaussianKernel`` by default.
     output_name : str, optional
-        The output of a whole-term event, required for array atoms unless
-        *event_spec* names it, and refused for record atoms.
+        The name of the law's one output, which names its draws, required for
+        array atoms unless *event_spec* names it, and refused for record atoms.
     label : str, optional
         The law's label, ``KDEDistribution`` by default.
     event_spec : OutputSpec, optional
-        The declaration of one draw, completed with the atoms' spec.
+        An event spec giving the type of one draw, completed with the atoms'
+        spec.
 
     Raises
     ------
     TypeError
         If *atoms* is neither a numeric array-like nor a ``NumericRecordBatch``,
-        a list or a tuple of atoms holds an entry that is not a number, *kernel* is not a ``SmoothingKernel`` class, *output_name* is missing for
-        array atoms or given for record atoms, *label* is not a non-empty
-        string, *event_spec* is not an ``OutputSpec``, or *event_spec* exposes a
-        record for array atoms.
+        a list or a tuple of atoms holds an entry that is not a number,
+        *kernel* is not a ``SmoothingKernel`` class, *output_name* is missing
+        for array atoms or given for record atoms, *label* is not a non-empty
+        string, *event_spec* is not an ``OutputSpec``, or *event_spec* is in
+        the positional form over a record for array atoms.
     ValueError
         If the atoms hold none or have no leading axis, the atoms of a list or a
         tuple have different shapes, the weights are invalid,
@@ -1124,7 +1127,7 @@ class KDEDistribution(
     1.8056
     """
 
-    #: The constructor takes the atoms first and the output as a keyword.
+    #: The constructor takes the atoms first and the output name as a keyword.
     _repr_output_name: ClassVar[str | None] = "keyword"
 
     def __init__(

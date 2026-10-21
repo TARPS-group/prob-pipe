@@ -428,7 +428,7 @@ class TestConditioning:
     def test_nle_constrained_prior_matches_true_likelihood(self):
         """A constrained (Gamma) prior end to end, judged against NUTS run with
         the TRUE (analytic Gaussian) likelihood on the same model -- isolating
-        the learned output's error from MCMC and prior effects. NUTS walks
+        the learned likelihood's error from MCMC and prior effects. NUTS walks
         the natural space; the learned likelihood conditions on raw positive
         theta."""
 

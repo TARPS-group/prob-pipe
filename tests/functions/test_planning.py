@@ -1,11 +1,11 @@
 """Planning, step 5 of the stack (design V.6).
 
-Planning unifies the available declarations and computes the result
-declaration as far as they determine it, deferring what only the return can
+Planning unifies the available specs and computes the result's
+output spec as far as they determine it, deferring what only the return can
 settle:
 
 - a bare output spec: completes to ``OutputSpec.default``;
-- an unspecified output type: is filled per call, and the declaration keeps it;
+- an unspecified output type: is filled per call, and the output spec keeps it;
 - a lift: plans a distribution over the output spec;
 - ``include_inputs``: returns the joint law of the lifted inputs and the output.
 """
@@ -156,7 +156,7 @@ class TestEmptySweepPlanning:
     @pytest.mark.parametrize(
         "declaration",
         [None, OutputSpec(value=None), NumericArraySpec(("n",)), RecordSpec(x=("n",))],
-        ids=["undeclared", "type-hole", "unbound-array", "unbound-record"],
+        ids=["undeclared", "unspecified-type", "unbound-array", "unbound-record"],
     )
     @pytest.mark.parametrize("check", [False, True], ids=["execute", "check"])
     def test_an_incomplete_declaration_is_refused_without_running_the_body(
@@ -182,7 +182,7 @@ class TestEmptySweepPlanning:
             raise AssertionError("An empty sweep must not evaluate the body")
 
         empty = NumericArrayBatch(jnp.zeros((0, 2)), "row", label="rows")
-        assert unexpected.check(empty).result.spec.shape == (2,)
+        assert unexpected.check(empty).result.term_spec.shape == (2,)
         result = unexpected(empty)
         assert isinstance(result, NumericArrayBatch)
         assert result.batch_shape == (0,)
@@ -198,7 +198,7 @@ class TestEmptySweepPlanning:
             element_spec=DistributionSpec(OutputSpec(x=NumericArraySpec(()))),
             label="laws",
         )
-        assert mean.check(empty).result.spec.shape == ()
+        assert mean.check(empty).result.term_spec.shape == ()
         result = mean(empty)
         assert isinstance(result, NumericArrayBatch)
         assert result.batch_shape == (0,)

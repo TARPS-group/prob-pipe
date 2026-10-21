@@ -157,7 +157,7 @@ class _FunctionLaw(Distribution):
     label : str
         The law's label.
     event_spec : OutputSpec
-        The complete declaration of one draw.
+        The complete event spec of one draw.
     sample : callable or None
         The sampler, as :func:`distribution` takes it.
     log_prob : callable or None
@@ -247,7 +247,7 @@ def _sampler_declaration(
 ) -> tuple[OutputSpec, bool]:
     """*declaration* completed from the abstract draw of *sample*, and whether *sample* traces.
 
-    Only a declaration that is numeric or pending is read abstractly. A sampler
+    Only an event spec whose type is numeric or pending is read abstractly. A sampler
     whose ``jax.eval_shape`` fails does not trace, and *declaration* is
     returned as it is, as it is for an event that is not numeric.
 
@@ -263,8 +263,9 @@ def _sampler_declaration(
     Returns
     -------
     declaration : OutputSpec
-        The declaration that ``OutputSpec.with_term_spec`` completes with the abstract
-        draw's spec, or *declaration* as it is when no abstract draw is read.
+        The event spec that ``OutputSpec.with_term_spec`` completes with the
+        abstract draw's spec, or *declaration* as it is when no abstract draw is
+        read.
     traces : bool
         Whether *sample* traces in JAX.
 
@@ -298,16 +299,16 @@ def _event_declaration(output_name: str | None, event_spec: Any) -> OutputSpec:
     Parameters
     ----------
     output_name : str or None
-        The output of a whole-term event, which :func:`distribution`
+        The name of a whole-term event's output, which :func:`distribution`
         received.
     event_spec : OutputSpec or TermSpec
-        The declaration :func:`distribution` received.
+        The event spec :func:`distribution` received.
 
     Returns
     -------
     OutputSpec
-        *event_spec* itself when it is an ``OutputSpec``, the exposed record of
-        a bare ``RecordSpec``, and otherwise the bare spec under *output_name*.
+        *event_spec* itself when it is an ``OutputSpec``, the positional form
+        over a bare ``RecordSpec``, and otherwise the bare spec under *output_name*.
 
     Raises
     ------
@@ -321,17 +322,17 @@ def _event_declaration(output_name: str | None, event_spec: Any) -> OutputSpec:
         if output_name is not None:
             raise TypeError(
                 f"distribution: {type(event_spec).__name__} names its own outputs, so pass "
-                f"no output; got output_name={output_name!r}"
+                f"no output_name; got output_name={output_name!r}"
             )
         return event_spec if isinstance(event_spec, OutputSpec) else OutputSpec(event_spec)
     if isinstance(event_spec, TermSpec):
         if output_name is None:
             raise TypeError(
-                f"distribution: a whole-term event of type {type(event_spec).__name__} needs a "
-                f"output; pass output_name='name'"
+                f"distribution: a whole-term event of type {type(event_spec).__name__} needs an "
+                f"output name; pass output_name='name'"
             )
         if not isinstance(output_name, str):
-            raise TypeError(f"distribution: output must be a string; got {output_name!r}")
+            raise TypeError(f"distribution: output_name must be a string; got {output_name!r}")
         return OutputSpec.default(event_spec, output_name=output_name)
     raise TypeError(
         f"distribution: event_spec must be an OutputSpec or a TermSpec; got "
@@ -359,7 +360,7 @@ def _density_traces(
 ) -> bool:
     """Whether *density* traces at a stand-in of one value of the event, where it must give a scalar.
 
-    A declaration without a stand-in, such as one with a value that is no
+    An event spec without a stand-in, such as one with a value that is no
     array, reads no density, which then scores a batch one value at a time.
 
     Parameters
@@ -425,7 +426,7 @@ def distribution(
     """Build a ``Distribution`` from a sampling function, a log-density, or both.
 
     ``sample(key)`` returns one draw at a PRNG key, at the kind the event
-    declaration names, as an array for an array event or a mapping or
+    spec names, as an array for an array event or a mapping or
     ``Record`` for a record event. ``log_prob(value)`` returns the normalized
     log-density of one value as a real scalar, and
     ``unnormalized_log_prob(value)`` returns one up to an additive constant. A density receives an array for an array event, a
@@ -452,7 +453,7 @@ def distribution(
     Construction draws nothing and scores no value. It evaluates each function
     that traces abstractly, with ``jax.eval_shape``: the abstract draw of
     *sample* must unify with *event_spec*, which it completes by filling a
-    pending type and setting a dtype the declaration leaves unset, and each
+    pending type and setting a dtype it leaves unset, and each
     density must return a real scalar at a stand-in of one value of the event.
     A function whose ``jax.eval_shape`` fails does not trace, and construction
     reads nothing from it.
@@ -479,12 +480,13 @@ def distribution(
         ``unnormalized_log_prob(value)``, the log-density of one value up to an
         additive constant.
     event_spec : OutputSpec or TermSpec
-        The declaration of one draw. An ``OutputSpec`` names its outputs, a
-        bare ``RecordSpec`` exposes its fields, and any other bare spec is a
+        The spec of one draw. An ``OutputSpec`` names its outputs, the fields
+        of a bare ``RecordSpec`` are the outputs, and any other bare spec is a
         whole term under *output_name*.
     output_name : str, optional
-        The output of a whole-term event declared by a bare spec other than
-        a record; required for one, and refused with any other declaration.
+        The name of the output of a whole-term event declared by a bare spec
+        other than a record; required for one, and refused with any other
+        *event_spec*.
     label : str, optional
         The law's label, ``ℙ`` by default.
 

@@ -110,7 +110,7 @@ def _draw_indices(
 
 
 def _parameter_declaration(prior: Any, output_name: str) -> OutputSpec:
-    """The declaration of the parameters *prior* is a law over.
+    """The event spec of the parameters *prior* is a law over.
 
     A prior that is not a distribution declares nothing, so its parameters are
     opaque under *output_name*.
@@ -207,7 +207,7 @@ class MinibatchedDistribution(
         ``[1, len(data)]``.
     """
 
-    #: The constructor takes no output, so the repr shows none.
+    #: The constructor takes no output name, so the repr shows none.
     _repr_output_name: ClassVar[str | None] = None
 
     def __init__(

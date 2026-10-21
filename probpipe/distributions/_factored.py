@@ -43,7 +43,7 @@ from ..core._spec_base import (
     _known_type,
     _unify_specs,
 )
-from ..core._specs import InputSpec, OutputSpec, _has_record_outputs, _single_output_name
+from ..core._specs import InputSpec, OutputSpec, _has_record_outputs
 from ..core.named_tree import _unflatten_paths
 from ..core.provenance import Provenance
 from ..core.record import Record
@@ -87,6 +87,7 @@ from ._distribution import (
     _no_free_dims,
     _recorded_copy,
     _shared_final_names,
+    _single_output_name,
 )
 
 if TYPE_CHECKING:
@@ -225,7 +226,8 @@ class _FactorGraph:
     unmet : InputSpec or None
         The givens no factor produces, or ``None`` when every given is met.
     event_spec : OutputSpec
-        The exposed record of every factor's outputs, in factor order.
+        The positional form over the record of every factor's outputs, in
+        factor order.
     scope : Mapping[str, int]
         The joint's dimension scope: each dimension name bound while the factors
         were unified, so a later composition binds the same name to the same
@@ -270,7 +272,7 @@ def _flattened(
 ) -> tuple[tuple[Factor, ...], dict[str, int]]:
     """*factors* with each factored factor replaced by its own, and the merged scope.
 
-    A packaged joint is one factor, since its packaging is part of its declaration.
+    A packaged joint is one factor, since its form is part of its event spec.
 
     Parameters
     ----------
@@ -328,7 +330,7 @@ def _unify_either_way(
         The size of each symbolic dimension bound so far, keyed by its name, which
         the direction that unifies extends in place.
     path : str
-        The location that error messages name, such as ``"the given 'x'"``.
+        The location that error messages name, such as ``"the input 'x'"``.
 
     Raises
     ------
@@ -356,10 +358,10 @@ def _factor_graph(
     conditional-first: a factor may condition on an output that a factor to
     its right produces, and never on one a factor to its left produces. Every
     output is produced once. A matched output's spec must unify with the
-    consuming input's, and same-named unmet givens unify into one input, all in one
+    consuming input's, and same-named unmet inputs unify into one input, all in one
     dimension scope, starting from *scope*, whose bindings are applied to the
     factors and recorded with the graph. An optional input is met as a required
-    one is, and unmet, it takes its default. The graph records the unmet givens
+    one is, and unmet, it takes its default. The graph records the unmet inputs
     only when a required one is among them, and an unmet input is optional when
     every factor that names it holds it optional.
 
@@ -375,7 +377,7 @@ def _factor_graph(
     -------
     _FactorGraph
         The flat factors, bound in the joint's one scope, with their dependencies
-        and their unmet givens.
+        and their unmet inputs.
 
     Raises
     ------
@@ -390,7 +392,7 @@ def _factor_graph(
     if not factors:
         raise ValueError("a FactoredDistribution needs at least one factor; got none")
     producers: dict[str, int] = {}
-    output_specs: dict[str, TermSpec] = {}
+    output_term_specs: dict[str, TermSpec] = {}
     for index, factor in enumerate(factors):
         if not isinstance(factor, (Distribution, ConditionalDistribution)):
             raise TypeError(
@@ -400,14 +402,14 @@ def _factor_graph(
         for output_name, spec in factor.event_spec.outputs.items():
             if output_name in producers:
                 raise ValueError(
-                    f"the field {output_name!r} is produced by both factor "
+                    f"the output {output_name!r} is produced by both factor "
                     f"{producers[output_name]} ({factors[producers[output_name]].label!r}) and "
                     f"factor {index} ({factor.label!r}); rename it in one of them with "
                     f"with_path_names({{{output_name!r}: ...}}), or build one of them with "
                     f"another output, as Normal('{output_name}_2', ...)"
                 )
             producers[output_name] = index
-            output_specs[output_name] = spec
+            output_term_specs[output_name] = spec
     edges: list[tuple[int, int, str]] = []
     unmet: dict[str, TermSpec] = {}
     required: set[str] = set()
@@ -422,7 +424,7 @@ def _factor_graph(
                     required.add(input_name)
                 if input_name in unmet:
                     _unify_either_way(
-                        unmet[input_name], input_term_spec, bindings, f"the given {input_name!r}"
+                        unmet[input_name], input_term_spec, bindings, f"the input {input_name!r}"
                     )
                     if isinstance(unmet[input_name], OpaqueSpec) and isinstance(
                         input_term_spec, OpaqueSpec
@@ -438,7 +440,10 @@ def _factor_graph(
                     f"{factors[producer].label!r} to the right of {factor.label!r}"
                 )
             _unify_specs(
-                input_term_spec, output_specs[input_name], bindings, f"the given {input_name!r}"
+                input_term_spec,
+                output_term_specs[input_name],
+                bindings,
+                f"the input {input_name!r}",
             )
             edges.append((index, producer, input_name))
     if bindings:
@@ -471,18 +476,19 @@ def _factor_graph(
 def _joint_declaration(graph: _FactorGraph, output_name: str | None) -> OutputSpec:
     """The event spec of a joint of *graph*, packaged under *output_name* when one is given.
 
-    An exposed joint declares the factors' exposed record, and a packaged joint
-    declares that record as a whole term under *output_name*. A packaged joint's
-    draw is the record of its factors' outputs, in the raw form an exposed
-    joint's draw has.
+    Without *output_name*, the joint's event spec is the positional form over
+    the record of its factors' outputs, and a packaged joint declares that
+    record as a whole term under *output_name*. A packaged joint's draw is the
+    record of its factors' outputs, in the raw form the draw of a joint in the
+    positional form has.
     """
     if output_name is None:
         return graph.event_spec
     return OutputSpec(**{output_name: graph.event_spec.term_spec})
 
 
-def _packaging(joint: Any) -> dict[str, str]:
-    """The constructor keyword that keeps *joint*'s packaging: its output, if it is packaged."""
+def _form_keywords(joint: Any) -> dict[str, str]:
+    """The constructor keyword that keeps *joint*'s form: its root output's name, if any."""
     output_name = _single_output_name(joint.event_spec)
     return {} if output_name is None else {"_output_name": output_name}
 
@@ -491,9 +497,9 @@ def _packaging(joint: Any) -> dict[str, str]:
 # The raw forms of a joint
 # ---------------------------------------------------------------------------
 #
-# A factor contributes its outputs to a joint's value by its own packaging:
-# a whole term's output is the factor's value itself, and an exposed record's
-# outputs are the value's immediate children. Scoring reverses the
+# A factor contributes its outputs to a joint's value by its own form: a
+# whole term's output is the factor's value itself, and the outputs of the
+# positional form over a record are the value's immediate children. Scoring reverses the
 # extraction, so every factor receives a value of the kind it declares.
 
 
@@ -547,7 +553,7 @@ def _children(value: Any) -> Mapping[str, Any]:
 
 
 def _outputs_of(declaration: OutputSpec, value: Any) -> dict[str, Any]:
-    """Each output *declaration* declares, extracted from *value*.
+    """The value of each output *declaration* declares, extracted from *value*.
 
     *value* is a draw of the declared event, or an event-typed result such as a
     mean, and the leading axes of a batch stay on each output.
@@ -562,8 +568,8 @@ def _outputs_of(declaration: OutputSpec, value: Any) -> dict[str, Any]:
 def _event_of(declaration: OutputSpec, outputs: Mapping[str, Any]) -> Any:
     """The value *declaration* declares, reconstructed from a joint's *outputs*.
 
-    It inverts :func:`_outputs_of`: a whole term is its output's value,
-    and an exposed record is the mapping of its outputs.
+    It inverts :func:`_outputs_of`: a whole term is its output's value, and
+    the positional form over a record is the mapping of its outputs.
     """
     if not _has_record_outputs(declaration):
         (output_name,) = declaration.outputs
@@ -717,10 +723,11 @@ def _ancestral_sample(
 
 
 def _law_at_defaults(factor: Factor, produced: Collection[str]) -> Factor:
-    """*factor*, or its law at its defaults when it is a kernel none of whose inputs is required or in *produced*.
+    """*factor*, or its law at its defaults when it is a kernel that needs no input.
 
-    A joint whose factors produce none of such a kernel's inputs holds them at
-    their defaults, so the kernel standing alone is that law.
+    A kernel needs no input when none of its inputs is required or in
+    *produced*. A joint whose factors produce none of such a kernel's inputs
+    holds them at their defaults, so the kernel standing alone is that law.
     """
     if (
         isinstance(factor, ConditionalDistribution)
@@ -734,7 +741,7 @@ def _law_at_defaults(factor: Factor, produced: Collection[str]) -> Factor:
 def _factor_given(
     factor: ConditionalDistribution, values: Mapping[str, Any], fixed: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """The value of each input of *factor*: an output's in *values*, else an unmet given's in *fixed*.
+    """Each input's value for *factor*: an output's in *values*, else an unmet input's in *fixed*.
 
     An optional input that neither sets is left out, so the factor takes its default.
     """
@@ -909,7 +916,7 @@ def _conditional_score(
     fixed: Mapping[str, Any],
     event: Any,
 ) -> Array:
-    """*factor*'s density *method* at *event*, at the given the joint's outputs supply."""
+    """*factor*'s density *method* at *event*, at the inputs the joint's outputs supply."""
     inner = {
         input_name: outputs[input_name]
         for input_name in factor.given_spec
@@ -1106,15 +1113,17 @@ _SOLE_FIELD_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
 class _SoleField(Distribution):
     """The law of the one field of a one-field record law, declared as a whole term.
 
-    The field determines the record, so the two are one law in two packagings,
+    The field determines the record, so the two are one law in two forms,
     and each capability is the record law's through that correspondence. A
     joint's marginal returns it for a projection onto the one output of a
-    factor that exposes a record of it, since a projection is a whole term.
+    factor in the positional form over a one-field record, since a projection
+    is a whole term.
 
     Parameters
     ----------
     law : Distribution
-        A law whose event exposes a record of one field.
+        A law whose event spec is the positional form over a record of one
+        field.
     """
 
     _capability_table = _SOLE_FIELD_CAPABILITIES
@@ -1133,19 +1142,23 @@ class _SoleField(Distribution):
         object.__setattr__(self, "_output_name", output_name)
 
     def __repr__(self) -> str:
-        """A call of the record law's constructor, with the whole-term declaration as ``event_spec=``."""
+        """A record-law constructor call, with the keyword-form event spec as ``event_spec=``."""
         return _law_repr(self, self._law._repr_arguments(), self._law)
 
     def _event_repr_parts(self) -> tuple[str | None, str | None]:
-        """No output, and the whole-term declaration, by which this law differs from the record law."""
+        """No output name, and the keyword-form event spec.
+
+        These set this law apart from the record law.
+        """
         return None, repr(self.event_spec)
 
 
 def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]:
     """The paths of *joint*'s factor record that *path* requests: one path, or several.
 
-    An exposed joint's event paths are its record's paths. A packaged joint's
-    paths start with its output, below which they are the record's paths.
+    The event paths of a joint in the positional form are its record's paths. A
+    packaged joint's paths start with its output's name, below which they are
+    the record's paths.
 
     Parameters
     ----------
@@ -1158,7 +1171,7 @@ def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]
     -------
     tuple of str
         Each requested path within the factor record, in the order requested,
-        with a packaged joint's leading output removed.
+        with a packaged joint's leading output name removed.
 
     Raises
     ------
@@ -1293,7 +1306,7 @@ def _joint_sample(self: Any, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -
     Returns
     -------
     dict
-        Each output's raw value, keyed by output in canonical factor order.
+        Each output's raw value, keyed by output name in canonical factor order.
     """
     return _ancestral_sample(self._graph, {}, key, tuple(sample_shape))
 
@@ -1302,7 +1315,7 @@ def _joint_log_prob(self: Any, value: Any) -> Array:
     """The normalized log-density of the joint: the sum of its factors' log-densities.
 
     Each factor scores its own event, reconstructed from the outputs of
-    *value* by the factor's packaging, and a conditional factor is scored at the
+    *value* by the factor's form, and a conditional factor is scored at the
     given the outputs it names supply. A batch of values keeps its leading
     axes, and a conditional factor is mapped over the batch, so it receives one
     given value per call.
@@ -1313,7 +1326,7 @@ def _joint_log_prob(self: Any, value: Any) -> Array:
         The joint whose capability subclass installs this function as
         ``_log_prob``.
     value : Mapping[str, Any] or Record
-        A value of the joint's event, or a batch of them, keyed by output.
+        A value of the joint's event, or a batch of them, keyed by output name.
 
     Returns
     -------
@@ -1335,7 +1348,7 @@ def _joint_unnormalized_log_prob(self: Any, value: Any) -> Array:
         The joint whose capability subclass installs this function as
         ``_unnormalized_log_prob``.
     value : Mapping[str, Any] or Record
-        A value of the joint's event, or a batch of them, keyed by output.
+        A value of the joint's event, or a batch of them, keyed by output name.
 
     Returns
     -------
@@ -1357,7 +1370,7 @@ def _joint_mean(self: Any) -> dict[str, Any]:
     Returns
     -------
     dict
-        Each output's mean, keyed by output in canonical factor order.
+        Each output's mean, keyed by output name in canonical factor order.
     """
     return _assemble_by_output(self._graph, {}, "_mean")
 
@@ -1374,7 +1387,7 @@ def _joint_variance(self: Any) -> dict[str, Any]:
     Returns
     -------
     dict
-        Each output's variance, keyed by output in canonical factor order.
+        Each output's variance, keyed by output name in canonical factor order.
     """
     return _assemble_by_output(self._graph, {}, "_variance")
 
@@ -1403,10 +1416,10 @@ def _joint_cov(self: Any) -> DenseLinOp:
 def _joint_quantile(self: Any, q: ArrayLike) -> dict[str, Any]:
     """The quantiles of an edge-free joint at the levels *q*, assembled per output.
 
-    A whole-term factor's quantiles are its output's, and an exposed record's
-    are the children of the factor's result. Each factor's result is its
-    event's raw form with the level axes leading in each leaf, so the joint's is
-    the same form of its own event.
+    A whole-term factor's quantiles are its output's, and those of a factor in
+    the positional form over a record are the children of the factor's result.
+    Each factor's result is its event's raw form with the level axes leading in
+    each leaf, so the joint's is the same form of its own event.
 
     Parameters
     ----------
@@ -1419,7 +1432,7 @@ def _joint_quantile(self: Any, q: ArrayLike) -> dict[str, Any]:
     Returns
     -------
     dict
-        Each output's quantiles, keyed by output in canonical factor order.
+        Each output's quantiles, keyed by output name in canonical factor order.
     """
     return _assemble_by_output(self._graph, {}, "_quantile", q)
 
@@ -1451,7 +1464,7 @@ def _joint_conditional_sample(
     Returns
     -------
     dict
-        Each output's raw value, keyed by output in canonical factor order.
+        Each output's raw value, keyed by output name in canonical factor order.
 
     Raises
     ------
@@ -1476,7 +1489,7 @@ def _joint_conditional_log_prob(self: Any, given: Record | Mapping[str, Any], va
         A value of each required input, and of any optional one, keyed by
         input name.
     value : Mapping[str, Any] or Record
-        A value of the joint's event, or a batch of them, keyed by output.
+        A value of the joint's event, or a batch of them, keyed by output name.
 
     Returns
     -------
@@ -1505,7 +1518,7 @@ def _joint_conditional_unnormalized_log_prob(
         A value of each required input, and of any optional one, keyed by
         input name.
     value : Mapping[str, Any] or Record
-        A value of the joint's event, or a batch of them, keyed by output.
+        A value of the joint's event, or a batch of them, keyed by output name.
 
     Returns
     -------
@@ -1535,7 +1548,7 @@ def _joint_conditional_mean(self: Any, given: Record | Mapping[str, Any]) -> dic
     Returns
     -------
     dict
-        Each output's mean, keyed by output in canonical factor order.
+        Each output's mean, keyed by output name in canonical factor order.
 
     Raises
     ------
@@ -1560,7 +1573,7 @@ def _joint_conditional_variance(self: Any, given: Record | Mapping[str, Any]) ->
     Returns
     -------
     dict
-        Each output's variance, keyed by output in canonical factor order.
+        Each output's variance, keyed by output name in canonical factor order.
 
     Raises
     ------
@@ -1614,7 +1627,7 @@ def _joint_conditional_quantile(
     Returns
     -------
     dict
-        Each output's quantiles, keyed by output in canonical factor order.
+        Each output's quantiles, keyed by output name in canonical factor order.
 
     Raises
     ------
@@ -1630,12 +1643,12 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
     A factor whose every output is requested is kept as it is, and a factor
     requested in part is reduced to its own marginal at its requested paths. A
     projection onto one path returns the one factor it keeps or reduces, as a
-    whole term: a kept factor that exposes a record of that one output is
-    returned as the law of its field. A selection of several paths returns an
-    exposed record: the one factor itself when it exposes a record, and
-    otherwise the joint of the kept factors in factor order, repackaged when
-    the paths name the fields in another order, so its fields follow the
-    order of the paths (III.8).
+    whole term: a kept factor in the positional form over a record of that one
+    field is returned as the law of its field. A selection of several paths
+    returns a law whose outputs are a record's fields: the one factor itself
+    when its outputs are, and otherwise the joint of the kept factors in factor
+    order, repackaged when the paths name the fields in another order, so its
+    fields follow the order of the paths (III.8).
 
     The marginal carries the expression the ``marginal`` operation gives it
     (VI.8). A marginal over the whole events of some factors, none of which
@@ -1712,7 +1725,7 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
 
 
 def _closed_factors(d: Any, paths: tuple[Any, ...]) -> list[Factor] | None:
-    """The factors of *d* whose events are the outputs *paths* name, if none conditions outside them.
+    """The factors of *d* producing the outputs *paths* name, if none conditions outside them.
 
     A marginal over these outputs is the product of the factors (VI.8).
     The factors are listed in the order the paths name their outputs when
@@ -1758,7 +1771,7 @@ def _closed_factors(d: Any, paths: tuple[Any, ...]) -> list[Factor] | None:
 
 
 def _in_selection_order(parts: list[Factor], paths: tuple[str, ...]) -> list[Factor] | None:
-    """*parts* in the order *paths* names their outputs, or None when no product of them has that order.
+    """*parts* in the order *paths* names their outputs, or None if no product has that order.
 
     A product declares each factor's outputs in turn, and it places a
     factor before every factor that produces an output it conditions on.
@@ -2024,7 +2037,7 @@ def _rebuilt(joint: Any, method: str, mapping: Mapping[str, Any], *, free: Any =
         _each_factor(joint.factors, method, mapping),
         label=joint.label,
         _scope=scope,
-        **_packaging(joint),
+        **_form_keywords(joint),
     )
     return _derived_product(rebuilt, joint).with_provenance(
         Provenance.create(method, parents=[joint], metadata=dict(mapping))
@@ -2100,9 +2113,9 @@ class FactoredDistribution(Distribution, SupportsFactors):
 
     The factors are ``Distribution``s and ``ConditionalDistribution``s in
     conditional-first order: a factor may condition on outputs that factors
-    to its right produce. The joint's event spec is an exposed record of
-    every factor's outputs in factor order, each factor's own order kept, and
-    extraction and reconstruction keep each factor's packaging. Each output
+    to its right produce. The joint's event spec is the positional form over
+    the record of every factor's outputs in factor order, each factor's own
+    order kept, and extraction and reconstruction keep each factor's form. Each output
     is produced by exactly one factor, while factor labels may repeat. A
     packaged joint, which a rename that gathers outputs builds, declares
     that record as a whole term under one output, and it is one factor of a
@@ -2144,8 +2157,8 @@ class FactoredDistribution(Distribution, SupportsFactors):
         The size of each dimension bound in the joint that a transform rebuilds,
         keyed by its name, which the factor graph starts from.
     _output_name : str, optional
-        The output under which a packaged joint declares its record as a whole
-        term. By default the joint exposes the record.
+        The name of the output under which a packaged joint declares its record
+        as a whole term. By default the joint's outputs are the record's fields.
 
     Raises
     ------
@@ -2158,7 +2171,7 @@ class FactoredDistribution(Distribution, SupportsFactors):
         ``FactoredConditionalDistribution``.
     """
 
-    #: The constructor takes no output, so the repr shows none.
+    #: The constructor takes no output name, so the repr shows none.
     _repr_output_name: ClassVar[str | None] = None
 
     _capability_table = _joint_table("FactoredDistribution", conditional=False)
@@ -2291,8 +2304,8 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         The size of each dimension bound in the joint that a transform rebuilds,
         keyed by its name, which the factor graph starts from.
     _output_name : str, optional
-        The output under which a packaged joint declares its record as a whole
-        term. By default the joint exposes the record.
+        The name of the output under which a packaged joint declares its record
+        as a whole term. By default the joint's outputs are the record's fields.
 
     Raises
     ------
@@ -2304,7 +2317,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         joint a ``FactoredDistribution``.
     """
 
-    #: The constructor takes no output, so the repr shows none.
+    #: The constructor takes no output name, so the repr shows none.
     _repr_output_name: ClassVar[str | None] = None
 
     _capability_table = _joint_table("FactoredConditionalDistribution", conditional=True)
@@ -2421,8 +2434,8 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         KeyError
             If a bound name is not an input of the joint.
         ValueError
-            If a factor's primitive returns a law or kernel whose declarations do
-            not match the factor's.
+            If a factor's primitive returns a law or kernel whose input and event
+            specs do not match the factor's.
         """
         top = given.children if hasattr(given, "children") else given
         values = dict(top.items())
@@ -2443,13 +2456,13 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         if set(self.given_spec.required) <= set(values):
             joint = FactoredDistribution(
                 factors,
-                **_packaging(self),
+                **_form_keywords(self),
                 label=self.label,
             )
         else:
             joint = FactoredConditionalDistribution(
                 factors,
-                **_packaging(self),
+                **_form_keywords(self),
                 label=self.label,
             )
         return _derived_product(joint, self)
@@ -2458,7 +2471,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
 def _bound_factor(
     factor: ConditionalDistribution, bound: Mapping[str, Any], options: Mapping[str, Any]
 ) -> Factor:
-    """*factor* conditioned on *bound* under *options*, checked to keep its declarations.
+    """*factor* conditioned on *bound* under *options*, checked to keep its input and event specs.
 
     Parameters
     ----------
@@ -2492,8 +2505,8 @@ def _bound_factor(
     if not expected.is_valid(result):
         raise ValueError(
             f"{factor.label!r} conditioned on {sorted(bound)} returned "
-            f"{type(result).__name__} {getattr(result, 'label', '')!r}, whose declarations do not "
-            f"match the factor's"
+            f"{type(result).__name__} {getattr(result, 'label', '')!r}, whose input and event "
+            f"specs do not match the factor's"
         )
     return result
 
@@ -2506,7 +2519,7 @@ def _bound_factor(
 class FactoredNumericDistribution(FactoredDistribution):
     """The marker of an unconditional joint whose event is numeric.
 
-    Membership is read from the declaration, as for ``NumericDistribution``, and
+    Membership is read from the event spec, as for ``NumericDistribution``, and
     a class that inherits the marker claims it for every instance, which
     construction checks.
     """
@@ -2515,13 +2528,13 @@ class FactoredNumericDistribution(FactoredDistribution):
 
 
 class FactoredConditionalNumericDistribution(FactoredConditionalDistribution):
-    """The marker of a conditional joint whose event is numeric, read from its declaration."""
+    """The marker of a conditional joint whose event is numeric, read from its event spec."""
 
     _membership_follows_declaration = True
 
 
 class FactoredNumericConditionalDistribution(FactoredConditionalDistribution):
-    """The marker of a conditional joint whose inputs are numeric, by its declaration."""
+    """The marker of a conditional joint whose inputs are numeric, by its input spec."""
 
     _membership_follows_declaration = True
 

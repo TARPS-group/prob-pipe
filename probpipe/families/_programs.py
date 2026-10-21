@@ -889,8 +889,8 @@ class StanModel(
 
     The inputs are the data-block variables *data* leaves unbound, which the
     program does not divide into sizes, covariates, and observations, and the
-    event is the parameter record. Each input is typed as its variable is declared,
-    and each parameter carries its dtype and the support its declared
+    event is the parameter record. Each input is typed as its variable is
+    declared, and each parameter carries its dtype and the support its declared
     constraint states; a size that names an unbound variable is the dimension of
     that name on both sides. It claims ``SupportsConditionalUnnormalizedLogProb``
     alone: binding every data variable yields the unnormalized posterior, whose density
@@ -924,7 +924,7 @@ class StanModel(
         declaration cannot be read.
     """
 
-    #: The constructor takes no output, so the repr shows none.
+    #: The constructor takes no output name, so the repr shows none.
     _repr_output_name: ClassVar[str | None] = None
 
     #: The program reads its observed variables' shapes from the data it
@@ -1360,7 +1360,7 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
     #: receives, so ``condition_on`` leaves their givens to the program.
     _shapes_from_data: ClassVar[bool] = True
 
-    #: The constructor takes no output, so the repr shows none.
+    #: The constructor takes no output name, so the repr shows none.
     _repr_output_name: ClassVar[str | None] = None
 
     _capability_table: ClassVar = {

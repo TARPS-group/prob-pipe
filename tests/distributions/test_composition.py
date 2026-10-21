@@ -1,8 +1,8 @@
 """The ``*`` operator: composing distributions and kernels into one flat joint.
 
 ``A * B`` is conditional-first: the left operand may condition on an output
-the right operand produces. An operand is characterized by its outputs,
-the keys of its event spec's outputs, and its unmet inputs. The
+the right operand produces. An operand is characterized by its outputs, the
+names its event spec gives its values, and by its unmet inputs. The
 bound, unmet, and require rules decide the joint's connections and its kind, the
 operands share one dimension scope, and the joint's label joins the operands'
 labels with a middle dot. Composition reads output and input names, never a
@@ -130,7 +130,7 @@ def _random_function() -> LinearBasisFunction:
 
 
 def _structure(joint: Any) -> tuple:
-    """What composition decides: the kind, the label, the declarations, and the factors."""
+    """What composition decides: the kind, the label, the input and event specs, and the factors."""
     return (
         type(joint),
         joint.label,
@@ -207,7 +207,7 @@ class TestBoundRule:
             pytest.param(OutputSpec(RecordSpec(beta=SCALAR)), id="one-field-record"),
         ],
     )
-    def test_an_output_meets_a_given_under_either_packaging(self, event_spec):
+    def test_an_output_meets_a_given_under_either_form(self, event_spec):
         joint = _likelihood() * Law(
             event_spec,
             label="prior",

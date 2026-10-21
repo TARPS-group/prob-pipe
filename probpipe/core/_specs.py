@@ -1,7 +1,7 @@
-"""Shared kind specs and input/output specs (design II.1–II.2).
+"""Shared kind specs, input specs, and output specs (design II.1–II.2).
 
-An output's output names describe its public interface independently of
-the label or identity of the value satisfying the declaration.
+The names of a term's outputs describe its public interface independently of
+the label or identity of the value an output spec describes.
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ def _check_output_name(name: str, *, context: str = "output names") -> None:
 
 def _check_output(name: str, spec: TermSpec | None, *, allow_hole: bool = False) -> None:
     _check_output_name(name)
-    _check_term(name, spec, allow_hole=allow_hole, noun="component")
+    _check_term(name, spec, allow_hole=allow_hole, noun="output")
 
 
 def _check_term(name: str, spec: TermSpec | None, *, allow_hole: bool, noun: str) -> None:
@@ -86,26 +86,26 @@ def _check_term(name: str, spec: TermSpec | None, *, allow_hole: bool, noun: str
 class InputSpec(Mapping[str, TermSpec]):
     """An immutable, flat mapping of input names to term specs.
 
-    An input is required or optional. A binding may omit an optional input, and the
-    map-like kind then uses its default; :meth:`with_optional` marks inputs
-    optional, and the optional inputs are part of the declaration, so they take
-    part in equality and hashing.
+    An input is required or optional. A binding may omit an optional input, which
+    then takes the default of the function or conditional distribution that owns
+    it; :meth:`with_optional` marks inputs optional, and the optional inputs are
+    part of the spec, so they take part in equality and hashing.
 
     Parameters
     ----------
     inputs : Mapping[str, TermSpec], optional
         A positional mapping of inputs, in iteration order. A nested record is
         one input carrying a RecordSpec.
-    **outputs : TermSpec
-        Alternatively, named inputs, including RecordSpec-valued inputs.
+    **inputs_by_name : TermSpec
+        Alternatively, the inputs by keyword, including RecordSpec-valued inputs.
         No constructor keyword is reserved.
 
     Raises
     ------
     TypeError
         If a non-None positional argument is not a Mapping, mapping and keyword
-        forms are combined, or an input value is not a hashable TermSpec.
-        Unspecified output types (None input values) are not admitted.
+        forms are combined, or an input's spec is not a hashable TermSpec; an
+        input's spec may not be None.
     ValueError
         If an input name is not a non-keyword Python identifier, including path keys.
     """
@@ -162,7 +162,7 @@ class InputSpec(Mapping[str, TermSpec]):
 
     @property
     def required(self) -> tuple[str, ...]:
-        """The inputs a binding must supply, in input order."""
+        """The inputs a binding must supply, in order."""
         return tuple(name for name in self._inputs if name not in self._optional)
 
     def with_optional(self, *names: str) -> InputSpec:
@@ -267,17 +267,17 @@ class InputSpec(Mapping[str, TermSpec]):
         return self._substitute_dims(bindings)
 
 
-#: The spec each kind of exposed term takes, by the kind :func:`_exposed_kind` names.
+#: The spec of each kind of term the positional form takes, by the kind :func:`_exposed_kind` names.
 _EXPOSED_SPECS = {
     "record": "RecordSpec",
     "law": "DistributionSpec or ConditionalDistributionSpec",
     "batch": "BatchSpec of a record or a law",
 }
 
-#: What the outputs of each kind of exposed term are, as a message names them.
+#: What the outputs of each kind of term in the positional form are, as a message names them.
 _EXPOSED_OF = {
     "record": "a record's fields",
-    "law": "a distribution's event outputs",
+    "law": "a distribution's outputs",
     "batch": "a batch element's outputs",
 }
 
@@ -300,7 +300,7 @@ def _exposed_kind(spec: object) -> str | None:
 
 
 def _exposed_outputs(spec: TermSpec) -> Mapping[str, TermSpec | None]:
-    """The outputs an exposed *spec* declares, by the rule of :func:`_exposed_kind`."""
+    """The outputs *spec* has in the positional form, by the rule of :func:`_exposed_kind`."""
     kind = _exposed_kind(spec)
     if kind == "record":
         return cast(RecordSpec, spec).children
@@ -311,7 +311,7 @@ def _exposed_outputs(spec: TermSpec) -> Mapping[str, TermSpec | None]:
 
 @dataclass(frozen=True, init=False)
 class OutputSpec:
-    """The outputs of a function's return value, of the values a distribution is over, or of a batch's elements.
+    """The outputs of a function's return value, a distribution's draws, or a batch's elements.
 
     An output is a name under which a value can be read and passed on to an
     input of the same name. An OutputSpec holds a spec, ``term_spec``, and its
@@ -327,10 +327,10 @@ class OutputSpec:
     Parameters
     ----------
     *args : RecordSpec, DistributionSpec, ConditionalDistributionSpec, or BatchSpec
-        The positional form: the spec whose outputs this OutputSpec has, a
-        record's top-level fields and groups, a distribution's or a conditional
-        distribution's event outputs, or the outputs of a batch's element, which
-        is a record or a distribution.
+        The positional form: the spec whose outputs this OutputSpec has, which
+        are a record's top-level fields and groups, the outputs of a
+        distribution's or a conditional distribution's event, or the outputs of
+        a batch's element, which is a record or a distribution.
     **term : TermSpec or None
         The keyword form: one keyword, the output's name, over the spec of the
         whole value. None means the type is not known yet; :meth:`with_term_spec`
@@ -481,17 +481,17 @@ class OutputSpec:
     def with_path_names(
         self, mapping: Mapping[str, str] | None = None, /, **kwargs: str
     ) -> OutputSpec:
-        """Rename or move nodes of the declaration by their paths, ``old -> new``.
+        """Rename or move nodes of this OutputSpec by their paths, ``old -> new``.
 
-        A path starts with an output: an exposed record's paths are the paths
-        of its record, and a whole term's are its output followed by the
-        paths within its term. Each key is the exact path of a node and each
-        target its new exact path, under the rule of
+        A path starts with an output. In the positional form over a record, the
+        paths are the record's; in the keyword form, a path is the output's name
+        followed by a path within its value. Each key is the exact path of a node
+        and each target its new exact path, under the rule of
         :meth:`~probpipe.core.named_tree.NamedTree.with_path_names`. The result
-        keeps the packaging. An exposed record stays exposed, so a move may
-        create or remove an output. A whole term's output is renamed in
-        place, and the term's fields stay under it, so a field moves only within
-        the output.
+        keeps the form. In the positional form a move may add or remove an
+        output. In the keyword form the output is renamed in place and the
+        fields of its value stay under it, so a field moves only within the
+        output.
 
         Parameters
         ----------
@@ -503,15 +503,15 @@ class OutputSpec:
         Returns
         -------
         OutputSpec
-            The renamed declaration.
+            The renamed OutputSpec.
 
         Raises
         ------
         KeyError
-            If a key is not a path of the declaration.
+            If a key is not a path of this OutputSpec.
         ValueError
             As :meth:`~probpipe.core.named_tree.NamedTree.with_path_names` raises
-            it, or if a whole term's output moves into a group or one of its
+            it, or if the keyword form's output moves into a group or one of its
             fields moves out of it.
         """
         spec = self._term_spec
@@ -525,8 +525,8 @@ class OutputSpec:
         if _PATH_SEP in renamed_output_name:
             raise ValueError(
                 f"cannot rename {output_name!r} to {renamed_output_name!r}: with_path_names() can "
-                f"rename a single-output but cannot move it into a group. Choose a "
-                f"name without {_PATH_SEP!r}."
+                f"rename the output of the keyword form but cannot move it into a group. "
+                f"Choose a name without {_PATH_SEP!r}."
             )
         prefix = renamed_output_name + _PATH_SEP
         for source, target in renames.items():
@@ -572,19 +572,19 @@ class OutputSpec:
 
 
 def _root_path(output_name: str | None, kind: str | None) -> str:
-    """The path a unification error names a declaration's root by.
+    """The path a unification error names an output spec's root by.
 
-    A whole term's paths start at its *output_name*, and an exposed record's
-    fields are its outputs, so its root is the empty path. An exposed law or
-    batch has no path above its event's outputs, so its root is named by its
-    *kind*.
+    In the keyword form the paths start at the *output_name*. In the positional
+    form over a record, the record's fields are the outputs, so the root is the
+    empty path; over a law or a batch, no path lies above the event's outputs,
+    so the root is named by its *kind*.
     """
     if output_name is not None:
         return output_name
     return "" if kind == "record" else _ROOT_NAMES[cast(str, kind)]
 
 
-#: The name a unification error gives the root of an exposed law or batch.
+#: The name a unification error gives the root of a law or a batch in the positional form.
 _ROOT_NAMES = {"law": "the distribution", "batch": "the batch"}
 
 
@@ -618,10 +618,11 @@ def _unification(declared: TermSpec, produced: TermSpec, bindings: Mapping[str, 
 def _renamed_exposed(
     spec: TermSpec, mapping: Mapping[str, str] | None, kwargs: Mapping[str, str]
 ) -> TermSpec:
-    """The exposed *spec* with the nodes its outputs start renamed, as ``with_path_names`` reads them.
+    """*spec* in the positional form, with the nodes its outputs start renamed.
 
-    A record renames its own paths, a law or a kernel its event spec's,
-    and a batch its element's, so the term keeps its kind.
+    The renames are read as ``with_path_names`` reads them. A record renames
+    its own paths, a law or a kernel its event spec's, and a batch its
+    element's, so the term keeps its kind.
     """
     from dataclasses import replace
 
@@ -722,10 +723,10 @@ def _single_output_name(output_spec: OutputSpec) -> str | None:
 
 
 def _unnamed_declaration(declaration: OutputSpec) -> tuple[object, ...]:
-    """*declaration*'s packaging and its outputs' specs in order, without their names.
+    """*declaration*'s form and its outputs' specs in order, without their names.
 
-    A function's fingerprint and its replay anchor record this form, so a
-    rename of the outputs of its output keeps both.
+    A function's fingerprint and its replay anchor record this, so renaming
+    the function's outputs keeps both.
     """
     if declaration._output_name is not None:
         return ("whole term", (declaration.term_spec,))
@@ -733,7 +734,7 @@ def _unnamed_declaration(declaration: OutputSpec) -> tuple[object, ...]:
 
 
 def _unnamed_exposed(spec: TermSpec) -> tuple[object, ...]:
-    """An exposed *spec* without its output names: its kind and what it holds besides them."""
+    """*spec* in the positional form without its output names: its kind and what else it holds."""
     kind = _exposed_kind(spec)
     if kind == "record":
         return ("record", tuple(_exposed_outputs(spec).values()))

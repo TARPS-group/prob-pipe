@@ -444,7 +444,7 @@ register_kind(NumericArraySpec, term_class=NumericArray, batch_class=NumericArra
 
 
 class _MappedBatchStore:
-    """A numeric row's array and declaration carried through a mapping transform.
+    """A numeric row's array and element spec carried through a mapping transform.
 
     The row is one ``NumericArray`` or a ``NumericArrayBatch`` with its own
     levels. The executor adds the sweep's levels after mapping, when it rebuilds
@@ -474,7 +474,7 @@ class _MappedBatchStore:
 
     @classmethod
     def of(cls, value: NumericArrayBatch | NumericArray) -> _MappedBatchStore:
-        """Carry *value*'s array, bound event spec, and any batch levels."""
+        """Carry *value*'s array, its element spec with dimensions bound, and any batch levels."""
         if isinstance(value, NumericArrayBatch):
             return cls(
                 value._label,

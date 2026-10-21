@@ -79,7 +79,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
 
     This batch **stores** its elements, and ``batch[i]`` is a view of the
     stored callable: a :class:`~probpipe.Function` wrapping it under the label
-    derived from the position and the batch's declarations, or, for a stored
+    derived from the position and the batch's input and output specs, or, for a stored
     ``Function``, a copy under the derived label that shares its callable. Its
     provenance records the batch and the stored term. A callable whose
     signature cannot be inspected, as for some builtins, has no ``Function``
@@ -160,7 +160,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
         return cast(FunctionSpec, self._spec.element_spec)
 
     def _wrap_element(self, value: Callable, label: str) -> Function:
-        """The callable *value* as a ``Function`` labeled *label* under the batch's declarations.
+        """The callable *value* as a ``Function`` labeled *label* under the batch's specs.
 
         Parameters
         ----------

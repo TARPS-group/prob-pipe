@@ -76,7 +76,7 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# The declarations of a kernel
+# The input and event specs of a kernel
 # ---------------------------------------------------------------------------
 
 
@@ -99,7 +99,7 @@ def _complete_given_spec(given_spec: Any) -> InputSpec:
     TypeError
         If *given_spec* is not a mapping of term specs.
     ValueError
-        If it has no inputs, since binding the last given returns a
+        If it has no inputs, since binding the last input returns a
         ``Distribution``, or an input name is not an identifier.
     """
     if not isinstance(given_spec, InputSpec):
@@ -125,7 +125,7 @@ def _unknown_inputs(label: str, unknown: list[str], inputs: Iterable[str]) -> st
 def _missing_inputs(label: str, missing: list[str]) -> str:
     """The message that a binding of every input of the kernel *label* leaves *missing* out."""
     inputs = f"input {missing[0]!r}" if len(missing) == 1 else f"inputs {missing}"
-    return f"cannot bind {label!r}: missing a value for the required given {inputs}"
+    return f"cannot bind {label!r}: missing a value for the required {inputs}"
 
 
 def _check_disjoint_sides(given_spec: InputSpec, event_spec: OutputSpec, owner: str) -> None:
@@ -313,8 +313,8 @@ class ConditionalDistributionSpec(TermSpec):
     given_spec : InputSpec or Mapping[str, TermSpec]
         The named inputs a kernel conditions on, at least one.
     event_spec : OutputSpec or RecordSpec
-        The declaration of one produced draw, as for ``DistributionSpec``. A
-        bare ``RecordSpec`` completes to the exposed form.
+        The output spec of one produced draw, as for ``DistributionSpec``. A
+        bare ``RecordSpec`` completes to the positional form over it.
 
     Raises
     ------
@@ -322,8 +322,8 @@ class ConditionalDistributionSpec(TermSpec):
         If *event_spec* is neither an ``OutputSpec`` nor a ``RecordSpec``, or
         *given_spec* is not a mapping of term specs.
     ValueError
-        If *given_spec* has no inputs, the event spec has an unspecified output type, or
-        an input shares a name with an output.
+        If *given_spec* has no inputs, the event spec leaves its type
+        unspecified, or an input shares a name with an output.
 
     Notes
     -----
@@ -380,8 +380,8 @@ class ConditionalDistributionSpec(TermSpec):
             The size of each symbolic dimension bound so far, keyed by its name,
             which unification extends in place.
         path : str
-            The location of the declaration that error messages name, such as
-            ``"the declaration"``.
+            The location of the specs that error messages name, such as
+            ``"the specs"``.
 
         Raises
         ------
@@ -399,7 +399,7 @@ class ConditionalDistributionSpec(TermSpec):
         _unify_declarations(self.event_spec, event_spec, bindings, path)
 
     def _bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
-        """Bind both sides against the declarations *value* carries."""
+        """Bind both sides against the input and event specs *value* carries."""
         if not isinstance(value, ConditionalDistribution):
             raise ValueError(f"{path} does not conform to its field spec ({self!r})")
         self._unify_with(value.given_spec, value.event_spec, bindings, path)
@@ -420,11 +420,11 @@ class ConditionalDistributionSpec(TermSpec):
         )
 
     def is_valid(self, value: Any) -> bool:
-        """Whether *value* is a ``ConditionalDistribution`` whose declarations match these."""
+        """Whether *value* is a ``ConditionalDistribution`` whose specs match these."""
         if not isinstance(value, ConditionalDistribution):
             return False
         try:
-            self._unify_with(value.given_spec, value.event_spec, {}, "the declaration")
+            self._unify_with(value.given_spec, value.event_spec, {}, "the specs")
         except ValueError:
             return False
         return True
@@ -438,8 +438,8 @@ class ConditionalDistributionSpec(TermSpec):
 class _ConditionalDistributionMeta(_TrackedTermMeta):
     """The metaclass of every conditional distribution.
 
-    Construction checks that the instance holds its declarations, and a numeric
-    marker's membership is read from the declarations whatever the class, as
+    Construction checks that the instance holds its input and event specs, and
+    a numeric marker's membership is read from them whatever the class, as
     for ``NumericDistribution``. Creating a class checks each capability guard
     it defines, as for ``Distribution``.
     """
@@ -479,12 +479,12 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
 
     The kernel stores one ``ConditionalDistributionSpec``, its :attr:`spec`;
     :attr:`given_spec` and :attr:`event_spec` are views on it. The event
-    declaration is read as a ``Distribution``'s is: a bare ``RecordSpec``
-    exposes its fields, and an ``OutputSpec`` names the output of a whole
-    term. The inputs and the produced
-    outputs are distinct roles, so their names are disjoint even when the
-    two spaces coincide, as in a Markov kernel ``state → next_state``. Symbolic
-    dimensions are scoped over both sides jointly.
+    spec is read as a ``Distribution``'s is: the fields of a bare
+    ``RecordSpec`` are the outputs, and an ``OutputSpec`` names the output of
+    a whole term. The inputs and the outputs are distinct roles, so their
+    names are disjoint even when the two spaces coincide, as in a Markov
+    kernel ``state → next_state``. Symbolic dimensions are scoped over both
+    sides jointly.
 
     Users call operations rather than methods: ``condition_on(K, s)`` binds the
     inputs, and ``sample(K, given=s)``, ``log_prob(K, y, given=s)``, and
@@ -517,7 +517,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         The named inputs the kernel conditions on, at least one; the keys are
         Python identifiers.
     event_spec : OutputSpec or RecordSpec
-        The declaration of one produced draw, completed as above.
+        The output spec of one produced draw, completed as above.
     label : str, optional
         The kernel's label, a non-empty string, ``p`` by default. A subclass's
         constructor passes the label its caller gave, or its own default.
@@ -535,8 +535,8 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         term specs, or *event_spec* is neither an ``OutputSpec`` nor a
         ``RecordSpec``.
     ValueError
-        If *given_spec* has no inputs, *event_spec* has an unspecified output type, or a given
-        input shares a name with an output.
+        If *given_spec* has no inputs, *event_spec* leaves its type unspecified,
+        or an input shares a name with an output.
     """
 
     #: The label the constructor gives when it is given none, which the repr leaves out;
@@ -549,7 +549,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     #: that holds other bound values must build its own.
     _transient_state = ("_memo",)
 
-    #: Where the constructor takes the output of a whole-term event, which the
+    #: Where the constructor takes the name of a whole-term event's output, which the
     #: repr follows, as for a law.
     _repr_output_name: ClassVar[str | None] = "first"
 
@@ -572,7 +572,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     def _init_declaration(
         self, given_spec: InputSpec | Mapping[str, TermSpec], event_spec: OutputSpec | TermSpec
     ) -> None:
-        """Complete both declarations and store them as this kernel's spec.
+        """Complete the input spec and the event spec and store them as this kernel's spec.
 
         The constructor calls this after setting the label; a class that bypasses
         the constructor calls it itself.
@@ -589,7 +589,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
 
     @property
     def raw(self) -> ConditionalDistribution:
-        """This kernel detached from the workflow, under its label and declarations.
+        """This kernel detached from the workflow, under its label and specs.
 
         A kernel is represented by itself, so its raw form is a copy that shares
         its representation and carries no provenance, no annotations, and no
@@ -601,11 +601,11 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         """
         return _cached_raw(self, lambda: _detached_term(self))
 
-    # -- the declarations ---------------------------------------------------
+    # -- the input and event specs -----------------------------------------
 
     @property
     def spec(self) -> ConditionalDistributionSpec:
-        """The kernel's term spec, the one stored source of both declarations."""
+        """The kernel's term spec, the one stored source of its input and event specs."""
         return self._spec
 
     @property
@@ -678,8 +678,8 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     ) -> ConditionalDistribution:
         """Rename or move inputs and event paths, ``old -> new``.
 
-        A key that starts with an input addresses the given side, and one
-        that starts with an output the event side, which behaves as
+        A key that starts with an input's name addresses the given side, and
+        one that starts with an output's name the event side, which behaves as
         :meth:`Distribution.with_path_names`. On the given side a target is the
         node's new exact path, so it may split or group inputs, since a kernel has
         no signature that fixes its top level: ``{"a": "theta/a"}`` moves the
@@ -750,7 +750,10 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         operation: str,
         arguments: Mapping[str, Any],
     ) -> Self:
-        """A copy of this kernel holding the declarations, with provenance recording *operation*."""
+        """A copy of this kernel holding *given_spec* and *event_spec*.
+
+        Its provenance records *operation*.
+        """
         clone = self._shallow_copy()
         object.__setattr__(clone, "_spec", ConditionalDistributionSpec(given_spec, event_spec))
         object.__setattr__(clone, "_provenance", None)
@@ -791,8 +794,8 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         """The joint of this kernel and *other*, composed conditional-first.
 
         This kernel may condition on what *other* produces. The result is a
-        ``FactoredDistribution`` when *other* meets every given, and a
-        ``FactoredConditionalDistribution`` over the unmet givens otherwise;
+        ``FactoredDistribution`` when *other* meets every input, and a
+        ``FactoredConditionalDistribution`` over the unmet inputs otherwise;
         see :meth:`Distribution.__mul__`.
         """
         return _compose_operands(self, other)
@@ -816,7 +819,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         return self._expression.render_notation(self._own_signature(), warn=True)
 
     def _own_signature(self) -> Signature:
-        """The signature the declaration states: the event outputs, then the inputs.
+        """The signature the kernel's specs state: the event outputs, then the inputs.
 
         An optional input shows its default, as ``n0=50.0``, or ``n0=…`` where
         the default is not a scalar or the kernel does not know its value.
@@ -830,7 +833,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         return Signature(tuple(self.event_spec.outputs), tuple(self.given_spec), defaults)
 
     def _given_defaults(self) -> Mapping[str, Any]:
-        """The value each optional input takes when a binding omits it, where the kernel knows it."""
+        """The value each optional input takes when a binding omits it, if the kernel knows it."""
         return {}
 
     def __str__(self) -> str:
@@ -840,7 +843,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     def __repr__(self) -> str:
         """A call of the kernel's public constructor, followed by the paths it holds fixed.
 
-        The output, the family parameters, and the inputs come first,
+        The output's name, the family parameters, and the inputs come first,
         as ``given=('mu',)``, then ``label=`` and ``event_spec=`` where they
         differ from the constructor's defaults, and the inputs that conditioning
         bound follow as ``fixed=(...)``, as for a law.
@@ -861,7 +864,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         return []
 
     def _event_repr_parts(self) -> tuple[str | None, str | None]:
-        """The output of the event and the declaration's repr, as for a law."""
+        """The name of the event's output and the event spec's repr, as for a law."""
         return _event_repr_parts(self.event_spec)
 
 
@@ -1018,7 +1021,7 @@ def _declared_law(law: Any, event_spec: OutputSpec, label: str) -> Distribution:
     law : Any
         The value the kernel's function returned, which must be a ``Distribution``.
     event_spec : OutputSpec
-        The kernel's event spec, which the declaration of *law* must unify
+        The kernel's event spec, which the event spec of *law* must unify
         with.
     label : str
         The kernel's label, which error messages name.
@@ -1068,7 +1071,7 @@ class _FunctionKernel(ConditionalDistribution):
     given_spec : InputSpec
         The inputs, one per parameter of *fn*.
     event_spec : OutputSpec
-        The declaration of the law *fn* returns.
+        The event spec of the law *fn* returns.
     guards : Mapping[str, Feasibility]
         The report of the law's guard of each capability it claims, keyed by
         the capability's method.
@@ -1315,7 +1318,7 @@ def _value_free(spec: TermSpec) -> TermSpec:
 
 
 def _probe(label: str, fn: Callable[..., Distribution], inputs: InputSpec) -> _Probe:
-    """The declaration and the guards of the law *fn* returns, evaluated abstractly.
+    """The event spec and the guards of the law *fn* returns, evaluated abstractly.
 
     *fn* runs once under ``jax.eval_shape``, with a traced stand-in of each
     required input's type at the kind the input declares, so no value is assumed,
@@ -1376,9 +1379,10 @@ def _probe(label: str, fn: Callable[..., Distribution], inputs: InputSpec) -> _P
 def _inputs_of(
     label: str, fn: Callable[..., Any], given_spec: InputSpec | Mapping[str, TermSpec] | None
 ) -> InputSpec:
-    """The inputs of the kernel of *fn*: one per parameter, declared by *given_spec* or its annotation.
+    """The inputs of the kernel of *fn*, one per parameter.
 
-    A parameter with a default is an optional input, which a binding may omit,
+    *given_spec* or the parameter's annotation declares each input. A
+    parameter with a default is an optional input, which a binding may omit,
     and its default's value declares it when neither *given_spec* nor its
     annotation does.
 
@@ -1446,30 +1450,30 @@ def _inputs_of(
 
 
 def _agreed_event_spec(label: str, declared: OutputSpec | TermSpec, law: OutputSpec) -> OutputSpec:
-    """*declared*, completed from *law*, the declaration of the law the function returns.
+    """*declared*, completed from *law*, the event spec of the law the function returns.
 
     Parameters
     ----------
     label : str
         The kernel's label, which error messages name.
     declared : OutputSpec or TermSpec
-        The event spec the caller passed. A bare ``RecordSpec`` exposes
-        its fields, and any other bare term spec declares a whole term under the
-        output of *law*.
+        The event spec the caller passed. The fields of a bare ``RecordSpec``
+        are its outputs, and any other bare term spec declares a whole term
+        under the name of *law*'s one output.
     law : OutputSpec
         The event spec of the law the function returns at the stand-ins.
 
     Returns
     -------
     OutputSpec
-        *declared* under its own outputs and packaging, holding the
-        unification of its type with the type of *law*.
+        *declared* with its own outputs and form, holding the unification of
+        its type with the type of *law*.
 
     Raises
     ------
     ValueError
-        If *declared* names other outputs or another packaging than *law*,
-        or its type does not unify with the law's.
+        If *declared* names other outputs than *law* or has another form, or
+        its type does not unify with the law's.
     """
     if isinstance(declared, OutputSpec):
         declaration = declared
@@ -1486,10 +1490,10 @@ def _agreed_event_spec(label: str, declared: OutputSpec | TermSpec, law: OutputS
         declaration.outputs
     ) != tuple(law.outputs):
         raise ValueError(
-            f"event_spec of {label!r} declares the fields {list(declaration.outputs)}, but its "
-            f"function returns a law with {list(law.outputs)}"
+            f"event_spec of {label!r} declares the outputs {list(declaration.outputs)}, but its "
+            f"function returns a law with the outputs {list(law.outputs)}; make them match"
         )
-    return declaration.with_term_spec(law.spec)
+    return declaration.with_term_spec(law.term_spec)
 
 
 def _function_kernel(
@@ -1511,8 +1515,8 @@ def _function_kernel(
         The specs of some or all inputs, keyed by parameter name, which
         :func:`_inputs_of` completes.
     event_spec : OutputSpec or TermSpec or None
-        The declared event, which must agree with the declaration of the law *fn*
-        returns. ``None`` takes the returned law's declaration.
+        The declared event, which must agree with the event spec of the law *fn*
+        returns. ``None`` takes the returned law's event spec.
 
     Returns
     -------
@@ -1622,9 +1626,9 @@ def conditional_distribution(
         or if the function returns something other than a law.
     ValueError
         If *event_spec* is a bare term spec other than a ``RecordSpec`` while the
-        returned law exposes a record or has more than one output, if
-        *event_spec* names other outputs or another packaging than the
-        returned law, or if its type does not unify with the law's.
+        returned law's outputs are a record's fields or it has more than one
+        output, if *event_spec* names other outputs than the returned law or has
+        another form, or if its type does not unify with the law's.
 
     Notes
     -----

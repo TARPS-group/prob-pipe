@@ -251,7 +251,7 @@ def _theta_given_population():
 
 
 class TestRecordValuedFactors:
-    def test_the_joint_exposes_each_factors_outputs_with_their_packaging(self):
+    def test_the_joint_exposes_each_factors_outputs_with_their_form(self):
         joint = _population_atoms() * Normal("x", 0.0, 1.0)
         spec = joint.event_spec.term_spec
         assert list(spec.children) == ["population", "x"]

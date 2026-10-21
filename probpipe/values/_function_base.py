@@ -67,25 +67,27 @@ class FunctionSpec(TermSpec):
     input_spec : InputSpec or None
         Named inputs. None leaves the input side unspecified.
     output_spec : OutputSpec or None
-        The returned term and its exposed outputs. None leaves that side
-        unspecified; a named unspecified output type leaves only its term kind unspecified.
+        The returned term and its outputs. None leaves that side unspecified;
+        an output spec that names its output but leaves its type unspecified,
+        as ``OutputSpec(y=None)``, leaves only the returned term's kind open.
 
     Raises
     ------
     TypeError
-        If either side has the wrong declaration type.
+        If either side has the wrong spec type.
 
     Notes
     -----
     ``is_valid`` admits any callable without executing it. Dimension binding
-    reads declarations when available, sharing one dimension scope across both
-    sides. Missing declarations add no bindings. Incompatible input names,
-    output exposure, kinds, or dimensions raise ValueError. Labels are outside
-    this spec; output names participate in declaration matching.
+    reads the input spec and output spec of each side when they are given,
+    sharing one dimension scope across both sides. A side left unspecified adds
+    no bindings. Incompatible input names,
+    output names or forms, kinds, or dimensions raise ValueError. Labels are
+    outside this spec; output names take part in matching the specs.
 
     Examples
     --------
-    A function's declaration binds a dimension that its sides share:
+    A function's input spec and output spec bind a dimension that they share:
 
     >>> from probpipe import FunctionSpec, InputSpec, NumericArraySpec, OutputSpec
     >>> declared = FunctionSpec(
@@ -136,8 +138,8 @@ class FunctionSpec(TermSpec):
             )
         )
         output = self.output_spec
-        if output is not None and output.spec is not None:
-            output = output._with_term_spec(output.spec._substitute_dims(bindings))
+        if output is not None and output.term_spec is not None:
+            output = output._with_term_spec(output.term_spec._substitute_dims(bindings))
         return FunctionSpec(inputs, output)
 
     def _bind_dims_from_value(self, value: Callable, bindings: dict[str, int], path: str) -> None:
@@ -153,8 +155,9 @@ class FunctionSpec(TermSpec):
         if self.input_spec is not None and actual.input_spec is not None:
             if self.input_spec.keys() != actual.input_spec.keys():
                 raise ValueError(
-                    f"{path} has incompatible inputs {list(actual.input_spec)}; "
-                    f"the declaration expects {list(self.input_spec)}"
+                    f"{path} has the inputs {list(actual.input_spec)}, but the expected "
+                    f"FunctionSpec has the inputs {list(self.input_spec)}; make the input "
+                    f"names match"
                 )
             for name, spec in self.input_spec.items():
                 _unify_specs(spec, actual.input_spec[name], bindings, f"{path}/input/{name}")
@@ -162,16 +165,17 @@ class FunctionSpec(TermSpec):
             expected, observed = self.output_spec, actual.output_spec
             if expected.outputs.keys() != observed.outputs.keys():
                 raise ValueError(
-                    f"{path} has incompatible outputs {list(observed.outputs)}; "
-                    f"the declaration expects {list(expected.outputs)}"
+                    f"{path} has the outputs {list(observed.outputs)}, but the expected "
+                    f"FunctionSpec has the outputs {list(expected.outputs)}; make the output "
+                    f"names match"
                 )
             if _root_output_name(expected) != _root_output_name(observed):
                 raise ValueError(
                     f"{path} has incompatible outputs: {observed!r} does not "
                     f"match the declared {expected!r}"
                 )
-            if expected.spec is not None and observed.spec is not None:
-                _unify_specs(expected.spec, observed.spec, bindings, f"{path}/output")
+            if expected.term_spec is not None and observed.term_spec is not None:
+                _unify_specs(expected.term_spec, observed.term_spec, bindings, f"{path}/output")
         return True
 
     def is_valid(self, value: Any) -> bool:
@@ -223,12 +227,12 @@ class _CallableFunctionImplementation:
         return self.callable(*bound_inputs.args, **bound_inputs.kwargs)
 
 
-#: The output of a Function whose callable has no usable name.
+#: The output name of a Function whose callable has no usable name.
 _NAMELESS_OUTPUT = "result"
 
 
 def _callable_output_name(fn: Any) -> str:
-    """The default output of a Function wrapping *fn*.
+    """The default output name of a Function wrapping *fn*.
 
     It is the callable's name by :func:`~probpipe.core.tracked._callable_name`,
     so a lambda's is ``f``, when that name is a Python identifier and no
@@ -244,7 +248,7 @@ def _callable_output_name(fn: Any) -> str:
     Returns
     -------
     str
-        The output, which is a valid output name.
+        The callable's name, or ``result``, which is a valid output name.
     """
     name = _callable_name(fn)
     if name is None or not name.isidentifier() or keyword.iskeyword(name):
@@ -362,7 +366,7 @@ def _kind_description(spec: TermSpec, kind: type) -> str:
 def _validate_function_output(
     *, function_name: str, output_spec: OutputSpec | None, result: Any, bindings: Mapping[str, int]
 ) -> OutputSpec | None:
-    """Validate one returned term without wrapping it or changing its declaration.
+    """Validate one returned term without wrapping it or changing its output spec.
 
     Each declared array's dtype admits a returned dtype of the same kind (bool,
     integer, floating, or complex) at any width, and its support must hold.
@@ -381,16 +385,16 @@ def _validate_function_output(
     Returns
     -------
     OutputSpec or None
-        The declaration completed from the result, or ``None`` when *output_spec*
-        is ``None``.
+        The output spec completed from the result, or ``None`` when
+        *output_spec* is ``None``.
 
     Raises
     ------
     _ResultKindMismatch
-        If the result's overall kind differs from the declaration.
+        If the result's overall kind differs from the output spec.
     ValueError
         If the result's structure, dimensions, dtype, or support does not
-        conform to the declaration.
+        conform to the output spec.
     """
     if output_spec is None:
         return None
@@ -479,9 +483,9 @@ def _validate_declared_support(expected: TermSpec, actual: TermSpec, path: str) 
     """Refuse an actual spec whose support a declared support does not contain, leaf by leaf.
 
     Records and batches are read field by field and element by element, and a
-    law's declaration output by output of its event, so a returned law
-    whose draws leave the declared support is refused, as completion checks the
-    produced value (II.2). A law's declaration has no unspecified output type, so both sides
+    law's event spec output by output, so a returned law whose draws leave the
+    declared support is refused, as completion checks the produced value
+    (II.2). A law's event spec never leaves its type unspecified, so both sides
     are concrete there. Supports are compared only where both are declared.
 
     Parameters
@@ -651,8 +655,9 @@ def _validate_function_declarations(
             )
         if set(input_spec) != set(parameters):
             raise ValueError(
-                f"Function {function_name!r} input_spec inputs {sorted(input_spec)} "
-                f"must exactly match signature parameters {sorted(parameters)}"
+                f"Function {function_name!r} declares the inputs {sorted(input_spec)} in "
+                f"input_spec, but its signature has the parameters {sorted(parameters)}; "
+                f"they must match"
             )
     unexpected = set(construction_bindings).difference(parameters)
     if unexpected and not any(p.kind == p.VAR_KEYWORD for p in parameters.values()):
@@ -680,7 +685,7 @@ def _validate_function_declarations(
         spec._bind_dims_from_value(value, effective, f"Function {function_name!r} {source}/{name}")
 
 
-#: The check a result declaration with an unspecified output type defers to the return.
+#: The check that an output spec whose type is unspecified defers to the return.
 _COMPLETED_AT_RETURN = "the result's type is completed from the returned value"
 
 #: The engine's controls, each with its default. A default count of None stands
@@ -843,13 +848,15 @@ class Function(TrackedTerm, Annotated):
     input_spec : InputSpec or Mapping[str, TermSpec] or None
         Authoritative inputs matching fixed signature parameters by name.
         Declared inputs cannot accompany variadic parameters. Defaults and
-        construction bindings must satisfy the declaration.
+        construction bindings must satisfy the input spec.
     output_spec : OutputSpec or TermSpec or None
-        Optional result declaration. A bare RecordSpec exposes its fields;
-        another bare spec uses the callable's original name (``f`` for a lambda,
-        ``result`` for a nameless callable). Without a declaration, the return
-        type is inferred with the same output rule. Display aliases never
-        change this default output. A named unspecified output type is inferred independently for each call.
+        Optional output spec of the result. A bare RecordSpec exposes its
+        fields as outputs; another bare spec is the single output, named by the
+        callable's original name (``f`` for a lambda, ``result`` for a nameless
+        callable). Without an output spec, the return type is inferred and the
+        output is named by the same rule. Display aliases never change this
+        default output name. An output spec that names its output but leaves
+        its type unspecified has the type inferred independently for each call.
     output_label : str or None
         Optional result alias. Without one, a call on values labels a value
         result by the application, as ``f(2.0)``, and a returned law or kernel
@@ -949,7 +956,7 @@ class Function(TrackedTerm, Annotated):
     control's default when it is read.
 
     The engine reads three declarations from the Function it runs (V.1): what
-    each parameter accepts, the result declaration, and the realization. A
+    each parameter accepts, the output spec of the result, and the realization. A
     Function declares them by its input spec and annotations, its
     ``output_spec``, and its body; a subclass realized by routes, as an
     operation is, declares them through ``_roles``, :meth:`_plan_route_inputs`, and
@@ -1277,7 +1284,7 @@ class Function(TrackedTerm, Annotated):
             The call's report: for each candidate route whether it is feasible,
             infeasible with a reason, or unresolved with the declarations it
             still needs; the selected route when selection can be decided; the
-            planned result declaration; the checks deferred to return; the
+            planned output spec of the result; the checks deferred to return; the
             lifted parameters; and the planned conversions.
 
         Raises
@@ -1388,11 +1395,11 @@ class Function(TrackedTerm, Annotated):
     def _plan_route_inputs(
         self, argument_values: Mapping[str, Any], controls: Mapping[str, Any]
     ) -> tuple[Any, OutputSpec | None, tuple[str, ...]]:
-        """What the routes read at one point: its call object, result declaration, and deferrals.
+        """What the routes read at one point: its call object, output spec, and deferrals.
 
-        A Function's call object is *argument_values*, and its result
-        declaration its ``output_spec``, whose unspecified output type defers the type to the
-        return.
+        A Function's call object is *argument_values*, and the output spec of its
+        result is its ``output_spec``, which defers the type to the return when
+        the type is unspecified.
 
         Parameters
         ----------
@@ -1404,7 +1411,7 @@ class Function(TrackedTerm, Annotated):
         Returns
         -------
         tuple
-            The object the routes' checks read, the result declaration, and the
+            The object the routes' checks read, the output spec of the result, and the
             checks deferred to the return.
         """
         result_declaration = self.output_spec
@@ -1439,7 +1446,7 @@ class Function(TrackedTerm, Annotated):
         Returns
         -------
         TrackedTerm or Any
-            The result at the kind its declaration names, with the call's
+            The result at the kind its output spec names, with the call's
             provenance. It is labeled by an explicit ``output_label``, or else
             by the application for a value and by the function's label for a
             returned law or kernel. A broadcast
@@ -1461,7 +1468,7 @@ class Function(TrackedTerm, Annotated):
         ResolutionError
             If no route realizes the call.
         ResultKindError, ResultSchemaError
-            If the result violates the completed declaration.
+            If the result violates the completed output spec.
         """
         return _call_engine(self, *args, **kwargs)
 

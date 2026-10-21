@@ -216,7 +216,7 @@ class TestLiftedScores:
         lifted = log_prob(Gaussian("g"), Gaussian("v"))
         assert isinstance(lifted, Distribution)
         # The law of the score at draws of the value is the operation at a draw,
-        # and its output is the operation's name, never a derived label.
+        # and its output name is the operation's name, never a derived label.
         assert (lifted.label, lifted.notation) == ("log_prob", "log_prob(g(g), v ~ v)")
         assert list(lifted.event_spec.outputs) == ["log_prob"]
 

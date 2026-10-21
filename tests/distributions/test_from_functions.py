@@ -3,7 +3,7 @@
 ``distribution`` builds a ``Distribution`` that claims the capability of each
 function it is given. Construction draws nothing and scores no value: it
 evaluates each function that traces in JAX abstractly against the event
-declaration, and it accepts a function that does not trace and an event of any
+spec, and it accepts a function that does not trace and an event of any
 kind.
 """
 

@@ -6,11 +6,11 @@ The engine runs the call stack of design Part V on every call of a Function:
 2. bind: the arguments bind to the signature (:mod:`._call`);
 3. normalize: distribution arguments are converted where their parameter names
    another class (:mod:`._normalization`) and each argument is admitted by its
-   role or its declaration (:func:`._call.admit_arguments`);
+   role or its input spec (:func:`._call.admit_arguments`);
 4. classify the lift: the lifted arguments are found and grouped
    (:func:`._plan.build_broadcast_plan`, :func:`._plan.build_stochastic_plan`);
-5. plan: the input specs unify and the output spec binds the
-   shared dimensions (:func:`._contract._bind_planned_function_inputs`), or, for
+5. plan: the input specs unify and the output spec binds the shared
+   dimensions (:func:`._contract._bind_planned_function_inputs`), or, for
    a Function realized by routes, each point's result rule runs
    (``Function._plan_route_inputs``);
 6. resolve: a lifted call resolves through the evaluation-rule registry
@@ -38,7 +38,7 @@ from typing import Any, cast, overload
 import jax
 import jax.numpy as jnp
 
-from ..core._specs import _has_record_outputs
+from ..core._specs import _has_record_outputs, _output_record
 from ..values import _binding
 
 try:
@@ -963,7 +963,7 @@ def _run_call(
         output_spec, output_template = concrete_output_spec, concrete_output_template
         if output_spec is None and candidates is not None and row_values is not argument_values:
             # A row of a sweep binds its element itself, which may declare what the
-            # element's declaration alone left open.
+            # element's spec alone left open.
             output_spec = _resolution.lifted_declaration(
                 function, row_values, resolved_controls, broadcast_plan
             )
@@ -1217,10 +1217,12 @@ def _jax_traceability_error(
                             f"marginal(law, {path!r}) gives it, or use dispatch='auto', "
                             f"'sequential', or 'thread'."
                         )
-                    from ..core._specs import _output_record
 
-                    outputs = _output_record(root.event_spec)
-                    if not isinstance(outputs, NumericRecordSpec) or not outputs.is_concrete:
+                    output_record = _output_record(root.event_spec)
+                    if (
+                        not isinstance(output_record, NumericRecordSpec)
+                        or not output_record.is_concrete
+                    ):
                         raise TypeError(
                             f"{type(root).__name__} must declare a concrete numeric event "
                             "to run under dispatch='jax'"
@@ -1233,14 +1235,14 @@ def _jax_traceability_error(
                             "under dispatch='jax'"
                         ) from error
                     columns = {}
-                    for path in outputs:
+                    for path in output_record:
                         dtype = dtypes.get(path)
                         if dtype is None:
                             dtype = dtypes.get(path.split("/", 1)[0])
                         if dtype is None:
                             dtype = _stored_dtype(root, path)
                         columns[path] = jax.ShapeDtypeStruct(
-                            (1, *outputs[path].shape),
+                            (1, *output_record[path].shape),
                             dtype,
                         )
                     # The stand-in draw is at the kind the law's event spec
@@ -1249,7 +1251,7 @@ def _jax_traceability_error(
                         root_probe = NumericRecordBatch(
                             columns,
                             "draw",
-                            element_spec=outputs,
+                            element_spec=output_record,
                             axes_per_level=(1,),
                             label=root.label,
                         )
@@ -1355,7 +1357,7 @@ def _batch_stand_in(root: Any, event: BatchSpec) -> Any:
 def _stored_dtype(root: Any, path: str) -> Any:
     """The dtype of the atoms an empirical *root* stores at the leaf *path*, or None.
 
-    The probe reads it where the law's declaration leaves a dtype open, since an
+    The probe reads it where the law's event spec leaves a dtype open, since an
     empirical law holds its atoms and reading them draws nothing. Atoms that
     are objects have no dtype.
     """
@@ -1708,7 +1710,7 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
     )
     _plan.require_empty_sweep_output(broadcast_plan, result)
     deferred = ()
-    if result is None or result.spec is None:
+    if result is None or result.term_spec is None:
         deferred = ("the result's type is completed from the returned value",)
     lifted = tuple(dict.fromkeys(ref.parameter_name for ref in lifted_refs))
     if waiting:

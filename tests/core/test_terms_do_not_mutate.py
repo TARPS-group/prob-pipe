@@ -41,8 +41,8 @@ def assigned_state(term) -> dict:
     ``_memo`` is excluded, being the one store a read is meant to fill.
     """
     state = object.__getstate__(term)
-    instance_dict, inputs = state if isinstance(state, tuple) else (state, {})
-    both = {**(instance_dict or {}), **(inputs or {})}
+    instance_dict, slots = state if isinstance(state, tuple) else (state, {})
+    both = {**(instance_dict or {}), **(slots or {})}
     return {name: (id(value), _census(value)) for name, value in both.items() if name != "_memo"}
 
 

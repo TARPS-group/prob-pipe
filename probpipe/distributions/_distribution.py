@@ -49,13 +49,14 @@ def _complete_event_spec(event_spec: Any) -> OutputSpec:
     Parameters
     ----------
     event_spec : OutputSpec or RecordSpec
-        The declaration a constructor supplies. A ``RecordSpec`` exposes its
-        fields, even when it has one, and an ``OutputSpec`` is kept as given.
+        The event spec a constructor supplies. The fields of a ``RecordSpec``
+        become the outputs, even when it has only one, and an ``OutputSpec`` is
+        kept as given.
 
     Returns
     -------
     OutputSpec
-        The complete declaration.
+        The complete event spec.
 
     Raises
     ------
@@ -63,8 +64,8 @@ def _complete_event_spec(event_spec: Any) -> OutputSpec:
         If *event_spec* is neither an ``OutputSpec`` nor a ``RecordSpec``, since
         an event of any other type is a whole term that an ``OutputSpec`` names.
     ValueError
-        If the declaration has an unspecified output type, since filling one is the
-        constructor's job.
+        If the event spec leaves its type unspecified, since filling it in is
+        the constructor's job.
     """
     if isinstance(event_spec, OutputSpec):
         declaration = event_spec
@@ -89,16 +90,16 @@ def _complete_event_spec(event_spec: Any) -> OutputSpec:
 def _whole_term_event(
     output_name: Any, term: TermSpec, event_spec: OutputSpec | None, owner: str
 ) -> OutputSpec:
-    """The declaration of a whole-term event *term* under *output_name*.
+    """The event spec of a whole-term event *term* under *output_name*.
 
     Parameters
     ----------
     output_name : str
-        The output of the event, which the constructor received first.
+        The name of the event's output, which the constructor received first.
     term : TermSpec
         The type of one draw, which the constructor derived.
     event_spec : OutputSpec or None
-        A declaration of the same output that also declares a type, which
+        An event spec of the same output that also declares a type, which
         *term* completes as :meth:`OutputSpec.with_term_spec` does, or ``None``.
     owner : str
         The constructor, as error messages name it, such as ``"Normal"``.
@@ -106,14 +107,14 @@ def _whole_term_event(
     Returns
     -------
     OutputSpec
-        The declaration ``OutputSpec(output_name=term)``, or *event_spec*
-        completed with *term*.
+        The keyword-form event spec whose one output, named *output_name*,
+        holds *term*, or *event_spec* completed with *term*.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *event_spec* is not an ``OutputSpec``,
-        or *event_spec* exposes a record.
+        or the outputs of *event_spec* are a record's fields.
     ValueError
         If *output_name* is not a valid output name, *event_spec* names
         another output, or *event_spec* declares a type that does not unify
@@ -133,12 +134,12 @@ def _whole_term_event(
 
 
 def _check_output(output_name: Any, owner: str) -> None:
-    """Raise ``TypeError`` unless *output_name*, the first argument of *owner*'s constructor, is a string.
+    """Raise ``TypeError`` unless *output_name*, the first argument to a constructor, is a string.
 
     Parameters
     ----------
     output_name : Any
-        The output of the event that the constructor received first.
+        The name of the event's output, which the constructor received first.
     owner : str
         The constructor, as the message names it, such as ``"Normal"``.
 
@@ -149,8 +150,8 @@ def _check_output(output_name: Any, owner: str) -> None:
     """
     if not isinstance(output_name, str):
         raise TypeError(
-            f"{owner} takes the output of its event as its first argument, a string such "
-            f"as 'mu', but got {type_name(output_name)}"
+            f"{owner} takes the name of the output of its event as its first argument, a "
+            f"string such as 'mu', but got {type_name(output_name)}"
         )
 
 
@@ -305,16 +306,16 @@ def _law_repr(term: Any, arguments: list[tuple[str, str]], constructor: Any = No
 
     The call holds, in order:
 
-    1. the output of a whole-term event, first where the constructor takes it
-       first, as ``Normal('mu', ...)``;
+    1. the name of a whole-term event's output, first where the constructor
+       takes it first, as ``Normal('mu', ...)``;
     2. *arguments*, the constructor's other arguments in its order;
-    3. the output as ``output_name=`` where the constructor takes it as a
+    3. that name as ``output_name=`` where the constructor takes it as a
        keyword, as an atoms-based law does;
     4. the label as ``label=`` where it differs from the label the
        constructor gives when it is given none, which the call gives again
        (:func:`_shows_label`);
     5. the event spec as ``event_spec=`` where it differs from the default
-       for the output.
+       for its outputs.
 
     The paths *term* holds fixed follow as ``fixed=('y',)``, so a conditioned
     law reads apart from an unconditioned one.
@@ -327,7 +328,7 @@ def _law_repr(term: Any, arguments: list[tuple[str, str]], constructor: Any = No
         Each other argument's name and its formatted value.
     constructor : Any, optional
         The law or kernel whose class the call names and whose constructor's
-        default label and placement of the output the call follows, as a
+        default label and placement of the output's name the call follows, as a
         law that presents another one names that one's class. It defaults to
         *term*.
 
@@ -343,7 +344,7 @@ def _law_repr(term: Any, arguments: list[tuple[str, str]], constructor: Any = No
     if output_name is not None and constructor._repr_output_name == "first":
         positional.append(repr(output_name))
     elif output_name is not None and constructor._repr_output_name == "keyword":
-        keywords.append(("component", repr(output_name)))
+        keywords.append(("output_name", repr(output_name)))
     if _shows_label(term, constructor):
         keywords.append(("label", repr(term._displayed_label())))
     if declaration is not None:
@@ -355,12 +356,12 @@ def _law_repr(term: Any, arguments: list[tuple[str, str]], constructor: Any = No
 
 
 def _event_repr_parts(declaration: OutputSpec) -> tuple[str | None, str | None]:
-    """The output of the event *declaration*, and its repr where it is not the default.
+    """The output name of the event spec *declaration*, and its repr where it is not the default.
 
-    A whole term has its output, and an exposed term has none, since its
-    outputs are the fields of what it exposes. The declaration is the default
-    when it is ``OutputSpec.default`` of its type under its output, or the
-    exposed form of its type, and the repr then leaves it out.
+    The keyword form has the name of its one output, and the positional form
+    has none, since its outputs are the fields of its type. The event spec is
+    the default when it is ``OutputSpec.default`` of its type under that name,
+    or the positional form over its type, and the repr then leaves it out.
     """
     output_name = _root_output_name(declaration)
     spec = declaration.term_spec
@@ -490,7 +491,7 @@ _ELEMENT_SOURCE = "_element_source"
 #: ``with_path_names``, ``with_label``, ``with_dim_names``, and ``with_dim_sizes`` set
 #: this attribute of each law they return that does not hold the law it is made from
 #: as its parent. The value is the pair of that law and the renames from its
-#: declaration to the result's, which are the identity for a relabeling and for a
+#: event spec to the result's, which are the identity for a relabeling and for a
 #: dimension transform. A lift reads it to draw the result together with that law
 #: (V.5). Detaching the result deletes the attribute.
 _COPY_SOURCE = "_copy_source"
@@ -634,7 +635,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     :attr:`~TrackedTerm.provenance`) and
     :class:`~probpipe.core.tracked.Annotated` (free-form
     :attr:`~Annotated.annotations`).  A family's constructor takes the
-    output of its event first and an optional ``label=``, which defaults to
+    name of its event's output first and an optional ``label=``, which defaults to
     the family's class name, so ``Normal("mu", 0.0, 1.0)`` is labeled
     ``Normal`` over the output ``mu``; any other law's label defaults to
     ``ℙ``, and a joint that ``*`` composes is labeled by its operands' labels.
@@ -649,15 +650,16 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
     **The event spec.** A law stores one ``DistributionSpec``, its
     :attr:`spec`, whose :attr:`event_spec` is the output spec of one
-    draw. A bare ``RecordSpec`` exposes its fields, and an ``OutputSpec`` names
-    the output of a whole-term event, as ``OutputSpec(mu=spec)``. :attr:`event_shape` reads the declaration, and
-    a law whose declaration is numeric also has the views of
+    draw. The fields of a bare ``RecordSpec`` are the outputs, and an
+    ``OutputSpec`` names the output of a whole-term event, as
+    ``OutputSpec(mu=spec)``. :attr:`event_shape` reads the event spec, and a
+    law whose event spec is numeric also has the views of
     :class:`NumericDistribution`; none of them is stored.
 
     Parameters
     ----------
     event_spec : OutputSpec or RecordSpec
-        The declaration of one draw, completed as above.
+        The output spec of one draw, completed as above.
     label : str, optional
         The law's label, a non-empty string, ``p`` by default. A subclass's
         constructor passes the label its caller gave, or its own default.
@@ -674,7 +676,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         If *label* is not a non-empty string, or *event_spec* is neither an
         ``OutputSpec`` nor a ``RecordSpec``.
     ValueError
-        If *event_spec* has an unspecified output type.
+        If *event_spec* leaves its type unspecified.
     """
 
     #: The label the constructor gives when it is given none, which the repr leaves out;
@@ -685,10 +687,10 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     #: fingerprint, which a copy or a pickle leaves out.
     _transient_state = ("_memo",)
 
-    #: Where the constructor takes the output of a whole-term event, which the
-    #: repr follows: ``"first"`` as its first argument, ``"keyword"`` as
-    #: ``output_name=`` after its other arguments, or ``None`` for a constructor that
-    #: takes no output.
+    #: Where the constructor takes the name of a whole-term event's output, which
+    #: the repr follows: ``"first"`` as its first argument, ``"keyword"`` as
+    #: ``output_name=`` after its other arguments, or ``None`` for a constructor
+    #: that takes no output name.
     _repr_output_name: ClassVar[str | None] = "first"
 
     def __init__(
@@ -712,7 +714,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         self._init_declaration(event_spec)
 
     def _init_declaration(self, event_spec: OutputSpec | TermSpec) -> None:
-        """Complete *event_spec* and store it as this law's declaration.
+        """Complete *event_spec* and store it as this law's event spec.
 
         The constructor calls this after setting the label; a class that bypasses
         the constructor calls it itself.
@@ -723,7 +725,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
     @property
     def raw(self) -> Distribution:
-        """This law detached from the workflow, under its label and declaration.
+        """This law detached from the workflow, under its label and event spec.
 
         A law is represented by itself, so its raw form is a copy that shares
         its representation and carries no provenance, no annotations, and no
@@ -781,7 +783,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     def __getattr__(self, name: str) -> Any:
         """Resolve a view of :class:`NumericDistribution` for a numeric law of another class.
 
-        Python calls this only when ordinary lookup fails. A law whose declaration
+        Python calls this only when ordinary lookup fails. A law whose event spec
         is numeric has the views of the marker whatever its class, so they resolve
         through the marker, and any other missing attribute raises as usual.
 
@@ -799,7 +801,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         ------
         AttributeError
             If *name* is not an attribute of the law, a view of the marker on a law
-            whose declaration is not numeric included.
+            whose event spec is not numeric included.
         """
         view = _NUMERIC_VIEWS.get(name)
         if view is None:
@@ -842,7 +844,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     # -- dimension transforms -------------------------------------------------
 
     def with_dim_sizes(self, **sizes: int) -> Self:
-        """Bind named symbolic dimensions of the declaration.
+        """Bind named symbolic dimensions of the event spec.
 
         The result is this law with its dimensions bound, so a lift draws it
         together with this law (V.5).
@@ -850,18 +852,18 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Parameters
         ----------
         **sizes : int
-            Sizes for free dimensions of the declaration.
+            Sizes for free dimensions of the event spec.
 
         Returns
         -------
         Self
-            A copy of the same class and label whose declaration has the sizes
+            A copy of the same class and label whose event spec has the sizes
             substituted; the original is unchanged.
 
         Raises
         ------
         ValueError
-            If a name is not a free dimension of the declaration, one an earlier
+            If a name is not a free dimension of the event spec, one an earlier
             call bound included, or a size is negative.
         TypeError
             If a size is not an integer.
@@ -875,7 +877,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         return _recorded_copy(copy, self)
 
     def with_dim_names(self, **names: str) -> Self:
-        """Rename symbolic dimensions of the declaration, simultaneously.
+        """Rename symbolic dimensions of the event spec, simultaneously.
 
         The result is this law under the new dimension names, so a lift draws it
         together with this law (V.5).
@@ -888,7 +890,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Returns
         -------
         Self
-            A copy of the same class and label whose declaration has the
+            A copy of the same class and label whose event spec has the
             dimensions renamed; the original is unchanged.
         """
         copy = self._with_declaration(
@@ -902,11 +904,11 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         """Rename or move nodes of the event spec by their paths, ``old -> new``.
 
         The result is this law with :meth:`OutputSpec.with_path_names` applied to
-        its declaration. A path starts with an output, and the packaging is
+        its event spec. A path starts with an output's name, and the form is
         kept, so a whole term's output is renamed in place with the term's
         fields under it. The law is unchanged: a draw of the result is a draw of
         this law carrying the new names. Renaming a whole term's output alone
-        changes only the declaration, so the result is a copy of the same class.
+        changes only the event spec, so the result is a copy of the same class.
         A factored law renames through its factors where they can carry the
         rename, and the result is the factored joint of the renamed factors over
         the same graph. A rename that gathers outputs under a new node
@@ -937,7 +939,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Raises
         ------
         KeyError
-            If a key is not a path of the declaration.
+            If a key is not a path of the event spec.
         ValueError
             As :meth:`OutputSpec.with_path_names` raises it.
         """
@@ -983,15 +985,15 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
         A whole-term law is itself under its output, so ``d[name]`` returns
         ``d``; the output is fixed at construction, so after ``with_label`` the
-        law is still addressed by it. Any other event path, a field of an exposed
-        record or a path below a whole record's output, gives the
+        law is still addressed by it. Any other event path, an output that is a
+        record's field or a path below a whole record's output, gives the
         ``FieldView`` of the node there, which holds a reference to this law, and
         a tuple of paths gives the view of their selection.
 
         Parameters
         ----------
         key : str or tuple of str
-            An event path, which starts with an output, or a tuple of event
+            An event path, which starts with an output's name, or a tuple of event
             paths to view jointly.
 
         Returns
@@ -1054,7 +1056,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Raises
         ------
         ValueError
-            If an output is produced twice, the right operand consumes a
+            If an output is produced twice, the right operand consumes an
             output the left produces, or matched specs do not unify.
         """
         return _compose_operands(self, other)
@@ -1275,7 +1277,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         return self._expression.render_notation(self._own_signature(), warn=True)
 
     def _own_signature(self) -> Signature:
-        """The signature the declaration states: the event outputs, in declaration order."""
+        """The signature the event spec states: the event outputs, in declaration order."""
         return Signature(tuple(self.event_spec.outputs))
 
     def __str__(self) -> str:
@@ -1287,11 +1289,11 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     def __repr__(self) -> str:
         """A call of the law's public constructor, followed by the paths the law holds fixed.
 
-        The output of a whole-term event and the family parameters come
+        The name of a whole-term event's output and the family parameters come
         first, as the constructor takes them, then ``label=`` where the label
         differs from the constructor's default, as
         ``Normal('mu', loc=0.0, scale=1.0, label='prior')``, and
-        ``event_spec=`` where the declaration differs from the default. The
+        ``event_spec=`` where the event spec differs from the default. The
         paths the law holds fixed follow as ``fixed=('y',)``.
         """
         return _law_repr(self, self._repr_arguments())
@@ -1310,7 +1312,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         return self._default_label
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The constructor's arguments the repr shows other than the output, the label, and the declaration.
+        """The constructor's arguments the repr shows, besides output name, label, and event spec.
 
         Each is a name and a formatted value, in the constructor's order. The
         base class shows none.
@@ -1318,7 +1320,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         return []
 
     def _event_repr_parts(self) -> tuple[str | None, str | None]:
-        """The output of the event and the declaration's repr, as :func:`_event_repr_parts` gives them."""
+        """The output name and the event spec's repr, as :func:`_event_repr_parts` gives them."""
         return _event_repr_parts(self.event_spec)
 
 
@@ -1333,8 +1335,8 @@ class NumericDistribution(Distribution):
 
     Every numeric law has the views below, whatever its class: a class that
     inherits the marker has them directly, and any other numeric law resolves
-    them through the marker. A law whose declaration is not numeric has none of
-    them. Like ``event_shape``, they read the declaration and are never stored.
+    them through the marker. A law whose event spec is not numeric has none of
+    them. Like ``event_shape``, they read the event spec and are never stored.
 
     The marker is not a dispatch type. Registering a method for it raises
     ``TypeError``, since selection by class would miss a numeric law whose class
@@ -1397,25 +1399,25 @@ def _event_form(output_name: str | None) -> str:
 def _unify_declarations(
     expected: OutputSpec, actual: OutputSpec, bindings: dict[str, int], path: str
 ) -> None:
-    """Match *actual* against *expected*: packaging and outputs, then their specs.
+    """Match *actual* against *expected*: form and outputs, then their specs.
 
     Parameters
     ----------
     expected : OutputSpec
-        The declaration to match against, such as a term spec's ``event_spec``.
+        The event spec to match against, such as a term spec's ``event_spec``.
     actual : OutputSpec
-        The declaration a law or a kernel carries.
+        The event spec a law or a kernel carries.
     bindings : dict[str, int]
         The size of each symbolic dimension bound so far, keyed by its name, which
         unification extends in place.
     path : str
-        The location of the declaration that error messages name, such as
-        ``"the declaration"``.
+        The location of the event spec that error messages name, such as
+        ``"the event spec"``.
 
     Raises
     ------
     ValueError
-        If the packaging or the whole-term output differs, or the specs do not
+        If the form or the name of a whole term's output differs, or the specs do not
         unify in the shared scope *bindings*.
     """
     wanted, found = _single_output_name(expected), _single_output_name(actual)
@@ -1427,7 +1429,10 @@ def _unify_declarations(
         raise ValueError(f"{path} declares the output {wanted!r}, but the law declares {found!r}")
     # A whole term's spec is bound under its output's path, as a record field's is.
     _unify_specs(
-        expected.spec, actual.spec, bindings, path if wanted is None else f"{path}/{wanted}"
+        expected.term_spec,
+        actual.term_spec,
+        bindings,
+        path if wanted is None else f"{path}/{wanted}",
     )
 
 
@@ -1438,8 +1443,8 @@ class DistributionSpec(TermSpec):
     Parameters
     ----------
     event_spec : OutputSpec or RecordSpec
-        The declaration of one draw. A bare ``RecordSpec`` completes to the
-        exposed form.
+        The output spec of one draw. A bare ``RecordSpec`` completes to the
+        positional form over it.
 
     Raises
     ------
@@ -1447,17 +1452,17 @@ class DistributionSpec(TermSpec):
         If *event_spec* is neither, since a bare spec of another kind has no
         output name to complete it with.
     ValueError
-        If the declaration has an unspecified output type.
+        If *event_spec* leaves its type unspecified.
 
     Notes
     -----
-    ``is_valid`` accepts a ``Distribution`` whose own declaration unifies with
-    this one: the packaging and the output names agree, and then the
-    outputs unify in one scope. An unset dtype accepts any dtype and a set one
+    ``is_valid`` accepts a ``Distribution`` whose own event spec unifies with
+    this one: the form and the output names agree, and then the outputs
+    unify in one scope. An unset dtype accepts any dtype and a set one
     requires a same-kind cast, sizes agree with symbolic dimensions bound
     consistently, and support is not compared.
 
-    ``bind_dims_from_value`` binds a symbolic declaration from a law's own, and
+    ``bind_dims_from_value`` binds a symbolic event spec from a law's own, and
     ``bind_dims_from_spec`` from another ``DistributionSpec``, by that same rule.
     Repeated symbols share one scope, and conflicting sizes raise ValueError.
 
@@ -1497,7 +1502,7 @@ class DistributionSpec(TermSpec):
         )
 
     def _bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
-        """Bind the declared event against the declaration *value* carries."""
+        """Bind the declared event against the event spec *value* carries."""
         if not isinstance(value, Distribution):
             raise ValueError(f"{path} does not conform to its field spec ({self!r})")
         _unify_declarations(self.event_spec, value.event_spec, bindings, path)
@@ -1514,11 +1519,11 @@ class DistributionSpec(TermSpec):
         return term_repr("DistributionSpec", None, [("event_spec", repr(self.event_spec))])
 
     def is_valid(self, value: Any) -> bool:
-        """Whether *value* is a ``Distribution`` whose declaration matches this one."""
+        """Whether *value* is a ``Distribution`` whose event spec matches this one."""
         if not isinstance(value, Distribution):
             return False
         try:
-            _unify_declarations(self.event_spec, value.event_spec, {}, "the declaration")
+            _unify_declarations(self.event_spec, value.event_spec, {}, "the event spec")
         except ValueError:
             return False
         return True

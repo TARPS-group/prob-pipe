@@ -21,8 +21,8 @@ __all__ = ["inverse", "log_det_jacobian"]
 def _inverse_result(f: Any) -> OutputSpec | None:
     """A map whose output spec comes from *f*'s inputs.
 
-    One input is returned whole under that input's name, and several form an
-    exposed record.
+    One input is returned whole under that input's name, and several are the
+    outputs of a record, in the positional form.
     """
     return None
 

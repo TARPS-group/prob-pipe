@@ -45,5 +45,5 @@ def test_the_result_keeps_the_target_output(posterior):
     assert list(posterior.event_spec.outputs) == ["z"]
 
 
-def test_the_result_keeps_the_target_packaging(posterior, target):
+def test_the_result_keeps_the_target_event_spec(posterior, target):
     assert posterior.event_spec == target.event_spec

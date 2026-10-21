@@ -36,7 +36,7 @@ from ..core._record_batch import RecordBatch, _batch_class_for
 from ..core._record_spec import NumericRecordSpec, RecordSpec
 from ..core._repr import format_value
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
-from ..core._specs import OutputSpec, _single_output_name
+from ..core._specs import OutputSpec
 from ..core.named_tree import _unflatten_paths
 from ..linalg import DenseLinOp
 from ._capabilities import (
@@ -55,6 +55,7 @@ from ._distribution import (
     Distribution,
     _constructor_label,
     _shared_final_names,
+    _single_output_name,
     _whole_term_event,
 )
 from ._factored import _raw_record, _stacked
@@ -468,17 +469,17 @@ def _atoms_declaration(
     atom_spec : TermSpec
         The type of one atom.
     output_name : str or None
-        The output of a whole-term event, which atoms that are not records
-        require unless *event_spec* names it.
+        The name of a whole-term event's output, which atoms that are not
+        records require unless *event_spec* names it.
     event_spec : OutputSpec or None
-        A declaration that names the outputs and the packaging.
+        An event spec that names the outputs and their form.
     owner : str
         The constructor, as error messages name it.
 
     Returns
     -------
     OutputSpec or TermSpec
-        The declaration to complete: the bare ``RecordSpec`` of record atoms,
+        The event spec to complete: the bare ``RecordSpec`` of record atoms,
         or an ``OutputSpec``.
 
     Raises
@@ -503,7 +504,7 @@ def _atoms_declaration(
     elif event_spec is None:
         raise TypeError(
             f"{owner} of atoms that are not records needs the output of its event, as "
-            f"component='theta'"
+            f"output_name='theta'"
         )
     if not isinstance(event_spec, OutputSpec):
         raise TypeError(f"event_spec must be an OutputSpec; got {type(event_spec).__name__}")
@@ -518,15 +519,16 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     Every batch axis indexes atoms, in the row-major order positional indexing
     reads. A batch is stored as given and keeps its own levels, which
     ``with_level_names`` renames. An array is stored as a ``NumericArrayBatch``
-    labeled by the law's output, on one level named by *level*, which
-    defaults to the component. The weights are normalized and default to
+    labeled by the name of the law's output, on one level named by *level*,
+    which defaults to that name. The weights are normalized and default to
     uniform. The law's label is ``ℙ`` unless *label* gives another.
 
-    **The event spec.** Record atoms expose their fields, which are the
-    law's outputs, and any other atoms form a whole-term event under
-    *output_name*. An *event_spec* names the outputs and the packaging in
-    place of *output_name*. ``OutputSpec.with_term_spec`` completes it with the atoms'
-    spec: an unspecified output type takes that spec, and a declared type must unify with it.
+    **The event spec.** The fields of record atoms are the law's outputs, and
+    any other atoms form a whole-term event whose one output is named
+    *output_name*. An *event_spec* names the outputs and their form in place of
+    *output_name*. ``OutputSpec.with_term_spec`` completes it with the atoms'
+    spec: where its type is unspecified it takes that spec, and a declared type
+    must unify with it.
 
     **Renaming.** For record atoms, ``with_path_names`` returns an
     ``EmpiricalDistribution`` with the same label and weights, whose atoms are
@@ -571,15 +573,15 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         like those axes, excluding any event batch axes. A ``Weights`` object, which can be built from log
         weights, is adopted as it is.
     output_name : str, optional
-        The output of a whole-term event, required for atoms that are not
-        records unless *event_spec* names it, and refused for record atoms.
+        The name of a whole-term event's output, required for atoms that are
+        not records unless *event_spec* names it, and refused for record atoms.
     label : str, optional
         The law's label, ``ℙ`` by default.
     level : str, optional
         The name of the one level a plain array's atoms lie on. It defaults to
-        the law's output.
+        the name of the law's output.
     event_spec : OutputSpec, optional
-        The declaration of one draw, completed with the atoms' spec. For a
+        The output spec of one draw, completed with the atoms' spec. For a
         ``BatchSpec`` event, its named levels must trail the stored atom levels;
         only the preceding axes index atoms and weights. One draw retains the
         event's levels, including levels of size zero. Nested batches are
@@ -592,7 +594,8 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         stored kind nor a numeric array, *output_name* is missing for atoms that
         are not records or given for record atoms, *level* is not a string or
         is given with a batch of atoms, *event_spec* is not an ``OutputSpec``,
-        or *event_spec* exposes a record for atoms that are not records.
+        or the outputs of *event_spec* are a record's fields for atoms that are
+        not records.
     ValueError
         If *atoms* holds no atom or is a 0-d array, the weights do not number
         one per atom or are negative or sum to zero, *output_name* is not a valid
@@ -618,7 +621,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
 
     _capability_table = _MOMENT_CAPABILITIES
 
-    #: The constructor takes the atoms first and the output as a keyword.
+    #: The constructor takes the atoms first and the output's name as a keyword.
     _repr_output_name: ClassVar[str | None] = "keyword"
 
     #: Derived from the stored atoms rather than transported.
@@ -668,7 +671,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         if isinstance(atoms, Batch):
             stored = atoms
         else:
-            # An array's atoms form a whole-term event, whose output labels them
+            # An array's atoms form a whole-term event, whose output's name labels them
             # and names their level.
             name = _single_output_name(self.event_spec)
             on_level = name if level is None else level
@@ -785,7 +788,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
 
         A single event path yields the leaf or subtree at that path whole, under
         an output named by the path's final segment. A tuple of event paths
-        yields an exposed record of the selected nodes keyed by their final
+        yields a law whose outputs are the selected nodes, named by their final
         segments. Either way the result keeps this law's label, the projected
         atoms keep the stored atoms' levels, and the result holds no reference
         to this law.
@@ -845,7 +848,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         -------
         tuple of _Selected
             One ``(path, segments, spec)`` triple per requested path, in the order
-            requested. The segments leave out a whole term's output, so they
+            requested. The segments leave out the name of a whole term's output, so they
             address the node within one atom.
 
         Raises

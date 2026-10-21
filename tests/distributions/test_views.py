@@ -1,9 +1,9 @@
 """A field view is the law of one event path of its parent.
 
-``FieldView(parent, path)`` declares the node at ``path`` whole, under a
+``FieldView(parent, path)`` declares the node at ``path`` whole, under an
 output named by the path's final segment, is labeled by the path, and holds a
-reference to its parent. A tuple of paths selects several nodes as an exposed
-record of them. Indexing a view joins the view's path to the key after the view's
+reference to its parent. A tuple of paths selects several nodes as a record of
+them in the positional form. Indexing a view joins the view's path to the key after the view's
 output. A view claims each capability its parent's can derive: a projection
 when the parent has it, covariance and quantiles only at a numeric node, and the
 densities and marginals when the parent has marginals. Each derived capability
@@ -83,16 +83,16 @@ from probpipe.operations._moments import mean
 from tests._fixed_paths import with_fixed_paths
 from tests._posterior import posterior_of
 
-# -- Declarations -------------------------------------------------------------
+# -- Event specs --------------------------------------------------------------
 
 #: The declared spec of a scalar normal draw, so that a scalar node of a double
-#: matches the declaration of a normal marginal.
+#: matches the event spec of a normal marginal.
 _REAL = Normal("x", 0.0, 1.0).event_spec.term_spec
 
-#: A numeric exposed record: a group two levels deep, and a vector beside it.
+#: A numeric record in the positional form: a group two levels deep, and a vector beside it.
 _EVENT = OutputSpec(RecordSpec(model=RecordSpec(theta=RecordSpec(mu=_REAL, tau=(2,))), y=(3,)))
 
-#: A mixed exposed record: an opaque leaf, a numeric leaf, and a mixed group.
+#: A mixed record in the positional form: an opaque leaf, a numeric leaf, and a mixed group.
 _MIXED = OutputSpec(
     RecordSpec(label=OpaqueSpec(), x=(2,), group=RecordSpec(tag=OpaqueSpec(), w=()))
 )

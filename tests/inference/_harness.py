@@ -215,10 +215,10 @@ def _at(raw: Any, path: str) -> Any:
 def _node(raw: Any, law: Any, path: str) -> Any:
     """The node at the event path *path* of *raw*, which is a raw draw or raw summary of *law*.
 
-    An exposed record's paths index its nested mapping, and a whole term's
-    paths start with its output, which stands for the whole raw value. A
-    summary such as ``mean`` takes the event's paths, so a draw and a summary
-    are read alike.
+    The paths of an event spec in the positional form index its nested mapping,
+    and those of one in the keyword form start with its output name, which
+    stands for the whole raw value. A summary such as ``mean`` takes the
+    event's paths, so a draw and a summary are read alike.
 
     Raises
     ------

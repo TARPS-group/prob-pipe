@@ -220,11 +220,11 @@ def _simulator_given(simulator: ConditionalDistribution, params: Any) -> Any:
     itself, so it may read a nested field by its leaf path; any other receives
     the record of its inputs.
     """
-    inputs = tuple(simulator.given_spec)
-    if set(inputs) == set(params.fields):
+    input_names = tuple(simulator.given_spec)
+    if set(input_names) == set(params.fields):
         return params
     return Record(
-        {input_name: params[input_name] for input_name in inputs},
+        {input_name: params[input_name] for input_name in input_names},
         label="given",
     )
 

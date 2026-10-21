@@ -121,8 +121,8 @@ class TestOpaqueSpecTypeAndMeta:
         assert declared.bind_dims_from_spec(inferred) == declared
         assert inferred.bind_dims_from_spec(declared) == inferred
         unified = OpaqueSpec(type=str, meta="units")
-        assert OutputSpec(label=declared).with_term_spec(inferred).spec == unified
-        assert OutputSpec(label=inferred).with_term_spec(declared).spec == unified
+        assert OutputSpec(label=declared).with_term_spec(inferred).term_spec == unified
+        assert OutputSpec(label=inferred).with_term_spec(declared).term_spec == unified
 
     def test_a_function_returning_an_opaque_value_keeps_the_declared_meta(self):
         tagged = Function(
@@ -139,10 +139,10 @@ class TestOpaqueSpecTypeAndMeta:
 
     def test_completion_keeps_the_declared_type(self):
         declared = OutputSpec(label=OpaqueSpec(type=str))
-        assert declared.with_term_spec(OpaqueSpec()).spec == OpaqueSpec(type=str)
+        assert declared.with_term_spec(OpaqueSpec()).term_spec == OpaqueSpec(type=str)
         assert OutputSpec(label=OpaqueSpec()).with_term_spec(
             OpaqueSpec(type=str)
-        ).spec == OpaqueSpec(type=str)
+        ).term_spec == OpaqueSpec(type=str)
 
     def test_a_record_built_from_values_infers_its_opaque_leaves(self):
         assert Record(
@@ -817,7 +817,7 @@ class TestInferFrom:
     def test_from_mixed_record_stays_base(self):
         """A plain ``Record`` with a non-numeric leaf can't be promoted —
         the result is a plain :class:`RecordSpec` with an opaque
-        input."""
+        leaf."""
         r = Record(
             {"x": 1.0, "label": "tag"},
             label="r",
@@ -1401,7 +1401,7 @@ class TestFunctionSpecIsValid:
 
 class TestFunctionSpecDeclarationsRequired:
     def test_explicit_sides_stored_per_the_storage_rule(self):
-        # FunctionSpec stores both declarations as they are given.
+        # FunctionSpec stores its input spec and output spec as they are given.
         inp, out = InputSpec(a=NumericArraySpec(())), OutputSpec(RecordSpec(b=()))
         spec = FunctionSpec(inp, out)
         assert spec.input_spec is inp
@@ -1444,7 +1444,7 @@ class TestFunctionSpecOptionalTemplates:
     def test_one_side_specified(self):
         spec = FunctionSpec(output_spec=OutputSpec(result=RecordSpec(out=NumericArraySpec(()))))
         assert spec.input_spec is None
-        # A record output is stored as its declaration (the storage rule).
+        # A record output is stored as the output spec's term spec (the storage rule).
         assert spec.output_spec.term_spec == RecordSpec(out=NumericArraySpec(()))
 
     def test_none_specs_are_hashable_and_equal(self):
@@ -2039,10 +2039,10 @@ class TestTermSpecTaxonomy:
         assert isinstance(NumericArraySpec(()), TermSpec)
         assert isinstance(OpaqueSpec(), TermSpec)
 
-    # --- the storage rule: a declaration is stored as a TermSpec ---
+    # --- the storage rule: an event or output spec stores a TermSpec ---
 
     def test_record_schema_is_stored_directly(self):
-        """The schema already declares the kind; the declaration holds it as is."""
+        """The schema already declares the kind; the event or output spec holds it as is."""
 
         tau = RecordSpec(x=())
         assert DistributionSpec(tau).event_spec.term_spec is tau
@@ -2133,7 +2133,7 @@ class TestTermSpecTaxonomy:
             )
 
     def test_unspecified_output_stays_none(self):
-        """None means "unspecified" and is not wrapped into a record declaration."""
+        """None means "unspecified" and is not wrapped into a record output spec."""
         assert FunctionSpec().output_spec is None
         assert FunctionSpec(InputSpec(RecordSpec(x=()).children)).output_spec is None
 
@@ -2388,7 +2388,7 @@ class TestTemplateConcretization:
 
 
 class TestBindingAFunctionSpec:
-    """A `FunctionSpec`'s two sides bind from the callable's own declaration.
+    """A `FunctionSpec`'s two sides bind from the callable's own input and output specs.
 
     Not a conformance check: a function is contravariant in its input, so whether
     a value *is* an acceptable function is a separate question. Only the sizes
@@ -2615,10 +2615,10 @@ class TestAFunctionOutputBindsWhateverItDeclares:
     """A `FunctionSpec`'s output binds whether or not it declares a record.
 
     `output_spec` is any value spec, since a callable may return a term of any
-    kind. A record declaration meets the callable's output template as a whole;
-    any other declaration describes the one value returned and meets that
-    template's sole immediate field. Both bind, so a name shared with the input is one
-    dimension on either route.
+    kind. An output spec in the positional form, a record, meets the callable's
+    output template as a whole; one in the keyword form describes the one value
+    returned and meets that template's sole immediate field. Both bind, so a name
+    shared with the input is one dimension on either route.
     """
 
     @staticmethod
@@ -2661,7 +2661,7 @@ class TestAFunctionOutputBindsWhateverItDeclares:
     def test_a_non_record_output_that_disagrees_with_the_input_raises(self):
         """The case a skipped output hid: the input says 3, the output says 5.
 
-        Binding only the input would leave the declaration reporting an output of
+        Binding only the input would leave the spec reporting an output of
         `(3,)` for a callable that returns `(5,)` — a schema that is not merely
         unbound but wrong.
         """
@@ -2686,7 +2686,7 @@ class TestAFunctionOutputBindsWhateverItDeclares:
             )
 
     def test_one_declared_output_value_does_not_match_several_fields(self):
-        """A single value declaration meets a single field, so two is a mismatch."""
+        """A single-value output spec meets a single field, so two is a mismatch."""
         function = Function(
             lambda x: x,
             label="f",
@@ -2695,7 +2695,7 @@ class TestAFunctionOutputBindsWhateverItDeclares:
         )
         declared = self._declared(NumericArraySpec(shape=("n",)))
 
-        with pytest.raises(ValueError, match="incompatible outputs"):
+        with pytest.raises(ValueError, match="make the output names match"):
             Record(
                 {"f": function},
                 event_template=declared,
@@ -2719,7 +2719,7 @@ class TestAFunctionOutputBindsWhateverItDeclares:
         assert record_output.bind_dims_from_value(function) == record_output
 
     def test_a_bare_callable_still_binds_nothing_from_its_output(self):
-        """No declaration to read, so the output stays free rather than raising."""
+        """The callable declares no output spec, so the output stays free rather than raising."""
         declared = self._declared(NumericArraySpec(shape=("k",)))
 
         record = Record(

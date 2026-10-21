@@ -1198,7 +1198,7 @@ class TestLevels:
         assert renamed.level_names == ("sample",)
         assert renamed.batch_shape == (3,)
         # The columns must ride along: renaming a level touches no data, and the
-        # copy relies on the tracked base carrying the storage input.
+        # copy relies on the tracked base carrying the storage slot.
         np.testing.assert_array_equal(np.asarray(renamed["outer/a"]), np.asarray([0.0, 1.0, 2.0]))
         assert renamed[0]["outer/a"] == 0.0
 

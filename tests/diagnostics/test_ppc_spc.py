@@ -30,7 +30,7 @@ from probpipe.diagnostics._views import DiagnosticsView, PPCView
 
 
 def _kernel(posterior, n: int = 50):
-    """``y ~ Normal(alpha, 1)``, iid over *n* observations, given the posterior's inputs."""
+    """``y ~ Normal(alpha, 1)``, iid over *n* observations; its inputs are the posterior's outputs."""
     return conditional_distribution(
         lambda alpha, beta: Normal("y", alpha * jnp.ones(n), 1.0),
         given_spec=posterior.event_spec.outputs,

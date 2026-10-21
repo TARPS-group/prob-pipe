@@ -1185,7 +1185,7 @@ class TestReplayPreflight:
         np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
         assert replayed.notation == "replayable_identity(value ~ value; y)"
 
-    @pytest.mark.parametrize("change", ["shape", "kind", "packaging", "declaration"])
+    @pytest.mark.parametrize("change", ["shape", "kind", "form", "output_spec"])
     def test_output_contract_drift_fails_before_sampling(self, change):
         record = RecordSpec(left=(), right=())
         declaration = OutputSpec(bundle=record)
@@ -1203,8 +1203,8 @@ class TestReplayPreflight:
         declarations = {
             "shape": OutputSpec(bundle=RecordSpec(left=(2,), right=())),
             "kind": OutputSpec(bundle=OpaqueSpec()),
-            "packaging": OutputSpec(record),
-            "declaration": None,
+            "form": OutputSpec(record),
+            "output_spec": None,
         }
         changed = Function(
             replayable_identity,

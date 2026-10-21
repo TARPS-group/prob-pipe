@@ -547,7 +547,7 @@ class TestRoundTripPreservesAnnotations:
         # demand.
         def assigned(obj):
             state = object.__getstate__(obj)
-            instance_dict, inputs = state if isinstance(state, tuple) else (state, {})
-            return (set(instance_dict or {}) | set(inputs or {})) - {"_jax_cache"}
+            instance_dict, slots = state if isinstance(state, tuple) else (state, {})
+            return (set(instance_dict or {}) | set(slots or {})) - {"_jax_cache"}
 
         assert assigned(term) - assigned(roundtrip(term)) == set()

@@ -53,7 +53,7 @@ class LinearPushforwardDistribution(Distribution):
     """The law of ``op @ X`` for ``X ~ base``, represented lazily.
 
     The event type is ``op``'s output type, under the pushforward's own
-    output. Sampling pushes the base's draws through ``op``. The mean and
+    output name. Sampling pushes the base's draws through ``op``. The mean and
     the covariance delegate exactly, ``𝔼[A X] = A 𝔼[X]`` and ``Cov(A X) = A
     Cov(X) Aᵀ``, lazily through the operator algebra. The log-density exists
     only when ``op`` is invertible, by change of variables.
@@ -61,7 +61,7 @@ class LinearPushforwardDistribution(Distribution):
     Parameters
     ----------
     output_name : str
-        The output of the pushforward's event.
+        The name of the pushforward's one output, which names its draws.
     base : Distribution
         The law of ``X``, whose numeric event is ``op``'s input.
     op : LinOp
@@ -234,7 +234,7 @@ class BijectorTransformedDistribution(Distribution):
     Parameters
     ----------
     output_name : str
-        The output of the transformed law's event.
+        The name of the transformed law's one output, which names its draws.
     base : Distribution
         The law of ``X``, whose draws are arrays.
     bijector : Function

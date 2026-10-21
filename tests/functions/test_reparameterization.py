@@ -64,7 +64,7 @@ class TestTheBijectorIsAFunction:
         assert is_invertible(bijector)
         assert isinstance(bijector, SupportsLogDetJacobian)
 
-    def test_its_output_is_the_backend_name(self):
+    def test_its_output_name_is_the_backend_name(self):
         bijector = bijector_for(positive)
         assert (bijector.label, bijector._output_name) == ("exp", "exp")
         assert bijector.with_label("other")._output_name == "exp"

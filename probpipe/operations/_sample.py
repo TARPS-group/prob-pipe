@@ -55,7 +55,7 @@ def _record_batch(value: Any, call: BoundCall, result: OutputSpec | None) -> Any
     """
     if call.controls["raw"] or not isinstance(value, Mapping) or result is None:
         return value
-    spec = result.spec
+    spec = result.term_spec
     if isinstance(spec, BatchSpec):
         spec = _flat_batch_spec(spec)
     if not isinstance(spec, BatchSpec) or not isinstance(spec.element_spec, RecordSpec):
@@ -95,7 +95,7 @@ def _sample_shape(sample_shape: Any) -> tuple[int, ...]:
 
 
 def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
-    """A draw and a batch of draws carry the law's event outputs, the batch on a level named sample.
+    """A draw and a batch of draws carry the law's outputs, the batch on a level named sample.
 
     The returned kind is read from ``event_spec.term_spec``, so an array and a
     one-field record stay distinct under every sample shape.
@@ -110,14 +110,14 @@ def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
     Returns
     -------
     OutputSpec
-        ``d.event_spec`` for an empty shape, and otherwise that declaration with
-        its spec replaced by the batch spec over the sample axes followed by
+        ``d.event_spec`` for an empty shape, and otherwise that event spec with
+        its term spec replaced by the batch spec over the sample axes followed by
         any batch levels that belong to one event.
 
     Raises
     ------
     ApplicabilityError
-        If *sample_shape* is malformed, the declaration has free dimensions,
+        If *sample_shape* is malformed, the event spec has free dimensions,
         which a draw has no value to bind, or a non-empty *sample_shape* meets
         a batch-valued event that already has a level named ``sample``.
     """
@@ -174,7 +174,7 @@ def sample(d: Distribution, sample_shape: SizesLike = ()):
     Raises
     ------
     ApplicabilityError
-        If *sample_shape* is malformed, the declaration has free dimensions, or
+        If *sample_shape* is malformed, the event spec has free dimensions, or
         a non-empty *sample_shape* meets a batch-valued event that already has
         a level named ``sample``.
     ResolutionError

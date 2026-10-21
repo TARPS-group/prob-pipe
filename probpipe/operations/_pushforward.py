@@ -205,9 +205,9 @@ def _arm_takes(arm: Any) -> str:
 def _domain_refusal(f: Function, parameter: str, event: TermSpec, fixed: Mapping[str, Any]) -> str:
     """Why the open *parameter* of *f* cannot take a draw declared by *event*, or ``""``.
 
-    Each declaration the parameter carries must admit the draw: its input of
+    Each declaration the parameter carries must admit the draw: its spec in
     *f*'s ``input_spec``, unified with the draw together with the fixed
-    arguments' inputs; its role, for an operation; and otherwise its annotation,
+    arguments' specs; its role, for an operation; and otherwise its annotation,
     whose arms are read by :func:`_arm_admits`.
     """
     draw = f"the draw is {_kind_words(type(event))}"

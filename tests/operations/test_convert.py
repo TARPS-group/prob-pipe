@@ -155,7 +155,7 @@ class TestConvert:
             convert.using(exact_only=True)(_Source("s"), _RoughTarget)
 
     def test_a_converter_that_changes_the_declaration_raises_value_error(self, suite_converters):
-        with pytest.raises(ValueError, match="fields"):
+        with pytest.raises(ValueError, match="declares the outputs"):
             convert(_Source("s"), _Unfaithful)
 
     def test_the_route_delegates_to_the_converter_registry(self):

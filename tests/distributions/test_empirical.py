@@ -2,10 +2,10 @@
 
 An ``EmpiricalDistribution`` takes its atoms in the event's batch form, or as an
 array whose leading axis indexes array atoms, with weights that default to
-uniform and are normalized. Without a declaration, record atoms expose their
+uniform and are normalized. Without an event spec, record atoms expose their
 fields and any other atoms form a whole-term event whose output defaults to
-the law's label; an ``event_spec`` names the outputs, and an unspecified output type is
-filled from the atoms. The law samples by weighted resampling, integrates any
+the law's label; an ``event_spec`` names the outputs, and an unspecified type
+is filled from the atoms. The law samples by weighted resampling, integrates any
 function exactly over its atoms, and has exact marginals, which are the
 empirical laws of the projected atoms under the same weights. A numeric event
 also has the weighted mean, variance, covariance, and per-coordinate quantiles,
@@ -184,7 +184,7 @@ class TestEventCompletion:
             ),
         ],
     )
-    def test_a_type_hole_is_filled_from_the_atoms(self, atoms, spec):
+    def test_an_unspecified_type_is_filled_from_the_atoms(self, atoms, spec):
         law = EmpiricalDistribution(atoms, event_spec=OutputSpec(beta=None), label="posterior")
         assert law.label == "posterior"
         assert law.event_spec == OutputSpec(beta=spec)
@@ -373,7 +373,7 @@ class TestConstructionErrors:
         with pytest.raises(ValueError, match="at least one atom"):
             EmpiricalDistribution(atoms, output_name="x")
 
-    def test_the_output_is_a_valid_output_name(self):
+    def test_the_output_name_is_valid(self):
         with pytest.raises(ValueError, match="output names must be non-empty"):
             EmpiricalDistribution(_VALUES, output_name="")
 

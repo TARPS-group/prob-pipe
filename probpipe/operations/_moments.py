@@ -8,16 +8,16 @@ matching protocol, ``closed_form``, and a Monte Carlo fallback,
 capability returns the law's own moment, and a numeric fallback returns that
 moment of the empirical law of its draws. ``mean``, ``variance``, and
 ``quantile`` are computed coordinate by coordinate, so they also carry the
-structural route ``by_output``: for a law whose event is a record, it
-computes each output that has an exact route of its own by that route, on
-the output's view, and the other outputs together, so a dependent joint's
-root factors keep their closed forms. ``cov`` couples outputs and has no
-such route.
+structural route ``by_output``: for a law whose event is a record, it splits
+the event into its top-level outputs and computes each output that has an
+exact route of its own by that route, on the output's view, and the outputs
+without one together, as one block, so a dependent joint's root factors keep
+their closed forms. ``cov`` couples the outputs, so it has no such route.
 
-A moment of the event's kind keeps the event's outputs and packaging and
+A moment of the event's kind keeps the event's outputs, in the same form, and
 derives its term specs, support included, so the mean of a law over ``mu`` and
 ``tau`` is a record whose fields are ``mu`` and ``tau``. Selection therefore
-commutes with a summary: for a law whose event exposes a record, the part of
+commutes with a summary: for a law whose outputs are a record's fields, the part of
 ``mean(d)`` at an event path ``p`` and ``mean(d[p])`` have one estimand, and
 they are equal where both take exact routes. ``cov`` is declared under the
 output ``cov``.
@@ -142,7 +142,7 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# The declarations of the moments
+# The output specs of the moments
 # ---------------------------------------------------------------------------
 
 
@@ -239,13 +239,13 @@ def _array_leaves(spec: TermSpec) -> list[NumericArraySpec]:
 
 
 def _summary_declaration(declaration: OutputSpec, term: TermSpec) -> OutputSpec:
-    """The declaration of a summary of each output of *declaration*, whose type is *term*.
+    """The output spec of a summary of each output of *declaration*, whose type is *term*.
 
-    The summary takes the declaration's outputs and packaging, so the mean
+    The summary takes the outputs of *declaration*, in the same form, so the mean
     of a law over ``mu`` and ``tau`` is a record whose fields are ``mu`` and
     ``tau``, and the mean of a law over ``theta`` is declared under ``theta``.
-    A summary whose type is a law, as the mean of a law over laws is, exposes
-    that law's event, since a law takes its event's outputs.
+    A summary whose type is a law, as the mean of a law over laws is, takes
+    the positional form over that law, since a law's outputs are its event's.
     """
     if isinstance(term, DistributionSpec):
         return OutputSpec(term)
@@ -264,7 +264,7 @@ def _capability(method: str) -> Callable[[BoundCall, OutputSpec | None], Any]:
 
 
 def _mean_result(d: DistributionSpec) -> OutputSpec:
-    """A value of the event's kind, under the event's outputs and in its packaging.
+    """A value of the event's kind, under the event's outputs and in the same form.
 
     Its term specs are those of an average: floating, on the hull of the
     event's support, so the mean of a Bernoulli event lies in the unit interval.
@@ -278,7 +278,7 @@ def _variance_result(d: DistributionSpec) -> OutputSpec:
 
 
 def _cov_result(d: DistributionSpec) -> OutputSpec | None:
-    """The dense covariance of the flattened draw, a ``(size, size)`` array under the component ``cov``.
+    """The dense covariance of the flat draw, a ``(size, size)`` array under the output ``cov``.
 
     The size is the number of the event's coordinates; an event with free
     dimensions leaves it to the returned value.
@@ -299,7 +299,7 @@ def _quantile_result(d: DistributionSpec, q: TermSpec) -> OutputSpec:
     Parameters
     ----------
     d : DistributionSpec
-        The law's spec, whose event spec the quantile's declaration
+        The law's spec, whose event spec the quantile's output spec
         follows.
     q : TermSpec
         The spec of the levels: a scalar for one level, or an array whose shape
@@ -308,7 +308,7 @@ def _quantile_result(d: DistributionSpec, q: TermSpec) -> OutputSpec:
     Returns
     -------
     OutputSpec
-        The event's declaration, with its outputs, packaging, and shapes.
+        The event spec, with its outputs, form, and shapes.
         Plural levels give its batch form.
 
     Raises
@@ -326,14 +326,14 @@ def _quantile_result(d: DistributionSpec, q: TermSpec) -> OutputSpec:
     element = _summary_declaration(d.event_spec, _quantile_term(d.event_spec.term_spec))
     if not q.shape:
         return element
-    return element._with_term_spec(BatchSpec(element.spec, quantile=q.shape))
+    return element._with_term_spec(BatchSpec(element.term_spec, quantile=q.shape))
 
 
 def _expectation_result(f: TermSpec) -> OutputSpec | None:
     """The mean of the integrand's output spec, as ``mean(pushforward(d, f))`` declares it.
 
-    It takes the integrand's outputs and packaging, with an average's term
-    specs. An integrand that declares no output leaves the declaration to the
+    It takes the integrand's outputs, in the same form, with an average's term
+    specs. An integrand that declares no output leaves the output spec to the
     returned value.
     """
     if (
@@ -439,7 +439,7 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
 
     Draws of an array event are its atoms along their leading axis. Draws of a
     record event are its atoms as the batch of records the law's event
-    declaration calls for, whether they arrive as a nested mapping of raw
+    spec calls for, whether they arrive as a nested mapping of raw
     columns or as a record of columns. A batch of records is taken as it is.
     Draws of a batch-valued event are its atoms on one level before the
     event's own levels.
@@ -581,8 +581,8 @@ def _view(d: Distribution, outputs: tuple[str, ...]) -> Distribution:
 def _block_values(view: Distribution, value: Any) -> dict[str, Any]:
     """The raw *value* of a summary of *view*, keyed by the outputs of the view's event.
 
-    A view that exposes a record returns the summary keyed by its outputs,
-    and a view of one whole term returns that term's summary.
+    A view whose outputs are a record's fields returns the summary keyed by
+    them, and a view in the keyword form returns its one output's summary.
     """
     declaration = view.event_spec
     if _has_record_outputs(declaration):
@@ -621,15 +621,15 @@ class _Partition:
 
 
 class _ByOutput(_DelegatingRoute):
-    """The summary of each output of a record event, by the route that output's view selects.
+    """The summary of each top-level output of a record event, by the route its view selects.
 
     ``mean``, ``variance``, and ``quantile`` are computed coordinate by
-    coordinate, so the summary of a law ``d`` whose event exposes a record is
+    coordinate, so the summary of a law ``d`` whose event is a record is
     the record of the summaries of the views ``d[B]`` over any partition of its
     outputs into blocks ``B``. The route forms the partition from the
     operation's own resolution on each output's view: an output for which
-    the operation selects an exact route is a block of its own, and the other
-    outputs form one block, whose draws they share. Each block is resolved
+    the operation selects an exact route is a block of its own, and the outputs
+    without one form one block, whose draws they share. Each block is resolved
     and run as the operation resolves a call on its view, under the call's
     controls with ``method`` unset and ``exact_only`` that of the candidate,
     inside the call itself, so its draws are the call's own.
@@ -637,10 +637,10 @@ class _ByOutput(_DelegatingRoute):
     The route's exactness is that of its blocks: it is exact when every block's
     route is, and approximate otherwise. It applies when the event is a record
     of at least two outputs, at least one of which has an exact route, and
-    the other outputs have a route together, so a law with no exact
-    output keeps the Monte Carlo fallback. It splits the top-level
-    outputs only, so a record-valued output is one block, whose route its
-    view selects. The result's provenance names, for each block, its
+    the outputs without one have a route together, so a law none of whose
+    outputs has an exact route keeps the Monte Carlo fallback. It splits the
+    top-level outputs only, so a record-valued output is one block, whose
+    route its view selects. The result's provenance names, for each block, its
     outputs, its route, that route's exactness, and the ``num_samples`` of a
     block whose route drew Monte Carlo samples.
 
@@ -716,12 +716,12 @@ class _ByOutput(_DelegatingRoute):
         exact routes finds the outputs that are exact under either.
         """
         memo = self._memo(call)
-        if "components" not in memo:
-            memo["components"] = {
+        if "outputs" not in memo:
+            memo["outputs"] = {
                 c: self._resolve(call, self._view_at(call, (c,)), True)
                 for c in call.operands["d"].event_spec.outputs
             }
-        return memo["components"]
+        return memo["outputs"]
 
     def _partition(self, call: BoundCall, exact_only: bool) -> _Partition:
         """The blocks of the call, in event order, with the report of the split.
@@ -742,7 +742,7 @@ class _ByOutput(_DelegatingRoute):
         _Partition
             The blocks and the split's report, which is infeasible when the
             event is not a record of several outputs, when no output has
-            an exact route, or when the other outputs have no route
+            an exact route, or when the outputs without one have no route
             together; unresolved when an output's resolution is; and
             otherwise feasible, exact exactly when every block's route is.
         """
@@ -840,7 +840,7 @@ class _ByOutput(_DelegatingRoute):
             candidate.exactness(report) if settled_exactness is None else settled_exactness
         ) is True
         block_metadata: dict[str, Any] = {
-            "components": list(block.outputs),
+            "outputs": list(block.outputs),
             "route": candidate.route_name,
             "exact": exactness,
         }
@@ -864,7 +864,7 @@ class _ByOutput(_DelegatingRoute):
         call : BoundCall
             The call, whose law is ``call.operands["d"]``.
         result : OutputSpec or None
-            The call's result declaration.
+            The output spec of the call's result.
         method : str or None
             Unused; a ``method`` control names this route itself.
         exact_only : bool
@@ -928,7 +928,7 @@ def mean(d: Distribution):
 
     The routes, in selection order, are the law's closed form,
     ``closed_form``; ``by_output``, which computes each output of a
-    record event by the route that output's view selects; and the Monte
+    record event by the route its own view selects; and the Monte
     Carlo fallback, ``monte_carlo``. A dependent joint claims no mean, so when
     one of its outputs, such as a root factor, has an exact mean, its mean
     takes ``by_output``: that output's mean is exact, and the result as
@@ -977,7 +977,7 @@ def variance(d: Distribution):
     A batch-valued law's variance is elementwise, as its mean is. The routes
     are those of ``mean``: the closed form, ``closed_form``;
     ``by_output``, which computes each output of a record event by the
-    route that output's view selects; and the Monte Carlo fallback,
+    route its own view selects; and the Monte Carlo fallback,
     ``monte_carlo``.
 
     Parameters
@@ -1149,8 +1149,8 @@ def quantile(d: Distribution, q: Any):
 
     A batch-valued law's quantiles are elementwise, as its mean is. The routes
     are the law's closed form, ``closed_form``; ``by_output``,
-    which computes each output of a record event by the route that
-    output's view selects; and the Monte Carlo fallback, ``monte_carlo``,
+    which computes each output of a record event by the route its own
+    view selects; and the Monte Carlo fallback, ``monte_carlo``,
     which ``using(method=...)`` selects among. The fallback's quantile
     at a level ``q`` is the generalized
     inverse ``inf{x : F(x) >= q}`` of each coordinate's CDF over the draws, as
@@ -1372,7 +1372,7 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
 
 
 def _closed_form_expectation(call: BoundCall, result: OutputSpec | None) -> Any:
-    """``d._expectation(f)``, under the outputs of the integrand's output."""
+    """``d._expectation(f)``, under the integrand's outputs."""
     return call.operands["d"]._expectation(_integrand(call))
 
 

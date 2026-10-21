@@ -1,4 +1,4 @@
-"""Function declarations, independent names, and the value/engine boundary."""
+"""Function input and output specs, independent names, and the value/engine boundary."""
 
 from __future__ import annotations
 
@@ -127,7 +127,7 @@ class TestFunctionSpecMatching:
                     input_spec={"y": NumericArraySpec(())},
                     label="actual",
                 ),
-                "incompatible inputs",
+                "the expected FunctionSpec has the inputs",
             ),
             (
                 FunctionSpec(output_spec=OutputSpec(left=None)),
@@ -136,13 +136,13 @@ class TestFunctionSpecMatching:
                     output_spec=OutputSpec(right=None),
                     label="actual",
                 ),
-                "incompatible outputs",
+                "the expected FunctionSpec has the outputs",
             ),
             (
-                FunctionSpec(output_spec=OutputSpec(output_name=None)),
+                FunctionSpec(output_spec=OutputSpec(quantity=None)),
                 Function(
-                    lambda: {"component": 1},
-                    output_spec=RecordSpec(output_name=()),
+                    lambda: {"quantity": 1},
+                    output_spec=RecordSpec(quantity=()),
                     label="actual",
                 ),
                 "incompatible outputs",
@@ -154,10 +154,10 @@ class TestFunctionSpecMatching:
                     output_spec=RecordSpec(right=()),
                     label="actual",
                 ),
-                "incompatible outputs",
+                "the expected FunctionSpec has the outputs",
             ),
         ],
-        ids=["slots", "output-names", "whole-vs-exposed", "exposed-fields"],
+        ids=["inputs", "output-names", "keyword-vs-positional", "positional-fields"],
     )
     def test_incompatible_declarations_raise(self, expected, actual, message, from_value):
         with pytest.raises(ValueError, match=message):
@@ -169,12 +169,12 @@ class TestFunctionSpecMatching:
     def test_matching_declarations_bind_dimensions_without_changing_labels(self):
         expected = FunctionSpec(
             InputSpec(x=NumericArraySpec(("n",))),
-            OutputSpec(output_name=NumericArraySpec(("n",))),
+            OutputSpec(quantity=NumericArraySpec(("n",))),
         )
         actual = Function(
             lambda x: x,
             input_spec={"x": NumericArraySpec((3,))},
-            output_spec=OutputSpec(output_name=NumericArraySpec((3,))),
+            output_spec=OutputSpec(quantity=NumericArraySpec((3,))),
             label="display",
         )
         for value in (actual, actual.with_label("another")):
@@ -288,7 +288,7 @@ class TestFunctionDeclarations:
             )
 
     @pytest.mark.parametrize("output_name", ["", "group/value"])
-    def test_invalid_explicit_output(self, output_name):
+    def test_invalid_explicit_output_name(self, output_name):
         with pytest.raises(ValueError, match="output names must be non-empty and contain no"):
             Function(
                 lambda: 1,
@@ -472,7 +472,7 @@ class TestFunctionDeclarations:
         original = Function(
             (lambda x: x["value"] + 1) if lift == "sweep" else (lambda x: x + 1),
             output_label="prediction",
-            output_spec=OutputSpec(output_name=NumericArraySpec(())),
+            output_spec=OutputSpec(quantity=NumericArraySpec(())),
             dispatch=dispatch,
             max_evaluations=8,
             label="predict",
@@ -502,7 +502,7 @@ class TestFunctionDeclarations:
             assert result.level_names == ("row",)
             np.testing.assert_array_equal(np.asarray(result.raw), [1.0, 2.0, 3.0])
         else:
-            assert tuple(result.event_spec.outputs) == ("component",)
+            assert tuple(result.event_spec.outputs) == ("quantity",)
             assert result.num_atoms == 8
 
     def test_decorator_can_be_reused_with_its_name_override(self):
@@ -630,7 +630,7 @@ class TestFunctionDeclarations:
         assert float(result["x"]) == 2
         assert tuple(wrapped.output_spec.outputs) == (("x",) if exposed else ("bundle",))
 
-    def test_type_hole_is_resolved_per_call(self):
+    def test_an_unspecified_output_type_is_resolved_per_call(self):
         wrapped = Function(
             lambda x: x,
             output_spec=OutputSpec(value=None),
@@ -1102,7 +1102,7 @@ class TestCompletedOutputDeclarations:
             label="load",
         )
         result = wrapped(rows)
-        # The declaration leaves the dtype open, so completion takes the produced one (II.2).
+        # The output spec leaves the dtype open, so completion takes the produced one (II.2).
         completed = NumericArraySpec((2,), dtype=stored.dtype, support=positive)
         assert result.element_spec == wrapped(rows[0]).spec == completed
         np.testing.assert_array_equal(result.raw, np.ones((3, 2)))
@@ -1130,15 +1130,15 @@ class TestCompletedOutputDeclarations:
     @pytest.mark.parametrize("kind", ["array", "record", "hole", "record_hole"])
     def test_broadcast_completes_dimensions_and_preserves_output(self, dispatch, kind):
         declaration = {
-            "array": OutputSpec(output_name=NumericArraySpec(("width",))),
-            "record": OutputSpec(RecordSpec(output_name=("width",))),
-            "hole": OutputSpec(output_name=None),
-            "record_hole": OutputSpec(output_name=None),
+            "array": OutputSpec(quantity=NumericArraySpec(("width",))),
+            "record": OutputSpec(RecordSpec(quantity=("width",))),
+            "hole": OutputSpec(quantity=None),
+            "record_hole": OutputSpec(quantity=None),
         }[kind]
 
         def body(x):
             value = jnp.stack([x, x + 1])
-            return {"component": value} if kind in ("record", "record_hole") else value
+            return {"quantity": value} if kind in ("record", "record_hole") else value
 
         wrapped = Function(
             body,
@@ -1151,8 +1151,8 @@ class TestCompletedOutputDeclarations:
         with workflow_run(seed=4):
             joint = wrapped.using(include_inputs=True)(Normal("x", 0, 1))
         assert joint.label == "result"
-        assert tuple(joint.event_spec.outputs) == ("x", "component")
-        column = joint._rows["component/component" if kind == "record_hole" else "component"]
+        assert tuple(joint.event_spec.outputs) == ("x", "quantity")
+        column = joint._rows["quantity/quantity" if kind == "record_hole" else "quantity"]
         assert column.shape == (8, 2)
         np.testing.assert_allclose(column[:, 1], column[:, 0] + 1, rtol=0, atol=0)
         assert wrapped.output_spec is declaration
@@ -1167,8 +1167,13 @@ class TestCompletedOutputDeclarations:
         ids=["list", "tuple", "empty-list", "float32-array", "int32-array"],
     )
     @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
-    def test_a_type_hole_completes_as_an_undeclared_return_does(self, returned, dispatch):
-        """An unspecified output type takes the type the kind-directed wrap gives the return, dtype included."""
+    def test_an_unspecified_output_type_completes_as_an_undeclared_return_does(
+        self, returned, dispatch
+    ):
+        """An unspecified output type takes the type the kind-directed wrap gives the return.
+
+        The dtype is included.
+        """
         undeclared = Function(
             lambda row: returned,
             output_label="items",
@@ -1205,7 +1210,7 @@ class TestCompletedOutputDeclarations:
         factory = Function(
             lambda x: jnp.stack([x, x + 1, x + 2]),
             output_label="results",
-            output_spec=OutputSpec(output_name=NumericArraySpec(("width",))),
+            output_spec=OutputSpec(quantity=NumericArraySpec(("width",))),
             dispatch=dispatch,
             max_evaluations=8,
             include_inputs=True,
@@ -1214,22 +1219,22 @@ class TestCompletedOutputDeclarations:
         with workflow_run(seed=4):
             result = factory(Normal("x", 0.0, 1.0))
         assert result.label == "results"
-        assert result.event_spec.term_spec["component"] == NumericArraySpec((3,), dtype="float32")
+        assert result.event_spec.term_spec["quantity"] == NumericArraySpec((3,), dtype="float32")
         assert factory.output_spec.term_spec.free_dims == {"width"}
 
     @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
-    def test_an_enumerated_lift_that_includes_its_inputs_fills_a_type_hole(self, dispatch):
+    def test_an_enumerated_lift_that_includes_its_inputs_fills_an_unspecified_type(self, dispatch):
         factory = Function(
             lambda x: jnp.stack([x, x + 1, x + 2]),
             output_label="results",
-            output_spec=OutputSpec(output_name=None),
+            output_spec=OutputSpec(quantity=None),
             dispatch=dispatch,
             include_inputs=True,
             label="factory",
         )
         result = factory(EmpiricalDistribution(jnp.arange(3.0), output_name="x"))
         assert result.label == "results"
-        assert result.event_spec.term_spec["component"] == NumericArraySpec((3,), dtype="float32")
+        assert result.event_spec.term_spec["quantity"] == NumericArraySpec((3,), dtype="float32")
         assert factory.output_spec.term_spec is None
 
     @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
@@ -1293,7 +1298,7 @@ class TestCompletedOutputDeclarations:
                 label="stored",
             ),
         }[kind]()
-        declaration = OutputSpec(output_name=stored.spec)
+        declaration = OutputSpec(quantity=stored.spec)
         factory = Function(
             lambda x: stored,
             output_label="results",
@@ -1305,7 +1310,7 @@ class TestCompletedOutputDeclarations:
         with workflow_run(seed=4):
             result = factory(Normal("x", 0.0, 1.0))
         assert result.event_spec == declaration
-        assert result["component"] is result
+        assert result["quantity"] is result
         assert result.num_atoms == 8
         assert all(type(atom) is type(stored) for atom in result.atoms)
         if kind == "function":
@@ -1313,7 +1318,7 @@ class TestCompletedOutputDeclarations:
         assert stored.label == ("inner" if kind == "function" else "stored")
 
     @pytest.mark.parametrize("tracked", [False, True])
-    def test_type_hole_accepts_a_nested_record(self, tracked):
+    def test_an_unspecified_output_type_accepts_a_nested_record(self, tracked):
         value = {"stats": {"mean": 2.0}}
         if tracked:
             value = Record(
@@ -1353,7 +1358,10 @@ class TestCompletedOutputDeclarations:
             else OutputSpec.default(declaration, output_name="factory"),
             label="factory",
         )
-        with pytest.raises(ValueError, match=r"input_spec inputs.*signature parameters"):
+        with pytest.raises(
+            ValueError,
+            match=r"declares the inputs.*in input_spec, but its signature has the parameters",
+        ):
             (factory.apply if raw else factory)()
         if tracked:
             assert returned.input_spec is None
@@ -1401,9 +1409,9 @@ class TestCompletedOutputDeclarations:
 
     @pytest.mark.parametrize("dispatch", ["sequential", "thread"])
     def test_nested_lift_carries_completed_output_dimensions(self, rows, dispatch):
-        declaration = RecordSpec(output_name=("width",))
+        declaration = RecordSpec(quantity=("width",))
         wrapped = Function(
-            lambda row, x: {"component": jnp.full((2,), x + row["x"])},
+            lambda row, x: {"quantity": jnp.full((2,), x + row["x"])},
             output_spec=declaration,
             dispatch=dispatch,
             max_evaluations=8,
@@ -1411,11 +1419,11 @@ class TestCompletedOutputDeclarations:
         )
         with workflow_run(seed=4):
             result = wrapped(rows, Normal("x", 0, 1))
-        assert result.event_spec.term_spec.leaf_shapes == {"component": (2,)}
+        assert result.event_spec.term_spec.leaf_shapes == {"quantity": (2,)}
         assert result.batch_shape == (3,)
         for marginal in result:
             assert marginal.event_spec.term_spec == result.event_spec.term_spec
-            values = marginal.atoms["component"].raw
+            values = marginal.atoms["quantity"].raw
             np.testing.assert_array_equal(values[:, 0], values[:, 1])
         assert declaration.free_dims == {"width"}
 
@@ -1499,7 +1507,7 @@ def test_a_shape_only_declaration_keeps_the_returned_terms_dtype_and_support(kin
 @pytest.mark.parametrize("mode", ["plain", "sweep", "lift"])
 @pytest.mark.parametrize("declared_side", [None, "input", "output"])
 def test_a_returned_function_keeps_the_declarations_its_result_leaves_open(mode, declared_side):
-    """A side the outer declaration leaves unspecified keeps the returned function's own."""
+    """A side the outer function spec leaves unspecified keeps the returned function's own."""
     from probpipe import EmpiricalDistribution, positive
 
     inputs = InputSpec(x=NumericArraySpec(()))

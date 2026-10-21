@@ -5,6 +5,8 @@ from __future__ import annotations
 from math import prod
 from typing import TYPE_CHECKING, Any
 
+from ..core._specs import _output_record
+
 if TYPE_CHECKING:
     from xarray import DataTree
 
@@ -23,7 +25,6 @@ from ..core._specs import (
     NumericRecordSpec,
     OutputSpec,
     RecordSpec,
-    _output_record,
 )
 from ..core.named_tree import _PATH_SEP
 from ..core.provenance import Provenance
@@ -231,7 +232,7 @@ def _record_atoms(label: str, stacked: Array, record: RecordSpec) -> NumericReco
     stacked : Array
         The draws of every chain, stacked along the leading axis.
     record : RecordSpec
-        The target's record declaration.
+        The target's record spec.
 
     Returns
     -------
@@ -379,12 +380,12 @@ def _flat_chains(law: EmpiricalDistribution) -> Array:
 # ---------------------------------------------------------------------------
 
 
-#: The output of a posterior whose target declares no event, or a bare type.
+#: The output name of a posterior whose target declares no event, or a bare type.
 _UNDECLARED = "posterior"
 
 
 def _posterior_declaration(event_spec: OutputSpec | TermSpec) -> OutputSpec:
-    """The target's declaration *event_spec*, a bare type other than a record under ``posterior``."""
+    """The target's event spec *event_spec*, a bare type other than a record under ``posterior``."""
     if isinstance(event_spec, TermSpec) and not isinstance(event_spec, RecordSpec):
         event_spec = OutputSpec(**{_UNDECLARED: event_spec})
     return _complete_event_spec(event_spec)
@@ -406,12 +407,13 @@ def make_posterior(
 
     The result is an :class:`~probpipe.EmpiricalDistribution` labeled *label*,
     whose atoms are the draws on the levels ``chain`` and ``draw``, labeled by
-    the law's outputs, as ``beta`` or ``(K, r, phi)``. Its event spec is the target's: a whole-term target stays
-    whole, and a record target keeps its fields' supports, scalar shapes, and
-    nested groups. Its provenance names the method and the target. Its
-    annotations are a ``DataTree`` whose root attribute ``method`` is *method*,
-    and which stores the method's diagnostics, sample statistics, and warmup
-    draws as ArviZ-compatible groups under ``arviz/``.
+    the law's outputs, as ``beta`` or ``(K, r, phi)``. Its event spec is the
+    target's: a whole-term target stays whole, and a record target keeps its
+    fields' supports, scalar shapes, and nested groups. Its provenance names
+    the method and the target. Its annotations are a ``DataTree`` whose root
+    attribute ``method`` is *method*, and which stores the method's
+    diagnostics, sample statistics, and warmup draws as ArviZ-compatible
+    groups under ``arviz/``.
 
     Parameters
     ----------
@@ -430,9 +432,10 @@ def make_posterior(
         with one variable per leaf of the result, named by its path with ``.``
         between the parts, since a ``DataTree`` variable has no ``/`` in its name.
     event_spec : OutputSpec, TermSpec, or None
-        The target's declaration, usually the prior's ``event_spec``, which the
-        result declares as its event. A bare ``RecordSpec`` exposes its fields,
-        and any other term is a whole term under the output ``posterior``.
+        The target's event spec, usually the prior's ``event_spec``, which the
+        result declares as its event. A bare ``RecordSpec`` exposes its fields
+        as outputs, and any other term is a whole term under the output
+        ``posterior``.
         ``None`` makes each draw one array under that output.
     field_order : list of str or None
         The field each contiguous column block of *chains* belongs to, in the

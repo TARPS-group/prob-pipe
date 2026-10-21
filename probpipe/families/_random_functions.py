@@ -43,11 +43,11 @@ def _event_of_kind(
     Parameters
     ----------
     output_name : str
-        The output of the event.
+        The name of the law's one output, which names its draws.
     event_spec : OutputSpec or TermSpec or None
-        The declaration the constructor received: a declaration of *output_name*,
-        whose unspecified output type *default* fills, the type of a draw, or None for
-        *default*.
+        What the constructor received: an event spec naming *output_name*,
+        whose type, when unspecified, *default* fills; the type of a draw; or
+        None for *default*.
     kind : type of TermSpec
         The class a declared type must be an instance of, such as ``FunctionSpec``.
     default : TermSpec
@@ -58,7 +58,7 @@ def _event_of_kind(
     Returns
     -------
     OutputSpec
-        The declaration of a whole term under *output_name*.
+        The event spec of a whole term under *output_name*.
 
     Raises
     ------
@@ -80,8 +80,8 @@ def _event_of_kind(
         return _whole_term_event(output_name, declared, None, owner)
     if declared is None:
         return _whole_term_event(output_name, default, event_spec, owner)
-    # A complete declaration of the output is kept as it is, so a law derived
-    # from another shares its declaration.
+    # A complete event spec naming the output is kept as it is, so a law
+    # derived from another shares its event spec.
     _whole_term_event(output_name, declared, event_spec, owner)
     return event_spec
 
@@ -100,11 +100,13 @@ class RandomFunction(Distribution):
     Parameters
     ----------
     output_name : str
-        The output of the event, a whole term.
+        The name of the random function's one output, which names its draws,
+        each a whole term.
     event_spec : OutputSpec or TermSpec, optional
-        The declaration of *output_name* or the type of one draw, a
+        An event spec naming *output_name*, or the type of one draw, a
         ``FunctionSpec``. The type defaults to a callable whose input and
-        output are unspecified, which also fills an unspecified output type.
+        output are unspecified, which also fills an event spec whose type is
+        unspecified.
     label : str, optional
         The random function's label, its class name by default.
 
@@ -152,11 +154,13 @@ class RandomMeasure(Distribution):
     Parameters
     ----------
     output_name : str
-        The output of the event, a whole term.
+        The name of the random measure's one output, which names its draws,
+        each a whole term.
     event_spec : OutputSpec or TermSpec, optional
-        The declaration of *output_name* or the type of one draw, a
+        An event spec naming *output_name*, or the type of one draw, a
         ``DistributionSpec``. The type defaults to a law whose event is opaque
-        under *output_name*, which also fills an unspecified output type.
+        under *output_name*, which also fills an event spec whose type is
+        unspecified.
     label : str, optional
         The random measure's label, its class name by default.
 

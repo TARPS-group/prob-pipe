@@ -244,9 +244,9 @@ class SupportsMarginals(Protocol):
     ``_marginal(path)`` returns a standalone ``Distribution`` over the node at
     ``path``, an event path of this law, with no reference back to it. A path
     that names an interior node selects the group of fields under it, and a
-    tuple of paths selects several nodes, returned as an exposed record of
-    them. The marginal is labeled as the ``marginal`` operation labels it, so
-    a law without factors gives its marginals its own label. Support may
+    tuple of paths selects several nodes, returned as a record of them. The
+    marginal is labeled as the ``marginal`` operation labels it, so a law
+    without factors gives its marginals its own label. Support may
     depend on the path, so a class whose marginal is exact only at some paths
     defines the guard ``_marginal_guard(path)``.
 

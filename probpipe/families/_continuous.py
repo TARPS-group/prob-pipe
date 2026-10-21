@@ -3,8 +3,8 @@
 ``Normal``, ``Beta``, ``Gamma``, ``InverseGamma``, ``Exponential``,
 ``LogNormal``, ``StudentT``, ``Uniform``, ``Cauchy``, ``Laplace``,
 ``HalfNormal``, ``HalfCauchy``, ``Pareto``, and ``TruncatedNormal`` each derive
-their event term spec from their parameters and take an ``event_spec``
-declaration that names the event's output.
+their event term spec from their parameters and take an ``event_spec`` that
+names the law's one output.
 
 The parameters broadcast against one another. Scalar parameters give a scalar
 draw, and parameters with axes give one draw of independent coordinates of the
@@ -259,7 +259,7 @@ class Normal(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     loc : array-like
         Mean of the distribution.
     scale : array-like
@@ -267,14 +267,16 @@ class Normal(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If *output_name* is not a valid output name, or *event_spec* names
         another output or declares a type that one draw does not conform to.
@@ -322,7 +324,7 @@ class Beta(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     alpha : array-like
         First concentration parameter (> 0).
     beta : array-like
@@ -330,14 +332,16 @@ class Beta(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If *output_name* is not a valid output name, or *event_spec* names
         another output or declares a type that one draw does not conform to.
@@ -385,7 +389,7 @@ class Gamma(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     concentration : array-like
         Shape parameter (> 0).
     rate : array-like
@@ -393,14 +397,16 @@ class Gamma(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If *output_name* is not a valid output name, or *event_spec* names
         another output or declares a type that one draw does not conform to.
@@ -452,7 +458,7 @@ class InverseGamma(_TailBoundedMoments, TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     concentration : array-like
         Shape parameter (> 0).
     scale : array-like
@@ -460,14 +466,16 @@ class InverseGamma(_TailBoundedMoments, TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If *output_name* is not a valid output name, or *event_spec* names
         another output or declares a type that one draw does not conform to.
@@ -518,20 +526,22 @@ class Exponential(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     rate : array-like
         Rate parameter (> 0).
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If *output_name* is not a valid output name, or *event_spec* names
         another output or declares a type that one draw does not conform to.
@@ -571,7 +581,7 @@ class LogNormal(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     loc : array-like
         Mean of the underlying normal distribution.
     scale : array-like
@@ -579,14 +589,16 @@ class LogNormal(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If *output_name* is not a valid output name, or *event_spec* names
         another output or declares a type that one draw does not conform to.
@@ -638,7 +650,7 @@ class StudentT(_TailBoundedMoments, TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     df : array-like
         Degrees of freedom (> 0).
     loc : array-like
@@ -648,14 +660,16 @@ class StudentT(_TailBoundedMoments, TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If *output_name* is not a valid output name, or *event_spec* names
         another output or declares a type that one draw does not conform to.
@@ -711,7 +725,7 @@ class Uniform(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     low : array-like
         Lower bound.
     high : array-like
@@ -719,14 +733,16 @@ class Uniform(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If *output_name* is not a valid output name, or *event_spec* names
         another output or declares a type that one draw does not conform to.
@@ -777,7 +793,7 @@ class Cauchy(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     loc : array-like
         Location parameter.
     scale : array-like
@@ -785,14 +801,16 @@ class Cauchy(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If *output_name* is not a valid output name, or *event_spec* names
         another output or declares a type that one draw does not conform to.
@@ -870,7 +888,7 @@ class Laplace(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     loc : array-like
         Location parameter.
     scale : array-like
@@ -878,14 +896,16 @@ class Laplace(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If *output_name* is not a valid output name, or *event_spec* names
         another output or declares a type that one draw does not conform to.
@@ -933,20 +953,22 @@ class HalfNormal(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     scale : array-like
         Scale parameter (> 0).
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If *output_name* is not a valid output name, or *event_spec* names
         another output or declares a type that one draw does not conform to.
@@ -989,7 +1011,7 @@ class HalfCauchy(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     loc : array-like
         Location parameter.
     scale : array-like
@@ -997,14 +1019,16 @@ class HalfCauchy(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If *output_name* is not a valid output name, or *event_spec* names
         another output or declares a type that one draw does not conform to.
@@ -1080,7 +1104,7 @@ class Pareto(_TailBoundedMoments, TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     concentration : array-like
         Tail index (shape parameter, > 0).
     scale : array-like
@@ -1088,14 +1112,16 @@ class Pareto(_TailBoundedMoments, TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If *output_name* is not a valid output name, or *event_spec* names
         another output or declares a type that one draw does not conform to.
@@ -1146,7 +1172,7 @@ class TruncatedNormal(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     loc : array-like
         Mean of the underlying normal distribution.
     scale : array-like
@@ -1158,14 +1184,16 @@ class TruncatedNormal(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If *output_name* is not a valid output name, or *event_spec* names
         another output or declares a type that one draw does not conform to.

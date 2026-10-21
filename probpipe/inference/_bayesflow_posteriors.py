@@ -315,7 +315,7 @@ class _AmortizedPosterior(
         )
         leaf_shapes = dict(_output_record(prior.event_spec).leaf_shapes)
         attributes = {
-            "_input": input_name,
+            "_observation_input_name": input_name,
             "_approximator": approximator,
             "_prior": prior,
             "_simulator": simulator,
@@ -366,10 +366,10 @@ class _AmortizedPosterior(
         if isinstance(given, Record):
             given = given.children
         if isinstance(given, Mapping):
-            others = sorted(set(given) - {self._input})
+            others = sorted(set(given) - {self._observation_input_name})
             if others:
                 raise KeyError(self._unexpected_keys(others))
-            given = given[self._input]
+            given = given[self._observation_input_name]
         obs_flat = np.ravel(np.asarray(given, dtype="float32"))
         if obs_flat.size != self._data_dim:
             raise ValueError(
@@ -403,11 +403,11 @@ class _AmortizedPosterior(
 
     def _unexpected_keys(self, others: list[str]) -> str:
         """The message for conditioning on *others*, keys other than the observation input."""
-        return f"unexpected keys {others} for {self.label!r}; it conditions only on {self._input!r}"
+        return f"unexpected keys {others} for {self.label!r}; it conditions only on {self._observation_input_name!r}"
 
     def _condition_on_guard(self, paths: tuple[str, ...]) -> Feasibility:
-        """Every path names the observation input, since a parameter is conditioned by Bayes' rule."""
-        others = [path for path in paths if path != self._input]
+        """Every path names the observation input, as a parameter is conditioned by Bayes' rule."""
+        others = [path for path in paths if path != self._observation_input_name]
         if others:
             return Feasibility(False, self._unexpected_keys(others), actionable=True)
         return Feasibility(True)

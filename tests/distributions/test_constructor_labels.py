@@ -47,7 +47,7 @@ class TestAFamily:
         with pytest.raises(ValueError, match="has the output 'mu', but its event_spec names"):
             Normal("mu", 0.0, 1.0, event_spec=OutputSpec(theta=None))
 
-    def test_an_output_that_is_not_a_string_raises(self):
+    def test_an_output_name_that_is_not_a_string_raises(self):
         with pytest.raises(TypeError, match="output of its event as its first argument"):
             Normal(0.0, 0.0, 1.0)
 
@@ -57,16 +57,16 @@ class TestAFamily:
 
 
 class TestAnEmpiricalLaw:
-    def test_array_atoms_take_the_output_and_the_generic_label(self):
+    def test_array_atoms_take_the_output_name_and_the_generic_label(self):
         law = EmpiricalDistribution(jnp.arange(3.0), output_name="theta")
         assert (law.label, list(law.event_spec.outputs)) == ("ℙ", ["theta"])
         assert (law.atoms.label, law.atoms.level_names) == ("theta", ("theta",))
 
-    def test_array_atoms_without_an_output_raise(self):
+    def test_array_atoms_without_an_output_name_raise(self):
         with pytest.raises(TypeError, match="needs the output of its event"):
             EmpiricalDistribution(jnp.arange(3.0))
 
-    def test_record_atoms_refuse_an_output(self):
+    def test_record_atoms_refuse_an_output_name(self):
         atoms = NumericRecordBatch(
             {"a": jnp.arange(3.0)},
             "draw",
@@ -76,7 +76,7 @@ class TestAnEmpiricalLaw:
             EmpiricalDistribution(atoms, output_name="a")
         assert list(EmpiricalDistribution(atoms).event_spec.outputs) == ["a"]
 
-    def test_an_event_spec_names_the_output_in_place_of_output(self):
+    def test_an_event_spec_names_the_output_in_place_of_output_name(self):
         law = EmpiricalDistribution(jnp.arange(3.0), event_spec=OutputSpec(theta=None))
         assert list(law.event_spec.outputs) == ["theta"]
 
@@ -94,17 +94,17 @@ class TestAnEmpiricalLaw:
 
 
 class TestALawFromFunctions:
-    def test_a_bare_spec_takes_the_output(self):
+    def test_a_bare_spec_takes_the_output_name(self):
         law = distribution(
             sample=lambda key: jax.random.normal(key), event_spec=_SCALAR, output_name="z"
         )
         assert (law.label, law.notation) == ("ℙ", "ℙ(z)")
 
-    def test_a_bare_spec_without_an_output_raises(self):
+    def test_a_bare_spec_without_an_output_name_raises(self):
         with pytest.raises(TypeError, match="needs an output"):
             distribution(sample=lambda key: jax.random.normal(key), event_spec=_SCALAR)
 
-    def test_an_output_spec_refuses_an_output(self):
+    def test_an_output_spec_refuses_an_output_name(self):
         with pytest.raises(TypeError, match="names its own outputs"):
             distribution(
                 sample=lambda key: jax.random.normal(key),

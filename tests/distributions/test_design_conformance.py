@@ -72,8 +72,6 @@ _PENDING: dict[str, str] = {
     "the code has none of them",
     "__and__": "IV.2 declares & as the merge of laws and kernels; the code merges them with *",
     "__bool__": "IV.2 declares that a law or a kernel refuses a truth value; the code has no __bool__",
-    "distribution": "IV.4 names the keyword output_name; the code names it output",
-    "EmpiricalDistribution": "VII.2 names the keyword output_name; the code names it output",
 }
 
 

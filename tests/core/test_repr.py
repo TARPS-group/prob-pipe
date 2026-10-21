@@ -515,7 +515,7 @@ class TestDistributions:
         assert repr(renamed.with_label("other")) == repr(renamed) + ".with_label('other')"
 
     def test_a_reordered_marginal_reads_as_the_joint_under_its_declaration(self):
-        """No rename states a reorder, so the repr shows the reordered declaration.
+        """No rename states a reorder, so the repr shows the reordered event spec.
 
         The kernel ``y`` conditions on ``a``, so no product lists ``a`` first.
         """

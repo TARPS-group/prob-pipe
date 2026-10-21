@@ -3,7 +3,7 @@
 ``log_prob(d, value)`` requires ``SupportsLogProb`` and returns the normalized
 log-density, and ``unnormalized_log_prob`` requires only
 ``SupportsUnnormalizedLogProb`` and returns it up to an additive constant. The
-value conforms to the law's event spec, its packaging included. A batch
+value conforms to the law's event spec, its form included. A batch
 of values is swept, and the scores keep the batch's levels: the law scores every
 element in one vectorized call when its density traces, and one element at a
 time otherwise. ``prob`` and ``unnormalized_prob`` are derived operations,
@@ -51,7 +51,7 @@ __all__ = [
 def _score_declaration(
     d: DistributionSpec, value: TermSpec, operation_name: str, spec: NumericArraySpec
 ) -> OutputSpec:
-    """The declaration of the score of one *value*: *spec* under the operation's name.
+    """The output spec of the score of one *value*: *spec* under the operation's name.
 
     The output is the operation's name, as ``log_prob``, since a score is a
     value of the whole event that no one output indexes. A batch of values
@@ -73,13 +73,13 @@ def _score_declaration(
     Returns
     -------
     OutputSpec
-        A declaration that names the score as one whole term.
+        An output spec in the keyword form, whose one output is the score.
 
     Raises
     ------
     ApplicabilityError
-        If the value does not conform to the law's event spec,
-        packaging included.
+        If the value does not conform to the law's event spec, its form
+        included.
     """
     try:
         # The bindings are local to this call, so a polymorphic law scores
@@ -121,7 +121,7 @@ def _log_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
     Returns
     -------
     OutputSpec
-        The declaration of one scalar under the output
+        The output spec of one scalar under the output
         ``log_prob``.
 
     Raises
@@ -146,7 +146,7 @@ def _unnormalized_log_prob_result(d: DistributionSpec, value: TermSpec) -> Outpu
     Returns
     -------
     OutputSpec
-        The declaration of one scalar under the output
+        The output spec of one scalar under the output
         ``unnormalized_log_prob``.
 
     Raises
@@ -171,7 +171,7 @@ def _prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
     Returns
     -------
     OutputSpec
-        The declaration of one non-negative scalar under the output
+        The output spec of one non-negative scalar under the output
         ``prob``.
 
     Raises
@@ -196,7 +196,7 @@ def _unnormalized_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpe
     Returns
     -------
     OutputSpec
-        The declaration of one non-negative scalar under the output
+        The output spec of one non-negative scalar under the output
         ``unnormalized_prob``.
 
     Raises
@@ -210,12 +210,12 @@ def _unnormalized_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpe
 
 
 def _random_log_prob_result(M: DistributionSpec) -> None:
-    """None: the returned law over log-density functions carries its declaration."""
+    """None: the returned law over log-density functions carries its own spec."""
     return None
 
 
 def _random_unnormalized_log_prob_result(M: DistributionSpec) -> None:
-    """None: the returned law over unnormalized log-density functions carries its declaration."""
+    """None: the returned law over unnormalized log-density functions carries its own spec."""
     return None
 
 

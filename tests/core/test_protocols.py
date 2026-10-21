@@ -85,11 +85,11 @@ class TestSupportsSampling:
     @pytest.mark.parametrize(
         "dist_cls,kwargs",
         [
-            (Normal, {"loc": 0.0, "scale": 1.0, "component": "x"}),
-            (Beta, {"alpha": 2.0, "beta": 5.0, "component": "b"}),
-            (Gamma, {"concentration": 3.0, "rate": 1.0, "component": "g"}),
-            (Bernoulli, {"probs": 0.5, "component": "d"}),
-            (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2), "component": "z"}),
+            (Normal, {"loc": 0.0, "scale": 1.0, "output_name": "x"}),
+            (Beta, {"alpha": 2.0, "beta": 5.0, "output_name": "b"}),
+            (Gamma, {"concentration": 3.0, "rate": 1.0, "output_name": "g"}),
+            (Bernoulli, {"probs": 0.5, "output_name": "d"}),
+            (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2), "output_name": "z"}),
         ],
     )
     def test_tfp_distributions(self, dist_cls, kwargs):
@@ -131,9 +131,9 @@ class TestSupportsLogProb:
     @pytest.mark.parametrize(
         "dist_cls,kwargs",
         [
-            (Normal, {"loc": 0.0, "scale": 1.0, "component": "x"}),
-            (Beta, {"alpha": 2.0, "beta": 5.0, "component": "b"}),
-            (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2), "component": "z"}),
+            (Normal, {"loc": 0.0, "scale": 1.0, "output_name": "x"}),
+            (Beta, {"alpha": 2.0, "beta": 5.0, "output_name": "b"}),
+            (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2), "output_name": "z"}),
         ],
     )
     def test_tfp_distributions(self, dist_cls, kwargs):
@@ -467,7 +467,7 @@ class TestTransformedDistributionDynamicProtocols:
 class TestJointDynamicProtocols:
     """A joint's protocol claims match its factors'."""
 
-    def test_all_tfp_components_all_protocols(self):
+    def test_all_tfp_factors_all_protocols(self):
         joint = Normal("z", loc=0.0, scale=1.0) * Normal("x", loc=0.0, scale=1.0)
         assert isinstance(joint, SupportsSampling)
         assert isinstance(joint, SupportsLogProb)
@@ -475,7 +475,7 @@ class TestJointDynamicProtocols:
         assert isinstance(joint, SupportsVariance)
         assert isinstance(joint, SupportsExactConditioning)
 
-    def test_empirical_output_drops_log_prob(self):
+    def test_an_empirical_factor_drops_log_prob(self):
         """``EmpiricalDistribution`` lacks ``SupportsLogProb``; a
         joint containing one should not claim it."""
         boot = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), output_name="b")
@@ -484,7 +484,7 @@ class TestJointDynamicProtocols:
         # conditioning capability, so the inference registry conditions it.
         assert isinstance(joint, SupportsSampling)
         assert not isinstance(joint, SupportsExactConditioning)
-        # MRO-level claims reflect missing log-prob on an output.
+        # MRO-level claims reflect missing log-prob on a factor.
         assert SupportsLogProb not in type(joint).__mro__
 
 

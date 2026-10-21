@@ -306,8 +306,8 @@ def observed_target(model: Any, observed: Any) -> Any:
     A model with no data, and an object that is not a law, is its own target.
     Data keyed by the model's inputs and fields form the exact stage of
     ``condition_on`` (VI.6): a kernel binds the inputs its data name first, as
-    the ``bind_inputs`` route does, and the data of the fields it produces then form the
-    unnormalized conditional of the result, whose joint and given values a
+    the ``bind_inputs`` route does, and the data of the fields it produces then
+    form the unnormalized conditional of the result, whose joint and given values a
     method reads back. A law that binding leaves unnormalized, with no data
     left, is the target itself. Data that name no field, such as one array for
     a whole program, form the unnormalized conditional of the model at those
@@ -321,10 +321,10 @@ def observed_target(model: Any, observed: Any) -> Any:
     values = dict(observed.children if isinstance(observed, Record) else observed)
     law = model
     if isinstance(model, ConditionalDistribution):
-        inputs = {key: value for key, value in values.items() if key in model.given_spec}
-        values = {key: value for key, value in values.items() if key not in inputs}
-        if inputs:
-            law = model._condition_on(inputs)
+        input_values = {key: value for key, value in values.items() if key in model.given_spec}
+        values = {key: value for key, value in values.items() if key not in input_values}
+        if input_values:
+            law = model._condition_on(input_values)
     if not values:
         if isinstance(law, Distribution) and not _is_normalized(law):
             return law
@@ -401,8 +401,8 @@ def _flat_view(prior: Any) -> Callable[[Array], Array] | None:
 def flat_record(prior: Any) -> NumericRecordSpec | None:
     """The numeric record a flat chain over *prior* unflattens to, when it is no family.
 
-    ``None`` for a parametric family, and for a law that draws no exposed
-    numeric record, such as a law over one array.
+    ``None`` for a parametric family, and for a law whose outputs are not the
+    fields of a numeric record, such as a law over one array.
     """
     if _has_flat_view(prior):
         return None
@@ -424,9 +424,9 @@ def _not_vectorizable(law: Any) -> str:
 def flat_unflatten(law: Any) -> Callable[[Array], Any]:
     """The map from a flat vector to a draw of the numeric *law*, the inverse of :func:`flat_vector`.
 
-    A draw of one array is the vector reshaped to the event, and an exposed
-    numeric record's is the record whose leaves the vector lays out in
-    canonical order.
+    A draw of one array is the vector reshaped to the event, and a draw of a
+    numeric record whose fields are the law's outputs is the record whose
+    leaves the vector lays out in canonical order.
 
     Parameters
     ----------
@@ -441,7 +441,8 @@ def flat_unflatten(law: Any) -> Callable[[Array], Any]:
     Raises
     ------
     TypeError
-        If *law* draws neither one numeric array nor an exposed numeric record.
+        If *law* draws neither one numeric array nor a numeric record whose
+        fields are its outputs.
     """
     flat_prior = _flat_view(law)
     if flat_prior is not None:
@@ -737,7 +738,7 @@ def get_init_state(
     2. **Prior sample** — if the prior implements ``SupportsSampling``,
        draw a single sample with the supplied ``random_seed``. A record
        draw, or the nested mapping a factored prior draws, is flattened
-       to a numeric vector in the order of the prior's declaration.
+       to a numeric vector in the order of the prior's event spec.
     3. **Joint draw** — if the prior is an unnormalized conditional
        over a numeric record, return the draw of its joint restricted
        to the unconditioned fields, flattened. A factored joint that
@@ -814,18 +815,18 @@ def get_init_state(
 
 
 # ---------------------------------------------------------------------------
-# The declaration of the posterior
+# The event spec of the posterior
 # ---------------------------------------------------------------------------
 
 
 def extract_event_spec(dist: Distribution) -> OutputSpec | None:
-    """Return the declaration of *dist*'s prior, or ``None`` for a prior with no flat vector.
+    """Return the event spec of *dist*'s prior, or ``None`` for a prior with no flat vector.
 
-    The target is its own prior. A prior that is neither a parametric family nor
-    an exposed numeric record, such as a bare ``SupportsLogProb`` target over a
-    flat array, gives ``None``. :func:`build_target_log_prob_flat` uses the
-    same condition, so every method names and shapes the posterior of such a
-    target alike.
+    The target is its own prior. A prior that is neither a parametric family
+    nor a law over a numeric record whose fields are its outputs, such as a
+    bare ``SupportsLogProb`` target over a flat array, gives ``None``.
+    :func:`build_target_log_prob_flat` uses the same condition, so every method
+    names and shapes the posterior of such a target alike.
     """
     if not _has_flat_view(dist) and flat_record(dist) is None:
         return None
@@ -874,7 +875,7 @@ def build_target_log_prob_flat(
     init: ArrayLike | None = None,
     random_seed: int | Array = 0,
 ) -> tuple[Callable[[Array], Array], Array, OutputSpec | None]:
-    """Build a flat-vector target + initial state + (optional) prior declaration.
+    """Build a flat-vector target + initial state + (optional) prior event spec.
 
     Returns ``(target_flat_fn, flat_init, event_spec)``:
 
@@ -882,7 +883,7 @@ def build_target_log_prob_flat(
       consumes a flat parameter vector.
     - ``flat_init``: the flat-vector initial chain state from
       :func:`get_init_state`.
-    - ``event_spec``: the prior's declaration when the prior is a
+    - ``event_spec``: the prior's event spec when the prior is a
       numeric law with a flat-vector view; ``None`` for bare
       array-shaped targets. Passes through to
       :func:`~probpipe.inference._approximate_distribution.make_posterior`
@@ -892,11 +893,11 @@ def build_target_log_prob_flat(
 
     1. **A parametric family prior**: ``target_flat_fn`` composes
        :func:`build_target_log_prob` with the reshape of the flat vector to
-       the family's event, and the prior's declaration is returned for
+       the family's event, and the prior's event spec is returned for
        downstream lift-back.
     2. **A record-shaped prior or target**, such as a factored joint or the
        unnormalized conditional of one: ``target_flat_fn`` unflattens the
-       vector to the numeric record the target declares, whose declaration is
+       vector to the numeric record the target declares, whose event spec is
        returned.
     3. **Bare ``SupportsLogProb`` target** with no Record-shaped prior
        (e.g., a hand-rolled ``Distribution`` subclass implementing
@@ -1063,7 +1064,7 @@ def unconstrained_coordinates(law: Any) -> UnconstrainedCoordinates:
     Parameters
     ----------
     law : Distribution
-        The law whose declaration lays out the flat state.
+        The law whose event spec lays out the flat state.
 
     Returns
     -------
@@ -1101,7 +1102,7 @@ def unconstrained_chain(
     init : Array
         The flat initial state.
     law : Distribution
-        The law whose declaration lays out the flat state.
+        The law whose event spec lays out the flat state.
 
     Returns
     -------

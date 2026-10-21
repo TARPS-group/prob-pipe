@@ -1,9 +1,9 @@
 """The batch forms of the two distribution kinds.
 
 A ``DistributionBatch`` holds separate laws sharing one event spec, and a
-``ConditionalDistributionBatch`` separate kernels sharing one given declaration
-and one event spec. Construction checks every element against the
-element spec and names the position that fails; the shared declarations are
+``ConditionalDistributionBatch`` separate kernels sharing one input spec and
+one event spec. Construction checks every element against the
+element spec and names the position that fails; the shared specs are
 views on the batch's spec; indexing and levels follow ``Batch``; and the kind
 table presents a law-valued or kernel-valued record field as the matching batch.
 """
@@ -68,7 +68,7 @@ class Kernel(ConditionalDistribution):
 
 
 def _laws(count: int, label: str = "x") -> list[Normal]:
-    """``count`` normal laws over one declaration, the law at position ``i`` with mean ``i``."""
+    """``count`` normal laws over one event spec, the law at position ``i`` with mean ``i``."""
     return [Normal(label, float(i), 1.0, label=label) for i in range(count)]
 
 
@@ -200,7 +200,7 @@ class TestDistributionBatchConstruction:
             )
 
     def test_a_law_of_other_outputs_raises_naming_the_outputs(self):
-        with pytest.raises(TypeError, match=r"element 1 .*fields \['x'\] but the law \['other'\]"):
+        with pytest.raises(TypeError, match=r"element 1 .*outputs \['x'\] but the law \['other'\]"):
             DistributionBatch(
                 [Normal("x", 0.0, 1.0), Normal("other", 0.0, 1.0)],
                 "law",
@@ -320,7 +320,7 @@ class TestDistributionBatchDeclarations:
         assert batch.event_spec.term_spec == drawn
 
     @pytest.mark.pending(
-        reason="a batch exposes the outputs of its element declaration",
+        reason="a batch exposes the outputs of its element's event spec",
         raises=AttributeError,
     )
     def test_the_output_of_a_batch_of_laws_defaults_to_the_batch_label(self):
@@ -519,7 +519,7 @@ class TestConditionalDistributionBatch:
     @pytest.mark.parametrize(
         "stranger",
         [
-            pytest.param(_kernels(1, given={"sigma": SCALAR})[0], id="other-given-input"),
+            pytest.param(_kernels(1, given={"sigma": SCALAR})[0], id="other-input"),
             pytest.param(_kernels(1, event=OutputSpec(z=SCALAR))[0], id="other-output"),
             pytest.param(Normal("y", 0.0, 1.0), id="a-law"),
             pytest.param("kernel", id="not-a-kernel"),

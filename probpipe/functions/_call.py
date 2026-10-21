@@ -110,7 +110,7 @@ class CallReport:
     deferred : tuple of str
         The checks left to the return.
     result : OutputSpec or None
-        The planned result declaration, or ``None`` when only the return
+        The planned output spec of the result, or ``None`` when only the return
         settles it.
     lifted : tuple of str
         The parameters whose arguments lift or sweep.
@@ -159,7 +159,7 @@ class CallReport:
         feasibility, and reason, and the selected route's row is marked. An
         unresolved route's reason names what it waits on, and each check left
         to the return is a row of its own. The lifted arguments, the planned
-        conversions, the registry methods, and the result declaration follow
+        conversions, the registry methods, and the result's output spec follow
         the table. Every value is escaped.
         """
         chosen = self.selected is not None and self.selected.feasible is True

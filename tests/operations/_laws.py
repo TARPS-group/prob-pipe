@@ -118,7 +118,7 @@ class Vector(Distribution, SupportsSampling):
 
 
 class Pair(Distribution, SupportsSampling, SupportsMean):
-    """A law drawing an exposed record of a scalar ``a`` and a vector ``b``."""
+    """A law drawing a record, in the positional form, of a scalar ``a`` and a vector ``b``."""
 
     def __init__(self, label: str) -> None:
         super().__init__(
@@ -295,7 +295,7 @@ def _given_values(given: Any) -> dict[str, Any]:
 class Kernel(ConditionalDistribution):
     """The kernel ``y | inputs ~ Normal(offset + sum of the inputs, 1)``, whose event is ``y``.
 
-    The output is fixed at construction, so a partly bound kernel and the law it
+    The output name is fixed at construction, so a partly bound kernel and the law it
     returns keep it whatever the kernel's label becomes.
     """
 

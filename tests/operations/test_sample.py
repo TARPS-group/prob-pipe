@@ -92,10 +92,10 @@ class TestBatches:
     def test_a_batch_of_draws_is_declared_under_the_event_outputs(self):
         whole = sample.check(Gaussian("g"), (4,)).result
         assert (list(whole.outputs), _has_record_outputs(whole)) == (["g"], False)
-        assert isinstance(whole.spec, BatchSpec)
+        assert isinstance(whole.term_spec, BatchSpec)
         record = sample.check(Pair("p"), (4,)).result
         assert list(record.outputs) == list(Pair("p").event_spec.outputs)
-        assert record.spec == BatchSpec(Pair("p").event_spec.term_spec, sample=4)
+        assert record.term_spec == BatchSpec(Pair("p").event_spec.term_spec, sample=4)
 
     def test_a_measure_draws_a_batch_of_laws(self):
         draws = sample(Measure("m"), sample_shape=(3,))

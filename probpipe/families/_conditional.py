@@ -11,7 +11,7 @@ Provides:
 A GLM likelihood conditions on the inputs ``X`` of shape ``("obs",
 "features")``, ``beta`` of shape ``("features",)``, and ``dispersion`` when
 its family takes one, and its event is the response vector of shape
-``("obs",)``. Its law at a given value is ``family.build(output,
+``("obs",)``. Its law at a given value is ``family.build(output_name,
 link⁻¹(X @ beta), dispersion)``, so changing the family or the link changes
 the model without a new class.
 """
@@ -75,15 +75,15 @@ class LinearGaussianConditional(ConditionalDistribution):
 
     It is the conditional member of the Gaussian algebra: composed with a
     Gaussian prior it yields a ``FactoredMultivariateGaussian``, and
-    conditioning through it is exact. The input is ``A``'s input, and
-    the event type is ``A``'s output type under the kernel's own output.
+    conditioning through it is exact. The kernel's one input is ``A``'s input,
+    and its event type is ``A``'s output type, under the kernel's own output.
 
     Parameters
     ----------
     output_name : str
-        The output of the kernel's event.
+        The name of the kernel's one output, which names its draws.
     A : LinOp
-        The linear map of the mean, whose input is the input.
+        The linear map of the mean, whose input is the kernel's input.
     b : Array
         The offset of the mean, shaped like ``A``'s output.
     cov : LinOp
@@ -293,7 +293,7 @@ class GLMFamily(ABC):
         Parameters
         ----------
         output_name : str
-            The output of the law's event.
+            The name of the law's one output, which names its draws.
         mean : Array
             One mean per observation, a vector.
         dispersion : ArrayLike, optional
@@ -302,8 +302,8 @@ class GLMFamily(ABC):
         label : str, optional
             The law's label, the class name of the law's family by default.
         event_spec : OutputSpec, optional
-            A declaration of *output_name* that declares the type of one draw;
-            the family completes it with the response vector.
+            An event spec naming *output_name*, which gives the type of one
+            draw; the family completes it with the response vector.
 
         Returns
         -------
@@ -501,13 +501,14 @@ def _declared_sizes(event_spec: OutputSpec, response: NumericArraySpec) -> dict[
 
     The inputs ``X`` and ``beta`` share the response's dimensions, so the
     sizes a declared type fixes are read here and substituted into them as well
-    as into the response. An unspecified output type fixes no size, and a declared type of
-    another kind is left to ``OutputSpec.with_term_spec``, which refuses it.
+    as into the response. An event spec whose type is unspecified fixes no
+    size, and a declared type of another kind is left to
+    ``OutputSpec.with_term_spec``, which refuses it.
 
     Parameters
     ----------
     event_spec : OutputSpec
-        The declaration of the response passed to :func:`glm_likelihood`.
+        The event spec of the response passed to :func:`glm_likelihood`.
     response : NumericArraySpec
         The spec of the response vector, whose shape is ``("obs",)``.
 
@@ -538,13 +539,14 @@ class _GLMLikelihood(
 ):
     """The kernel of a GLM, which :func:`glm_likelihood` constructs.
 
-    An input with a fixed value is not an input, and its value binds the
-    dimensions it declares. Binding some inputs returns the kernel of
-    the others. Each conditional capability is the matching capability of the
-    law :meth:`_condition_on` returns for a value of every input. The law
-    carries the kernel's event spec, whose output is completed once,
-    at construction. Under the family's canonical link the family builds the
-    law from the linear predictor, and under another link from the mean.
+    Fixing the value of an input removes it from the kernel's inputs, and the
+    value binds the dimensions the input declares, so binding some inputs
+    returns the kernel of the others. Each conditional capability is the
+    matching capability of the law :meth:`_condition_on` returns for a value of
+    every input. The law carries the kernel's event spec, whose output's spec
+    is completed once, at construction. Under the family's canonical link the
+    family builds the law from the linear predictor, and under another link
+    from the mean.
     """
 
     def __init__(
@@ -742,8 +744,8 @@ class _GLMLikelihood(
         Returns
         -------
         Distribution
-            The family's law of the response vector, with the kernel's label and event
-            declaration.
+            The family's law of the response vector, with the kernel's label and
+            event spec.
 
         Raises
         ------
@@ -853,7 +855,7 @@ def glm_likelihood(
     The kernel's inputs are ``X`` of shape ``("obs", "features")``,
     ``beta`` of shape ``("features",)``, and ``dispersion`` when the family has
     one, and its event is the response vector of shape ``("obs",)`` under
-    *output_name*. Its law at a given value is ``family.build(output,
+    *output_name*. Its law at a given value is ``family.build(output_name,
     link⁻¹(X @ beta), dispersion, label=label)``, which carries the kernel's
     label: ``GaussianFamily`` with the identity link is linear
     regression, ``BernoulliFamily`` with the logit is logistic regression, and
@@ -865,7 +867,7 @@ def glm_likelihood(
     Parameters
     ----------
     output_name : str
-        The output of the response.
+        The name of the kernel's one output, which names the response.
     family : GLMFamily
         The response family.
     link : Function, optional
@@ -874,8 +876,8 @@ def glm_likelihood(
     label : str, optional
         The kernel's label, ``ℙ`` by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the response's type, passed
-        through to the family.
+        An event spec naming *output_name*, which gives the response's type,
+        passed through to the family.
     X : Array, optional
         The design matrix, of shape ``(obs, features)``, fixed at construction.
     dispersion : ArrayLike, optional
@@ -899,7 +901,7 @@ def glm_likelihood(
         If *X* is not a matrix, *output_name* is not a valid output name,
         *event_spec* names another output, declares a type the response
         vector does not conform to, or a number of observations that *X*
-        contradicts, or the event's output is also an input's name.
+        contradicts, or *output_name* is also the name of an input.
     """
     return _GLMLikelihood(
         output_name,

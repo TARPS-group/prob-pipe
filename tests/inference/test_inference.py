@@ -1100,7 +1100,7 @@ class TestViewProtocolDuckTyping:
         assert isinstance(view, SupportsMean)
         assert isinstance(view, SupportsVariance)
 
-    def test_view_log_prob_delegates_to_output(self):
+    def test_view_log_prob_delegates_to_factor(self):
         """A joint view's density is its factor's, the joint's marginal at the path."""
         import scipy.stats
 

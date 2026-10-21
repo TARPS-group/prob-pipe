@@ -109,13 +109,13 @@ def _methods(protocol: type) -> dict[str, Callable[..., Any]]:
 
 
 class _GivenLaw(Distribution):
-    """The kernel's law at complete inputs, without evaluating the kernel.
+    """The kernel's law at values of all its required inputs, without evaluating the kernel.
 
     It claims exactly the unconditional capabilities whose conditional twins
     the kernel claims. All given values unify in one dimension scope before
     the event spec is substituted. No density, draw, kernel application,
     or inference method runs during construction. Internal declaration-only
-    planning also accepts a record-valued StandIn: its field declarations bind
+    planning also accepts a record-valued StandIn: its fields' specs bind
     the dimensions, and guards that need its values remain unresolved.
 
     Parameters
@@ -130,7 +130,7 @@ class _GivenLaw(Distribution):
     ------
     ApplicabilityError
         If the given is not a record, mapping, or record-valued planning stand-in,
-        names an unknown input, leaves a required input unbound, or fails its declaration.
+        names an unknown input, leaves a required input unbound, or fails its input spec.
     """
 
     _capability_table: ClassVar[dict[type, dict[str, Callable[..., Any]]]] = {

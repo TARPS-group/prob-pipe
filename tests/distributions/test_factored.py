@@ -1,8 +1,8 @@
 """Factored distributions: joints that carry the ordered list of their factors.
 
 A factored joint holds its factors in conditional-first order and derives the
-rest from them. Its event spec is an exposed record over the factors'
-outputs; sampling and the densities are the intersection of the factors'
+rest from them. Its event spec takes the positional form, a record over the
+factors' outputs; sampling and the densities are the intersection of the factors'
 capabilities; the moments are present exactly when an edge-free joint's factors
 all have them; and the marginal is exact per path, by the factor graph. A
 conditional joint binds its givens in every factor that names them.
@@ -222,7 +222,10 @@ class RenamingKernel(NormalKernel):
 
 
 class MarginalKernel(NormalKernel, SupportsConditionalMarginals):
-    """A kernel over an exposed record whose conditional marginal is exact at every path."""
+    """A kernel over a record in the positional form.
+
+    Its conditional marginal is exact at every path.
+    """
 
     def _condition_on(self, given, /, **kwargs):
         return Law(
@@ -454,7 +457,7 @@ def _law(label: str, output_name: str, spec: Any = SCALAR, law: type[Law] = Law)
 
 
 def _pair(label: str = "pair", law: type[Law] = Law, **options: Any) -> Law:
-    """A law over an exposed record of the fields ``a`` and ``b``."""
+    """A law over a record of the fields ``a`` and ``b``, in the positional form."""
     return law(event_spec=OutputSpec(RecordSpec(a=SCALAR, b=SCALAR)), label=label, **options)
 
 
@@ -571,7 +574,7 @@ class TestConstruction:
         with pytest.raises(
             ValueError,
             match=re.escape(
-                "the field 'beta' is produced by both factor 0 ('prior') and factor 1 ('prior'); "
+                "the output 'beta' is produced by both factor 0 ('prior') and factor 1 ('prior'); "
                 "rename it in one of them with with_path_names({'beta': ...}), or build one of "
                 "them with another output, as Normal('beta_2', ...)"
             ),
@@ -579,11 +582,11 @@ class TestConstruction:
             FactoredDistribution([_prior(), _prior()], label="model")
 
 
-# -- The event spec --------------------------------------------------------
+# -- The event spec ---------------------------------------------------------------
 
 
 class TestEventDeclaration:
-    """An exposed record over the factors' outputs, in factor order, each factor's order kept."""
+    """The positional form: the factors' outputs in factor order, each factor's own order kept."""
 
     def test_the_event_is_an_exposed_record_of_every_factor_output(self):
         joint = _likelihood() * _prior() * _law("other", "c")
@@ -619,7 +622,7 @@ class TestEventDeclaration:
         assert list(joint.event_spec.outputs) == ["a", "params"]
         assert joint.event_spec.outputs["params"] == params
 
-    def test_the_joint_keeps_each_factor_packaging(self):
+    def test_the_joint_keeps_each_factor_form(self):
         exposed = Law(
             OutputSpec(RecordSpec(beta=SCALAR)),
             label="exposed",
@@ -1247,7 +1250,7 @@ class TestConditioning:
 
 
 class TestNumericMarkers:
-    """Membership in each factored numeric marker is read from the joint's declarations."""
+    """Membership in each factored numeric marker is read from the joint's specs."""
 
     def test_a_joint_with_a_numeric_event_is_a_factored_numeric_distribution(self):
         joint = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
@@ -1580,7 +1583,7 @@ def _assert_same_joint(restored: Any, joint: Any) -> None:
 
 
 class TestRoundTrips:
-    """A pickled or copied joint keeps its label, declarations, factors, and capabilities."""
+    """A pickled or copied joint keeps its label, specs, factors, and capabilities."""
 
     @pytest.mark.parametrize("make", _JOINTS)
     def test_pickle(self, make):
@@ -1611,7 +1614,7 @@ class TestJointSampling:
         assert joint.event_spec.term_spec.is_valid(draw)
         assert list(draw.keys()) == ["y", "beta", "c"]
 
-    def test_a_draw_extracts_outputs_by_each_factor_packaging(self):
+    def test_a_draw_extracts_outputs_by_each_factor_form(self):
         fields = OutputSpec(RecordSpec(a=SCALAR, b=SCALAR))
         exposed = PointLaw("exposed", fields, {"a": jnp.asarray(1.0), "b": jnp.asarray(2.0)})
         params = OutputSpec(params=RecordSpec(u=SCALAR, v=SCALAR))
@@ -1961,8 +1964,8 @@ class TestCompiledFactorCalls:
     def test_a_family_check_of_a_parameter_computed_in_the_program_does_not_run(self):
         @conditional_distribution(given_spec={"beta": SCALAR, "w": SCALAR}, label="lik")
         def lik(beta, w):
-            outputs = [Normal("y", beta, 1.0), Normal("y", beta + 1.0, 1.0)]
-            return MixtureDistribution(outputs, jnp.stack([w, 1.0 - w]))
+            components = [Normal("y", beta, 1.0), Normal("y", beta + 1.0, 1.0)]
+            return MixtureDistribution(components, jnp.stack([w, 1.0 - w]))
 
         with pytest.raises(ValueError, match="nonnegative"):
             lik._condition_on({"beta": 0.0, "w": -0.5})

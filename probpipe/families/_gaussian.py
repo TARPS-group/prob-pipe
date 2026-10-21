@@ -148,7 +148,7 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
         Parameters
         ----------
         given : Record or Mapping[str, Any]
-            Values of some of the joint's outputs, keyed by output.
+            Values of some of the joint's outputs, keyed by output name.
         **options : Any
             Unused, since the conditional is in closed form.
 
@@ -200,7 +200,7 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
     def _unknown_outputs(self, unknown: Sequence[str]) -> str:
         """The message for conditioning on the names *unknown*, which are not outputs."""
         outputs = list(self.event_spec.outputs)
-        return f"cannot condition {self.label!r}: {unknown_names('component', unknown, outputs)}"
+        return f"cannot condition {self.label!r}: {unknown_names('output', unknown, outputs)}"
 
     def _every_output(self) -> str:
         """The message for conditioning on every output, which leaves no distribution."""
@@ -221,31 +221,31 @@ _register_refinement(FactoredMultivariateGaussian, _jointly_gaussian)
 def _declarations(
     output_name: str, output_spec: OutputSpec | None, event_spec: OutputSpec | None
 ) -> tuple[OutputSpec, OutputSpec]:
-    """The drawn function's output spec and the event's, each defaulting to *output_name*.
+    """The drawn function's output spec and the event spec, each defaulting to *output_name*.
 
-    The event is a function, so a declared event type is a ``FunctionSpec`` whose
-    output side names the drawn function's output. An unspecified output type in the
-    event, or in the function's output side, is filled with the output spec.
+    The event is a function, so a declared event type is a ``FunctionSpec``
+    whose output spec names the drawn function's one output. An event spec
+    whose type is unspecified, or a ``FunctionSpec`` whose output spec is
+    unspecified, is completed with the drawn function's output spec.
 
     Parameters
     ----------
     output_name : str
-        The output of the event, which the drawn function's output also takes
-        by default.
+        The name of the event's one output, which also names the drawn
+        function's output by default.
     output_spec : OutputSpec or None
-        The declaration of the drawn function's output, or None for an unspecified output type under
-        *output_name*.
+        The drawn function's output spec, or None for one output named
+        *output_name* whose type is unspecified.
     event_spec : OutputSpec or None
-        The declaration of the function-valued event under *output_name*, or None for a
-        ``FunctionSpec`` under *output_name*.
+        The event spec of the function-valued event, naming *output_name*, or
+        None for a ``FunctionSpec`` under *output_name*.
 
     Returns
     -------
     output : OutputSpec
-        The output spec, which names one output.
+        The drawn function's output spec, which names one output.
     event : OutputSpec
-        The event spec, whose ``FunctionSpec`` names that output on its output
-        side.
+        The event spec, whose ``FunctionSpec`` has that output spec.
 
     Raises
     ------
@@ -254,7 +254,8 @@ def _declarations(
         *event_spec* is not an ``OutputSpec`` or declares a type that is not a
         ``FunctionSpec``.
     ValueError
-        If the event's ``FunctionSpec`` names another output.
+        If the event's ``FunctionSpec`` names an output other than the drawn
+        function's.
     """
     output = OutputSpec(**{output_name: None}) if output_spec is None else output_spec
     if not isinstance(output, OutputSpec) or _root_output_name(output) is None:
@@ -280,14 +281,13 @@ def _declarations(
     if named != _root_output_name(output):
         raise ValueError(
             f"event_spec of {output_name!r} names the function output {named!r}, but output_spec "
-            f"names it {_root_output_name(output)!r} (the output when output_spec is omitted); "
-            f"make them match"
+            f"names it {_root_output_name(output)!r}; make them match"
         )
     return output, event_spec
 
 
 def _output_of(law: GaussianRandomFunction) -> str:
-    """The output of the function-valued event of *law*, which a map of it keeps."""
+    """The name of *law*'s one output, whose draws are functions; a map of *law* keeps it."""
     (output_name,) = law.event_spec.outputs
     return output_name
 
@@ -319,17 +319,17 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
     evaluates jointly and there is more than one value, and otherwise a
     ``Normal`` whose coordinates are the values, which are independent when
     the member does not evaluate jointly. The law's label is the random
-    function's, and its event is declared under the drawn function's output
-    output.
+    function's, and its one output is the drawn function's output.
 
     The function-valued event is a whole term under *output_name*, and the
-    drawn function's output defaults to it; ``output_spec`` names
-    another, and ``event_spec`` declares the event's type. A type that
-    ``event_spec`` declares is a
-    ``FunctionSpec`` naming the output, and an unspecified output type in it, or in
-    its output side, is filled with the output spec. The mean is the
-    mean function and the variance the pointwise variance function, each a
-    callable on stacked inputs.
+    drawn function's output takes the same name by default; ``output_spec``
+    names another, and ``event_spec`` declares the event's type. A type that
+    ``event_spec`` declares is a ``FunctionSpec`` whose output spec names the
+    drawn function's output; an event spec whose type is unspecified, or a
+    ``FunctionSpec`` whose output spec is unspecified, is completed with the
+    drawn function's output spec. The mean is the mean function and the
+    variance the pointwise variance function, each a callable on stacked
+    inputs.
 
     Shifts ``f + b``, scalings ``alpha * f`` by a scalar, output-side linear
     maps ``A @ f``, and sums ``f + g`` of independent members are again
@@ -340,13 +340,13 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
     Parameters
     ----------
     output_name : str
-        The output of the function-valued event.
+        The name of the random function's one output, which names its draws.
     label : str, optional
         The random function's label, its class name by default.
     output_spec : OutputSpec, optional
-        The declaration of the drawn function's output, naming its output.
+        The drawn function's output spec, which names its one output.
     event_spec : OutputSpec, optional
-        The declaration of the function-valued draw under *output_name*.
+        The event spec of the function-valued draw, naming *output_name*.
 
     Raises
     ------
@@ -356,8 +356,9 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
         *event_spec* is not an ``OutputSpec`` or declares a type that is not a
         ``FunctionSpec``.
     ValueError
-        If *event_spec* names another output than *output_name*, or the
-        ``FunctionSpec`` it declares names another output.
+        If *event_spec* names an output other than *output_name*, or the
+        ``FunctionSpec`` it declares names an output other than the drawn
+        function's.
     """
 
     def __init__(
@@ -493,7 +494,7 @@ class GaussianProcess(GaussianRandomFunction):
     Parameters
     ----------
     output_name : str
-        The output of the function-valued event.
+        The name of the random function's one output, which names its draws.
     mean_fn : Callable[[Array], Array]
         The mean function, evaluated at stacked input points.
     cov_kernel : Callable[[Array, Array], Array]
@@ -501,15 +502,15 @@ class GaussianProcess(GaussianRandomFunction):
     label : str, optional
         The process's label, ``GaussianProcess`` by default.
     output_spec : OutputSpec, optional
-        The declaration of the drawn function's output.
+        The drawn function's output spec.
     event_spec : OutputSpec, optional
-        The declaration of the function-valued draw.
+        The event spec of the function-valued draw.
 
     Raises
     ------
     TypeError
-        If *mean_fn* or *cov_kernel* is not callable, or a declaration is
-        refused as :class:`GaussianRandomFunction` refuses it.
+        If *mean_fn* or *cov_kernel* is not callable, or *output_spec* or
+        *event_spec* is refused as :class:`GaussianRandomFunction` refuses it.
     ValueError
         As :class:`GaussianRandomFunction` raises.
     """
@@ -577,7 +578,7 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
     Parameters
     ----------
     output_name : str
-        The output of the function-valued event.
+        The name of the random function's one output, which names its draws.
     basis : Callable[[Array], Array]
         The feature map, evaluated at stacked input points.
     weights : MultivariateNormal
@@ -585,16 +586,16 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
     label : str, optional
         The random function's label, ``LinearBasisFunction`` by default.
     output_spec : OutputSpec, optional
-        The declaration of the drawn function's output.
+        The drawn function's output spec.
     event_spec : OutputSpec, optional
-        The declaration of the function-valued draw.
+        The event spec of the function-valued draw.
 
     Raises
     ------
     TypeError
         If *weights* is not a ``MultivariateNormal``, *basis* is not callable,
-        or a declaration is refused as :class:`GaussianRandomFunction` refuses
-        it.
+        or *output_spec* or *event_spec* is refused as
+        :class:`GaussianRandomFunction` refuses it.
     ValueError
         As :class:`GaussianRandomFunction` raises.
     """

@@ -519,7 +519,7 @@ class TestTheKDEDeclaration:
         kde = KDEDistribution(jnp.arange(5), 0.5, output_name="k")
         assert jnp.issubdtype(kde.event_spec.term_spec.dtype, jnp.floating)
 
-    def test_a_type_hole_takes_the_atoms_term(self, centers):
+    def test_an_unspecified_type_takes_the_atoms_term(self, centers):
         kde = KDEDistribution(centers, 0.5, event_spec=OutputSpec(theta=None), label="post")
         assert kde.event_spec == OutputSpec(theta=NumericArraySpec((2,), jnp.float32, real))
 

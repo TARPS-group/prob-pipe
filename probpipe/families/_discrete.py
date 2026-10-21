@@ -2,7 +2,7 @@
 
 ``Bernoulli``, ``Binomial``, ``Poisson``, ``Categorical``, and
 ``NegativeBinomial`` each derive their event term spec from their parameters
-and take an ``event_spec`` declaration that names the event's output.
+and take an ``event_spec`` that names the law's one output.
 
 The parameters broadcast against one another, a categorical's along all but
 its last axis, which indexes the categories. Scalar parameters give a scalar
@@ -99,7 +99,7 @@ class Bernoulli(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     probs : array-like, optional
         Probability of a 1 outcome.  Exactly one of *probs* or *logits*
         must be provided.
@@ -108,14 +108,16 @@ class Bernoulli(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If not exactly one of *probs* and *logits* is given, or *event_spec*
         declares a type that one draw does not conform to.
@@ -179,7 +181,7 @@ class Binomial(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     total_count : array-like
         Number of trials.
     probs : array-like, optional
@@ -190,14 +192,16 @@ class Binomial(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If not exactly one of *probs* and *logits* is given, or *event_spec*
         declares a type that one draw does not conform to.
@@ -267,20 +271,22 @@ class Poisson(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     rate : array-like
         Rate parameter (must be positive).
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If *output_name* is not a valid output name, or *event_spec* names
         another output or declares a type that one draw does not conform to.
@@ -319,7 +325,7 @@ class Categorical(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     probs : array-like, optional
         Probabilities for each category.  Exactly one of *probs* or
         *logits* must be provided.
@@ -328,14 +334,16 @@ class Categorical(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If not exactly one of *probs* and *logits* is given, or *event_spec*
         declares a type that one draw does not conform to.
@@ -405,7 +413,7 @@ class NegativeBinomial(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     total_count : array-like
         Number of successes before stopping.
     probs : array-like, optional
@@ -416,14 +424,16 @@ class NegativeBinomial(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If not exactly one of *probs* and *logits* is given, or *event_spec*
         declares a type that one draw does not conform to.

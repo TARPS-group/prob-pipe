@@ -567,7 +567,7 @@ class TestFunctionHashing:
                 OutputSpec(DistributionSpec(OutputSpec(b=NumericArraySpec(())))),
             ),
         ],
-        ids=["whole-term", "exposed-record", "exposed-law"],
+        ids=["keyword-form", "positional-record", "positional-law"],
     )
     def test_a_rename_of_the_function_or_its_outputs_keeps_the_fingerprint(self, before, after):
         """A rename changes no value, so the renamed function shares the fingerprint."""
@@ -606,7 +606,7 @@ class TestFunctionHashing:
         ids=["undeclared", "value-output", "result-output"],
     )
     def test_an_output_label_changes_no_identity(self, declaration):
-        """Display aliases leave computational declarations and identity unchanged."""
+        """Display aliases leave the output spec and identity unchanged."""
 
         def identity(value):
             return value
@@ -626,7 +626,7 @@ class TestFunctionHashing:
         assert fingerprint(first) == fingerprint(second)
         assert fingerprint(first) == fingerprint(first.with_label("display"))
 
-    @pytest.mark.parametrize("change", ["shape", "kind", "packaging", "declaration"])
+    @pytest.mark.parametrize("change", ["shape", "kind", "form", "undeclared"])
     def test_output_contract_participates_in_function_fingerprint(self, change):
         def identity(value):
             return value
@@ -641,8 +641,8 @@ class TestFunctionHashing:
         declarations = {
             "shape": OutputSpec(bundle=RecordSpec(field=(2,))),
             "kind": OutputSpec(bundle=OpaqueSpec()),
-            "packaging": OutputSpec(RecordSpec(field=())),
-            "declaration": None,
+            "form": OutputSpec(RecordSpec(field=())),
+            "undeclared": None,
         }
         changed = Function(
             identity,
@@ -1192,7 +1192,7 @@ class TestNumericContainerHashing:
 class TestTermSpecFingerprints:
     """Specs are hashed as template leaves, by declaration and not by identity.
 
-    A declaration is stored as a spec (`DistributionSpec.event_spec`,
+    An event or output spec is stored inside a term spec (`DistributionSpec.event_spec`,
     `FunctionSpec.output_spec`), so the spec hasher must recurse into it. These
     tests pin that: equal declarations must agree, distinct ones must not, and
     every spec kind must be reachable — a spec the hasher does not know falls

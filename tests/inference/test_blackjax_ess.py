@@ -186,7 +186,7 @@ class TestGaussianPriorDetection:
     def test_product_mixed_normal_and_mvn(self):
         """Block assembly must respect field order for *both* mean and cov.
 
-        Distinct non-zero output means and distinct diagonal variances
+        Distinct non-zero means and distinct diagonal variances
         pin the block order exactly: a field-order permutation in
         ``_gaussian_prior_params`` would scramble the mean *and* the cov
         diagonal away from the field-order concatenation
@@ -221,7 +221,7 @@ class TestGaussianPriorDetection:
     def test_non_gaussian_returns_none(self, prior):
         assert _gaussian_prior_params(prior) is None
 
-    def test_product_with_non_gaussian_output_returns_none(self):
+    def test_product_with_non_gaussian_factor_returns_none(self):
         prior = Normal("a", loc=0.0, scale=1.0) * Gamma("b", concentration=2.0, rate=1.0)
         assert _gaussian_prior_params(prior) is None
 

@@ -1,7 +1,7 @@
 """A kernel built from a function of its given values that returns a law (IV.4).
 
 ``conditional_distribution`` builds a ``ConditionalDistribution`` from a
-function, as ``function`` builds a ``Function``. Each parameter is a given
+function, as ``function`` builds a ``Function``. Each parameter is an
 input, declared by its annotation or by ``given_spec``. The event spec is
 the returned law's, or an explicit ``event_spec`` that agrees with it.
 Conditioning, sampling, and the conditional density derive from the returned
@@ -127,7 +127,7 @@ class TestTheEventDeclaration:
         kernel = conditional_distribution(_location, given_spec=INPUTS, label="y")
         assert kernel.event_spec == Normal("y", 0.0, 1.0).event_spec
 
-    def test_the_inputs_shapes_shape_the_event(self):
+    def test_the_input_shapes_shape_the_event(self):
         kernel = conditional_distribution(
             lambda mu: Normal("y", mu, 1.0), given_spec={"mu": NumericArraySpec((3,))}, label="y"
         )
@@ -140,7 +140,7 @@ class TestTheEventDeclaration:
         assert kernel.event_spec == Normal("y", 0.0, 1.0).event_spec
 
     def test_an_explicit_event_spec_naming_other_outputs_raises(self):
-        with pytest.raises(ValueError, match="declares the fields"):
+        with pytest.raises(ValueError, match="declares the outputs"):
             conditional_distribution(
                 _location, given_spec=INPUTS, event_spec=OutputSpec(obs=None), label="y"
             )
@@ -206,7 +206,7 @@ class TestTheCapabilities:
 
 
 class TestEvaluation:
-    def test_the_given_values_arrive_by_name_at_their_inputs_kinds(self):
+    def test_the_given_values_arrive_by_name_at_the_kinds_of_their_inputs(self):
         seen: dict[str, type] = {}
 
         def law(population: Any, scale: Any) -> Distribution:

@@ -89,7 +89,7 @@ def _product(*names: str):
 
 
 def _means(post) -> dict[str, np.ndarray]:
-    """The mean of each of the posterior's outputs, keyed by the output."""
+    """The mean of each of the posterior's outputs, keyed by the output name."""
     m = mean(post)
     return {f: np.asarray(m[f]).reshape(-1) for f in post.event_spec.outputs}
 

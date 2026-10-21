@@ -604,7 +604,7 @@ def format_signature(
     Parameters
     ----------
     outputs : iterable of str
-        A law's or a kernel's event outputs, or a function's parameters, in
+        A law's or a kernel's outputs, or a function's parameters, in
         declaration order.
     given : iterable of str, optional
         A kernel's inputs, in declaration order.
@@ -651,7 +651,7 @@ def format_default(value: Any) -> str:
 
 
 def format_outputs(outputs: Iterable[str]) -> str:
-    """Several outputs as one label: one as it is, as ``mu``, and several in parentheses, as ``(y, mu)``.
+    """Several outputs as one label, as ``mu`` for one and ``(y, mu)`` for several.
 
     A draw's outputs read this way before its ``~``, and the atoms of a
     posterior are labeled this way by its outputs.
@@ -659,7 +659,7 @@ def format_outputs(outputs: Iterable[str]) -> str:
     Parameters
     ----------
     outputs : iterable of str
-        A law's event outputs, in declaration order.
+        A law's outputs, in declaration order.
 
     Returns
     -------

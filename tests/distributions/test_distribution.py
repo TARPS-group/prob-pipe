@@ -459,7 +459,7 @@ class TestMetaclassEnforcement:
 
     @pytest.mark.parametrize("base", [Distribution, NumericDistribution])
     def test_a_law_that_leaves_its_event_undeclared_raises(self, base):
-        """Construction checks the declaration after ``__init__``, naming
+        """Construction checks the event spec after ``__init__``, naming
         the class, whichever base it bypasses."""
 
         class _NoDeclaration(base):
@@ -502,7 +502,7 @@ class TestWithLabelTemplateRoundtrip:
 
     def test_with_label_preserves_a_non_numeric_declaration(self):
         """An empirical law over records with an opaque field declares its atoms'
-        record, not the distribution's label, so relabeling leaves the declaration
+        record, not the distribution's label, so relabeling leaves the event spec
         intact."""
         import numpy as np
 
@@ -523,7 +523,7 @@ class TestDistributionSpecIsValid:
         dist = Normal("x", loc=0.0, scale=1.0)
         assert DistributionSpec(dist.event_spec).is_valid(dist)
 
-    def test_packaging_mismatch_invalid(self):
+    def test_form_mismatch_invalid(self):
         # A whole term x and a one-field record exposing x are different draws.
         dist = Normal("x", loc=0.0, scale=1.0)
         assert not DistributionSpec(RecordSpec(x=())).is_valid(dist)
@@ -546,7 +546,7 @@ class TestNoTypeParameter:
     """The distribution kinds and their capabilities are not generic.
 
     A draw's type follows from the event spec, so a static parameter
-    could record only the declaration's kind.
+    could record only the event spec's kind.
     """
 
     @pytest.mark.parametrize(
@@ -649,7 +649,7 @@ class TestLabelBinding:
         assert law.label == "prior"
         assert tuple(law.event_spec.outputs) == ("x",)
 
-    def test_output_given_both_ways_raises(self):
+    def test_output_name_given_both_ways_raises(self):
         with pytest.raises(TypeError, match="multiple values for argument 'output_name'"):
             Normal("x", 0.0, 1.0, output_name="y")
 
@@ -766,7 +766,7 @@ class _DeclaredLaw(Distribution):
 
 
 class TestEventDeclaration:
-    """A law stores one declaration, completed from what its constructor supplies."""
+    """A law stores one event spec, completed from what its constructor supplies."""
 
     def test_a_bare_array_spec_needs_an_output(self):
         class _Bare(Distribution):
@@ -794,7 +794,7 @@ class TestEventDeclaration:
         declaration = OutputSpec(beta=NumericArraySpec((2,)))
         assert _DeclaredLaw("law", declaration).event_spec is declaration
 
-    def test_a_type_hole_raises(self):
+    def test_an_unspecified_type_raises(self):
         with pytest.raises(ValueError, match="does not declare a type"):
             _DeclaredLaw("x", OutputSpec(x=None))
 
@@ -1183,7 +1183,7 @@ class TestFamilyDeclarations:
 
 
 class TestJointDeclarations:
-    """A joint declares an exposed record of its outputs' declared terms."""
+    """A joint's event spec is in the positional form, a record of its outputs' declared terms."""
 
     def test_a_joint_keeps_each_output_dtype_and_support(self):
         joint = Normal("a", 0.0, 1.0) * Gamma("c", 2.0, 1.0)
@@ -1490,7 +1490,7 @@ class TestDimensionTransforms:
 
 
 class TestDistributionSpecMatching:
-    def test_a_packaging_mismatch_is_named(self):
+    def test_a_form_mismatch_is_named(self):
         spec = DistributionSpec(RecordSpec(x=()))
         with pytest.raises(ValueError, match="declares a record of fields, but the law declares"):
             spec.bind_dims_from_value(_DeclaredLaw("x", NumericArraySpec(())))
@@ -1502,7 +1502,7 @@ class TestDistributionSpecMatching:
 
 
 class TestDistributionSpecFingerprint:
-    def test_the_two_packagings_fingerprint_apart(self):
+    def test_the_two_forms_fingerprint_apart(self):
         from probpipe.core._fingerprint import fingerprint
 
         whole = DistributionSpec(OutputSpec(x=NumericArraySpec(())))

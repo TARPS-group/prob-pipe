@@ -13,7 +13,7 @@ capability protocol. The converter registry
 It tests the source first, returning a law that already satisfies the target
 as it is. Its ``check`` reports the selected converter's promise under the
 registered name and exactness, and a conversion carries the source's event
-declaration and satisfies the target.
+spec and satisfies the target.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ _SCALAR = NumericArraySpec(())
 
 
 class Source(Distribution):
-    """A law the converters below read, over a scalar unless given a declaration."""
+    """A law the converters below read, over a scalar unless given an event spec."""
 
     def __init__(self, label: str = "x", event_spec: OutputSpec | None = None):
         super().__init__(
@@ -76,7 +76,7 @@ class Stranger(Distribution):
 
 
 class Target(Distribution):
-    """A representation converted to, built from a name and a declaration."""
+    """A representation converted to, built from a name and an event spec."""
 
 
 class TargetSub(Target):
@@ -147,10 +147,10 @@ class Labeled(Protocol):
 class ToyConverter(Converter):
     """A converter whose declarations, report, and result each test sets.
 
-    When feasible, ``check`` promises the source's declaration with
+    When feasible, ``check`` promises the source's event spec with
     ``target_class`` and ``capabilities``, and ``report`` replaces that promise.
     ``execute`` returns ``result``, or else a ``target_class`` law carrying the
-    source's declaration. Each call's arguments are recorded.
+    source's event spec. Each call's arguments are recorded.
     """
 
     def __init__(
@@ -324,7 +324,7 @@ class TestConversionInfo:
         assert ConversionInfo(feasible=False).exact is None
 
     def test_a_feasible_report_promises_its_target_spec(self):
-        """Planning reads the promised declaration, so a feasible conversion states it."""
+        """Planning reads the promised spec, so a feasible conversion states it."""
         with pytest.raises(ValueError):
             ConversionInfo(feasible=True, method_name="m", exact=True, target_class=Target)
 
@@ -401,7 +401,7 @@ class TestRegistration:
 
     @pytest.mark.parametrize("side", ["sources", "targets"])
     def test_the_numeric_marker_is_refused_on_either_side(self, side: str):
-        """Membership follows an instance's declaration, so selection by class would miss laws."""
+        """Membership follows an instance's event spec, so selection by class would miss laws."""
         registry = ConverterRegistry()
         with pytest.raises(TypeError, match="cannot dispatch on NumericDistribution"):
             registry.register(ToyConverter("m", **{side: (NumericDistribution,)}))
@@ -1119,7 +1119,7 @@ class TestEventDeclarationPreserved:
             OutputSpec(x=NumericArraySpec((2,))),
             OutputSpec(RecordSpec(x=_SCALAR)),
         ],
-        ids=["renamed-output", "reshaped", "repackaged"],
+        ids=["renamed-output", "reshaped", "another-form"],
     )
     def test_a_converted_law_with_another_declaration_is_refused(self, declaration: OutputSpec):
         registry = _registry(

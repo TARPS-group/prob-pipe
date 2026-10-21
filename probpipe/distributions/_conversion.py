@@ -5,7 +5,7 @@ converts from and the targets it converts to, and whether it is exact. The
 **converter registry** is keyed on the source's type and the requested target,
 which is a distribution class or a capability protocol. A conversion changes
 the representation and nothing else: the result carries the source's event
-declaration and realizes the same law up to the converter's fidelity.
+spec and realizes the same law up to the converter's fidelity.
 
 The registry tests the source first, so a law that already satisfies the
 target is returned as it is, with no converter selected. Otherwise it selects a
@@ -85,7 +85,7 @@ class ConversionInfo(MethodInfo):
     """The report of one conversion, before it executes.
 
     A converter's ``check`` returns one, and the registry's ``check`` returns
-    one in every state. A feasible report promises the declaration the result
+    one in every state. A feasible report promises the spec the result
     carries and states whether executing the conversion claims a random event,
     and the registry's report also states whether the conversion is exact; an
     infeasible report leaves the promise at its defaults, which promise
@@ -99,7 +99,7 @@ class ConversionInfo(MethodInfo):
     Attributes
     ----------
     target_spec : DistributionSpec or None
-        The declaration the result will carry, ``None`` unless feasible.
+        The spec the result will carry, ``None`` unless feasible.
     target_class : type or None
         The representation class of the result, when known.
     capabilities : tuple of type
@@ -233,7 +233,7 @@ def _satisfaction(source: Any, target: type) -> Feasibility:
     A class target is satisfied by its instances. A capability is satisfied by a
     law that claims it and whose guard, for a capability whose method takes no
     argument other than values, is established. Only a ``Distribution`` can
-    satisfy a target as it is, since only a law carries the declaration a
+    satisfy a target as it is, since only a law carries the event spec a
     conversion preserves.
     """
     if not isinstance(source, Distribution) or not isinstance(source, target):
@@ -258,14 +258,15 @@ def _guaranteed(capabilities: tuple[type, ...], target: type) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _packaging(declaration: OutputSpec) -> str:
+def _event_form(declaration: OutputSpec) -> str:
+    """What an event spec holds, in a conversion's mismatch message."""
     if _has_record_outputs(declaration):
         return "a record of fields"
     (output_name,) = declaration.outputs
     return f"the single field {output_name!r}"
 
 
-#: The names of the two declarations a conversion compares, in its messages.
+#: The names of the two event specs a conversion compares, in its messages.
 _CONVERSION_SIDES = ("the source", "the result")
 
 
@@ -281,9 +282,9 @@ def _term_difference(
     The kinds and shapes are compared, and with *dtypes* a set dtype of *actual*
     must cast to one *expected* sets by the same-kind rule, as a law matches a
     ``DistributionSpec``. Supports are not compared, since a family's own
-    support replaces the source's. An unspecified output type in *expected*, which a backend
-    declaration may leave for the converter to fill, matches any term. *sides*
-    names the two declarations in the message.
+    support replaces the source's. A type left unspecified in *expected*, which
+    the event spec given for a backend object may leave for the converter to
+    fill, matches any term. *sides* names the two event specs in the message.
     """
     first, second = sides
     if expected is None:
@@ -340,19 +341,19 @@ def _event_difference(
     sides: tuple[str, str] = _CONVERSION_SIDES,
     dtypes: bool = True,
 ) -> str | None:
-    """How the declaration *actual* departs from *expected*, or ``None``.
+    """How the event spec *actual* departs from *expected*, or ``None``.
 
-    A conversion preserves the packaging, the output names, and each
+    A conversion preserves the form, the output names, and each
     output's kind and shape, and a dtype it sets casts to the source's (see
     :func:`_term_difference`, which *dtypes* passes to). *sides* names the two
-    declarations in the message, the source's and the result's by default.
+    event specs in the message, the source's and the result's by default.
     """
     first, second = sides
     if _has_record_outputs(expected) != _has_record_outputs(actual):
-        return f"{first} declares {_packaging(expected)} but {second} {_packaging(actual)}"
+        return f"{first} declares {_event_form(expected)} but {second} {_event_form(actual)}"
     if tuple(expected.outputs) != tuple(actual.outputs):
         return (
-            f"{first} declares the fields {list(expected.outputs)} but {second} "
+            f"{first} declares the outputs {list(expected.outputs)} but {second} "
             f"{list(actual.outputs)}"
         )
     for name, spec in expected.outputs.items():
@@ -365,7 +366,7 @@ def _event_difference(
 def _source_declaration(source: Any, options: dict[str, Any]) -> OutputSpec | None:
     """The event spec a conversion of *source* preserves, or ``None`` when it has none.
 
-    A law's is its own. A backend object carries none, and its declaration is
+    A law's is its own. A backend object carries none, and its event spec is
     the ``event_spec`` option when the caller gives one.
     """
     if isinstance(source, Distribution):
@@ -653,7 +654,7 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
             a class, or a converter's ``check`` returns another report type.
         ValueError
             If a converter promises a law that does not carry the source's event
-            declaration.
+            spec.
         """
         return self._plan(args, method, exact_only, dict(options), listing=False).info
 
@@ -745,7 +746,7 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
         result: Any,
         awaiting: str | None,
     ) -> None:
-        """Hold the converted law to the promise: the source's declaration, and the target.
+        """Hold the converted law to the promise: the source's event spec, and the target.
 
         Parameters
         ----------
@@ -786,7 +787,7 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
             if difference is not None:
                 raise ValueError(
                     f"converter {name!r} returned a law that does not carry the source's event "
-                    f"declaration: {difference}"
+                    f"spec: {difference}"
                 )
         if not isinstance(result, target):
             raise TypeError(

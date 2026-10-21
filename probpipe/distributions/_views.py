@@ -32,14 +32,7 @@ from ..core._record_batch import RecordBatch, _batch_over, _stacked_batches
 from ..core._record_spec import RecordSpec
 from ..core._repr import WIDTH, call_repr, format_names, mapping_repr
 from ..core._spec_base import NumericSpec, TermSpec
-from ..core._specs import (
-    InputSpec,
-    OutputSpec,
-    _has_record_outputs,
-    _output_record,
-    _root_output_name,
-    _single_output_name,
-)
+from ..core._specs import InputSpec, OutputSpec, _has_record_outputs, _output_record
 from ..core.named_tree import _unflatten_paths
 from ..core.provenance import Provenance
 from ..core.record import Record
@@ -89,7 +82,9 @@ from ._distribution import (
     _keeps_fixed_paths,
     _law_repr,
     _no_free_dims,
+    _root_output_name,
     _shared_final_names,
+    _single_output_name,
 )
 from ._factored import (
     FactoredConditionalDistribution,
@@ -115,15 +110,16 @@ _PATH_SEP = "/"
 
 
 # ---------------------------------------------------------------------------
-# Paths, nodes, and coordinates of a declaration
+# Paths, nodes, and coordinates of an event spec
 # ---------------------------------------------------------------------------
 
 
 def _node_at(declaration: OutputSpec, path: str) -> TermSpec:
     """The term spec of the node at *path* in *declaration*.
 
-    A path starts with an output: an exposed record's paths are its record's,
-    and a whole term's are its output followed by the paths within its term.
+    A path starts with an output's name: the paths of the positional form over
+    a record are its record's, and a whole term's are its output's name
+    followed by the paths within its term.
 
     Parameters
     ----------
@@ -164,10 +160,11 @@ def _final_segment(path: str) -> str:
 
 
 def _view_declaration(declaration: OutputSpec, path: str | tuple[str, ...]) -> OutputSpec:
-    """The declaration of the view at *path* of a law declared by *declaration*.
+    """The event spec of the view at *path* of a law declared by *declaration*.
 
     One path gives the node whole under an output named by its final segment,
-    and a tuple of paths gives an exposed record of the nodes, in order.
+    and a tuple of paths gives the positional form over a record of the nodes,
+    in order.
 
     Parameters
     ----------
@@ -179,7 +176,8 @@ def _view_declaration(declaration: OutputSpec, path: str | tuple[str, ...]) -> O
     Returns
     -------
     OutputSpec
-        A whole-term declaration for one path, and an exposed record for a tuple.
+        The keyword form for one path, and the positional form over a record for
+        a tuple.
 
     Raises
     ------
@@ -211,8 +209,9 @@ def _view_declaration(declaration: OutputSpec, path: str | tuple[str, ...]) -> O
 def _draw_segments(declaration: OutputSpec, path: str) -> tuple[str, ...]:
     """The segments of *path* below the top of a draw of *declaration*.
 
-    An exposed record's draw is its record, which every segment addresses, and a
-    whole term's draw is the term, so its output is dropped.
+    A draw of the positional form over a record is the record, which every
+    segment addresses, and a whole term's draw is the term, so its output's
+    name is dropped.
     """
     segments = tuple(path.split(_PATH_SEP))
     return segments if _single_output_name(declaration) is None else segments[1:]
@@ -239,14 +238,14 @@ def _coordinate_range(declaration: OutputSpec, path: str) -> range:
     Raises
     ------
     TypeError
-        If the declaration is not numeric, so that a draw has no flat vector.
+        If *declaration* is not numeric, so that a draw has no flat vector.
     ValueError
         If a dimension that the range depends on is unbound.
     """
     spec = declaration.term_spec
     if not isinstance(spec, NumericSpec):
         raise TypeError(
-            f"a draw of {declaration!r} has no flat vector, since its declaration is not numeric"
+            f"a draw of {declaration!r} has no flat vector, since the event spec is not numeric"
         )
     start = 0
     for segment in _draw_segments(declaration, path):
@@ -259,7 +258,7 @@ def _coordinate_range(declaration: OutputSpec, path: str) -> range:
 
 
 def _leaf_paths(declaration: OutputSpec) -> list[str]:
-    """The paths of *declaration* that address its leaves, each starting with an output."""
+    """The paths of *declaration* that address its leaves, each starting with an output's name."""
     leaves: list[str] = []
     for output_name, spec in declaration.outputs.items():
         if isinstance(spec, RecordSpec):
@@ -317,7 +316,7 @@ def _projector(declaration: OutputSpec, path: str | tuple[str, ...]) -> Callable
     """pi for a law declared by *declaration*: the extraction of its node at *path*.
 
     A tuple of paths extracts the record of the selected nodes, keyed by
-    output. The paths are read now, so the extraction does not follow a later
+    output name. The paths are read now, so the extraction does not follow a later
     change to whatever supplied them. A ``Record`` holding draws, as the lift
     holds a record law's draws, gives its node at the path, or a ``Record`` of
     the selected nodes, and any other value is read in its raw form and gives
@@ -614,7 +613,7 @@ def _view_cov(self: FieldView) -> LinOp:
     Raises
     ------
     TypeError
-        If the parent's declaration is not numeric.
+        If the parent's event spec is not numeric.
     """
     if not isinstance(self._parent, SupportsCovariance):
         return _marginal_moment(self, "_cov")
@@ -746,7 +745,7 @@ def _view_marginal(self: FieldView, path: str | tuple[str, ...]) -> Distribution
 def _view_marginal_guard(self: FieldView, path: str | tuple[str, ...]) -> Feasibility:
     """The parent's marginal guard at the parent's paths for *path*, paths of the view.
 
-    A path of the view starts with its output, and a tuple of paths selects
+    A path of the view starts with its output's name, and a tuple of paths selects
     several nodes, whose final segments must differ.
     """
     paths = (path,) if isinstance(path, str) else tuple(path)
@@ -987,10 +986,10 @@ class FieldView(Distribution):
     ``d[path]`` returns a ``FieldView`` for a node below the law's whole term;
     it is never constructed by hand. The view holds a reference to its parent
     rather than a detached law, so sibling views co-sample from one parent
-    draw and the correlation between them is preserved. Its declaration is the
+    draw and the correlation between them is preserved. Its event spec is the
     parent's schema at the path, the leaf or subtree whole, under an output
     named by the path's final segment. A tuple of paths selects several nodes:
-    the view declares an exposed record of them, in order.
+    the view's outputs are those nodes, in order.
 
     The view displays as the detached marginal at its path does, and its repr
     names the class and the path, which distinguishes it from that marginal.
@@ -1039,7 +1038,7 @@ class FieldView(Distribution):
     parent : Distribution
         The law whose event the view reads.
     path : str or tuple of str
-        An event path of *parent*, a slash path that starts with an output,
+        An event path of *parent*, a slash path that starts with an output's name,
         or a tuple of them.
 
     Raises
@@ -1096,8 +1095,8 @@ class FieldView(Distribution):
     def _parent_path(self, path: Any) -> str | None:
         """The parent's path for *path*, an event path of this view, or None if it is not one.
 
-        The view's paths start with an output, which stands for the node the
-        view reads at that output.
+        The view's paths start with an output's name, which stands for the node
+        the view reads at that output.
         """
         if not isinstance(path, str):
             return None
@@ -1115,7 +1114,7 @@ class FieldView(Distribution):
         Parameters
         ----------
         paths : sequence of str
-            Paths that each start with an output of this view.
+            Paths that each start with the name of an output of this view.
 
         Returns
         -------
@@ -1153,7 +1152,7 @@ class FieldView(Distribution):
 
         The node is in raw form: a leaf's raw value, or the nested mapping of a
         group's raw leaves, and a selection gives the mapping of its nodes keyed
-        by output. Leading batch axes stay on every leaf. A ``Record`` or a
+        by output name. Leading batch axes stay on every leaf. A ``Record`` or a
         batch of records is read through that raw form.
         """
         return _projector(self._parent.event_spec, self._path)(_raw_record(value))
@@ -1169,7 +1168,7 @@ class FieldView(Distribution):
         Raises
         ------
         TypeError
-            If the parent's declaration is not numeric.
+            If the parent's event spec is not numeric.
         """
         return [
             index
@@ -1180,7 +1179,7 @@ class FieldView(Distribution):
     def __getitem__(self, key: str | tuple[str, ...]) -> Distribution:
         """This view under its output, the parent's view at a path within it, or a selection.
 
-        A path of the view starts with its output, so ``d["a"]["a/b/c"]``
+        A path of the view starts with its output's name, so ``d["a"]["a/b/c"]``
         reads the node that ``d["a/b/c"]`` reads. A tuple of paths of the view
         selects several nodes, as the parent's view at the tuple of their
         paths, named by the view's paths. The result is labeled as the marginal
@@ -1277,7 +1276,7 @@ class FieldView(Distribution):
     def with_dim_sizes(self, **sizes: int) -> FieldView:
         """Bind named symbolic dimensions in the parent, and view the result at the same path.
 
-        The view's declaration is the parent's schema at the path, and a schema
+        The view's event spec is the parent's schema at the path, and a schema
         is one dimension scope, so a dimension binds wherever the parent
         declares it.
 
@@ -1474,10 +1473,10 @@ def _held_nodes(
 
 
 def _declared_like(like: OutputSpec, specs: Mapping[str, TermSpec]) -> OutputSpec:
-    """The declaration of the leaves *specs*, keyed by their paths, packaged as *like* allows.
+    """The event spec of the leaves *specs*, keyed by their paths, in the form *like* allows.
 
-    An exposed record stays exposed, and a whole term stays whole while its
-    leaves lie under one output.
+    The positional form over a record keeps that form, and a whole term stays
+    whole while its leaves lie under one output.
     """
     record = RecordSpec(dict(specs))
     if _has_record_outputs(like) or len(record.children) != 1:
@@ -1490,20 +1489,20 @@ def _declared_like(like: OutputSpec, specs: Mapping[str, TermSpec]) -> OutputSpe
 class _EventRenames:
     """The renames and moves that take an event spec to a renamed one.
 
-    The renamed declaration holds each field of the original at a new path, and
+    The renamed event spec holds each field of the original at a new path, and
     maybe in a new order, so the values of a law over the original translate to
-    it field by field: a draw of an exposed record carries the paths of its
-    record, and a draw of a whole term the paths below its output. A node of
-    the renamed declaration holds a node of the original when its fields are
-    exactly that node's, and a path of the renamed law addresses the original's
+    it field by field: a draw of the positional form over a record carries the
+    paths of its record, and a draw of a whole term the paths below its output.
+    A node of the renamed event spec holds a node of the original when its
+    fields are exactly that node's, and a path of the renamed law addresses the original's
     marginals and conditioning through the node it holds.
 
     Attributes
     ----------
     declaration : OutputSpec
-        The original declaration.
+        The original event spec.
     renamed : OutputSpec
-        The renamed declaration.
+        The renamed event spec.
     leaves : Mapping[str, str]
         The path in *renamed* of each leaf of *declaration*, keyed by its path in
         *declaration*.
@@ -1525,7 +1524,7 @@ class _EventRenames:
         return cls(declaration, renamed, moved)
 
     def followed_by(self, then: _EventRenames) -> _EventRenames:
-        """These renames followed by *then*, which starts from this renamed declaration."""
+        """These renames followed by *then*, which starts from this renamed event spec."""
         leaves = {old: then.leaves[new] for old, new in self.leaves.items() if new in then.leaves}
         return _EventRenames(self.declaration, then.renamed, leaves)
 
@@ -1582,15 +1581,15 @@ class _EventRenames:
         return self._draw_moves is None and all(old == new for old, new in self.leaves.items())
 
     def draw(self, value: Any) -> Any:
-        """*value*, a raw value of the original declaration or a batch of them, under the new paths.
+        """*value*, a raw value of the original event spec or a batch of them, under the new paths.
 
         The fields of a batch of records take the new paths in the renamed
-        declaration's order, and the batch keeps its label and levels.
+        event spec's order, and the batch keeps its label and levels.
         """
         return _moved_value(value, self._draw_moves)
 
     def undraw(self, value: Any) -> Any:
-        """*value*, a raw value of the renamed declaration, under the original paths."""
+        """*value*, a raw value of the renamed event spec, under the original paths."""
         return _moved_value(value, self._undraw_moves)
 
     def covariance(self, cov: LinOp) -> LinOp:
@@ -1619,11 +1618,11 @@ class _EventRenames:
         return quantiles if order is None else jnp.asarray(quantiles)[..., jnp.asarray(order)]
 
     def original(self, path: str) -> str | None:
-        """The original node that *path*, a path of the renamed declaration, holds, or None."""
+        """The original node that *path*, a path of the renamed event spec, holds, or None."""
         return self._nodes.get(path)
 
     def undraw_at(self, path: str, value: Any) -> Any:
-        """*value*, the node at *path* of the renamed declaration, as the original node it holds."""
+        """*value*, the node at *path* of the renamed event spec, as the original node it holds."""
         original = self._nodes[path]
         moves = _field_moves(
             [
@@ -1635,10 +1634,10 @@ class _EventRenames:
         return _moved_value(value, moves)
 
     def law(self, law: Distribution) -> Distribution:
-        """*law*, over the original declaration or the part of it that remains, renamed.
+        """*law*, over the original event spec or the part of it that remains, renamed.
 
         Each field that *law* still declares takes its new path, in the renamed
-        declaration's order, so a law conditioned on some fields keeps the paths
+        event spec's order, so a law conditioned on some fields keeps the paths
         of the fields that remain.
         """
         fields = _leaf_paths(law.event_spec)
@@ -1679,7 +1678,7 @@ def _original_nodes(
     Parameters
     ----------
     event : _EventRenames
-        The renames from the parent's declaration to *declaration*.
+        The renames from the parent's event spec to *declaration*.
     declaration : OutputSpec
         The renamed event spec.
     paths : sequence of str
@@ -1744,7 +1743,7 @@ def _renamed_by_leaves(
 ) -> Distribution:
     """*law* declared by *target*, each of its leaves at the path that *leaves* gives it.
 
-    A whole term whose draws keep their fields is renamed by its output,
+    A whole term whose draws keep their fields is renamed by its output's name,
     which keeps the law's class.
     """
     source = law.event_spec
@@ -1782,7 +1781,7 @@ def _renamed_variance(self: _RenamedDistribution) -> Any:
 
 
 def _renamed_cov(self: _RenamedDistribution) -> LinOp:
-    """The parent's covariance, over the flat coordinates in the renamed declaration's order."""
+    """The parent's covariance, over the flat coordinates in the renamed event spec's order."""
     return self._event.covariance(self._parent._cov())
 
 
@@ -1999,7 +1998,7 @@ class _RenamedDistribution(Distribution):
     translated on the way out, and a scored value, a given, or a path on the
     way in. A move reorders the flat coordinates, so the covariance, and
     quantiles over the flat coordinates, are permuted into the renamed
-    declaration's order. Each capability carries the parent's guard at the
+    event spec's order. Each capability carries the parent's guard at the
     original nodes. A further rename of this law renames its parent by both
     renames at once.
 
@@ -2008,7 +2007,7 @@ class _RenamedDistribution(Distribution):
     parent : Distribution
         The law whose values are translated.
     event : _EventRenames
-        The renames from the parent's declaration to this law's.
+        The renames from the parent's event spec to this law's.
     renames : tuple of Mapping[str, str]
         The renames applied to the parent, in order, each as its caller gave
         it, which the repr shows.
@@ -2075,7 +2074,7 @@ class _RenamedDistribution(Distribution):
         Parameters
         ----------
         paths : sequence of str
-            Paths that each start with an output of this law.
+            Paths that each start with the name of an output of this law.
 
         Returns
         -------
@@ -2097,7 +2096,7 @@ class _RenamedDistribution(Distribution):
         Each rename shows the paths it changed, and a label that differs from
         the parent's follows as ``.with_label(...)``. A reorder that changes no
         path, which no rename can state, reads as a call of the parent's
-        constructor with the parent's arguments and this law's declaration as
+        constructor with the parent's arguments and this law's event spec as
         ``event_spec=``.
         """
         renames = [{old: new for old, new in step.items() if old != new} for step in self._renames]
@@ -2117,7 +2116,7 @@ class _RenamedDistribution(Distribution):
         return self._parent._repr_class_name()
 
     def _event_repr_parts(self) -> tuple[str | None, str | None]:
-        """The output and the declaration, by which this law differs from the law it renames."""
+        """The output name and event spec, which set this law apart from the law it renames."""
         return _root_output_name(self.event_spec), repr(self.event_spec)
 
 
@@ -2152,7 +2151,7 @@ def _renamed(law: Distribution, event: _EventRenames, arguments: Mapping[str, st
 
 
 def _copy_source(law: Distribution) -> tuple[Distribution, _EventRenames] | None:
-    """The law *law* is made from, with the renames from its declaration to *law*'s, or None.
+    """The law *law* is made from, with the renames from its event spec to *law*'s, or None.
 
     A law that translates its parent's values at its boundary holds its parent.
     Every other law that ``with_path_names``, ``with_label``, ``with_dim_names``,
@@ -2170,7 +2169,7 @@ def _with_copy_source(
 ) -> Distribution:
     """*law*, a copy or a rename of *parent*, recording *parent* as its source.
 
-    The record is *parent* with the renames from its declaration to *law*'s,
+    The record is *parent* with the renames from its event spec to *law*'s,
     which :func:`_copy_source` reads. A factored joint orders its outputs
     by its factors, so the renames end at *law*'s own declaration. *law* also
     holds the paths *parent* holds fixed.
@@ -2185,14 +2184,14 @@ def _renamed_law(
 ) -> Distribution:
     """The law ``with_path_names`` returns for *parent*, which reads the draw of *parent*.
 
-    A rename of a whole term's output alone changes only the declaration, so
+    A rename of a whole term's output alone changes only the event spec, so
     the result is a copy of *parent*. A factored law renames through its factors
     where they carry the rename, and regroups them where the rename gathers
     their outputs under new nodes. A law whose family rebuilds itself under
     the new paths returns the member that :meth:`Distribution._renamed_in_family`
     gives. Any other law, or a rename its factors cannot carry, is translated at
     the boundary of a law that holds *parent*. Each other result records
-    *parent* and the renames from its declaration to the result's, which a lift
+    *parent* and the renames from its event spec to the result's, which a lift
     reads to draw the result together with *parent* (V.5).
     """
     if event_spec.term_spec == parent.event_spec.term_spec:
@@ -2230,7 +2229,7 @@ def _factor_renames(graph: _FactorGraph, pairs: Mapping[str, str]) -> list[dict[
     factor that conditions on the output renames the matching given path,
     and a renamed unmet given is renamed in every factor that names it. A
     joint's path that starts with a factor's output is the same path in the
-    factor's own declaration, and so is a path into an input.
+    factor's own event spec, and so is a path into an input.
     """
     renames: list[dict[str, str]] = [{} for _ in graph.factors]
     for old, new in pairs.items():
@@ -2252,11 +2251,11 @@ def _renamed_through_factors(
     The result is the factored joint of the renamed factors over the same
     graph, under the joint's label. Its outputs follow the factors, so a
     moved node joins its factor's outputs rather than the end of the joint's.
-    The factors cannot carry a rename that changes a factor's packaging, as
+    The factors cannot carry a rename that changes a factor's form, as
     moving a whole term's output into a group does, that places outputs of
     two factors under one node, or that changes which factor conditions on
     which. A packaged joint renames the paths below its output through its
-    factors, and keeps its packaging.
+    factors, and keeps its form.
 
     Parameters
     ----------
@@ -2264,7 +2263,7 @@ def _renamed_through_factors(
         The joint renamed.
     pairs : Mapping[str, str]
         The new exact path of each renamed node, keyed by its exact path; a key
-        starts with an output or, for a conditional joint, an input.
+        starts with an output's name or, for a conditional joint, an input's.
     event_spec : OutputSpec
         The joint's event spec with the renames applied, whose leaves
         the result must declare.
@@ -2276,14 +2275,14 @@ def _renamed_through_factors(
         ``None``.
     """
     graph: _FactorGraph = joint._graph
-    packaging: dict[str, str] = {}
+    form_keywords: dict[str, str] = {}
     output_name = _single_output_name(joint.event_spec)
     if output_name is not None:
         inner = _within_package(joint, pairs, output_name)
         target = _single_output_name(event_spec)
         if inner is None or target is None:
             return None
-        pairs, packaging = inner, {"_output_name": target}
+        pairs, form_keywords = inner, {"_output_name": target}
     try:
         factors = [
             factor.with_path_names(renames) if renames else factor
@@ -2295,7 +2294,7 @@ def _renamed_through_factors(
             else FactoredDistribution
         )
         renamed = _derived_product(
-            kind(factors, label=joint.label, _scope=graph.scope, **packaging), joint
+            kind(factors, label=joint.label, _scope=graph.scope, **form_keywords), joint
         )
     except (KeyError, ValueError):
         return None
@@ -2313,7 +2312,7 @@ def _within_package(
 ) -> dict[str, str] | None:
     """*pairs* as paths of the factor record of *joint*, packaged under *output_name*.
 
-    A key of the event side and its target each start with the output, and
+    A key of the event side and its target each start with the output's name, and
     a key of an input is kept. None when an event-side rename leaves the
     output or renames it.
     """
@@ -2332,7 +2331,7 @@ def _within_package(
 
 
 def _gathered(graph: _FactorGraph, pairs: Mapping[str, str]) -> dict[str, str] | None:
-    """The gathering node each gathered output joins, keyed by the output.
+    """The gathering node each gathered output joins, keyed by the output's name.
 
     A rename gathers an output when it moves the whole output into a new
     top-level node. None when no rename gathers, or when another rename reaches
@@ -2562,7 +2561,7 @@ def _conditional_first(units: Sequence[tuple[int, Any]]) -> list[int] | None:
 def _leaf_values(given_spec: InputSpec, given: Any) -> dict[str, Any]:
     """The value *given* binds at each leaf of the given side, keyed by the leaf's path.
 
-    A key of *given* is an input or a path into a structured input, and the value
+    A key of *given* is an input's name or a path into a structured input, and the value
     of a structured node is a record or a mapping of its fields.
 
     Parameters
@@ -2570,7 +2569,7 @@ def _leaf_values(given_spec: InputSpec, given: Any) -> dict[str, Any]:
     given_spec : InputSpec
         The given side whose paths the keys of *given* are.
     given : Record or Mapping[str, Any]
-        Values keyed by input or by a path into a structured input.
+        Values keyed by input name or by a path into a structured input.
 
     Returns
     -------
@@ -2689,8 +2688,8 @@ def _renamed_conditional_marginal(
         The renamed kernel whose capability subclass installs this function as
         ``_conditional_marginal``.
     given : Record or Mapping[str, Any]
-        A value of every input of this kernel, keyed by input or by a path into a
-        structured input.
+        A value of every input of this kernel, keyed by input name or by a path
+        into a structured input.
     path : str or tuple of str
         An event path of this kernel, or a tuple of them.
 
@@ -2839,7 +2838,7 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         self._init_declaration(given_spec, event_spec)
 
     def __repr__(self) -> str:
-        """A call of the renamed kernel's constructor, with this kernel's inputs and declaration."""
+        """A call of the renamed kernel's constructor, with this kernel's inputs and event spec."""
         arguments = [*self._repr_arguments(), ("given", format_names(self.given_spec))]
         return _law_repr(self, arguments, self._parent)
 
@@ -2852,23 +2851,26 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         return self._parent._repr_arguments()
 
     def _event_repr_parts(self) -> tuple[str | None, str | None]:
-        """The output and the renamed declaration, by which this kernel differs from the one it renames."""
+        """The output name and the renamed event spec of this kernel.
+
+        They set this kernel apart from the one it renames.
+        """
         return _root_output_name(self.event_spec), repr(self.event_spec)
 
     def _translated(self, given: Any) -> tuple[dict[str, Any], dict[str, Any], set[str]]:
-        """The parent inputs *given* completes, the parent leaves left pending, and the inputs bound.
+        """The parent inputs *given* completes, parent leaves left pending, and the inputs bound.
 
         Parameters
         ----------
         given : Record or Mapping[str, Any]
-            Values of some inputs of this kernel, keyed by input or by a path into a
-            structured input.
+            Values of some inputs of this kernel, keyed by input name or by a path
+            into a structured input.
 
         Returns
         -------
         complete : dict[str, Any]
             The value of each parent input whose leaves are all bound, keyed by
-            input.
+            input name.
         pending : dict[str, Any]
             The values bound so far at leaves of the other parent inputs, keyed by
             the parent's leaf paths.
@@ -2927,7 +2929,7 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         Parameters
         ----------
         given : Record or Mapping[str, Any]
-            Values keyed by input or by a path into a structured input.
+            Values keyed by input name or by a path into a structured input.
 
         Returns
         -------

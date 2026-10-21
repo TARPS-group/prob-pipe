@@ -62,10 +62,10 @@ def _node(d: DistributionSpec, path: str) -> Any:
 
 
 def _marginal_result(d: DistributionSpec, field: Any) -> OutputSpec:
-    """A law over the node at the path, which exposes its event: a whole term under the path's final segment.
+    """A law over the node at the path, whose event is one output named by the path's final segment.
 
-    A tuple of paths selects several nodes, the law's event an exposed record
-    of them.
+    A tuple of paths selects several nodes, and the law's event is then the
+    positional form over a record of them.
 
     Parameters
     ----------
@@ -78,8 +78,8 @@ def _marginal_result(d: DistributionSpec, field: Any) -> OutputSpec:
     Returns
     -------
     OutputSpec
-        The declaration of the marginal law as one whole term, whose spec is a
-        ``DistributionSpec`` over the selected nodes.
+        The output spec of the marginal law, in the positional form over a
+        ``DistributionSpec`` of the selected nodes.
 
     Raises
     ------
@@ -203,7 +203,7 @@ def _names_an_output(d: Any, output_name: str) -> bool:
 
 
 def _factor_result(d: Any, output_name: str) -> None:
-    """None: the returned factor, a law or a kernel for a dependent edge, carries its declaration."""
+    """None: the returned factor, a law or a kernel for a dependent edge, carries its own spec."""
     return None
 
 

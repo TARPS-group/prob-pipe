@@ -316,11 +316,11 @@ class TestRecordSpec:
     def test_data_dependent_shape_reflects_conditioned_build(self):
         """``_parameter_record_for(model)`` reports the data-conditioned
         shape for an RV whose shape depends on data size, while the
-        declaration reports the declared (no-data) shape.
+        event spec reports the declared (no-data) shape.
 
         The inference paths call ``_parameter_record_for`` with the model
         they build from data, so the parameter record matches the chain.
-        The declaration cannot know the conditioned shape without data, so it
+        The event spec cannot know the conditioned shape without data, so it
         stays at the declared sentinel — and, crucially, holds no
         per-call mutable state, so concurrent inference on one instance
         can't race.
@@ -702,7 +702,7 @@ class TestRecordSpec:
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
-        # The declaration holds a symbolic dimension.
+        # The event spec holds a symbolic dimension.
         model = PyMCModel(model_fn, label="model")
         assert model.event_spec.term_spec["z"].shape == ("z_0",)
 
@@ -729,7 +729,7 @@ class TestRecordDataUnpacking:
         return m
 
     def test_record_input_unpacked_by_field_name(self):
-        """A ``Record({"X": ..., "y": ...}, label=...)`` populates both observed inputs."""
+        """A ``Record({"X": ..., "y": ...}, label=...)`` populates both data arguments."""
         from probpipe import Record
 
         rng = np.random.RandomState(0)

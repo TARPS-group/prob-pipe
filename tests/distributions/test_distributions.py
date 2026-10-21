@@ -555,7 +555,7 @@ class TestDistributionCoverageGaps:
 
     def test_the_views_read_a_declared_event(self):
         """A subclass declares its event, and its outputs, ``dtypes``, and
-        ``dtype`` all read that declaration."""
+        ``dtype`` all read that event spec."""
         from probpipe import NumericArraySpec
 
         class Scalar(NumericDistribution):

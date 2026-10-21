@@ -453,7 +453,7 @@ class PyABCSMCMethod(InferenceMethod):
         flat = jax.vmap(coordinates.forward)(jnp.asarray(particles))
         weights = np.asarray(weights, dtype=float)
 
-        # Lift the flat columns back to name-keyed Records via the target's declaration.
+        # Lift the flat columns back to name-keyed Records via the target's event spec.
         return make_posterior(
             [flat],
             parents=(target,),

@@ -84,12 +84,12 @@ def _joint():
 
 
 def _raw_mean(law):
-    """The mean of *law* at its one leaf, whatever its packaging."""
+    """The mean of *law* at its one leaf, whatever its form."""
     return np.asarray(jax.tree.leaves(mean.using(raw=True)(law))[0])
 
 
 def _raw_variance(law):
-    """The variance of *law* at its one leaf, whatever its packaging."""
+    """The variance of *law* at its one leaf, whatever its form."""
     return np.asarray(jax.tree.leaves(variance.using(raw=True)(law))[0])
 
 

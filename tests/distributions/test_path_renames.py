@@ -6,7 +6,7 @@ unless the law's family rebuilds itself under the new paths, as an empirical
 law over records does. Either way its draws, moments, and marginals carry the
 new names, and the law that holds the original translates a scored value, a
 given, or a path under the new names to the original's. Renaming a whole term's
-output alone changes only the declaration. On a kernel, a
+output alone changes only the event spec. On a kernel, a
 given-side target is the node's new path, so a rename may group inputs or split
 a field out of a structured input; binding the renamed kernel translates the
 given to the original inputs and renames what the binding returns.
@@ -61,7 +61,7 @@ _SCALAR = NumericArraySpec(())
 _MEAN = jnp.array([1.0, 2.0, 3.0])
 _COV = jnp.array([[2.0, 0.3, 0.1], [0.3, 1.5, 0.2], [0.1, 0.2, 1.0]])
 
-#: A nested exposed record: a group two levels deep and a vector beside it.
+#: A nested record in the positional form: a group two levels deep and a vector beside it.
 _NESTED = OutputSpec(RecordSpec(model=RecordSpec(theta=RecordSpec(mu=_REAL, tau=(2,))), y=(3,)))
 
 

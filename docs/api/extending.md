@@ -8,9 +8,9 @@ The registries that users query are documented on the pages of their topics: `in
 
 ## A new family
 
-A family subclasses `Distribution`, or `ConditionalDistribution` for a kernel, and passes its label and the declaration of one draw to the base constructor as `label` and `event_spec`.
+A family subclasses `Distribution`, or `ConditionalDistribution` for a kernel, and passes its label and the event spec of one draw to the base constructor as `label` and `event_spec`.
 A draw that is one whole term is declared by an `OutputSpec` whose one keyword names its output, such as `OutputSpec(y=NumericArraySpec((22,)))`.
-A family's constructor takes the output as its first argument and the label as the optional keyword `label=`, which defaults to the class name.
+A family's constructor takes the output's name as its first argument and the label as the optional keyword `label=`, which defaults to the class name.
 So `Normal("mu", 0.0, 1.0)` is labeled `Normal`, and `Normal("mu", 0.0, 1.0, label="prior")` is labeled `prior`.
 A family over a TensorFlow Probability distribution subclasses `TFPDistribution`, which samples and scores through the backend distribution.
 A family claims a capability by defining its implementation method, such as `_sample` for `SupportsSampling` or `_mean` for `SupportsMean`, and claims a conditioning capability by inheriting `SupportsExactConditioning` or `SupportsApproximateConditioning`.

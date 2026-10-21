@@ -526,7 +526,7 @@ class TestRawDrawLabeling:
         result = wrapped()
         assert wrapped.apply() is value
         assert result.label == "law"
-        # The declaration leaves the dtype open, so the result takes the returned one (II.2).
+        # The output spec leaves the dtype open, so the result takes the returned one (II.2).
         assert result.spec == completed
         assert float(result["x"] if isinstance(result, Record) else result) == 2.0
 

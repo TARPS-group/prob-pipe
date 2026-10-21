@@ -4,7 +4,7 @@
   eight-schools model as ``population/mu``, ``population/tau``, and
   ``groups/theta_tilde``, is conditioned on its data through a method and
   checked at the nested paths against the quadrature reference.
-- An inference result keeps its target's event spec, packaging and
+- An inference result keeps its target's event spec, form and
   nested paths included, and its views, marginals, and moments read it at the
   target's paths.
 - Each model family conditions to a posterior over record-valued parameters:
@@ -72,7 +72,7 @@ def _from_draws(posterior, target) -> EmpiricalDistribution:
     """The posterior's draws as an EmpiricalDistribution on the levels ``chain`` and ``draw``.
 
     The draws are read in the target's layout, so the law declares the
-    target's record whatever declaration the result itself carries.
+    target's record whatever event spec the result itself carries.
     """
     raw = _raw_record(flat_draws(posterior))
     chains = num_chains(posterior)
@@ -173,7 +173,7 @@ class TestNestedHierarchicalModel:
 
 
 # ---------------------------------------------------------------------------
-# The declaration an inference result keeps
+# The event spec an inference result keeps
 # ---------------------------------------------------------------------------
 
 
@@ -466,7 +466,7 @@ class TestLearnedKernelOverANestedRecord:
     def test_the_amortized_posterior_of_a_nested_prior_draws_the_nested_record(self):
         """An amortized posterior trained on the nested eight-schools prior yields laws over that record.
 
-        Training is brief, since only the declaration and the draws' paths are
+        Training is brief, since only the event spec and the draws' paths are
         checked; it takes about ten seconds.
         """
         import os

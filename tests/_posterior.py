@@ -106,6 +106,6 @@ def flat_draws(posterior: Any, chain: int | None = None, *, include_warmup: bool
         chains = [jnp.concatenate([w, c], axis=0) for w, c in zip(warmup, chains)]
     samples = chains[chain] if chain is not None else jnp.concatenate(chains, axis=0)
     spec = posterior.event_spec
-    if not isinstance(spec.spec, RecordSpec) and list(spec.outputs) == [posterior.label]:
+    if not isinstance(spec.term_spec, RecordSpec) and list(spec.outputs) == [posterior.label]:
         return samples
     return _reconstruct_from_vector(posterior.label, _output_record(posterior.event_spec), samples)

@@ -306,8 +306,8 @@ class TestAdmission:
         assert seen == [kernel]
 
     @pytest.mark.parametrize("annotation", [Any, _AnyAlias], ids=["Any", "alias"])
-    @pytest.mark.parametrize("input_name", ["parameter", "variadic positional", "variadic keyword"])
-    def test_a_kernel_at_an_input_annotated_any_passes(self, input_name, annotation):
+    @pytest.mark.parametrize("input_kind", ["parameter", "variadic positional", "variadic keyword"])
+    def test_a_kernel_at_an_input_annotated_any_passes(self, input_kind, annotation):
         seen = []
 
         def at_parameter(proposal):
@@ -326,14 +326,14 @@ class TestAdmission:
         at_args.__annotations__ = {"proposals": annotation}
         at_options.__annotations__ = {"options": annotation}
         kernel = _kernel()
-        if input_name == "variadic keyword":
+        if input_kind == "variadic keyword":
             Function(
                 at_options,
                 label="body",
             )(proposal=kernel)
         else:
             Function(
-                at_parameter if input_name == "parameter" else at_args,
+                at_parameter if input_kind == "parameter" else at_args,
                 label="body",
             )(kernel)
 

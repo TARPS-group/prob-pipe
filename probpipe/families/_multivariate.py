@@ -2,7 +2,7 @@
 
 ``MultivariateNormal``, ``Dirichlet``, ``Multinomial``, ``Wishart``, and
 ``VonMisesFisher`` each derive their event term spec from their parameters and
-take an ``event_spec`` declaration that names the event's output.
+take an ``event_spec`` that names the law's one output.
 
 Parameters with more axes than one law needs give one law over independent
 rows, whose leading event axes are those axes: a ``MultivariateNormal`` whose
@@ -133,7 +133,7 @@ class MultivariateNormal(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     loc : array-like, shape ``(..., d)``
         Mean vector, or one per row.
     scale_tril : array-like, shape ``(..., d, d)``, optional
@@ -145,14 +145,16 @@ class MultivariateNormal(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If not exactly one of *scale_tril* and *cov* is given, the trailing axes
         of *cov* are not ``(d, d)`` for the length ``d`` of *loc*, or
@@ -312,20 +314,22 @@ class Dirichlet(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     concentration : array-like, shape ``(..., k)``
         Positive concentration (alpha) parameters, or one vector per row.
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If *concentration* is a scalar, or *event_spec* declares a type that one
         draw does not conform to.
@@ -379,7 +383,7 @@ class Multinomial(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     total_count : int or array-like
         Number of trials, or one per row.
     probs : array-like, shape ``(..., k)``, optional
@@ -389,14 +393,16 @@ class Multinomial(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If not exactly one of *probs* and *logits* is given, or *event_spec*
         declares a type that one draw does not conform to.
@@ -465,7 +471,7 @@ class Wishart(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     df : float or array-like
         Degrees of freedom (must be >= dimension), or one per row.
     scale_tril : array-like, shape ``(..., d, d)``, optional
@@ -475,14 +481,16 @@ class Wishart(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If not exactly one of *scale_tril* and *scale* is given, or *event_spec*
         declares a type that one draw does not conform to.
@@ -555,7 +563,7 @@ class VonMisesFisher(TFPDistribution):
     Parameters
     ----------
     output_name : str
-        The output of the law's event.
+        The name of the law's one output, which names its draws.
     mean_direction : array-like, shape ``(..., d)``
         Unit vector giving the mean direction, or one per row.
     concentration : float or array-like
@@ -563,14 +571,16 @@ class VonMisesFisher(TFPDistribution):
     label : str, optional
         The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        A declaration of *output_name* that declares the type of one draw, which
-        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
+        An event spec naming *output_name*, which gives the type of one draw
+        and which the family completes, as
+        ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
         If *output_name* is not a string, *label* is not a non-empty string, or
-        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or is in the
+        positional form over a record.
     ValueError
         If *output_name* is not a valid output name, or *event_spec* names
         another output or declares a type that one draw does not conform to.

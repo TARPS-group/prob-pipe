@@ -4,7 +4,7 @@ The registry returns a law that already satisfies the target as it is. The
 shipped converters bring TFP and SciPy distributions into ProbPipe exactly, and
 fit a family by its moments, sample an empirical law, or smooth a kernel
 density estimate approximately; every conversion carries the source's event
-declaration and records the converter in the result's provenance.
+spec and records the converter in the result's provenance.
 """
 
 import re
@@ -372,7 +372,7 @@ class TestARecordSource:
         return EmpiricalDistribution(atoms, label="posterior")
 
     def test_a_record_law_does_not_convert_to_a_family(self):
-        """The conversion would change the packaging, which a conversion preserves."""
+        """The conversion would change the form, which a conversion preserves."""
         with pytest.raises(
             ResolutionError,
             match=r"draws a record with fields \['lam'\]; convert one field instead",
@@ -648,7 +648,7 @@ class TestTFPConverter:
         assert result.num_atoms == 50
 
     def test_a_family_exports_its_backend_distribution_through_raw(self):
-        """Converting to a backend class is no conversion, since the result carries no declaration."""
+        """Converting to a backend class is no conversion, since the result carries no event spec."""
         n = Normal("x", loc=3.0, scale=1.0)
         assert isinstance(n.raw, tfd.Normal)
         np.testing.assert_allclose(float(n.raw.loc), 3.0)

@@ -215,7 +215,7 @@ class TestDeclarations:
         assert list(law.event_spec.outputs) == ["y"]
         assert list(process.event_spec.outputs) == ["f"]
 
-    def test_event_spec_names_the_event_and_its_hole_is_the_function(self):
+    def test_event_spec_names_the_event_and_leaves_the_function_output_unspecified(self):
         process = GaussianProcess("g", lambda X: jnp.zeros(X.shape[0]), _rbf_kernel, label="f")
         assert process.event_spec == OutputSpec(g=FunctionSpec(output_spec=OutputSpec(g=None)))
 

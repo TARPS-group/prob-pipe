@@ -946,7 +946,7 @@ class TestTemplateDeclarationContract:
         [RecordSpec(x=()), RecordSpec(x=(), y=(), z=())],
     )
     def test_signature_template_requires_total_bijection(self, template):
-        with pytest.raises(ValueError, match="exactly match signature parameters"):
+        with pytest.raises(ValueError, match="but its signature has the parameters"):
             Function(lambda x, y: x + y, label="function", input_spec=InputSpec(template.children))
 
     @pytest.mark.parametrize(
@@ -1012,7 +1012,7 @@ class TestTemplateDeclarationContract:
             label="identity",
         )
         result = wrapped(jnp.ones(3))
-        # The declaration leaves the dtype open, so completion takes the produced one (II.2).
+        # The output spec leaves the dtype open, so completion takes the produced one (II.2).
         assert result.spec == NumericArraySpec((3,), dtype="float32")
         assert wrapped.output_spec.term_spec.free_dims == {"new"}
 
@@ -1247,7 +1247,7 @@ class TestSymbolicCalls:
 
         result = wrapped(rows)
 
-        # The declaration leaves the dtype open, so completion takes the produced one (II.2).
+        # The output spec leaves the dtype open, so completion takes the produced one (II.2).
         assert result.element_spec == NumericArraySpec((), dtype="float32", support=positive)
         np.testing.assert_allclose(result.raw, np.arange(3.0) + 1)
 
@@ -1678,7 +1678,7 @@ class TestReentrancyAndProvenance:
     def test_preprovenanced_tracked_return_is_copied_for_each_call(
         self, stored, full_provenance_mode
     ):
-        # A batch carries no annotations — its inputs hold the batch's own state
+        # A batch carries no annotations — its slots hold the batch's own state
         # alone — so the annotation half of the contract applies to the hosts
         # that have them.
         carries_annotations = hasattr(stored, "annotations")

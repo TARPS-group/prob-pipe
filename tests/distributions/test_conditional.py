@@ -3,9 +3,9 @@
 A ``ConditionalDistribution`` stores one ``ConditionalDistributionSpec``: a
 non-empty ``InputSpec`` of inputs and an event spec completed as a
 ``Distribution``'s is. ``given_spec`` and ``event_spec`` are views on it, the
-given-input and produced-output names are disjoint, and symbolic dimensions
+input and output names are disjoint, and symbolic dimensions
 are scoped over both sides jointly. The numeric markers read membership from
-the declarations, and ``_condition_on`` is the one method a kernel must
+the input and event specs, and ``_condition_on`` is the one method a kernel must
 implement.
 """
 
@@ -221,7 +221,7 @@ class TestConstructionErrors:
                 label="k",
             )
 
-    def test_an_event_with_a_type_hole_raises(self):
+    def test_an_event_with_an_unspecified_type_raises(self):
         with pytest.raises(ValueError, match="does not declare a type"):
             _kernel(event=OutputSpec(y=None))
 
@@ -261,7 +261,7 @@ class TestConstructionErrors:
 
 
 class TestViews:
-    """Both declarations are views on the one stored ``ConditionalDistributionSpec``."""
+    """The input spec and the event spec are views on the one stored ``ConditionalDistributionSpec``."""
 
     def test_the_kernel_stores_one_conditional_distribution_spec(self):
         kernel = _kernel(given={"mu": SCALAR}, event=OutputSpec(y=_array(2)))
@@ -297,10 +297,10 @@ class TestConditionalDistributionSpec:
                 OutputSpec(y=None),
                 ValueError,
                 "does not declare a type",
-                id="type-hole",
+                id="unspecified-type",
             ),
             pytest.param(
-                {"y": SCALAR}, OutputSpec(y=SCALAR), ValueError, "both as a given", id="shared"
+                {"y": SCALAR}, OutputSpec(y=SCALAR), ValueError, "both as an input", id="shared"
             ),
             pytest.param(["mu"], OutputSpec(y=SCALAR), TypeError, "given_spec", id="not-mapping"),
         ],
@@ -327,7 +327,7 @@ class TestConditionalDistributionSpec:
             pytest.param({"w": _array(3)}, OutputSpec(y=_array(3)), id="renamed-input"),
             pytest.param({"x": _array(3, 2)}, OutputSpec(y=_array(3)), id="input-rank"),
             pytest.param({"x": _array(3)}, OutputSpec(z=_array(3)), id="other-output"),
-            pytest.param({"x": _array(3)}, RecordSpec(y=_array(3)), id="other-packaging"),
+            pytest.param({"x": _array(3)}, RecordSpec(y=_array(3)), id="other-form"),
             pytest.param({"x": _array(3)}, OutputSpec(y=_array(4)), id="other-size"),
         ],
     )
@@ -466,11 +466,11 @@ class TestDimensionTransforms:
         assert kernel.spec.free_dims == {"n", "m"}
 
 
-# Declarations whose event side is numeric, or not.
+# Event specs that are numeric, or not.
 _NUMERIC_EVENTS = [
     pytest.param(OutputSpec(y=SCALAR), id="array"),
-    pytest.param(RecordSpec(a=SCALAR, b=_array(2)), id="exposed-record"),
-    pytest.param(OutputSpec(parameters=RecordSpec(a=SCALAR)), id="whole-record"),
+    pytest.param(RecordSpec(a=SCALAR, b=_array(2)), id="positional-record"),
+    pytest.param(OutputSpec(parameters=RecordSpec(a=SCALAR)), id="keyword-record"),
 ]
 _OTHER_EVENTS = [
     pytest.param(OutputSpec(y=LABEL), id="opaque"),
@@ -491,7 +491,7 @@ _OTHER_GIVENS = [
 
 
 class TestNumericMarkers:
-    """Membership in each marker is read from the declarations, whatever the class."""
+    """Membership in each marker is read from the input and event specs, whatever the class."""
 
     @pytest.mark.parametrize("event", _NUMERIC_EVENTS)
     def test_a_numeric_event_is_a_member_of_the_event_marker(self, event):

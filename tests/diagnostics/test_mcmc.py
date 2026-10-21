@@ -459,7 +459,7 @@ class TestAddMcmcDiagnostics:
         add_mcmc_diagnostics(posterior)
         assert posterior.diagnostics.mcmc.n_divergences == 3
 
-    def test_vector_parameter_diagnostics_are_written_by_output(self):
+    def test_vector_parameter_diagnostics_are_written_by_entry(self):
         posterior = _posterior_of_draws(_vector_draws())
 
         add_mcmc_diagnostics(posterior)

@@ -26,7 +26,7 @@ The routes, in selection order:
    part of a law's that conditions on them exactly, and normalizes the result.
 3. ``exact_conditioning`` calls ``_condition_on`` on a law claiming
    ``SupportsExactConditioning``.
-4. ``inference_methods`` binds any inputs the given names, forms the
+4. ``inference_methods`` binds any inputs that *given* names, forms the
    unnormalized conditional of the produced fields by Bayes' rule, and
    normalizes it through the inference-method registry. A kernel normalized
    per value is bound and conditioned through the kernel whose laws it
@@ -332,7 +332,7 @@ def _given_values(given: Any) -> dict[str, Any]:
 
 
 def _head(path: str) -> str:
-    """The first segment of *path*: an input or an event output."""
+    """The first segment of *path*: an input or an output of the event."""
     return path.split(_PATH_SEP, 1)[0]
 
 
@@ -451,10 +451,10 @@ def _at_given(kernel: ConditionalDistribution, given: Any, **options: Any) -> An
 
 
 def _unconditioned_event(law: Any, produced: Iterable[str]) -> OutputSpec:
-    """The declaration of *law*'s outputs that *produced* leaves unconditioned.
+    """The event spec of *law*'s outputs that *produced* leaves unconditioned.
 
-    It is an exposed record of those outputs, in the order *law* declares
-    them.
+    It is the positional form over a record of those outputs, in the order
+    *law* declares them.
     """
     record = _output_record(law.event_spec)
     conditioned = set(produced)
@@ -503,7 +503,7 @@ class _UnnormalizedConditional(Distribution):
         when *keyed* is false, the data of a joint that does not declare them
         as fields, such as a model conditioned through ``probpipe.condition_on``.
     event_spec : OutputSpec
-        The declaration of the unconditioned fields.
+        The event spec of the unconditioned fields.
     keyed : bool
         Whether *given* is keyed by the joint's fields.
     """
@@ -583,7 +583,8 @@ class _UnnormalizedConditionalKernel(ConditionalDistribution):
     given : Record
         The values of the conditioned fields, keyed by their outputs.
     event_spec : OutputSpec
-        The declaration of the unconditioned fields, an exposed record.
+        The event spec of the unconditioned fields, in the positional form over
+        a record.
     """
 
     _capability_table: ClassVar = {
@@ -664,18 +665,18 @@ _UNNORMALIZED_FIX = 'use method="unnormalized" to get the unnormalized condition
 
 
 def _packaged_alike(declared: OutputSpec, expected: OutputSpec) -> bool:
-    """Whether *declared* packages its event as *expected* does, under the same outputs."""
+    """Whether *declared* has the same form as *expected*, under the same outputs."""
     return _has_record_outputs(declared) == _has_record_outputs(expected) and tuple(
         declared.outputs
     ) == tuple(expected.outputs)
 
 
 def _as_declared(source: Any, law: Any) -> EmpiricalDistribution:
-    """The atoms and weights of the normalized *law* under *source*'s event declaration.
+    """The atoms and weights of the normalized *law* under *source*'s event spec.
 
     The result is an ``EmpiricalDistribution`` carrying *law*'s provenance and
-    annotations, since a posterior over a whole-term event draws a one-field
-    record of it.
+    annotations, since a posterior over an event in the keyword form draws a
+    one-field record of it.
     """
     empirical = EmpiricalDistribution(
         law.atoms, law.weights, label=source.label, event_spec=source.event_spec
@@ -977,7 +978,7 @@ def _can_bind_inputs(call: BoundCall) -> Feasibility:
 
 
 def _bind_inputs(call: BoundCall) -> Any:
-    """The kernel's ``_condition_on`` at the inputs.
+    """The kernel's ``_condition_on`` at the given values of its inputs.
 
     A kernel whose evaluation runs a method, one normalized per value or one
     that claims ``SupportsApproximateConditioning``, receives the call's
@@ -1292,7 +1293,7 @@ def _reads_shapes_from_data(law: Any) -> bool:
 def _spec_at(declaration: Any, path: str) -> TermSpec | None:
     """The term spec *declaration* states at *path*, or None where it states none.
 
-    The path's first segment names an output of an output spec or a
+    The path's first segment names an output of an output spec or an
     input of an input spec, and the rest addresses a node of its record.
     """
     head, _, rest = path.partition("/")
@@ -1307,7 +1308,7 @@ def _spec_at(declaration: Any, path: str) -> TermSpec | None:
 
 
 def _given_conformance(call: BoundCall) -> Feasibility | None:
-    """Each numeric given conforms to the numeric declaration at its path, an input's or a produced field's.
+    """Each numeric given conforms to the spec at its path, an input's or a produced field's.
 
     A path the law declares nothing at is left to the stage's own check. A
     given that is no numeric array, such as a list of numbers, is checked by
@@ -1566,9 +1567,9 @@ def _remaining_given_spec(given_spec: InputSpec, keys: tuple[str, ...]) -> Input
 def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec | None:
     """Binding inputs declares the kernel's law, or a kernel over the inputs left.
 
-    The result exposes its event, so its outputs are the law's. Conditioning
-    on a produced field leaves the declaration to the law the selected route
-    returns.
+    The result is the positional form over the law, so its outputs are the
+    law's. Conditioning on a produced field leaves the output spec to the law
+    the selected route returns.
     """
     if isinstance(d, ConditionalDistributionSpec) and isinstance(given, RecordSpec):
         from ._given import _bind_given_dims_from_spec
@@ -1593,8 +1594,8 @@ def _conditioned_expression(d: Any, given: Any) -> Expression:
 
     The result is *d* conditioned on the paths *given* fixes, so it keeps
     *d*'s label: ``condition_on(model, {"y": data})`` is labeled ``model`` and
-    displays as ``model(mu; y)``, and a kernel applied at inputs keeps the
-    kernel's label and holds those inputs fixed, while its other inputs stay
+    displays as ``model(mu; y)``, and a kernel applied at some of its inputs
+    keeps the kernel's label and holds those inputs fixed, while its other inputs stay
     given. Fixing the whole events of factors upstream of the rest leaves the
     other factors at the given values, so ``condition_on(model, {"mu": 0.5})``
     for ``model = likelihood * prior`` is ``likelihood`` conditioned on ``mu``,
@@ -1961,7 +1962,7 @@ def _empirical_of(call: BoundCall, law: Any) -> Any:
     Returns
     -------
     Distribution
-        The first of *law* and *law* under the source's declaration that is an
+        The first of *law* and *law* under the source's event spec that is an
         instance of the target and declares the source's event. Otherwise, an
         ``EmpiricalDistribution`` of *law*'s atoms and weights, under the
         source's label and with *law*'s annotations.
@@ -1969,7 +1970,7 @@ def _empirical_of(call: BoundCall, law: Any) -> Any:
     Raises
     ------
     TypeError
-        If the normalized law under the source's declaration is not the target.
+        If the normalized law under the source's event spec is not the target.
     """
     source, target = call.operands["d"], call.operands["target"]
     for candidate in (law, _declared_as_source(call, law)):

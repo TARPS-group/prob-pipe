@@ -1,8 +1,8 @@
 > **AI-generated.** An AI assistant drafted this page, and no maintainer has reviewed it yet. Please report errors on the issue tracker.
 
-# Declarations
+# Input and output specs
 
-A declaration states the kind and structure of a value without holding the value: a term spec declares one value, and an input or output spec declares a side of a function or of a draw.
+A spec states the kind and structure of a value without holding the value: a term spec declares one value, an input spec declares the inputs of a function or of a conditional distribution, and an output spec declares the outputs of a function or of a draw.
 A constraint declares the support of a numeric value.
 The values themselves are on [Values and records](values.md).
 

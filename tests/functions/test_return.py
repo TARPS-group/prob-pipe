@@ -1,9 +1,9 @@
 """Return, step 8 of the stack (design V.10).
 
-Return validates the produced terms against the completed declaration and
+Return validates the produced terms against the completed output spec and
 wraps a raw host into the kind its spec names. It labels the result by
 ``output_label`` and gives it provenance, or returns it detached under
-``raw=True``. A result that violates its declaration raises ResultKindError or
+``raw=True``. A result that violates its output spec raises ResultKindError or
 ResultSchemaError, which are return-contract defects.
 """
 

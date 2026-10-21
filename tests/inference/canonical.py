@@ -121,7 +121,7 @@ class ObservationKernel(
     Parameters
     ----------
     label : str
-        The kernel's label and the output of the response.
+        The kernel's label and the output name of the response.
     given : Mapping[str, NumericArraySpec]
         The inputs, each the event spec of the prior factor that produces it.
     response : NumericArraySpec

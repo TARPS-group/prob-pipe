@@ -117,11 +117,11 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
     Parameters
     ----------
     approximator : ContinuousApproximator or RatioApproximator
-        The trained BayesFlow approximator whose outputs the subclass's
+        The trained BayesFlow approximator whose networks the subclass's
         ``_row_scores`` calls.
     prior : Distribution
         The prior the estimator was trained against; its ``event_size`` fixes
-        the expected ``theta`` width, and its outputs are the inputs.
+        the expected ``theta`` width, and its outputs are the kernel's inputs.
     simulator : ConditionalDistribution
         The training simulator.
     data_dim : int
@@ -131,7 +131,7 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         The kernel's label, the name of its public class by default.
     """
 
-    #: The constructors take no output, so the repr shows none.
+    #: The constructors take no output name, so the repr shows none.
     _repr_output_name: ClassVar[str | None] = None
 
     def __init__(
@@ -319,7 +319,7 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase, SupportsConditionalLogProb):
         network score the rows.
     prior : Distribution
         The prior the estimator was trained against, whose outputs are the
-        inputs.
+        kernel's inputs.
     simulator : ConditionalDistribution
         The training simulator.
     data_dim : int
@@ -366,8 +366,8 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase, SupportsConditionalLogProb):
     def _row_scores(self, theta_rows: Array, data_rows: Array) -> Array:
         # The public approximator.log_prob is host-bound at both edges (adapter
         # numpy in, convert_to_numpy out), so this re-traces its math on-device:
-        # standardize both inputs exactly as training did -- theta feeds the
-        # "inference_conditions" input, y is the modeled "inference_variables" --
+        # standardize theta and y exactly as training did -- theta feeds the
+        # "inference_conditions" key, y is the modeled "inference_variables" --
         # then ask the flow for the density of standardized y. Adding the
         # standardization log-det-jacobian converts that density back to the
         # original y units, making the values equal to the public log_prob.
@@ -416,7 +416,7 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase, SupportsConditionalUnnormalizedLo
         rows.
     prior : Distribution
         The prior the estimator was trained against, whose outputs are the
-        inputs.
+        kernel's inputs.
     simulator : ConditionalDistribution
         The training simulator.
     data_dim : int
@@ -479,7 +479,7 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase, SupportsConditionalUnnormalizedLo
 
 # ---------------------------------------------------------------------------
 # Learner entry points. Plain functions, as they were for the likelihood
-# outputs these kernels replace; see STYLE_GUIDE 1.4.
+# classes these kernels replace; see STYLE_GUIDE 1.4.
 # ---------------------------------------------------------------------------
 
 
@@ -500,9 +500,9 @@ def _train_offline(
 ) -> tuple[ContinuousApproximator | RatioApproximator, int]:
     """Shared NLE/NRE training loop: validate, simulate, adapt, fit.
 
-    ``theta_role`` is the adapter input the (raw, constrained) theta fields feed
+    ``theta_role`` is the adapter key the (raw, constrained) theta fields feed
     -- ``"inference_conditions"`` for NLE, ``"inference_variables"`` for NRE --
-    with the observation taking the other input. With ``dequantize``, U[0,1)
+    with the observation taking the other key. With ``dequantize``, U[0,1)
     jitter is added to the simulated observations after simulation (the
     simulator stays untouched). Once the inputs are valid, the training's seed
     is drawn from a workflow-owned random event, and it seeds the simulation,
@@ -527,7 +527,7 @@ def _train_offline(
     sim_backend : {"jax", "sequential"}
         The learner's simulation backend.
     theta_role : str
-        The adapter input of the theta fields.
+        The adapter key of the theta fields.
     build_approximator : callable
         ``build_approximator(bf, adapter, data_dim)``, the BayesFlow
         approximator to train.

@@ -118,7 +118,7 @@ class TestBatchValuedLifts:
         with pytest.raises(ValueError, match=r"atom level 'time'.*levels \['time'\]"):
             EmpiricalDistribution(jnp.ones((4, 3)), event_spec=event, level="time")
 
-    def test_non_batch_outputs_use_their_output_as_the_atom_level(self):
+    def test_non_batch_outputs_use_their_output_name_as_the_atom_level(self):
         wrapped = Function(lambda x: x + 1, output_spec=OutputSpec(score=None), label="alias")
         with workflow_run(seed=0):
             law = wrapped(EmpiricalDistribution(jnp.array([2.0]), output_name="beta"))

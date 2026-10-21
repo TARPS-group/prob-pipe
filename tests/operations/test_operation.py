@@ -470,9 +470,9 @@ class TestResultRule:
         with pytest.raises(ValueError, match="shape"):
             toy(Gaussian("g"))
 
-    def test_a_type_hole_is_filled_from_the_returned_value(self):
+    def test_an_unspecified_type_is_filled_from_the_returned_value(self):
         def rule(d: Any) -> OutputSpec:
-            """A hole."""
+            """An output spec of unspecified type."""
             return OutputSpec(toy=None)
 
         toy = _toy(result=rule)

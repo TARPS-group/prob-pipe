@@ -180,7 +180,7 @@ def _sample_count(options: dict[str, Any]) -> int:
 
 
 def _declared(source: Any, options: dict[str, Any]) -> OutputSpec | None:
-    """The ``event_spec`` option, the declaration of a backend source.
+    """The ``event_spec`` option, the event spec of a backend source.
 
     Parameters
     ----------
@@ -192,13 +192,13 @@ def _declared(source: Any, options: dict[str, Any]) -> OutputSpec | None:
     Returns
     -------
     OutputSpec or None
-        The declaration of the backend source's event, or None when the option is absent.
+        The event spec of the backend source, or None when the option is absent.
 
     Raises
     ------
     TypeError
         If the option is not an ``OutputSpec``, or is given for a ProbPipe law,
-        which carries its own declaration.
+        which carries its own event spec.
     """
     declared = options.get("event_spec")
     if declared is None:
@@ -273,7 +273,7 @@ def _tfp_law(source: tfd.Distribution, declared: OutputSpec | None) -> TFPDistri
     A backend distribution with a family enters as that family at its
     parameters, and any other enters through the bare backend adapter. The law
     is labeled by the backend's name, and *declared*, when given, names its
-    output, which is otherwise the backend's name.
+    one output, which is otherwise named by the backend's name.
     """
     name = source.name or type(source).__name__
     output_name = _backend_output(name, declared)
@@ -285,7 +285,7 @@ def _tfp_law(source: tfd.Distribution, declared: OutputSpec | None) -> TFPDistri
 
 
 def _backend_output(name: str, declared: OutputSpec | None) -> str:
-    """The output of a backend distribution's law: the one *declared* names, or *name*."""
+    """The output name of a backend distribution's law: the one *declared* names, or *name*."""
     if declared is None or _has_record_outputs(declared):
         return name
     (output_name,) = declared.outputs
@@ -427,7 +427,7 @@ def _entering_law(source: Any, declared: OutputSpec | None) -> Distribution | No
 
 
 def _scipy_declaration(source: Any, declared: OutputSpec | None) -> OutputSpec:
-    """The declaration of one draw of a SciPy frozen distribution: a scalar under its name.
+    """The event spec of one draw of a SciPy frozen distribution: a scalar under its name.
 
     Its dtype is the one JAX gives SciPy's draws: the default integer dtype for
     a discrete distribution, and the default floating dtype otherwise.
@@ -841,7 +841,7 @@ def _fit_claims_random_events(law: Distribution | None, needs: frozenset[str]) -
 
 
 def _array_event(declaration: OutputSpec, label: str, family: type, rank: int | None) -> str | None:
-    """Why the event *declaration* cannot be a draw of *family*, or ``None`` when it can.
+    """Why the event spec *declaration* cannot be a draw of *family*, or ``None`` when it can.
 
     A family draws one array, as a whole term, of the rank its event has.
     """
@@ -868,9 +868,9 @@ def _array_event(declaration: OutputSpec, label: str, family: type, rank: int | 
 
 
 def _cast_event(declaration: OutputSpec, label: str, family: type) -> str | None:
-    """Why a draw of *family* does not cast to the dtype *declaration* sets, or ``None``.
+    """Why a draw of *family* does not cast to the event spec *declaration*'s dtype, or ``None``.
 
-    A conversion's result carries the source's declaration, so the family's
+    A conversion's result carries the source's event spec, so the family's
     dtype must cast to the source's by the same-kind rule, as a law's must to
     the ``DistributionSpec`` it matches.
     """
@@ -972,7 +972,7 @@ class _MomentMatching(Converter):
     The family is the requested target, and the fit reads the statistics the
     family's parameters need: a moment the law claims in closed form, and any
     other statistic from one shared batch of ``num_samples`` draws. The fit
-    keeps the law's output, and its label unless the label is the law's
+    keeps the law's output name, and its label unless the label is the law's
     default, so a ``Normal`` fit to ``Laplace("g", 0.0, 1.0)`` reads
     ``Normal(g)``. A family whose draws do not cast to the law's dtype is
     infeasible, as a ``Normal`` fit to a ``Bernoulli`` law is. Unless ``check_support=False``, the fit keeps the law's support:
@@ -1062,9 +1062,9 @@ class _MomentMatching(Converter):
         )
 
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
-        """Promise the family *target_type* over the source's declaration, without fitting it.
+        """Promise the family *target_type* over the source's event spec, without fitting it.
 
-        The promised declaration is the source's shape with the family's dtype.
+        The promised event spec is the source's shape with the family's dtype.
         A fit whose draws do not cast to the source's dtype by the same-kind
         rule is infeasible, so the registry tries the next converter, and so is
         a family whose support is fixed and differs from the support the source
@@ -1122,7 +1122,7 @@ class _MomentMatching(Converter):
         )
 
     def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
-        """The fit of the family *target_type* to the source, over its declaration.
+        """The fit of the family *target_type* to the source, over its event spec.
 
         Parameters
         ----------
@@ -1138,7 +1138,7 @@ class _MomentMatching(Converter):
         -------
         Distribution
             The fitted instance of *target_type*, which keeps the source's
-            output, and its label unless the label is the source's default.
+            output name, and its label unless the label is the source's default.
 
         Raises
         ------
@@ -1174,10 +1174,10 @@ class _MomentMatching(Converter):
 def _sampled_source(
     source: Any, options: dict[str, Any]
 ) -> tuple[Distribution | None, OutputSpec] | str:
-    """The law a sampling converter draws from, with the declaration of a draw, or why it cannot.
+    """The law a sampling converter draws from, with the event spec of a draw, or why it cannot.
 
     A SciPy frozen distribution without a family has no law, and draws through
-    SciPy under the declaration of a scalar named by its distribution.
+    SciPy under the event spec of a scalar named by its distribution.
     """
     declared = _declared(source, options)
     law = _entering_law(source, declared)
@@ -1235,7 +1235,7 @@ class _EmpiricalDraws(Converter):
         return ((Distribution, *_BACKEND_SOURCES), (EmpiricalDistribution, *_NUMERIC_MOMENTS))
 
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
-        """Promise the empirical law of the source's draws, over its declaration.
+        """Promise the empirical law of the source's draws, over its event spec.
 
         Parameters
         ----------
@@ -1275,7 +1275,7 @@ class _EmpiricalDraws(Converter):
         )
 
     def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
-        """The empirical law of ``num_samples`` draws, keeping the source's declaration.
+        """The empirical law of ``num_samples`` draws, keeping the source's event spec.
 
         Parameters
         ----------
@@ -1366,7 +1366,7 @@ class _KDESmoothing(Converter):
         return law, declaration, claims_random_events
 
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
-        """Promise the kernel density estimate of the source, over its declaration.
+        """Promise the kernel density estimate of the source, over its event spec.
 
         Parameters
         ----------
@@ -1405,7 +1405,7 @@ class _KDESmoothing(Converter):
         )
 
     def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
-        """The kernel density estimate, keeping the source's declaration.
+        """The kernel density estimate, keeping the source's event spec.
 
         Parameters
         ----------

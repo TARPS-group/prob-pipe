@@ -1,6 +1,6 @@
 """The API reference documents each public object of ProbPipe once, with a summary.
 
-A public module is a module of ``probpipe`` whose dotted path has no output
+A public module is a module of ``probpipe`` whose dotted path has no segment
 that starts with an underscore, as ``STYLE_GUIDE.md`` §2.3 states, and its
 ``__all__`` lists its public names (§9.1). A name that two public modules export
 is one object, such as ``probpipe.Normal`` and ``probpipe.families.Normal``, so

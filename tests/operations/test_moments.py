@@ -230,7 +230,7 @@ def _value(term: Any) -> float:
     return float(jnp.asarray(term))
 
 
-class TestDerivedLabelsAreNeverOutputs:
+class TestDerivedLabelsAreNeverOutputNames:
     """A derived label may hold ``~``, a space, ``;``, or ``/``, and no route names a part by it."""
 
     @staticmethod
@@ -276,7 +276,7 @@ class TestMean:
         assert routes["closed_form"].exact is True
         assert (report.route, report.exact) == ("closed_form", True)
 
-    def test_the_result_takes_the_events_outputs_and_packaging(self):
+    def test_the_result_takes_the_events_outputs_and_form(self):
         assert mean.check(Gaussian("g")).result == OutputSpec(
             **{"g": NumericArraySpec((), jnp.float32, real)}
         )
@@ -305,7 +305,7 @@ class TestMean:
         assert abs(_value(estimate) - 2.0) < 0.1
 
     def test_the_fallback_takes_a_law_whose_label_is_no_identifier(self):
-        """The draws lie on a level named after the law's output, here ``my law``."""
+        """The draws lie on a level named after the law's output name, here ``my law``."""
         with workflow_run(seed=1):
             estimate = mean.using(num_samples=_DRAWS)(Sampler("my law", 2.0))
         # Observed across seeds 0-5: errors of 0.001 to 0.020; the standard error is 0.016.
@@ -615,7 +615,7 @@ class TestFunctionValuedEvents:
 
 
 class TestTheFallbacksOnFewDraws:
-    """A fallback reports the moments of the empirical law of its draws, whatever the packaging."""
+    """A fallback reports the moments of the empirical law of its draws, whatever the form."""
 
     @pytest.mark.parametrize("record", [False, True], ids=["array", "record"])
     def test_the_covariance_divides_by_the_number_of_draws(self, record):
@@ -688,7 +688,7 @@ class TestByOutput:
             and parent.provenance.metadata.get("route") == "by_output"
         ]
         return [
-            (tuple(block["components"]), block["route"], block["exact"])
+            (tuple(block["outputs"]), block["route"], block["exact"])
             for block in assembled.provenance.metadata["blocks"]
         ]
 
@@ -1472,7 +1472,7 @@ class TestTheDrawCount:
             for parent in result.provenance.parents
             if parent.provenance is not None
         ]
-        blocks = {tuple(block["components"]): block for block in record.metadata["blocks"]}
+        blocks = {tuple(block["outputs"]): block for block in record.metadata["blocks"]}
         assert blocks[("mu",)]["exact"] is True
         assert "num_samples" not in blocks[("mu",)]
         assert blocks[("y",)]["num_samples"] == 15

@@ -554,7 +554,7 @@ class TestWorkflowCallableAnchor:
             == _callable.capture_function_anchor(first.with_label("display")).controls()
         )
 
-    @pytest.mark.parametrize("change", ["shape", "kind", "packaging", "declaration"])
+    @pytest.mark.parametrize("change", ["shape", "kind", "form", "output_spec"])
     def test_output_contract_participates_in_callable_anchor(self, change):
         declaration = OutputSpec(bundle=RecordSpec(field=()))
         baseline = Function(
@@ -566,8 +566,8 @@ class TestWorkflowCallableAnchor:
         declarations = {
             "shape": OutputSpec(bundle=RecordSpec(field=(2,))),
             "kind": OutputSpec(bundle=OpaqueSpec()),
-            "packaging": OutputSpec(RecordSpec(field=())),
-            "declaration": None,
+            "form": OutputSpec(RecordSpec(field=())),
+            "output_spec": None,
         }
         changed = Function(
             replayable_identity,

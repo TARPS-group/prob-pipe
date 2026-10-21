@@ -150,6 +150,8 @@ A base value standing alone has no outputs, since nothing states a name for it, 
 
 Outputs are not chosen: the value type fixes them, and the one name it does not fix is that of an output at the root. A term with an output at the root has no paths, so the name of an output at the root never collides with a path. A distribution over `{a, g: {c, e}}` has the outputs `a` and `g`, while `g/c` is a path of it and not an output; renaming `g/c` to `c` makes it one.
 
+**The record of the outputs.** Many operations read a term's outputs as one record: the parameters of a model's or a posterior's draw, the fields a conditioning value supplies, the value a merge places in its result (IV.2). The record of the outputs has one field per output, in the outputs' order, typed by the output's type: a `RecordSpec` value type is its own record, and an output at the root `n` over a base spec `B` gives `{n: B}`. It exists exactly when the term has outputs. A term without outputs because its value type is a `DistributionSpec` or a `ConditionalDistributionSpec` has no record of its outputs, and asking for it raises, saying to wrap the term under a name; it is never the empty record, since "no outputs" there means that the term cannot be read by name, not that it is empty.
+
 ```python
 class OutputSpec:
     @overload
@@ -225,6 +227,7 @@ Naming inputs and outputs, apart from the term's label, is `C5 – Naming for un
 
 ### Notes
 
+- *The record of the outputs, until the outputs of a distribution's spec change.* An output spec in the positional form over a distribution still has the outputs of one draw of that distribution, and over a batch its outputs are typed by the element's fields rather than by the marginal batches. Until both change, the library's one reader of the record of the outputs refuses either spec, as it refuses a distribution's.
 - *The keyword form over a record, a distribution, a function, or a batch.* The families of laws over laws, functions, or batches still name their event whole in the keyword form, which then has its name as one output with paths below it, until each wraps the values it is over under its constructor's name (VII.2, VII.5, VII.6). Once none uses it, the keyword form refuses such a spec, as the contract states.
 
 ## II.3 — Numeric values: `Numeric`, `NumericSpec`, `Constraint`

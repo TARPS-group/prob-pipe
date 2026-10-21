@@ -6,8 +6,8 @@ generated the data, whether the posterior is a method's fit or a kernel such as
 an amortized posterior:
 
 - :func:`simulation_based_calibration` (Talts et al. 2018) draws ``θ★`` and
-  ``y`` from the joint, forms the posterior at ``y``, and ranks each ``θ★``
-  output among the posterior's draws. The ranks are uniform on
+  ``y`` from the joint, forms the posterior at ``y``, and ranks each entry of
+  ``θ★`` among the posterior's draws. The ranks are uniform on
   ``{0, …, L}`` when the posterior is calibrated, so non-uniform ranks expose a
   biased or mis-tuned method.
 - :func:`interval_coverage` is the companion frequentist check of one posterior:
@@ -54,7 +54,7 @@ def _flatten(value: Any, event_spec: OutputSpec, batch_ndim: int = 0) -> Array:
 
     The posterior's event spec *event_spec* gives the layout. An array
     value is raveled, and a record value, a ``Record`` or the nested mapping of
-    its leaves, has its leaves raveled and concatenated in the declaration's
+    its leaves, has its leaves raveled and concatenated in the event spec's
     leaf order. The *batch_ndim* leading axes of a batch are kept, so one value
     gives a ``(p,)`` array and a batch of ``n`` draws an ``(n, p)`` array.
     """
@@ -74,7 +74,7 @@ def _flatten(value: Any, event_spec: OutputSpec, batch_ndim: int = 0) -> Array:
 
 
 def _ranks(draws: Array, point: Array) -> Array:
-    """SBC rank of each output of *point*: ``#{draws < point}``, in ``{0, …, n}``.
+    """SBC rank of each entry of *point*: ``#{draws < point}``, in ``{0, …, n}``.
 
     Uses strict ``<`` (ties, measure-zero for a continuous posterior, count as
     not-below). ``draws`` is ``(n, d)``; ``point`` is ``(d,)``; returns ``(d,)``.
@@ -82,12 +82,12 @@ def _ranks(draws: Array, point: Array) -> Array:
     return jnp.sum(draws < point[None, :], axis=0)
 
 
-def _output_names(posterior: Any) -> tuple[str, ...]:
-    """Per-flattened-component parameter names matching the posterior's flat coordinates.
+def _entry_names(posterior: Any) -> tuple[str, ...]:
+    """Parameter names of the posterior's flat coordinates, one name per entry.
 
-    A scalar leaf keeps its path, and a leaf with ``k > 1`` flattened
-    outputs becomes ``path[0] … path[k-1]`` (row-major), in the posterior's
-    leaf order. A whole-term posterior's one leaf is its output.
+    A scalar leaf keeps its path, and a leaf with ``k > 1`` entries becomes
+    ``path[0] … path[k-1]`` (row-major), in the posterior's leaf order. A
+    whole-term posterior's one leaf takes the name of its output.
     """
     names: list[str] = []
     for path, spec in _array_leaves(posterior.event_spec).items():
@@ -191,13 +191,13 @@ def _input_binding(kernel: ConditionalDistribution, observed: tuple[str, ...]) -
     ValueError
         If neither rule binds the inputs.
     """
-    inputs = tuple(kernel.given_spec)
-    if set(observed) <= set(inputs) and set(kernel.given_spec.required) <= set(observed):
+    input_names = tuple(kernel.given_spec)
+    if set(observed) <= set(input_names) and set(kernel.given_spec.required) <= set(observed):
         return {name: name for name in observed}
-    if len(inputs) == 1 and len(observed) == 1:
-        return {inputs[0]: observed[0]}
+    if len(input_names) == 1 and len(observed) == 1:
+        return {input_names[0]: observed[0]}
     raise ValueError(
-        f"the inputs {list(inputs)} of posterior {kernel.label!r} do not match the "
+        f"the inputs {list(input_names)} of posterior {kernel.label!r} do not match the "
         f"observed fields {list(observed)}. Name the inputs after the observed fields, or "
         f"use a posterior with one input for one observed field."
     )
@@ -206,8 +206,9 @@ def _input_binding(kernel: ConditionalDistribution, observed: tuple[str, ...]) -
 def _check_parameters(event_spec: OutputSpec, parameters: tuple[str, ...], label: str) -> None:
     """Raise unless a draw of the posterior holds the parameters.
 
-    A draw that exposes a record holds the parameters as its outputs, and a
-    whole-term draw is the value of the one parameter.
+    When the posterior's outputs are the fields of a record, a draw holds the
+    parameters as those outputs; otherwise a draw is a whole term, the value of
+    the one parameter.
 
     Parameters
     ----------
@@ -221,8 +222,8 @@ def _check_parameters(event_spec: OutputSpec, parameters: tuple[str, ...], label
     Raises
     ------
     ValueError
-        If the outputs of an exposed record are not the parameters, or a
-        whole-term draw meets several parameters.
+        If the posterior's outputs are the fields of a record but are not the
+        parameters, or a whole-term draw meets several parameters.
     """
     if _has_record_outputs(event_spec):
         if set(event_spec.outputs) != set(parameters):
@@ -336,7 +337,7 @@ def simulation_based_calibration(
 
     Each of *num_simulations* replications draws the parameters ``θ★`` and the
     *observed* fields ``y`` from the joint *model*, forms the posterior at
-    ``y``, draws from it, and ranks each flattened ``θ★`` component among the
+    ``y``, draws from it, and ranks each entry of the flattened ``θ★`` among the
     draws. Under a calibrated posterior each rank is uniform on
     ``{0, …, num_posterior_draws}``. The result summarizes each parameter's
     ranks by their KS distance from uniform and its p-value.
@@ -411,8 +412,8 @@ def simulation_based_calibration(
         If a count is not positive; if an *observed* name is not a field of a
         draw, or no parameter is left; if *method* or *method_options* is given
         with *posterior*; if *posterior*'s inputs do not take the observed
-        fields; or if the posterior's draw does not hold the parameters: a draw
-        that exposes a record names other fields, or a whole-term draw meets
+        fields; or if the posterior's draw does not hold the parameters: a record
+        draw whose fields are the posterior's outputs names other fields, or a whole-term draw meets
         several parameters.
     ResolutionError
         If no route of :func:`condition_on` forms the posterior at ``y``, or
@@ -503,7 +504,7 @@ def simulation_based_calibration(
 
     simulations = _raw_record(sample.using(raw=True)(model, sample_shape=(num_simulations,)))
     rank_rows: list[np.ndarray] = []
-    output_names: tuple[str, ...] | None = None
+    entry_names: tuple[str, ...] | None = None
     for index in range(num_simulations):
         draw = jax.tree.map(lambda column, i=index: column[i], simulations)
         theta_star = {name: draw[name] for name in parameters}
@@ -514,9 +515,9 @@ def simulation_based_calibration(
                 posterior, {input_name: draw[field] for input_name, field in binding.items()}
             )
         draws = sample.using(raw=True)(law, sample_shape=(num_posterior_draws,))
-        if output_names is None:
+        if entry_names is None:
             _check_parameters(law.event_spec, parameters, law.label)
-            output_names = _output_names(law)
+            entry_names = _entry_names(law)
         # A whole-term posterior's draw is its one parameter's value.
         point = (
             theta_star if _has_record_outputs(law.event_spec) else next(iter(theta_star.values()))
@@ -529,7 +530,7 @@ def simulation_based_calibration(
     return SBCResult(
         ranks=ranks,
         num_posterior_draws=num_posterior_draws,
-        param_names=output_names,
+        param_names=entry_names,
         ks_statistic=ks_stat,
         ks_pvalue=ks_pvalue,
     )
@@ -546,7 +547,7 @@ def interval_coverage(
 ) -> dict[float, Array]:
     """Central-credible-interval coverage of *truth*, per parameter.
 
-    For each ``level``, checks whether each output of *truth* lies in the
+    For each ``level``, checks whether each entry of *truth* lies in the
     central ``level`` interval ``[q_{(1−level)/2}, q_{(1+level)/2}]`` of the
     per-parameter posterior. Returns ``{level: covered}`` with ``covered`` a
     boolean array over parameters. Averaging the indicators over many

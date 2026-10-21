@@ -51,7 +51,7 @@ def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
 
     The posterior is an ``EmpiricalDistribution``, such as the result of
     ``condition_on``, whose atoms along one axis give one variable per leaf
-    path, or one under the output of an array event.
+    path, or, for an array event, one under the name of the law's one output.
 
     Parameters
     ----------

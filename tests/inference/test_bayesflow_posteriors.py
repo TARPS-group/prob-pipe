@@ -261,7 +261,7 @@ class TestBayesFlowNPE:
         assert not isinstance(post, EmpiricalDistribution)
         assert method_of(post) == "bayesflow_npe"
         draws = law_draws(post, 300)
-        # Fields named by the prior's declaration, one row per draw.
+        # Fields named by the prior's event spec, one row per draw.
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 300
         assert np.isfinite(np.asarray(draws["b"])).all()
 

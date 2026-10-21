@@ -85,7 +85,7 @@ def standard():
 
 class TestTheLinearPushforward:
     @pytest.mark.pending(reason="the pushforward's event is the operator's output type")
-    def test_the_event_is_the_operator_output_under_its_own_output(self, base, op):
+    def test_the_event_is_the_operator_output_under_its_own_name(self, base, op):
         pushed = LinearPushforwardDistribution("y", base, op)
         assert list(pushed.event_spec.outputs) == ["y"]
         assert pushed.event_spec.term_spec.shape == (3,)

@@ -183,7 +183,7 @@ class TestASampleShapeGetsADrawLevel:
         assert drawn[2].shape == ()
 
     def test_a_joint_draws_a_batch_of_records_under_its_declaration(self):
-        """A law whose draws are a mapping of columns draws the batch its declaration names."""
+        """A law whose draws are a mapping of columns draws the batch its event spec names."""
         from probpipe import NumericRecordBatch
 
         law = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)

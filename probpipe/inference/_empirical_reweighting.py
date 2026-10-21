@@ -68,10 +68,10 @@ def _flat_atoms(prior: EmpiricalDistribution) -> jnp.ndarray:
 
 
 def _target_atoms(prior: EmpiricalDistribution, declaration: OutputSpec) -> Any:
-    """The atoms of *prior* packaged as the target's *declaration* packages its event.
+    """The atoms of *prior* in the form the target's output spec *declaration* gives its event.
 
-    A prior over a record keeps its atoms, whose fields are the declaration's
-    outputs. A prior over one array, whose output the declaration exposes
+    A prior over a record keeps its atoms, whose fields are the outputs of
+    *declaration*. A prior over one array, whose output *declaration* names
     as a field, becomes a one-field record batch on one level.
     """
     expected = prior.event_spec

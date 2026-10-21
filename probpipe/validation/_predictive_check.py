@@ -44,9 +44,10 @@ def predictive_check[D](
     of replications whose statistic is at least the observed one.
 
     A statistic receives a replication in the form the kernel declares for its
-    event: a whole term is its value, such as an array, and an exposed record is
-    the mapping of its fields. A statistic that JAX can trace is computed on
-    every replication in one ``jax.vmap`` call, and any other in a loop.
+    event: a whole term is its value, such as an array, and a record whose
+    fields are the kernel's outputs is the mapping of its fields. A statistic
+    that JAX can trace is computed on every replication in one ``jax.vmap``
+    call, and any other in a loop.
 
     The replications are one workflow-owned random event of the enclosing
     workflow scope. A call inside ``workflow_run(seed=...)`` therefore
@@ -98,10 +99,10 @@ def predictive_check[D](
         sample, *test_fns* is neither a callable nor an iterable, a statistic
         is not callable, or *num_replications* is not an integer.
     ValueError
-        If *law* does not produce every input of *kernel*, naming the
-        missing inputs; if *law* produces an output that *kernel* produces;
-        if *test_fns* is empty or holds two statistics of the same name; or if
-        *num_replications* is not positive.
+        If *law* has no output for some input of *kernel*, naming the
+        missing inputs; if *law* has an output of the same name as an output
+        of *kernel*; if *test_fns* is empty or holds two statistics of the same
+        name; or if *num_replications* is not positive.
 
     Notes
     -----
@@ -247,8 +248,8 @@ def _predictive_joint(
         If *kernel* is not a ``ConditionalDistribution`` or *law* is not a
         ``Distribution`` that samples.
     ValueError
-        If *law* does not produce every input of *kernel*, or produces a
-        output that *kernel* produces.
+        If *law* has no output for some input of *kernel*, or has an output
+        of the same name as an output of *kernel*.
     """
     if not isinstance(kernel, ConditionalDistribution):
         raise TypeError(
