@@ -334,7 +334,7 @@ class TestFieldAccess:
             {"a": np.array([1.0, 2.0])},
             label="r",
         )
-        with pytest.raises(KeyError, match="'a/b' is not a path of 'r'"):
+        with pytest.raises(KeyError, match="unknown path 'a/b' in 'r'"):
             v["a/b"]
         # __contains__ swallows the same case to False.
         assert "a/b" not in v
@@ -369,7 +369,7 @@ class TestFieldAccess:
             v["nonexistent"]
 
     def test_bad_key_type_raises(self, v):
-        with pytest.raises(TypeError, match="give a path or a list of paths, got int"):
+        with pytest.raises(TypeError, match="it must be a path or a list of paths, got int"):
             v[42]
 
 

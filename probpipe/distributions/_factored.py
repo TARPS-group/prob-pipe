@@ -541,8 +541,8 @@ def _extract(value: Any, segments: tuple[str, ...]) -> Any:
     for segment in segments:
         if not isinstance(value, Mapping):
             raise TypeError(
-                f"the node at {_PATH_SEP.join(segments)!r} cannot be read from a "
-                f"{type(value).__name__}; a raw value with paths is a mapping"
+                f"cannot read the node at {_PATH_SEP.join(segments)!r} from a "
+                f"{type(value).__name__}, since a value with paths must be a mapping"
             )
         value = value[segment]
     return value

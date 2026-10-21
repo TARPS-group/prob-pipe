@@ -725,7 +725,7 @@ class TestTheLabelFirstFormIsRefusedWithAHint:
 
 class TestPaths:
     def test_a_batch_of_functions_is_indexed_by_position_only(self, functions):
-        with pytest.raises(TypeError, match="indexed by position only"):
+        with pytest.raises(TypeError, match="this batch takes positions only"):
             functions["anything"]
 
     def test_opaque_elements_have_no_paths(self, labels):

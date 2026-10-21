@@ -69,15 +69,15 @@ class TestMarginal:
             marginal(Marginalizing("law"), "c")
 
     def test_a_path_that_is_not_a_string_raises_type_error(self):
-        with pytest.raises(TypeError, match="give a path or a list of paths, got int"):
+        with pytest.raises(TypeError, match="it must be a path or a list of paths, got int"):
             marginal(Marginalizing("law"), 3)
 
     @pytest.mark.parametrize(
         ("paths", "match"),
         [
-            pytest.param([], "it names no paths", id="empty"),
-            pytest.param(("a", "a"), "names the path 'a' twice", id="repeated"),
-            pytest.param(("x", "x/a"), "'x/a' is inside 'x'; pick one", id="nested"),
+            pytest.param([], "since it names no paths", id="empty"),
+            pytest.param(("a", "a"), "cannot select 'a' twice", id="repeated"),
+            pytest.param(("x", "x/a"), "'x/a' is inside 'x'. Keep one of them", id="nested"),
             pytest.param("x//a", "has an empty name", id="empty-name"),
         ],
     )

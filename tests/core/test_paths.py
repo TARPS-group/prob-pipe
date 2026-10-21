@@ -87,16 +87,21 @@ class TestTheReaderErrors:
             pytest.param("", ValueError, "the path is empty", id="empty-path"),
             pytest.param("g//c", ValueError, "has an empty name", id="empty-name"),
             pytest.param("/a", ValueError, "has an empty name", id="leading-separator"),
-            pytest.param([], ValueError, "it names no paths", id="empty-list"),
-            pytest.param((), ValueError, "it names no paths", id="empty-tuple"),
-            pytest.param(("a", "a"), ValueError, "names the path 'a' twice", id="repeated"),
-            pytest.param(("g", "g/c"), ValueError, "'g/c' is inside 'g'; pick one", id="nested"),
+            pytest.param([], ValueError, "since it names no paths", id="empty-list"),
+            pytest.param((), ValueError, "since it names no paths", id="empty-tuple"),
+            pytest.param(("a", "a"), ValueError, "cannot select 'a' twice", id="repeated"),
+            pytest.param(
+                ("g", "g/c"),
+                ValueError,
+                "cannot select both 'g' and 'g/c', since 'g/c' is inside 'g'",
+                id="nested",
+            ),
             pytest.param({"a"}, TypeError, "got set", id="set"),
             pytest.param(iter(["a"]), TypeError, "got list_iterator", id="iterator"),
             pytest.param(
                 ("a", 0),
                 TypeError,
-                r"a path and a position cannot be mixed in one \[\]",
+                r"cannot mix a path and a position in one \[\]",
                 id="path-and-position",
             ),
         ],
@@ -110,14 +115,13 @@ class TestTheReaderErrors:
             KeyError, match=r"'nope' is not a path of .*; its paths: \['a', 'g', 'g/c', 'g/e'\]"
         ):
             term["nope"]
-        with pytest.raises(KeyError, match="'nope' is not a path of"):
+        with pytest.raises(KeyError, match="unknown path 'nope' in"):
             term["a", "nope"]
 
     def test_a_tuple_that_spells_a_nested_path_says_how_to_write_it(self, term):
         with pytest.raises(
             KeyError,
-            match=r"'c' is not a path of .*; a tuple is a list of paths; for the nested path "
-            r"write 'g/c'",
+            match=r"unknown path 'c' in .*\. To select the nested path, write 'g/c'",
         ):
             term["g", "c"]
 
@@ -135,7 +139,7 @@ class TestBatchPositions:
     """A batch also takes positions, and refuses a list or an array of them."""
 
     def test_a_path_and_a_position_in_one_key_raise(self):
-        with pytest.raises(TypeError, match=r"a path and a position cannot be mixed in one \[\]"):
+        with pytest.raises(TypeError, match=r"cannot mix a path and a position in one \[\]"):
             _draws()["a", 0]
 
     @pytest.mark.parametrize(
@@ -146,9 +150,7 @@ class TestBatchPositions:
             _draws()[positions]
 
     def test_a_list_of_positions_says_to_index_one(self):
-        with pytest.raises(
-            TypeError, match="a list of positions is not supported; index one position or a slice"
-        ):
+        with pytest.raises(TypeError, match="cannot index a batch by a list of positions, got"):
             _draws()[[0, 2]]
 
     def test_a_path_inside_whole_elements_says_the_batch_holds_their_values(self):
@@ -161,7 +163,7 @@ class TestBatchPositions:
             draws["mu"]
 
     def test_an_empty_tuple_never_returns_the_whole_batch(self):
-        with pytest.raises(ValueError, match="it names no paths"):
+        with pytest.raises(ValueError, match="since it names no paths"):
             _draws()[()]
 
     @pytest.mark.parametrize("key", [None, True, ...], ids=["none", "bool", "ellipsis"])
@@ -269,24 +271,30 @@ class TestOnePathPerArgument:
 
     def test_without_refuses_a_repeated_or_nested_path_and_a_tuple(self):
         draw = _draw()
-        with pytest.raises(ValueError, match="names the path 'a' twice"):
+        with pytest.raises(ValueError, match=r"cannot call without\(\) with 'a' twice"):
             draw.without("a", "a")
         with pytest.raises(ValueError, match="'g/c' is inside 'g'"):
             draw.without("g", "g/c")
-        with pytest.raises(TypeError, match="give each path as a separate argument"):
+        with pytest.raises(TypeError, match="Give each path as a separate argument"):
             draw.without(("a", "g/e"))
 
     def test_at_path_takes_separate_segments_and_refuses_a_tuple(self):
         draw = _draw()
         assert draw.at_path("g", "c") == draw["g/c"]
-        with pytest.raises(TypeError, match="give each segment as a separate argument"):
+        with pytest.raises(
+            TypeError,
+            match=r"at_path takes each segment as a separate argument, got a tuple. Write at_path\(\*segments\)",
+        ):
             draw.at_path(("g", "c"))
 
     def test_select_keys_each_path_by_its_last_name(self):
         draw = _draw()
         assert list(draw.select("a", "g/c")) == ["a", "c"]
         assert list(draw.select(x="g/c")) == ["x"]
-        with pytest.raises(ValueError, match="its key 'theta' is already taken by 's1/theta'"):
+        with pytest.raises(
+            ValueError,
+            match="cannot select 's1/theta' and 's2/theta' together, since both would be named 'theta'",
+        ):
             _sample(_hier()).select("s1/theta", "s2/theta")
         assert list(_draws().select("a", "g/c")) == ["a", "c"]
 

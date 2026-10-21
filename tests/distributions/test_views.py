@@ -771,13 +771,13 @@ class TestIndexing:
     def test_an_empty_list_of_paths_raises_value_error(self):
         """An empty tuple is malformed rather than an unknown path."""
         parent = _Law("parent", _EVENT)
-        with pytest.raises(ValueError, match="it names no paths"):
+        with pytest.raises(ValueError, match="since it names no paths"):
             FieldView(parent, ())
-        with pytest.raises(ValueError, match="it names no paths"):
+        with pytest.raises(ValueError, match="since it names no paths"):
             parent[()]
-        with pytest.raises(ValueError, match="it names no paths"):
+        with pytest.raises(ValueError, match="since it names no paths"):
             parent[[]]
-        with pytest.raises(ValueError, match="it names no paths"):
+        with pytest.raises(ValueError, match="since it names no paths"):
             FieldView(parent, "model/theta")[()]
 
     @pytest.mark.parametrize(

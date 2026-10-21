@@ -1328,7 +1328,10 @@ class TestSelect:
         batch = NumericRecordBatch(
             {"s1/theta": jnp.zeros(3), "s2/theta": jnp.ones(3)}, "draw", label="hier"
         )
-        with pytest.raises(ValueError, match="its key 'theta' is already taken by 's1/theta'"):
+        with pytest.raises(
+            ValueError,
+            match="cannot select 's1/theta' and 's2/theta' together, since both would be named 'theta'",
+        ):
             batch.select("s1/theta", "s2/theta")
         assert set(batch.select("s1/theta", other="s2/theta")) == {"theta", "other"}
 

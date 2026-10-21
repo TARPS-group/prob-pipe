@@ -398,28 +398,29 @@ def _as_paths(arg: Any, *, action: str, positions: bool = False) -> str | tuple[
         return _checked_path(str(arg), action=action, given=arg)
     if isinstance(arg, (list, tuple)):
         if not arg:
-            raise ValueError(f"cannot {action} {arg!r}: it names no paths; give at least one path")
+            raise ValueError(f"cannot {action} {arg!r}, since it names no paths. Give at least one")
         holds_position = any(_is_position(entry) for entry in arg)
         if holds_position and any(isinstance(entry, str) for entry in arg):
             raise TypeError(
-                f"cannot {action} {arg!r}: a path and a position cannot be mixed in one []"
+                f"cannot mix a path and a position in one [], got {arg!r}. Index the position "
+                f"and the path separately, as b[0]['a']"
             )
         if positions and holds_position and all(_is_position(entry) for entry in arg):
             raise TypeError(
-                f"cannot {action} {arg!r}: a list of positions is not supported; index one "
-                f"position or a slice"
+                f"cannot index a batch by a list of positions, got {arg!r}. Index one position "
+                f"or a slice"
             )
         for entry in arg:
             if not isinstance(entry, str):
                 raise TypeError(
-                    f"cannot {action} {arg!r}: a path must be a str, got {type_name(entry)} "
-                    f"{entry!r}"
+                    f"cannot {action} {arg!r}, since each path must be a str, got "
+                    f"{type_name(entry)} {entry!r}"
                 )
         paths = tuple(_checked_path(str(entry), action=action, given=arg) for entry in arg)
-        _check_distinct_paths(paths, action=action, given=arg)
+        _check_distinct_paths(paths, action="select", given=arg)
         return paths
     forms = "a path, a list of paths, or a position" if positions else "a path or a list of paths"
-    raise TypeError(f"cannot {action} {arg!r}: give {forms}, got {type_name(arg)}")
+    raise TypeError(f"cannot {action} {arg!r}, since it must be {forms}, got {type_name(arg)}")
 
 
 def _as_positions(arg: Any) -> tuple[Any, ...] | None:
@@ -476,7 +477,9 @@ def _as_path(arg: Any, *, action: str) -> str:
         If *arg* is empty or has an empty name.
     """
     if not isinstance(arg, str):
-        raise TypeError(f"cannot {action} {arg!r}: a path must be a str, got {type_name(arg)}")
+        raise TypeError(
+            f"cannot {action} {arg!r}, since a path must be a str, got {type_name(arg)}"
+        )
     return _checked_path(str(arg), action=action, given=arg)
 
 
@@ -511,11 +514,10 @@ def _as_path_arguments(arguments: tuple[Any, ...], *, action: str) -> tuple[str,
     shown_arguments = arguments[0] if len(arguments) == 1 else arguments
     for argument in arguments:
         if not isinstance(argument, str):
-            hint = "; give each path as a separate argument" if isinstance(argument, tuple) else ""
+            fix = ". Give each path as a separate argument" if isinstance(argument, tuple) else ""
             raise TypeError(
-                f"cannot {action} {shown_arguments!r}: a path must be a str, got "
-                f"{type_name(argument)} "
-                f"{argument!r}{hint}"
+                f"cannot {action} {shown_arguments!r}, since a path must be a str, got "
+                f"{type_name(argument)} {argument!r}{fix}"
             )
     paths = tuple(
         _checked_path(str(argument), action=action, given=shown_arguments) for argument in arguments
@@ -524,7 +526,7 @@ def _as_path_arguments(arguments: tuple[Any, ...], *, action: str) -> tuple[str,
     return paths
 
 
-def _as_joined_path(segments: tuple[Any, ...], *, action: str) -> str:
+def _as_joined_path(segments: tuple[Any, ...], *, function: str) -> str:
     """The one path that *segments* spell, each a path or a name, joined with ``/``.
 
     ``("g", "c")`` and ``("g/c",)`` both spell the path ``"g/c"``.
@@ -533,9 +535,9 @@ def _as_joined_path(segments: tuple[Any, ...], *, action: str) -> str:
     ----------
     segments : tuple
         The segments as the caller gave them, one per argument.
-    action : str
-        What the caller was asked to do, which each error message completes
-        with *segments*, such as ``"call at_path() with"``.
+    function : str
+        The name of the method that takes *segments*, such as ``"at_path"``,
+        which each error message names.
 
     Returns
     -------
@@ -551,18 +553,21 @@ def _as_joined_path(segments: tuple[Any, ...], *, action: str) -> str:
     """
     from .named_tree import _PATH_SEP
 
+    action = f"call {function}() with"
     shown_segments = segments[0] if len(segments) == 1 else segments
     for segment in segments:
-        if not isinstance(segment, str):
-            hint = (
-                "; give each segment as a separate argument" if isinstance(segment, tuple) else ""
-            )
+        if isinstance(segment, tuple):
             raise TypeError(
-                f"cannot {action} {shown_segments!r}: a path segment must be a str, got "
-                f"{type_name(segment)} {segment!r}{hint}"
+                f"{function} takes each segment as a separate argument, got a tuple. Write "
+                f"{function}(*segments)"
+            )
+        if not isinstance(segment, str):
+            raise TypeError(
+                f"cannot {action} {shown_segments!r}, since a path segment must be a str, got "
+                f"{type_name(segment)} {segment!r}"
             )
     if not segments:
-        raise ValueError(f"cannot {action} no path: give at least one path segment")
+        raise ValueError(f"cannot {action} no segments. Give at least one path segment")
     return _checked_path(
         _PATH_SEP.join(str(segment) for segment in segments),
         action=action,
@@ -577,8 +582,7 @@ def _missing_path(
 
     When *path* comes from a list of paths whose ``/``-joined form is a path of
     *owner*, as ``site["habitat", "forest"]`` on a record with the path
-    ``habitat/forest``, the message adds that a tuple is a list of paths and
-    gives the nested path.
+    ``habitat/forest``, the message adds how to write the nested path.
 
     Parameters
     ----------
@@ -599,10 +603,11 @@ def _missing_path(
     from .named_tree import _PATH_SEP
 
     paths = list(available)
-    message = f"{path!r} is not a path of {owner}; its paths: {paths}"
+    have = f"available paths: {paths}" if paths else "it has no paths"
+    message = f"unknown path {path!r} in {owner}; {have}"
     joined = _PATH_SEP.join(requested)
     if len(requested) > 1 and joined in paths:
-        message += f"; a tuple is a list of paths; for the nested path write {joined!r}"
+        message += f". To select the nested path, write {joined!r}"
     return message
 
 
@@ -636,11 +641,11 @@ def _checked_path(path: str, *, action: str, given: Any) -> str:
     from .named_tree import _PATH_SEP
 
     if not path:
-        raise ValueError(f"cannot {action} {given!r}: the path is empty")
+        raise ValueError(f"cannot {action} {given!r}, since the path is empty")
     if "" in path.split(_PATH_SEP):
         raise ValueError(
-            f"cannot {action} {given!r}: the path {path!r} has an empty name; a path joins "
-            f"names with a single {_PATH_SEP!r}, such as 'g/c'"
+            f"cannot {action} {given!r}, since the path {path!r} has an empty name. Join the "
+            f"names with a single {_PATH_SEP!r}, as 'g/c'"
         )
     return path
 
@@ -653,7 +658,8 @@ def _check_distinct_paths(paths: tuple[str, ...], *, action: str, given: Any) ->
     paths : tuple of str
         The paths.
     action : str
-        What the caller was asked to do, which the message completes.
+        What the caller does with *paths*, which each message leads with, such
+        as ``"select"`` or ``"call without() with"``.
     given : Any
         The argument that held *paths*, which the message shows.
 
@@ -667,11 +673,12 @@ def _check_distinct_paths(paths: tuple[str, ...], *, action: str, given: Any) ->
     seen: set[str] = set()
     for path in paths:
         if path in seen:
-            raise ValueError(f"cannot {action} {given!r}: it names the path {path!r} twice")
+            raise ValueError(f"cannot {action} {path!r} twice, got {given!r}. Give each path once")
         seen.add(path)
     for outer in paths:
         for inner in paths:
             if inner.startswith(outer + _PATH_SEP):
                 raise ValueError(
-                    f"cannot {action} {given!r}: {inner!r} is inside {outer!r}; pick one"
+                    f"cannot {action} both {outer!r} and {inner!r}, since {inner!r} is inside "
+                    f"{outer!r}. Keep one of them"
                 )

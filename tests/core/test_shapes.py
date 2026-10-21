@@ -255,11 +255,19 @@ class TestPaths:
             pytest.param("g//c", "the path 'g//c' has an empty name", id="empty-name"),
             pytest.param("/a", "the path '/a' has an empty name", id="leading-separator"),
             pytest.param("a/", "the path 'a/' has an empty name", id="trailing-separator"),
-            pytest.param([], "it names no paths", id="empty-list"),
-            pytest.param((), "it names no paths", id="empty-tuple"),
-            pytest.param(("a", "a"), "it names the path 'a' twice", id="repeated"),
-            pytest.param(("g", "g/c"), "'g/c' is inside 'g'; pick one", id="nested"),
-            pytest.param(("g/c", "g"), "'g/c' is inside 'g'; pick one", id="nested-reversed"),
+            pytest.param([], "since it names no paths", id="empty-list"),
+            pytest.param((), "since it names no paths", id="empty-tuple"),
+            pytest.param(("a", "a"), "cannot select 'a' twice", id="repeated"),
+            pytest.param(
+                ("g", "g/c"),
+                "cannot select both 'g' and 'g/c', since 'g/c' is inside 'g'",
+                id="nested",
+            ),
+            pytest.param(
+                ("g/c", "g"),
+                "cannot select both 'g' and 'g/c', since 'g/c' is inside 'g'",
+                id="nested-reversed",
+            ),
         ],
     )
     def test_refuses_malformed_paths_with_value_error(self, arg, match):
@@ -277,7 +285,7 @@ class TestPaths:
             pytest.param(0, "got int", id="position"),
             pytest.param(
                 ("a", 0),
-                r"a path and a position cannot be mixed in one \[\]",
+                r"cannot mix a path and a position in one \[\]",
                 id="list-holding-a-position",
             ),
         ],
@@ -287,7 +295,7 @@ class TestPaths:
             _as_paths(arg, action="index R by")
 
     def test_names_the_positions_for_a_caller_that_takes_them(self):
-        with pytest.raises(TypeError, match=r"a path and a position cannot be mixed in one \[\]"):
+        with pytest.raises(TypeError, match=r"cannot mix a path and a position in one \[\]"):
             _as_paths(("a", 0), action="index B by", positions=True)
         with pytest.raises(TypeError, match="a list of positions is not supported"):
             _as_paths([0, 2], action="index B by", positions=True)
@@ -331,14 +339,14 @@ class TestPathArguments:
         assert _as_path_arguments((), action="call without() with") == ()
 
     def test_refuses_a_tuple_and_says_how_to_pass_the_paths(self):
-        with pytest.raises(TypeError, match="give each path as a separate argument"):
+        with pytest.raises(TypeError, match="Give each path as a separate argument"):
             _as_path_arguments((("a", "g/e"),), action="call without() with")
 
     @pytest.mark.parametrize(
         ("arguments", "match"),
         [
-            (("a", "a"), "it names the path 'a' twice"),
-            (("g", "g/c"), "'g/c' is inside 'g'; pick one"),
+            (("a", "a"), r"cannot call without\(\) with 'a' twice"),
+            (("g", "g/c"), r"cannot call without\(\) with both 'g' and 'g/c', since 'g/c' is"),
             (("g//c",), "has an empty name"),
         ],
     )
@@ -357,13 +365,18 @@ class TestJoinedPath:
 
     @pytest.mark.parametrize("segments", [("g", "c"), ("g/c",)])
     def test_joins_the_segments(self, segments):
-        assert _as_joined_path(segments, action="call at_path() with") == "g/c"
+        assert _as_joined_path(segments, function="at_path") == "g/c"
 
     def test_refuses_a_tuple_of_segments(self):
-        with pytest.raises(TypeError, match="give each segment as a separate argument"):
-            _as_joined_path((("g", "c"),), action="call at_path() with")
+        with pytest.raises(
+            TypeError,
+            match=r"at_path takes each segment as a separate argument, got a tuple. Write at_path\(\*segments\)",
+        ):
+            _as_joined_path((("g", "c"),), function="at_path")
 
-    @pytest.mark.parametrize(("segments", "match"), [((), "no path"), (("g", ""), "empty name")])
+    @pytest.mark.parametrize(
+        ("segments", "match"), [((), "no segments"), (("g", ""), "empty name")]
+    )
     def test_refuses_no_segment_and_an_empty_name(self, segments, match):
         with pytest.raises(ValueError, match=match):
-            _as_joined_path(segments, action="call at_path() with")
+            _as_joined_path(segments, function="at_path")

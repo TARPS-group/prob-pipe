@@ -75,8 +75,8 @@ def _keyed_paths(paths: tuple[Any, ...], mapping: Mapping[str, Any]) -> dict[str
         key = path.rsplit(_PATH_SEP, 1)[-1] if keyword is None else keyword
         if key in keyed:
             raise ValueError(
-                f"cannot call select() with {path!r}: its key {key!r} is already taken by "
-                f"{keyed[key]!r}; name one of them with a keyword"
+                f"cannot select {keyed[key]!r} and {path!r} together, since both would be named "
+                f"{key!r}. Name one with a keyword, as select({key}2={path!r})"
             )
         keyed[key] = path
     return keyed
@@ -680,7 +680,7 @@ class NamedTree[L]:
         ValueError
             If no segment is given, or the path has an empty name.
         """
-        path = _as_joined_path(segments, action="call at_path() with")
+        path = _as_joined_path(segments, function="at_path")
         node = self._existing_node_at(path)
         if isinstance(node, self._node_type()):
             return node

@@ -1448,18 +1448,18 @@ class TestIndexingDispatchesOnTheKeyType:
         assert fields[:, 1].label == "b[draw=1]"
 
     def test_a_tuple_mixing_paths_and_positions_addresses_neither(self, nested):
-        with pytest.raises(TypeError, match=r"a path and a position cannot be mixed in one \[\]"):
+        with pytest.raises(TypeError, match=r"cannot mix a path and a position in one \[\]"):
             nested[0, "x"]
 
     def test_a_mixed_tuple_is_blamed_on_the_mix_and_not_on_the_count(self, flat):
         # One axis and two entries, so a complaint about arity would fire first
         # and blame the count rather than the path that indexes no axis.
-        with pytest.raises(TypeError, match=r"a path and a position cannot be mixed in one \[\]"):
+        with pytest.raises(TypeError, match=r"cannot mix a path and a position in one \[\]"):
             flat[0, "x"]
 
     def test_an_empty_tuple_names_no_paths(self, nested):
         # ``batch[tuple(paths)]`` with no paths must not return everything.
-        with pytest.raises(ValueError, match="it names no paths"):
+        with pytest.raises(ValueError, match="since it names no paths"):
             nested[()]
 
     def test_a_list_of_positions_is_refused(self, flat):
@@ -1479,7 +1479,7 @@ class TestIndexingDispatchesOnTheKeyType:
 
     @pytest.mark.parametrize("key", [{"x"}, iter(["x"])], ids=["set", "iterator"])
     def test_a_set_or_an_iterator_is_refused(self, flat, key):
-        with pytest.raises(TypeError, match="give a path, a list of paths, or a position"):
+        with pytest.raises(TypeError, match="it must be a path, a list of paths, or a position"):
             flat[key]
 
     def test_an_ellipsis_is_refused(self, flat):
@@ -1684,9 +1684,7 @@ class TestTheTwoWaysOfIndexingCompose:
 
     def test_a_mixed_tuple_is_refused_whichever_comes_first(self, fields):
         for key in [(0, "value"), ("value", 0)]:
-            with pytest.raises(
-                TypeError, match=r"a path and a position cannot be mixed in one \[\]"
-            ):
+            with pytest.raises(TypeError, match=r"cannot mix a path and a position in one \[\]"):
                 fields[key]
 
 

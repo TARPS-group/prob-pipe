@@ -1057,14 +1057,12 @@ class Batch[E](TrackedTerm, ABC):
         class_name = public_class_name(type(self))
         if isinstance(self.element_spec, NumericArraySpec | OpaqueSpec):
             raise KeyError(
-                f"cannot index {class_name} by {paths!r}: it names no path inside the elements of "
-                f"{self.label!r}, since each element is one whole value; the batch already holds "
-                f"their values (read them with .raw)"
+                f"cannot index {class_name} {self.label!r} by {paths!r}, since its elements are "
+                f"single values with no paths. Read the values with .raw"
             )
         raise TypeError(
-            f"cannot index {class_name} by {paths!r}: a batch of this kind is indexed by position "
-            f"only. Index one element by position first, or use at_levels() to index by level "
-            f"name"
+            f"cannot index {class_name} by {paths!r}, since this batch takes positions only. "
+            f"Index an element by position first, or use at_levels() to index by level name"
         )
 
     def _has_path(self, path: str) -> bool:
