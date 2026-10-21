@@ -174,8 +174,8 @@ def _run_on_chosen_executor(evaluation_points: EvaluationPoints) -> tuple[Any, .
     call; and with no executor named, automatic selection runs the set, with
     the options the call's own ``Function`` gave.
 
-    The call's provenance records the set, and what its evaluation points
-    noted merges into the call's record.
+    The call's evaluation log records the set, and what its evaluation points
+    noted merges into the call's accumulators.
 
     Parameters
     ----------
@@ -201,6 +201,38 @@ def _run_on_chosen_executor(evaluation_points: EvaluationPoints) -> tuple[Any, .
     executor, executor_options = _chosen_executor(
         evaluation_points, call_context.execution_choice, call_context.evaluation_log
     )
+    evaluation_outcomes = _run_on_executor(evaluation_points, executor, executor_options)
+    if evaluation_outcomes.failures:
+        failures = tuple(evaluation_outcomes.failures.values())
+        first_error = min(failures, key=lambda failure: failure.point_index).error
+        raise EvaluationError(
+            failures,
+            evaluation_outcomes.outputs,
+            origin=evaluation_points.origin,
+            point_noun=evaluation_points.point_noun,
+        ) from first_error
+    return evaluation_outcomes.outputs
+
+
+def _run_on_executor(
+    evaluation_points: EvaluationPoints,
+    executor: EvaluationExecutor,
+    executor_options: Mapping[str, Any],
+) -> EvaluationOutcomes:
+    """The outcomes of *evaluation_points* run on *executor*, under the running call.
+
+    It checks that the executor returned one outcome per evaluation point,
+    accepts the draws that runs in other processes claimed, merges what the
+    evaluation points noted into the call's accumulators, records the set in
+    the call's evaluation log, and warns about casts that lost precision.
+
+    Raises
+    ------
+    RuntimeError
+        If the executor did not return one outcome per evaluation point,
+        starting at point index 0.
+    """
+    call_context = current_call_context()
     try:
         evaluation_outcomes = executor.execute(evaluation_points, **executor_options)
         _check_outcomes_cover(evaluation_outcomes, evaluation_points, executor.name)
@@ -217,16 +249,7 @@ def _run_on_chosen_executor(evaluation_points: EvaluationPoints) -> tuple[Any, .
         origin=evaluation_points.origin,
         evaluation_log=call_context.evaluation_log,
     )
-    if evaluation_outcomes.failures:
-        failures = tuple(evaluation_outcomes.failures.values())
-        first_error = min(failures, key=lambda failure: failure.point_index).error
-        raise EvaluationError(
-            failures,
-            evaluation_outcomes.outputs,
-            origin=evaluation_points.origin,
-            point_noun=evaluation_points.point_noun,
-        ) from first_error
-    return evaluation_outcomes.outputs
+    return evaluation_outcomes
 
 
 # ---------------------------------------------------------------------------
@@ -430,7 +453,7 @@ def _chosen_executor(
     automatic_options: Mapping[str, Any] = {}
     if execution_choice.names_executor():
         executor_name = execution_choice.executor_name
-        named_executor = executor_registry.get_method(executor_name)
+        named_executor = _requested_executor(executor_name)
         _check_executor_reads_options(named_executor, execution_choice.executor_options)
         feasibility = named_executor.check(evaluation_points, **execution_choice.executor_options)
         if feasibility.feasible:
@@ -456,6 +479,11 @@ def _chosen_executor(
     selected_executor = _automatically_selected_executor(evaluation_points)
     _check_executor_reads_options(selected_executor, automatic_options)
     return selected_executor, dict(automatic_options)
+
+
+def _requested_executor(executor_name: str) -> EvaluationExecutor:
+    """The executor a caller named, raising ``ResolutionError`` when none is registered by that name."""
+    return executor_registry._named(executor_name).method
 
 
 def _automatically_selected_executor(evaluation_points: EvaluationPoints) -> EvaluationExecutor:

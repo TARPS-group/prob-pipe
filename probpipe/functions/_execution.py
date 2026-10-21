@@ -1091,6 +1091,20 @@ class _ShippedEvaluationPointScopes:
         return (_ShippedEvaluationPointScopes, (self._reserved_points,))
 
 
+@contextmanager
+def _requester_workflow_scope() -> Generator[None, None, None]:
+    """The workflow position from which code asks for sets of evaluation points, as a lifted call does.
+
+    Inside it a key broker of its own is active under the running call, as
+    for a nested call, so a set of evaluation points built there issues its
+    evaluation points' keys from it. A set built inside a function body
+    without it has no key broker: its evaluation points draw keys in the
+    order they run, and a worker process refuses their draws.
+    """
+    with _context._ephemeral_workflow_run(), _evaluation_keys._function_stochastic_scope():
+        yield
+
+
 def _evaluation_point_scopes(num_evaluation_points: int) -> Any:
     """The workflow scopes of a new set of evaluation points, built under the running call.
 

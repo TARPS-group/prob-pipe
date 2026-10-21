@@ -76,7 +76,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from .._messages import unknown_names
 from ..core._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
@@ -1354,6 +1354,8 @@ class Operation(Function):
         a derived route is given beside a derived route check, or it is not a
         delegating route.
     """
+
+    _options_need_named_executor: ClassVar[bool] = True
 
     def __init__(
         self,

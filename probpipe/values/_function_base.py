@@ -19,17 +19,25 @@ import os
 import warnings
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial, wraps
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, Self, runtime_checkable
 
 import jax
 import jax.numpy as jnp
 
 from .._messages import label_given_first, unknown_names
 from ..core._array_backend import _is_numeric_leaf
-from ..core._call_context import _open_call_context, _under_call_context, current_call_context
+from ..core._call_context import (
+    _AUTOMATIC_SELECTION,
+    _CallContext,
+    _ExecutionChoice,
+    _jax_settings_snapshot,
+    _open_call_context,
+    _under_call_context,
+    current_call_context,
+)
 from ..core._dispatch import Feasibility
 from ..core._execution_claims import (
     TRACING_ERRORS,
@@ -38,6 +46,7 @@ from ..core._execution_claims import (
     ProbeResults,
     checked_execution_claims,
 )
+from ..core._executors import _check_executor_reads_options, _requested_executor
 from ..core._expression import Collapse, Expression, Signature
 from ..core._kinds import term_class_for_spec
 from ..core._numeric_array import _inferred_spec
@@ -704,6 +713,8 @@ _CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
         "num_samples": None,
         "dispatch": "auto",
         "max_workers": None,
+        "executor": None,
+        "executor_options": MappingProxyType({}),
         "include_inputs": False,
         "method": None,
         "exact_only": False,
@@ -716,8 +727,21 @@ _CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
 #: The controls a construction keyword of None leaves at their default; None is
 #: inadmissible for every other control.
 _DEFAULTED_BY_NONE = frozenset(
-    {"max_evaluations", "num_samples", "max_workers", "method", "conversions", "method_options"}
+    {
+        "max_evaluations",
+        "num_samples",
+        "max_workers",
+        "executor",
+        "executor_options",
+        "method",
+        "conversions",
+        "method_options",
+    }
 )
+
+#: The two controls that choose an executor, which resolve together as one unit
+#: and whose home in a call is its executor choice, not its resolved controls.
+_EXECUTION_CHOICE_CONTROLS = frozenset({"executor", "executor_options"})
 
 #: The two count controls, which a derived route passes down.
 _PASSED_COUNT_CONTROLS = ("max_evaluations", "num_samples")
@@ -768,13 +792,18 @@ def _in_child_call_context(
                 if parent_context.passed_controls is None
                 else self._inheriting(parent_context.passed_controls)
             )
+            is_root_call = parent_context.call_depth == 0
             child_context = parent_context.child_for_call(
                 entry_method_name=entry_method_name,
                 function_label=function_view.label,
-                resolved_controls=function_view.options,
-                session_config_values=(
-                    config._session_values_snapshot() if parent_context.call_depth == 0 else None
-                ),
+                resolved_controls={
+                    name: value
+                    for name, value in function_view.options.items()
+                    if name not in _EXECUTION_CHOICE_CONTROLS
+                },
+                execution_choice=_resolve_execution_choice(function_view, parent_context),
+                session_config_values=config._session_values_snapshot() if is_root_call else None,
+                jax_settings=_jax_settings_snapshot() if is_root_call else None,
             )
             with _open_call_context(child_context, entry_method_name=entry_method_name):
                 return entry_method(function_view, *args, **kwargs)
@@ -782,6 +811,51 @@ def _in_child_call_context(
         return run_in_child_call_context
 
     return decorate
+
+
+def _resolve_execution_choice(
+    function_view: Function, parent_context: _CallContext
+) -> _ExecutionChoice:
+    """The executor choice of a call of *function_view* opened in *parent_context*, by V.9's rules.
+
+    The view's own ``executor`` and ``executor_options``, from its decorator
+    or its ``using``, win, taken as one unit; options without an executor go
+    to the executor automatic selection picks, and block inheritance.
+    Otherwise the call inherits the enclosing call's choice when that names an
+    executor, and else selects automatically.
+
+    Raises
+    ------
+    ResolutionError
+        If the view names an executor that is not registered.
+    ValueError
+        If the named executor does not take one of the options, or an
+        operation is given options without an executor.
+    """
+    own_controls = function_view._options
+    if own_controls.keys() & _EXECUTION_CHOICE_CONTROLS:
+        effective_controls = function_view.options
+        executor_name = effective_controls["executor"]
+        executor_options = effective_controls["executor_options"]
+        if executor_name is None:
+            if executor_options and function_view._options_need_named_executor:
+                raise ValueError(
+                    f"{function_view.label} was given executor_options without an executor. "
+                    "Name the executor the options belong to, as executor='thread'"
+                )
+        else:
+            _check_executor_reads_options(_requested_executor(executor_name), executor_options)
+        return _ExecutionChoice(
+            executor_name=executor_name,
+            executor_options=executor_options,
+            source="own",
+            applies_only_to=None if function_view._options_need_named_executor else function_view,
+            named_on=function_view.label,
+        )
+    inherited_choice = parent_context.execution_choice
+    if inherited_choice.names_executor():
+        return replace(inherited_choice, source="inherited")
+    return _AUTOMATIC_SELECTION
 
 
 #: Removed construction keywords, each with the warning it raises, which are ignored.
@@ -923,6 +997,18 @@ class Function(TrackedTerm, Annotated):
           dispatch interpreted by the engine, "auto" by default.
         - ``max_workers`` (int or None): positive thread-worker count, or the
           executor default.
+        - ``executor`` (str or None): the name of the executor that runs the
+          sets of evaluation points of this function's calls, such as
+          ``"thread"`` or a cluster executor a user registers; None, the
+          default, inherits an enclosing call's executor or else selects one
+          automatically. A function JAX can trace is always compiled by
+          ``"jax"``.
+        - ``executor_options`` (Mapping or None): the options of the executor
+          named with them, or of the automatically selected one when no
+          executor is named, such as ``{"max_workers": 8}``; the executor
+          validates them when the call runs. Empty by default. ``executor``
+          and ``executor_options`` are set together: setting one with
+          ``using`` resets the other.
         - ``include_inputs`` (bool): whether the sampling lift retains inputs
           alongside outputs, False by default.
         - ``method`` (str or None): the name of the route that realizes a
@@ -1014,6 +1100,10 @@ class Function(TrackedTerm, Annotated):
     #: such as a ``using`` view, shares them, since a copy keeps its callable,
     #: its bindings, and its input and output specs.
     _probe_results: ProbeResults
+    #: Whether ``executor_options`` given without ``executor`` are refused,
+    #: as on an operation, whose work runs many callables and so has no one
+    #: automatically selected executor that would take them.
+    _options_need_named_executor: ClassVar[bool] = False
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         # The constructor's arguments are checked here, before ``__init__`` binds
@@ -1264,6 +1354,10 @@ class Function(TrackedTerm, Annotated):
             raise _unknown_controls(unknown)
         # Only set controls are stored, so dropping one makes it read its default.
         reset = {name for name, value in controls.items() if value is None}
+        if controls.keys() & _EXECUTION_CHOICE_CONTROLS:
+            # The executor and its options are one unit, so options never pair
+            # with an executor named in another layer.
+            reset |= _EXECUTION_CHOICE_CONTROLS - controls.keys()
         kept = {name: value for name, value in self._options.items() if name not in reset}
         revisions = {name: value for name, value in controls.items() if value is not None}
         options = _set_controls(self._control_defaults(), kept, revisions, self.signature)
@@ -1673,6 +1767,18 @@ def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) 
     method = options["method"]
     if method is not None and (not isinstance(method, str) or not method):
         raise TypeError(f"method must be a non-empty string or None; got {method!r}")
+    executor = options["executor"]
+    if executor is not None and (not isinstance(executor, str) or not executor):
+        raise TypeError(f"executor must be a non-empty string or None; got {executor!r}")
+    executor_options = options["executor_options"]
+    if not isinstance(executor_options, Mapping):
+        raise TypeError(
+            "executor_options must map option names to their values; "
+            f"got {type(executor_options).__name__}"
+        )
+    for name in executor_options:
+        if not isinstance(name, str) or not name:
+            raise TypeError(f"executor_options keys must be non-empty strings; got {name!r}")
     conversions = options["conversions"]
     if not isinstance(conversions, Mapping):
         raise TypeError(
@@ -1703,6 +1809,7 @@ def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) 
             {name: MappingProxyType(dict(settings)) for name, settings in conversions.items()}
         ),
         "method_options": MappingProxyType(dict(method_options)),
+        "executor_options": MappingProxyType(dict(executor_options)),
     }
 
 
