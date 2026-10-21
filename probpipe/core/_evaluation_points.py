@@ -31,7 +31,7 @@ from collections.abc import Callable, Iterable, Mapping
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 import cloudpickle
 import jax
@@ -43,6 +43,7 @@ from ._call_context import (
     _CallContext,
     _collecting_call_accumulators,
     _EvaluationLog,
+    _EvaluationSetRecord,
     _NumSamplesUsed,
     _under_call_context,
     current_call_context,
@@ -159,8 +160,12 @@ class EvaluationPoints:
         self._shared_payload = SharedPayload(fn, MappingProxyType(dict(shared or {})))
         self._call_context = current_call_context()
         evaluation_log = self._call_context.evaluation_log
-        self._set_ordinal = 0 if evaluation_log is None else evaluation_log.next_set_ordinal(origin)
-        self._point_scopes = _EVALUATION_POINT_SCOPES_FACTORY(self._num_evaluation_points)
+        self._set_ordinal, set_position = (
+            (0, 0) if evaluation_log is None else evaluation_log.next_set_numbers(origin)
+        )
+        self._point_scopes = _EVALUATION_POINT_SCOPES_FACTORY(
+            self._num_evaluation_points, set_position
+        )
         self._shipping_feasibility: Feasibility | None = None
 
     def __len__(self) -> int:
@@ -407,8 +412,10 @@ class EvaluationChunk:
             start=self.start,
             outputs=tuple(outputs),
             failures=MappingProxyType(failures),
-            _num_samples_used=chunk_context.num_samples_used,
-            _evaluation_log=chunk_context.evaluation_log,
+            _noted_num_samples=cast(
+                _NumSamplesUsed, chunk_context.num_samples_used
+            ).num_samples_values,
+            _noted_set_records=cast(_EvaluationLog, chunk_context.evaluation_log).set_records,
             _claim_reports=tuple(self._point_scopes.claim_reports()),
             _lossy_casts=frozenset(lossy_casts),
         )
@@ -597,8 +604,10 @@ class EvaluationOutcomes:
     start: int
     outputs: tuple[Any, ...]
     failures: Mapping[int, EvaluationFailure]
-    _num_samples_used: _NumSamplesUsed | None = field(default=None, repr=False, compare=False)
-    _evaluation_log: _EvaluationLog | None = field(default=None, repr=False, compare=False)
+    _noted_num_samples: frozenset[int] = field(default=frozenset(), repr=False, compare=False)
+    _noted_set_records: tuple[_EvaluationSetRecord, ...] = field(
+        default=(), repr=False, compare=False
+    )
     _claim_reports: tuple[Any, ...] = field(default=(), repr=False, compare=False)
     _lossy_casts: frozenset[tuple[str, str]] = field(default=frozenset(), repr=False, compare=False)
 
@@ -667,13 +676,6 @@ class EvaluationOutcomes:
                     "each evaluation point once"
                 )
             next_start = outcomes.start + len(outcomes.outputs)
-        merged_num_samples_used = _NumSamplesUsed()
-        merged_evaluation_log = _EvaluationLog()
-        for outcomes in ordered_outcomes:
-            if outcomes._num_samples_used is not None:
-                merged_num_samples_used.merge_from(outcomes._num_samples_used)
-            if outcomes._evaluation_log is not None:
-                merged_evaluation_log.merge_from(outcomes._evaluation_log)
         return cls(
             start=ordered_outcomes[0].start,
             outputs=tuple(output for outcomes in ordered_outcomes for output in outcomes.outputs),
@@ -684,8 +686,14 @@ class EvaluationOutcomes:
                     for point_index, failure in outcomes.failures.items()
                 }
             ),
-            _num_samples_used=merged_num_samples_used,
-            _evaluation_log=merged_evaluation_log,
+            _noted_num_samples=frozenset().union(
+                *(outcomes._noted_num_samples for outcomes in ordered_outcomes)
+            ),
+            _noted_set_records=tuple(
+                set_record
+                for outcomes in ordered_outcomes
+                for set_record in outcomes._noted_set_records
+            ),
             _claim_reports=tuple(
                 report for outcomes in ordered_outcomes for report in outcomes._claim_reports
             ),
@@ -813,18 +821,23 @@ class _UnscopedEvaluationPoints:
         return None
 
 
-def _unscoped_evaluation_points(num_evaluation_points: int) -> _EvaluationPointScopes:
+def _unscoped_evaluation_points(
+    num_evaluation_points: int, set_position: int
+) -> _EvaluationPointScopes:
     """The scopes of a set of evaluation points when no function engine installed its own."""
     return _UnscopedEvaluationPoints()
 
 
-#: Builds the workflow scopes of a new set of evaluation points from its size.
-_EVALUATION_POINT_SCOPES_FACTORY: Callable[[int], _EvaluationPointScopes] = (
+#: Builds the workflow scopes of a new set of evaluation points from its size
+#: and its position among the sets its call asks for.
+_EVALUATION_POINT_SCOPES_FACTORY: Callable[[int, int], _EvaluationPointScopes] = (
     _unscoped_evaluation_points
 )
 
 
-def _install_evaluation_point_scopes(factory: Callable[[int], _EvaluationPointScopes]) -> None:
+def _install_evaluation_point_scopes(
+    factory: Callable[[int, int], _EvaluationPointScopes],
+) -> None:
     """Make *factory* build the workflow scopes of every new set of evaluation points.
 
     The function engine calls this when it is imported, as it installs its

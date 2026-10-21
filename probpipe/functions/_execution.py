@@ -951,15 +951,18 @@ class _WorkflowEvaluationPointScopes:
     ----------
     num_evaluation_points : int
         The size of the set.
+    set_position : int
+        The set's position among the sets its call asks for, which keeps its
+        evaluation points' segments apart from those of the call's other sets.
     """
 
-    def __init__(self, num_evaluation_points: int) -> None:
+    def __init__(self, num_evaluation_points: int, set_position: int) -> None:
         self._parent_frame = _context._capture_active_workflow_frame()
         self._parent_broker = _evaluation_keys._capture_active_broker()
         self._issued_points = issue_evaluation_points(
             [{}] * num_evaluation_points,
             point_segments=[
-                sweep_cell_point_segment((point_index,))
+                sweep_cell_point_segment((set_position, point_index))
                 for point_index in range(num_evaluation_points)
             ],
         )
@@ -1105,7 +1108,7 @@ def _requester_workflow_scope() -> Generator[None, None, None]:
         yield
 
 
-def _evaluation_point_scopes(num_evaluation_points: int) -> Any:
+def _evaluation_point_scopes(num_evaluation_points: int, set_position: int) -> Any:
     """The workflow scopes of a new set of evaluation points, built under the running call.
 
     Inside a route probe or a JAX body, where workflow draws are refused, the
@@ -1114,7 +1117,7 @@ def _evaluation_point_scopes(num_evaluation_points: int) -> Any:
     """
     if _context._workflow_side_effects_forbidden():
         return _UnscopedEvaluationPoints()
-    return _WorkflowEvaluationPointScopes(num_evaluation_points)
+    return _WorkflowEvaluationPointScopes(num_evaluation_points, set_position)
 
 
 _install_evaluation_point_scopes(_evaluation_point_scopes)

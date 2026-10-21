@@ -624,6 +624,7 @@ class _EvaluationLog:
         self._lock = threading.Lock()
         self._set_records: list[_EvaluationSetRecord] = []
         self._set_counts_by_origin: dict[str, int] = {}
+        self._set_count = 0
         self._warnings_given: set[Any] = set()
 
     @property
@@ -632,12 +633,23 @@ class _EvaluationLog:
         with self._lock:
             return tuple(self._set_records)
 
-    def next_set_ordinal(self, origin: str) -> int:
-        """The ordinal of the next set of evaluation points of *origin* that the call asks for."""
+    def next_set_numbers(self, origin: str) -> tuple[int, int]:
+        """The numbers of the next set of evaluation points of *origin* that the call asks for.
+
+        Returns
+        -------
+        tuple of (int, int)
+            The set's ordinal among the call's sets of *origin*, which its
+            evaluation points' identities name, and its position among all the
+            call's sets, which keeps its evaluation points' workflow scopes
+            apart from those of the call's other sets; both count from 0.
+        """
         with self._lock:
             set_ordinal = self._set_counts_by_origin.get(origin, 0)
             self._set_counts_by_origin[origin] = set_ordinal + 1
-            return set_ordinal
+            set_position = self._set_count
+            self._set_count += 1
+            return set_ordinal, set_position
 
     def record(self, set_record: _EvaluationSetRecord) -> None:
         """Record that the call ran the set *set_record* describes."""

@@ -79,6 +79,7 @@ def check_executor(executor: EvaluationExecutor) -> None:
                 continue
             reference_outcomes = conformance_set.outcomes_on(reference_executor)
             assert reference_outcomes is not None
+            conformance_set.check_reference(reference_outcomes)
             conformance_set.check_agreement(executor.name, executor_outcomes, reference_outcomes)
             sets_run.append(conformance_set.name)
     assert sets_run, (
@@ -109,6 +110,9 @@ class _ConformanceSet:
     compiled : bool
         Whether ``jax`` compiles the set, so outputs agree within a tolerance
         rather than bit for bit.
+    expected_failures : tuple of (int, str)
+        The point index and the kind of each failure the set is built to
+        have, which the ``sequential`` executor's outcomes must show.
     """
 
     name: str
@@ -116,6 +120,7 @@ class _ConformanceSet:
     claims: ExecutionClaims = NO_CLAIMS
     output_spec: OutputSpec | None = None
     compiled: bool = False
+    expected_failures: tuple[tuple[int, str], ...] = ()
 
     def evaluation_points(self) -> EvaluationPoints:
         """The set's evaluation points, built under the running call."""
@@ -155,6 +160,24 @@ class _ConformanceSet:
             config.sampling.using(num_samples=_BLOCK_NUM_SAMPLES),
         ):
             return requester.using(raw=True)()
+
+    def check_reference(self, reference_outcomes: EvaluationOutcomes) -> None:
+        """Raise if the ``sequential`` executor's outcomes do not fail exactly as the set is built to."""
+        reference_failures = tuple(
+            sorted(
+                (point_index, failure.kind)
+                for point_index, failure in reference_outcomes.failures.items()
+            )
+        )
+        if reference_failures != self.expected_failures:
+            first_message = next(
+                (failure.message for failure in reference_outcomes.failures.values()), ""
+            )
+            raise RuntimeError(
+                f"check_executor's set {self.name!r} failed on the sequential executor at "
+                f"{reference_failures} where it is built to fail at {self.expected_failures} "
+                f"({first_message}). This is a fault of check_executor, not of the executor"
+            )
 
     def check_agreement(
         self,
@@ -210,8 +233,7 @@ _BLOCK_NUM_SAMPLES = 37
 
 def _simulate_with_a_nested_draw(theta: Any, point_index: Any, scale: Any) -> np.ndarray:
     """A simulator that draws from the workflow inside each evaluation point, finishing in reverse order."""
-    from ..distributions import Normal
-    from ..operations import sample
+    from .. import Normal, sample
 
     time.sleep(0.002 * (_NUM_EVALUATION_POINTS - int(point_index)))
     noise = np.asarray(sample(Normal("noise", 0.0, 1.0)))
@@ -253,11 +275,16 @@ _CONFORMANCE_SETS = (
     _ConformanceSet(
         "a simulator with draws nested in its evaluation points", _simulate_with_a_nested_draw
     ),
-    _ConformanceSet("evaluation points that raise", _fail_at_two_evaluation_points),
+    _ConformanceSet(
+        "evaluation points that raise",
+        _fail_at_two_evaluation_points,
+        expected_failures=((3, "error"), (6, "error")),
+    ),
     _ConformanceSet(
         "an output that does not match its output spec",
         _return_a_wrong_shape_once,
         output_spec=OutputSpec(simulated=NumericArraySpec((2,), "float64")),
+        expected_failures=((1, "invalid"),),
     ),
     _ConformanceSet(
         "a callable that takes a whole chunk",

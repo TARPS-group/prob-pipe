@@ -198,9 +198,13 @@ def _run_on_chosen_executor(evaluation_points: EvaluationPoints) -> tuple[Any, .
         If an evaluation point failed, naming every failed one.
     """
     call_context = current_call_context()
-    executor, executor_options = _chosen_executor(
-        evaluation_points, call_context.execution_choice, call_context.evaluation_log
-    )
+    try:
+        executor, executor_options = _chosen_executor(
+            evaluation_points, call_context.execution_choice, call_context.evaluation_log
+        )
+    except BaseException:
+        evaluation_points._point_scopes.close()
+        raise
     evaluation_outcomes = _run_on_executor(evaluation_points, executor, executor_options)
     if evaluation_outcomes.failures:
         failures = tuple(evaluation_outcomes.failures.values())
@@ -552,14 +556,13 @@ def _check_outcomes_cover(
 
 
 def _merge_outcome_accumulators(evaluation_outcomes: EvaluationOutcomes, call_context: Any) -> None:
-    """Merge what the evaluation points noted into the call's accumulators."""
-    if (
-        call_context.num_samples_used is not None
-        and evaluation_outcomes._num_samples_used is not None
-    ):
-        call_context.num_samples_used.merge_from(evaluation_outcomes._num_samples_used)
-    if call_context.evaluation_log is not None and evaluation_outcomes._evaluation_log is not None:
-        call_context.evaluation_log.merge_from(evaluation_outcomes._evaluation_log)
+    """Add what the evaluation points noted to the call's accumulators."""
+    if call_context.num_samples_used is not None:
+        for num_samples in evaluation_outcomes._noted_num_samples:
+            call_context.num_samples_used.note(num_samples)
+    if call_context.evaluation_log is not None:
+        for set_record in evaluation_outcomes._noted_set_records:
+            call_context.evaluation_log.record(set_record)
 
 
 def _set_record(
