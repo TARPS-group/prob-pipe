@@ -311,7 +311,7 @@ class NumericRecord(Record, Numeric):
         """The converted ``jax.Array`` for the field at *key*, at any depth.
 
         *key* must address a field; a path to an interior node is not a key
-        and is not valid input. Each path component descends one level,
+        and is not valid input. Each path segment descends one level,
         delegating the final hop to :meth:`_child_field_as_jax`.
         """
         child_name, sep, descendant_key = key.partition(_PATH_SEP)

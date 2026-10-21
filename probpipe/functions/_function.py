@@ -6,11 +6,11 @@ The engine runs the call stack of design Part V on every call of a Function:
 2. bind: the arguments bind to the signature (:mod:`._call`);
 3. normalize: distribution arguments are converted where their parameter names
    another class (:mod:`._normalization`) and each argument is admitted by its
-   role or its declaration (:func:`._call.admit_arguments`);
+   role or its input spec (:func:`._call.admit_arguments`);
 4. classify the lift: the lifted arguments are found and grouped
    (:func:`._plan.build_broadcast_plan`, :func:`._plan.build_stochastic_plan`);
-5. plan: the input declarations unify and the output declaration binds the
-   shared dimensions (:func:`._contract._bind_planned_function_inputs`), or, for
+5. plan: the input specs unify and the output spec binds the shared
+   dimensions (:func:`._contract._bind_planned_function_inputs`), or, for
    a Function realized by routes, each point's result rule runs
    (``Function._plan_route_inputs``);
 6. resolve: a lifted call resolves through the evaluation-rule registry
@@ -38,6 +38,7 @@ from typing import Any, cast, overload
 import jax
 import jax.numpy as jnp
 
+from ..core._specs import _has_record_outputs, _output_record
 from ..values import _binding
 
 try:
@@ -164,7 +165,7 @@ def function(
         The function label, defaulting to the callable's name, or ``𝒻`` for a lambda.
         A callable with none, such as a ``functools.partial``, needs it.
     input_spec : InputSpec or Mapping[str, TermSpec] or None
-        The authoritative input slots, as :class:`Function` takes them.
+        The authoritative inputs, as :class:`Function` takes them.
     output_spec : OutputSpec or TermSpec or None
         The authoritative result declaration, as :class:`Function` takes it.
     output_label : str or None
@@ -379,7 +380,7 @@ def _result_expression(
 def _value_arguments(
     function: Function, values: Mapping[str, Any], explicit_parameter_names: frozenset[str]
 ) -> tuple[Expression, ...]:
-    """Arguments in parameter order, using declared slot names for unnamed arrays."""
+    """Arguments in parameter order, using declared input names for unnamed arrays."""
     arguments = (
         _argument_expression(_binding.input_ref_value(values, ref), ref, explicit_parameter_names)
         for ref in _binding.iter_input_refs(function._signature_info, values)
@@ -477,10 +478,10 @@ def _lifted_expression(
                 arguments.append(draw_of(value))
                 continue
             laws = [_binding.input_ref_value(values, consumer.arg_ref) for consumer in consumers]
-            components = dict.fromkeys(name for law in laws for name in law.event_spec.components)
+            outputs = dict.fromkeys(name for law in laws for name in law.event_spec.outputs)
             arguments.append(
                 Draw(
-                    tuple(components),
+                    tuple(outputs),
                     _drawn_together_from(laws, plan, index)._embedded_expression(),
                 )
             )
@@ -962,7 +963,7 @@ def _run_call(
         output_spec, output_template = concrete_output_spec, concrete_output_template
         if output_spec is None and candidates is not None and row_values is not argument_values:
             # A row of a sweep binds its element itself, which may declare what the
-            # element's declaration alone left open.
+            # element's spec alone left open.
             output_spec = _resolution.lifted_declaration(
                 function, row_values, resolved_controls, broadcast_plan
             )
@@ -982,7 +983,7 @@ def _run_call(
             require_jax_traceable=require_jax_traceable,
             function_name=function._label,
             output_label=function.output_label,
-            output_component=function._output_component,
+            output_name=function._output_name,
             output_expression=_lifted_expression(
                 function,
                 row_values,
@@ -1177,7 +1178,8 @@ def _jax_traceability_error(
                     array_args=refs,
                     label=function.output_label,
                     output_is_declared=(
-                        function.output_spec is not None and function.output_spec.spec is not None
+                        function.output_spec is not None
+                        and function.output_spec.term_spec is not None
                     ),
                 )
                 # The first row of the storage the executor maps.
@@ -1200,7 +1202,7 @@ def _jax_traceability_error(
                 for group in stochastic_plan.source_groups:
                     binding = stochastic_plan.runtime_bindings[group.index]
                     root = binding.root
-                    event = root.event_spec.spec
+                    event = root.event_spec.term_spec
                     if isinstance(event, BatchSpec):
                         # A batch-valued draw is mapped in its raw form.
                         root_probes.append(_batch_stand_in(root, event))
@@ -1215,10 +1217,12 @@ def _jax_traceability_error(
                             f"marginal(law, {path!r}) gives it, or use dispatch='auto', "
                             f"'sequential', or 'thread'."
                         )
-                    from ..core._specs import _components_record
 
-                    components = _components_record(root.event_spec)
-                    if not isinstance(components, NumericRecordSpec) or not components.is_concrete:
+                    output_record = _output_record(root.event_spec)
+                    if (
+                        not isinstance(output_record, NumericRecordSpec)
+                        or not output_record.is_concrete
+                    ):
                         raise TypeError(
                             f"{type(root).__name__} must declare a concrete numeric event "
                             "to run under dispatch='jax'"
@@ -1231,23 +1235,23 @@ def _jax_traceability_error(
                             "under dispatch='jax'"
                         ) from error
                     columns = {}
-                    for path in components:
+                    for path in output_record:
                         dtype = dtypes.get(path)
                         if dtype is None:
                             dtype = dtypes.get(path.split("/", 1)[0])
                         if dtype is None:
                             dtype = _stored_dtype(root, path)
                         columns[path] = jax.ShapeDtypeStruct(
-                            (1, *components[path].shape),
+                            (1, *output_record[path].shape),
                             dtype,
                         )
-                    # The stand-in draw is at the kind the law's event declaration
+                    # The stand-in draw is at the kind the law's event spec
                     # names, as the law's own draws are.
-                    if root.event_spec.exposes_record:
+                    if _has_record_outputs(root.event_spec):
                         root_probe = NumericRecordBatch(
                             columns,
                             "draw",
-                            element_spec=components,
+                            element_spec=output_record,
                             axes_per_level=(1,),
                             label=root.label,
                         )
@@ -1310,7 +1314,7 @@ def _batch_stand_in(root: Any, event: BatchSpec) -> Any:
     root : Distribution
         The law whose draws the probe stands in for.
     event : BatchSpec
-        The law's event declaration.
+        The law's event spec.
 
     Returns
     -------
@@ -1353,7 +1357,7 @@ def _batch_stand_in(root: Any, event: BatchSpec) -> Any:
 def _stored_dtype(root: Any, path: str) -> Any:
     """The dtype of the atoms an empirical *root* stores at the leaf *path*, or None.
 
-    The probe reads it where the law's declaration leaves a dtype open, since an
+    The probe reads it where the law's event spec leaves a dtype open, since an
     empirical law holds its atoms and reading them draws nothing. Atoms that
     are objects have no dtype.
     """
@@ -1652,7 +1656,7 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         If an argument's kind is not accepted, a condition fails, or the
         declarations conflict.
     ValueError
-        If an empty sweep lacks a concrete output declaration after input
+        If an empty sweep lacks a concrete output spec after input
         dimensions bind.
     ResolutionError
         If a conversion has no converter, or the ``method`` control names no
@@ -1706,7 +1710,7 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
     )
     _plan.require_empty_sweep_output(broadcast_plan, result)
     deferred = ()
-    if result is None or result.spec is None:
+    if result is None or result.term_spec is None:
         deferred = ("the result's type is completed from the returned value",)
     lifted = tuple(dict.fromkeys(ref.parameter_name for ref in lifted_refs))
     if waiting:

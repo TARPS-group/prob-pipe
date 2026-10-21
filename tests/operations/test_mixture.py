@@ -16,7 +16,7 @@ def test_mixture_is_derived_from_its_formula():
     assert mixture.formula == "pushforward(K * mixing, _kernel_output_projection(K))"
 
 
-def test_the_result_carries_the_kernel_event_declaration():
+def test_the_result_carries_the_kernel_event_spec():
     kernel = Kernel("y", ("mu",))
     assert mixture.check(kernel, Gaussian("mu")).result == OutputSpec(
         DistributionSpec(kernel.event_spec)

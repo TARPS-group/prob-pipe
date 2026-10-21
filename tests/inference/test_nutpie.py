@@ -107,8 +107,8 @@ class TestCompileForNutpie:
             patch.object(nutpie, "sample", return_value=trace),
         ):
             result = condition_on_nutpie.apply(posterior, num_results=3, num_chains=2)
-        assert tuple(result.event_spec.components) == ("mu", "theta")
-        assert result.event_spec.spec["theta"] == NumericArraySpec(
+        assert tuple(result.event_spec.outputs) == ("mu", "theta")
+        assert result.event_spec.term_spec["theta"] == NumericArraySpec(
             (2,), jnp.result_type(float), real
         )
         np.testing.assert_array_equal(
@@ -407,7 +407,7 @@ class TestNutpieStanIntegration:
         options = {"num_results": 30, "num_warmup": 30, "num_chains": 1}
         with workflow_run(seed=0):
             posterior = condition_on.using(method_options=options)(renamed, data)
-        assert list(posterior.event_spec.components) == ["scale_free"]
+        assert list(posterior.event_spec.outputs) == ["scale_free"]
 
 
 # ---------------------------------------------------------------------------
@@ -500,7 +500,7 @@ class TestNutpieIntegration:
         options = {"num_results": 30, "num_warmup": 30, "num_chains": 1}
         with workflow_run(seed=0):
             posterior = condition_on.using(method_options=options)(renamed, data)
-        assert list(posterior.event_spec.components) == ["location"]
+        assert list(posterior.event_spec.outputs) == ["location"]
 
     def test_annotations_trace_attached(self):
         model = PyMCModel(_gaussian_pymc_fn, label="gaussian")

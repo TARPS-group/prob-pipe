@@ -30,10 +30,10 @@ from probpipe.diagnostics._views import DiagnosticsView, PPCView
 
 
 def _kernel(posterior, n: int = 50):
-    """``y ~ Normal(alpha, 1)``, iid over *n* observations, given the posterior's slots."""
+    """``y ~ Normal(alpha, 1)``, iid over *n* observations; its inputs are the posterior's outputs."""
     return conditional_distribution(
         lambda alpha, beta: Normal("y", alpha * jnp.ones(n), 1.0),
-        given_spec=posterior.event_spec.components,
+        given_spec=posterior.event_spec.outputs,
         label="y_given_alpha",
     )
 
@@ -232,7 +232,7 @@ class TestAddPpc:
         view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
         assert view.observed["_mean"] == pytest.approx(float(np.mean(observed)), rel=1e-5)
 
-    def test_observed_data_may_map_the_kernel_components(self, posterior):
+    def test_observed_data_may_map_the_kernel_outputs(self, posterior):
         observed = np.random.default_rng(3).standard_normal(50)
         with workflow_run(seed=0):
             add_ppc(
@@ -276,12 +276,12 @@ class TestAddPpc:
         assert np.isnan(float(ppc_ds["p_value"].sel(test_fn="_mean")))
         assert np.isnan(float(ppc_ds["observed"].sel(test_fn="_mean")))
 
-    def test_a_posterior_that_misses_a_given_slot_raises_naming_it(self, posterior):
+    def test_a_posterior_that_misses_an_input_raises_naming_it(self, posterior):
         kernel = conditional_distribution(
             lambda alpha, gamma: Normal("y", alpha * jnp.ones(5), 1.0),
             given_spec={
-                "alpha": posterior.event_spec.components["alpha"],
-                "gamma": posterior.event_spec.components["alpha"],
+                "alpha": posterior.event_spec.outputs["alpha"],
+                "gamma": posterior.event_spec.outputs["alpha"],
             },
             label="y_given_alpha_gamma",
         )

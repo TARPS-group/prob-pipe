@@ -1,0 +1,66 @@
+name: Push status
+
+# While the contracts push runs (plans/status.py exists), keeps its tracking issue
+# current and checks that each PR into dev/overhaul says which step it belongs to.
+#
+# - The label check fails a PR that carries none of `step:<step>`, `push:plans`,
+#   `push:checkpoint`, or `push:outside` (plans/README.md § Status).
+# - The status job runs plans/status.py, which rewrites the tracking issue's step
+#   lines from the PRs' labels, after every change to a PR's state or labels.
+#
+# A `pull_request` run takes this file from the PR's merge ref, so a merged PR's
+# run uses the workflow as merged. No PR text reaches a shell command.
+
+on:
+  pull_request:
+    branches: [dev/overhaul]
+    types: [opened, reopened, ready_for_review, converted_to_draft, closed, labeled, unlabeled]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  label:
+    name: Push label
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Check for a step or push label
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          if [ ! -f plans/status.py ]; then
+            echo "No push is running."
+            exit 0
+          fi
+          if python3 -c 'import json, os, sys; names = json.loads(os.environ["LABELS"]); sys.exit(not any(n.startswith("step:") or n in {"push:plans", "push:checkpoint", "push:outside"} for n in names))'; then
+            echo "The PR carries a step or push label."
+          else
+            echo "::error::This PR into dev/overhaul has no step:<step> label. Add the label of the step it implements, such as step:S3; push:plans for a plans or design PR; or push:outside for a PR outside the push (plans/README.md § Status)."
+            exit 1
+          fi
+
+  status:
+    name: Tracking issue status
+    runs-on: ubuntu-latest
+    concurrency:
+      group: push-status
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Rewrite the tracking issue from the PRs' labels
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f plans/status.py ]; then
+            python3 plans/status.py
+          else
+            echo "No push is running."
+          fi

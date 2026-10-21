@@ -405,7 +405,7 @@ class TestWithLabelOnCustomNewHosts:
                 "emp",
                 label="labels",
             ),
-            component="emp",
+            output_name="emp",
         )
         renamed = emp.with_label("labels")
         assert renamed.label == "labels"

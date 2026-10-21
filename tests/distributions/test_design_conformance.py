@@ -67,13 +67,11 @@ _OTHER_PACKAGES = frozenset(
 _PENDING: dict[str, str] = {
     "Distribution": "III.7 declares [] by paths, in, output, without, and rename; the code has [] by key, "
     "with_path_names, and none of in, output, or without",
-    "MarginalView": "III.7 names the view class MarginalView; the code names it FieldView",
+    "CoupledMarginal": "III.7 names the class CoupledMarginal; the code names it FieldView",
     "ConditionalDistribution": "III.9 declares [] by paths, output, without, and rename on a kernel; "
     "the code has none of them",
     "__and__": "IV.2 declares & as the merge of laws and kernels; the code merges them with *",
     "__bool__": "IV.2 declares that a law or a kernel refuses a truth value; the code has no __bool__",
-    "distribution": "IV.4 names the keyword output_name; the code names it component",
-    "EmpiricalDistribution": "VII.2 names the keyword output_name; the code names it component",
 }
 
 
@@ -138,7 +136,7 @@ class TestDeclarationsAreImplemented:
 
 class TestExportsAreDeclared:
     @pytest.mark.pending(
-        reason="III.7 names the view class MarginalView; the code exports FieldView",
+        reason="III.7 names the class CoupledMarginal; the code exports FieldView",
         raises=AssertionError,
     )
     def test_every_exported_distribution_kind_is_declared_or_derived_by_rule(self):

@@ -202,7 +202,7 @@ def test_using_controls_max_evaluations_and_include_inputs():
 
     assert isinstance(result, EmpiricalDistribution)
     assert result.num_atoms == 6
-    assert "x" in result.event_spec.components
+    assert "x" in result.event_spec.outputs
 
 
 def test_workflow_run_reproduces_one_lifted_call():

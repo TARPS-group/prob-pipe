@@ -135,7 +135,7 @@ class TestAutomaticSample:
 
 class TestAutomaticExpectation:
     def test_exact_empirical_expectation_claims_no_event(self):
-        dist = EmpiricalDistribution(jnp.asarray([1.0, 2.0, 3.0]), component="x")
+        dist = EmpiricalDistribution(jnp.asarray([1.0, 2.0, 3.0]), output_name="x")
 
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,

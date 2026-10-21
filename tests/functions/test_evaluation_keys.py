@@ -704,6 +704,6 @@ def _normal_model(prior):
     likelihood = conditional_distribution(
         lambda mu: Normal("y", mu * jnp.ones(4), 1.0),
         label="y_given_mu",
-        given_spec=prior.event_spec.components,
+        given_spec=prior.event_spec.outputs,
     )
     return likelihood * prior

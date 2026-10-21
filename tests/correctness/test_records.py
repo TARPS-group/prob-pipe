@@ -241,7 +241,7 @@ def _population_atoms() -> EmpiricalDistribution:
 
 
 def _theta_given_population():
-    """The kernel ``theta | population ~ N(mu, tau)``, whose given slot is a record."""
+    """The kernel ``theta | population ~ N(mu, tau)``, whose input is a record."""
     return RecordObservationKernel(
         "theta",
         {"population": _POPULATION},
@@ -251,13 +251,13 @@ def _theta_given_population():
 
 
 class TestRecordValuedFactors:
-    def test_the_joint_exposes_each_factors_components_with_their_packaging(self):
+    def test_the_joint_exposes_each_factors_outputs_with_their_form(self):
         joint = _population_atoms() * Normal("x", 0.0, 1.0)
-        spec = joint.event_spec.spec
+        spec = joint.event_spec.term_spec
         assert list(spec.children) == ["population", "x"]
         assert spec.children["population"] == _POPULATION
 
-    def test_a_joint_draw_takes_the_record_component_from_one_atom(self):
+    def test_a_joint_draw_takes_the_record_output_from_one_atom(self):
         hyper = _population_atoms()
         joint = hyper * Normal("x", 0.0, 1.0)
         with workflow_run(seed=3):
@@ -278,7 +278,7 @@ class TestRecordValuedFactors:
             np.testing.assert_allclose(_at(means, path), _at(hyper_mean, path))
         assert float(means["x"]) == pytest.approx(0.5)
 
-    def test_the_marginal_of_the_record_component_is_its_factors_law(self):
+    def test_the_marginal_of_the_record_output_is_its_factors_law(self):
         hyper = _population_atoms()
         group = marginal(hyper * Normal("x", 0.0, 1.0), "population")
         assert group.event_spec == OutputSpec(population=_POPULATION)
@@ -418,7 +418,7 @@ class TestNestedViews:
     def test_a_view_reads_the_parents_moments_and_quantiles_at_its_node(self, path):
         law = _correlated()
         view = FieldView(law, path)
-        component = path.rsplit("/", 1)[-1]
+        output_name = path.rsplit("/", 1)[-1]
         for operation in (mean, variance):
             parent_raw = operation.using(raw=True)(law)
             view_raw = operation.using(raw=True)(view)
@@ -430,7 +430,7 @@ class TestNestedViews:
         parent_q = quantile.using(raw=True)(law, levels)
         view_q = quantile.using(raw=True)(view, levels)
         node = _node(parent_q, path)
-        assert list(view.event_spec.components) == [component]
+        assert list(view.event_spec.outputs) == [output_name]
         np.testing.assert_allclose(
             np.asarray(jax.tree.leaves(view_q)), np.asarray(jax.tree.leaves(node))
         )
@@ -512,7 +512,7 @@ class TestRenames:
         """The renamed law's draws, moments, and quantiles at a new path are the original's at the old."""
         law = _two_groups()
         renamed = law.with_path_names(renames)
-        new_paths = set(leaf_paths(renamed.event_spec.spec))
+        new_paths = set(leaf_paths(renamed.event_spec.term_spec))
         assert set(moved) <= new_paths
         assert not set(renames) & new_paths
         key = jax.random.PRNGKey(14)
@@ -550,10 +550,10 @@ class TestRenames:
         round_trip = law.with_path_names({"population/mu": "mu"}).with_path_names(
             {"mu": "population/mu"}
         )
-        spec = law.event_spec.spec
-        assert set(leaf_paths(round_trip.event_spec.spec)) == set(leaf_paths(spec))
+        spec = law.event_spec.term_spec
+        assert set(leaf_paths(round_trip.event_spec.term_spec)) == set(leaf_paths(spec))
         for path in leaf_paths(spec):
-            assert round_trip.event_spec.spec.at_path(*path.split("/")) == spec.at_path(
+            assert round_trip.event_spec.term_spec.at_path(*path.split("/")) == spec.at_path(
                 *path.split("/")
             )
             np.testing.assert_allclose(
@@ -561,10 +561,10 @@ class TestRenames:
                 _at(mean.using(raw=True)(law), path),
             )
 
-    def test_a_factored_joint_moves_a_component_into_a_group(self):
+    def test_a_factored_joint_moves_an_output_into_a_group(self):
         joint = Normal("a", 0.0, 1.0) * Normal("b", 2.0, 1.0)
         renamed = joint.with_path_names({"a": "g/a"})
-        assert set(leaf_paths(renamed.event_spec.spec)) == {"g/a", "b"}
+        assert set(leaf_paths(renamed.event_spec.term_spec)) == {"g/a", "b"}
         assert float(_at(mean.using(raw=True)(renamed), "g/a")) == pytest.approx(0.0)
 
 

@@ -143,7 +143,7 @@ class TestAnOperationDoesNotMutateItsResultAfterBuildingIt:
         assert assigned_state(conditioned) == before
         assert again is not conditioned
         # The operand is untouched, which is what §V.1 promises.
-        assert set(joint.event_spec.components) == {"z", "x"}
+        assert set(joint.event_spec.outputs) == {"z", "x"}
 
 
 class TestEveryMemoHolderDropsItsMemoOnACopy:

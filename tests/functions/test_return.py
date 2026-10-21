@@ -1,9 +1,9 @@
 """Return, step 8 of the stack (design V.10).
 
-Return validates the produced terms against the completed declaration and
+Return validates the produced terms against the completed output spec and
 wraps a raw host into the kind its spec names. It labels the result by
 ``output_label`` and gives it provenance, or returns it detached under
-``raw=True``. A result that violates its declaration raises ResultKindError or
+``raw=True``. A result that violates its output spec raises ResultKindError or
 ResultSchemaError, which are return-contract defects.
 """
 
@@ -108,7 +108,7 @@ class TestTheKindDirectedWrap:
         assert result.level_names == ("row",)
         np.testing.assert_array_equal(result.raw, [1.0, 2.0])
 
-    def test_an_array_under_one_component_stays_an_array(self):
+    def test_an_array_under_one_output_stays_an_array(self):
         wrapped = Function(
             lambda: jnp.ones(2),
             output_spec=OutputSpec(beta=None),
@@ -392,7 +392,7 @@ class TestResultErrors:
         with pytest.raises(ResultSchemaError, match="dtype int32"):
             Function(
                 lambda: returned,
-                output_spec=OutputSpec.default(declared, component="f"),
+                output_spec=OutputSpec.default(declared, output_name="f"),
                 label="f",
             )()
 
@@ -491,7 +491,7 @@ class TestResultErrors:
             lambda: value,
             output_spec=declaration
             if isinstance(declaration, OutputSpec) or declaration is None
-            else OutputSpec.default(declaration, component="produce"),
+            else OutputSpec.default(declaration, output_name="produce"),
             label="produce",
         )
         invoke = wrapped.apply if mode == "apply" else wrapped.using(raw=mode == "raw")
@@ -505,7 +505,7 @@ class TestResultErrors:
     def test_a_lifted_kind_mismatch_raises_result_kind_error(self, dispatch, regime, raw):
         wrapped = Function(
             lambda x: {"y": x},
-            output_spec=OutputSpec.default(SCALAR, component="produce"),
+            output_spec=OutputSpec.default(SCALAR, output_name="produce"),
             dispatch=dispatch,
             max_evaluations=6,
             raw=raw,
@@ -547,7 +547,7 @@ class TestResultErrors:
 
         wrapped = Function(
             body,
-            output_spec=OutputSpec.default(SCALAR, component="produce"),
+            output_spec=OutputSpec.default(SCALAR, output_name="produce"),
             dispatch="sequential",
             label="produce",
         )

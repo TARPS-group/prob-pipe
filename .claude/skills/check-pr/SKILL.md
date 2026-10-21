@@ -85,5 +85,8 @@ each changed Markdown file, and revise each candidate that breaks
 ## Step 6: Report
 
 Present the findings in two groups, blocking and recommended, followed by the
-path of the draft body. A failing test or check is blocking. Wait for the user before
+path of the draft body. While `plans/README.md` exists, also list what follows
+opening the PR: the label of its step, `step:<step>`, or `push:plans` or
+`push:outside` (`plans/README.md` § Status), and a comment on the tracking issue
+with its link and any decision or postponed work. A failing test or check is blocking. Wait for the user before
 pushing or opening the PR.

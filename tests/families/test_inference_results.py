@@ -1,7 +1,7 @@
 """Contracts of the inference-produced distributions (VII.7): ordinary members with a record.
 
 A result is a member of the family that realizes it, it keeps the target's
-event declaration under its own label, and its provenance names the method,
+event spec under its own label, and its provenance names the method,
 the target, and the inputs.
 """
 
@@ -41,9 +41,9 @@ def test_the_provenance_names_the_method_and_the_target(posterior, target):
     assert (parent.type_name, parent.label) == (type(target).__name__, target.label)
 
 
-def test_the_result_keeps_the_target_component(posterior):
-    assert list(posterior.event_spec.components) == ["z"]
+def test_the_result_keeps_the_target_output(posterior):
+    assert list(posterior.event_spec.outputs) == ["z"]
 
 
-def test_the_result_keeps_the_target_packaging(posterior, target):
+def test_the_result_keeps_the_target_event_spec(posterior, target):
     assert posterior.event_spec == target.event_spec
