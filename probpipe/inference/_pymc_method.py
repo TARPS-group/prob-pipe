@@ -11,18 +11,16 @@ import numpy as np
 from tensorflow_probability.substrates import jax as tfp
 
 from ..core._dispatch import Feasibility
-from ..core._specs import OutputSpec
+from ..custom_types import PRNGKey
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
-from ..operations._condition import InferenceMethod, _UnnormalizedConditional
+from ..operations._condition import InferenceMethod
+from ..operations._inference_target import InferenceTarget, _described, _UnnormalizedConditional
 from ._approximate_distribution import _record_run, make_posterior
 from ._inference_utils import (
-    described,
     extract_chain_columns,
     integer_seed,
     joint_and_given,
-    posterior_var_order,
-    run_seed,
 )
 
 
@@ -74,7 +72,7 @@ class PyMCNutsMethod(InferenceMethod):
         return "pymc_nuts"
 
     def supported_types(self) -> tuple[type, ...]:
-        return (self._model_type, _UnnormalizedConditional)
+        return (_UnnormalizedConditional,)
 
     @property
     def priority(self) -> int:
@@ -85,11 +83,13 @@ class PyMCNutsMethod(InferenceMethod):
         dist, _ = joint_and_given(target)
         if not isinstance(dist, self._model_type):
             return Feasibility(
-                feasible=False, description=f"the model must be a PyMCModel; got {described(dist)}"
+                feasible=False, description=f"the model must be a PyMCModel; got {_described(dist)}"
             )
         return Feasibility(feasible=True)
 
-    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
+    def execute(
+        self, target: InferenceTarget, /, *, key: PRNGKey, **kwargs: Any
+    ) -> EmpiricalDistribution:
         """PyMC inference on the model the target carries, at the observed values it binds."""
         self._check_options(kwargs)
         from ..families._programs import _import_pymc
@@ -108,13 +108,12 @@ class PyMCNutsMethod(InferenceMethod):
         # warning and falls back to single-process sampling — so multi-core
         # is the default without making serializability a hard requirement.
         cores = kwargs.get("cores", min(num_chains, os.cpu_count() or 1))
-        random_seed = integer_seed(run_seed(self.name))
+        random_seed = integer_seed(key)
 
         model = dist._pymc_model(data=observed)
-        # Build the parameter record in canonical field order before sampling
-        # (fail fast on a dynamic-RV / non-concrete model).
-        param_names = dist._conditioned_param_names(model)
-        event_spec = OutputSpec(dist._parameter_record_for(model, param_names))
+        # The parameters' shapes come from the build at the data, before sampling,
+        # so a dynamic-RV or non-concrete model fails fast.
+        parameter_shapes = _pymc_parameter_shapes(target, dist, model)
         with model:
             trace = pm.sample(
                 draws=num_results,
@@ -128,18 +127,14 @@ class PyMCNutsMethod(InferenceMethod):
                 nuts_sampler="pymc",
             )
 
-        # Extract in the trace's natural order; field_order lets
-        # make_posterior realign columns to the parameters by name.
-        order = posterior_var_order(trace, param_names)
-        chains = extract_chain_columns(trace, order, num_chains)
+        chains = extract_chain_columns(trace, list(parameter_shapes), num_chains)
 
         return make_posterior(
+            target,
             chains,
-            parents=(target,),
             method="pymc_nuts",
             annotations=trace,
-            event_spec=event_spec,
-            field_order=order,
+            parameter_shapes=parameter_shapes,
             num_results=num_results,
             num_warmup=num_warmup,
             num_chains=num_chains,
@@ -162,8 +157,7 @@ class PyMCADVIMethod(InferenceMethod):
     - ``progress_bar``: whether ``fit`` draws its progress bar. ``fit``
       receives the option as ``progressbar``, which is ``True`` unless set.
 
-    The run draws its key from a workflow-owned random event, and the key seeds
-    both ``fit`` and the draws of an empirical result.
+    The run's random key seeds both ``fit`` and the draws of an empirical result.
 
     Notes
     -----
@@ -198,7 +192,7 @@ class PyMCADVIMethod(InferenceMethod):
         return "pymc_advi"
 
     def supported_types(self) -> tuple[type, ...]:
-        return (self._model_type, _UnnormalizedConditional)
+        return (_UnnormalizedConditional,)
 
     @property
     def priority(self) -> int | None:
@@ -209,11 +203,11 @@ class PyMCADVIMethod(InferenceMethod):
         dist, _ = joint_and_given(target)
         if not isinstance(dist, self._model_type):
             return Feasibility(
-                feasible=False, description=f"the model must be a PyMCModel; got {described(dist)}"
+                feasible=False, description=f"the model must be a PyMCModel; got {_described(dist)}"
             )
         return Feasibility(feasible=True)
 
-    def execute(self, target: Any, /, **kwargs: Any) -> Distribution:
+    def execute(self, target: InferenceTarget, /, *, key: PRNGKey, **kwargs: Any) -> Distribution:
         """PyMC variational inference on the model the target carries, at the observed values it binds."""
         self._check_options(kwargs)
         from ..families._programs import _import_pymc
@@ -224,14 +218,13 @@ class PyMCADVIMethod(InferenceMethod):
 
         num_iterations = kwargs.get("num_iterations", 30000)
         num_results = kwargs.get("num_results", 1000)
-        fit_key, draws_key = jax.random.split(run_seed(self.name))
+        fit_key, draws_key = jax.random.split(key)
         vi_method = kwargs.get("vi_method", "advi")
 
         model = dist._pymc_model(data=observed)
-        # Build the parameter record in canonical field order before fitting (fail
-        # fast on a dynamic-RV / non-concrete model).
-        param_names = dist._conditioned_param_names(model)
-        event_spec = OutputSpec(dist._parameter_record_for(model, param_names))
+        # The parameters' shapes come from the build at the data, before fitting,
+        # so a dynamic-RV or non-concrete model fails fast.
+        parameter_shapes = _pymc_parameter_shapes(target, dist, model)
         with model:
             approx = pm.fit(
                 n=num_iterations,
@@ -241,26 +234,61 @@ class PyMCADVIMethod(InferenceMethod):
             )
         name = f"pymc_{vi_method}"
         if vi_method == "advi":
-            family = _mean_field_family(approx, model, param_names)
+            family = _mean_field_family(approx, model, list(parameter_shapes))
             if family is not None:
                 return _record_run(family, (target,), name, num_iterations=num_iterations)
         with model:
             trace = approx.sample(num_results, random_seed=integer_seed(draws_key))
 
-        # ADVI's approx.sample yields a single chain of `num_results`
-        # draws; extract in natural order and realign by name.
-        order = posterior_var_order(trace, param_names)
-        chains = extract_chain_columns(trace, order, num_chains=1)
+        # ADVI's approx.sample yields a single chain of `num_results` draws.
+        chains = extract_chain_columns(trace, list(parameter_shapes), num_chains=1)
 
         return make_posterior(
+            target,
             chains,
-            parents=(target,),
             method=name,
             annotations=trace,
-            event_spec=event_spec,
-            field_order=order,
+            parameter_shapes=parameter_shapes,
             num_iterations=num_iterations,
         )
+
+
+def _pymc_parameter_shapes(
+    target: InferenceTarget, pymc_model: Any, model_build: Any
+) -> dict[str, tuple[int, ...]]:
+    """The shape of each parameter of *target* in *model_build*, a build of *pymc_model* at its data.
+
+    The shapes follow the target's order of its parameters, which a method
+    extracts its draws in.
+
+    Parameters
+    ----------
+    target : InferenceTarget
+        The target, whose event names the parameters.
+    pymc_model : PyMCModel
+        The model the target conditions.
+    model_build : pymc.Model
+        The build of *pymc_model* at the target's observed values.
+
+    Returns
+    -------
+    dict of str to tuple of int
+        Each parameter's shape, by name, in the target's order.
+
+    Raises
+    ------
+    ValueError
+        If the build leaves free other variables than the target's parameters.
+    """
+    names = list(target.event_spec.outputs)
+    free_names = pymc_model._conditioned_param_names(model_build)
+    if set(free_names) != set(names):
+        raise ValueError(
+            f"the PyMC model leaves {list(free_names)} free at its data, but the parameters of "
+            f"{target.label!r} are {names}"
+        )
+    record = pymc_model._parameter_record_for(model_build, names)
+    return {name: tuple(spec.shape) for name, spec in record.children.items()}
 
 
 # ---------------------------------------------------------------------------

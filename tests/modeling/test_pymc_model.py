@@ -464,8 +464,8 @@ class TestRecordSpec:
     def test_fullrank_advi_draws_realign_by_name(self):
         """Full-rank ADVI's draws are realigned to the template by name.
 
-        Its trace comes from ``approx.sample`` rather than a NUTS run, so it
-        exercises ``posterior_var_order`` on a distinct trace source, where a
+        Its trace comes from ``approx.sample`` rather than a NUTS run, so the
+        draws are extracted by name from a distinct trace source, where a
         positional split would shape-scramble the fields.
         """
         from probpipe import condition_on
@@ -616,11 +616,10 @@ class TestRecordSpec:
         assert float(jnp.mean(jnp.asarray(draws["mu"]))) > 50.0  # ~ +100
         assert float(jnp.mean(jnp.asarray(draws["X"]))) < -50.0  # ~ -100
 
-    def test_pymc_nuts_multiparam_field_order_realigned(self):
-        """End-to-end check of the name-keyed wiring: the
-        pymc_nuts path extracts in the trace's alphabetical ``data_vars``
-        order, and ``field_order`` realigns columns to the declared
-        (template) order by name.
+    def test_pymc_nuts_multiparam_draws_follow_the_targets_order(self):
+        """End-to-end check of the name-keyed wiring: the pymc_nuts path
+        extracts each parameter by name, in the target's order, whatever the
+        order of the trace's ``data_vars``.
 
         ``zeta``, ``alpha``, ``mu`` are declared non-alphabetically with
         distinct tight priors and a near-flat likelihood. The posterior

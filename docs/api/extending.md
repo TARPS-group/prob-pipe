@@ -25,17 +25,26 @@ A family that stores its laws at batched parameters in one backend object implem
 ## A new inference method
 
 An inference method normalizes the target that `condition_on` forms when no exact route conditions a law, and it returns a normalized law over the target's event.
-It subclasses `InferenceMethod`, declares `name` and `supported_types`, implements `check` and `execute`, and registers with `inference_method_registry.register`:
+It subclasses `InferenceMethod`, declares `name` and `supported_types`, implements `check` and `execute`, and registers with `inference_method_registry.register`.
+
+A method reads the model through its target, which is an `InferenceTarget`. The model is `target.joint`, the observed values are `target.given`, and `target.factors()` gives a merged model's prior and likelihood.
+Most methods run on the target's density in its flat layout, where one position is a 1-D array that holds a value of every parameter: `target.log_density(position)` is the unnormalized log-density there, and `target.unflatten(position)` is the same parameters as a draw of the event.
+`execute` also receives the run's random key as the keyword `key`, which `condition_on` derives from the enclosing `workflow_run`, so a seed reproduces the run; a method draws all of its randomness from that key.
+`make_posterior` turns chains of positions into the posterior the method returns.
+
+This method draws positions from a normal proposal and weights each by the target's density over the proposal's:
 
 ```python
-from typing import Any
+import jax
+import jax.numpy as jnp
+from jax.scipy.stats import norm
 
-from probpipe import Distribution, SupportsUnnormalizedLogProb, inference_method_registry
-from probpipe.inference import Feasibility, InferenceMethod
+from probpipe import Distribution, NumericRecordSpec, SupportsUnnormalizedLogProb, inference_method_registry
+from probpipe.inference import Feasibility, InferenceMethod, InferenceTarget, make_posterior
 
 
 class ImportanceSampling(InferenceMethod):
-    _method_options = ("num_draws",)  # the method_options entries execute reads
+    _method_options = ("num_draws", "proposal_scale")  # the method_options entries execute reads
 
     @property
     def name(self) -> str:
@@ -43,25 +52,54 @@ class ImportanceSampling(InferenceMethod):
 
     @property
     def description(self) -> str:  # one line, which the registry catalog shows
-        return "Self-normalized importance sampling from the prior."
+        return "Self-normalized importance sampling from a normal proposal."
 
     def supported_types(self) -> tuple[type, ...]:
         return (Distribution,)
 
-    def check(self, target: Any, /, **options: Any) -> Feasibility:
+    def check(self, target: InferenceTarget, /, **options) -> Feasibility:
         if not isinstance(target, SupportsUnnormalizedLogProb):
             return Feasibility(False, "the target has no unnormalized density")
+        if not isinstance(target.event_spec.term_spec, NumericRecordSpec):
+            return Feasibility(False, "the parameters must be a record of numeric arrays")
         return Feasibility(True)
 
-    def execute(self, target: Any, /, **options: Any) -> Distribution:
+    def execute(self, target: InferenceTarget, /, *, key, **options) -> Distribution:
         self._check_options(options)
-        ...  # draw, weight, and return a normalized law over the target's event
+        num_draws = options.get("num_draws", 2000)
+        scale = options.get("proposal_scale", 2.0)
+        size = target.event_spec.term_spec.vector_size  # the length of one position
+        positions = scale * jax.random.normal(key, (num_draws, size))
+        log_proposal = jnp.sum(norm.logpdf(positions, 0.0, scale), axis=-1)
+        log_weights = jax.vmap(target.log_density)(positions) - log_proposal
+        return make_posterior(
+            target, [positions], method=self.name, weights=jax.nn.softmax(log_weights)
+        )
 
 
 inference_method_registry.register(ImportanceSampling())
 ```
 
-`condition_on.using(method="my_importance_sampling")` runs the method by name.
+`condition_on.using(method="my_importance_sampling")` runs the method by name, and one seed gives the same draws:
+
+```python
+from probpipe import Normal, NumericArraySpec, condition_on, conditional_distribution, mean, workflow_run
+
+likelihood = conditional_distribution(
+    lambda mu: Normal("y", mu * jnp.ones(3), 1.0), given_spec={"mu": NumericArraySpec(())}
+)
+model = likelihood * Normal("mu", 0.0, 1.0)
+observed = {"y": jnp.array([0.4, 0.9, -0.1])}
+
+with workflow_run(seed=0):
+    posterior = condition_on.using(method="my_importance_sampling")(model, observed)
+with workflow_run(seed=0):
+    again = condition_on.using(method="my_importance_sampling")(model, observed)
+
+assert (posterior.atoms.raw["mu"] == again.atoms.raw["mu"]).all()
+print(mean(posterior))  # mu is near 0.3, the exact posterior mean
+```
+
 The method takes part in automatic selection once it overrides `priority`.
 
 ### Exactness and priority
@@ -93,6 +131,18 @@ Five criteria, in decreasing weight, place a new approximate method among these 
 5. Breadth: the range of models the method applies to, which breaks ties only, since `check` decides which methods apply.
 
 ::: probpipe.inference.InferenceMethod
+    options:
+      show_root_full_path: true
+
+::: probpipe.inference.InferenceTarget
+    options:
+      show_root_full_path: true
+
+::: probpipe.inference.ModelFactors
+    options:
+      show_root_full_path: true
+
+::: probpipe.inference.make_posterior
     options:
       show_root_full_path: true
 

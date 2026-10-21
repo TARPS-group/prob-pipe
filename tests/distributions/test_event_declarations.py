@@ -112,8 +112,9 @@ from probpipe.inference._minibatch import (
     _RandomMinibatchLogProb,
 )
 from probpipe.linalg import DenseLinOp
-from probpipe.operations._condition import _unnormalized_conditional, _UnnormalizedConditional
+from probpipe.operations._condition import _unnormalized_conditional
 from probpipe.operations._given import _GivenLaw
+from probpipe.operations._inference_target import _UnnormalizedConditional
 from tests._stanc import require_stanc
 
 # -- Constructions ------------------------------------------------------------

@@ -60,6 +60,7 @@ not read with ``TypeError``, naming the entries it reads.
 
 from __future__ import annotations
 
+from abc import abstractmethod
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from itertools import pairwise
@@ -75,7 +76,6 @@ from ..core._dispatch import (
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
-from ..core._execution_claims import Traceability
 from ..core._expression import Expression
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
@@ -89,11 +89,11 @@ from ..core._spec_base import (
 from ..core._specs import InputSpec, OutputSpec, _has_record_outputs, _output_record
 from ..core.provenance import Provenance
 from ..core.record import Record
+from ..custom_types import PRNGKey
 from ..distributions._capabilities import (
     SupportsApproximateConditioning,
     SupportsConditionalUnnormalizedLogProb,
     SupportsExactConditioning,
-    SupportsUnnormalizedLogProb,
     _capability_guard,
     _capability_subclass,
     _guard_condition,
@@ -122,10 +122,17 @@ from ..distributions._factored import (
     _with_named,
 )
 from ..distributions._views import _RenamedDistribution
+from ..functions import _evaluation_keys
 from ..functions._call import checking
 from ..functions._resolution import PointReport
 from ..values import FunctionSpec
 from ._convert import convert
+from ._inference_target import (
+    InferenceTarget,
+    _as_inference_target,
+    _joint_value,
+    _UnnormalizedConditional,
+)
 from ._operation import (
     BoundCall,
     RouteSource,
@@ -154,19 +161,18 @@ class InferenceMethod(UnaryDispatchMethod):
     """Base class for registered inference methods; ``exact`` is ``False`` unless a method overrides it.
 
     A method normalizes the target of ``condition_on``'s normalization stage: it
-    takes the target alone, a law whose data are already bound, and returns a
-    normalized law over the target's event. A subclass declares ``name``,
-    ``supported_types``, ``check``, and ``execute``, and overrides ``priority``
-    to take part in automatic selection. Its ``check`` reads the interface it
-    requires of the target, such as an unnormalized density, a backend program,
-    or the joint and the given values to simulate from.
+    takes the target, an :class:`~probpipe.inference.InferenceTarget` whose data
+    are already bound, and returns a normalized law over the target's event. A
+    subclass declares ``name``, ``supported_types``, ``check``, and ``execute``,
+    and overrides ``priority`` to take part in automatic selection. Its
+    ``check`` reads the interface it requires of the target, such as an
+    unnormalized density, a backend program, or the prior and likelihood to
+    simulate from.
 
     A method validates the ``method_options`` entries it receives when it runs:
     a subclass names the entries its ``execute`` reads in ``_method_options``
-    and calls :meth:`_check_options` before it computes anything. A built-in
-    method reads no seed among them: each of its runs draws its key from a
-    workflow-owned random event, so ``workflow_run(seed=...)`` reproduces the
-    run.
+    and calls :meth:`_check_options` before it computes anything. No method
+    reads a seed among them: :meth:`execute` receives the run's random key.
 
     Notes
     -----
@@ -185,6 +191,36 @@ class InferenceMethod(UnaryDispatchMethod):
     @property
     def exact(self) -> bool:
         return False
+
+    @abstractmethod
+    def execute(self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any) -> Distribution:
+        """Normalize *target*: return a normalized law over its event.
+
+        ``condition_on`` calls it once per run of the method, after ``check``
+        admitted the target, with a random key it derives for that run from
+        the enclosing ``workflow_run``, so ``workflow_run(seed=...)`` reproduces
+        the run and two runs in one workflow draw differently. A method draws
+        all of its randomness from *key*, splitting it as it needs, and none
+        from a global random generator; a method that draws nothing ignores
+        it. Code that calls a method directly passes a key of its own choice.
+
+        Parameters
+        ----------
+        target : InferenceTarget
+            The law to normalize: a model's parameters at its observed values.
+        key : PRNGKey
+            The run's random key.
+        **options : Any
+            The call's ``method_options``, which the method validates with
+            :meth:`_check_options`.
+
+        Returns
+        -------
+        Distribution
+            A normalized law over ``target.event_spec``, usually built with
+            :func:`~probpipe.inference.make_posterior`.
+        """
+        ...
 
     def _check_options(self, options: Mapping[str, Any]) -> None:
         """Refuse a ``method_options`` entry that the method does not read.
@@ -272,9 +308,23 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
         """
         return super().execute(*self._targets(args), method=method, exact_only=exact_only, **kwargs)
 
+    def _run_selected(
+        self, registration: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> Any:
+        """The selected method's result on the target, with the key of this run of the method."""
+        return registration.method.execute(
+            *args, key=_inference_run_key(registration.name), **kwargs
+        )
+
     @staticmethod
     def _targets(args: tuple[Any, ...]) -> tuple[Any, ...]:
-        """*args* with a model and its observed data replaced by their target.
+        """*args* with the target they denote, an inference target wherever they denote a law.
+
+        A model and the data it is conditioned on are replaced by the target the
+        installed builder forms from them. A law that is no inference target,
+        such as one that is itself unnormalized, is replaced by the target of
+        conditioning it on nothing, so every method receives an
+        :class:`~probpipe.inference.InferenceTarget`.
 
         Parameters
         ----------
@@ -285,19 +335,59 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
         Returns
         -------
         tuple of Any
-            A one-element tuple of the target when *args* holds two arguments, and
-            *args* itself otherwise.
+            A one-element tuple of the target when *args* holds a law or a model
+            and its data, and *args* itself otherwise.
 
         Raises
         ------
         TypeError
             If a model and its data are passed before a builder is installed.
         """
-        if len(args) != 2:
-            return args
-        if _observed_target is None:
-            raise TypeError("conditioning a model on data requires probpipe.inference; import it")
-        return (_observed_target(*args),)
+        if len(args) == 2:
+            if _observed_target is None:
+                raise TypeError(
+                    "conditioning a model on data requires probpipe.inference; import it"
+                )
+            args = (_observed_target(*args),)
+        if len(args) == 1 and isinstance(args[0], Distribution):
+            return (_as_inference_target(args[0]),)
+        return args
+
+
+#: The sampling ABI of the key of an inference method's run. The string is
+#: frozen: it enters every run's key, so changing it changes every seeded run.
+_INFERENCE_RUN_KEY_ABI = "probpipe.inference.run_seed/v1"
+
+
+def _inference_run_key(method_name: str) -> PRNGKey:
+    """The workflow-owned random key of one run of the inference method *method_name*.
+
+    The enclosing scope derives the key from its root seed and the call's
+    structure (V.8), so ``workflow_run(seed=...)`` reproduces the run, and
+    scopes with different seeds, or two unscoped calls, run differently. The
+    registry derives it for every method it runs, and a public function that
+    runs an inference algorithm outside the registry derives its own.
+
+    Parameters
+    ----------
+    method_name : str
+        The method's name, which the random event records as its provider.
+
+    Returns
+    -------
+    PRNGKey
+        A JAX random key.
+    """
+    return _evaluation_keys._resolve_automatic_key(
+        None,
+        _evaluation_keys._singleton_effect_plan(
+            operation_kind="inference",
+            execution_mode="sampled",
+            sample_shape=None,
+            sampling_abi=_INFERENCE_RUN_KEY_ABI,
+            provider_abi=f"probpipe.inference.{method_name}/v1",
+        ),
+    )
 
 
 inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = _InferenceMethodRegistry(
@@ -464,106 +554,6 @@ def _unconditioned_event(law: Any, produced: Iterable[str]) -> OutputSpec:
             {name: spec for name, spec in record.children.items() if name not in conditioned}
         )
     )
-
-
-def _joint_value(value: Any, given: Record) -> Record:
-    """The joint's value at *value*, a draw of the unconditioned fields, and at *given*."""
-    fields = value.children if isinstance(value, Record) else value
-    return Record({**dict(fields), **dict(given.children)}, label="value")
-
-
-def _conditional_density(self: _UnnormalizedConditional, value: Any) -> Any:
-    """The joint's unnormalized log-density at *value* and the given values.
-
-    Field-keyed given values join *value* into one record of the joint's fields.
-    Data the joint does not declare as fields pair with *value* as
-    ``(value, data)``, the form a density over parameters and data takes.
-    """
-    given = self.given
-    joint_value = _joint_value(value, given) if self.keyed else (value, given)
-    return self.joint._unnormalized_log_prob(joint_value)
-
-
-class _UnnormalizedConditional(Distribution):
-    """The unnormalized conditional: the law of a joint's unconditioned fields at given values.
-
-    Its unnormalized log-density at a value of the unconditioned fields is the
-    joint's at that value and the given values. It carries the joint and the
-    given values, so a method that simulates rather than evaluates a density
-    reads them. It claims ``SupportsUnnormalizedLogProb`` when the joint claims
-    an unnormalized density, and no normalized capability, so it is
-    unnormalized, and ``condition_on`` passes it to the inference-method
-    registry as the target.
-
-    Parameters
-    ----------
-    joint : Distribution
-        The law conditioned.
-    given : Record or Any
-        The values of the conditioned fields, keyed by their outputs; or,
-        when *keyed* is false, the data of a joint that does not declare them
-        as fields, such as a model conditioned through ``probpipe.condition_on``.
-    event_spec : OutputSpec
-        The event spec of the unconditioned fields.
-    keyed : bool
-        Whether *given* is keyed by the joint's fields.
-    """
-
-    _capability_table: ClassVar = {
-        SupportsUnnormalizedLogProb: {"_unnormalized_log_prob": _conditional_density},
-    }
-
-    def __new__(
-        cls, joint: Distribution, given: Any, event_spec: OutputSpec, *, keyed: bool = True
-    ) -> Any:
-        claimed = (
-            (SupportsUnnormalizedLogProb,) if isinstance(joint, SupportsUnnormalizedLogProb) else ()
-        )
-        return object.__new__(_capability_subclass(_UnnormalizedConditional, claimed))
-
-    def __init__(
-        self, joint: Distribution, given: Any, event_spec: OutputSpec, *, keyed: bool = True
-    ) -> None:
-        super().__init__(
-            event_spec,
-            label=joint.label,
-        )
-        self._joint = joint
-        self._given = given
-        self._keyed = keyed
-        self.with_provenance(
-            Provenance.create(
-                "condition_on",
-                parents=[joint],
-                metadata={"stage": "exact", "route": "inference_methods"},
-            )
-        )
-
-    def _derived_traceability(self) -> Traceability:
-        """The joint's traceability, whose density this law reads at the given values."""
-        return self._joint._traceability()
-
-    @property
-    def joint(self) -> Distribution:
-        """The law conditioned."""
-        return self._joint
-
-    @property
-    def given(self) -> Any:
-        """The values of the conditioned fields, or the data of a joint without such fields."""
-        return self._given
-
-    @property
-    def keyed(self) -> bool:
-        """Whether the given values are keyed by the joint's fields."""
-        return self._keyed
-
-    def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The law conditioned, and the fields its given values fix where they are keyed."""
-        fields = [("joint", repr(self._joint))]
-        if self._keyed:
-            fields.append(("conditioned", format_names(self._given.keys())))
-        return fields
 
 
 def _conditional_kernel_density(

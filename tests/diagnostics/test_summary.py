@@ -29,7 +29,7 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.distributions._batches import DistributionBatch
-from probpipe.inference._approximate_distribution import make_posterior
+from probpipe.inference._approximate_distribution import _posterior_from_chains
 
 # Each summary of these laws is a float32 closed form, which matches SciPy's
 # float64 value to within a few units in the last place.
@@ -75,7 +75,7 @@ def _posterior(
         event = OutputSpec(RecordSpec(population=RecordSpec(mu=scalar, sigma=scalar)))
     else:
         event = OutputSpec(RecordSpec(mu=scalar, sigma=scalar))
-    return make_posterior(list(draws), (), "test", event_spec=event)
+    return _posterior_from_chains(list(draws), (), "test", event_spec=event)
 
 
 @pytest.fixture

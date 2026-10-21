@@ -20,7 +20,7 @@ from probpipe.diagnostics._views import (
     PPCView,
 )
 from probpipe.families import PoissonFamily, glm_likelihood
-from probpipe.inference._approximate_distribution import make_posterior
+from probpipe.inference._approximate_distribution import _posterior_from_chains
 from probpipe.inference._inference_utils import build_mcmc_datatree
 
 # ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ def poisson_regression():
     likelihood = glm_likelihood("y", PoissonFamily(), X=design)
     prior = Normal("beta", jnp.zeros(2), jnp.ones(2))
     chains = [rng.normal([0.5, 0.3], 0.1, size=(500, 2)).astype(np.float32) for _ in range(2)]
-    posterior = make_posterior(
+    posterior = _posterior_from_chains(
         chains,
         parents=(prior,),
         method="test",

@@ -11,11 +11,12 @@ import numpy as np
 import tensorflow_probability.substrates.jax.mcmc as tfp_mcmc
 
 from ..core._dispatch import Feasibility
-from ..custom_types import Array
+from ..custom_types import Array, PRNGKey
 from ..distributions._capabilities import SupportsUnnormalizedLogProb
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..operations._condition import InferenceMethod
+from ..operations._inference_target import InferenceTarget, _flat_record
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
     UNTRACEABLE_DENSITY,
@@ -23,12 +24,9 @@ from ._inference_utils import (
     build_mcmc_datatree,
     build_target_log_prob,
     build_target_log_prob_flat,
-    extract_event_spec,
-    flat_record,
     get_init_state,
     no_density_reason,
     observed_parts,
-    run_seed,
     traces_in_jax,
     unconstrained_chain,
 )
@@ -120,19 +118,18 @@ def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, np.ndarray]
 
 def _chain_target(
     model: Any, observed: Any, *, init: Any, random_seed: int
-) -> tuple[Callable[[Array], Array], Array, Any]:
-    """The log-density at a chain state, the initial state, and the posterior's declaration.
+) -> tuple[Callable[[Array], Array], Array]:
+    """The log-density at a chain state, and the initial state.
 
     TFP runs on the flat state :func:`get_init_state` gives. A target that
     declares a numeric record it has no flat view of is scored at that state
     unflattened, and any other at the state as it is.
     """
-    if flat_record(model) is not None:
+    if _flat_record(model) is not None:
         return build_target_log_prob_flat(model, observed, init=init, random_seed=random_seed)
     return (
         build_target_log_prob(model, observed),
         get_init_state(model, init, random_seed=random_seed),
-        extract_event_spec(model),
     )
 
 
@@ -188,22 +185,24 @@ class _TFPGradientMethod(InferenceMethod):
         if not traces_in_jax(model):
             return Feasibility(feasible=False, description=UNTRACEABLE_DENSITY)
         try:
-            density, init, _ = _chain_target(
-                model, observed, init=kwargs.get("init"), random_seed=0
-            )
+            density, init = _chain_target(model, observed, init=kwargs.get("init"), random_seed=0)
             unconstrained_chain(density, init, model)
         except Exception as e:
             return Feasibility(feasible=False, description=str(e))
         return Feasibility(feasible=True)
 
-    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
+    def execute(
+        self, target: InferenceTarget, /, *, key: PRNGKey, **kwargs: Any
+    ) -> EmpiricalDistribution:
         """Chains of the TFP kernel on the target's unnormalized density.
 
         Parameters
         ----------
-        target : Distribution
+        target : InferenceTarget
             The law to sample: a law with an unnormalized density, or an
             unnormalized conditional at data its joint does not declare as fields.
+        key : PRNGKey
+            The run's random key.
         **kwargs : Any
             The call's ``method_options``, which :func:`TFPNutsMethod` lists.
 
@@ -223,11 +222,8 @@ class _TFPGradientMethod(InferenceMethod):
             raise ValueError(
                 f"target_accept_prob must be strictly between 0 and 1; got {target_accept_prob!r}"
             )
-        random_seed = run_seed(self.name)
         model, observed = observed_parts(target)
-        density, init, event_spec = _chain_target(
-            model, observed, init=kwargs.get("init"), random_seed=random_seed
-        )
+        density, init = _chain_target(model, observed, init=kwargs.get("init"), random_seed=key)
         density, init, constrain = unconstrained_chain(density, init, model)
 
         num_results = kwargs.get("num_results", 1000)
@@ -243,16 +239,15 @@ class _TFPGradientMethod(InferenceMethod):
             num_chains=num_chains,
             step_size=kwargs.get("step_size", 0.1),
             target_accept_prob=target_accept_prob,
-            random_seed=random_seed,
+            random_seed=key,
         )
         chains = [constrain(chain) for chain in chains]
         annotations = build_mcmc_datatree(chains, sample_stats)
         return make_posterior(
+            target,
             chains,
-            parents=(target,),
             method=self._method_name,
             annotations=annotations,
-            event_spec=event_spec,
             num_results=num_results,
             num_warmup=num_warmup,
             num_chains=num_chains,

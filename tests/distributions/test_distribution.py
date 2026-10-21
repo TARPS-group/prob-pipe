@@ -1424,10 +1424,10 @@ class TestModelDeclarations:
     """Posteriors declare what their targets or stored draws are."""
 
     def test_a_posterior_declares_its_targets_event(self):
-        from probpipe.inference._approximate_distribution import make_posterior
+        from probpipe.inference._approximate_distribution import _posterior_from_chains
 
         prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
-        post = make_posterior(
+        post = _posterior_from_chains(
             [jnp.zeros((10, 2))],
             parents=(prior,),
             method="test",
@@ -1435,7 +1435,7 @@ class TestModelDeclarations:
         )
         assert post.event_spec == OutputSpec(RecordSpec(a=(), b=()))
         positive_target = RecordSpec(a=NumericArraySpec((), None, positive), b=())
-        post = make_posterior(
+        post = _posterior_from_chains(
             [jnp.ones((10, 2))], parents=(prior,), method="test", event_spec=positive_target
         )
         assert post.event_spec == OutputSpec(positive_target)

@@ -11,12 +11,13 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._dispatch import Feasibility
-from ..core._specs import OutputSpec
+from ..custom_types import PRNGKey
 from ..distributions._empirical import EmpiricalDistribution
-from ..families._programs import _parameter_record_at, _StanPosterior
+from ..families._programs import _StanPosterior
 from ..operations._condition import InferenceMethod
+from ..operations._inference_target import InferenceTarget, _UnnormalizedConditional
 from ._approximate_distribution import make_posterior
-from ._inference_utils import integer_seed, run_seed
+from ._inference_utils import integer_seed, joint_and_given
 
 
 def _import_cmdstanpy():
@@ -57,7 +58,7 @@ class CmdStanNutsMethod(InferenceMethod):
         return "cmdstan_nuts"
 
     def supported_types(self) -> tuple[type, ...]:
-        return (_StanPosterior,)
+        return (_UnnormalizedConditional,)
 
     @property
     def priority(self) -> int:
@@ -65,7 +66,8 @@ class CmdStanNutsMethod(InferenceMethod):
 
     def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
         """Whether the target is a Stan program's posterior at its data, and cmdstanpy is installed."""
-        if not isinstance(target, _StanPosterior):
+        program_posterior, given = joint_and_given(target)
+        if not isinstance(program_posterior, _StanPosterior) or given is not None:
             return Feasibility(
                 feasible=False, description="the target must be a StanModel's posterior"
             )
@@ -76,7 +78,9 @@ class CmdStanNutsMethod(InferenceMethod):
             )
         return Feasibility(feasible=True)
 
-    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
+    def execute(
+        self, target: InferenceTarget, /, *, key: PRNGKey, **kwargs: Any
+    ) -> EmpiricalDistribution:
         """Stan's NUTS on the target's program at its data, through cmdstanpy.
 
         The posterior keeps the target's parameter record: each chain holds the
@@ -89,11 +93,12 @@ class CmdStanNutsMethod(InferenceMethod):
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 1000)
         num_chains = kwargs.get("num_chains", 4)
-        random_seed = integer_seed(run_seed(self.name))
+        random_seed = integer_seed(key)
+        program_posterior, _ = joint_and_given(target)
 
-        model = cmdstanpy.CmdStanModel(stan_file=target.stan_file)
+        model = cmdstanpy.CmdStanModel(stan_file=program_posterior.stan_file)
         fit = model.sample(
-            data=dict(target.data),
+            data=dict(program_posterior.data),
             chains=num_chains,
             iter_sampling=num_results,
             iter_warmup=num_warmup,
@@ -103,7 +108,7 @@ class CmdStanNutsMethod(InferenceMethod):
 
         # stan_variable concatenates the chains in chain order, each draw in the
         # variable's own shape.
-        names = list(target.event_spec.outputs)
+        names = list(program_posterior.event_spec.outputs)
         draws = {name: np.asarray(fit.stan_variable(name)) for name in names}
         per_chain = len(draws[names[0]]) // num_chains
         chains = [
@@ -117,14 +122,13 @@ class CmdStanNutsMethod(InferenceMethod):
             for c in range(num_chains)
         ]
         shapes = {name: draws[name].shape[1:] for name in names}
-        event_spec = OutputSpec(_parameter_record_at(target.event_spec.term_spec, shapes))
 
         return make_posterior(
+            target,
             chains,
-            parents=(target,),
             method="cmdstan_nuts",
             annotations=azb.from_cmdstanpy(fit),
-            event_spec=event_spec,
+            parameter_shapes=shapes,
             num_results=num_results,
             num_warmup=num_warmup,
             num_chains=num_chains,

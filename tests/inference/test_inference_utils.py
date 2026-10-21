@@ -34,13 +34,12 @@ from probpipe.inference._inference_utils import (
     as_prng_key,
     build_target_log_prob,
     build_target_log_prob_flat,
-    extract_event_spec,
     get_init_state,
     likelihood_flat,
     model_factors,
     observed_target,
     parameter_given,
-    posterior_var_order,
+    require_trace_variables,
     run_chain_scan,
     traces_in_jax,
     unconstrained_chain,
@@ -78,10 +77,12 @@ class TestBuildTargetLogProbFlat:
 
     def test_flat_target_matches_record_target(self, small_model):
         target_record = build_target_log_prob(small_model, None)
-        target_flat, flat_init, event_spec = build_target_log_prob_flat(small_model, None)
+        target_flat, flat_init = build_target_log_prob_flat(small_model, None)
         # Round-trip: unflatten the flat init back to a Record and confirm
         # the two callables agree.
-        record_init = NumericRecord.from_vector(event_spec.term_spec, flat_init, label="nr")
+        record_init = NumericRecord.from_vector(
+            small_model.event_spec.term_spec, flat_init, label="nr"
+        )
         np.testing.assert_allclose(
             float(target_flat(flat_init)),
             float(target_record(record_init)),
@@ -90,24 +91,19 @@ class TestBuildTargetLogProbFlat:
         )
 
     def test_flat_init_dim_matches_the_declared_vector_size(self, small_model):
-        _, flat_init, event_spec = build_target_log_prob_flat(
+        _, flat_init = build_target_log_prob_flat(
             small_model,
             observed=None,
         )
         # Both fields are scalar Normals: vector_size == 2.
-        assert flat_init.shape == (event_spec.term_spec.vector_size,) == (2,)
-
-    def test_the_declared_output_order_is_preserved(self, small_model):
-        _, _, event_spec = build_target_log_prob_flat(small_model, observed=None)
-        # The order of the joint's factors.
-        assert tuple(event_spec.outputs) == ("a", "b")
+        assert flat_init.shape == (small_model.event_spec.term_spec.vector_size,) == (2,)
 
     def test_bare_distribution_falls_through_unwrapped(self):
         """A target with no Record-shaped prior round-trips its log-prob unchanged.
 
         For a bare ``SupportsLogProb`` whose ``_unnormalized_log_prob``
         already takes a flat array, ``build_target_log_prob_flat``
-        passes the callable through verbatim and returns no event spec.
+        passes the callable through verbatim.
         This is the path BlackJAX MCMC uses
         for hand-rolled distributions that don't carry a Record-shaped
         prior.
@@ -119,11 +115,10 @@ class TestBuildTargetLogProbFlat:
             def _unnormalized_log_prob(self, x):
                 return -0.5 * jnp.sum(jnp.asarray(x) ** 2)
 
-        target_flat, flat_init, event_spec = build_target_log_prob_flat(
+        target_flat, flat_init = build_target_log_prob_flat(
             _FlatGaussian(),
             observed=None,
         )
-        assert event_spec is None
         assert flat_init.shape == (2,)
         np.testing.assert_allclose(
             float(target_flat(jnp.asarray([1.0, -1.0]))),
@@ -147,22 +142,17 @@ class _FlatTarget(Distribution):
         return self._log_prob(value)
 
 
-class TestExtractEventSpec:
-    def test_a_target_over_a_record_gives_its_declaration(self, small_model):
-        assert extract_event_spec(small_model) == small_model.event_spec
-
-    def test_a_target_with_no_flat_view_gives_none(self):
-        assert extract_event_spec(_FlatTarget()) is None
-
+class TestThePosteriorOfALawOverOneArray:
     @pytest.mark.parametrize("method", ["blackjax_nuts", "blackjax_rwmh", "tfp_nuts"])
-    def test_the_methods_agree_on_a_bare_target(self, method):
-        """Each names the posterior and draws it as build_target_log_prob_flat does."""
+    def test_the_methods_name_the_posterior_by_the_laws_output(self, method):
+        """Each declares the law's event, as every posterior declares its target's."""
+        law = _FlatTarget()
         with workflow_run(seed=0):
             posterior = inference_method_registry.execute(
-                _FlatTarget(), method=method, num_results=20, num_warmup=20, num_chains=1
+                law, method=method, num_results=20, num_warmup=20, num_chains=1
             )
-        assert list(posterior.event_spec.outputs) == ["posterior"]
-        assert isinstance(flat_draws(posterior), jax.Array)
+        assert posterior.event_spec == law.event_spec
+        assert flat_chains(posterior).shape == (1, 20, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -656,49 +646,25 @@ class TestParallelChainMap:
 
 class _StubPosterior:
     def __init__(self, var_names):
-        # dict preserves insertion order, mimicking a trace's data_vars.
         self.data_vars = dict.fromkeys(var_names)
 
 
 class _StubTrace:
-    """Minimal stand-in: ``posterior_var_order`` reads only
-    ``trace.posterior.data_vars`` (ordered)."""
+    """Minimal stand-in: ``require_trace_variables`` reads only ``trace.posterior.data_vars``."""
 
     def __init__(self, var_names):
         self.posterior = _StubPosterior(var_names)
 
 
-class TestPosteriorVarOrder:
-    """``posterior_var_order`` returns a trace's posterior variables in the
-    backend's natural order filtered to *keep*, and fails loudly when a
-    kept name is missing."""
+class TestRequireTraceVariables:
+    """A backend's trace must hold the draws of every parameter a method extracts."""
 
-    def test_preserves_trace_order_not_keep_order(self):
-        trace = _StubTrace(["slope", "intercept", "lp__"])
-        # The trace's data_vars order wins; the keep argument's order does not.
-        assert posterior_var_order(trace, ["intercept", "slope"]) == ["slope", "intercept"]
+    def test_a_trace_with_every_parameter_passes(self):
+        require_trace_variables(_StubTrace(["slope", "intercept", "lp__"]), ["intercept", "slope"])
 
-    def test_alphabetical_backend_order_returned_for_realignment(self):
-        # nutpie, e.g., sorts data_vars alphabetically; the helper returns
-        # that order so field_order can realign columns by name.
-        trace = _StubTrace(["a", "b", "c"])
-        assert posterior_var_order(trace, ["c", "a", "b"]) == ["a", "b", "c"]
-
-    def test_ignores_unkept_trace_vars(self):
-        trace = _StubTrace(["mu", "sigma", "lp__", "diverging"])
-        assert posterior_var_order(trace, ["mu", "sigma"]) == ["mu", "sigma"]
-
-    def test_missing_expected_var_raises_valueerror(self):
-        """A kept name absent from the trace raises a clear ValueError here,
-        not a cryptic 'not a permutation' error later in make_posterior."""
-        trace = _StubTrace(["mu"])
-        with pytest.raises(ValueError, match="trace is missing the parameters"):
-            posterior_var_order(trace, ["mu", "sigma"])
-
-    def test_error_message_names_the_missing_vars(self):
-        trace = _StubTrace(["mu"])
-        with pytest.raises(ValueError, match="sigma"):
-            posterior_var_order(trace, ["mu", "sigma"])
+    def test_a_missing_parameter_raises_naming_it(self):
+        with pytest.raises(ValueError, match=r"trace is missing the parameters \['sigma'\]"):
+            require_trace_variables(_StubTrace(["mu"]), ["mu", "sigma"])
 
 
 # ---------------------------------------------------------------------------

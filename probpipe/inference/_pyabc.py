@@ -17,17 +17,20 @@ from ..custom_types import PRNGKey
 from ..distributions._capabilities import SupportsConditionalSampling
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._empirical import EmpiricalDistribution
-from ..operations._condition import InferenceMethod, _UnnormalizedConditional
+from ..operations._condition import InferenceMethod
+from ..operations._inference_target import (
+    InferenceTarget,
+    _described,
+    _flat_unflatten,
+    _UnnormalizedConditional,
+)
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
     _declared_vector,
-    described,
-    flat_unflatten,
     flat_vector,
     integer_seed,
     model_factors,
     parameter_given,
-    run_seed,
     unconstrained_coordinates,
     unfactored_model_reason,
 )
@@ -127,7 +130,7 @@ class PyABCDistribution(pyabc.Distribution):
         """The coordinates of a prior draw at a key and the log-density at coordinates, compiled."""
         if "_draw" not in self.__dict__:
             prior = self._prior
-            unflatten = flat_unflatten(prior)
+            unflatten = _flat_unflatten(prior)
             coordinates = unconstrained_coordinates(prior)
 
             def log_density(z: Any) -> Any:
@@ -282,7 +285,7 @@ class PyABCSMCMethod(InferenceMethod):
                 feasible=False,
                 description=(
                     "the likelihood must be a ConditionalDistribution that can be sampled, "
-                    f"since ABC simulates from it; got {described(factors.likelihood)}"
+                    f"since ABC simulates from it; got {_described(factors.likelihood)}"
                 ),
             )
         # Feasible means the prior can flatten, sample, *and* score jointly.
@@ -298,30 +301,32 @@ class PyABCSMCMethod(InferenceMethod):
             return Feasibility(
                 feasible=False,
                 description=(
-                    f"the joint density of the prior {described(factors.prior)} is not finite "
+                    f"the joint density of the prior {_described(factors.prior)} is not finite "
                     f"at a draw from it"
                 ),
             )
         return Feasibility(feasible=True)
 
-    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
+    def execute(
+        self, target: InferenceTarget, /, *, key: PRNGKey, **kwargs: Any
+    ) -> EmpiricalDistribution:
         """Run SMC-ABC and return a weighted posterior.
 
-        The run's seed is drawn from a workflow-owned random event, so
-        ``workflow_run(seed=...)`` reproduces the run, and an unscoped call
-        runs afresh. The seed fixes the JAX keys of the prior's draws and of
+        The run's random key fixes the JAX keys of the prior's draws and of
         the simulator. It also seeds numpy's global generator for the duration
         of the run, and pyabc draws its perturbations from that generator. The
         caller's numpy state is restored afterwards.
 
         Parameters
         ----------
-        target : Distribution
+        target : InferenceTarget
             The unnormalized conditional of a factored joint at its observed
             fields: a prior that flattens to a parameter vector and carries a
             joint density, a likelihood kernel that samples, the simulator, and
             the observed value, flattened (after ``summary_fn``) to the target
             vector.
+        key : PRNGKey
+            The run's random key.
         **kwargs : Any
             The call's ``method_options``:
 
@@ -384,7 +389,7 @@ class PyABCSMCMethod(InferenceMethod):
         n_particles = int(kwargs.get("n_particles", 100))
         max_populations = int(kwargs.get("max_populations", 4))
         eps_alpha = float(kwargs.get("eps_alpha", 0.5))
-        random_seed = integer_seed(run_seed(self.name))
+        random_seed = integer_seed(key)
         summary_fn: _SummaryFn | None = kwargs.get("summary_fn")
         distance_fn: _DistanceFn = kwargs.get("distance_fn") or _euclidean_distance
         sampler = kwargs.get("sampler") or SingleCoreSampler()
@@ -398,7 +403,7 @@ class PyABCSMCMethod(InferenceMethod):
         d = pyabc_prior._d
 
         x0 = {_DATA_KEY: _summarize(flat_vector(factors.observed)[None, :], summary_fn)}
-        unflatten = flat_unflatten(prior)
+        unflatten = _flat_unflatten(prior)
         coordinates = unconstrained_coordinates(prior)
 
         sim_keys = _ProcessKeys(sim_key0)
@@ -455,12 +460,10 @@ class PyABCSMCMethod(InferenceMethod):
 
         # Lift the flat columns back to name-keyed Records via the target's event spec.
         return make_posterior(
+            target,
             [flat],
-            parents=(target,),
             method="pyabc_smcabc",
             weights=jnp.asarray(weights / weights.sum()),
-            event_spec=target.event_spec,
-            field_order=list(target.event_spec.outputs),
             annotations=_smc_diagnostics(history),
             n_particles=n_particles,
             max_populations=max_populations,

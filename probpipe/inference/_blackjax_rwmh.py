@@ -40,23 +40,22 @@ from blackjax.adaptation.mass_matrix import welford_algorithm
 
 from ..core._dispatch import Feasibility
 from ..core._execution_claims import Traceability, probe
-from ..custom_types import Array, ArrayLike
+from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions._capabilities import SupportsUnnormalizedLogProb
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
-from ..operations._condition import InferenceMethod
+from ..operations._condition import InferenceMethod, _inference_run_key
+from ..operations._inference_target import InferenceTarget, _as_inference_target
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
     as_prng_key,
     build_mcmc_datatree,
-    extract_event_spec,
     flat_density,
     get_init_state,
     no_density_reason,
     observed_parts,
     parallel_chain_map,
     run_chain_scan,
-    run_seed,
     unconstrained_chain,
 )
 
@@ -688,6 +687,7 @@ def rwmh(
     if not isinstance(dist, SupportsUnnormalizedLogProb):
         raise TypeError(f"cannot run rwmh: {no_density_reason(dist)}")
     return _rwmh(
+        _as_inference_target(dist),
         dist,
         data,
         log_prob_fn=log_prob_fn,
@@ -699,11 +699,12 @@ def rwmh(
         n_windows=n_windows,
         proposal_cov=proposal_cov,
         init=init,
-        random_seed=run_seed("blackjax_rwmh"),
+        random_seed=_inference_run_key("blackjax_rwmh"),
     )
 
 
 def _rwmh(
+    target: InferenceTarget,
     dist: SupportsUnnormalizedLogProb,
     data: ArrayLike | None,
     *,
@@ -725,8 +726,11 @@ def _rwmh(
 
     Parameters
     ----------
+    target : InferenceTarget
+        The target whose posterior the chains are, which the result names as
+        its parent.
     dist : SupportsUnnormalizedLogProb
-        The target, as :func:`rwmh` takes it.
+        The law whose density the chains run on, as :func:`rwmh` takes it.
     data : array-like or None
         The observed data that *log_prob_fn* receives.
     log_prob_fn : callable or None
@@ -819,13 +823,11 @@ def _rwmh(
     if warmups is not None:
         warmups = [constrain(warmup) for warmup in warmups]
     annotations = build_mcmc_datatree(chains, sample_stats, warmup_chains=warmups)
-    event_spec = extract_event_spec(dist)
     return make_posterior(
+        target,
         chains,
-        parents=(dist,),
         method="blackjax_rwmh",
         annotations=annotations,
-        event_spec=event_spec,
         num_results=num_results,
         num_warmup=num_warmup,
         num_chains=num_chains,
@@ -893,11 +895,14 @@ class BlackJAXRWMHMethod(InferenceMethod):
             )
         return Feasibility(feasible=True)
 
-    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
+    def execute(
+        self, target: InferenceTarget, /, *, key: PRNGKey, **kwargs: Any
+    ) -> EmpiricalDistribution:
         """Random-walk chains on the target's parameters, scored by its prior and likelihood."""
         self._check_options(kwargs)
         dist, observed = observed_parts(target)
         return _rwmh(
+            target,
             dist,
             observed,
             log_prob_fn=None,
@@ -909,7 +914,7 @@ class BlackJAXRWMHMethod(InferenceMethod):
             n_windows=kwargs.get("n_windows", 4),
             proposal_cov=kwargs.get("proposal_cov"),
             init=kwargs.get("init"),
-            random_seed=run_seed(self.name),
+            random_seed=key,
         )
 
 
