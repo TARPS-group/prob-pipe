@@ -35,7 +35,7 @@ from probpipe.distributions._capabilities import (
 from probpipe.families import GaussianFamily, glm_likelihood
 from probpipe.validation import SBCResult, interval_coverage, simulation_based_calibration
 from probpipe.validation._calibration import (
-    _component_names,
+    _entry_names,
     _flatten,
     _kolmogorov_sf,
     _ks_uniform,
@@ -106,10 +106,10 @@ class _GridPosterior(ConditionalDistribution, SupportsConditionalSampling):
         y = jnp.asarray(dict(given.children if isinstance(given, Record) else given)["y"])
         grid = jnp.linspace(-10.0, 10.0, 4001)
         if not self._weighted:
-            return EmpiricalDistribution(grid, component="mu")
+            return EmpiricalDistribution(grid, output_name="mu")
         log_density = -0.5 * _PRECISION * (grid - jnp.sum(y) / _PRECISION) ** 2
         return EmpiricalDistribution(
-            grid, jnp.exp(log_density - jnp.max(log_density)), component="mu"
+            grid, jnp.exp(log_density - jnp.max(log_density)), output_name="mu"
         )
 
     def _condition_on(self, given, /, **options):
@@ -132,7 +132,7 @@ def _conjugate_model():
     prior = Normal("mu", 0.0, 2.0)
     likelihood = conditional_distribution(
         lambda mu: Normal("y", mu * jnp.ones(_N), 1.0),
-        given_spec=prior.event_spec.components,
+        given_spec=prior.event_spec.outputs,
         label="y_given_mu",
     )
     return likelihood * prior
@@ -144,7 +144,7 @@ def _posterior_at(y, scale_factor: float = 1.0):
 
 
 def _exact_posterior(scale_factor: float = 1.0):
-    """The kernel of :func:`_posterior_at`, whose one given slot is ``y``."""
+    """The kernel of :func:`_posterior_at`, whose one input is ``y``."""
     return conditional_distribution(
         lambda y: _posterior_at(y, scale_factor),
         given_spec={"y": NumericArraySpec((_N,))},
@@ -153,7 +153,7 @@ def _exact_posterior(scale_factor: float = 1.0):
 
 
 def _observation_posterior():
-    """The kernel of :func:`_posterior_at`, whose one given slot is ``observation``."""
+    """The kernel of :func:`_posterior_at`, whose one input is ``observation``."""
     return conditional_distribution(
         lambda observation: _posterior_at(observation),
         given_spec={"observation": NumericArraySpec((_N,))},
@@ -194,7 +194,7 @@ class TestIntervalCoverage:
     def test_accepts_distribution_input(self):
         # An empirical law scores identically to its atoms' flat coordinates.
         draws = jax.random.normal(jax.random.PRNGKey(4), (2000, 2))
-        emp = EmpiricalDistribution(draws, component="z")
+        emp = EmpiricalDistribution(draws, output_name="z")
         from_dist = interval_coverage(emp, jnp.array([0.3, -0.4]), levels=(0.9,))
         from_array = interval_coverage(draws, jnp.array([0.3, -0.4]), levels=(0.9,))
         assert bool(jnp.all(from_dist[0.9] == from_array[0.9]))
@@ -266,14 +266,14 @@ class TestRanks:
         np.testing.assert_array_equal(np.asarray(_ranks(draws, jnp.array([-1.0]))), [0])
         np.testing.assert_array_equal(np.asarray(_ranks(draws, jnp.array([9.0]))), [4])
 
-    def test_per_component(self):
+    def test_per_entry(self):
         draws = jnp.array([[0.0, 10.0], [1.0, 20.0], [2.0, 30.0]])
         # col 0: 2 draws below 1.5; col 1: 0 draws below 5.0.
         np.testing.assert_array_equal(np.asarray(_ranks(draws, jnp.array([1.5, 5.0]))), [2, 0])
 
 
 class TestFlattening:
-    """The multi-field θ★ flattening + component-naming that ranks rely on."""
+    """The multi-field θ★ flattening + entry-naming that ranks rely on."""
 
     def test_flatten_honors_field_order(self):
         point = Record(
@@ -305,7 +305,7 @@ class TestFlattening:
             row = _flatten({"a": draws["a"][i], "b": draws["b"][i]}, spec)
             np.testing.assert_array_equal(np.asarray(rows[i]), np.asarray(row))
 
-    def test_component_names_expand_per_field(self):
+    def test_entry_names_expand_per_field(self):
         # A length-k field becomes field[0..k-1]; a scalar field keeps its name —
         # in posterior field order, matching the flat coordinates of its atoms.
         atoms = NumericRecordBatch(
@@ -315,11 +315,11 @@ class TestFlattening:
             label="r",
         )
         emp = EmpiricalDistribution(atoms, label="m")
-        assert _component_names(emp) == ("a[0]", "a[1]", "b")
+        assert _entry_names(emp) == ("a[0]", "a[1]", "b")
 
-    def test_a_whole_term_posterior_names_its_component(self):
-        emp = EmpiricalDistribution(jnp.zeros((10, 2)), component="m")
-        assert _component_names(emp) == ("m[0]", "m[1]")
+    def test_a_whole_term_posterior_names_its_entries(self):
+        emp = EmpiricalDistribution(jnp.zeros((10, 2)), output_name="m")
+        assert _entry_names(emp) == ("m[0]", "m[1]")
 
 
 class TestCoverage:
@@ -450,7 +450,7 @@ class TestSBCPosteriorKernel:
         assert float(weighted.ks_pvalue[0]) > 0.005
         assert float(unweighted.ks_pvalue[0]) < 1e-3
 
-    def test_one_given_slot_takes_the_one_observed_field_whatever_its_name(self):
+    def test_one_input_takes_the_one_observed_field_whatever_its_name(self):
         common = {"observed": "y", "num_simulations": 8, "num_posterior_draws": 20}
         with workflow_run(seed=3):
             by_name = simulation_based_calibration(
@@ -463,8 +463,8 @@ class TestSBCPosteriorKernel:
         np.testing.assert_array_equal(by_position.ranks, by_name.ranks)
 
     @pytest.mark.bayesflow
-    def test_an_amortized_posterior_takes_the_observed_field_in_its_observation_slot(self):
-        """A briefly trained amortized posterior calibrates, its ``observation`` slot taking ``y``.
+    def test_an_amortized_posterior_takes_the_observed_field_in_its_observation_input(self):
+        """A briefly trained amortized posterior calibrates, its ``observation`` input taking ``y``.
 
         The training is too short to calibrate the network, so the test checks
         the ranks' shape and range, not their uniformity.
@@ -476,7 +476,7 @@ class TestSBCPosteriorKernel:
         prior = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
         simulator = conditional_distribution(
             lambda a, b: Normal("y", jnp.stack([a + b, a - b]), 0.1),
-            given_spec=prior.event_spec.components,
+            given_spec=prior.event_spec.outputs,
             label="y_given_ab",
         )
         amortized = learn_amortized_posterior(
@@ -559,22 +559,22 @@ class TestSBCPosteriorKernel:
                 num_posterior_draws=10,
             )
 
-    def test_rejects_given_slots_that_do_not_take_the_observed_fields(self):
-        two_slots = conditional_distribution(
+    def test_rejects_inputs_that_do_not_take_the_observed_fields(self):
+        two_inputs = conditional_distribution(
             lambda y, z: Normal("mu", jnp.sum(y) + z, 1.0),
             given_spec={"y": NumericArraySpec((_N,)), "z": NumericArraySpec(())},
             label="posterior",
         )
-        with pytest.raises(ValueError, match=r"given slots \['y', 'z'\]"):
+        with pytest.raises(ValueError, match=r"inputs \['y', 'z'\]"):
             simulation_based_calibration(
                 _conjugate_model(),
                 observed="y",
-                posterior=two_slots,
+                posterior=two_inputs,
                 num_simulations=2,
                 num_posterior_draws=10,
             )
 
-    def test_one_given_slot_rejects_several_observed_fields(self):
+    def test_one_input_rejects_several_observed_fields(self):
         model = _conjugate_model() * Normal("w", 0.0, 1.0)
         with pytest.raises(ValueError, match=r"observed fields \['y', 'w'\]"):
             simulation_based_calibration(
@@ -617,7 +617,7 @@ class TestSBCFit:
         assert isinstance(res, SBCResult)
         assert res.ranks.shape == (32, 2)
         assert res.ranks.min() >= 0 and res.ranks.max() <= res.num_posterior_draws
-        # param_names are per flattened component, aligned with the rank columns.
+        # param_names are per flattened entry, aligned with the rank columns.
         assert res.param_names == ("beta[0]", "beta[1]")
         assert len(res.param_names) == res.ranks.shape[1]
         # Well-specified model + NUTS → ranks ~ uniform. Measured across seeds 0–3

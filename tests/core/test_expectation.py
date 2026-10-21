@@ -57,7 +57,7 @@ class TestExpectationReturnsArray:
 
     def test_empirical_exact_returns_array(self):
         """EmpiricalDistribution with num_evaluations=None is exact → Array."""
-        d = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="x")
+        d = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), output_name="x")
         result = expectation(d, lambda x: x)
         assert isinstance(result, NumericArray)
 
@@ -189,28 +189,28 @@ class TestExpectationExact:
 class TestExpectationEmpirical:
     def test_uniform_mean(self):
         samples = jnp.array([1.0, 2.0, 3.0, 4.0])
-        d = EmpiricalDistribution(samples, component="x")
+        d = EmpiricalDistribution(samples, output_name="x")
         result = expectation(d, lambda x: x)
         np.testing.assert_allclose(float(result), 2.5, atol=1e-6)
 
     def test_weighted_mean(self):
         samples = jnp.array([0.0, 10.0])
         weights = jnp.array([0.3, 0.7])
-        d = EmpiricalDistribution(samples, weights=weights, component="x")
+        d = EmpiricalDistribution(samples, weights=weights, output_name="x")
         result = expectation(d, lambda x: x)
         np.testing.assert_allclose(float(result), 7.0, atol=1e-5)
 
     def test_custom_function(self):
         samples = jnp.array([1.0, 2.0, 3.0])
         weights = jnp.array([0.2, 0.5, 0.3])
-        d = EmpiricalDistribution(samples, weights=weights, component="x")
+        d = EmpiricalDistribution(samples, weights=weights, output_name="x")
         result = expectation(d, lambda x: x**2)
         expected = 0.2 * 1.0 + 0.5 * 4.0 + 0.3 * 9.0
         np.testing.assert_allclose(float(result), expected, atol=1e-5)
 
     def test_matches_mean_method(self):
         samples = jnp.array([1.0, 3.0, 5.0, 7.0])
-        d = EmpiricalDistribution(samples, component="x")
+        d = EmpiricalDistribution(samples, output_name="x")
         ex = expectation(d, lambda x: x)
         np.testing.assert_allclose(float(ex), float(mean(d)), atol=1e-6)
 
@@ -237,7 +237,7 @@ class TestMCFallbackMethods:
         np.testing.assert_allclose(float(result), 4.0, atol=1e-6)
 
     def test_empirical_mean_still_exact(self):
-        d = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="x")
+        d = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), output_name="x")
         result = mean(d)
         assert isinstance(result, NumericArray)
         np.testing.assert_allclose(float(result), 2.0, atol=1e-6)
@@ -253,7 +253,7 @@ _DEFAULT_SIZE_ESTIMATORS = [
     pytest.param(lambda: Normal("x", loc=0.0, scale=1.0), lambda x: x, id="tfp"),
     pytest.param(
         lambda: BootstrapReplicateDistribution(
-            "boot", EmpiricalDistribution(jnp.arange(5.0), component="data")
+            "boot", EmpiricalDistribution(jnp.arange(5.0), output_name="data")
         ),
         jnp.mean,
         id="bootstrap-replicate",
@@ -301,7 +301,7 @@ class _StandIn(BinaryDispatchMethod):
         return Feasibility(True)
 
     def execute(self, f, operand, /, **call):
-        return EmpiricalDistribution(jnp.array([-1.0]), component="stand_in")
+        return EmpiricalDistribution(jnp.array([-1.0]), output_name="stand_in")
 
 
 @pytest.fixture

@@ -169,7 +169,7 @@ def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
 _NO_DESCRIPTION = "<no description>"
 
 
-#: The ASCII name a lambda takes as an output component.
+#: The ASCII name a lambda takes as an output name.
 _LAMBDA_NAME = "f"
 
 
@@ -493,14 +493,14 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         object.__setattr__(self, "_label_collapse", collapse)
 
     def _own_signature(self) -> Signature | None:
-        """The signature the term's declaration states; ``None`` for a value, which has none."""
+        """The signature the term's specs state; ``None`` for a value, which has none."""
         return None
 
     def _embedded_expression(self) -> Expression:
         """The term's expression as a child of another node, recording the term's own signature.
 
         A node holds no term, so a node that has a law, a kernel, or a function
-        as a child records the signature that the term's declaration states. A
+        as a child records the signature that the term's specs state. A
         value's expression is returned as it is.
         """
         own = self._own_signature()

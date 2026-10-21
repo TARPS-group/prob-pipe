@@ -108,7 +108,7 @@ def execute_sweep(
             require_jax_traceable=require_jax_traceable,
             workflow_kind=workflow_kind,
             function_name=function_name,
-            output_is_declared=output_spec is not None and output_spec.spec is not None,
+            output_is_declared=output_spec is not None and output_spec.term_spec is not None,
             output_label=output_label,
         )
         if output_spec is not None:

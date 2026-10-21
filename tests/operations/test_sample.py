@@ -19,6 +19,7 @@ from probpipe import (
 )
 from probpipe.core._batch import BatchSpec
 from probpipe.core._dispatch import ResolutionError
+from probpipe.core._specs import _has_record_outputs
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._distribution import Distribution
 from probpipe.operations._sample import sample
@@ -30,7 +31,7 @@ class TestOneDraw:
     def test_an_array_law_draws_a_numeric_array_at_its_declaration(self):
         draw = sample(Gaussian("g"))
         assert isinstance(draw, NumericArray)
-        assert draw.spec == Gaussian("g").event_spec.spec
+        assert draw.spec == Gaussian("g").event_spec.term_spec
 
     def test_a_record_law_draws_a_record_with_its_schema(self):
         draw = sample(Pair("p"))
@@ -52,7 +53,7 @@ class TestOneDraw:
         assert draws.level_names == ("sample",)
         assert draws[0].label == "(g ~ g; y/obs)[sample=0]"
 
-    def test_the_draw_is_labeled_by_its_components_and_the_law(self):
+    def test_the_draw_is_labeled_by_its_outputs_and_the_law(self):
         assert sample(Gaussian("g")).label == "g ~ g"
         draws = sample(Gaussian("g"), sample_shape=(3,))
         assert draws.label == "g ~ g"
@@ -85,16 +86,16 @@ class TestBatches:
         draws = sample(joint, sample_shape=(4,))
         assert isinstance(draws, NumericRecordBatch)
         assert (draws.batch_shape, draws.level_names) == ((4,), ("sample",))
-        assert draws.element_spec == joint.event_spec.spec
+        assert draws.element_spec == joint.event_spec.term_spec
         assert jnp.shape(draws["b"]) == (4,)
 
-    def test_a_batch_of_draws_is_declared_under_the_event_components(self):
+    def test_a_batch_of_draws_is_declared_under_the_event_outputs(self):
         whole = sample.check(Gaussian("g"), (4,)).result
-        assert (list(whole.components), whole.exposes_record) == (["g"], False)
-        assert isinstance(whole.spec, BatchSpec)
+        assert (list(whole.outputs), _has_record_outputs(whole)) == (["g"], False)
+        assert isinstance(whole.term_spec, BatchSpec)
         record = sample.check(Pair("p"), (4,)).result
-        assert list(record.components) == list(Pair("p").event_spec.components)
-        assert record.spec == BatchSpec(Pair("p").event_spec.spec, sample=4)
+        assert list(record.outputs) == list(Pair("p").event_spec.outputs)
+        assert record.term_spec == BatchSpec(Pair("p").event_spec.term_spec, sample=4)
 
     def test_a_measure_draws_a_batch_of_laws(self):
         draws = sample(Measure("m"), sample_shape=(3,))

@@ -43,7 +43,7 @@ from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._record_spec import NumericRecordSpec, RecordSpec
 from ..core._repr import format_value, type_name
 from ..core._spec_base import NumericArraySpec, TermSpec
-from ..core._specs import OutputSpec, _check_component_name
+from ..core._specs import OutputSpec, _check_output_name
 from ..core.constraints import real
 from ..core.named_tree import _unflatten_paths
 from ..distributions._capabilities import (
@@ -183,13 +183,13 @@ def _replicate_level(source: Distribution, level: str | None) -> str:
     """The level a replicate's draws lie on.
 
     It defaults to the atom level of an empirical source with exactly one, and
-    otherwise to the source's component when the source has one component, as a
-    whole-term event does.
+    otherwise to the name of the source's output when the source has one
+    output, as a whole-term event does.
 
     Parameters
     ----------
     source : Distribution
-        The bootstrap's source, whose atom level or component gives the default.
+        The bootstrap's source, whose atom level or output name gives the default.
     level : str or None
         The requested level name, or None for the default.
 
@@ -204,21 +204,21 @@ def _replicate_level(source: Distribution, level: str | None) -> str:
         If *level* is not a string.
     ValueError
         If *level* is empty or contains ``/``, or is omitted for a source that
-        exposes a record of several components.
+        has several outputs.
     """
     if level is not None:
         if not isinstance(level, str):
             raise TypeError(f"level must be a string, got {_type_name(level)}")
-        _check_component_name(level, context="level names")
+        _check_output_name(level, context="level names")
         return level
     if isinstance(source, EmpiricalDistribution) and len(source.atoms.level_names) == 1:
         return source.atoms.level_names[0]
-    components = list(source.event_spec.components)
-    if len(components) == 1:
-        return components[0]
+    outputs = list(source.event_spec.outputs)
+    if len(outputs) == 1:
+        return outputs[0]
     raise ValueError(
-        f"level is required because the source {source.label!r} has several components "
-        f"{components}; pass level='<name>' to name the level of each replicate's draws"
+        f"level is required because the source {source.label!r} has several outputs "
+        f"{outputs}; pass level='<name>' to name the level of each replicate's draws"
     )
 
 
@@ -247,15 +247,15 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
     resampled by weight, which is the nonparametric bootstrap, and a fitted law
     is redrawn, which is the parametric bootstrap.
 
-    **The event declaration.** One draw is a batch of the source's event term on
+    **The event spec.** One draw is a batch of the source's event term on
     the replicate's level, so a replicate keeps the source's term kind. The
-    declaration is the law's own, derived from the source and the replicate
-    size, under *component*.
+    event spec is the law's own, derived from the source and the replicate
+    size, under *output_name*.
 
     Parameters
     ----------
-    component : str
-        The component of the law's event.
+    output_name : str
+        The name of the law's one output, which names its draws.
     source : Distribution
         The law the replicate draws from, which implements ``SupportsSampling``.
     replicate_size : int, optional
@@ -266,37 +266,38 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
     level : str, optional
         The level a replicate's draws lie on. It defaults to the source's atom
         level when the source is an empirical law with exactly one, and
-        otherwise to the source's component when the source has one, as a
-        whole-term event does.
+        otherwise to the name of the source's output when the source has one,
+        as a whole-term event does.
     event_spec : OutputSpec, optional
-        A declaration of *component* that declares the type of one draw.
+        An event spec naming *output_name*, which gives the type of one draw.
 
     Raises
     ------
     TypeError
-        If *source* is not a law that samples, *component* or *level* is not a
+        If *source* is not a law that samples, *output_name* or *level* is not a
         string, *label* is not a non-empty string, *replicate_size* is not an
-        integer, or *event_spec* is not an ``OutputSpec`` or exposes a record.
+        integer, or *event_spec* is not an ``OutputSpec`` or is in the
+        positional form over a record.
     ValueError
         If *replicate_size* is not positive or is omitted for a source without
-        atoms, *level* is omitted for a source exposing several components or is
-        not a valid level name, *event_spec* names another component, or it
+        atoms, *level* is omitted for a source with several outputs or is
+        not a valid level name, *event_spec* names another output, or it
         declares a type that does not unify with the replicate's.
 
     Examples
     --------
     >>> import jax.numpy as jnp
-    >>> data = EmpiricalDistribution(jnp.array([1.0, 2.0, 4.0]), component="y")
+    >>> data = EmpiricalDistribution(jnp.array([1.0, 2.0, 4.0]), output_name="y")
     >>> replicate = BootstrapReplicateDistribution("boot", data)
     >>> replicate.replicate_size
     3
-    >>> replicate.event_spec.spec.level_names
+    >>> replicate.event_spec.term_spec.level_names
     ('y',)
     """
 
     def __init__(
         self,
-        component: str,
+        output_name: str,
         source: SupportsSampling,
         replicate_size: int | None = None,
         *,
@@ -310,7 +311,7 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
         term = _replicate_spec(law, size, on_level)
         owner = _class_label(self)
         super().__init__(
-            _whole_term_event(component, term, event_spec, owner),
+            _whole_term_event(output_name, term, event_spec, owner),
             label=_constructor_label(self, label, owner),
         )
         self._source = law
@@ -354,7 +355,7 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
 
 def _replicate_spec(source: Distribution, size: int, level: str) -> TermSpec:
     """The term spec of one replicate: *size* of the source's draws on *level*."""
-    return BatchSpec(source.event_spec.spec, {level: size})
+    return BatchSpec(source.event_spec.term_spec, {level: size})
 
 
 class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
@@ -368,10 +369,10 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
     :class:`BootstrapReplicateDistribution` for a statistic that reads a
     dataset.
 
-    **The event declaration.** One draw is declared as a law carrying the
-    source's complete event declaration, so its component names and packaging
-    are the source's. The measure's own declaration is distinct: a whole term
-    under *component*.
+    **The event spec.** One draw is declared as a law carrying the
+    source's complete event spec, so its outputs and their form are the
+    source's. The measure's own event spec is distinct: a whole term
+    under *output_name*.
 
     **Capabilities.** The measure samples, and its mean, the marginalized law
     ``𝔼[D](A)`` of a draw ``D``, is the source itself, since each atom of a
@@ -380,8 +381,8 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
 
     Parameters
     ----------
-    component : str
-        The component of the measure's event.
+    output_name : str
+        The name of the measure's one output, which names its draws.
     source : Distribution
         The law a replicate draws from, which implements ``SupportsSampling``.
     replicate_size : int, optional
@@ -394,7 +395,7 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
         The level the atoms of a drawn measure lie on, defaulting as for
         :class:`BootstrapReplicateDistribution`.
     event_spec : OutputSpec, optional
-        A declaration of *component* that declares the type of one draw.
+        An event spec naming *output_name*, which gives the type of one draw.
 
     Raises
     ------
@@ -405,16 +406,16 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
     --------
     >>> import jax
     >>> import jax.numpy as jnp
-    >>> data = EmpiricalDistribution(jnp.array([1.0, 2.0, 4.0]), component="y")
+    >>> data = EmpiricalDistribution(jnp.array([1.0, 2.0, 4.0]), output_name="y")
     >>> measure = BootstrapDistribution("boot", data)
     >>> draw = measure._sample(jax.random.PRNGKey(0))
-    >>> (type(draw).__name__, draw.num_atoms, list(draw.event_spec.components))
+    >>> (type(draw).__name__, draw.num_atoms, list(draw.event_spec.outputs))
     ('EmpiricalDistribution', 3, ['y'])
     """
 
     def __init__(
         self,
-        component: str,
+        output_name: str,
         source: SupportsSampling,
         replicate_size: int | None = None,
         *,
@@ -427,8 +428,8 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
         on_level = _replicate_level(law, level)
         term = DistributionSpec(law.event_spec)
         if event_spec is not None:
-            term = _whole_term_event(component, term, event_spec, _class_label(self))
-        super().__init__(component, term, label=label)
+            term = _whole_term_event(output_name, term, event_spec, _class_label(self))
+        super().__init__(output_name, term, label=label)
         self._source = law
         self._replicate_size = size
         self._level = on_level
@@ -445,7 +446,7 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
 
     def _measure(self, raw: Any) -> EmpiricalDistribution:
         """The empirical measure of the replicate *raw*, the source's raw draws along one axis."""
-        atoms = _batch_form(self.label, raw, self._level, self._source.event_spec.spec)
+        atoms = _batch_form(self.label, raw, self._level, self._source.event_spec.term_spec)
         return EmpiricalDistribution(atoms, label=self.label, event_spec=self._source.event_spec)
 
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any:
@@ -1056,9 +1057,9 @@ class KDEDistribution(
     ``"silverman"``, and ``None`` selects Scott's rule. Both rules count Kish's
     effective sample size, so they stay sensible under importance weights.
 
-    **The event declaration.** Record atoms expose their fields, and array atoms
-    form a whole-term event under *component*. An *event_spec* names the
-    components, as for ``EmpiricalDistribution``. Every leaf is declared
+    **The event spec.** Each field of record atoms is an output of the law,
+    and array atoms form a whole-term event under *output_name*. An *event_spec* names the
+    outputs, as for ``EmpiricalDistribution``. Every leaf is declared
     floating, on the real line.
 
     **Capabilities.**
@@ -1091,41 +1092,43 @@ class KDEDistribution(
         omitted.
     kernel : type of SmoothingKernel
         The smoothing kernel, ``GaussianKernel`` by default.
-    component : str, optional
-        The component of a whole-term event, required for array atoms unless
-        *event_spec* names it, and refused for record atoms.
+    output_name : str, optional
+        The name of the law's one output, which names its draws, required for
+        array atoms unless *event_spec* names it, and refused for record atoms.
     label : str, optional
         The law's label, ``KDEDistribution`` by default.
     event_spec : OutputSpec, optional
-        The declaration of one draw, completed with the atoms' spec.
+        An event spec giving the type of one draw, completed with the atoms'
+        spec.
 
     Raises
     ------
     TypeError
         If *atoms* is neither a numeric array-like nor a ``NumericRecordBatch``,
-        a list or a tuple of atoms holds an entry that is not a number, *kernel* is not a ``SmoothingKernel`` class, *component* is missing for
-        array atoms or given for record atoms, *label* is not a non-empty
-        string, *event_spec* is not an ``OutputSpec``, or *event_spec* exposes a
-        record for array atoms.
+        a list or a tuple of atoms holds an entry that is not a number,
+        *kernel* is not a ``SmoothingKernel`` class, *output_name* is missing
+        for array atoms or given for record atoms, *label* is not a non-empty
+        string, *event_spec* is not an ``OutputSpec``, or *event_spec* is in
+        the positional form over a record for array atoms.
     ValueError
         If the atoms hold none or have no leading axis, the atoms of a list or a
         tuple have different shapes, the weights are invalid,
         *bandwidth* names no rule or a rule selects a zero scale, the scales do not
         broadcast against the atoms or are not positive, or *event_spec* names
-        another component or declares a type that does not unify with the atoms'.
+        another output or declares a type that does not unify with the atoms'.
 
     Examples
     --------
     >>> import jax.numpy as jnp
-    >>> kde = KDEDistribution(jnp.array([0.0, 1.0, 3.0]), 0.5, component="x")
+    >>> kde = KDEDistribution(jnp.array([0.0, 1.0, 3.0]), 0.5, output_name="x")
     >>> round(float(kde._mean()), 4)
     1.3333
     >>> round(float(kde._variance()), 4)  # the atoms' variance 14/9, plus 0.5 ** 2
     1.8056
     """
 
-    #: The constructor takes the atoms first and the component as a keyword.
-    _repr_component: ClassVar[str | None] = "keyword"
+    #: The constructor takes the atoms first and the output name as a keyword.
+    _repr_output_name: ClassVar[str | None] = "keyword"
 
     def __init__(
         self,
@@ -1134,7 +1137,7 @@ class KDEDistribution(
         weights: Array | Weights | None = None,
         kernel: type[SmoothingKernel] = GaussianKernel,
         *,
-        component: str | None = None,
+        output_name: str | None = None,
         label: str | None = None,
         event_spec: OutputSpec | None = None,
     ) -> None:
@@ -1146,7 +1149,7 @@ class KDEDistribution(
             )
         stored, atom_spec = _kde_atoms(atoms)
         owner = _class_label(self)
-        declared = _atoms_declaration(atom_spec, component, event_spec, owner)
+        declared = _atoms_declaration(atom_spec, output_name, event_spec, owner)
         super().__init__(
             declared,
             label=_constructor_label(self, label, owner),
@@ -1178,7 +1181,7 @@ class KDEDistribution(
 
     def _record_spec(self) -> RecordSpec | None:
         """The record one draw is, or ``None`` for an array event."""
-        spec = self.event_spec.spec
+        spec = self.event_spec.term_spec
         return spec if isinstance(spec, RecordSpec) else None
 
     def _unflattened(self, flat: Array) -> Any:

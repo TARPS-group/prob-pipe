@@ -267,7 +267,7 @@ class TestBijectorTransformedDistributionProvenance:
         assert td.provenance.metadata["bijector"] == "chain_of_exp_of_shift"
 
     def test_transform_with_empirical_base(self):
-        ed = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="x", label="x")
+        ed = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), output_name="x", label="x")
         td = BijectorTransformedDistribution("td", ed, tfb.Exp())
         assert td.provenance is not None
         assert td.provenance.operation == "transform"
@@ -432,7 +432,7 @@ class TestBroadcastingProvenance:
 
     def test_broadcast_enumerate_provenance(self):
         """Enumeration path should also get provenance."""
-        ed = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="x")
+        ed = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), output_name="x")
         n = Normal("n", loc=0.0, scale=1.0)
 
         def add(a: float, b: float) -> float:
@@ -518,7 +518,7 @@ class TestProvenanceChains:
     def test_two_step_chain(self):
         """convert → condition_on creates a 2-step chain.
 
-        The converted law keeps the source's component, which the joint conditions on.
+        The converted law keeps the source's output, which the joint conditions on.
         """
         src = StudentT("prior", df=5.0, loc=0.0, scale=1.0, label="prior")
         converted = convert(src, Normal)

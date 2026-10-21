@@ -10,8 +10,8 @@ from typing import Any
 
 __all__ = [
     "_as_numpy",
-    "_component_name",
     "_dataset_values",
+    "_entry_name",
     "_json_dumps_safe",
     "_record_get",
     "_safe_float",
@@ -84,8 +84,8 @@ def _json_dumps_safe(obj: Any) -> str:
             return "{}"
 
 
-def _component_name(param: str, index: tuple[int, ...]) -> str:
-    """Return a stable display name for an event component."""
+def _entry_name(param: str, index: tuple[int, ...]) -> str:
+    """Return a stable display name for one entry of an array, such as ``beta[0]``."""
     if not index:
         return param
     suffix = ", ".join(str(i) for i in index)
@@ -103,6 +103,6 @@ def _dataset_values(ds: Any) -> dict[str, float]:
             continue
 
         for index in np.ndindex(arr.shape):
-            values[_component_name(param, index)] = float(arr[index])
+            values[_entry_name(param, index)] = float(arr[index])
 
     return values

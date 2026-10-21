@@ -342,14 +342,14 @@ def build_broadcast_plan(
 
 
 def require_empty_sweep_output(plan: BroadcastPlan, output_spec: OutputSpec | None) -> None:
-    """Require a complete output declaration when a sweep has no evaluations.
+    """Require a complete output spec when a sweep has no evaluations.
 
     Parameters
     ----------
     plan : BroadcastPlan
         The call's lifting regime and sweep shape.
     output_spec : OutputSpec or None
-        The output declaration after dimensions shared with inputs bind.
+        The output spec after dimensions shared with inputs bind.
 
     Raises
     ------
@@ -358,7 +358,11 @@ def require_empty_sweep_output(plan: BroadcastPlan, output_spec: OutputSpec | No
         unbound, since no returned value can complete its declaration.
     """
     if plan.regime in ("sweep", "nested") and plan.n_sweep == 0:
-        if output_spec is None or output_spec.spec is None or not output_spec.spec.is_concrete:
+        if (
+            output_spec is None
+            or output_spec.term_spec is None
+            or not output_spec.term_spec.is_concrete
+        ):
             raise ValueError("An empty sweep requires a concrete output_spec")
 
 
@@ -525,7 +529,7 @@ def _group_stochastic_sources(
             )
         )
         runtime_evaluators[group_index].append(captured.evaluator)
-        runtime_events[group_index].append(value.event_spec.spec)
+        runtime_events[group_index].append(value.event_spec.term_spec)
 
     return grouped_consumers, source_values, runtime_samplers, runtime_evaluators, runtime_events
 

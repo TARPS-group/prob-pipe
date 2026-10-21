@@ -42,7 +42,7 @@ def _np_weighted_quantile(values, weights, qs):
 class TestQuantileOp:
     def test_uniform_matches_numpy_inverted_cdf(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (1000,))
-        emp = EmpiricalDistribution(samples, component="x")
+        emp = EmpiricalDistribution(samples, output_name="x")
         q = np.array([0.1, 0.5, 0.9])
         # The generalized inverse CDF is NumPy's type-1 ``inverted_cdf`` method.
         np.testing.assert_allclose(
@@ -53,7 +53,7 @@ class TestQuantileOp:
 
     def test_scalar_q_returns_scalar_shape(self):
         samples = jax.random.normal(jax.random.PRNGKey(1), (1000,))
-        emp = EmpiricalDistribution(samples, component="x")
+        emp = EmpiricalDistribution(samples, output_name="x")
         med = np.asarray(quantile(emp, 0.5))
         assert med.shape == ()
         expected = np.quantile(np.asarray(samples), 0.5, method="inverted_cdf")
@@ -63,7 +63,7 @@ class TestQuantileOp:
         # Weights ∝ value give density f(x) ∝ x on [0, 1], so F(x) = x² and the
         # q-quantile is √q — an independent analytic baseline for the weighted path.
         samples = jnp.linspace(0.0, 1.0, 101)
-        emp = EmpiricalDistribution(samples, weights=samples, component="x")
+        emp = EmpiricalDistribution(samples, weights=samples, output_name="x")
         q = jnp.array([0.1, 0.5, 0.9])
         wq = np.asarray(quantile(emp, q))
         # The discretization error is at most 0.01 on 101 points.
@@ -74,7 +74,7 @@ class TestQuantileOp:
         # NumPy weighted quantile.
         samples = jax.random.normal(jax.random.PRNGKey(7), (500, 2))
         weights = jnp.arange(1.0, 501.0)
-        emp = EmpiricalDistribution(samples, weights=weights, component="z")
+        emp = EmpiricalDistribution(samples, weights=weights, output_name="z")
         qs = [0.25, 0.75]
         out = np.asarray(quantile(emp, jnp.array(qs)))
         assert out.shape == (2, 2)
@@ -101,7 +101,7 @@ class TestQuantileOp:
     def test_vector_q_on_vector_event(self):
         # (n, 2) samples, q a 3-vector → per-field quantile shape (3, 2).
         samples = jax.random.normal(jax.random.PRNGKey(4), (1000, 2))
-        emp = EmpiricalDistribution(samples, component="z")
+        emp = EmpiricalDistribution(samples, output_name="z")
         q = np.array([0.25, 0.5, 0.75])
         out = np.asarray(quantile(emp, jnp.asarray(q)))
         assert out.shape == (3, 2)
@@ -131,7 +131,7 @@ class TestQuantileOp:
         assert float(jnp.asarray(median)) in (1.0, 2.0, 3.0)
 
     def test_raises_on_out_of_range_q(self):
-        emp = EmpiricalDistribution(jnp.arange(10.0), component="x")
+        emp = EmpiricalDistribution(jnp.arange(10.0), output_name="x")
         with pytest.raises(ValueError, match=r"\[0, 1\]"):
             quantile(emp, 1.5)
         with pytest.raises(ValueError, match=r"\[0, 1\]"):
@@ -140,13 +140,15 @@ class TestQuantileOp:
             quantile(emp, jnp.nan)
 
     def test_one_level_of_an_array_law_is_an_array(self):
-        emp = EmpiricalDistribution(jax.random.normal(jax.random.PRNGKey(8), (200,)), component="x")
+        emp = EmpiricalDistribution(
+            jax.random.normal(jax.random.PRNGKey(8), (200,)), output_name="x"
+        )
         res = quantile(emp, 0.5)
         assert isinstance(res, NumericArray)
         assert np.asarray(res).shape == ()
 
     def test_empirical_satisfies_supports_quantile(self):
-        emp = EmpiricalDistribution(jnp.arange(10.0), component="x")
+        emp = EmpiricalDistribution(jnp.arange(10.0), output_name="x")
         assert isinstance(emp, SupportsQuantile)
 
 
@@ -165,7 +167,7 @@ class TestRawQuantilesAtTheirLevels:
 
     def test_several_levels_of_an_array_law_are_a_batch_on_the_level_quantile(self):
         result = quantile(
-            EmpiricalDistribution(jnp.array([2.0, 4.0, 1.0, 3.0]), component="x"),
+            EmpiricalDistribution(jnp.array([2.0, 4.0, 1.0, 3.0]), output_name="x"),
             jnp.array([0.0, 1.0]),
         )
         assert isinstance(result, NumericArrayBatch)

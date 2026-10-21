@@ -20,10 +20,10 @@ Supported types
   hashes its atoms' levels + element spec + stored rows + weights,
   ``KDEDistribution`` hashes atoms + weights + kernel class + scales;
   ``Weights`` are hashed by content
-- ``Function`` — frozen signature, input declaration, and output declaration
-  without its component names, plus either plain-callable bytecode, referenced
+- ``Function`` — frozen signature, input spec, and output spec
+  without its output names, plus either plain-callable bytecode, referenced
   names, and captured/default values or a private implementation type, so
-  relabeling the function or its output, or renaming its output's components,
+  relabeling the function or its output, or renaming its outputs,
   keeps the digest
 - Closure-free Python functions — module + qualified name + bytecode +
   defaults. Closure-bearing functions and every other callable kind are
@@ -100,7 +100,7 @@ _DEFAULT_MAX_ARRAY_BYTES: int = 256 << 20  # 256 MB
 
 @dataclass
 class _FingerprintState:
-    """Aggregate whether any component used a weak identity fingerprint."""
+    """Aggregate whether any part used a weak identity fingerprint."""
 
     is_weak: bool = False
 
@@ -111,7 +111,7 @@ def fingerprint(obj: Any, *, max_array_bytes: int | None = _DEFAULT_MAX_ARRAY_BY
     Known content-bearing values are deterministic across processes. Opaque
     values are stable only for the same object in the current process. Use
     :attr:`ParentInfo.fingerprint_is_weak` before treating a provenance
-    fingerprint as a portable cache-key component. The digest is NOT
+    fingerprint as part of a portable cache key. The digest is NOT
     cryptographically secure.
 
     Parameters
@@ -139,7 +139,7 @@ def _fingerprint_with_strength(
     *,
     max_array_bytes: int | None = _DEFAULT_MAX_ARRAY_BYTES,
 ) -> tuple[str, bool]:
-    """Return a digest and whether any component used weak identity semantics.
+    """Return a digest and whether any part used weak identity semantics.
 
     A distribution is immutable, so its digest is computed once and kept in its
     transient memo, which a copy or a pickle leaves out. A law that many views
@@ -248,15 +248,15 @@ def _update(
             _update(h, k, depth + 1, max_array_bytes, state)
             _update(h, v, depth + 1, max_array_bytes, state)
     else:
-        from ._specs import InputSpec, OutputSpec
+        from ._specs import InputSpec, OutputSpec, _root_output_name
 
         if isinstance(obj, InputSpec):
             h.update(b"input_spec:")
             _update(h, dict(obj), depth + 1, max_array_bytes, state)
         elif isinstance(obj, OutputSpec):
             h.update(b"output_spec:")
-            _update(h, obj._component_name, depth + 1, max_array_bytes, state)
-            _update(h, obj.spec, depth + 1, max_array_bytes, state)
+            _update(h, _root_output_name(obj), depth + 1, max_array_bytes, state)
+            _update(h, obj.term_spec, depth + 1, max_array_bytes, state)
         elif _is_tfp_object(obj):
             _update_tfp_object(h, obj, depth, max_array_bytes, state)
         elif (content := _numeric_container_to_numpy(obj)) is not None:
@@ -399,7 +399,7 @@ def _update_value_spec(
     from ..values._function_base import FunctionSpec
     from ._batch import BatchSpec
     from ._opaque import OpaqueSpec
-    from ._specs import NumericArraySpec, RecordSpec
+    from ._specs import NumericArraySpec, RecordSpec, _root_output_name
 
     spec_type = type(spec)
     h.update(b"spec:")
@@ -425,14 +425,15 @@ def _update_value_spec(
     elif isinstance(spec, RecordSpec):
         _update_event_template(h, spec, depth, max_array_bytes, state)
     elif isinstance(spec, DistributionSpec):
-        # The packaging and the component are part of the declaration, so a whole
-        # term ``x`` and a one-field record exposing ``x`` hash apart.
+        # The event spec's form and its root output's name are both hashed, so the
+        # keyword form ``OutputSpec(x=...)`` and the positional form over a
+        # one-field record ``x`` hash apart.
         declaration = spec.event_spec
         h.update(b"component=")
-        component = declaration._component_name
-        _update(h, component, depth + 1, max_array_bytes, state)
+        output_name = _root_output_name(declaration)
+        _update(h, output_name, depth + 1, max_array_bytes, state)
         h.update(b":event=")
-        _update(h, declaration.spec, depth + 1, max_array_bytes, state)
+        _update(h, declaration.term_spec, depth + 1, max_array_bytes, state)
     elif isinstance(spec, FunctionSpec):
         _update(h, spec.input_spec, depth + 1, max_array_bytes, state)
         _update_output_declaration(h, spec.output_spec, depth + 1, max_array_bytes, state)
@@ -913,7 +914,7 @@ def _update_output_declaration(
     max_array_bytes: int | None,
     state: _FingerprintState,
 ) -> None:
-    """Hash a function's output declaration without its component names.
+    """Hash a function's output spec without its output names.
 
     Two functions that differ only in the names of their outputs compute the
     same values, so they share a fingerprint.
@@ -933,7 +934,7 @@ def _update_function(
 ) -> None:
     """Hash a Function by callable content or stable implementation declaration.
 
-    Every Function includes its frozen signature and declarations. Plain-callable
+    Every Function includes its frozen signature and its input and output specs. Plain-callable
     Functions additionally use bytecode plus default and closure content.
     Other private implementations add only their implementation type,
     excluding implementation instance state and artifact identity.

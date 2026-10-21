@@ -105,7 +105,7 @@ nav:
   - API reference:
     - api/index.md
     - Values and records: api/values.md
-    - Declarations: api/declarations.md
+    - Input and output specs: api/input_and_output_specs.md
     - Distributions and families: api/distributions.md
     - Random functions: api/random_functions.md
     - Functions: api/functions.md

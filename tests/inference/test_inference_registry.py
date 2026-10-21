@@ -400,7 +400,7 @@ def gaussian_model():
     prior = Normal("mu", loc=0.0, scale=1.0)
     likelihood = ObservationKernel(
         "y",
-        {"mu": prior.event_spec.spec},
+        {"mu": prior.event_spec.term_spec},
         NumericArraySpec((3,)),
         lambda mu: tfd.Independent(tfd.Normal(jnp.broadcast_to(mu, (3,)), 1.0), 1),
     )
@@ -503,7 +503,7 @@ class TestTargets:
         target = _logistic_target()
         assert observed_parts(target) == (target, None)
         joint, given = joint_and_given(target)
-        assert set(joint.event_spec.components) == {"y", "beta"}
+        assert set(joint.event_spec.outputs) == {"y", "beta"}
         assert set(given.fields) == {"y"}
 
     def test_the_gradient_method_normalizes_a_keyed_target(self):
@@ -512,14 +512,14 @@ class TestTargets:
         assert (info.feasible, info.method_name) == (True, "blackjax_nuts")
         with workflow_run(seed=0):
             posterior = inference_method_registry.execute(target, num_results=30, num_warmup=30)
-        assert set(posterior.event_spec.components) == {"beta"}
+        assert set(posterior.event_spec.outputs) == {"beta"}
         assert flat_draws(posterior)["beta"].shape == (4 * 30, 2)
 
     def test_the_random_walk_normalizes_a_keyed_target(self):
         posterior = inference_method_registry.execute(
             _logistic_target(), method="blackjax_rwmh", num_results=20, num_warmup=30
         )
-        assert set(posterior.event_spec.components) == {"beta"}
+        assert set(posterior.event_spec.outputs) == {"beta"}
         assert flat_draws(posterior)["beta"].shape == (4 * 20, 2)
 
     def test_a_keyed_target_starts_at_a_draw_of_its_joint(self):
