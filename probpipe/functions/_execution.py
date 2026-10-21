@@ -17,6 +17,7 @@ from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from functools import partial
 from time import sleep
 from typing import Any, Literal
 
@@ -310,9 +311,10 @@ def execute_many(request: WorkflowExecutionRequest) -> list[Any]:
             for evaluation_point in request.evaluation_points
         ]
     _evaluation_keys._record_active_execution_contract(contract)
-    # A worker starts without the caller's context, so the work function carries
-    # the call context.
-    request = replace(request, func=_carrying_call_context(request.func))
+    if request.execution.mode in ("sequential", "thread"):
+        # A worker starts without the caller's context, so the work function
+        # carries the call context; map_task carries it for Prefect.
+        request = replace(request, func=_carrying_call_context(request.func))
     parent_frame = _context._capture_active_workflow_frame()
     parent_broker = _evaluation_keys._capture_active_broker()
     if parent_broker is not None:
@@ -434,11 +436,15 @@ def map_task(
     _context._guard_evaluation_point_submission()
     _ensure_prefect_available()
 
-    func = request.func
+    # The worker's workflow frame takes the run's provenance mode from the call
+    # context, so the payload runs under the carried context from its start.
+    run_payload_under_call_context = _carrying_call_context(
+        partial(_execute_prefect_payload, request.func)
+    )
 
     @task(name=task_name or request.execution.name, retries=0)
     def run_func(payload):
-        return _execute_prefect_payload(func, payload)
+        return run_payload_under_call_context(payload)
 
     payloads_by_index: dict[int, EvaluationPointPrefectPayload] = {}
     try:
@@ -558,7 +564,6 @@ def _make_prefect_payload(
     return EvaluationPointPrefectPayload(
         evaluation_point=evaluation_point,
         attempt=attempt,
-        provenance_mode=_context._active_provenance_mode(),
         parent_envelope=parent_envelope,
     )
 
@@ -831,16 +836,17 @@ def _execute_prefect_payload(
     func: Callable[..., Any],
     payload: EvaluationPointPrefectPayload,
 ) -> EvaluationPointOutcome:
-    """Execute one serializable Prefect payload and return its claim report."""
+    """Execute one serializable Prefect payload and return its claim report.
+
+    The worker's workflow frame takes the run's provenance mode from the call
+    context in effect, which :func:`map_task` carries into the worker.
+    """
     payload = _validated_evaluation_point_prefect_payload_snapshot(payload)
     evaluation_point = payload.evaluation_point
     attempt = payload.attempt
     if payload.parent_envelope is None:
         with (
-            _context._transported_workflow_frame(
-                None,
-                payload.provenance_mode,
-            ),
+            _context._transported_workflow_frame(None),
             _evaluation_keys._remote_coordination_probe_scope() as observation,
         ):
             output = None
@@ -867,10 +873,7 @@ def _execute_prefect_payload(
             report=EvaluationPointClaimReport(evaluation_point.frame, attempt, 0),
         )
 
-    with _context._transported_workflow_frame(
-        payload.parent_envelope.root_words,
-        payload.provenance_mode,
-    ):
+    with _context._transported_workflow_frame(payload.parent_envelope.root_words):
         remote_parent = None
         try:
             with _evaluation_keys._remote_evaluation_point_stochastic_scope(

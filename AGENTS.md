@@ -81,3 +81,4 @@ These checks run without being asked:
 - the advisory CI jobs: the type check, the design ledger report, and the PR hygiene check of the title, branch, and body;
 - `tests/docs/`: each citation of the rule documents and the agent files exists, this file stays within 120 lines, and each CHANGELOG release has one heading per change type;
 - `tests/test_version.py`: the two `pyproject.toml` files share one version.
+- while `plans/` exists, the push-status job: a PR into `dev/overhaul` needs a `step:<step>` or `push:*` label, and the job rewrites the tracking issue from the labels (`plans/README.md` § Status).

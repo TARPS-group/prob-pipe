@@ -710,6 +710,17 @@ def _single_output_name(output_spec: OutputSpec) -> str | None:
     is the one of them; the step that gives such an output spec no outputs
     removes this helper, and its callers then read :func:`_root_output_name`.
 
+    Parameters
+    ----------
+    output_spec : OutputSpec
+        The output spec to read.
+
+    Returns
+    -------
+    str or None
+        The name of the one output, or None when the outputs are a record's
+        fields.
+
     Raises
     ------
     ValueError

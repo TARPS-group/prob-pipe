@@ -425,3 +425,148 @@ def _resolved_method_options():
         name: dict(options) if isinstance(options, MappingProxyType) else options
         for name, options in current_call_context().resolved_controls["method_options"].items()
     }
+
+
+class TestTheSessionSnapshot:
+    """A root call snapshots the session's values, which the work it dispatches reads."""
+
+    def test_a_root_call_snapshots_every_section_but_prefect(self):
+        seen = []
+
+        @function
+        def inner(x):
+            seen.append(current_call_context().session_config_values)
+            return x
+
+        @function
+        def outer(x):
+            seen.append(current_call_context().session_config_values)
+            return inner(x)
+
+        config.sampling.num_samples = 333
+        outer(1.0)
+        root_snapshot, nested_snapshot = seen
+        assert set(root_snapshot) == {"sampling", "notation", "provenance"}
+        assert root_snapshot["sampling"]["num_samples"] == 333
+        assert root_snapshot["provenance"]["mode"] is config.provenance.mode
+        assert isinstance(root_snapshot["sampling"], MappingProxyType)
+        assert nested_snapshot is root_snapshot
+
+    def test_a_child_keeps_its_parents_snapshot_and_a_root_takes_the_given_one(self):
+        root = current_call_context().child_for_call(
+            entry_method_name="__call__",
+            function_label="f",
+            resolved_controls={},
+            session_config_values={"sampling": {"num_samples": 5}},
+        )
+        child = root.child_for_call(
+            entry_method_name="apply", function_label="g", resolved_controls={}
+        )
+        assert dict(root.session_config_values["sampling"]) == {"num_samples": 5}
+        assert child.session_config_values is root.session_config_values
+
+    def test_the_evaluation_context_is_marked_and_its_children_keep_the_mark(self):
+        call_context = current_call_context().child_for_call(
+            entry_method_name="__call__", function_label="f", resolved_controls={}
+        )
+        evaluation_context = call_context.evaluation_context()
+        assert not call_context.in_evaluation_point
+        assert evaluation_context.in_evaluation_point
+        child = evaluation_context.child_for_call(
+            entry_method_name="__call__", function_label="g", resolved_controls={}
+        )
+        assert child.in_evaluation_point
+        assert child.with_config_block({"sampling": {"num_samples": 3}}).in_evaluation_point
+
+    def test_a_pickled_evaluation_context_keeps_the_snapshot(self):
+        carried = []
+
+        @function
+        def dispatching(x):
+            carried.append(_carrying_call_context(_resolved_method_options))
+            return x
+
+        config.notation.max_depth = 5
+        dispatching(1.0)
+        restored_context = pickle.loads(pickle.dumps(carried[0])).call_context
+        assert restored_context.in_evaluation_point
+        assert (
+            restored_context.session_config_values == carried[0].call_context.session_config_values
+        )
+        assert restored_context.session_config_values["notation"]["max_depth"] == 5
+        assert isinstance(restored_context.session_config_values["notation"], MappingProxyType)
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread"])
+    def test_a_session_assignment_during_a_call_reaches_none_of_its_points(self, dispatch):
+        seen = []
+
+        @function(dispatch=dispatch, **({"max_workers": 1} if dispatch == "thread" else {}))
+        def body(x):
+            if float(x) == 0.0:
+                config.sampling.num_samples = 7
+            seen.append((float(x), config.sampling.num_samples))
+            return x
+
+        body(NumericArrayBatch(jnp.arange(3.0), "x", label="xs"))
+        assert seen == [(0.0, 1024), (1.0, 1024), (2.0, 1024)]
+        assert config.sampling.num_samples == 7
+
+    def test_a_call_inside_a_point_resolves_its_controls_from_the_snapshot(self):
+        seen = []
+
+        @function
+        def inner(x):
+            seen.append(_num_samples_in_effect())
+            return x
+
+        @function(dispatch="thread", max_workers=1)
+        def body(x):
+            config.sampling.num_samples = 7
+            return inner(x)
+
+        body(NumericArrayBatch(jnp.arange(2.0), "x", label="xs"))
+        assert seen == [1024, 1024]
+
+    def test_a_block_wins_over_the_snapshot_inside_a_point(self):
+        seen = []
+
+        @function(dispatch="thread", max_workers=1)
+        def body(x):
+            seen.append(config.sampling.num_samples)
+            return x
+
+        with config.sampling.using(num_samples=55):
+            body(NumericArrayBatch(jnp.arange(2.0), "x", label="xs"))
+        assert seen == [55, 55]
+
+    def test_a_point_reads_the_live_prefect_settings(self):
+        task_runner_sentinel = object()
+        seen = []
+
+        @function(dispatch="thread", max_workers=1)
+        def body(x):
+            config.prefect.task_runner = task_runner_sentinel
+            seen.append(config.prefect.task_runner)
+            return x
+
+        body(NumericArrayBatch(jnp.arange(2.0), "x", label="xs"))
+        assert seen == [task_runner_sentinel, task_runner_sentinel]
+
+    def test_work_carried_outside_every_call_reads_the_live_session(self):
+        with config.notation.using(max_depth=3):
+            carried = _carrying_call_context(lambda: config.sampling.num_samples)
+        config.sampling.num_samples = 9
+        assert carried() == 9
+
+    def test_a_body_assigning_the_session_still_reads_the_snapshot(self):
+        seen = []
+
+        @function
+        def body(x):
+            config.sampling.num_samples = 11
+            seen.append(config.sampling.num_samples)
+            return x
+
+        body(1.0)
+        assert seen == [1024]
+        assert config.sampling.num_samples == 11

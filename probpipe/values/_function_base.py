@@ -761,7 +761,9 @@ def _in_child_call_context(
     The call runs on the view that :meth:`Function._inheriting` returns when
     an enclosing derived route passes controls, and it opens the child context that
     :meth:`~probpipe.core._call_context._CallContext.child_for_call` derives,
-    which holds the view's resolved controls, for the extent of the call.
+    which holds the view's resolved controls, for the extent of the call. A
+    root call also takes the snapshot of the session's values that the work it
+    dispatches reads.
     """
 
     def decorate(entry_method: Callable[..., Any]) -> Callable[..., Any]:
@@ -777,6 +779,9 @@ def _in_child_call_context(
                 entry_method_name=entry_method_name,
                 function_label=function_view.label,
                 resolved_controls=function_view.options,
+                session_config_values=(
+                    config._session_values_snapshot() if parent_context.call_depth == 0 else None
+                ),
             )
             with _open_call_context(child_context, entry_method_name=entry_method_name):
                 return entry_method(function_view, *args, **kwargs)
