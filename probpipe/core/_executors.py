@@ -26,7 +26,7 @@ import threading
 import warnings
 from abc import abstractmethod
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 import cloudpickle
 import jax
@@ -99,9 +99,10 @@ class EvaluationExecutor(UnaryDispatchMethod):
         executor_registry.register(PoolExecutor())
     """
 
-    exact = True
-    priority: int | None = None
-    description = ""
+    @property
+    def exact(self) -> bool:
+        """``True``: an executor returns the requested result itself, whatever it runs on."""
+        return True
 
     def supported_types(self) -> tuple[type, ...]:
         """``(EvaluationPoints,)``: an executor admits every set of evaluation points."""
@@ -234,6 +235,20 @@ def _run_on_executor(
     evaluation points noted into the call's accumulators, records the set in
     the call's evaluation log, and warns about casts that lost precision.
 
+    Parameters
+    ----------
+    evaluation_points : EvaluationPoints
+        The set of evaluation points, built under the running call.
+    executor : EvaluationExecutor
+        The executor that runs it.
+    executor_options : Mapping of str to Any
+        The options *executor* receives.
+
+    Returns
+    -------
+    EvaluationOutcomes
+        One outcome per evaluation point, failures included.
+
     Raises
     ------
     RuntimeError
@@ -268,9 +283,17 @@ def _run_on_executor(
 class _JaxExecutor(EvaluationExecutor):
     """Compile a traceable callable over every evaluation point with one ``jax.vmap``."""
 
-    name = "jax"
-    priority = 20
-    description = "Map a traceable callable over every evaluation point with jax.vmap."
+    @property
+    def name(self) -> str:
+        return "jax"
+
+    @property
+    def priority(self) -> int | None:
+        return 20
+
+    @property
+    def description(self) -> str:
+        return "Map a traceable callable over every evaluation point with jax.vmap."
 
     def check(self, evaluation_points: EvaluationPoints, /) -> Feasibility:
         if not evaluation_points.traceable:
@@ -336,9 +359,17 @@ class _JaxExecutor(EvaluationExecutor):
 class _SequentialExecutor(EvaluationExecutor):
     """Run the evaluation points one after another, in the calling thread."""
 
-    name = "sequential"
-    priority = 0
-    description = "Run the evaluation points one after another, in the calling thread."
+    @property
+    def name(self) -> str:
+        return "sequential"
+
+    @property
+    def priority(self) -> int | None:
+        return 0
+
+    @property
+    def description(self) -> str:
+        return "Run the evaluation points one after another, in the calling thread."
 
     def check(
         self, evaluation_points: EvaluationPoints, /, *, chunk_size: int | None = None
@@ -357,8 +388,13 @@ class _SequentialExecutor(EvaluationExecutor):
 class _ThreadExecutor(EvaluationExecutor):
     """Run chunks of evaluation points on a pool of threads; opt-in, since user code may not be thread-safe."""
 
-    name = "thread"
-    description = "Run chunks of evaluation points on a pool of threads."
+    @property
+    def name(self) -> str:
+        return "thread"
+
+    @property
+    def description(self) -> str:
+        return "Run chunks of evaluation points on a pool of threads."
 
     def check(
         self,
@@ -390,8 +426,13 @@ class _ThreadExecutor(EvaluationExecutor):
 class _ProcessExecutor(EvaluationExecutor):
     """Run chunks of evaluation points in spawned worker processes, under the parent's JAX settings."""
 
-    name = "process"
-    description = "Run chunks of evaluation points in worker processes."
+    @property
+    def name(self) -> str:
+        return "process"
+
+    @property
+    def description(self) -> str:
+        return "Run chunks of evaluation points in worker processes."
 
     def check(
         self,
@@ -461,7 +502,7 @@ def _chosen_executor(
     automatic_options: Mapping[str, Any] = {}
     if execution_choice.names_executor():
         executor_name = execution_choice.executor_name
-        named_executor = _requested_executor(executor_name)
+        named_executor = _requested_executor(cast(str, executor_name))
         _check_executor_reads_options(named_executor, execution_choice.executor_options)
         feasibility = named_executor.check(evaluation_points, **execution_choice.executor_options)
         if feasibility.feasible:

@@ -522,6 +522,11 @@ class _NumSamplesUsed:
     ``collects_calls``, and what a worker process notes into it comes back
     with the outcomes of its evaluation points.
 
+    Parameters
+    ----------
+    collects_calls : bool, optional
+        Its initial ``collects_calls``; ``False`` by default.
+
     Attributes
     ----------
     collects_calls : bool
@@ -635,6 +640,11 @@ class _EvaluationLog:
 
     def next_set_numbers(self, origin: str) -> tuple[int, int]:
         """The numbers of the next set of evaluation points of *origin* that the call asks for.
+
+        Parameters
+        ----------
+        origin : str
+            The callable or the site the set belongs to.
 
         Returns
         -------

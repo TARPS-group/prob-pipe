@@ -815,6 +815,20 @@ def _child_context_for_call(
     ``executor_options``, and its executor choice; a root call also takes the
     session's values and the JAX settings as they read now.
 
+    Parameters
+    ----------
+    function_view : Function
+        The view the call runs on.
+    parent_context : _CallContext
+        The context the call is opened in.
+    entry_method_name : {"__call__", "apply", "check"}
+        The ``Function`` method that opens the call.
+
+    Returns
+    -------
+    _CallContext
+        The call's context.
+
     Raises
     ------
     ResolutionError, ValueError
@@ -845,6 +859,18 @@ def _resolve_execution_choice(
     to the executor automatic selection picks, and block inheritance.
     Otherwise the call inherits the enclosing call's choice when that names an
     executor, and else selects automatically.
+
+    Parameters
+    ----------
+    function_view : Function
+        The view the call runs on.
+    parent_context : _CallContext
+        The context the call is opened in.
+
+    Returns
+    -------
+    _ExecutionChoice
+        The call's executor choice.
 
     Raises
     ------

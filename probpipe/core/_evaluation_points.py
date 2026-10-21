@@ -338,6 +338,15 @@ class EvaluationChunk:
     arguments and the settings of the call that asked for them. Running it
     does the same wherever it runs.
 
+    Parameters
+    ----------
+    evaluation_points : EvaluationPoints
+        The set the chunk is a slice of.
+    start : int
+        The point index of its first evaluation point.
+    stop : int
+        One past the point index of its last evaluation point.
+
     Attributes
     ----------
     start : int
@@ -713,6 +722,17 @@ class EvaluationError(RuntimeError):
     then raised. The error is chained to the first failure's exception when it
     is available, so the traceback points into the code that raised.
 
+    Parameters
+    ----------
+    failures : iterable of EvaluationFailure
+        The failed evaluation points.
+    outputs : iterable
+        Each evaluation point's output, in order, ``None`` where one failed.
+    origin : str
+        The callable or the site, which the message names.
+    point_noun : str, optional
+        The word for one evaluation point in the message, such as ``"draw"``.
+
     Attributes
     ----------
     failures : tuple of EvaluationFailure
@@ -879,6 +899,21 @@ def _checked_point_output(
     declared order, and an array whose dtype differs from a declared one is
     cast to it.
 
+    Parameters
+    ----------
+    output : Any
+        What the evaluation point returned.
+    output_spec : OutputSpec or None
+        The callable's output spec; ``None`` checks nothing.
+    output_path : str
+        How a message names the output.
+
+    Returns
+    -------
+    tuple of (Any, frozenset of (str, str))
+        The checked output, and the pairs of dtype names of each cast that
+        lost precision.
+
     Raises
     ------
     _InvalidPointOutput
@@ -967,7 +1002,7 @@ def _num_rows(varying: Mapping[str, Any], origin: str) -> int:
             f"{sorted(count for count in row_counts if count is not None)}. Stack every "
             "varying argument with one row per evaluation point"
         )
-    return int(next(iter(row_counts)))
+    return int(cast(int, next(iter(row_counts))))
 
 
 def _stacked_shared_arguments(shared_arguments: Mapping[str, Any], num_rows: int) -> dict[str, Any]:
