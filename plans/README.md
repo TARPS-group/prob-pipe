@@ -78,7 +78,7 @@ Ask the maintainer before doing any of the following:
 - departing from an item that `decisions.md` records as settled;
 - adding a special case, an alias, or a workaround to get past a problem.
 
-To ask, comment on the tracking issue (§ Status), or, before it exists, list the question in the PR body under "Questions for the maintainer", and say so in the session. A step PR does not edit `decisions.md` (§ Ending a session); the checkpoint PR copies each question into the queue of `decisions.md` and each answer into its settled table.
+To ask, comment on the tracking issue (§ Status) and add the question to the issue's section "Waiting on the maintainer", or, before the issue exists, list the question in the PR body under "Questions for the maintainer", and say so in the session. A step PR does not edit `decisions.md` (§ Ending a session); the checkpoint PR copies each question into the queue of `decisions.md` and each answer into its settled table.
 For a new question, one not yet in the queue, unless it blocks all further work on the step, do not wait for the answer: make the most conservative choice consistent with the plans, state the choice and its alternative with the question, and go on.
 Write the question for a reader without the session's context:
 1. the background, from first principles;
@@ -90,7 +90,7 @@ A choice that changes none of the above, such as a private helper's structure, i
 
 ## Branches and PRs
 
-- Every step is one PR into `dev/overhaul`, from the branch the step tables below name, cut from `origin/dev/overhaul`. The one exception is P0b, a PR into #587's branch, `dev/config-sections` (§ Steps started before this PR merged).
+- Every step is one PR into `dev/overhaul`, from the branch the step tables below name, cut from `origin/dev/overhaul`. The one exception was P0b, a PR into #587's branch, `dev/config-sections`, which merged on 2026-10-20.
 - Each dependency in the step tables has one of two kinds (decided 2026-10-20, N7):
     - a step **builds on** a dependency whose code it changes or calls. It starts once that dependency has merged, or stacks on the dependency's open PR and retargets `dev/overhaul` once the dependency merges. A step with several open "builds on" dependencies branches from the one that changes most of its code and merges the others' branches in. Its PR body names the branch it stacks on and the branches it merged in;
     - a step **merges after** a dependency that only fixes the order, such as design text it follows, a rename it absorbs, or a module both edit. It does not wait for such a dependency: it is built in parallel, and its PR stays a draft until each such dependency has merged; it then brings itself up to date and is marked ready.
@@ -135,7 +135,7 @@ The declarations and addressing steps follow `declarations-and-addressing.md`, w
 A clean cut means:
 - the step's PR does not merge; its branch is kept, and its work resumes after the workshop;
 - the current behaviour stays, with no bridging code (directive 8);
-- `deferred.md` gains the step, and the tracking issue marks it cut;
+- `deferred.md` gains the step, and the maintainer marks it cut on the tracking issue by ending its line with ` — **cut**`, which `plans/status.py` keeps;
 - a session never starts a step whose cut is already decided.
 
 Since every merge leaves `dev/overhaul` coherent (directive 7), the code can be frozen after any merge.
@@ -160,7 +160,7 @@ E3a builds on E2 and merges after E0, E1, and PV, and E2 merges after E1, so all
 
 | Step | What | Plan section | Builds on | Merges after | Before | Branch |
 |---|---|---|---|---|---|---|
-| S0 | Design text: II.2 states the grammar rule, input specs, and output specs indexed by path, II.6 the paths and how `[]` reads them; IV.2 retitled "Merging distributions", with the one definition of merge, "merge" for `&`, and "unfed" for "unmet"; "conforms", "unify", and "completes", one word per relation; the glossary; all in the final words "input", "output", "input spec", "output spec", and "event spec" (`declarations-and-addressing.md` B.2); the reworded passages of § 6.5.4; and `_PENDING` entries in the conformance tests for the signatures that change ahead of the code | `declarations-and-addressing.md` B.6 S0 | — | PL | yes | `dev/declarations-design-text` |
+| S0 | Design text: II.2 states the grammar rule, input specs, and output specs indexed by path, II.6 the paths and how `[]` reads them; IV.2 retitled "Merging distributions", with the one definition of merge, "merge" for `&`, and "unfed" for "unmet"; "conforms", "unify", and "completes", one word per relation; the glossary; all in the final words "input", "output", "input spec", "output spec", and "event spec" (`declarations-and-addressing.md` B.2); the passages that B.3's table rewords; and `_PENDING` entries in the conformance tests for the signatures that change ahead of the code | `declarations-and-addressing.md` B.6 S0 | — | PL | yes | `dev/declarations-design-text` |
 | S1 | One path reader and one `_PATH_SEP`; `[]` returns groups on `Record` and `RecordSpec`; lists of paths keep their paths; `in`, laws included; `marginal(d, paths)`; `select` flattens to last names; `()` on a batch raises | B.6 S1 | — | S0 | yes | `dev/path-reader` |
 | S2a | **Announced, mechanical.** `spec` becomes `term_spec` and `with_spec` becomes `with_term_spec`; `exposes_record` goes; every read of `_component_name` outside `_specs.py` moves to one private helper; and the rename to the final words: "slot" → "input", "component" → "output", "input, output, and event declaration" → "input, output, and event spec", `components` → `outputs`, `component=` → `output_name=`, the private names, and the docs page, in the code, its messages, and the User Guide (decided 2026-10-20, N16 and N21) | B.6 S2a | — | S0 | yes | `dev/term-spec-rename` |
 | S2b-out | `OutputSpec[]`, `in`, `without`, and `&` through S1's reader; `__iter__`'s refusal; a produced law or kernel offers no outputs; the joint's event through `&`; `merge` on records, record specs, and `RecordBatch` becomes shallow (decided 2026-10-20, N5) | B.6 S2b-out | S1, S2a | — | yes | `dev/output-spec-operations` |
@@ -194,25 +194,13 @@ The post-workshop work of both tracks is listed in `deferred.md`.
 
 ## Status
 
-A GitHub tracking issue, #601, holds each step's state and PR, as `CONTRIBUTING.md` § PR Workflow describes for a multi-PR plan. The maintainer approved it on 2026-10-18, and it was created when PL merged. Step PRs never edit § Steps, so parallel PRs do not conflict on this file.
+The tracking issue, #601, shows each step's state, and `plans/status.py` writes it, so no box is ticked by hand. Each PR of a step carries the label `step:<step>`, such as `step:S2a`; a PR of the push that belongs to no step, such as a plans or design PR, carries `push:plans`; and a checkpoint PR carries `push:checkpoint` as well. From these labels the script writes each step's line: merged into `dev/overhaul`, in review, draft, or not started, with the box ticked once the step's PR has merged and none is open. It also lists the issue's comments that name `decisions.md` or `deferred.md` and were posted after the last checkpoint PR merged, which are the decisions and postponed work that those files do not hold yet, and the plans PRs. The issue's section "Waiting on the maintainer" is written by hand.
 
-### Steps started before this PR merged
-
-The maintainer approved starting steps from the plans branch on 2026-10-18, before PL merges. Each opened, or will open, as a draft PR, and lists its questions in its body under "Questions for the maintainer", since `decisions.md` is not on its base. State on the night of 2026-10-18, with N11 and N12 applied on 2026-10-20:
-
-| Step | PR | Branch | Base | What happens next |
-|---|---|---|---|---|
-| P0b | #597 (draft) | `dev/call-context` | `dev/config-sections` (#587) | A PR into #587's branch, the one exception to "every step is one PR into `dev/overhaul`". jhuggins is away in the week of 2026-10-20 and has put the maintainer in charge, so the push merges it into `dev/config-sections` (N11); after that the maintainer merges #586, once `dev/overhaul` has been merged into #586's branch to resolve its conflict, and then #587. |
-| E0 | #598 (draft) | `dev/evaluation-point-rename` | `dev/config-sections` | Once P0b is in #587, it merges `dev/config-sections` and renames P0b's "identity". It retargets `dev/overhaul` when #587 merges. |
-| E1 | #596 (draft) | `dev/execution-design-text` | `dev/config-sections` | Once P0b is in #587, it merges `dev/config-sections`, taking P0b's V.2 sentence and glossary entry "call context". It retargets `dev/overhaul` when #587 merges. |
-| S1 | #599 (draft) | `dev/path-reader` | `dev/overhaul` | Built ahead of S0, against `declarations-and-addressing.md` B.6, S1. It merges after S0, and merges `dev/overhaul` once #587 merges. |
-| S0 | #600 (draft) | `dev/declarations-design-text` | `dev/overhaul` | Written from `declarations-and-addressing.md`, which the maintainer accepted on 2026-10-20 (N12), so it waits on nothing. |
-
-When this PR merges, its session creates the tracking issue with these rows, and creates handoffs for PV only; it does not create handoffs for the steps above.
+Run `python3 plans/status.py` after opening a PR of the push, marking one ready for review, or merging one; `--dry-run` prints the body without writing it. Step PRs never edit § Steps, so parallel PRs do not conflict on this file.
 
 ## Starting a session on a step
 
-1. Read this file in full, then `decisions.md`, then the current plans (directive 1).
+1. Read this file in full, then `decisions.md`, then the comments that the tracking issue lists under "Decided since the last checkpoint", which bind as `decisions.md` does, then the current plans (directive 1).
 2. Check the tracking issue, and `gh pr list --state all --head <the step's branch>` with the branch the step tables name: if a PR or branch for the step already exists, stop and tell the maintainer.
 3. Check each dependency of the step with `gh pr view <number> --json state,mergedAt`. If a dependency the step **builds on** has no PR yet, stop and report which. If every one has merged, base the branch on `origin/dev/overhaul`; if some are open, branch from the open one that changes most of the step's code and merge the other open ones in, as § Branches and PRs says. A dependency the step **merges after** does not hold it back: the PR stays a draft until that dependency merges.
 4. `git fetch origin`, then create the step's branch, named as the step tables say, from `origin/dev/overhaul`, or from the dependency's branch when stacking. The session's worktree may have started on another branch, such as `main`; never base a step on it.
@@ -223,8 +211,8 @@ When this PR merges, its session creates the tracking issue with these rows, and
 
 1. Open the PR into `dev/overhaul` as a draft, with a body that follows directives 4, 9, and 10 and the PR template. Its CHANGELOG entries go at the **end** of the existing section for their type, and never add a heading that `[Unreleased]` already has; each breaking change goes under `### Changed (breaking)` with a before-and-after line a user can copy, and a silent change shows the same call before and after (`execution-layer.md` § 13.1, `declarations-and-addressing.md` C.5).
 2. Run `/review-pr` on it, fix or answer each finding, and mark it ready for review (directive 13). If `plans/` is not on the PR's base, run `/review-pr` from a checkout of a branch that has `plans/`, or paste `plans/README.md` into the review's context, so the plan check runs.
-3. Comment on the tracking issue with the PR link.
-4. Post any decision or question, and any postponed work, as a comment on the tracking issue (before it exists, in the PR body). Step PRs do not edit `decisions.md` or `deferred.md`, which every parallel PR would otherwise conflict on: at each checkpoint, one small plans PR moves the comments into them. A plan correction that a step needs goes in that step's PR, in the section it corrects, and the checkpoint PR adds its revision-log row.
+3. Label the PR `step:<step>`, or `push:plans` for a PR that belongs to no step, comment on the tracking issue with the PR link, and run `python3 plans/status.py`. A PR that changes the scope of another step, as a design or plans PR may, names that step in its comment.
+4. Post any decision or question, and any postponed work, as a comment on the tracking issue (before it exists, in the PR body). A comment with a decision names `decisions.md`, and one with postponed work names `deferred.md`, so `plans/status.py` lists it until the checkpoint moves it. Step PRs do not edit `decisions.md` or `deferred.md`, which every parallel PR would otherwise conflict on: at each checkpoint, one small plans PR moves the comments into them. A plan correction that a step needs goes in that step's PR, in the section it corrects, and the checkpoint PR adds its revision-log row.
 5. Create the handoffs (below).
 
 ## Handoffs
@@ -232,7 +220,7 @@ When this PR merges, its session creates the tracking issue with these rows, and
 When a session marks its PR ready for review, it creates a handoff for each step that lists its own step among its dependencies and whose other "builds on" dependencies have each merged or are open as PRs; a "merges after" dependency need not have started.
 Two sessions may then create a handoff for the same step; the new session's check of the tracking issue and the step's branch stops the second.
 A handoff whose "builds on" dependencies have not merged when it is opened stacks on them, or stops if one has no PR yet (§ Starting a session); the maintainer opens it again later.
-When this `plans/` PR merges, its session creates the handoff for PV only; P0b, E0, E1, S1, and S0 are already under way (§ Steps started before this PR merged), and a handoff must not start them again.
+A handoff never starts a step that the tracking issue shows with a PR.
 A coordinator session may start step sessions directly, at most three at a time (§ Priorities and off-ramps), choosing never-cut steps first and the step that frees the longest chain first.
 
 **A sequence of automated handoffs.** A session that starts a sequence of automated step sessions, such as a coordinator, first checks every step of the sequence against the queue of `decisions.md`. Before any step starts, it tells the maintainer which open questions block or shape which steps, so he can answer them up front and the sequence runs without stopping. A step whose blocking question is still open does not start (§ When to stop and ask).
@@ -280,7 +268,7 @@ Repository: <absolute path of the main checkout>. Work in the fresh worktree thi
 The checkpoints are on 2026-10-20 and 2026-10-22; the second decides the cut. *Criteria that make each checkpoint's decision mechanical, and a cut early enough to save work, are pending the maintainer's decision N14 in `decisions.md`.*
 At a checkpoint:
 1. run `/review-all` on the latest merged work, or a fresh-eyes review of the merged code against every plan;
-2. update the plans and this file where the code has taught something, and move the tracking issue's decisions, questions, and postponed work into `decisions.md` and `deferred.md` (§ Ending a session, step 4);
+2. update the plans and this file where the code has taught something, and move the tracking issue's decisions, questions, and postponed work into `decisions.md` and `deferred.md` (§ Ending a session, step 4), in a PR labeled `push:checkpoint` and `push:plans`, then run `python3 plans/status.py` once it merges;
 3. update the steps that remain.
 
 ## When the push ends
