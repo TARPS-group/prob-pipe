@@ -819,12 +819,12 @@ class Batch[E](TrackedTerm, ABC):
             If more indexers are given than there are batch axes, or an integer
             is out of range for its axis.
         KeyError
-            If a path is not a path of the elements, which holds for every path
-            of a batch whose elements are arrays or opaque values.
+            If the elements are records and a path is not one of their paths.
         TypeError
             If *paths_or_positions* is neither a position nor paths, such as ``None``, a
             ``bool``, ``...``, a set, or an array; if it mixes paths with
-            positions; or if it is a list of positions.
+            positions; if it is a list of positions; or if it is paths and the
+            elements have no paths, as arrays and opaque values have none.
         ValueError
             If a slice has a step of zero, a path is empty or has an empty name,
             or a list of paths is empty, as ``batch[()]`` is, names a path
@@ -1049,20 +1049,20 @@ class Batch[E](TrackedTerm, ABC):
 
         Raises
         ------
-        KeyError
-            By default, if the elements are arrays or opaque values.
         TypeError
-            By default, for any other elements.
+            By default: the elements are arrays or opaque values, which have no
+            paths, or their paths are not read through a batch yet.
         """
         class_name = public_class_name(type(self))
         if isinstance(self.element_spec, NumericArraySpec | OpaqueSpec):
-            raise KeyError(
+            raise TypeError(
                 f"cannot index {class_name} {self.label!r} by {paths!r}, since its elements are "
                 f"single values with no paths. Read the values with .raw"
             )
         raise TypeError(
-            f"cannot index {class_name} by {paths!r}, since this batch takes positions only. "
-            f"Index an element by position first, or use at_levels() to index by level name"
+            f"cannot index {class_name} by {paths!r}, since indexing its elements by path is not "
+            f"supported yet. Index an element by position first, or use at_levels() to index by "
+            f"level name"
         )
 
     def _has_path(self, path: str) -> bool:

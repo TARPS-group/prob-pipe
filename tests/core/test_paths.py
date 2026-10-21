@@ -135,6 +135,22 @@ class TestTheReaderErrors:
         ):
             site["habitat/forst"]
 
+    def test_a_term_with_no_paths_raises_type_error(self):
+        # A KeyError says a path is missing; a term over a single value has none to look up.
+        x = Normal("x", 0.0, 1.0)
+        with pytest.raises(TypeError, match="since its draws are single values with no paths"):
+            x["y"]
+        with pytest.raises(TypeError, match="since its elements are single values with no paths"):
+            _sample(x, sample_shape=4)["y"]
+        assert "y" not in x
+
+    def test_a_path_below_a_field_of_a_record_raises_key_error(self):
+        # The record has paths, and 'a/b' is not one of them, whatever the field 'a' holds.
+        with pytest.raises(KeyError, match="unknown path 'a/b'"):
+            _draw()["a/b"]
+        with pytest.raises(KeyError, match="unknown path 'a/b'"):
+            _grouped()["a/b"]
+
 
 class TestBatchPositions:
     """A batch also takes positions, and refuses a list or an array of them."""
@@ -157,7 +173,7 @@ class TestBatchPositions:
     def test_a_path_inside_whole_elements_says_the_batch_holds_their_values(self):
         draws = _sample(Normal("mu", 0.0, 1.0), sample_shape=4)
         with pytest.raises(
-            KeyError,
+            TypeError,
             match=r"since its elements are single values with no paths\. Read the values with "
             r"\.raw",
         ):

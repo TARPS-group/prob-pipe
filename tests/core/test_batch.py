@@ -1422,18 +1422,18 @@ class TestIndexingDispatchesOnTheKeyType:
     """
 
     def test_a_path_reaches_the_elements_rather_than_an_axis(self, flat):
-        with pytest.raises(KeyError, match="since its elements are single values with no paths"):
+        with pytest.raises(TypeError, match="since its elements are single values with no paths"):
             flat["x"]
 
     def test_a_list_of_paths_reaches_the_elements_too(self, flat):
         with pytest.raises(
-            KeyError,
+            TypeError,
             match=r"by \('outer', 'a'\), since its elements are single values with no paths",
         ):
             flat["outer", "a"]
 
     def test_the_refusal_says_the_batch_holds_the_values(self, flat):
-        with pytest.raises(KeyError, match=r"Read the values with \.raw"):
+        with pytest.raises(TypeError, match=r"Read the values with \.raw"):
             flat["x"]
 
     def test_a_batch_whose_elements_have_fields_answers_a_path(self):

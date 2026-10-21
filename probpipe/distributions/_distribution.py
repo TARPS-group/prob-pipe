@@ -29,7 +29,7 @@ from ..core._record_spec import RecordSpec
 from ..core._repr import call_repr, format_names, public_class_name, term_repr, type_name
 from ..core._shapes import PathsLike, _as_paths, _missing_path
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
-from ..core._specs import OutputSpec, _output_record
+from ..core._specs import _VALUES_WITHOUT_RECORD, OutputSpec, _output_record
 from ..core.constraints import _known_equal
 from ..core.named_tree import _PATH_SEP
 from ..core.provenance import Provenance
@@ -251,29 +251,49 @@ def _is_event_path(declaration: OutputSpec, path: Any) -> bool:
     """
     if not isinstance(path, str):
         return False
-    if path == _single_output_name(declaration):
-        return True
     try:
-        paths = _output_record(declaration)
+        record = _output_record(declaration)
     except TypeError:
-        return False
-    return path in paths
+        outputs = declaration.outputs
+        return len(outputs) == 1 and path in outputs
+    return path in record
+
+
+def _has_event_paths(declaration: OutputSpec) -> bool:
+    """Whether a law declared by *declaration* has paths: its draws are records."""
+    return isinstance(declaration.term_spec, RecordSpec)
 
 
 def _not_an_event_path(
-    declaration: OutputSpec, label: str, path: str, requested: tuple[str, ...] = ()
-) -> str:
-    """The message that *path* is not an event path of the law *label* declared by *declaration*.
+    declaration: OutputSpec,
+    label: str,
+    path: str,
+    requested: tuple[str, ...] = (),
+    *,
+    action: str | None = None,
+) -> KeyError | TypeError:
+    """The error for *path*, which is not an event path of the law *label* declared by *declaration*.
 
-    The message lists the law's paths, as
-    :func:`~probpipe.core._shapes._missing_path` words it for every term, and
-    *requested* is the tuple of paths that held *path*, or ``()``.
+    A law over a record lacks that path, which is a ``KeyError`` listing the
+    paths it has, as :func:`~probpipe.core._shapes._missing_path` words it for
+    every term; *requested* is the tuple of paths that held *path*, or ``()``.
+    A law over any other value has no paths to look up, which is a
+    ``TypeError`` whose message completes *action*, by default indexing the
+    law.
     """
-    try:
-        paths = list(_output_record(declaration)._node_paths())
-    except TypeError:
-        paths = list(declaration.outputs)
-    return _missing_path(path, owner=repr(label), available=paths, requested=requested)
+    if _has_event_paths(declaration):
+        paths = _output_record(declaration)._node_paths()
+        return KeyError(
+            _missing_path(path, owner=repr(label), available=paths, requested=requested)
+        )
+    failed = f"cannot {action or f'index {label!r} by'} {path!r}"
+    values = _VALUES_WITHOUT_RECORD.get(type(declaration.term_spec).__name__)
+    if values is None:
+        return TypeError(f"{failed}, since its draws are single values with no paths")
+    return TypeError(
+        f"{failed}, since its draws are {values}, and indexing into them by path is not "
+        f"supported yet"
+    )
 
 
 def _read_event_paths(
@@ -311,9 +331,10 @@ def _read_event_paths(
     Raises
     ------
     KeyError
-        If a path is not an event path of the law.
+        If the law is over a record and a path is not one of its paths.
     TypeError
-        If *paths* is neither a string nor a list or tuple of strings.
+        If *paths* is neither a string nor a list or tuple of strings, or the
+        law is over a value with no paths, such as an array.
     ValueError
         If a path is empty or has an empty name, or a list of paths is empty,
         names a path twice, or holds a path inside another.
@@ -324,7 +345,7 @@ def _read_event_paths(
     for path in listed:
         if not _is_event_path(declaration, path):
             requested = listed if hinted and isinstance(read_paths, tuple) else ()
-            raise KeyError(_not_an_event_path(declaration, label, path, requested))
+            raise _not_an_event_path(declaration, label, path, requested, action=action)
     if isinstance(read_paths, str):
         return read_paths
     return _output_record(declaration)._ordered_paths(read_paths)
@@ -1080,9 +1101,10 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Raises
         ------
         KeyError
-            If a path is not an event path of this law.
+            If this law is over a record and a path is not one of its paths.
         TypeError
-            If *key* is neither a string nor a list or tuple of strings.
+            If *key* is neither a string nor a list or tuple of strings, or
+            this law is over a value with no paths, such as an array.
         ValueError
             If a path is empty or has an empty name, or a list of paths is
             empty, names a path twice, or holds a path inside another.

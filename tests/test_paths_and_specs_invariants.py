@@ -199,7 +199,7 @@ def test_i9_one_path_gives_the_node_and_a_list_a_record_that_holds_it():
     assert x[["x"]].event_spec == OutputSpec(RecordSpec(x=x.event_spec.term_spec))
 
 
-@pytest.mark.pending(reason="S4: a batch stores its elements' output name", raises=KeyError)
+@pytest.mark.pending(reason="S4: a batch stores its elements' output name", raises=TypeError)
 def test_i9_a_batchs_output_at_the_root():
     draws = _sample(Normal("x", 0.0, 1.0), sample_shape=4)
     assert draws[["x"]].element_spec.keys() == ("x",)

@@ -830,7 +830,8 @@ class TestOutputAccess:
     def test_a_whole_term_is_itself_under_its_output(self, make):
         law = make()
         assert law["x"] is law
-        with pytest.raises(KeyError):
+        # A law over a single value has no paths to look up.
+        with pytest.raises(TypeError, match="since its draws are single values with no paths"):
             law["y"]
 
     def test_a_tuple_selects_its_paths_as_an_exposed_record(self):
@@ -845,7 +846,7 @@ class TestOutputAccess:
     def test_the_output_addresses_a_relabeled_law(self):
         renamed = _DeclaredLaw("x", NumericArraySpec(())).with_label("y")
         assert renamed["x"] is renamed
-        with pytest.raises(KeyError):
+        with pytest.raises(TypeError, match="since its draws are single values with no paths"):
             renamed["y"]
 
     def test_a_joint_field_is_a_view_declaring_the_field(self):

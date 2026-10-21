@@ -1739,8 +1739,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and `without("g", "g/c")` raise `ValueError`, and a tuple raises
     `TypeError`. `is_field` takes one path, `is_field("g/c")`.
   - `in` on a law works, where it raised `TypeError`.
-  - A batch whose elements are arrays or opaque values has no paths, so
-    `batch["x"]` raises `KeyError` where it raised `TypeError`.
+  - A law over a single value has no paths, so `Normal("x", 0.0, 1.0)["y"]`
+    raises `TypeError` where it raised `KeyError`. A batch of arrays or
+    opaque values raises `TypeError` for a path, as before. A missing path of
+    a record, or of a law or batch over records, still raises `KeyError`.
 - **`select` keys each path by its last name.** `record.select("a", "g/c")`
   is `{"a": ..., "c": ...}`, so the result splats into a call, where it was
   keyed `"g/c"`. Two paths with one last name raise `ValueError`; name one

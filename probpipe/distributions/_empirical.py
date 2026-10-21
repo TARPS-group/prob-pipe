@@ -848,9 +848,10 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         Raises
         ------
         KeyError
-            If a path is not an event path of this law.
+            If this law is over a record and a path is not one of its paths.
         TypeError
-            If a path is not a string.
+            If a path is not a string, or this law is over a value with no
+            paths, such as an array.
         ValueError
             If a path is malformed, or a list of paths names a path twice or a
             path inside another.

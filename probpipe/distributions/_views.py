@@ -685,7 +685,7 @@ def _view_marginal_guard(self: FieldView, paths: str | tuple[str, ...]) -> Feasi
     """
     try:
         parent_request = self._parent_request(_ordered_paths_of(self, paths))
-    except KeyError as error:
+    except (KeyError, TypeError) as error:
         return Feasibility(False, str(error.args[0]))
     return _capability_guard(self._parent, "_marginal", parent_request.paths)
 
@@ -785,7 +785,7 @@ def _view_condition_on_guard(self: FieldView, paths: tuple[str, ...]) -> Feasibi
     for path in paths:
         try:
             parent_request = self._parent_request(path)
-        except KeyError as error:
+        except (KeyError, TypeError) as error:
             return Feasibility(False, str(error.args[0]))
         parent_paths.extend(_path_tuple(parent_request.paths))
     if not self._kept_nodes(paths):
@@ -813,7 +813,9 @@ def _ordered_paths_of(
     Raises
     ------
     KeyError
-        If a path is not an event path of *law*.
+        If *law* is over a record and a path is not one of its paths.
+    TypeError
+        If *law* is over a value with no paths, such as an array.
     """
     return _read_event_paths(
         law.event_spec, law.label, paths, action=f"take a marginal of {law.label!r} at"
@@ -1040,10 +1042,10 @@ class FieldView(Distribution):
     Raises
     ------
     KeyError
-        If a path is not an event path of *parent*.
+        If *parent* is over a record and a path is not one of its paths.
     TypeError
-        If *parent* is not a ``Distribution``, or *path* is neither a string
-        nor a list or tuple of strings.
+        If *parent* is not a ``Distribution``, *path* is neither a string nor
+        a list or tuple of strings, or *parent* is over a value with no paths.
     ValueError
         If a path is empty or has an empty name, or a list of paths is empty,
         names a path twice, or holds a path inside another.
@@ -1116,13 +1118,15 @@ class FieldView(Distribution):
         Raises
         ------
         KeyError
-            If a path is not an event path of this view.
+            If this view is over a record and a path is not one of its paths.
+        TypeError
+            If this view is over a value with no paths, such as an array.
         """
         requested = _path_tuple(request)
         for path in requested:
             if not _is_event_path(self.event_spec, path):
                 listed = requested if isinstance(request, tuple) else ()
-                raise KeyError(_not_an_event_path(self.event_spec, self.label, path, listed))
+                raise _not_an_event_path(self.event_spec, self.label, path, listed)
         if isinstance(self._path, str):
             output_name = cast(str, _single_output_name(self.event_spec))
             parent_paths = tuple(self._path + path[len(output_name) :] for path in requested)
@@ -1162,7 +1166,7 @@ class FieldView(Distribution):
             return None
         try:
             request = self._parent_request(path)
-        except KeyError:
+        except (KeyError, TypeError):
             return None
         return None if request.group is not None else cast(str, request.paths)
 
@@ -1238,9 +1242,10 @@ class FieldView(Distribution):
         Raises
         ------
         KeyError
-            If a path is not an event path of the view.
+            If the view is over a record and a path is not one of its paths.
         TypeError
-            If *paths* is neither a string nor a list or tuple of strings.
+            If *paths* is neither a string nor a list or tuple of strings, or
+            the view is over a value with no paths, such as an array.
         ValueError
             If a path is empty or has an empty name, or a list of paths is
             empty, names a path twice, or holds a path inside another.

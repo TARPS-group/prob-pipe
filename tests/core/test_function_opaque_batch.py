@@ -725,11 +725,11 @@ class TestTheLabelFirstFormIsRefusedWithAHint:
 
 class TestPaths:
     def test_a_batch_of_functions_is_indexed_by_position_only(self, functions):
-        with pytest.raises(TypeError, match="this batch takes positions only"):
+        with pytest.raises(TypeError, match="indexing its elements by path is not supported yet"):
             functions["anything"]
 
     def test_opaque_elements_have_no_paths(self, labels):
-        with pytest.raises(KeyError, match="cannot index OpaqueBatch 's' by 'anything'"):
+        with pytest.raises(TypeError, match="cannot index OpaqueBatch 's' by 'anything'"):
             labels["anything"]
         assert "anything" not in labels
         assert "north" not in labels  # membership never tests the elements

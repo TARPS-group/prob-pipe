@@ -605,7 +605,6 @@ _NOT_EVENT_PATHS = [
     pytest.param(_EVENT, "y/0", id="below-a-leaf"),
     pytest.param(_WHOLE, "beta", id="whole-term-field-without-its-output"),
     pytest.param(_WHOLE, "parameters/beta/0", id="below-a-whole-term-leaf"),
-    pytest.param(OutputSpec(x=NumericArraySpec((3,))), "x/0", id="below-a-whole-array"),
 ]
 
 
@@ -614,6 +613,11 @@ class TestPaths:
     def test_a_path_that_is_not_an_event_path_raises_key_error(self, event_spec, path):
         with pytest.raises(KeyError):
             FieldView(_Law("parent", event_spec), path)
+
+    def test_a_path_of_a_law_over_a_single_value_raises_type_error(self):
+        whole_array = OutputSpec(x=NumericArraySpec((3,)))
+        with pytest.raises(TypeError, match="since its draws are single values with no paths"):
+            FieldView(_Law("parent", whole_array), "x/0")
 
     @pytest.mark.parametrize("path", _MALFORMED_PATHS)
     def test_a_malformed_path_raises_value_error_before_any_lookup(self, path):
@@ -699,7 +703,7 @@ class TestIndexing:
     def test_a_view_renamed_by_path_is_addressed_by_its_new_output(self):
         view = FieldView(_Law("parent", _EVENT), "y").with_path_names(y="obs")
         assert view["obs"] is view
-        with pytest.raises(KeyError):
+        with pytest.raises(TypeError, match="since its draws are single values with no paths"):
             view["y"]
 
     def test_a_list_of_paths_of_a_view_keeps_the_paths_of_the_view(self):

@@ -50,9 +50,10 @@ def _read_marginal_paths(event_spec: OutputSpec, label: str, paths: Any) -> str 
     Raises
     ------
     ApplicabilityError
-        If a path is not an event path of the law.
+        If the law is over a record and a path is not one of its paths.
     TypeError
-        If *paths* is neither a string nor a list or tuple of strings.
+        If *paths* is neither a string nor a list or tuple of strings, or the
+        law is over a value with no paths, such as an array.
     ValueError
         If a path is empty or has an empty name, or a list of paths is empty,
         names a path twice, or holds a path inside another.
@@ -148,9 +149,10 @@ def marginal(d: Distribution, paths: PathsLike):
     Raises
     ------
     ApplicabilityError
-        If a path is not an event path of *d*.
+        If *d* is over a record and a path is not one of its paths.
     TypeError
-        If *paths* is neither a string nor a list or tuple of strings.
+        If *paths* is neither a string nor a list or tuple of strings, or *d*
+        is over a value with no paths, such as an array.
     ValueError
         If a path is empty or has an empty name, or a list of paths is empty,
         names a path twice, or holds a path inside another.
