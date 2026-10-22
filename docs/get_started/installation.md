@@ -22,13 +22,14 @@ Until it is, install the tutorials' set of extras through `probpipe-core`, as th
 ## Google Colab
 
 [Google Colab](https://colab.research.google.com/) runs Python in your browser, so it needs no install of Python.
-To install the minimal set, run this in a code cell:
+To install the smallest set, run this in a code cell:
 
 ```text
-%pip install "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul" "pymc>=6.2"
+%pip install "probpipe-core[pymc] @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
 ```
 
-Colab comes with PyMC 5, which does not work with the ArviZ 1.x that ProbPipe requires, so the command also upgrades PyMC.
+Colab comes with PyMC 5, which does not work with the ArviZ 1.x that ProbPipe requires.
+The command therefore installs the `pymc` extra, and the extra upgrades PyMC.
 
 To install the set the tutorials use, run this instead:
 

@@ -94,7 +94,7 @@ class PyMCNutsMethod(InferenceMethod):
         self._check_options(options)
         from ..families._programs import _import_pymc
 
-        pm = _import_pymc()
+        pm = _import_pymc(f"the inference method {self.name!r}")
 
         dist, observed = joint_and_given(target)
 
@@ -212,7 +212,7 @@ class PyMCADVIMethod(InferenceMethod):
         self._check_options(options)
         from ..families._programs import _import_pymc
 
-        pm = _import_pymc()
+        pm = _import_pymc(f"the inference method {self.name!r}")
 
         dist, observed = joint_and_given(target)
 
@@ -357,9 +357,6 @@ def _bijector_of(transform: Any, rv: Any, model: Any) -> Any:
     ``None`` stands for no transform, and ``NotImplemented`` for a transform the
     mean-field family does not cover.
     """
-    from ..families._programs import _import_pymc
-
-    _import_pymc()
     from pymc.distributions import transforms
 
     tfb = tfp.bijectors

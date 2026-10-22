@@ -6,6 +6,7 @@ import importlib.metadata
 import pickle
 import re
 import subprocess
+import sys
 import tomllib
 import types
 from pathlib import Path
@@ -564,38 +565,69 @@ class TestPyMCModel:
 
 
 class TestThePyMCRelease:
-    """PyMC is imported only at a release that works with ArviZ 1.x, and an older one names the upgrade."""
+    """PyMC is imported only at a release no older than the floor of the pymc extra, and the error names the fix."""
 
     @staticmethod
-    def _installed(monkeypatch, version):
+    def _unimportable(monkeypatch, installed):
+        """``import pymc`` fails, and the package metadata reports *installed*, or no PyMC for ``None``."""
         original = importlib.metadata.version
 
-        def installed(name):
+        def version(name):
             if name != "pymc":
                 return original(name)
-            if version is None:
+            if installed is None:
                 raise importlib.metadata.PackageNotFoundError(name)
-            return version
+            return installed
 
-        monkeypatch.setattr(_programs.importlib.metadata, "version", installed)
+        monkeypatch.setitem(sys.modules, "pymc", None)
+        monkeypatch.setattr(_programs.importlib.metadata, "version", version)
 
-    def test_an_older_release_names_the_upgrade(self, monkeypatch):
-        self._installed(monkeypatch, "5.28.5")
-        with pytest.raises(ImportError, match=r'PyMC 6\.2 or later.*PyMC 5\.28\.5.*"pymc>=6\.2"'):
-            _programs._import_pymc()
+    def test_an_older_release_that_fails_to_import_names_the_upgrade(self, monkeypatch):
+        self._unimportable(monkeypatch, "5.28.5")
+        with pytest.raises(
+            ImportError,
+            match=r"^PyMC 5\.28\.5 is installed, but PyMCModel requires PyMC 6\.2 or later\. "
+            r'Upgrade it with pip install -U "pymc>=6\.2", then restart the Python session\.$',
+        ):
+            _programs._import_pymc("PyMCModel")
 
-    def test_a_missing_pymc_names_the_extra(self, monkeypatch):
-        self._installed(monkeypatch, None)
-        with pytest.raises(ImportError, match=r"probpipe-core\[pymc\]"):
-            _programs._import_pymc()
+    def test_an_older_release_that_imports_names_the_upgrade(self, monkeypatch):
+        pymc = pytest.importorskip("pymc")
+        monkeypatch.setattr(pymc, "__version__", "6.1.0")
+        with pytest.raises(
+            ImportError, match=r"^PyMC 6\.1\.0 is installed, but PyMCModel requires"
+        ):
+            _programs._import_pymc("PyMCModel")
 
-    def test_a_model_refuses_an_older_release_before_it_imports_pymc(self, monkeypatch):
-        self._installed(monkeypatch, "5.28.5")
+    def test_a_missing_pymc_names_the_install(self, monkeypatch):
+        self._unimportable(monkeypatch, None)
+        with pytest.raises(
+            ImportError,
+            match=r"^PyMC is not installed, and PyMCModel requires PyMC 6\.2 or later\. Install it "
+            r'with pip install "pymc>=6\.2"\.$',
+        ):
+            _programs._import_pymc("PyMCModel")
+
+    def test_another_import_failure_of_a_current_release_propagates(self, monkeypatch):
+        self._unimportable(monkeypatch, "6.3.2")
+        with pytest.raises(ImportError) as failure:
+            _programs._import_pymc("PyMCModel")
+        assert "PyMCModel" not in str(failure.value)
+        assert failure.value.__cause__ is None
+
+    @pytest.mark.parametrize("version", ["6.2", "6.2.0", "6.3.2"])
+    def test_a_release_at_or_above_the_floor_returns_pymc(self, monkeypatch, version):
+        pymc = pytest.importorskip("pymc")
+        monkeypatch.setattr(pymc, "__version__", version)
+        assert _programs._import_pymc("PyMCModel") is pymc
+
+    def test_a_model_refuses_an_older_release_before_it_builds_the_model(self, monkeypatch):
+        self._unimportable(monkeypatch, "5.28.5")
 
         def model():
             raise AssertionError("the model is built only after the check")
 
-        with pytest.raises(ImportError, match=r"PyMC 6\.2 or later"):
+        with pytest.raises(ImportError, match=r"but PyMCModel requires PyMC 6\.2 or later"):
             PyMCModel(model)
 
     def test_the_floor_is_the_pymc_extras(self):
@@ -608,16 +640,21 @@ class TestThePyMCRelease:
             if entry.startswith("pymc")
         )
         floor = re.fullmatch(r"pymc>=([\d.]+)", requirement).group(1)
-        assert _programs._release(floor) == _programs._PYMC_FLOOR
+        assert floor == _programs._PYMC_FLOOR
 
     @pytest.mark.parametrize(
-        ("version", "release"),
+        ("version", "older"),
         [
-            ("6.2", (6, 2)),
-            ("5.28.5", (5, 28, 5)),
-            ("6.3.0rc1", (6, 3, 0)),
-            ("6.2.1+local", (6, 2, 1)),
+            ("5.28.5", True),
+            ("6.1.9", True),
+            ("6.2rc1", True),
+            ("6.2.dev0", True),
+            ("6.2", False),
+            ("6.2.0", False),
+            ("6.2.post1", False),
+            ("6.2.1+local", False),
+            ("6.3.0rc1", False),
         ],
     )
-    def test_a_release_reads_its_first_three_numbers(self, version, release):
-        assert _programs._release(version) == release
+    def test_a_release_orders_against_the_floor_as_pip_orders_it(self, version, older):
+        assert _programs._older_than_floor(version) is older
