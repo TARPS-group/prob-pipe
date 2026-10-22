@@ -538,7 +538,7 @@ def test_an_operation_route_keeps_the_calling_thread_and_its_single_worker_is_av
     import threading
 
     from probpipe.core._specs import OutputSpec
-    from probpipe.operations._operation import operation
+    from probpipe.operations._operation import OperationRegistry, operation
 
     caller = threading.get_ident()
     seen = []
@@ -548,7 +548,10 @@ def test_an_operation_route_keeps_the_calling_thread_and_its_single_worker_is_av
         output_spec=SCALAR,
     )
 
-    @operation(result=lambda x: OutputSpec.default(SCALAR, output_name="coordinate"))
+    @operation(
+        result=lambda x: OutputSpec.default(SCALAR, output_name="coordinate"),
+        registry=OperationRegistry(),
+    )
     def coordinate(x):
         seen.append(threading.get_ident())
         return _stored_call(opaque, argument=x)
