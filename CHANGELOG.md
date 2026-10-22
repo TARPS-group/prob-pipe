@@ -2019,6 +2019,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Scalar multiplication of Gaussian random functions and record truth values
   retain their existing behavior.
 
+- **`&` refuses coupled laws at any depth of either operand.** A merge
+  compares the root ancestor of each operand and of every factor inside it,
+  grouped sub-joints included. So `d & d["a"].rename(a="z")`,
+  `d["a"] & d.rename(a="p", b="q")`, and a grouped sub-joint holding `d["a"]`
+  merged with `d["b"]` now raise `ValueError`, where they built a joint that
+  drew the coupled laws independently. The check precedes the check of
+  shared outputs, so `d & d["a"]` reports the coupling. The advice to merge
+  standalone marginals appears only when `marginal` computes them, and a law
+  in both operands is named once: `prior & prior` raises "cannot merge
+  prior & prior: the law prior is in both operands. Merge it once".
+
 - **Every record uses container truth, including `NumericRecord`.**
   `bool(Record({"x": 0.0}))` now returns `True`, where scalar conversion
   returned `False`; `bool(Record({}, label="empty"))` returns `False`, where it raised.
