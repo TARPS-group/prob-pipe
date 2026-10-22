@@ -62,6 +62,11 @@ in another order does not conform, including inside a nested record. At function
 input and return boundaries, and when binding a kernel's conditioning values,
 a raw mapping may arrive in any order: the body and returned value receive its
 fields in declaration order. This leaves the caller's mapping unchanged.
+Raw mappings supplied as density values are arranged against the law's event
+spec before type inference, including nested records. Their insertion order
+does not constrain the event layout. A constructed `Record` already has an
+ordered declaration and must conform in that order.
+
 `InputSpec.without` raises `KeyError` for a name it does not declare.
 
 ::: probpipe.InputSpec

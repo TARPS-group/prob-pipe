@@ -3181,6 +3181,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
                                    origin="simulate", output_spec=simulate.output_spec)
   ```
 
+- **Density values accept raw mappings in any insertion order.**
+  `log_prob(d, {"b": 2.0, "a": 1.0})` is arranged in `d`'s event order
+  before inferring its spec, as are the other density operations and nested
+  record values. Constructed records still have to conform in order.
+
 ### Changed
 
 - **A converter's `check` states only its promise.** It leaves `method_name`
