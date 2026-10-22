@@ -73,7 +73,7 @@ def _batch(values, level: str = "row") -> NumericArrayBatch:
     return NumericArrayBatch(
         jnp.asarray(values),
         level,
-        element_spec=SCALAR,
+        element=SCALAR,
         label="rows",
     )
 
@@ -870,7 +870,7 @@ class TestSingletonAlignment:
         assert calls == []
         assert result.axis_groups == ((0,),)
         assert result.batch_shape == (0,)
-        assert result.element_spec.shape == ()
+        assert result.element_spec.term_spec.shape == ()
 
     def test_a_later_incompatible_size_raises_naming_each_shape(self):
         @function(dispatch="sequential")

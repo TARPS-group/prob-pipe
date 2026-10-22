@@ -337,7 +337,7 @@ class _NumericLaw(
             return NumericRecordBatch(
                 fields,
                 "sample",
-                element_spec=self.event_spec.term_spec,
+                element=self.event_spec.term_spec,
                 axes_per_level=(len(sample_shape),),
                 label=self.label,
             )
@@ -1112,7 +1112,7 @@ class TestDerivedBehavior:
         atoms = NumericRecordBatch(
             {"b": jnp.array([[0.0, 1.0], [1.0, 0.0], [2.0, 2.0]]), "a": jnp.array([3.0, 1.0, 2.0])},
             "row",
-            element_spec=RecordSpec(b=(2,), a=()),
+            element=RecordSpec(b=(2,), a=()),
             label="rows",
         )
         parent = EmpiricalDistribution(atoms, label="post")
@@ -1133,7 +1133,7 @@ class TestDerivedBehavior:
         atoms = NumericRecordBatch(
             {"u": values[:, 0], "v": values[:, 1]},
             "row",
-            element_spec=RecordSpec(u=(), v=()),
+            element=RecordSpec(u=(), v=()),
             label="rows",
         )
         parent = EmpiricalDistribution(atoms, label="e")
@@ -1349,7 +1349,7 @@ class TestTheViewOfAWeightedLaw:
         return NumericRecordBatch(
             {"a": self._A, "b": self._B},
             "obs",
-            element_spec=NumericRecordSpec(a=(), b=()),
+            element=NumericRecordSpec(a=(), b=()),
             label="atoms",
         )
 
@@ -1466,7 +1466,7 @@ class TestNotation:
         atoms = NumericRecordBatch(
             {"u": jnp.array([0.0, 1.0]), "v": jnp.array([2.0, 3.0])},
             "obs",
-            element_spec=NumericRecordSpec(u=(), v=()),
+            element=NumericRecordSpec(u=(), v=()),
             label="atoms",
         )
         model = (
@@ -1527,7 +1527,7 @@ class TestNotation:
         atoms = NumericRecordBatch(
             {"y": jnp.array([0.0, 1.0]), "mu": jnp.array([2.0, 3.0])},
             "obs",
-            element_spec=NumericRecordSpec(y=(), mu=()),
+            element=NumericRecordSpec(y=(), mu=()),
             label="atoms",
         )
         model = EmpiricalDistribution(atoms, label="model")

@@ -530,7 +530,7 @@ class TestEightSchools:
         with workflow_run(seed=0):
             draws = sample(joint, sample_shape=(4,))
         assert draws.batch_shape == (4,)
-        assert draws.element_spec["y"].shape == (J,)
+        assert draws.element_spec.term_spec["y"].shape == (J,)
 
     def test_a_nested_prior_gives_record_inputs(self):
         J = canonical.SCHOOL_EFFECTS.shape[0]
@@ -555,4 +555,4 @@ class TestEightSchools:
         with workflow_run(seed=0):
             draws = sample(schools, sample_shape=(3,))
         assert draws.batch_shape == (3,)
-        assert draws.element_spec["y"].shape == (J,)
+        assert draws.element_spec.term_spec["y"].shape == (J,)

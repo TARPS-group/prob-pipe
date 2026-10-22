@@ -482,7 +482,7 @@ class TestFunctionDeclarations:
             NumericRecordBatch(
                 {"value": jnp.arange(3.0)},
                 "row",
-                element_spec=RecordSpec(value=()),
+                element=RecordSpec(value=()),
                 label="inputs",
             )
             if lift == "sweep"
@@ -558,7 +558,7 @@ class TestFunctionDeclarations:
         stored = NumericArrayBatch(
             jnp.ones(2),
             "draw",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="stored",
         )
         declared = BatchSpec(NumericArraySpec((), support=positive), stored.spec.levels)
@@ -570,7 +570,7 @@ class TestFunctionDeclarations:
         result = wrapped()
         assert wrapped.apply() is stored
         assert result.spec == declared
-        assert stored.element_spec.support is None
+        assert stored.element_spec.term_spec.support is None
 
     @pytest.mark.parametrize("invalid_value", [0.0, -1.0])
     @pytest.mark.parametrize("raw", [False, True])
@@ -581,7 +581,7 @@ class TestFunctionDeclarations:
         stored = NumericArrayBatch(
             values,
             "draw",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="stored",
         )
         declaration = BatchSpec(NumericArraySpec((), support=positive), stored.spec.levels)
@@ -594,7 +594,7 @@ class TestFunctionDeclarations:
         )
         with pytest.raises(ValueError, match="output/load does not conform to declared support"):
             (wrapped.apply if raw else wrapped)()
-        assert stored.element_spec.support is None
+        assert stored.element_spec.term_spec.support is None
         assert stored.label == "stored"
         np.testing.assert_array_equal(stored.raw, values)
         assert wrapped.output_spec.term_spec == declaration
@@ -717,7 +717,7 @@ class TestLiftedNames:
         rows = NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             "case",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="inputs",
         )
         result = wrapped(rows)
@@ -736,7 +736,7 @@ class TestLiftedNames:
         rows = NumericArrayBatch(
             jnp.empty(0),
             "case",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="inputs",
         )
         result = wrapped(rows)
@@ -768,13 +768,13 @@ class TestLiftedNames:
         rows = NumericArrayBatch(
             jnp.empty(0),
             "case",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="inputs",
         )
         result = wrapped(rows)
         assert type(result).__name__ == kind
         assert result.label == "results"
-        assert result.element_spec == declaration
+        assert result.element_spec.term_spec == declaration
         assert result.batch_shape == (0,)
 
     @pytest.mark.parametrize("declaration", [OutputSpec(value=None), NumericArraySpec(("n",))])
@@ -790,7 +790,7 @@ class TestLiftedNames:
         rows = NumericArrayBatch(
             jnp.empty(0),
             "case",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="inputs",
         )
         with pytest.raises(ValueError, match="concrete output_spec"):
@@ -817,7 +817,7 @@ class TestLiftedNames:
         rows = NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             "rows",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="inputs",
         )
         wrapped = Function(
@@ -837,7 +837,7 @@ class TestLiftedNames:
         rows = NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             "rows",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="inputs",
         )
         wrapped = Function(
@@ -924,7 +924,7 @@ class TestCompletedOutputDeclarations:
         return NumericRecordBatch(
             {"x": jnp.arange(1.0, 4.0)},
             "case",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="inputs",
         )
 
@@ -1077,7 +1077,7 @@ class TestCompletedOutputDeclarations:
 
         single = factory(rows[0])
         batch = factory(rows)
-        assert batch.element_spec == declaration
+        assert batch.element_spec.term_spec == declaration
         for result in (single, *batch):
             assert result is not stored
             assert result.spec == declaration
@@ -1104,7 +1104,7 @@ class TestCompletedOutputDeclarations:
         result = wrapped(rows)
         # The output spec leaves the dtype open, so completion takes the produced one (II.2).
         completed = NumericArraySpec((2,), dtype=stored.dtype, support=positive)
-        assert result.element_spec == wrapped(rows[0]).spec == completed
+        assert result.element_spec.term_spec == wrapped(rows[0]).spec == completed
         np.testing.assert_array_equal(result.raw, np.ones((3, 2)))
         assert stored.spec.support is None
 
@@ -1119,7 +1119,7 @@ class TestCompletedOutputDeclarations:
         )
         for width in (2, 4):
             result = wrapped(rows, width)
-            assert result.element_spec == RecordSpec(stats=RecordSpec(y=(width,)))
+            assert result.element_spec.term_spec == RecordSpec(stats=RecordSpec(y=(width,)))
             np.testing.assert_array_equal(
                 result["stats/y"], np.repeat([[1.0], [2.0], [3.0]], width, axis=1)
             )
@@ -1190,7 +1190,7 @@ class TestCompletedOutputDeclarations:
         rows = NumericRecordBatch(
             {"x": jnp.arange(2.0)},
             "row",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="rows",
         )
         operands = [0]
@@ -1294,7 +1294,7 @@ class TestCompletedOutputDeclarations:
             "batch": lambda: NumericArrayBatch(
                 jnp.arange(2.0),
                 "row",
-                element_spec=NumericArraySpec((), dtype=jnp.float32),
+                element=NumericArraySpec((), dtype=jnp.float32),
                 label="stored",
             ),
         }[kind]()
@@ -1474,7 +1474,7 @@ def test_a_shape_only_declaration_keeps_the_returned_terms_dtype_and_support(kin
         stored = NumericArrayBatch(
             values[None, :],
             "item",
-            element_spec=leaf,
+            element=leaf,
             label="stored",
         )
         declaration = BatchSpec(NumericArraySpec((3,)), item=1)
@@ -1492,14 +1492,14 @@ def test_a_shape_only_declaration_keeps_the_returned_terms_dtype_and_support(kin
         rows = NumericArrayBatch(
             jnp.arange(2.0),
             "row",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="rows",
         )
-        actual = factory(rows).element_spec
+        actual = factory(rows).element_spec.term_spec
     if kind == "record":
         actual = actual["stats/x"]
     elif kind == "batch" and mode == "plain":
-        actual = actual.element_spec
+        actual = actual.element_spec.term_spec
     assert actual == leaf
     assert factory.output_spec.term_spec is declaration
 
@@ -1536,7 +1536,7 @@ def test_a_returned_function_keeps_the_declarations_its_result_leaves_open(mode,
         rows = NumericArrayBatch(
             jnp.arange(2.0),
             "row",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="rows",
         )
         returned = list(factory(rows))
@@ -1557,7 +1557,7 @@ def test_a_returned_batch_is_relabeled_as_the_root_of_its_views(sliced, full_pro
         jnp.arange(6.0).reshape(2, 3),
         ("chain", "row"),
         axes_per_level=(1, 1),
-        element_spec=NumericArraySpec(()),
+        element=NumericArraySpec(()),
         label="pts",
     )
     if sliced:

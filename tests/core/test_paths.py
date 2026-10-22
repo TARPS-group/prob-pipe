@@ -69,7 +69,7 @@ def _field_paths(term):
     if isinstance(term, Record | RecordSpec):
         return term.keys()
     if hasattr(term, "element_spec"):
-        return term.element_spec.keys()
+        return term.element_spec.term_spec.keys()
     return term.event_spec.term_spec.keys()
 
 

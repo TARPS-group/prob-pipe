@@ -315,14 +315,14 @@ class TestPairedNumericSweeps:
             jnp.arange(np.prod(shape)).reshape(shape),
             "row",
             label="a",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             axes_per_level=(len(shape),),
         )
         b = NumericArrayBatch(
             2 * a.as_jax(),
             "row",
             label="b",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             axes_per_level=(len(shape),),
         )
         if record:
@@ -330,7 +330,7 @@ class TestPairedNumericSweeps:
                 {"x": b.as_jax()},
                 "row",
                 label="b",
-                element_spec=RecordSpec(x=()),
+                element=RecordSpec(x=()),
                 axes_per_level=(len(shape),),
             )
         calls = []
@@ -344,7 +344,7 @@ class TestPairedNumericSweeps:
         sequential = Function(body, label="sum", dispatch="sequential")(a, b)
         np.testing.assert_array_equal(np.asarray(mapped), 3 * a.as_jax())
         np.testing.assert_array_equal(np.asarray(mapped), np.asarray(sequential))
-        assert mapped.element_spec == sequential.element_spec
+        assert mapped.element_spec.term_spec == sequential.element_spec.term_spec
         assert mapped.level_names == sequential.level_names == ("row",)
         assert mapped.axis_groups == sequential.axis_groups == (shape,)
 
@@ -366,11 +366,11 @@ class TestPairedNumericSweeps:
         data = jnp.arange(6.0).reshape(3, 1, 2)
         if record:
             batch = NumericRecordBatch(
-                {"x": data}, ("site", "replicate"), label="data", element_spec=RecordSpec(x=(2,))
+                {"x": data}, ("site", "replicate"), label="data", element=RecordSpec(x=(2,))
             )
         else:
             batch = NumericArrayBatch(
-                data, ("site", "replicate"), label="data", element_spec=NumericArraySpec((2,))
+                data, ("site", "replicate"), label="data", element=NumericArraySpec((2,))
             )
         actual = _sweep.mapped_storage(batch, 24, axis_groups=((2, 3), (4, 1)))
         if record:
@@ -380,7 +380,7 @@ class TestPairedNumericSweeps:
 
     def test_mapped_storage_validates_row_count_for_empty_events(self):
         batch = NumericArrayBatch(
-            jnp.empty((2, 0)), "row", label="empty", element_spec=NumericArraySpec((0,))
+            jnp.empty((2, 0)), "row", label="empty", element=NumericArraySpec((0,))
         )
         with pytest.raises(ValueError, match="row count 3"):
             _sweep.mapped_storage(batch, 3)
@@ -580,7 +580,7 @@ class TestASweptBodyThatReturnsABatch:
         mapped = Function(self._body, label="swept")(self._rows(4))
         sequential = Function(self._body, label="swept", dispatch="sequential")(self._rows(4))
 
-        assert mapped.element_spec == sequential.element_spec
+        assert mapped.element_spec.term_spec == sequential.element_spec.term_spec
         assert mapped.level_names == sequential.level_names
         assert mapped.axis_groups == sequential.axis_groups
         np.testing.assert_allclose(np.asarray(mapped["y"]), np.asarray(sequential["y"]))
@@ -607,7 +607,7 @@ class TestASweptBodyThatReturnsABatch:
         grid = RecordBatch(
             {"x": jnp.arange(6.0).reshape(2, 3)},
             "cell",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=(2,),
             label="batch",
         )
@@ -682,7 +682,7 @@ class TestASweptBodyThatReturnsABatch:
         sequential = Function(body, label="swept", dispatch="sequential")(self._rows(3))
 
         assert mapped.level_names == ("row", "k")
-        assert mapped.element_spec == sequential.element_spec
+        assert mapped.element_spec.term_spec == sequential.element_spec.term_spec
         np.testing.assert_allclose(
             np.asarray(mapped._raw_column("inner/y")),
             np.asarray(sequential._raw_column("inner/y")),
@@ -731,7 +731,7 @@ def numeric_sweep_source(request):
     return NumericRecordBatch(
         {"x": values},
         levels,
-        element_spec=RecordSpec(x=NumericArraySpec((), dtype=np.float32)),
+        element=RecordSpec(x=NumericArraySpec((), dtype=np.float32)),
         axes_per_level=axes_per_level,
         label="inputs",
     )
@@ -760,7 +760,7 @@ class TestNumericArraySweep:
 
         assert isinstance(result, NumericArrayBatch)
         # The rows are stored as one JAX array, whose dtype the element spec records.
-        assert result.element_spec == NumericArraySpec(
+        assert result.element_spec.term_spec == NumericArraySpec(
             event_shape, dtype=np.float32, support=positive
         )
         assert result.raw.dtype == np.float32
@@ -798,7 +798,9 @@ class TestNumericArraySweep:
             source
         )
 
-        assert result.element_spec == NumericArraySpec((2,), dtype=np.float32, support=positive)
+        assert result.element_spec.term_spec == NumericArraySpec(
+            (2,), dtype=np.float32, support=positive
+        )
         assert result.raw.dtype == np.float32
         assert result.batch_shape == source.batch_shape
         assert result.level_names == source.level_names
@@ -845,7 +847,7 @@ class TestNumericArraySweep:
         assert result.batch_shape == source.batch_shape
         assert result.level_names == source.level_names
         assert result.axis_groups == source.axis_groups
-        assert result.element_spec == expected_spec
+        assert result.element_spec.term_spec == expected_spec
         assert result.raw.dtype == np.float32
         assert result.provenance is not None
         np.testing.assert_array_equal(np.asarray(result), expected)
@@ -863,7 +865,7 @@ class TestNumericArraySweep:
         assert result.axis_groups == source.axis_groups
         assert result.level_names == source.level_names
         # log_prob declares only the shape, so completion takes the produced dtype (II.2).
-        assert result.element_spec == NumericArraySpec((), dtype=np.float32)
+        assert result.element_spec.term_spec == NumericArraySpec((), dtype=np.float32)
         np.testing.assert_allclose(np.asarray(result), expected, rtol=2e-7, atol=1e-7)
 
         shifted = Function(lambda value: value + 1, label="function", dispatch="sequential")(result)
@@ -888,7 +890,9 @@ class TestNumericArraySweep:
 
         # The rows are stored as one JAX array, whose dtype the element spec records.
         assert result.raw.dtype == np.float32
-        assert result.element_spec == NumericArraySpec((2,), dtype=np.float32, support=positive)
+        assert result.element_spec.term_spec == NumericArraySpec(
+            (2,), dtype=np.float32, support=positive
+        )
         assert result.axis_groups == numeric_sweep_source.axis_groups
         assert result.level_names == numeric_sweep_source.level_names
         np.testing.assert_array_equal(
@@ -951,7 +955,7 @@ class TestNumericArraySweep:
         if reverse:
             expected = expected[::-1]
         stored = np.dtype(np.float64 if x64 else np.float32)
-        assert result.element_spec == NumericArraySpec(event_shape, dtype=stored)
+        assert result.element_spec.term_spec == NumericArraySpec(event_shape, dtype=stored)
         assert result.dtype == stored
         assert result.level_names == source.level_names
         assert result.axis_groups == source.axis_groups
@@ -985,7 +989,9 @@ class TestNumericArraySweep:
             _numeric_record_batch("x", range(2))
         )
 
-        assert result.element_spec == NumericArraySpec((), dtype=expected_dtype, support=support)
+        assert result.element_spec.term_spec == NumericArraySpec(
+            (), dtype=expected_dtype, support=support
+        )
         np.testing.assert_array_equal(np.asarray(result), [2.0, 1.0] if reverse else [1.0, 2.0])
 
     @pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reverse"])
@@ -1011,7 +1017,9 @@ class TestNumericArraySweep:
             source
         )
 
-        assert result.element_spec == NumericArraySpec((), dtype=expected_dtype, support=positive)
+        assert result.element_spec.term_spec == NumericArraySpec(
+            (), dtype=expected_dtype, support=positive
+        )
         assert result.raw.dtype == np.dtype(expected_dtype)
         assert result.batch_shape == source.batch_shape
         assert result.level_names == source.level_names
@@ -1041,7 +1049,9 @@ class TestNumericArraySweep:
                 dispatch="sequential",
             )(source)
             batches.append(batch)
-            assert batch.element_spec == NumericArraySpec((), dtype=np.float16, support=positive)
+            assert batch.element_spec.term_spec == NumericArraySpec(
+                (), dtype=np.float16, support=positive
+            )
             assert batch.raw.dtype == np.float16
             assert batch.level_names == source.level_names
             assert batch.axis_groups == source.axis_groups
@@ -1051,7 +1061,9 @@ class TestNumericArraySweep:
             lambda row: batches[int(row["x"])], label="combined", dispatch="sequential"
         )(_numeric_record_batch("x", range(2), level_name="outer"))
 
-        assert result.element_spec == NumericArraySpec((), dtype=np.float16, support=positive)
+        assert result.element_spec.term_spec == NumericArraySpec(
+            (), dtype=np.float16, support=positive
+        )
         assert result.raw.dtype == np.float16
         assert result.batch_shape == (2, 3)
         assert result.level_names == ("outer", "row")
@@ -1086,7 +1098,7 @@ class TestNumericArraySweep:
         )
 
         # The rows are stored as one JAX array, whose dtype the element spec records.
-        assert result.element_spec == NumericArraySpec((), dtype=np.float32)
+        assert result.element_spec.term_spec == NumericArraySpec((), dtype=np.float32)
         np.testing.assert_array_equal(np.asarray(result), [2.5, 1.0] if reverse else [1.0, 2.5])
 
     @pytest.mark.parametrize("raw_value", [-1.0, 1.0], ids=["negative", "positive"])
@@ -1112,7 +1124,9 @@ class TestNumericArraySweep:
         expected = np.stack([np.full(event_shape, raw_value), np.full(event_shape, 2.0)])
         if tracked_first:
             expected = expected[::-1]
-        assert result.element_spec == NumericArraySpec(event_shape, dtype=result.raw.dtype)
+        assert result.element_spec.term_spec == NumericArraySpec(
+            event_shape, dtype=result.raw.dtype
+        )
         assert result.batch_shape == source.batch_shape
         assert result.level_names == source.level_names
         assert result.axis_groups == source.axis_groups
@@ -1141,7 +1155,7 @@ class TestNumericArraySweep:
 
         expected = [2.0, 3.0]
         expected.insert(raw_position, -1.0)
-        assert result.element_spec == NumericArraySpec((), dtype=result.raw.dtype)
+        assert result.element_spec.term_spec == NumericArraySpec((), dtype=result.raw.dtype)
         assert result.batch_shape == source.batch_shape
         assert result.level_names == source.level_names
         assert result.axis_groups == source.axis_groups
@@ -1154,7 +1168,7 @@ class TestASweptBatchOfArrays:
         return NumericArrayBatch(
             jnp.arange(24.0).reshape(2, 4, 3),
             ("rows", "cols"),
-            element_spec=NumericArraySpec((3,)),
+            element=NumericArraySpec((3,)),
             axes_per_level=(1, 1),
             label="grid",
         )
@@ -1279,7 +1293,7 @@ class TestARecordedDtypeIsTheStoredDtype:
         return NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             "row",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="rows",
         )
 
@@ -1317,7 +1331,7 @@ class TestARecordedDtypeIsTheStoredDtype:
         )
         result = wrapped(self._rows())
         assert np.asarray(result.raw).dtype == np.float32
-        assert result.element_spec == NumericArraySpec((3,), dtype="float32")
+        assert result.element_spec.term_spec == NumericArraySpec((3,), dtype="float32")
 
     @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax"])
     @pytest.mark.parametrize(
@@ -1335,7 +1349,7 @@ class TestARecordedDtypeIsTheStoredDtype:
         )
         result = wrapped(EmpiricalDistribution(jnp.arange(3.0), output_name="x"))
         assert np.asarray(result.atoms.raw).dtype == np.float32
-        assert result.atoms.element_spec.dtype == np.float32
+        assert result.atoms.element_spec.term_spec.dtype == np.float32
         assert result.event_spec.outputs["f"].dtype == np.float32
 
     @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax"])
@@ -1348,7 +1362,7 @@ class TestARecordedDtypeIsTheStoredDtype:
         )
         result = wrapped(self._rows())
         assert result._raw_column("y").dtype == np.float32
-        assert result.element_spec["y"] == NumericArraySpec((3,), dtype="float32")
+        assert result.element_spec.term_spec["y"] == NumericArraySpec((3,), dtype="float32")
 
     @pytest.mark.parametrize("output", ["array", "record"])
     def test_sequential_and_jax_sweeps_agree_on_a_dtype_record_leaves_leave_unset(self, output):
@@ -1363,7 +1377,7 @@ class TestARecordedDtypeIsTheStoredDtype:
             ],
             level_name="draw",
         )
-        assert rows.element_spec["value"].dtype is None
+        assert rows.element_spec.term_spec["value"].dtype is None
 
         def body(row):
             value = row["value"] + 1
@@ -1374,7 +1388,7 @@ class TestARecordedDtypeIsTheStoredDtype:
                 body,
                 dispatch=dispatch,
                 label="f",
-            )(rows).element_spec
+            )(rows).element_spec.term_spec
             for dispatch in ("sequential", "thread", "jax")
         }
         assert specs["sequential"] == specs["thread"] == specs["jax"]

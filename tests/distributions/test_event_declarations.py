@@ -313,7 +313,7 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         NumericRecordBatch(
             {"a": jnp.array([0.0, 1.0]), "b": jnp.array([1.0, 3.0])},
             "row",
-            element_spec=NumericRecordSpec(a=(), b=()),
+            element=NumericRecordSpec(a=(), b=()),
             label="rows",
         ),
         label="kde",

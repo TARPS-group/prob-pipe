@@ -94,6 +94,7 @@ In the examples, `x` is a law over `{a, b, c, sigma}`, `ke` a kernel `ke(e | sig
 |---|---|---|---|
 | `batch.spec.element_spec`, a type | `batch.spec.element_spec.term_spec`; `element_spec` is an output spec, naming base elements `element` | S4a | no |
 | `BatchSpec(element_spec, ...)` | `BatchSpec(element, ...)`, taking an `OutputSpec` or a type | S4a | no |
+| `NumericArrayBatch(..., element_spec=...)`, likewise `RecordBatch`, `NumericRecordBatch`, `OpaqueBatch`, `FunctionBatch`, `DistributionBatch`, `ConditionalDistributionBatch`, and `RecordBatch.stack` | `element=...`, taking the elements' spec; a batch's repr shows `element=` | S4a | no |
 
 ## Execution
 

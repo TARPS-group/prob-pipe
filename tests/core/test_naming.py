@@ -83,19 +83,19 @@ def _labeled(kind):
         "RecordBatch": lambda: RecordBatch(
             COLUMNS,
             "lvl",
-            element_spec=ELEMENT,
+            element=ELEMENT,
             label="given",
         ),
         "NumericRecordBatch": lambda: NumericRecordBatch(
             COLUMNS,
             "lvl",
-            element_spec=ELEMENT,
+            element=ELEMENT,
             label="given",
         ),
         "NumericArrayBatch": lambda: NumericArrayBatch(
             jnp.arange(4.0),
             "lvl",
-            element_spec=NumericArraySpec(shape=()),
+            element=NumericArraySpec(shape=()),
             label="given",
         ),
         "OpaqueBatch": lambda: OpaqueBatch(
@@ -233,7 +233,7 @@ class TestADerivedLabelSaysSo:
         return NumericArrayBatch(
             jnp.arange(12.0).reshape(4, 3),
             "draw",
-            element_spec=NumericArraySpec(shape=(3,)),
+            element=NumericArraySpec(shape=(3,)),
             label="posterior",
         )
 
@@ -380,7 +380,7 @@ class TestLevelsAreNamedForWhatMintsThem:
                 NumericRecordBatch(
                     {"u": jnp.arange(4.0)},
                     "row",
-                    element_spec=RecordSpec(u=()),
+                    element=RecordSpec(u=()),
                     label="rows",
                 ),
                 None,
@@ -484,7 +484,7 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
         drawn = NumericArrayBatch(
             jnp.zeros((2, 3)),
             ("chain", "draw"),
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             axes_per_level=(1, 1),
             label="draws",
         )
@@ -546,7 +546,7 @@ class TestEveryAggregateIsLabeledForItsFunction:
         return NumericRecordBatch(
             {"x": jnp.arange(float(n))},
             "row",
-            element_spec=NumericRecordSpec(x=()),
+            element=NumericRecordSpec(x=()),
             label="rows",
         )
 
@@ -582,7 +582,7 @@ class TestEveryAggregateIsLabeledForItsFunction:
         grid = NumericRecordBatch(
             {"x": jnp.arange(6.0).reshape(2, 3)},
             ("a", "b"),
-            element_spec=NumericRecordSpec(x=()),
+            element=NumericRecordSpec(x=()),
             label="grid",
         )
 
@@ -637,7 +637,7 @@ class TestNoKindInventsALabel:
         batch = NumericRecordBatch(
             {"a": jnp.zeros(3), "b": jnp.zeros(3)},
             "lvl",
-            element_spec=NumericRecordSpec(a=(), b=()),
+            element=NumericRecordSpec(a=(), b=()),
             label="derived",
         )
 

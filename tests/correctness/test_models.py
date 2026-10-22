@@ -414,7 +414,7 @@ class TestUnnormalizedDensity:
                 law, sample_shape=(50,)
             )
         assert draws.batch_shape == (50,)
-        assert draws.element_spec == law.event_spec.term_spec
+        assert draws.element_spec.term_spec == law.event_spec.term_spec
         with workflow_run(seed=14):
             normalized = convert.using(method="blackjax_nuts", method_options=FIT)(
                 law, EmpiricalDistribution

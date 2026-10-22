@@ -199,7 +199,7 @@ def _numeric_record_batch():
     return NumericRecordBatch(
         {"g/a": jnp.arange(3.0), "g/b": jnp.ones(3), "c": jnp.zeros((3, 2))},
         "draw",
-        element_spec=NumericRecordSpec(g=NumericRecordSpec(a=(), b=()), c=(2,)),
+        element=NumericRecordSpec(g=NumericRecordSpec(a=(), b=()), c=(2,)),
         label="draws",
     )
 
@@ -220,7 +220,7 @@ class TestBatches:
         batch = NumericArrayBatch(
             stored,
             "draw",
-            element_spec=NumericArraySpec((2,)),
+            element=NumericArraySpec((2,)),
             label="x",
         )
         assert batch.raw is stored
@@ -230,7 +230,7 @@ class TestBatches:
         batch = RecordBatch(
             {"data/effect": effects, "label": np.array(["A", "B", "C"], dtype=object)},
             "school",
-            element_spec=RecordSpec(
+            element=RecordSpec(
                 {
                     "data/effect": (),
                     "label": Opaque(
@@ -283,7 +283,7 @@ class TestBatches:
         batch = NumericArrayBatch(
             stored,
             "draw",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="x",
         )
         np.testing.assert_array_equal(batch[2:4].raw, stored[2:4])
@@ -486,7 +486,7 @@ class TestTheRemovedAccessors:
         batch = NumericArrayBatch(
             jnp.zeros((4, 2)),
             "draw",
-            element_spec=NumericArraySpec((2,)),
+            element=NumericArraySpec((2,)),
             label="x",
         )
         assert not hasattr(batch, "values")

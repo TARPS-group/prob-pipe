@@ -306,7 +306,7 @@ class TestWithPathNames:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="batch",
         )
         renamed = ra.with_path_names(a="b")
@@ -739,7 +739,7 @@ class TestRecordAutoPromotion:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="batch",
         )
         assert type(ra) is NumericRecordBatch
@@ -747,7 +747,7 @@ class TestRecordAutoPromotion:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="batch",
         )
         assert type(nrb) is NumericRecordBatch

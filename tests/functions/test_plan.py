@@ -638,7 +638,7 @@ def _batch(level: str = "draw", n: int = 3, **fields) -> Any:
     return NumericRecordBatch(
         dict(fields),
         (level,),
-        element_spec=RecordSpec({name: value.shape[1:] for name, value in fields.items()}),
+        element=RecordSpec({name: value.shape[1:] for name, value in fields.items()}),
         label="batch",
     )
 
@@ -713,7 +713,7 @@ class TestPartialLevelOverlap:
         two = NumericRecordBatch(
             {"x": jnp.arange(6.0).reshape(2, 3)},
             ("chain", "draw"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=(1, 1),
             label="batch",
         )
@@ -732,14 +732,14 @@ class TestPartialLevelOverlap:
         ga = NumericRecordBatch(
             {"x": jnp.zeros((2, 3, 4))},
             ("a", "b"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=(1, 2),
             label="batch",
         )
         gb = NumericRecordBatch(
             {"y": jnp.zeros((2, 3, 4))},
             ("a", "b"),
-            element_spec=RecordSpec(y=()),
+            element=RecordSpec(y=()),
             axes_per_level=(2, 1),
             label="batch",
         )

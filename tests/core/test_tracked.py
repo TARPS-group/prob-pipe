@@ -73,7 +73,7 @@ class TestMixinMembership:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="batch",
         )
         assert isinstance(ra, TrackedTerm)
@@ -163,7 +163,7 @@ class TestLabelLifecycle:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="derived",
         )
         assert ra.label == "derived"
@@ -171,7 +171,7 @@ class TestLabelLifecycle:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="mine",
         )
         assert named.label == "mine"
@@ -341,7 +341,7 @@ class TestWithLabelOnBatchTypes:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="derived",
         )
         ra2 = ra.with_label("mine")
@@ -356,7 +356,7 @@ class TestWithLabelOnBatchTypes:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="orig",
         )
         nra2 = nrb.with_label("new")
@@ -562,7 +562,7 @@ class TestBatchPickleRoundTrip:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="mine",
         )
         nrb.with_provenance(Provenance("op"))

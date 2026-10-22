@@ -475,7 +475,7 @@ class TestConditionalOperations:
         kernel = Vector()
         assert sample.check(
             kernel, sample_shape=(2,), given={"mu": jnp.ones(3)}
-        ).result.term_spec.element_spec.shape == (3,)
+        ).result.term_spec.element_spec.term_spec.shape == (3,)
         assert sample(kernel, sample_shape=(2,), given={"mu": jnp.ones(3)}).shape == (2, 3)
         assert kernel.event_spec.term_spec.free_dims == frozenset({"n"})
 

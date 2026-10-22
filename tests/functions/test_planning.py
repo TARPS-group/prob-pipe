@@ -144,7 +144,7 @@ class TestTheResultOfALift:
         empty = NumericArrayBatch(
             jnp.zeros((0,)),
             "row",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="rows",
         )
 
@@ -186,7 +186,7 @@ class TestEmptySweepPlanning:
         result = unexpected(empty)
         assert isinstance(result, NumericArrayBatch)
         assert result.batch_shape == (0,)
-        assert result.element_spec.shape == (2,)
+        assert result.element_spec.term_spec.shape == (2,)
         assert result.raw.shape == (0, 2)
 
     def test_an_operation_derives_the_empty_sweeps_declaration(self):
@@ -195,14 +195,14 @@ class TestEmptySweepPlanning:
         empty = DistributionBatch(
             np.empty((0,), dtype=object),
             "row",
-            element_spec=DistributionSpec(OutputSpec(x=NumericArraySpec(()))),
+            element=DistributionSpec(OutputSpec(x=NumericArraySpec(()))),
             label="laws",
         )
         assert mean.check(empty).result.term_spec.shape == ()
         result = mean(empty)
         assert isinstance(result, NumericArrayBatch)
         assert result.batch_shape == (0,)
-        assert result.element_spec.shape == ()
+        assert result.element_spec.term_spec.shape == ()
 
 
 class TestIncludingTheInputs:

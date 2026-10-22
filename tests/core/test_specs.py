@@ -65,7 +65,7 @@ def _grouped_spec():
 def _law_over_laws():
     """A law over laws, declared in the positional form over a law over an array ``x``."""
     laws = DistributionBatch([Normal("x", 0.0, 1.0), Normal("x", 1.0, 2.0)], "law")
-    return EmpiricalDistribution(laws, event_spec=OutputSpec(laws.element_spec))
+    return EmpiricalDistribution(laws, event_spec=OutputSpec(laws.element_spec.term_spec))
 
 
 class TestOutputSpec:
@@ -900,7 +900,7 @@ class TestDimensionBinding:
         assert renamed["data"].shape == ("m", "n")
         assert renamed["data"].dtype == np.dtype("float32")
         assert renamed["batch"].axis_groups == (("n",),)
-        assert renamed["batch"].element_spec.shape == ("m",)
+        assert renamed["batch"].element_spec.term_spec.shape == ("m",)
         assert renamed["batch"].level_names == ("draw",)
         assert renamed["law"].event_spec.outputs["x"].shape == ("m",)
         assert renamed["function"].input_spec["x"].shape == ("n",)
@@ -1020,7 +1020,7 @@ class TestSpecKinds:
         batch = NumericArrayBatch(
             np.zeros((2, 3)),
             "draw",
-            element_spec=NumericArraySpec((3,)),
+            element=NumericArraySpec((3,)),
             label="draws",
         )
         schema = RecordSpec.infer_from({"batch": batch})
@@ -1275,7 +1275,7 @@ class TestNestedValueBinding:
                 atoms = NumericRecordBatch(
                     {"x": np.zeros((2, width))},
                     "row",
-                    element_spec=RecordSpec(x=(width,)),
+                    element=RecordSpec(x=(width,)),
                     label="rows",
                 )
                 return EmpiricalDistribution(atoms, label="x")

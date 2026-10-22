@@ -84,7 +84,7 @@ def _from_draws(posterior, target) -> EmpiricalDistribution:
     batch = NumericRecordBatch(
         jax.tree.map(split, raw),
         ("chain", "draw"),
-        element_spec=target.event_spec.term_spec,
+        element=target.event_spec.term_spec,
         axes_per_level=(1, 1),
         label="draws",
     )

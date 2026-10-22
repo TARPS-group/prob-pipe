@@ -171,7 +171,7 @@ def _record_empirical() -> EmpiricalDistribution:
     atoms = NumericRecordBatch(
         {"b": jnp.array([[1.0, 2.0], [0.0, 1.0], [2.0, 3.0]]), "a": jnp.array([2.0, 1.0, 3.0])},
         "row",
-        element_spec=RecordSpec(b=(2,), a=()),
+        element=RecordSpec(b=(2,), a=()),
         label="rows",
     )
     return EmpiricalDistribution(atoms, label="post")
@@ -1527,7 +1527,7 @@ def _nested_empirical() -> EmpiricalDistribution:
             "c": jnp.array([2.0, 1.0, 3.0]),
         },
         "row",
-        element_spec=RecordSpec(g=RecordSpec(mu=(), y=(2,)), c=()),
+        element=RecordSpec(g=RecordSpec(mu=(), y=(2,)), c=()),
         label="rows",
     )
     return EmpiricalDistribution(atoms, label="post")
@@ -1549,7 +1549,9 @@ class TestASummaryTakesTheEventsNames:
     def test_the_summary_declares_the_events_fields(self, summary):
         law = _nested_empirical()
         result = summary(law)
-        element = result.element_spec if isinstance(result, NumericRecordBatch) else result.spec
+        element = (
+            result.element_spec.term_spec if isinstance(result, NumericRecordBatch) else result.spec
+        )
         assert tuple(element.children) == ("g", "c")
         assert tuple(element.children["g"].children) == ("mu", "y")
 
