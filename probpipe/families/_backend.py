@@ -189,8 +189,9 @@ def _compiled(
 
     A backend that :func:`_compilable` refuses runs *eager*. Otherwise
     :func:`~probpipe.core._compilation.compiled_or_eager` traces *program*
-    before it first runs at a new input structure, and records in the law's
-    memo, under *method*, a program that does not trace. The record belongs
+    before it first runs at new arguments, and records in the law's memo,
+    under *method* and the arguments' trace cache key, a program that does
+    not trace. The record belongs
     to the law, since a law has one backend, so the backend is left out of
     the trace cache key. The integer arguments are static arguments of the
     programs, so the key reads them by value. An error raised while the

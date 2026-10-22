@@ -22,6 +22,7 @@ from probpipe import (
 from probpipe.core._call_context import (
     _AUTOMATIC_SELECTION,
     _collecting_call_accumulators,
+    _EvaluationSetRecord,
     _ExecutionChoice,
     _note_num_samples_used,
     _under_call_context,
@@ -33,7 +34,9 @@ from probpipe.core._compilation import (
     _ProgramStore,
     _static_settings_in_effect,
     _StaticSettings,
+    _StoreEntry,
     _trace_cache_key,
+    _TraceNotes,
     compiled_or_eager,
 )
 from probpipe.core.config import _num_samples_in_effect
@@ -152,6 +155,44 @@ class TestTheFallbackRule:
             _compiled_or_eager(decision_record, "add", program, None, x)
         assert len(python_runs) == 2
         assert len(traces) == 2
+
+    def test_a_failed_trace_runs_eagerly_only_at_its_own_shapes(self):
+        python_runs: list = []
+
+        def to_number_at_one_entry(x):
+            return float(x[0]) + 1.0 if x.shape == (1,) else x + 1.0
+
+        program = _counted_program(to_number_at_one_entry, python_runs)
+        decision_record: dict = {}
+        for x in (jnp.ones(1), jnp.ones(3), jnp.ones(1), jnp.ones(3)):
+            _compiled_or_eager(decision_record, "add", program, to_number_at_one_entry, x)
+        # One failed trace at shape (1,), one trace at (3,), and no trace again at either.
+        assert [args[0].shape for args in python_runs] == [(1,), (3,)]
+        assert _eager_decision_keys(decision_record) == ("add",)
+
+    def test_a_failed_trace_under_one_num_samples_leaves_another_compiled(self):
+        traced_counts: list = []
+
+        def body(static_options, x):
+            traced_counts.append(config.sampling.num_samples)
+            if config.sampling.num_samples == 7:
+                return float(x)
+            return x + config.sampling.num_samples
+
+        def eager(x):
+            if config.sampling.num_samples == 7:
+                return float(x)
+            return x + config.sampling.num_samples
+
+        program_store = _ProgramStore()
+        results = {}
+        for count in (7, 9, 7, 9):
+            with config.sampling.using(num_samples=count):
+                results[count] = program_store.run("body", body, eager, jnp.ones(()))
+        assert traced_counts == [7, 9]
+        assert results[7] == 1.0
+        assert float(results[9]) == 10.0
+        assert isinstance(results[9], jax.Array)
 
 
 class TestTheTraceCacheKey:
@@ -445,7 +486,55 @@ class TestNotesReachEveryCallThatReusesATrace:
         assert noted_by_thread == [frozenset({37})] * 8
 
 
+class TestComparingTheNotesOfTwoTraces:
+    def _set_record(self, executor_options: dict) -> _EvaluationSetRecord:
+        return _EvaluationSetRecord("simulate", 0, "thread", executor_options, 4, ())
+
+    def test_records_whose_arrays_differ_beyond_numpys_display_raise(self):
+        weights = np.zeros(2000)
+        changed_weights = weights.copy()
+        changed_weights[1000] = 1.0
+        store_entry = _StoreEntry()
+        store_entry.add_trace_notes(
+            _TraceNotes(frozenset(), (self._set_record({"weights": weights}),))
+        )
+        assert repr(weights) == repr(changed_weights)
+        with pytest.raises(RuntimeError, match="sets of evaluation points"):
+            store_entry.add_trace_notes(
+                _TraceNotes(frozenset(), (self._set_record({"weights": changed_weights}),))
+            )
+
+    def test_records_of_equal_content_in_another_order_are_accepted(self):
+        pool = object()
+        first = self._set_record({"weights": np.zeros(2000), "pool": pool})
+        second = replace(first, origin="summarize")
+        store_entry = _StoreEntry()
+        store_entry.add_trace_notes(_TraceNotes(frozenset({5}), (first, second)))
+        store_entry.add_trace_notes(
+            _TraceNotes(
+                frozenset({5}),
+                (
+                    replace(second, executor_options={"weights": np.zeros(2000), "pool": pool}),
+                    replace(first, executor_options={"weights": np.zeros(2000), "pool": pool}),
+                ),
+            )
+        )
+
+
 class TestTheJointsMappedFactor:
+    def test_a_numeric_given_with_a_new_value_or_type_keeps_the_notes(self):
+        @conditional_distribution(given_spec={"mu": SCALAR, "offset": SCALAR}, label="lik")
+        def likelihood(mu, offset):
+            _note_num_samples_used(17)
+            return Normal("y", mu + offset, 1.0)
+
+        joint = likelihood & Normal("mu", 0.0, 1.0)
+        for offset in (1, 2, 1, 1.0, jnp.asarray(2.0)):
+            noted = _noted_by(
+                joint._conditional_sample, {"offset": offset}, jax.random.key(0), (3,)
+            )
+            assert noted == {17}, offset
+
     def test_a_kernel_that_fails_while_its_program_runs_raises_and_is_not_rerun_eagerly(self):
         python_runs: list = []
 
