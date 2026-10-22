@@ -1362,6 +1362,14 @@ class TestARecordedDtypeIsTheStoredDtype:
             **_EXECUTION[execution],
             label="f",
         )
+        if (
+            isinstance(declaration, NumericArraySpec)
+            and declaration.dtype is not None
+            and declaration.dtype == np.dtype("float64")
+        ):
+            with pytest.raises(ValueError, match="jax_enable_x64"):
+                wrapped(self._rows())
+            return
         result = wrapped(self._rows())
         assert np.asarray(result.raw).dtype == np.float32
         assert result.element_spec.term_spec == NumericArraySpec((3,), dtype="float32")
@@ -1380,22 +1388,29 @@ class TestARecordedDtypeIsTheStoredDtype:
             max_evaluations=5,
             label="f",
         )
+        if (
+            isinstance(declaration, NumericArraySpec)
+            and declaration.dtype is not None
+            and declaration.dtype == np.dtype("float64")
+        ):
+            with pytest.raises(ValueError, match="jax_enable_x64"):
+                wrapped(EmpiricalDistribution(jnp.arange(3.0), output_name="x"))
+            return
         result = wrapped(EmpiricalDistribution(jnp.arange(3.0), output_name="x"))
         assert np.asarray(result.atoms.raw).dtype == np.float32
         assert result.atoms.element_spec.term_spec.dtype == np.float32
         assert result.event_spec.outputs["f"].dtype == np.float32
 
     @pytest.mark.parametrize("execution", ["sequential", "thread", "jax"])
-    def test_a_declared_64_bit_record_field_records_the_stored_dtype(self, execution):
+    def test_a_declared_64_bit_record_field_refuses_disabled_64_bit_mode(self, execution):
         wrapped = Function(
             lambda row: {"y": np.arange(3.0)},
             output_spec=RecordSpec(y=NumericArraySpec((3,), dtype="float64")),
             **_EXECUTION[execution],
             label="f",
         )
-        result = wrapped(self._rows())
-        assert result._raw_column("y").dtype == np.float32
-        assert result.element_spec.term_spec["y"] == NumericArraySpec((3,), dtype="float32")
+        with pytest.raises(ValueError, match="jax_enable_x64"):
+            wrapped(self._rows())
 
     @pytest.mark.parametrize("output", ["array", "record"])
     def test_sequential_and_jax_sweeps_agree_on_a_dtype_record_leaves_leave_unset(self, output):

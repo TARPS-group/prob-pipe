@@ -23,6 +23,7 @@ import jax
 import jax.numpy as jnp
 
 from .._messages import label_given_first, unknown_names
+from ..core._compilation import _contains_embedded_calls
 from ..core._dispatch import Feasibility
 from ..core._execution_claims import Traceability, probe, spec_stand_in
 from ..core._expression import ELLIPSIS, Signature
@@ -1452,12 +1453,20 @@ def _evaluate_abstractly(
         }
         return jnp.zeros(())
 
-    jax.eval_shape(evaluate, stand_ins)
+    try:
+        traced = jax.make_jaxpr(evaluate)(stand_ins)
+    except jax.errors.TracerArrayConversionError as error:
+        raise TypeError(
+            f"the function of {label!r} converts a traced given to NumPy, so it cannot be traced. "
+            "Wrap the code that is not JAX in @function(traceable=False, output_spec=...)"
+        ) from error
     declaration = found["event_spec"]
     return _AbstractEvaluation(
         declaration._with_term_spec(_value_free(declaration.term_spec)),
         found["guards"],
-        found["traceability"],
+        Traceability.least_permissive(found["traceability"], Traceability.EMBEDDABLE)
+        if _contains_embedded_calls(traced, validate_tokens=False)
+        else found["traceability"],
     )
 
 

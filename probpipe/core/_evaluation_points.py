@@ -49,7 +49,7 @@ from ._call_context import (
     current_call_context,
 )
 from ._dispatch import Feasibility
-from ._execution_claims import NO_CLAIMS, ExecutionClaims
+from ._execution_claims import NO_CLAIMS, ExecutionClaims, _check_output_float_width
 from ._record_spec import RecordSpec
 from ._spec_base import NumericArraySpec, OpaqueSpec, TermSpec
 from ._specs import OutputSpec
@@ -131,12 +131,14 @@ class EvaluationPoints:
     ------
     ValueError
         If there are no varying arguments, or they do not all have the same
-        number of rows.
+        number of rows, or the output spec declares float64 while
+        ``jax_enable_x64`` is disabled.
     RuntimeError
         If it is built where no ProbPipe call gives its evaluation points a
         place in the workflow, which gives them their random keys, such as
         directly in a function's body; ``evaluate_at_points`` takes a place
-        of its own there.
+        of its own there. Embedded evaluations carry their call through a
+        token instead and cannot draw workflow randomness.
 
     Examples
     --------
@@ -201,6 +203,7 @@ class EvaluationPoints:
         place in the workflow of the evaluation point at a point index,
         ``None`` giving each the default place of its set.
         """
+        _check_output_float_width(output_spec, origin)
         self.origin = origin
         self.claims = claims
         self.output_spec = output_spec
@@ -215,8 +218,12 @@ class EvaluationPoints:
         self._set_ordinal, set_position = (
             (0, 0) if evaluation_log is None else evaluation_log.next_set_numbers(origin)
         )
-        self._point_scopes = _EVALUATION_POINT_SCOPES_FACTORY(
-            origin, self._num_evaluation_points, set_position, point_segment
+        self._point_scopes = (
+            _UnscopedEvaluationPoints()
+            if self._call_context.forbids_workflow_randomness
+            else _EVALUATION_POINT_SCOPES_FACTORY(
+                origin, self._num_evaluation_points, set_position, point_segment
+            )
         )
         self._shipping_feasibility: Feasibility | None = None
 

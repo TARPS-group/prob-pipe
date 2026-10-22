@@ -47,7 +47,12 @@ except ImportError:
     task = flow = None
 
 from ..core._batch import Batch, BatchSpec, _flat_batch_spec
-from ..core._call_context import _NumSamplesUsed, current_call_context
+from ..core._call_context import (
+    _jax_tracing_active,
+    _jax_transformation_active,
+    _NumSamplesUsed,
+    current_call_context,
+)
 from ..core._dispatch import MethodInfo, ResolutionError
 from ..core._evaluation_points import _requested_evaluation_points
 from ..core._execution_claims import ProbeResult, probe
@@ -82,6 +87,7 @@ from ..values._function_base import (
     install_call_engine,
 )
 from . import (
+    _boundary,
     _broadcast,
     _call,
     _callable,
@@ -241,6 +247,8 @@ def _orchestration_mode(workflow_kind_control: WorkflowKind) -> WorkflowKind:
     ``DEFAULT``, orchestration is ``OFF``. A requested ``TASK`` or ``FLOW``
     falls back to ``OFF``, with a warning, when Prefect is not installed.
     """
+    if _jax_tracing_active():
+        return WorkflowKind.OFF
     kind = (
         workflow_kind_control
         if workflow_kind_control is not WorkflowKind.DEFAULT
@@ -269,6 +277,49 @@ def _call_function(
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
 ) -> Any:
+    if _jax_transformation_active():
+        values = _call.resolve_function_call(
+            function._signature_info,
+            args,
+            call_inputs,
+            bind=function._bind,
+            function_name=function.label,
+        )
+        inline_plan = _plan.build_broadcast_plan(
+            values=values, signature_info=function._signature_info, roles=function._roles
+        )
+        staged, result = (
+            _boundary.maybe_stage(function, values)
+            if inline_plan.regime == "none"
+            else (False, None)
+        )
+        if staged:
+            return result
+        if _jax_tracing_active() and inline_plan.regime == "none":
+            controls = current_call_context().resolved_controls
+            candidates = function._route_candidates(controls, values)
+            if candidates is not None:
+                _call.admit_arguments(
+                    function._signature_info,
+                    values,
+                    function_name=function.label,
+                    roles=function._roles,
+                    lifts=False,
+                )
+                # A law keeps its ProbPipe capabilities here. Its raw backend
+                # object can have weaker guards than the law it represents.
+                return _realized_point(function, values, controls, candidates)
+            _, bindings = _bind_function_inputs(
+                function_name=function.label, input_spec=function.input_spec, values=values
+            )
+            result = function._invoke_resolved(values, context=_FunctionInvocationContext(bindings))
+            _validate_function_output(
+                function_name=function.label,
+                output_spec=function.output_spec,
+                result=result,
+                bindings=bindings,
+            )
+            return _result.raw_form(result)
     _context._assert_workflow_admission()
     with _replay._function_replay_scope() as replay_call:
         occurrence_path = None if replay_call is None else replay_call.occurrence_path
@@ -903,25 +954,37 @@ def _run_call(
             route=route.metadata,
         )
 
-    # A plain call is one evaluation point, which varies only in being the
-    # call's own: its arguments are one row of a set of one. TrackedTerm
-    # values form lineage parents; every other resolved parameter remains
-    # separately fingerprinted in Provenance.inputs.
-    call_arguments = np.empty(1, dtype=object)
-    call_arguments[0] = argument_values
-    result = _execution.evaluate_plain_call(
-        _requested_evaluation_points(
-            lambda call_arguments: invoke_point(**call_arguments),
-            varying={"call_arguments": call_arguments},
-            origin=function._label,
-            traceable=False,
-            untraceable_reason=None,
-            point_noun="evaluation point",
-            point_segment=lambda point_index: _execution.plain_call_point_segment(),
-        ),
-        workflow_kind=workflow_kind,
-        function_label=function._label,
-    )
+    if selection is not None:
+        # A route coordinates the work requested by the operation. Preserve
+        # its logical context so embedded points inherit its executor without
+        # occupying a worker needed by those same points.
+        broker = _evaluation_keys._capture_active_broker()
+        if broker is None:
+            raise RuntimeError("an operation route has no active call broker")
+        if not _context._workflow_side_effects_forbidden():
+            _execution._record_execution_contract(None)
+        with _execution.in_place_evaluation_point_scope(broker):
+            result = invoke_point(**argument_values)
+    else:
+        # A plain call is one evaluation point, which varies only in being the
+        # call's own: its arguments are one row of a set of one. TrackedTerm
+        # values form lineage parents; every other resolved parameter remains
+        # separately fingerprinted in Provenance.inputs.
+        call_arguments = np.empty(1, dtype=object)
+        call_arguments[0] = argument_values
+        result = _execution.evaluate_plain_call(
+            _requested_evaluation_points(
+                lambda call_arguments: invoke_point(**call_arguments),
+                varying={"call_arguments": call_arguments},
+                origin=function._label,
+                traceable=False,
+                untraceable_reason=None,
+                point_noun="evaluation point",
+                point_segment=lambda point_index: _execution.plain_call_point_segment(),
+            ),
+            workflow_kind=workflow_kind,
+            function_label=function._label,
+        )
     if settled_exactness:
         exact = False if False in settled_exactness else (True if all(settled_exactness) else None)
         route = replace(route, exact=exact)
@@ -982,11 +1045,12 @@ def _evaluated_body_point(
     except ValueError as error:
         raise _call.ApplicabilityError(str(error)) from error
     context = _FunctionInvocationContext(point_bindings)
-    result = _result._batch_from_declared_sequence(
-        function._invoke_resolved(point_values, context=context),
-        function_name=function.output_label,
-        output_spec=function.output_spec,
-    )
+    with _boundary.realizing_point(function):
+        result = _result._batch_from_declared_sequence(
+            function._invoke_resolved(point_values, context=context),
+            function_name=function.output_label,
+            output_spec=function.output_spec,
+        )
     try:
         point_output_spec = _validate_function_output(
             function_name=function._label,
@@ -1998,6 +2062,9 @@ class _CallEngine:
         admits each argument by its role, with no lifting, runs the route
         selected for the point, and returns the result's raw form.
         """
+        staged, result = _boundary.maybe_stage(function, values)
+        if staged:
+            return result
         resolved_controls = current_call_context().resolved_controls
         candidates = function._route_candidates(resolved_controls, values)
         if candidates is None:

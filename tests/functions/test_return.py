@@ -9,6 +9,7 @@ ResultSchemaError, which are return-contract defects.
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -382,7 +383,8 @@ class TestResultErrors:
             label="f",
         )
 
-        assert wrapped().spec == NumericArraySpec((), jnp.float64)
+        with jax.enable_x64(True):
+            assert wrapped().spec == NumericArraySpec((), jnp.float64)
 
     def test_a_record_field_of_another_dtype_kind_raises_result_schema_error(self):
         wrapped = Function(

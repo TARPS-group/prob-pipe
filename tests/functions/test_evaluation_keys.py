@@ -589,7 +589,6 @@ def _sample_sum(loc):
 
 
 class TestCallerJaxTraceDetection:
-    @pytest.mark.parametrize("use_core_fallback", [False, True])
     @pytest.mark.parametrize(
         ("transform", "argument"),
         [
@@ -599,13 +598,11 @@ class TestCallerJaxTraceDetection:
             pytest.param(jax.grad, 0.0, id="grad"),
         ],
     )
-    def test_trace_detection(self, monkeypatch, use_core_fallback, transform, argument):
-        if use_core_fallback:
-            monkeypatch.delattr(jax.extend.core, "find_top_trace", raising=False)
+    def test_trace_detection(self, transform, argument):
         observed = []
 
         def body(value):
-            observed.append(context_mod._caller_jax_trace_active())
+            observed.append(context_mod._jax_transformation_active())
             return value * value
 
         if transform is None:

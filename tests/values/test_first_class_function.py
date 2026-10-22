@@ -346,20 +346,21 @@ class TestApplyContract:
         actual_dtype,
         declared_dtype,
     ):
-        value = np.asarray(3, dtype=actual_dtype)
-        template = RecordSpec(y=NumericArraySpec((), dtype=declared_dtype))
+        with jax.enable_x64(True):
+            value = np.asarray(3, dtype=actual_dtype)
+            template = RecordSpec(y=NumericArraySpec((), dtype=declared_dtype))
 
-        Function(
-            lambda: value, label="function", output_spec=OutputSpec(**template.children)
-        ).apply()
-        Function(
-            lambda: Record(
-                {"y": value},
-                label="returned",
-            ),
-            label="function",
-            output_spec=template,
-        ).apply()
+            Function(
+                lambda: value, label="function", output_spec=OutputSpec(**template.children)
+            ).apply()
+            Function(
+                lambda: Record(
+                    {"y": value},
+                    label="returned",
+                ),
+                label="function",
+                output_spec=template,
+            ).apply()
 
     @pytest.mark.parametrize("structured", [False, True])
     def test_cross_kind_output_dtype_is_rejected(self, structured):

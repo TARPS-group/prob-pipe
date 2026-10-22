@@ -44,6 +44,7 @@ from ..core._execution_claims import (
     ExecutionClaims,
     FalseTraceableClaimError,
     ProbeResults,
+    _check_output_float_width,
     checked_execution_claims,
 )
 from ..core._executors import _check_executor_reads_options, _requested_executor
@@ -806,6 +807,7 @@ def _in_child_call_context(
     def decorate(entry_method: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(entry_method)
         def run_in_child_call_context(self: Function, /, *args: Any, **kwargs: Any) -> Any:
+            _check_output_float_width(self.output_spec, self.label)
             parent_context = current_call_context()
             function_view = (
                 self
@@ -1012,6 +1014,8 @@ class Function(TrackedTerm, Annotated):
         output is named by the same rule. Display aliases never change this
         default output name. An output spec that names its output but leaves
         its type unspecified has the type inferred independently for each call.
+        A declared float64 output requires ``jax_enable_x64=True`` when the
+        call opens; this applies to ``apply`` and to ordinary calls.
     output_label : str or None
         Optional result alias. Without one, a call on values labels a value
         result by the application, as ``f(2.0)``, and a returned law or kernel
@@ -1031,7 +1035,12 @@ class Function(TrackedTerm, Annotated):
         Python up to the first operation that fails on a traced value, and
         later calls with inputs of the same structure read the stored outcome.
         A callable with side effects, or one that draws from NumPy's random
-        generators, should claim ``False``.
+        generators, should claim ``False``. Inside a JAX trace an opaque
+        callable runs through a host callback, provided its output spec has
+        concrete numeric shapes and explicit dtypes. Its output is checked on
+        the host; a failed evaluation raises ``EvaluationError`` and stops the
+        compiled program. Gradients through it require a derivative, which
+        this boundary does not supply.
     vectorized : bool
         Whether the callable evaluates a stack of evaluation points in one
         call, returning their outputs stacked on a leading axis, with output

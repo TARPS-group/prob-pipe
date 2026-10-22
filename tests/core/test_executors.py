@@ -462,7 +462,7 @@ class TestFailures:
             return np.zeros(3) if x[0] == 2.0 else scale * x
 
         with pytest.raises(EvaluationError) as raised:
-            _run_set(wrong_at_one, output_spec=OutputSpec(y=NumericArraySpec((2,), "float64")))
+            _run_set(wrong_at_one, output_spec=OutputSpec(y=NumericArraySpec((2,), "float32")))
         assert [(failure.point_index, failure.kind) for failure in raised.value.failures] == [
             (1, "invalid")
         ]
