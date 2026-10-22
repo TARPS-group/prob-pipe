@@ -1054,6 +1054,7 @@ class NamedTree[L]:
 
         Examples
         --------
+        >>> from probpipe import RecordSpec
         >>> RecordSpec(a=(3,)).merge(RecordSpec(g=RecordSpec(b=())))
         NumericRecordSpec(a=(3,), g=NumericRecordSpec(b=()))
         """

@@ -156,23 +156,23 @@ def _final_segment(path: str) -> str:
     return path.rsplit(_PATH_SEP, 1)[-1]
 
 
-def _view_declaration(declaration: OutputSpec, paths: str | tuple[str, ...]) -> OutputSpec:
-    """The event spec of the view at *paths* of a law declared by *declaration*.
+def _view_declaration(parent_event_spec: OutputSpec, paths: str | tuple[str, ...]) -> OutputSpec:
+    """The event spec of the view at *paths* of a law whose event spec is *parent_event_spec*.
 
-    It is ``declaration[paths]``: one path to a single value gives the value
+    It is ``parent_event_spec[paths]``: one path to a single value gives the value
     under an output named by its last name, and a list of paths gives the
     positional form over the record that keeps each node at its own path, in
-    the canonical order of *declaration*. One path to a group, or to a field
+    the canonical order of *parent_event_spec*. One path to a group, or to a field
     that holds a distribution or a batch, still gives the node whole under an
     output named by its last name, as views did before an output spec was
     indexed by path.
 
     Parameters
     ----------
-    declaration : OutputSpec
+    parent_event_spec : OutputSpec
         The parent law's event spec.
     paths : str or tuple of str
-        A path of *declaration*, or a list of paths to select jointly, as
+        A path of *parent_event_spec*, or a list of paths to select jointly, as
         :func:`~probpipe.core._shapes._as_paths` reads them.
 
     Returns
@@ -184,13 +184,13 @@ def _view_declaration(declaration: OutputSpec, paths: str | tuple[str, ...]) -> 
     Raises
     ------
     KeyError
-        If a path is not a path of *declaration*.
+        If a path is not a path of *parent_event_spec*.
     """
     if isinstance(paths, str):
-        node_spec = _node_at(declaration, paths)
+        node_spec = _node_at(parent_event_spec, paths)
         if _exposed_kind(node_spec) is not None:
             return OutputSpec(**{_final_segment(paths): node_spec})
-    return declaration[paths]
+    return parent_event_spec[paths]
 
 
 def _draw_segments(declaration: OutputSpec, path: str) -> tuple[str, ...]:

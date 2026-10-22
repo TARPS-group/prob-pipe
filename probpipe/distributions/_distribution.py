@@ -247,14 +247,14 @@ def _record_default_expression(term: Any) -> None:
 
 
 def _not_an_event_path(
-    declaration: OutputSpec,
+    event_spec: OutputSpec,
     label: str,
     path: str,
     requested: tuple[str, ...] = (),
     *,
     action: str | None = None,
 ) -> KeyError | TypeError:
-    """The error for *path*, which is not an event path of the law *label* declared by *declaration*.
+    """The error for *path*, which is not an event path of the law *label* over *event_spec*.
 
     A law over a record lacks that path, which is a ``KeyError`` listing the
     paths it has; *requested* is the tuple of paths that held *path*, or
@@ -263,7 +263,7 @@ def _not_an_event_path(
     law. :func:`~probpipe.core._specs._paths_error` words both.
     """
     return _paths_error(
-        declaration,
+        event_spec,
         path,
         owner=repr(label),
         values="draws",
@@ -273,14 +273,14 @@ def _not_an_event_path(
 
 
 def _read_event_paths(
-    declaration: OutputSpec,
+    event_spec: OutputSpec,
     label: str,
     paths: Any,
     *,
     action: str,
     tuple_given: bool | None = None,
 ) -> str | tuple[str, ...]:
-    """*paths*, read as event paths of the law *label* declared by *declaration*.
+    """*paths*, read as event paths of the law *label* over *event_spec*.
 
     A law's paths are those of its event spec, so this is the reader of
     :meth:`OutputSpec.__getitem__ <probpipe.core._specs.OutputSpec.__getitem__>`,
@@ -290,7 +290,7 @@ def _read_event_paths(
 
     Parameters
     ----------
-    declaration : OutputSpec
+    event_spec : OutputSpec
         The law's event spec.
     label : str
         The law's label, which the messages name.
@@ -319,7 +319,7 @@ def _read_event_paths(
         names a path twice, or holds a path inside another.
     """
     return _read_paths(
-        declaration,
+        event_spec,
         paths,
         owner=repr(label),
         values="draws",
