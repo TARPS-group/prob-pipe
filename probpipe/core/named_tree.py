@@ -1320,8 +1320,10 @@ def _check_no_shared_top_level_names(left: NamedTree, right: NamedTree, *, opera
 
     Parameters
     ----------
-    left, right : NamedTree
-        The trees merged, or the specs of the records two batches hold.
+    left : NamedTree
+        The tree merged first, or the spec of the records the first batch holds.
+    right : NamedTree
+        The tree merged after *left*, or the spec of the second batch's records.
     operands : str
         What the message calls the two operands, such as ``"the two Records"``.
 
