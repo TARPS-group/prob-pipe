@@ -31,11 +31,14 @@ from probpipe import (
     Distribution,
     EmpiricalDistribution,
     Function,
+    Gamma,
+    InputSpec,
     Normal,
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
     NumericRecord,
+    NumericRecordSpec,
     OutputSpec,
     Record,
     RecordBatch,
@@ -949,3 +952,23 @@ class TestSingletonAlignment:
             np.testing.assert_allclose(
                 leaves[0], [11.0 + 10.0 * index, 13.0 + 10.0 * index], atol=0, rtol=0
             )
+
+
+class TestALiftedRecordDrawKeepsTheEventsOrder:
+    """JAX maps a dict with its keys sorted, so each lifted record draw is laid out in the event's order again."""
+
+    def test_a_function_declaring_the_record_lifts_over_a_merge_out_of_alphabetical_order(self):
+        record_spec = NumericRecordSpec(
+            r=NumericArraySpec((), "float32"), m=NumericArraySpec((), "float32")
+        )
+
+        @function(input_spec=InputSpec(x=record_spec))
+        def difference(x):
+            return x["r"] - x["m"]
+
+        prior = Gamma("r", 3.0, 1.0) & Normal("m", 0.0, 1.0)
+        with workflow_run(seed=0):
+            lifted_mean = mean(difference(prior))
+        # E[r - m] = 3 for r ~ Gamma(3, 1) and m ~ Normal(0, 1). The difference has
+        # standard deviation 2, so the mean of 256 draws is within 0.5 at 4 standard errors.
+        np.testing.assert_allclose(np.asarray(lifted_mean), 3.0, atol=0.5)

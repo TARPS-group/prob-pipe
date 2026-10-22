@@ -16,18 +16,21 @@ from probpipe import (
     DistributionBatch,
     EmpiricalDistribution,
     Function,
+    InputSpec,
     Normal,
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
     NumericRecord,
     NumericRecordBatch,
+    NumericRecordSpec,
     OpaqueBatch,
     OutputSpec,
     Record,
     RecordBatch,
     RecordSpec,
     ResolutionError,
+    function,
     log_prob,
     mean,
     workflow_run,
@@ -1442,3 +1445,22 @@ class TestARecordedDtypeIsTheStoredDtype:
         assert specs["sequential"] == specs["thread"] == specs["jax"]
         if output == "array":
             assert specs["jax"] == NumericArraySpec((2,), dtype="float32")
+
+
+class TestARowKeepsTheBatchsFieldOrder:
+    """JAX maps a dict with its keys sorted, so each swept row is laid out in the batch's order again."""
+
+    def test_a_function_declaring_the_record_receives_its_fields_in_declared_order(self):
+        record_spec = NumericRecordSpec(r=NumericArraySpec(()), m=NumericArraySpec(()))
+
+        @function(input_spec=InputSpec(x=record_spec))
+        def difference(x):
+            return x["r"] - x["m"]
+
+        batch = NumericRecordBatch({"r": jnp.arange(3.0), "m": jnp.ones(3)}, level_names=("draw",))
+        np.testing.assert_allclose(np.asarray(difference(batch)), [-1.0, 0.0, 1.0])
+
+    def test_a_row_lists_its_fields_in_the_batchs_order(self):
+        batch = NumericRecordBatch({"r": jnp.arange(3.0), "m": jnp.ones(3)}, level_names=("draw",))
+        row = _sweep._mapped_row(batch, "x", {"m": jnp.ones(()), "r": jnp.zeros(())})
+        assert list(row.fields) == ["r", "m"]
