@@ -17,7 +17,7 @@ import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, NoReturn, Self
 
 import jax
 import jax.numpy as jnp
@@ -62,6 +62,8 @@ from ._distribution import (
     _merge_operands,
     _no_free_dims,
     _record_default_expression,
+    _refuse_distribution_multiplication,
+    _refuse_distribution_truth_value,
     _unify_declarations,
     _value_at_declared_kind,
 )
@@ -823,6 +825,36 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
             A ``Distribution`` when every input is bound, and otherwise the
             kernel over the remaining inputs.
         """
+
+    def __mul__(self, other: object) -> Any:
+        """Refuse ``*`` between distributions. Use ``&`` to merge them.
+
+        Parameters
+        ----------
+        other : object
+            The right operand.
+
+        Returns
+        -------
+        Any
+            ``NotImplemented`` for an operand of another kind.
+
+        Raises
+        ------
+        TypeError
+            If *other* is a distribution or a conditional distribution.
+        """
+        return _refuse_distribution_multiplication(other)
+
+    def __bool__(self) -> NoReturn:
+        """Refuse a truth value, so ``a and b`` raises. Use ``a & b`` to merge.
+
+        Raises
+        ------
+        TypeError
+            Always: a distribution has no truth value.
+        """
+        _refuse_distribution_truth_value()
 
     # -- merge ------------------------------------------------------------
 

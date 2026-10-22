@@ -41,6 +41,7 @@ from ..core.named_tree import _PATH_SEP
 from ..distributions._batches import _element_source
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
+from ..distributions._merge import _install_root_ancestor
 from ..distributions._views import CoupledMarginal, _copy_source, _projector, _RenamedDistribution
 
 _DISTRIBUTION_SAMPLING_ABI = "probpipe.distribution_sampling/v1"
@@ -521,3 +522,11 @@ def _renamed_descent(renamed: Distribution) -> _Descent:
         forward=event.draw,
         descriptor=("renamed", tuple(sorted(event.leaves.items()))),
     )
+
+
+def _distribution_root(distribution: Distribution) -> Distribution:
+    """The root that supplies a distribution's draws, shared with the merge check."""
+    return capture_stochastic_consumer(distribution).root
+
+
+_install_root_ancestor(_distribution_root)

@@ -11,7 +11,7 @@ from __future__ import annotations
 from abc import ABC
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, NoReturn, Self
 
 import jax
 import jax.numpy as jnp
@@ -649,6 +649,20 @@ def _merge_operands(left: Any, right: Any) -> Any:
     return _merge_engine(left, right)
 
 
+def _refuse_distribution_multiplication(other: object) -> Any:
+    """Refuse multiplication by a law or a conditional distribution."""
+    from ._conditional import ConditionalDistribution
+
+    if isinstance(other, (Distribution, ConditionalDistribution)):
+        raise TypeError("cannot multiply distributions with *. To merge them, write lik & prior")
+    return NotImplemented
+
+
+def _refuse_distribution_truth_value() -> NoReturn:
+    """Refuse the truth value shared by laws and conditional distributions."""
+    raise TypeError("a distribution has no truth value. To merge distributions, write a & b")
+
+
 class _DistributionMeta(_TrackedTermMeta):
     """The metaclass of every distribution.
 
@@ -1131,6 +1145,36 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     def __contains__(self, path: object) -> bool:
         """Whether *path* is a ``str`` and ``self[path]`` gives a law: an event path, or a whole term's output."""
         return path in self.event_spec
+
+    def __mul__(self, other: object) -> Any:
+        """Refuse ``*`` between distributions. Use ``&`` to merge them.
+
+        Parameters
+        ----------
+        other : object
+            The right operand.
+
+        Returns
+        -------
+        Any
+            ``NotImplemented`` for an operand of another kind.
+
+        Raises
+        ------
+        TypeError
+            If *other* is a distribution or a conditional distribution.
+        """
+        return _refuse_distribution_multiplication(other)
+
+    def __bool__(self) -> NoReturn:
+        """Refuse a truth value, so ``a and b`` raises. Use ``a & b`` to merge.
+
+        Raises
+        ------
+        TypeError
+            Always: a distribution has no truth value.
+        """
+        _refuse_distribution_truth_value()
 
     # -- merge ------------------------------------------------------------
 

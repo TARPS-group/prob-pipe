@@ -88,6 +88,8 @@ In the examples, `x` is a law over `{a, b, c, sigma}`, `ke` a kernel `ke(e | sig
 | `FieldView` | `CoupledMarginal` | S3 | no |
 | the `joint` route `"compose"` in `provenance.metadata["route"]` | `"merge"`; a recipe recorded before cannot be replayed | S3 | yes |
 
+| `d["a"] & d["b"]` silently treated coupled marginals as independent | raises `ValueError`; use `d["a", "b"]` for the joint, or `marginal(d, "a") & marginal(d, "b")` for independent laws | S3 | no |
+
 ## Batches
 
 | Old | New | Step | Silent? |

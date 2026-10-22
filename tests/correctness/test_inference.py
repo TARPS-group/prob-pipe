@@ -75,7 +75,8 @@ def _regression_case() -> ModelTestCase:
 
 class TestReferences:
     @pytest.mark.parametrize(
-        "case_name", [name for name in canonical.CASES if canonical.case(name).posterior]
+        "case_name",
+        [name for name in canonical.CASES if canonical.case(name).posterior is not None],
     )
     def test_the_closed_form_posterior_meets_its_own_reference(self, case_name):
         """Independent draws of the closed-form posterior law meet the case's reference.
