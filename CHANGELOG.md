@@ -2019,10 +2019,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Scalar multiplication of Gaussian random functions and record truth values
   retain their existing behavior.
 
+- **`&` refuses coupled laws at any depth of either operand.** A merge
+  compares the root ancestor of each operand and of every factor inside it,
+  grouped sub-joints included. So `d & d["a"].rename(a="z")`,
+  `d["a"] & d.rename(a="p", b="q")`, and a grouped sub-joint holding `d["a"]`
+  merged with `d["b"]` now raise `ValueError`, where they built a joint that
+  drew the coupled laws independently. The check precedes the check of
+  shared outputs, so `d & d["a"]` reports the coupling. The advice to merge
+  standalone marginals appears only when `marginal` computes them, and a law
+  in both operands is named once: `prior & prior` raises "cannot merge
+  prior & prior: the law prior is in both operands. Merge it once".
+
 - **Every record uses container truth, including `NumericRecord`.**
   `bool(Record({"x": 0.0}))` now returns `True`, where scalar conversion
   returned `False`; `bool(Record({}, label="empty"))` returns `False`, where it raised.
   Test `bool(record["x"])` when the field's value should decide truth.
+
+- **`rename`, `[]`, and `in` take the parameters the design declares.** On a
+  law, a kernel, a record, a record batch, and an output spec, `rename` takes
+  `(renames, /, **keyword_renames)`, and `[]` and `in` on a law and a record
+  take their path positionally only. A call that gives its renames by position
+  or as keywords is unchanged. Calling the special methods with the path as a
+  keyword now raises `TypeError`: replace `d.__getitem__(key="x")` with
+  `d["x"]` and `d.__contains__(path="x")` with `"x" in d`.
+
+  A `rename` now checks each key and each new path with the rules that `[]`
+  applies to a path, on a record, a record batch, an output spec, and a
+  kernel. A new path that is not a string raises `TypeError`, where it raised
+  `ValueError`. A kernel's key that is not a string raises `TypeError`, where
+  it raised `AttributeError`. A key that is not a path of the term raises
+  `KeyError` before its new path is read, so `record.rename(zz="")` raises
+  `KeyError`, where it raised `ValueError`. The messages are those of `[]`:
+
+  ```python
+  record.rename(x=("g", "x"))
+  # before: ValueError: new path for 'x' must be a non-empty string
+  # after:  TypeError: cannot call rename() to move 'x' to ('g', 'x'), since a path must be a str, got tuple
+  record.rename(x="a//b")
+  # before: ValueError: new path 'a//b' for 'x' has an empty segment ...
+  # after:  ValueError: cannot call rename() to move 'x' to 'a//b', since the path 'a//b' has an empty name. ...
+  ```
 
 ### Added
 
@@ -4247,11 +4283,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **An installed PyMC older than 6.2 raises an `ImportError` that names the
-  upgrade,** as `ProbPipe needs PyMC 6.2 or later, which works with ArviZ 1.x,
-  but PyMC 5.28.5 is installed`, where PyMC 5 failed on import with an error
-  about ArviZ. Google Colab preinstalls PyMC 5, so every notebook's Colab
-  install cell, and the minimal Colab command of the installation page, also
-  installs `pymc>=6.2`, and pip no longer reports a dependency conflict.
+  upgrade,** as `PyMC 5.28.5 is installed, but PyMCModel requires PyMC 6.2 or
+  later`, where PyMC 5 failed on import with an error about ArviZ. A missing
+  PyMC names the API and the release it requires, and the command that
+  installs it. Google Colab preinstalls PyMC 5, so every notebook's Colab
+  install cell, and the smallest Colab command of the installation page,
+  installs the `pymc` extra, and pip no longer reports a dependency conflict.
 - **A derived operation passes `exact_only` and its counts to the
   functions its identity calls.** `prob.using(exact_only=True)(Normal("x",
   0.0, 2.0), 0.0)` used to raise `ResolutionError` and now returns the exact

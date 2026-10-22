@@ -1017,7 +1017,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         )
         return _recorded_copy(copy, self)
 
-    def rename(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Distribution:
+    def rename(
+        self, renames: Mapping[str, str] | None = None, /, **keyword_renames: str
+    ) -> Distribution:
         """Rename or move nodes of the event spec by their paths, ``old -> new``.
 
         The result is this law with :meth:`OutputSpec.rename` applied to
@@ -1043,9 +1045,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
         Parameters
         ----------
-        mapping : Mapping[str, str], optional
+        renames : Mapping[str, str], optional
             The new exact path of each node, keyed by the node's exact path.
-        **kwargs : str
+        **keyword_renames : str
             Further renames, keyed by paths that are identifiers.
 
         Returns
@@ -1057,14 +1059,16 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         ------
         KeyError
             If a key is not a path of the event spec.
+        TypeError
+            As :meth:`OutputSpec.rename` raises it.
         ValueError
             As :meth:`OutputSpec.rename` raises it.
         """
-        renamed = self.event_spec.rename(mapping, **kwargs)
-        renames = {**dict(mapping or {}), **kwargs}
+        renamed_event_spec = self.event_spec.rename(renames, **keyword_renames)
+        all_renames = {**dict(renames or {}), **keyword_renames}
         if _renamed_law_factory is None:
             raise RuntimeError("the renamed law is not installed; import probpipe")
-        return _renamed_law_factory(self, renamed, renames)
+        return _renamed_law_factory(self, renamed_event_spec, all_renames)
 
     def _renamed_in_family(self, event: _EventRenames) -> Distribution | None:
         """The member of this law's family that holds its values under *event*'s new paths, or None.
@@ -1097,7 +1101,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     # a law iterable through it.
     __iter__ = None
 
-    def __getitem__(self, key: PathsLike) -> Distribution:
+    def __getitem__(self, paths: PathsLike, /) -> Distribution:
         """The law itself at a whole term's output, or the coupled marginal at a path or a list of paths.
 
         A whole-term law is itself under its output, so ``d[name]`` returns
@@ -1113,7 +1117,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
         Parameters
         ----------
-        key : str, or list or tuple of str
+        paths : str, or list or tuple of str
             An event path, which starts with an output's name, or a list of event
             paths to view jointly.
 
@@ -1127,14 +1131,14 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         KeyError
             If this law is over a record and a path is not one of its paths.
         TypeError
-            If *key* is neither a string nor a list or tuple of strings, or
+            If *paths* is neither a string nor a list or tuple of strings, or
             this law is over a value with no paths, such as an array.
         ValueError
             If a path is empty or has an empty name, or a list of paths is
             empty, names a path twice, or holds a path inside another.
         """
         read_paths = _read_event_paths(
-            self.event_spec, self.label, key, action=f"index {self.label!r} by"
+            self.event_spec, self.label, paths, action=f"index {self.label!r} by"
         )
         if read_paths == _root_output_name(self.event_spec):
             return self
@@ -1142,7 +1146,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
             raise RuntimeError("the coupled marginal is not installed; import probpipe")
         return _coupled_marginal_factory(self, read_paths)
 
-    def __contains__(self, path: object) -> bool:
+    def __contains__(self, path: object, /) -> bool:
         """Whether *path* is a ``str`` and ``self[path]`` gives a law: an event path, or a whole term's output."""
         return path in self.event_spec
 

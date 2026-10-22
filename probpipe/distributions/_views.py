@@ -1228,7 +1228,7 @@ class CoupledMarginal(Distribution):
             for index in _coordinate_range(self._parent.event_spec, path)
         ]
 
-    def __getitem__(self, paths: PathsLike) -> Distribution:
+    def __getitem__(self, paths: PathsLike, /) -> Distribution:
         """This coupled marginal itself, or the law at a path or a list of paths of the coupled marginal.
 
         A tuple is a list of paths; a nested path is written with ``/``.
@@ -2121,16 +2121,20 @@ class _RenamedDistribution(Distribution):
         object.__setattr__(self, "_renames", tuple(dict(step) for step in renames))
         self._init_declaration(event.renamed)
 
-    def rename(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Distribution:
+    def rename(
+        self, renames: Mapping[str, str] | None = None, /, **keyword_renames: str
+    ) -> Distribution:
         """Rename or move nodes of the event spec, as :meth:`Distribution.rename`.
 
         The result renames this law's parent by this law's renames followed by
         the new ones, so a rename of the output alone keeps the renames of
         the fields below it.
         """
-        renamed = self.event_spec.rename(mapping, **kwargs)
-        renames = {**dict(mapping or {}), **kwargs}
-        return _renamed(self, _EventRenames.of(self.event_spec, renamed, renames), renames)
+        renamed_event_spec = self.event_spec.rename(renames, **keyword_renames)
+        all_renames = {**dict(renames or {}), **keyword_renames}
+        return _renamed(
+            self, _EventRenames.of(self.event_spec, renamed_event_spec, all_renames), all_renames
+        )
 
     def _original_given(self, given: Any) -> Record | None:
         """*given*, keyed by event paths of this law, as the record of the parent's nodes it binds.

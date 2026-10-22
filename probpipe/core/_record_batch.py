@@ -701,7 +701,7 @@ class RecordBatch(Batch[Record]):
     # field-wise storage means applying it to the fields: the batch axes are
     # untouched throughout, and the levels come through unchanged.
 
-    def rename(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self:
+    def rename(self, renames: Mapping[str, str] | None = None, /, **keyword_renames: str) -> Self:
         """Rename or move nodes ``old -> new`` within every element.
 
         The element counterpart of :meth:`~probpipe.core._batch.Batch.with_level_names`,
@@ -713,9 +713,9 @@ class RecordBatch(Batch[Record]):
 
         Parameters
         ----------
-        mapping : Mapping of str to str, optional
+        renames : Mapping of str to str, optional
             The new path of each node of the elements, keyed by the node's path.
-        **kwargs : str
+        **keyword_renames : str
             The new path of each top-level node of the elements, keyed by the node's
             name.
 
@@ -728,15 +728,17 @@ class RecordBatch(Batch[Record]):
         ------
         KeyError
             If a key is not the path of a node of the elements.
+        TypeError
+            As :meth:`~probpipe.core.named_tree.NamedTree.rename` raises it.
         ValueError
             As :meth:`~probpipe.core.named_tree.NamedTree.rename` raises it.
         """
         template = self.event_template
-        renames = template._resolve_path_renames(mapping, kwargs)
-        moved = template._moved_leaf_paths(renames)
+        resolved_renames = template._resolve_path_renames(renames, keyword_renames)
+        moved = template._moved_leaf_paths(resolved_renames)
         return self._rebuilt(
             {moved[path]: column for path, column in self._columns.items()},
-            template.rename(renames),
+            template.rename(resolved_renames),
         )
 
     def without(self, *paths: str) -> Self:
