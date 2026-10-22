@@ -1985,6 +1985,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for the evaluations with `evaluate_at_points`, which takes a place of its
   own, or through a ProbPipe call, such as a lifted call.
 
+- **A failed embedded evaluation stops its compiled JAX program and raises
+  `EvaluationError`.** Previously an opaque Function could not cross this
+  boundary. Failed host callbacks raise rather than returning a placeholder
+  value, and a ProbPipe call preserves host-side executor refusal exceptions.
+  For example, `sample(model, 3)` now raises `EvaluationError` if a wrapped
+  opaque simulator fails while the joint's compiled factor runs; the same
+  call previously failed to trace the simulator.
+- **A declared `float64` output requires `jax_enable_x64=True`.** Calls and
+  `apply` refuse the declaration while 64-bit floats are disabled, instead of
+  storing a silently narrowed output. Enable 64-bit floats before calling,
+  or declare `float32`: replace `f(x)` under disabled 64-bit floats with
+  `jax.config.update("jax_enable_x64", True); f(x)` before any calls run.
+
 ### Added
 
 - **`summarize(d)` collects a law's standard summaries in one record that
@@ -3160,6 +3173,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   simulations = evaluate_at_points(simulate, varying={"theta": thetas}, shared={"data": y},
                                    origin="simulate", output_spec=simulate.output_spec)
   ```
+
+- Opaque Functions with concrete numeric output shapes and explicit dtypes
+  can run inside JAX programs, kernels, and joints through host callbacks.
+  Stored programs carry the live call context through a dynamic token, and
+  embedded evaluations use the executor machinery and host-side output checks.
 
 ### Changed
 

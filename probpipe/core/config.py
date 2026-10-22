@@ -46,7 +46,13 @@ from types import MappingProxyType
 from typing import Any, ClassVar, Literal, Self
 
 from .._messages import unknown_names
-from ._call_context import _under_call_context, _UnshippableSetting, current_call_context
+from ._call_context import (
+    _TRACED_CALL_TOKEN,
+    _UnclassifiedSettingError,
+    _under_call_context,
+    _UnshippableSetting,
+    current_call_context,
+)
 from ._expression import _STORED_DEPTH
 
 # ---------------------------------------------------------------------------
@@ -113,6 +119,11 @@ class _Section:
         Inside an evaluation point the session's value is the one in the
         snapshot that the root call took, when it holds the section.
         """
+        if _TRACED_CALL_TOKEN.get() is not None and setting_name not in self._settings:
+            raise _UnclassifiedSettingError(
+                f"config setting {self._name}.{setting_name} has no declared kind. "
+                "Declare it static or inert before reading it while ProbPipe traces"
+            )
         call_context = current_call_context()
         section_block = call_context.config_blocks.get(self._name)
         if section_block is not None and setting_name in section_block:

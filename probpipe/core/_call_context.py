@@ -35,6 +35,9 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 import cloudpickle
 import jax
+import numpy as np
+from jax._src import core as jax_core
+from jax._src.interpreters.partial_eval import DynamicJaxprTrace
 
 if TYPE_CHECKING:
     from ._compilation import _StaticSettings
@@ -138,6 +141,133 @@ class _ExecutionChoice:
 
 #: The choice of a call that names no executor and no options.
 _AUTOMATIC_SELECTION = _ExecutionChoice()
+
+
+_TRACED_CALL_TOKEN: ContextVar[Any | None] = ContextVar("probpipe_traced_call_token", default=None)
+
+
+class _UnclassifiedSettingError(RuntimeError):
+    """A setting with no declared static or inert kind was read while staging."""
+
+
+def _jax_transformation_active() -> bool:
+    """Whether JAX is transforming the current evaluation, staging or eagerly."""
+    return not isinstance(jax_core.trace_ctx.trace, jax_core.EvalTrace)
+
+
+def _jax_tracing_active() -> bool:
+    """Whether a staging trace is active, including below eager transformations.
+
+    Eager vmap and differentiation alone do not stage a program. Control-flow
+    bodies and jit do. These private JAX trace APIs are pinned by the staging
+    conformance tests.
+    """
+    trace = jax_core.trace_ctx.trace
+    while True:
+        if isinstance(trace, DynamicJaxprTrace):
+            return True
+        parent = getattr(trace, "parent_trace", None)
+        if parent is None:
+            return False
+        trace = parent
+
+
+class _ActiveCalls:
+    """Thread-safe lookup of live calls by uint32 token; zero denotes no call."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._contexts: dict[int, _CallContext] = {}
+        self._next_token = 1
+
+    def register(self, context: _CallContext) -> np.uint32:
+        """Register *context*, refusing exhaustion rather than recycling a token."""
+        with self._lock:
+            if self._next_token > np.iinfo(np.uint32).max:
+                raise RuntimeError("the call token space is exhausted")
+            token = self._next_token
+            self._next_token += 1
+            self._contexts[token] = context
+        return np.uint32(token)
+
+    def lookup(self, token: int) -> _CallContext:
+        """The live context of *token*, or the default context for zero."""
+        if token == 0:
+            return _CallContext()
+        with self._lock:
+            context = self._contexts.get(token)
+        if context is None:
+            raise RuntimeError(f"call token {token} is no longer active")
+        return context
+
+    def release(self, token: int) -> None:
+        """Release a token after every dispatched result has completed."""
+        with self._lock:
+            self._contexts.pop(token, None)
+
+
+_ACTIVE_CALLS = _ActiveCalls()
+
+
+class _EmbeddedCallState:
+    """One call's lazy registration, outstanding results, and host-side errors.
+
+    Registration always stores the call's base context. Derived scopes share
+    this state, so they cannot capture their temporary controls in its token.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.base_context: _CallContext | None = None
+        self._token: np.uint32 | None = None
+        self._results: list[Any] = []
+        self._errors: list[Exception] = []
+        self.warned_about_user_trace = False
+
+    def token(self) -> np.uint32:
+        """Register the base context once, and return its token."""
+        with self._lock:
+            if self._token is None:
+                if self.base_context is None:
+                    raise RuntimeError("the embedded call has no base context")
+                self._token = _ACTIVE_CALLS.register(self.base_context)
+            return self._token
+
+    def note_result(self, result: Any) -> None:
+        """Keep a dispatched result alive until the call closes."""
+        with self._lock:
+            self._results.append(result)
+
+    def note_error(self, error: Exception) -> None:
+        """Keep a host exception to raise with its own type on the calling thread."""
+        with self._lock:
+            self._errors.append(error)
+
+    def raise_if_failed(self) -> None:
+        """Raise the first host exception, retaining its traceback and cause."""
+        with self._lock:
+            error = self._errors[0] if self._errors else None
+        if error is not None:
+            raise error
+
+    def close(self) -> None:
+        """Wait for every dispatched program, raise its host error, and release the token."""
+        with self._lock:
+            results = tuple(self._results)
+        runtime_error = None
+        try:
+            for result in results:
+                try:
+                    jax.block_until_ready(result)
+                except Exception as error:
+                    if runtime_error is None:
+                        runtime_error = error
+            self.raise_if_failed()
+            if runtime_error is not None:
+                raise runtime_error
+        finally:
+            if self._token is not None:
+                _ACTIVE_CALLS.release(int(self._token))
 
 
 @dataclass(frozen=True)
@@ -251,6 +381,12 @@ class _CallContext:
         they were when the root call opened; a child call keeps its parent's,
         and a worker process applies them before it unpickles any work. Empty
         outside every call.
+    embedded_calls : _EmbeddedCallState or None
+        This call's lazy token and host error state, absent while staging and
+        in evaluation contexts. It is never shipped to a worker process.
+    forbids_workflow_randomness : bool
+        Whether a workflow-owned draw is forbidden in this evaluation, carried
+        into every executor worker of an embedded call.
     """
 
     config_blocks: Mapping[str, Mapping[str, Any]] = _NO_CONFIG_BLOCKS
@@ -264,6 +400,8 @@ class _CallContext:
     execution_choice: _ExecutionChoice = _AUTOMATIC_SELECTION
     evaluation_log: _EvaluationLog | None = None
     jax_settings: Mapping[str, Any] = _NO_JAX_SETTINGS
+    embedded_calls: _EmbeddedCallState | None = None
+    forbids_workflow_randomness: bool = False
 
     def with_config_block(self, config_values: Mapping[str, Mapping[str, Any]]) -> _CallContext:
         """This context under one more ``config`` block, which sets *config_values*.
@@ -365,6 +503,7 @@ class _CallContext:
                 {**self.resolved_controls, **dict(static_settings.resolved_controls)}
             ),
             execution_choice=_AUTOMATIC_SELECTION,
+            embedded_calls=None,
         ).with_fresh_call_accumulators()
 
     def collects_calls(self) -> bool:
@@ -459,7 +598,12 @@ class _CallContext:
         _CallContext
             The evaluation context.
         """
-        return replace(self, in_evaluation_point=True, execution_choice=_AUTOMATIC_SELECTION)
+        return replace(
+            self,
+            in_evaluation_point=True,
+            execution_choice=_AUTOMATIC_SELECTION,
+            embedded_calls=None,
+        )
 
     def is_root_call(self) -> bool:
         """Whether this is the context of a call opened outside every other call."""
@@ -480,6 +624,7 @@ class _CallContext:
         """
         shipped_context = replace(
             self,
+            embedded_calls=None,
             config_blocks=_shippable_config_values(self.config_blocks),
             session_config_values=_shippable_config_values(self.session_config_values),
         )
@@ -574,7 +719,17 @@ def _open_call_context(
         else nullcontext()
     )
     with _under_call_context(child_context), collecting:
-        yield
+        if entry_method_name != "check" and not _jax_tracing_active():
+            state = _EmbeddedCallState()
+            base_context = replace(current_call_context(), embedded_calls=state)
+            state.base_context = base_context
+            with _under_call_context(base_context):
+                try:
+                    yield
+                finally:
+                    state.close()
+        else:
+            yield
 
 
 class _NumSamplesUsed:

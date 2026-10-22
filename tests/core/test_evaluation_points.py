@@ -207,7 +207,7 @@ class TestTheOutputCheck:
             return np.zeros(3) if x[0] == 6.0 else scale * x
 
         outcomes = _run(
-            _points(wrong_at_three, output_spec=OutputSpec(y=NumericArraySpec((2,), "float64")))
+            _points(wrong_at_three, output_spec=OutputSpec(y=NumericArraySpec((2,), "float32")))
         )
         assert set(outcomes.failures) == {3}
         assert outcomes.failures[3].kind == "invalid"

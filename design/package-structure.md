@@ -37,7 +37,7 @@ probpipe/
 │   ├── _dispatch.py           #   dispatch methods and registries, Feasibility, MethodInfo, ResolutionError, MathematicalDomainError (II.7)
 │   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.7)
 │   ├── _compilation.py        #   compiled_or_eager: a JAX program traced before it runs, or the eager call;
-│   │                          #   the program store and its static settings (V.9)
+│   │                          #   the program store, its static settings, and dynamic call tokens (V.9)
 │   ├── _call_context.py       #   the call context: the per-call state a call carries into its workers (V.2)
 │   ├── _execution_claims.py   #   execution claims, the probe, and its stored results; traceability (V.13)
 │   ├── _evaluation_points.py  #   EvaluationPoints, EvaluationChunk, SharedPayload, EvaluationOutcomes,
@@ -79,6 +79,7 @@ probpipe/
 │   └── _conversion.py         #   Converter, ConverterRegistry (IV.3)
 ├── functions/                 # Part V — Function and its engine
 │   ├── _function.py           #   the engine installed on Function at import; the decorator; the using method (V.1, V.2)
+│   ├── _boundary.py           #   embedded opaque calls: staging, host callbacks, and token inspection (V.9)
 │   ├── _call.py               #   binding, wrap, conversion planning, admission; ApplicabilityError (V.3, V.4)
 │   ├── _plan.py               #   lift classification, root-ancestor grouping, and the result declaration (V.5, V.6)
 │   ├── _rules.py              #   the evaluation-rule registry: consulted by the engine,

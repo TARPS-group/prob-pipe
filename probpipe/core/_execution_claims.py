@@ -45,6 +45,7 @@ import numpy as np
 
 from ._record_spec import RecordSpec
 from ._spec_base import NumericArraySpec, NumericSpec, TermSpec
+from ._specs import OutputSpec
 
 __all__ = [
     "NO_CLAIMS",
@@ -862,3 +863,25 @@ def _array_contents_cache_key(arrays: tuple[Any, ...]) -> Hashable | None:
         digest = hashlib.blake2b(np.ascontiguousarray(host_array).tobytes(), digest_size=16)
         contents_cache_key.append((host_array.shape, str(host_array.dtype), digest.hexdigest()))
     return tuple(contents_cache_key)
+
+
+def _check_output_float_width(output_spec: OutputSpec | None, origin: str) -> None:
+    """Refuse an output declared float64 while JAX has 64-bit floats disabled."""
+    if jax.config.x64_enabled or output_spec is None:
+        return
+    from ._batch import BatchSpec
+
+    def declares_float64(spec: TermSpec | None) -> bool:
+        if isinstance(spec, NumericArraySpec):
+            return spec.dtype is not None and spec.dtype.kind == "f" and spec.dtype.itemsize == 8
+        if isinstance(spec, RecordSpec):
+            return any(declares_float64(child) for child in spec.children.values())
+        if isinstance(spec, BatchSpec):
+            return declares_float64(spec.element_spec.term_spec)
+        return False
+
+    if declares_float64(output_spec.term_spec):
+        raise ValueError(
+            f"{origin!r} declares a float64 output while 64-bit floats are off. "
+            "Set jax_enable_x64=True before calling it, or declare a float32 output"
+        )

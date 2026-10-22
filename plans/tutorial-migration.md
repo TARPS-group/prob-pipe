@@ -116,3 +116,10 @@ In the examples, `x` is a law over `{a, b, c, sigma}`, `ke` a kernel `ke(e | sig
 | `f.using(dispatch="sequential")` ran a function JAX can trace one draw at a time | `jax` maps it whatever executor is named; `@function(traceable=False)` runs it one draw at a time | E3b | yes, up to the last bit of rounding |
 | a `float64` output spec with 64-bit floats off silently gave `float32` | an error that says to set `jax_enable_x64` | E4 | no |
 | an inference method reads `run_seed` and imports `ModelFactors` privately | `InferenceMethod.execute(target, /, *, key, **options)` with an `InferenceTarget`; `ModelFactors` and `make_posterior` are public | E6 | no |
+
+## Embedded calls
+
+| Old | New | Step | Silent? |
+|---|---|---|---|
+| an opaque evaluation inside a compiled JAX program could not cross the boundary | a concrete numeric opaque Function runs on the host; a failed evaluation stops the program and raises `EvaluationError` | E4a | no |
+| a `float64` output declaration with 64-bit floats disabled could be stored as `float32` | the call refuses; set `jax_enable_x64=True` before calling, or declare `float32` | E4a | no |

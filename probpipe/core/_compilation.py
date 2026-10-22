@@ -21,8 +21,9 @@ from __future__ import annotations
 
 import logging
 import threading
+import warnings
 from collections.abc import Callable, Hashable, Iterable, Mapping, MutableMapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -30,10 +31,14 @@ import jax
 import numpy as np
 
 from ._call_context import (
+    _TRACED_CALL_TOKEN,
     _EvaluationLog,
     _EvaluationSetRecord,
+    _jax_transformation_active,
     _merge_noted_into,
     _NumSamplesUsed,
+    _open_call_context,
+    _UnclassifiedSettingError,
     _under_call_context,
     current_call_context,
 )
@@ -50,6 +55,28 @@ _STATIC_CONTROL_NAMES = ("max_evaluations", "num_samples")
 
 #: No static keyword arguments.
 _NO_STATIC_KEYWORDS: Mapping[str, Hashable] = MappingProxyType({})
+
+
+class _EmbeddedCallTracingError(TypeError):
+    """A boundary declaration or a captured token forbids this staged call."""
+
+
+_embedded_call_inspector: Callable[..., bool] | None = None
+
+
+def _install_embedded_call_inspector(inspector: Callable[..., bool]) -> None:
+    """Install the function engine's recognition of its own callbacks in jaxprs."""
+    global _embedded_call_inspector
+    _embedded_call_inspector = inspector
+
+
+def _contains_embedded_calls(jaxpr: Any, *, validate_tokens: bool = True) -> bool:
+    """Inspect the jaxpr through the function engine's callback recognition hook."""
+    return (
+        _embedded_call_inspector(jaxpr, validate_tokens=validate_tokens)
+        if _embedded_call_inspector is not None
+        else False
+    )
 
 
 def compiled_or_eager(
@@ -123,7 +150,7 @@ def compiled_or_eager(
     if trace_cache_key is None or traced_key not in decision_record:
         try:
             program.trace(*arguments, **static_keywords)
-        except _VaryingTraceNotesError:
+        except (_VaryingTraceNotesError, _EmbeddedCallTracingError, _UnclassifiedSettingError):
             raise
         except Exception as tracing_error:
             eager_result = eager(*arguments)
@@ -133,6 +160,42 @@ def compiled_or_eager(
         if trace_cache_key is not None:
             decision_record[traced_key] = True
     return program(*arguments, **static_keywords)
+
+
+class _ProgramForCall:
+    """A stored JAX program whose dynamic first argument is the running call's token.
+
+    Detection traces with zero as data, never as a static constant. Only a
+    program containing this engine's callbacks registers the running call.
+    """
+
+    def __init__(self, program: Any, entry: _StoreEntry) -> None:
+        self._program = program
+        self._entry = entry
+
+    def trace(self, *arguments: Any, **static_keywords: Any) -> Any:
+        """Trace and inspect the jaxpr before its first execution."""
+        traced = self._program.trace(np.uint32(0), *arguments, **static_keywords)
+        self._entry.has_embedded_calls = _contains_embedded_calls(traced.jaxpr)
+        return traced
+
+    def __call__(self, *arguments: Any, **static_keywords: Any) -> Any:
+        """Run with the current call's token and preserve any host exception's type."""
+        state = current_call_context().embedded_calls
+        call_token = (
+            state.token() if self._entry.has_embedded_calls and state is not None else np.uint32(0)
+        )
+        try:
+            result = self._program(call_token, *arguments, **static_keywords)
+            if state is not None and self._entry.has_embedded_calls:
+                state.note_result(result)
+                jax.block_until_ready(result)
+                state.raise_if_failed()
+            return result
+        except Exception:
+            if state is not None:
+                state.raise_if_failed()
+            raise
 
 
 class _ProgramStore:
@@ -148,7 +211,10 @@ class _ProgramStore:
     its own JAX program rather than reusing one traced under the first.
 
     Each JAX program is traced before it first runs, and falls back
-    to the eager form by the rule of :func:`compiled_or_eager`.
+    to the eager form by the rule of :func:`compiled_or_eager`. A dynamic
+    first argument carries the running call's token into embedded callbacks;
+    callback-free programs use zero and register no context. A call made
+    inside a JAX transformation runs the body inline and opens no program.
 
     Code that the body runs can note things on the running call while it is
     traced, such as the number of draws of a Monte Carlo estimate. A trace
@@ -224,8 +290,17 @@ class _ProgramStore:
             If a trace of the JAX program notes other values on the running
             call than an earlier trace of it, which is a bug in the traced code.
         """
+        if _jax_transformation_active():
+            return body(static_options, *arguments)
+        if current_call_context().embedded_calls is None:
+            # A route may run as an evaluation point in another thread or
+            # process. Its carried context deliberately has no live host state;
+            # the local program owns one for the duration of this invocation.
+            with _open_call_context(current_call_context(), entry_method_name="apply"):
+                return self.run(body_name, body, eager, *arguments, static_options=static_options)
         static_settings = _static_settings_in_effect()
         trace_cache_key = _trace_cache_key(arguments)
+        store_entry = self._entry((body_name, static_options, static_settings, trace_cache_key))
         ran_eagerly = False
 
         def run_eagerly(*eager_arguments: Any) -> Any:
@@ -236,7 +311,7 @@ class _ProgramStore:
         body_result = compiled_or_eager(
             self._decision_record,
             (body_name, static_options, jax.tree.structure(arguments)),
-            self._jitted_body(body_name, body),
+            _ProgramForCall(self._jitted_body(body_name, body), store_entry),
             run_eagerly,
             *arguments,
             trace_cache_key=trace_cache_key,
@@ -272,17 +347,31 @@ class _ProgramStore:
         """*body*, traced under the static settings it receives, keeping what it notes on its entry."""
 
         def run_body_in_static_settings(
-            *arguments: Any, static_options: Hashable, static_settings: _StaticSettings
+            call_token: Any,
+            *arguments: Any,
+            static_options: Hashable,
+            static_settings: _StaticSettings,
         ) -> Any:
             traced_context = current_call_context().with_static_settings(static_settings)
-            with _under_call_context(traced_context):
-                body_output = body(static_options, *arguments)
+            token_scope = _TRACED_CALL_TOKEN.set(call_token)
+            try:
+                with (
+                    _under_call_context(traced_context),
+                    warnings.catch_warnings(record=True) as captured_warnings,
+                ):
+                    warnings.simplefilter("always")
+                    body_output = body(static_options, *arguments)
+            finally:
+                _TRACED_CALL_TOKEN.reset(token_scope)
             self._entry(
                 (body_name, static_options, static_settings, _trace_cache_key(arguments))
             ).add_trace_notes(
                 _TraceNotes(
                     cast(_NumSamplesUsed, traced_context.num_samples_used).num_samples_values,
                     cast(_EvaluationLog, traced_context.evaluation_log).set_records,
+                    tuple(
+                        (warning.category, str(warning.message)) for warning in captured_warnings
+                    ),
                 )
             )
             return body_output
@@ -427,14 +516,17 @@ class _TraceNotes:
     set_records : tuple of _EvaluationSetRecord
         The sets of evaluation points recorded, in the order they were
         recorded.
+    warnings : tuple of (warning class, str), optional
+        Warnings emitted while tracing, replayed once after every successful run.
     """
 
     num_samples_values: frozenset[int]
     set_records: tuple[_EvaluationSetRecord, ...]
+    warnings: tuple[tuple[type[Warning], str], ...] = ()
 
     def is_empty(self) -> bool:
         """Whether the trace noted nothing."""
-        return not self.num_samples_values and not self.set_records
+        return not self.num_samples_values and not self.set_records and not self.warnings
 
 
 class _VaryingTraceNotesError(RuntimeError):
@@ -452,6 +544,7 @@ class _StoreEntry:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._trace_notes: _TraceNotes | None = None
+        self.has_embedded_calls = False
 
     def add_trace_notes(self, trace_notes: _TraceNotes) -> None:
         """Keep the notes of one trace, raising if they differ from an earlier trace's."""
@@ -476,6 +569,15 @@ class _StoreEntry:
                     sorted(set_record.origin for set_record in trace_notes.set_records),
                 )
             )
+        # Nested JAX caches can suppress a warning on a later trace. Keep the
+        # union for replay rather than treating cache-dependent emissions as
+        # a change to the program's semantic notes.
+        with self._lock:
+            assert self._trace_notes is not None
+            self._trace_notes = replace(
+                self._trace_notes,
+                warnings=tuple(dict.fromkeys((*self._trace_notes.warnings, *trace_notes.warnings))),
+            )
 
     def apply_trace_notes(self) -> None:
         """Merge the notes of the entry's traces into the current call context's accumulators once."""
@@ -485,6 +587,8 @@ class _StoreEntry:
         _merge_noted_into(
             current_call_context(), trace_notes.num_samples_values, trace_notes.set_records
         )
+        for category, message in trace_notes.warnings:
+            warnings.warn(message, category, stacklevel=3)
 
 
 def _same_in_any_order(

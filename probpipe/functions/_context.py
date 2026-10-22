@@ -15,9 +15,7 @@ from threading import Lock
 from types import TracebackType
 from typing import Any, Literal
 
-import jax
-import jax.extend.core
-
+from ..core._call_context import _jax_transformation_active, current_call_context
 from ..core.config import ProvenanceMode, _register_open_run_provenance_mode_reader, config
 from ..custom_types import PRNGKey
 from ._errors import UnmanagedConcurrentWorkflowEntryError
@@ -194,6 +192,8 @@ class _WorkflowRunScope:
         self._token: Token[_WorkflowFrame | None] | None = None
 
     def __enter__(self) -> None:
+        if current_call_context().forbids_workflow_randomness and self._root_kind != "ephemeral":
+            raise TypeError(JAX_KEYLESS_DRAW_MESSAGE)
         if self._token is not None:
             raise RuntimeError("workflow_run context is already active")
         from . import _replay
@@ -329,25 +329,8 @@ def _workflow_side_effects_forbidden() -> bool:
 
 def _guard_automatic_key_request() -> None:
     """Reject omitted-key randomness during actual JAX execution."""
-    if _JAX_RUNTIME_GUARD.get():
+    if _JAX_RUNTIME_GUARD.get() or current_call_context().forbids_workflow_randomness:
         raise TypeError(JAX_KEYLESS_DRAW_MESSAGE)
-
-
-def _caller_jax_trace_active() -> bool:
-    """Return whether a JAX transformation is tracing the current call.
-
-    ``jax.core.eval_context`` installs JAX's evaluation trace, which is the
-    current trace at the top level. Under a transformation, such as ``jit``,
-    ``vmap``, or ``grad``, the current trace is the transformation's own.
-    """
-    find_top_trace = getattr(jax.extend.core, "find_top_trace", None)
-    if find_top_trace is None:
-        # JAX 0.9 exposes this extension entry point through jax.core.
-        find_top_trace = jax.core.find_top_trace
-    current = find_top_trace(())
-    with jax.core.eval_context():
-        top_level = find_top_trace(())
-    return current is not top_level
 
 
 def _guard_caller_jax_trace(operation_kind: str) -> None:
@@ -367,7 +350,7 @@ def _guard_caller_jax_trace(operation_kind: str) -> None:
     RuntimeError
         If a JAX transformation the caller opened is tracing the call.
     """
-    if _workflow_side_effects_forbidden() or not _caller_jax_trace_active():
+    if _workflow_side_effects_forbidden() or not _jax_transformation_active():
         return
     raise RuntimeError(
         f"the {operation_kind!r} operation cannot draw random values "
