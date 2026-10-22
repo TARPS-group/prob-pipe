@@ -129,7 +129,7 @@ All four are laws whose declared capabilities are those they can provide (`D1 �
 
 ### Contract
 
-A `MixtureDistribution` is a convex combination of component distributions over one shared event spec, including its outputs, paths, and kind, so components whose event specs differ are renamed or transformed explicitly first. It implements `_sample` when all of its components do, and the same holds for `_log_prob` (as the weighted log-sum-exp). Moments combine componentwise when every component provides them: the mean is `Σ wᵢ mᵢ` and the covariance is `Σ wᵢ (Σᵢ + mᵢ mᵢᵀ) − m mᵀ`. It is what `mixture` returns for a finite mixing distribution, and the form a dependent joint's detached marginal takes under finite mixing.
+A `MixtureDistribution` is a convex combination of component distributions over one shared event spec, including its outputs, paths, and kind, so components whose event specs differ are renamed or transformed explicitly first. It implements `_sample` when all of its components do, and the same holds for `_log_prob` (as the weighted log-sum-exp). Moments combine componentwise when every component provides them: the mean is `Σ wᵢ mᵢ` and the covariance is `Σ wᵢ (Σᵢ + mᵢ mᵢᵀ) − m mᵀ`. It is what `mixture` returns for a finite mixing distribution, and the form a dependent joint's standalone marginal takes under finite mixing.
 
 ```python
 class MixtureDistribution(Distribution):

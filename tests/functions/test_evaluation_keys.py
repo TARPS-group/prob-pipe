@@ -701,4 +701,4 @@ def _normal_model(prior):
         label="y_given_mu",
         given_spec=prior.event_spec.outputs,
     )
-    return likelihood * prior
+    return likelihood & prior

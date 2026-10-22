@@ -4,8 +4,8 @@ A lifted argument is a law, and the law whose draws it reads, transitively, is
 its **root**. Each of these laws reads another law's draw:
 
 - an element of a batch of laws: its stored law's draw;
-- a field view: its parent's draw, projected onto its node;
-- every law that ``with_path_names``, ``with_label``, ``with_dim_names``, or
+- a coupled marginal: its parent's draw, projected onto its node;
+- every law that ``rename``, ``with_label``, ``with_dim_names``, or
   ``with_dim_sizes`` returns: the draw of the law it is made from, moved to the
   new paths;
 - a law of a registered descendant type: its ancestor's draw, mapped as a
@@ -14,7 +14,7 @@ its **root**. Each of these laws reads another law's draw:
 A law that renames at its boundary holds the law it renames, and every other
 result of these four methods records the law it is made from. The lift groups
 the arguments by root, so each group contributes one root draw per repetition
-and every member evaluates on it. Hence sibling views co-sample, two accesses of
+and every member evaluates on it. Hence sibling coupled marginals co-sample, two accesses of
 one batch element co-sample, a law co-samples with its own transform, its own
 rename, and its own relabeled or dimension-bound copy, and the empirical
 enumeration enumerates a renamed empirical law's atoms as the law's.
@@ -22,7 +22,7 @@ enumeration enumerates a renamed empirical law's atoms as the law's.
 The capture of an argument records its root, the root's sampler, the event
 path a projection reads, a canonical descriptor of the descendant graph between
 the root and the argument, and the evaluator that maps one root draw to the
-argument's draw. It reads the graph once, so a later change to a view or a
+argument's draw. It reads the graph once, so a later change to a coupled marginal or a
 transform does not reach a captured plan.
 """
 
@@ -41,7 +41,8 @@ from ..core.named_tree import _PATH_SEP
 from ..distributions._batches import _element_source
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
-from ..distributions._views import FieldView, _copy_source, _projector, _RenamedDistribution
+from ..distributions._merge import _install_root_ancestor
+from ..distributions._views import CoupledMarginal, _copy_source, _projector, _RenamedDistribution
 
 _DISTRIBUTION_SAMPLING_ABI = "probpipe.distribution_sampling/v1"
 _DESCRIPTOR_DOMAIN = b"ProbPipe-descendant-descriptor-v1\0"
@@ -220,7 +221,7 @@ def _capture_stochastic_consumer(
     *,
     session: _StochasticCaptureSession,
 ) -> CapturedStochasticConsumer:
-    """The capture of *value* as a batch element, a field view, a copy, or a descendant.
+    """The capture of *value* as a batch element, a coupled marginal, a copy, or a descendant.
 
     A copy whose renames keep every path captures as the law it is made from,
     as a batch element captures as its stored law. A descendant is a law of a
@@ -229,8 +230,8 @@ def _capture_stochastic_consumer(
     source = _element_source(value)
     if source is not None:
         return _capture_source(value, source, "batch element", session=session)
-    if isinstance(value, FieldView):
-        return _capture_field_view(value, session=session)
+    if isinstance(value, CoupledMarginal):
+        return _capture_coupled_marginal(value, session=session)
     copy_source = _copy_source(value)
     if copy_source is not None:
         parent, event = copy_source
@@ -338,21 +339,21 @@ def _capture_source(
         session.active_descendants.remove(identity)
 
 
-def _capture_field_view(
-    view: FieldView,
+def _capture_coupled_marginal(
+    coupled_marginal: CoupledMarginal,
     *,
     session: _StochasticCaptureSession,
 ) -> CapturedStochasticConsumer:
-    """A field view's capture: its parent's root, and the projection of the view's nodes.
+    """A coupled marginal's capture: its parent's root, and the projection of the coupled marginal's nodes.
 
-    A view of one path records the path's segments, and a view of a root needs
+    A coupled marginal of one path records the path's segments, and a coupled marginal of a root needs
     no descriptor beyond them. A selection of several paths records them in its
     descriptor.
 
     Parameters
     ----------
-    view : FieldView
-        The view of one path of its parent's event, or of a selection of
+    coupled_marginal : CoupledMarginal
+        The coupled marginal of one path of its parent's event, or of a selection of
         several paths.
     session : _StochasticCaptureSession
         The call-local capture session, which captures the parent and whose
@@ -366,12 +367,12 @@ def _capture_field_view(
     Raises
     ------
     TypeError
-        If the view graph is cyclic.
+        If the coupled marginal graph is cyclic.
     """
-    identity = id(view)
+    identity = id(coupled_marginal)
     if identity in session.active_descendants:
-        raise TypeError("Cyclic field view graph is unsupported")
-    parent, path = view.parent, view.path
+        raise TypeError("Cyclic coupled marginal graph is unsupported")
+    parent, path = coupled_marginal.parent, coupled_marginal.path
     session.active_descendants.add(identity)
     try:
         captured_parent = session.capture_consumer(parent)
@@ -498,7 +499,7 @@ def _renamed_descent(renamed: Distribution) -> _Descent:
     Parameters
     ----------
     renamed : Distribution
-        A law that ``with_path_names`` returned, which records the law it renames
+        A law that ``rename`` returned, which records the law it renames
         and the renames.
 
     Returns
@@ -521,3 +522,11 @@ def _renamed_descent(renamed: Distribution) -> _Descent:
         forward=event.draw,
         descriptor=("renamed", tuple(sorted(event.leaves.items()))),
     )
+
+
+def _distribution_root(distribution: Distribution) -> Distribution:
+    """The root that supplies a distribution's draws, shared with the merge check."""
+    return capture_stochastic_consumer(distribution).root
+
+
+_install_root_ancestor(_distribution_root)

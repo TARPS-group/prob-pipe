@@ -35,8 +35,8 @@ def predictive_check[D](
 ) -> dict:
     """Compare replicated data with the observed data through test statistics.
 
-    A replication is a draw of the kernel's event from the composition
-    ``kernel * law``, which draws the inputs from *law* and then the
+    A replication is a draw of the kernel's event from the merge
+    ``kernel & law``, which draws the inputs from *law* and then the
     kernel's event at those values. With the posterior as *law* the check is a
     posterior predictive check, and with the prior it is a prior predictive
     check. Each statistic is computed on the same replications and, when
@@ -57,7 +57,7 @@ def predictive_check[D](
     ----------
     kernel : ConditionalDistribution
         The law of the observations given the parameters, such as the
-        likelihood of a model ``likelihood * prior``.
+        likelihood of a model ``likelihood & prior``.
     law : Distribution
         A law over the kernel's inputs: the posterior for a posterior
         predictive check, or the prior for a prior predictive check. A
@@ -139,7 +139,7 @@ def predictive_check[D](
     joint = _predictive_joint(kernel, law, "predictive_check")
     observed = None if observed_data is None else _observed_event(kernel, observed_data)
 
-    # The composition is a ProbPipe law, so its draws follow the distribution ABI.
+    # The merge is a ProbPipe law, so its draws follow the distribution ABI.
     key = _claim_validation_key(
         operation_kind="predictive-check",
         execution_mode="sampled",
@@ -224,7 +224,7 @@ def _planned_statistics(test_fns: Any) -> tuple[tuple[str, Callable], ...]:
 def _predictive_joint(
     kernel: ConditionalDistribution, law: Distribution, operation: str, law_name: str = "law"
 ) -> Distribution:
-    """The composition ``kernel * law``, from which a replication is drawn.
+    """The merge ``kernel & law``, from which a replication is drawn.
 
     Parameters
     ----------
@@ -261,7 +261,7 @@ def _predictive_joint(
             f"{operation}: {law_name} must be a Distribution that can be sampled; "
             f"got {type(law).__name__}"
         )
-    joint = kernel * law
+    joint = kernel & law
     if isinstance(joint, FactoredConditionalDistribution):
         raise ValueError(
             f"{operation}: {law_name} {law.label!r} does not produce "

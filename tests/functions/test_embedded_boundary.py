@@ -234,7 +234,7 @@ def test_a_joint_with_an_opaque_kernel_samples_and_scores(executor):
     def kernel(mu):
         return Normal("y", opaque(mu), 1.0)
 
-    model = kernel * Normal("mu", 0.0, 1.0)
+    model = kernel & Normal("mu", 0.0, 1.0)
     with workflow_run(seed=41):
         draws = sample.using(executor=executor)(model, 3)
     assert draws.batch_shape == (3,)
@@ -569,7 +569,7 @@ def test_a_refused_operation_executor_falls_back_for_an_embedded_function():
     def kernel(mu):
         return Normal("y", opaque(mu), 1.0)
 
-    model = kernel * Normal("mu", 0.0, 1.0)
+    model = kernel & Normal("mu", 0.0, 1.0)
     with workflow_run(seed=41), pytest.warns(UserWarning, match="cannot run|refuses|fall"):
         draws = sample.using(executor=_Refusing.name)(model, 3)
     assert draws.batch_shape == (3,)

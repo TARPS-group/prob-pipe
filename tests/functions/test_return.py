@@ -191,7 +191,7 @@ class TestLabelAndProvenance:
 
     def test_a_returned_product_takes_the_output_label_as_its_label(self):
         """The product displays by the label, and the returned object is left unlabeled."""
-        product = Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0)
+        product = Normal("a", 0.0, 1.0) & Gamma("b", 2.0, 1.0)
         result = Function(
             lambda: product,
             label="predict",
@@ -204,7 +204,7 @@ class TestLabelAndProvenance:
     def test_a_law_returned_by_a_value_call_displays_by_the_function_label(self):
         @function
         def predict(x):
-            return Normal("y", x, 1.0) * Normal("mu", 0.0, 1.0)
+            return Normal("y", x, 1.0) & Normal("mu", 0.0, 1.0)
 
         @function
         def single(x):
@@ -225,7 +225,7 @@ class TestLabelAndProvenance:
 
     def test_a_returned_law_takes_the_output_label_alias(self):
         def predict(x):
-            return Normal("y", x, 1.0) * Normal("mu", 0.0, 1.0)
+            return Normal("y", x, 1.0) & Normal("mu", 0.0, 1.0)
 
         product = Function(predict, label="predict", output_label="model")(1.0)
         law = Function(lambda x: Normal("y", x, 1.0), label="single", output_label="lik")(1.0)
@@ -245,7 +245,7 @@ class TestLabelAndProvenance:
 
     def test_each_product_of_a_sweep_displays_by_its_element_label(self):
         def predict(loc):
-            return Normal("a", loc, 1.0) * Gamma("b", 2.0, 1.0)
+            return Normal("a", loc, 1.0) & Gamma("b", 2.0, 1.0)
 
         rows = NumericArrayBatch(
             jnp.arange(2.0),

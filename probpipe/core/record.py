@@ -966,10 +966,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             )
         return self._rebuild_root(new_children, RecordSpec(specs))
 
-    def merge(self, other: Record) -> Record:
+    def __and__(self, other: Record) -> Record:
         """Merge two records by top-level name: this record's fields and groups, then *other*'s.
 
-        The merge is shallow, as :meth:`NamedTree.merge` states: a top-level
+        The merge is shallow, as :meth:`NamedTree.__and__` states: a top-level
         name present in both records raises, even when the two groups hold
         different fields. Each child is reused as it is, with its class and
         metadata, and both records' specs are carried into the merged
@@ -992,7 +992,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
         Examples
         --------
-        >>> Record({"a": 1.0}).merge(Record({"b": 2.0, "g": {"c": 3.0}})).keys()
+        >>> (Record({"a": 1.0}) & (Record({"b": 2.0, "g": {"c": 3.0}}))).keys()
         ('a', 'b', 'g/c')
         """
         _check_no_shared_top_level_names(self, other, operands=f"the two {type(self).__name__}s")
@@ -1054,10 +1054,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     # -- Field renaming -------------------------------------------------------
 
-    def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Record:
+    def rename(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Record:
         """Return a Record with the given nodes renamed or moved, ``old -> new``.
 
-        The structural contract is :meth:`NamedTree.with_path_names`: each key
+        The structural contract is :meth:`NamedTree.rename`: each key
         is the exact path of a node and each target its new exact path. The
         authoritative :attr:`event_template` is renamed by the same rule, so the
         subtree invariant holds on the result. The record keeps its label, since
@@ -1081,11 +1081,11 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         KeyError
             If a key is not the path of a node.
         ValueError
-            As :meth:`NamedTree.with_path_names` raises it.
+            As :meth:`NamedTree.rename` raises it.
         """
         renames = self._resolve_path_renames(mapping, kwargs)
         tree, _ = self._renamed_tree(renames)
-        return self._rebuild_root(tree, self.event_template.with_path_names(renames))
+        return self._rebuild_root(tree, self.event_template.rename(renames))
 
     # -- Backend conversion -------------------------------------------------
 

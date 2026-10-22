@@ -67,13 +67,13 @@ probpipe/
 │   └── _batch.py              #   LinOpBatch
 ├── distributions/             # the distribution layer (III.7–IV.4)
 │   ├── _distribution.py       #   Distribution, NumericDistribution, DistributionSpec (III.7)
-│   ├── _views.py              #   FieldView (III.7–III.8)
+│   ├── _views.py              #   CoupledMarginal (III.7–III.8)
 │   ├── _capabilities.py       #   the Supports* protocols (III.8)
 │   ├── _conditional.py        #   ConditionalDistribution, its markers and spec (III.9), conditional_distribution (IV.4)
 │   ├── _from_functions.py     #   distribution: a law from a sampler, a density, or both (IV.4)
 │   ├── _batches.py            #   DistributionBatch, ConditionalDistributionBatch (III.10)
 │   ├── _factored.py           #   SupportsFactors and the factored classes (IV.1)
-│   ├── _composition.py        #   the merge engine behind & (IV.2)
+│   ├── _merge.py        #   the merge engine behind & (IV.2)
 │   ├── _empirical.py          #   EmpiricalDistribution (VII.2) — the closure family the
 │   │                          #     lift and the Monte Carlo fallbacks construct
 │   └── _conversion.py         #   Converter, ConverterRegistry (IV.3)

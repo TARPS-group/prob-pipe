@@ -74,7 +74,7 @@ def _model(prior):
     ``y = theta + sigma * noise`` (``sigma = 0.2``), the simulator a kernel that
     samples but has no density, composed with *prior*. For a single observation
     the posterior mean ~= y and std ~= 0.20."""
-    return _Simulator(prior) * prior
+    return _Simulator(prior) & prior
 
 
 def _observed(*values: float) -> dict:

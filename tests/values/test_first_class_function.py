@@ -555,9 +555,9 @@ class TestApplyContract:
             ).apply()
 
     def test_returned_law_with_nested_outputs_matches_distribution_spec(self):
-        law = (Normal("a", 0, 1) * Normal("b", 0, 1)).with_path_names(
+        law = (Normal("a", 0, 1) & Normal("b", 0, 1)).rename(
             {"a": "params/a", "b": "params/b"}
-        ) * Normal("s", 0, 1)
+        ) & Normal("s", 0, 1)
         nested = RecordSpec(params=RecordSpec(a=(), b=()), s=())
         assert (
             Function(

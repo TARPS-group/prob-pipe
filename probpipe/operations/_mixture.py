@@ -2,7 +2,7 @@
 
 ``mixture(K, mixing)`` returns ``μK = ∫ K(s, ·) μ(ds)``, the law of ``T`` for
 ``S ~ mixing`` and ``T ~ K(S, ·)``. It is a derived operation: the
-reconstructed kernel output of the composed joint ``K * mixing``.
+reconstructed kernel output of the merged joint ``K * mixing``.
 """
 
 from __future__ import annotations
@@ -53,4 +53,4 @@ def mixture(K: ConditionalDistribution, mixing: Distribution):
     ResolutionError
         If neither the formula nor a direct route applies.
     """
-    return pushforward(K * mixing, _kernel_output_projection(K))
+    return pushforward((K & mixing), _kernel_output_projection(K))

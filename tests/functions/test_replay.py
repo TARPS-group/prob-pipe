@@ -1198,7 +1198,7 @@ class TestReplayPreflight:
             max_evaluations=8,
             label="identity",
         )
-        law = Normal("left", 0.0, 1.0) * Normal("right", 0.0, 1.0)
+        law = Normal("left", 0.0, 1.0) & Normal("right", 0.0, 1.0)
         with workflow_run(seed=4):
             original = baseline(value=law)
         declarations = {
@@ -1249,14 +1249,14 @@ class TestReplayPreflight:
             changed(value=candidate)
 
     def test_direct_record_projection_drift_fails_before_key_derivation(self):
-        original_root = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=2.0, scale=1.0)
+        original_root = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=2.0, scale=1.0)
         with workflow_run(seed=4):
             original = sample(original_root["x"])
         assert original.provenance.controls["replay"]["plan"]["expected_effects"][0][
             "record_path"
         ] == ["x"]
 
-        candidate_root = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=2.0, scale=1.0)
+        candidate_root = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=2.0, scale=1.0)
         with (
             patch.object(type(candidate_root), "_sample", side_effect=AssertionError("sampled")),
             patch(

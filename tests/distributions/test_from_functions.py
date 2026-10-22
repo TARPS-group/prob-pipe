@@ -435,7 +435,7 @@ class TestKernels:
 
     def test_a_joint_of_the_simulator_and_a_prior_samples(self):
         kernel = conditional_distribution(_counts, given_spec={"rate": POSITIVE}, label="y")
-        joint = kernel * probpipe.Gamma("rate", 4.0, 2.0)
+        joint = kernel & probpipe.Gamma("rate", 4.0, 2.0)
         draws = sample(joint, sample_shape=(6,))
         assert np.shape(np.asarray(draws["y"])) == (6, 4)
 

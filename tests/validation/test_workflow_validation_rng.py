@@ -171,7 +171,7 @@ def _conjugate_calibration(**options):
         label="posterior",
     )
     return simulation_based_calibration(
-        likelihood * prior,
+        (likelihood & prior),
         observed="y",
         posterior=exact,
         num_posterior_draws=10,
@@ -184,7 +184,7 @@ class TestSimulationBasedCalibrationBroker:
     def _model():
         x = jnp.ones((3, 1))
         prior = MultivariateNormal("beta", loc=jnp.zeros(1), cov=jnp.eye(1))
-        return glm_likelihood("y", GaussianFamily(), X=x, dispersion=1.0) * prior
+        return glm_likelihood("y", GaussianFamily(), X=x, dispersion=1.0) & prior
 
     def test_a_call_in_a_seeded_scope_reproduces_its_ranks(self):
         with workflow_run(seed=7):

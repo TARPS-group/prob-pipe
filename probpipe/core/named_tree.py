@@ -160,7 +160,7 @@ def _unflatten_paths(source: Mapping[str, Any]) -> dict[str, Any]:
 
 # -- Moving nodes to new exact paths ---------------------------------------------
 #
-# ``with_path_names`` rebuilds a plain nested-dict copy of a tree, in which the
+# ``rename`` rebuilds a plain nested-dict copy of a tree, in which the
 # dicts are the interior nodes, since a mapping is never a leaf. Each node of the
 # copy records its original path, so the rebuild reports where every node went.
 
@@ -213,9 +213,7 @@ def _is_vacant(node: _Moving) -> bool:
 def _collision(source: tuple[str, ...] | None, target: tuple[str, ...]) -> ValueError:
     """The error for a move of the node at *source* onto *target*, a path another node holds."""
     if source is None:
-        return ValueError(
-            f"with_path_names(): the path {_PATH_SEP.join(target)!r} is already taken"
-        )
+        return ValueError(f"rename(): the path {_PATH_SEP.join(target)!r} is already taken")
     return ValueError(
         f"cannot move {_PATH_SEP.join(source)!r} to {_PATH_SEP.join(target)!r}: that path is "
         f"already taken"
@@ -401,7 +399,7 @@ class NamedTree[L]:
     structure (see :meth:`_check_leaf`).
     Navigation yields views into the same storage; the structure-preserving
     transforms (:meth:`map`, :meth:`replace`, :meth:`merge`, :meth:`without`,
-    :meth:`with_path_names`) return a tree of the same family, rebuilt through
+    :meth:`rename`) return a tree of the same family, rebuilt through
     :meth:`_rebuild_class`.
 
     This substrate provides no constructor logic; each family's constructor
@@ -1038,7 +1036,7 @@ class NamedTree[L]:
         _check_no_shared_top_level_names(self, other, operands=f"the two {type(self).__name__}s")
         return {**dict(self._walk_leaves()), **dict(other._walk_leaves())}
 
-    def merge(self, other: Any) -> Self:
+    def __and__(self, other: Any) -> Self:
         """Merge two trees by top-level name: this tree's fields and groups, then *other*'s.
 
         The merge is shallow: a top-level name, a field or a group, present in
@@ -1064,7 +1062,7 @@ class NamedTree[L]:
         Examples
         --------
         >>> from probpipe import RecordSpec
-        >>> RecordSpec(a=(3,)).merge(RecordSpec(g=RecordSpec(b=())))
+        >>> (RecordSpec(a=(3,)) & (RecordSpec(g=RecordSpec(b=()))))
         NumericRecordSpec(a=(3,), g=NumericRecordSpec(b=()))
         """
         return self._rebuild_node(self._leaves_merged(other), node_name=None)
@@ -1158,7 +1156,7 @@ class NamedTree[L]:
     def _resolve_path_renames(
         self, mapping: Mapping[str, str] | None, kwargs: Mapping[str, str]
     ) -> dict[str, str]:
-        """Resolve :meth:`with_path_names` inputs to ``{source path: target path}``.
+        """Resolve :meth:`rename` inputs to ``{source path: target path}``.
 
         Each key is the exact path of a node, and each target is the node's new
         exact path.
@@ -1166,9 +1164,9 @@ class NamedTree[L]:
         Parameters
         ----------
         mapping : Mapping of str to str or None
-            The renames :meth:`with_path_names` takes positionally.
+            The renames :meth:`rename` takes positionally.
         kwargs : Mapping of str to str
-            The renames :meth:`with_path_names` takes as keywords.
+            The renames :meth:`rename` takes as keywords.
 
         Returns
         -------
@@ -1197,13 +1195,13 @@ class NamedTree[L]:
                         f"new path {new!r} for {old!r} has an empty segment "
                         f"(no leading, trailing, or doubled {_PATH_SEP!r})"
                     )
-                resolved = _as_path(old, action="call with_path_names() with")
+                resolved = _as_path(old, action="call rename() with")
                 self._existing_node_at(resolved)
                 if resolved in pairs:
-                    raise ValueError(f"with_path_names(): {resolved!r} is renamed more than once")
+                    raise ValueError(f"rename(): {resolved!r} is renamed more than once")
                 pairs[resolved] = new
         if not pairs:
-            raise ValueError("with_path_names() requires at least one rename")
+            raise ValueError("rename() requires at least one rename")
         for resolved, new in pairs.items():
             if new.startswith(resolved + _PATH_SEP):
                 raise ValueError(f"cannot move {resolved!r} to {new!r}, which is inside it")
@@ -1265,7 +1263,7 @@ class NamedTree[L]:
         moved = {origin: path for path, origin in origins.items()}
         return {key: moved[key] for key in self.keys()}
 
-    def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self:
+    def rename(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self:
         """Return a same-family tree with the given nodes renamed or moved, ``old -> new``.
 
         Acts on the nodes *within* the tree, leaves or whole subtrees; the object
@@ -1274,10 +1272,10 @@ class NamedTree[L]:
         positional mapping any node. Each target is the node's new exact path,
         so a bare name is a top-level path::
 
-            t.with_path_names(mu="loc")                  # rename a top-level node
-            t.with_path_names({"g/mu": "g/loc"})         # rename a node within g
-            t.with_path_names({"g/mu": "mu"})            # move it out of g
-            t.with_path_names({"mu": "g/mu"})            # move it into g
+            t.rename(mu="loc")                  # rename a top-level node
+            t.rename({"g/mu": "g/loc"})         # rename a node within g
+            t.rename({"g/mu": "mu"})            # move it out of g
+            t.rename({"mu": "g/mu"})            # move it into g
 
         The renames apply simultaneously: every key is resolved against the
         original tree, so swaps are well-defined, and a node below a moved node

@@ -21,7 +21,7 @@ is read from :attr:`RecordBatch.event_template`, which is where it belongs. What
 addresses a field within every element.
 
 What does carry over is the **structure-preserving transforms** —
-``with_path_names``, ``without``, ``replace``, ``merge``, ``map`` — since those
+``rename``, ``without``, ``replace``, ``merge``, ``map`` — since those
 act on the elements rather than navigating the batch as a tree. Each is its
 record counterpart applied to every element at once, which for field-wise
 storage means applying it to the fields.
@@ -444,7 +444,7 @@ class RecordBatch(Batch[Record]):
         if paths in self._columns:
             return self._column_as_batch(paths)
         node = template[paths]
-        return self._field_view(paths, cast(RecordSpec, node))
+        return self._coupled_marginal(paths, cast(RecordSpec, node))
 
     def _has_path(self, path: str) -> bool:
         """Whether *path* is the path of a field or a group of the elements."""
@@ -590,7 +590,7 @@ class RecordBatch(Batch[Record]):
         view._init_batch(self.spec._replace(element=template), label=label)
         return self._inherit_provenance(view)
 
-    def _field_view(self, path: str, template: RecordSpec) -> Self:
+    def _coupled_marginal(self, path: str, template: RecordSpec) -> Self:
         """The batch of the group's records at *path*, as a view labeled *path*.
 
         *template* is this batch's own template at *path*. The columns are
@@ -605,7 +605,7 @@ class RecordBatch(Batch[Record]):
         }
         return self._view_over(columns, template, label=path)
 
-    def _single_field_view(self, key: str) -> Self:
+    def _single_coupled_marginal(self, key: str) -> Self:
         """A one-column sub-batch presenting the field *key* alone, as a view.
 
         What :meth:`select` hands back. Unlike ``self[key]``, which yields the
@@ -690,8 +690,8 @@ class RecordBatch(Batch[Record]):
         """
         self._check_path(path)
         if path in self._columns:
-            return self._single_field_view(path)
-        return self._field_view(path, cast(RecordSpec, self.event_template[path]))
+            return self._single_coupled_marginal(path)
+        return self._coupled_marginal(path, cast(RecordSpec, self.event_template[path]))
 
     # -- structural transforms ----------------------------------------------
     #
@@ -701,14 +701,14 @@ class RecordBatch(Batch[Record]):
     # field-wise storage means applying it to the fields: the batch axes are
     # untouched throughout, and the levels come through unchanged.
 
-    def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self:
+    def rename(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self:
         """Rename or move nodes ``old -> new`` within every element.
 
         The element counterpart of :meth:`~probpipe.core._batch.Batch.with_level_names`,
         which renames the *levels*: the two namespaces are independent, and
         renaming one leaves the other unchanged. Each key is the exact path of a
         node of the elements and each target its new exact path, under the rule
-        of :meth:`~probpipe.core.named_tree.NamedTree.with_path_names`. Each
+        of :meth:`~probpipe.core.named_tree.NamedTree.rename`. Each
         column is stored under its field's new key, so no stored value changes.
 
         Parameters
@@ -729,14 +729,14 @@ class RecordBatch(Batch[Record]):
         KeyError
             If a key is not the path of a node of the elements.
         ValueError
-            As :meth:`~probpipe.core.named_tree.NamedTree.with_path_names` raises it.
+            As :meth:`~probpipe.core.named_tree.NamedTree.rename` raises it.
         """
         template = self.event_template
         renames = template._resolve_path_renames(mapping, kwargs)
         moved = template._moved_leaf_paths(renames)
         return self._rebuilt(
             {moved[path]: column for path, column in self._columns.items()},
-            template.with_path_names(renames),
+            template.rename(renames),
         )
 
     def without(self, *paths: str) -> Self:
@@ -821,12 +821,12 @@ class RecordBatch(Batch[Record]):
             columns, _element_template_for(columns, self, edited=set(edits), declared=declared)
         )
 
-    def merge(self, other: Self) -> Self:
+    def __and__(self, other: Self) -> Self:
         """Merge this batch's elements with *other*'s by top-level name, element by element.
 
         Both batches must span the same axes under the same level names, since
         the result's elements pair up one for one. The merge is shallow, as
-        :meth:`Record.merge` states: a top-level name, a field or a group, in
+        :meth:`Record.__and__` states: a top-level name, a field or a group, in
         both batches raises. Each side keeps its own fields' specs.
 
         Parameters
@@ -849,19 +849,19 @@ class RecordBatch(Batch[Record]):
         """
         if not isinstance(other, RecordBatch):
             raise TypeError(
-                f"{type(self).__name__}.merge() takes another batch of records, "
-                f"got {type(other).__name__}"
+                f"cannot merge {type(self).__name__} with {type(other).__name__}. "
+                "Pass another batch of records"
             )
         if (self.axis_groups, self.level_names) != (other.axis_groups, other.level_names):
             raise ValueError(
-                f"merge() needs both batches to have the same levels, got "
+                f"cannot merge batches with different levels: "
                 f"{format_levels(self.level_names, self.axis_groups)} and "
                 f"{format_levels(other.level_names, other.axis_groups)}"
             )
         _check_no_shared_top_level_names(
             self.event_template, other.event_template, operands="the two batches of records"
         )
-        merged = self.event_template.merge(other.event_template)
+        merged = self.event_template & (other.event_template)
         return self._rebuilt({**self._columns, **other._columns}, merged)
 
     def map(self, f: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Self:

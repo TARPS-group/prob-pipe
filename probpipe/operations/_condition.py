@@ -555,7 +555,7 @@ def _at_given(kernel: ConditionalDistribution, given: Any, **options: Any) -> An
                 name += "_"
             occupied.add(name)
             moves[path] = name
-        kernel = kernel.with_path_names(moves)
+        kernel = kernel.rename(moves)
         values = {moves.get(path, path): value for path, value in values.items()}
     result = kernel._condition_on(values, **options)
     if result is not kernel and result.provenance is None:
@@ -1621,7 +1621,7 @@ def _conditioned_expression(d: Any, given: Any) -> Expression:
     keeps the kernel's label and holds those inputs fixed, while its other inputs stay
     given. Fixing the whole events of factors upstream of the rest leaves the
     other factors at the given values, so ``condition_on(model, {"mu": 0.5})``
-    for ``model = likelihood * prior`` is ``likelihood`` conditioned on ``mu``,
+    for ``model = likelihood & prior`` is ``likelihood`` conditioned on ``mu``,
     as ``likelihood(y; mu)``, and several factors left form a product without
     a label. The result holds the paths *d* holds fixed, followed by the paths
     *given* fixes that *d* does not hold already, so conditioning a conditioned

@@ -175,8 +175,8 @@ class TestBroadcastPlanning:
 class TestFieldExtraction:
     """A field view reads its column out of a batch."""
 
-    def test_a_field_view_extracts_its_column_from_a_batch(self):
-        joint = (Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)).with_label(
+    def test_a_coupled_marginal_extracts_its_column_from_a_batch(self):
+        joint = (Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=0.0, scale=1.0)).with_label(
             "joint"
         )
         batch = NumericRecordBatch(

@@ -43,7 +43,7 @@ def _identity(prior, n=4):
             NumericArraySpec((n,)),
             lambda **values: tfd.Independent(tfd.Normal(jnp.zeros(n), 1.0), 1),
         )
-        * prior
+        & prior
     )
 
 
@@ -60,13 +60,13 @@ def _gaussian_mean(prior, n=3):
             NumericArraySpec((n,)),
             lambda mu: tfd.Independent(tfd.Normal(jnp.broadcast_to(mu, (n,)), 1.0), 1),
         )
-        * prior
+        & prior
     )
 
 
 @pytest.fixture
 def small_model():
-    prior = Normal("a", loc=1.0, scale=0.5) * Normal("b", loc=-2.0, scale=0.7)
+    prior = Normal("a", loc=1.0, scale=0.5) & Normal("b", loc=-2.0, scale=0.7)
     return _identity(prior)
 
 

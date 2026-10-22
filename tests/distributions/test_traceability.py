@@ -101,13 +101,13 @@ class TestDerivedFromParts:
         assert _HostDensity()._traceability() is Traceability.HOST_ONLY
 
     def test_a_joint_takes_the_least_of_its_factors(self):
-        traceable = _observation_kernel() * Normal("mu", 0.0, 1.0)
-        host_only = _observation_kernel() * _HostDensity()
+        traceable = _observation_kernel() & Normal("mu", 0.0, 1.0)
+        host_only = _observation_kernel() & _HostDensity()
         assert traceable._traceability() is Traceability.TRACEABLE
         assert host_only._traceability() is Traceability.HOST_ONLY
 
     def test_a_view_takes_its_parents_traceability(self):
-        host_only = _observation_kernel() * _HostDensity()
+        host_only = _observation_kernel() & _HostDensity()
         assert host_only["mu"]._traceability() is Traceability.HOST_ONLY
 
     def test_the_kernel_of_a_function_takes_the_law_it_returned(self):
@@ -185,7 +185,7 @@ class TestInferenceReadsTheTraceability:
             {"mu": NumericArraySpec(())},
             NumericArraySpec((3,)),
             lambda mu: tfd.Independent(tfd.Normal(jnp.broadcast_to(mu, (3,)), 1.0), 1),
-        ) * Normal("mu", 0.0, 1.0)
+        ) & Normal("mu", 0.0, 1.0)
         target = condition_on.using(method="unnormalized")(model, {"y": Y})
         report = inference_method_registry.get_method("blackjax_nuts").check(target)
         assert report.feasible is False
@@ -196,7 +196,7 @@ class TestInferenceReadsTheTraceability:
             lambda mu: Normal("y", mu * jnp.ones(3), 1.0),
             given_spec={"mu": NumericArraySpec(())},
             label="likelihood",
-        ) * Normal("mu", 0.0, 1.0)
+        ) & Normal("mu", 0.0, 1.0)
         target = condition_on.using(method="unnormalized")(model, {"y": Y})
         attempts_before = len(probe_attempts)
         report = inference_method_registry.get_method("blackjax_nuts").check(target)
@@ -205,7 +205,7 @@ class TestInferenceReadsTheTraceability:
 
     def test_elliptical_slice_refuses_a_likelihood_that_is_host_only(self):
         target = condition_on.using(method="unnormalized")(
-            _host_observation_kernel() * Normal("mu", 0.0, 1.0), {"y": Y}
+            (_host_observation_kernel() & Normal("mu", 0.0, 1.0)), {"y": Y}
         )
         report = inference_method_registry.get_method("blackjax_elliptical_slice").check(target)
         assert report.feasible is False
@@ -227,7 +227,7 @@ class TestInferenceReadsTheTraceability:
                 return self._condition_on(given)._sample(key, sample_shape)
 
         target = condition_on.using(method="unnormalized")(
-            _SamplingOnly() * Normal("mu", 0.0, 1.0), {"y": Y}
+            (_SamplingOnly() & Normal("mu", 0.0, 1.0)), {"y": Y}
         )
         report = inference_method_registry.get_method("blackjax_elliptical_slice").check(target)
         assert report.feasible is False
@@ -235,7 +235,7 @@ class TestInferenceReadsTheTraceability:
 
     def test_tfp_nuts_refuses_a_target_that_is_host_only(self):
         target = condition_on.using(method="unnormalized")(
-            _host_observation_kernel() * Normal("mu", 0.0, 1.0), {"y": Y}
+            (_host_observation_kernel() & Normal("mu", 0.0, 1.0)), {"y": Y}
         )
         report = inference_method_registry.get_method("tfp_nuts").check(target)
         assert report.feasible is False
@@ -243,10 +243,10 @@ class TestInferenceReadsTheTraceability:
 
     def test_rwmh_runs_a_host_only_target_in_its_python_loop(self):
         traceable = condition_on.using(method="unnormalized")(
-            _observation_kernel() * Normal("mu", 0.0, 1.0), {"y": Y}
+            (_observation_kernel() & Normal("mu", 0.0, 1.0)), {"y": Y}
         )
         host_only = condition_on.using(method="unnormalized")(
-            _host_observation_kernel() * Normal("mu", 0.0, 1.0), {"y": Y}
+            (_host_observation_kernel() & Normal("mu", 0.0, 1.0)), {"y": Y}
         )
         start = jnp.zeros(1)
         assert _target_traces(traceable, None, None, start) is True
@@ -260,7 +260,9 @@ class TestInferenceReadsTheTraceability:
             ("host_only", _host_observation_kernel()),
         ):
             prior = EmpiricalDistribution(atoms, output_name="mu", label="prior")
-            posterior = condition_on.using(method="empirical_reweighting")(kernel * prior, {"y": Y})
+            posterior = condition_on.using(method="empirical_reweighting")(
+                (kernel & prior), {"y": Y}
+            )
             weights[name] = np.asarray(posterior.weights)
         np.testing.assert_allclose(weights["host_only"], weights["traceable"], rtol=1e-5)
 

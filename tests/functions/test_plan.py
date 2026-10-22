@@ -404,7 +404,7 @@ class TestStochasticSourceGrouping:
         assert len(stochastic_plan.random_events) == 6
 
     def test_record_views_share_their_known_parent_group(self):
-        joint = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=1.0, scale=1.0)
+        joint = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=1.0, scale=1.0)
 
         plan = _stochastic_plan(
             {
@@ -458,11 +458,9 @@ class TestStochasticSourceGrouping:
         assert plan.runtime_bindings[1].root is second
 
     def test_root_sibling_and_transitive_views_share_canonical_paths(self):
-        joint = (
-            Normal("left", loc=0.0, scale=1.0) * Normal("right", loc=1.0, scale=1.0)
-        ).with_path_names({"left": "nested/left", "right": "nested/right"}) * Normal(
-            "top", loc=2.0, scale=1.0
-        )
+        joint = (Normal("left", loc=0.0, scale=1.0) & Normal("right", loc=1.0, scale=1.0)).rename(
+            {"left": "nested/left", "right": "nested/right"}
+        ) & Normal("top", loc=2.0, scale=1.0)
 
         plan = _stochastic_plan(
             {

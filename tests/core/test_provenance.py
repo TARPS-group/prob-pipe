@@ -283,7 +283,7 @@ class TestBijectorTransformedDistributionProvenance:
 
 class TestConditioningProvenance:
     def test_product_condition_on(self):
-        joint = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=1.0, scale=2.0, label="y")
+        joint = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=1.0, scale=2.0, label="y")
         cond = condition_on(joint, {"x": jnp.array(0.0)})
         assert cond.provenance is not None
         assert cond.provenance.operation == "workflow.condition_on"
@@ -296,7 +296,7 @@ class TestConditioningProvenance:
         ]
 
     def test_condition_on_records_plain_observation_by_parameter(self):
-        joint = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=1.0, scale=2.0)
+        joint = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=1.0, scale=2.0)
 
         at_zero = condition_on(joint, {"x": jnp.array(0.0)})
         at_five = condition_on(joint, {"x": jnp.array(5.0)})
@@ -311,7 +311,7 @@ class TestConditioningProvenance:
         )
 
     def test_dependent_joint_condition_on(self):
-        joint = _ShiftKernel() * Normal("z", loc=0.0, scale=1.0)
+        joint = _ShiftKernel() & Normal("z", loc=0.0, scale=1.0)
         cond = condition_on_operation(joint, {"z": jnp.array(1.0)})
         assert cond.provenance.operation == "workflow.condition_on"
         # The operation, the joint, and the slice's law, whose own record names its stage.
@@ -323,7 +323,7 @@ class TestConditioningProvenance:
         assert isinstance(cond.provenance.parents[0], ParentInfo)
 
     def test_gaussian_condition_on(self):
-        jg = MultivariateNormal("x", jnp.zeros(1), cov=jnp.eye(1)) * MultivariateNormal(
+        jg = MultivariateNormal("x", jnp.zeros(1), cov=jnp.eye(1)) & MultivariateNormal(
             "y", jnp.zeros(1), cov=jnp.eye(1), label="y"
         )
         cond = condition_on(jg, {"x": jnp.array([0.0])})
@@ -526,7 +526,7 @@ class TestProvenanceChains:
         """
         src = StudentT("prior", df=5.0, loc=0.0, scale=1.0, label="prior")
         converted = convert(src, Normal)
-        joint = converted * Normal("y", loc=0.0, scale=1.0)
+        joint = converted & Normal("y", loc=0.0, scale=1.0)
         cond = condition_on(joint, {"prior": jnp.array(0.0)})
 
         # cond's provenance points to joint

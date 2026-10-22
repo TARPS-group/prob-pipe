@@ -630,7 +630,7 @@ class TestExecutorChoice:
             label="consume",
             max_evaluations=10,
         )
-        joint = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=0.0, scale=1.0)
+        joint = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=0.0, scale=1.0)
         with workflow_run(seed=32):
             result = w(joint=joint)
         assert result.num_atoms == 10

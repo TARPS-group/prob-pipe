@@ -33,7 +33,7 @@ def poisson_regression():
     """A Poisson regression of 20 counts on two coefficients, with an inference result.
 
     The fixture is the tuple ``(likelihood, model, data, posterior)``, where
-    *model* is ``likelihood * prior`` and *posterior* is an inference result of
+    *model* is ``likelihood & prior`` and *posterior* is an inference result of
     two chains of 500 seeded draws whose annotations hold the ArviZ groups an
     MCMC method records.
     """
@@ -51,7 +51,7 @@ def poisson_regression():
         annotations=build_mcmc_datatree(chains, {"diverging": np.zeros((2, 500), dtype=bool)}),
         event_spec=OutputSpec(beta=NumericArraySpec((2,))),
     )
-    return likelihood, likelihood * prior, {"y": y}, posterior
+    return likelihood, (likelihood & prior), {"y": y}, posterior
 
 
 def total_count(y: jax.Array) -> jax.Array:

@@ -40,8 +40,8 @@ from probpipe import (
 from probpipe.distributions._factored import _raw_record
 from probpipe.families import GaussianFamily, PyMCModel, glm_likelihood
 from tests._ops import (
+    CoupledMarginal,
     EmpiricalDistribution,
-    FieldView,
     condition_on,
     convert,
     inference_method_registry,
@@ -146,7 +146,7 @@ class TestNestedHierarchicalModel:
 
     def test_a_view_at_a_nested_path_reads_the_posterior(self, schools):
         _, _, posterior = schools
-        view = FieldView(posterior, "population/tau")
+        view = CoupledMarginal(posterior, "population/tau")
         draws = _raw_record(flat_draws(posterior))
         assert float(mean.using(raw=True)(view)) == pytest.approx(
             float(np.mean(draws["population"]["tau"])), rel=1e-5
@@ -183,9 +183,8 @@ def _glm_with_dispersion():
     X = jnp.asarray(case.stan_data["X"], jnp.float32)
     joint = (
         glm_likelihood("y", GaussianFamily(), X=X)
-        * MultivariateNormal("beta", jnp.zeros(X.shape[1]), cov=4.0 * jnp.eye(X.shape[1]))
-        * HalfNormal("dispersion", 2.0)
-    )
+        & MultivariateNormal("beta", jnp.zeros(X.shape[1]), cov=4.0 * jnp.eye(X.shape[1]))
+    ) & HalfNormal("dispersion", 2.0)
     return joint, case.data
 
 
@@ -429,7 +428,7 @@ class TestFamiliesWithRecordParameters:
                 law, EmpiricalDistribution
             )
         parent_mean = mean.using(raw=True)(normalized)
-        view = FieldView(normalized, "theta/b")
+        view = CoupledMarginal(normalized, "theta/b")
         group = marginal(normalized, "theta")
         np.testing.assert_allclose(
             np.asarray(mean.using(raw=True)(view)),
@@ -475,7 +474,7 @@ class TestLearnedKernelOverANestedRecord:
         from probpipe.inference import learn_amortized_posterior
         from tests.correctness._laws import Groups, Population
 
-        prior = Groups() * Population()
+        prior = Groups() & Population()
         with workflow_run(seed=0):
             kernel = learn_amortized_posterior(
                 prior,

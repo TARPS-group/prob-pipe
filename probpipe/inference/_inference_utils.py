@@ -393,7 +393,7 @@ def unfactored_model_reason(target: Any) -> str:
     else:
         got = f"{_described(target.joint)} conditioned on data not keyed by its fields"
     return (
-        "the model must be a product such as likelihood * prior, conditioned on every field "
+        "the model must be a merge such as likelihood & prior, conditioned on every field "
         f"the likelihood produces and on no field of the prior; got {got}"
     )
 

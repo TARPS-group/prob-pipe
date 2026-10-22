@@ -133,7 +133,7 @@ class TestGLM:
         """The joint's log-density is the GLM's under its canonical link plus the prior's."""
         dispersion = 0.7 if family.has_dispersion else None
         likelihood = glm_likelihood("y", family, X=_X, dispersion=dispersion)
-        joint = likelihood * MultivariateNormal("beta", jnp.zeros(2), cov=2.0 * jnp.eye(2))
+        joint = likelihood & MultivariateNormal("beta", jnp.zeros(2), cov=2.0 * jnp.eye(2))
         value = {"y": jnp.asarray(response, jnp.float32), "beta": jnp.asarray(_BETA, jnp.float32)}
         expected = density(np.asarray(_X, np.float64) @ _BETA, response) + (
             scipy.stats.multivariate_normal.logpdf(_BETA, np.zeros(2), 2.0 * np.eye(2))
@@ -142,7 +142,7 @@ class TestGLM:
 
     def test_the_prior_predictive_has_the_gaussian_moments(self):
         """``y = X beta + e`` has mean zero and variance ``v ||x_i||² + s²`` per observation."""
-        joint = glm_likelihood("y", GaussianFamily(), X=_X, dispersion=0.7) * MultivariateNormal(
+        joint = glm_likelihood("y", GaussianFamily(), X=_X, dispersion=0.7) & MultivariateNormal(
             "beta", jnp.zeros(2), cov=2.0 * jnp.eye(2)
         )
         with workflow_run(seed=11):
@@ -166,7 +166,7 @@ class TestGLM:
 
     def test_a_design_left_unbound_is_an_input_of_the_joint(self):
         likelihood = glm_likelihood("y", GaussianFamily(), dispersion=1.0)
-        joint = likelihood * MultivariateNormal("beta", jnp.zeros(2), cov=jnp.eye(2))
+        joint = likelihood & MultivariateNormal("beta", jnp.zeros(2), cov=jnp.eye(2))
         assert isinstance(joint, FactoredConditionalDistribution)
         assert list(joint.given_spec) == ["X"]
         bound = condition_on(joint, {"X": _X})
@@ -182,7 +182,7 @@ class TestGLM:
         case = canonical.case("gaussian_linear")
         X = jnp.asarray(case.stan_data["X"], jnp.float32)
         prior = MultivariateNormal("beta", jnp.zeros(X.shape[1]), cov=4.0 * jnp.eye(X.shape[1]))
-        joint = glm_likelihood("y", GaussianFamily(), dispersion=1.0) * prior
+        joint = glm_likelihood("y", GaussianFamily(), dispersion=1.0) & prior
         with workflow_run(seed=0):
             posterior = condition_on.using(method="blackjax_nuts", method_options=FIT)(
                 joint, {"X": X, **case.data}
@@ -472,7 +472,7 @@ def _chain():
     y = ObservationKernel(
         "y", {"x": x.event_spec.term_spec}, REAL, lambda x: tfd.Normal(2 * x + 1, 0.5)
     )
-    return y * x
+    return y & x
 
 
 class TestFactoredJoints:
@@ -491,7 +491,7 @@ class TestFactoredJoints:
         assert float(log_prob.using(raw=True)(_chain(), value)) == pytest.approx(expected, rel=1e-6)
 
     def test_the_edge_free_joint_has_each_factors_moments(self):
-        joint = Normal("a", 1.0, 2.0) * Gamma("b", 3.0, 2.0)
+        joint = Normal("a", 1.0, 2.0) & Gamma("b", 3.0, 2.0)
         means = mean.using(raw=True)(joint)
         variances = variance.using(raw=True)(joint)
         assert float(means["a"]) == pytest.approx(1.0)
@@ -592,7 +592,7 @@ class TestLearnedKernels:
         _bayesflow()
         from probpipe.inference import learn_amortized_posterior
 
-        prior = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        prior = Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)
         with workflow_run(seed=0):
             kernel = learn_amortized_posterior(
                 prior, _shift_simulator(prior), num_simulations=3000, epochs=8
@@ -644,7 +644,7 @@ class TestLearnedKernels:
                 epochs=15,
             )
         observation = jnp.array([[0.6, -0.4]])
-        joint = likelihood * _shift_prior()
+        joint = likelihood & _shift_prior()
         with workflow_run(seed=0):
             posterior = condition_on.using(method="blackjax_nuts", method_options=FIT)(
                 joint, {"observation": observation}

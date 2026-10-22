@@ -310,7 +310,7 @@ def _component_mismatch(first: Distribution, other: Distribution, index: int) ->
         return (
             f"{head}: component 0 ({first.label!r}) has the outputs "
             f"{list(expected.outputs)} but component {index} ({other.label!r}) has "
-            f"{list(actual.outputs)}. Rename them with with_path_names() so they match."
+            f"{list(actual.outputs)}. Rename them with rename() so they match."
         )
     for name, spec in expected.outputs.items():
         mismatch = _first_mismatch(spec, actual.outputs[name], name)
