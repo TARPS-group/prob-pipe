@@ -163,8 +163,8 @@ class TestOutputSpec:
         assert hole.with_dim_sizes(n=3).with_dim_names(n="m") == hole
 
     def test_the_record_of_the_outputs_of_each_form(self):
-        assert RecordSpec(OutputSpec(theta=NumericArraySpec(())).outputs) == RecordSpec(theta=())
-        assert RecordSpec(OutputSpec(RecordSpec(a=())).outputs) == RecordSpec(a=())
+        assert _output_record(OutputSpec(theta=NumericArraySpec(()))) == RecordSpec(theta=())
+        assert _output_record(OutputSpec(RecordSpec(a=()))) == RecordSpec(a=())
 
 
 class TestTheFinalNames:

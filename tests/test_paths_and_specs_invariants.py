@@ -172,7 +172,11 @@ _VIEWED = [
 ]
 
 
-@pytest.mark.parametrize(("law", "paths"), [(law, p) for law, ps in _VIEWED for p in ps], ids=repr)
+@pytest.mark.parametrize(
+    ("law", "paths"),
+    [(law, paths) for law, listed in _VIEWED for paths in listed],
+    ids=[f"{law.__name__.lstrip('_')}[{paths!r}]" for law, listed in _VIEWED for paths in listed],
+)
 def test_i6_a_views_output_spec_agrees_with_its_parents(law, paths):
     """I6 for laws: the event spec of ``d[s]`` and of ``marginal(d, s)`` is ``d.event_spec[s]``."""
     parent = law()
