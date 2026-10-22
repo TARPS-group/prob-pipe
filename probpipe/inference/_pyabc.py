@@ -180,8 +180,9 @@ def _compiled(fn: Callable[..., Any]) -> Callable[..., Any]:
     form traces once and is reused at every particle. A function that does not
     trace, such as a simulator that calls NumPy or an external program, runs
     eagerly instead, by the rule of
-    :func:`~probpipe.core._compilation.compiled_or_eager`: the first trace
-    decides, and an error raised while the compiled form runs propagates.
+    :func:`~probpipe.core._compilation.compiled_or_eager`: the first trace at
+    each shape and dtype of the arguments decides for them, and an error
+    raised while the compiled form runs propagates.
     """
     compiled_fn = jax.jit(fn)
     decision_record: dict[Hashable, Any] = {}

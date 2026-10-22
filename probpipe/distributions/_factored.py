@@ -878,7 +878,7 @@ def _at_each_given(
     The call runs uncompiled, under ``jax.vmap``, when :func:`_split_fixed`
     returns ``None`` or when the JAX program does not trace, as for a method
     that converts an unmet given to a Python number. The store records a JAX
-    program that does not trace for its argument shapes and dtypes and the
+    program that does not trace for its set of constants, input shapes, and
     static settings, so later calls with the same ones skip the attempt,
     while a call with others traces it again. An error raised while
     the compiled JAX program runs propagates. When a given is not numeric,

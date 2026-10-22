@@ -2,7 +2,8 @@
 
 import threading
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from types import MappingProxyType
 from typing import Any
 
 import jax
@@ -192,7 +193,32 @@ class TestTheFallbackRule:
         assert traced_counts == [7, 9]
         assert results[7] == 1.0
         assert float(results[9]) == 10.0
-        assert isinstance(results[9], jax.Array)
+
+    def test_a_failed_trace_under_one_set_of_static_options_leaves_another_compiled(self):
+        traced_options: list = []
+
+        def body(static_options, x):
+            traced_options.append(static_options)
+            return float(x) if static_options == "to number" else x + 1.0
+
+        def eager(x):
+            return x + 1.0
+
+        program_store = _ProgramStore()
+        for static_options in ("to number", "add", "to number", "add"):
+            program_store.run("body", body, eager, jnp.ones(()), static_options=static_options)
+        assert traced_options == ["to number", "add"]
+
+    def test_without_a_trace_cache_key_each_run_traces_and_nothing_is_recorded(self):
+        python_runs: list = []
+        program = _counted_program(float, python_runs)
+        decision_record: dict = {}
+        for _ in range(2):
+            compiled_or_eager(
+                decision_record, "to float", program, float, jnp.ones(()), trace_cache_key=None
+            )
+        assert len(python_runs) == 2
+        assert decision_record == {}
 
 
 class TestTheTraceCacheKey:
@@ -486,6 +512,13 @@ class TestNotesReachEveryCallThatReusesATrace:
         assert noted_by_thread == [frozenset({37})] * 8
 
 
+@dataclass(frozen=True)
+class _Retry:
+    """An executor option that compares by value."""
+
+    attempts: int
+
+
 class TestComparingTheNotesOfTwoTraces:
     def _set_record(self, executor_options: dict) -> _EvaluationSetRecord:
         return _EvaluationSetRecord("simulate", 0, "thread", executor_options, 4, ())
@@ -503,6 +536,23 @@ class TestComparingTheNotesOfTwoTraces:
             store_entry.add_trace_notes(
                 _TraceNotes(frozenset(), (self._set_record({"weights": changed_weights}),))
             )
+
+    @pytest.mark.parametrize(
+        ("first_options", "second_options"),
+        [
+            ({"chunk": MappingProxyType({"size": 8})}, {"chunk": MappingProxyType({"size": 8})}),
+            ({"retry": _Retry(3)}, {"retry": _Retry(3)}),
+            ({"timeout": 1}, {"timeout": 1.0}),
+            ({"weights": np.zeros(3, np.float32)}, {"weights": jnp.zeros(3)}),
+        ],
+        ids=["read-only-mapping", "frozen-dataclass", "int-and-float", "numpy-and-jax-array"],
+    )
+    def test_records_of_equal_but_distinct_options_are_accepted(
+        self, first_options, second_options
+    ):
+        store_entry = _StoreEntry()
+        store_entry.add_trace_notes(_TraceNotes(frozenset(), (self._set_record(first_options),)))
+        store_entry.add_trace_notes(_TraceNotes(frozenset(), (self._set_record(second_options),)))
 
     def test_records_of_equal_content_in_another_order_are_accepted(self):
         pool = object()

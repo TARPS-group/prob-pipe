@@ -19,6 +19,7 @@ Provides:
 
 from __future__ import annotations
 
+import dataclasses
 import enum
 import logging
 import threading
@@ -38,7 +39,6 @@ from ._call_context import (
     _under_call_context,
     current_call_context,
 )
-from ._fingerprint import fingerprint
 from ._immutable import transient_memo
 from .config import _static_config_values_in_effect
 
@@ -100,7 +100,7 @@ def compiled_or_eager(
         What JAX traces *program* again for: :func:`_trace_cache_key` of the
         arguments that can differ between calls under *decision_record*. An
         argument fixed for its owner, such as a law's backend, may be left
-        out. ``None`` traces *program* before every run.
+        out. ``None`` traces *program* before every run and records nothing.
     static_keywords : Mapping of str to Hashable, optional
         Keyword arguments of *program* alone, each named in its
         ``static_argnames``; none by default.
@@ -123,20 +123,22 @@ def compiled_or_eager(
     outcome_key = _TraceOutcomeKey(
         decision_key, trace_cache_key, tuple(sorted(static_keywords.items()))
     )
-    recorded_outcome = decision_record.get(outcome_key)
+    recorded_outcome = None if trace_cache_key is None else decision_record.get(outcome_key)
     if recorded_outcome is _TraceOutcome.RUNS_EAGERLY:
         return eager(*arguments)
-    if recorded_outcome is None or trace_cache_key is None:
+    if recorded_outcome is None:
         try:
             program.trace(*arguments, **static_keywords)
         except _VaryingTraceNotesError:
             raise
         except Exception as tracing_error:
             eager_result = eager(*arguments)
-            decision_record[outcome_key] = _TraceOutcome.RUNS_EAGERLY
+            if trace_cache_key is not None:
+                decision_record[outcome_key] = _TraceOutcome.RUNS_EAGERLY
             logger.debug("%r runs uncompiled: tracing it raised %r", decision_key, tracing_error)
             return eager_result
-        decision_record[outcome_key] = _TraceOutcome.TRACED
+        if trace_cache_key is not None:
+            decision_record[outcome_key] = _TraceOutcome.TRACED
     return program(*arguments, **static_keywords)
 
 
@@ -428,6 +430,11 @@ class _TraceOutcomeKey(NamedTuple):
     static_keywords: tuple[tuple[str, Hashable], ...]
 
 
+#: The fields of a set record, which :func:`_same_content` compares one by one.
+_SET_RECORD_FIELD_NAMES = tuple(
+    record_field.name for record_field in dataclasses.fields(_EvaluationSetRecord)
+)
+
 #: The key of an owner's program store in its transient memo.
 _PROGRAM_STORE = "program store"
 
@@ -485,12 +492,15 @@ class _StoreEntry:
                 )
             )
         if not _same_in_any_order(trace_notes.set_records, kept_notes.set_records):
+            origins = sorted(
+                {
+                    set_record.origin
+                    for set_record in (*kept_notes.set_records, *trace_notes.set_records)
+                }
+            )
             raise _VaryingTraceNotesError(
-                _varying_note_message(
-                    "the sets of evaluation points of",
-                    sorted(set_record.origin for set_record in kept_notes.set_records),
-                    sorted(set_record.origin for set_record in trace_notes.set_records),
-                )
+                "internal error: two traces of a compiled JAX program noted different sets of "
+                f"evaluation points of {', '.join(map(repr, origins))}. Please report this"
             )
 
     def apply_trace_notes(self) -> None:
@@ -507,29 +517,51 @@ def _same_in_any_order(
     first_records: Iterable[_EvaluationSetRecord], second_records: Iterable[_EvaluationSetRecord]
 ) -> bool:
     """Whether two sequences of set records hold records of the same content, in any order."""
-    return sorted(map(_set_record_fingerprint, first_records)) == sorted(
-        map(_set_record_fingerprint, second_records)
-    )
+    unmatched_records = list(second_records)
+    for set_record in first_records:
+        matching_position = next(
+            (
+                position
+                for position, unmatched_record in enumerate(unmatched_records)
+                if _same_content(set_record, unmatched_record)
+            ),
+            None,
+        )
+        if matching_position is None:
+            return False
+        del unmatched_records[matching_position]
+    return not unmatched_records
 
 
-def _set_record_fingerprint(set_record: _EvaluationSetRecord) -> str:
-    """A digest of *set_record*'s fields, every array in its executor options hashed in full.
+def _same_content(first_value: Any, second_value: Any) -> bool:
+    """Whether two values hold the same content: arrays element by element, and anything else by ``==``.
 
-    An executor option that is neither a value nor an array, such as a pool,
-    is compared by its identity, as :func:`~probpipe.core._fingerprint.fingerprint`
-    compares an object it cannot read.
+    A set record compares field by field, and a mapping, such as an
+    executor's options, key by key, so an array anywhere inside compares in
+    full rather than raising as ``==`` on it does.
     """
-    return fingerprint(
-        (
-            set_record.origin,
-            set_record.set_ordinal,
-            set_record.executor_name,
-            dict(set_record.executor_options),
-            set_record.num_evaluation_points,
-            set_record.failed_point_indices,
-        ),
-        max_array_bytes=None,
-    )
+    if isinstance(first_value, _EvaluationSetRecord) and isinstance(
+        second_value, _EvaluationSetRecord
+    ):
+        return all(
+            _same_content(getattr(first_value, field_name), getattr(second_value, field_name))
+            for field_name in _SET_RECORD_FIELD_NAMES
+        )
+    if isinstance(first_value, Mapping) and isinstance(second_value, Mapping):
+        return first_value.keys() == second_value.keys() and all(
+            _same_content(first_value[key], second_value[key]) for key in first_value
+        )
+    if isinstance(first_value, np.ndarray | jax.Array) or isinstance(
+        second_value, np.ndarray | jax.Array
+    ):
+        first_array, second_array = np.asarray(first_value), np.asarray(second_value)
+        return first_array.dtype == second_array.dtype and np.array_equal(first_array, second_array)
+    if isinstance(first_value, list | tuple) and isinstance(second_value, list | tuple):
+        return len(first_value) == len(second_value) and all(
+            _same_content(first_item, second_item)
+            for first_item, second_item in zip(first_value, second_value, strict=True)
+        )
+    return bool(first_value == second_value)
 
 
 def _varying_note_message(note_description: str, kept_value: Any, traced_value: Any) -> str:
