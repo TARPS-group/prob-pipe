@@ -23,10 +23,10 @@ def _maximum(values):
 
 
 def _kernel(posterior):
-    """``y ~ Normal(alpha, 1)``, iid over four observations, given the posterior's slots."""
+    """``y ~ Normal(alpha, 1)``, iid over four observations; its inputs are the posterior's outputs."""
     return conditional_distribution(
         lambda alpha, beta: Normal("y", alpha * jnp.ones(4), 1.0),
-        given_spec=posterior.event_spec.components,
+        given_spec=posterior.event_spec.outputs,
         label="y_given_alpha",
     )
 
@@ -140,10 +140,10 @@ class TestPpcDiagnosticBroker:
         assert run(3) == (1, 1)
         assert run(30) == (1, 1)
 
-    def test_a_missing_given_slot_fails_before_sampling_or_event(self, posterior):
+    def test_a_missing_input_fails_before_sampling_or_event(self, posterior):
         kernel = conditional_distribution(
             lambda gamma: Normal("y", gamma * jnp.ones(4), 1.0),
-            given_spec={"gamma": posterior.event_spec.components["alpha"]},
+            given_spec={"gamma": posterior.event_spec.outputs["alpha"]},
             label="y_given_gamma",
         )
         with (

@@ -62,8 +62,9 @@ class TestSequentialLiftingWorkflowRun:
         dist = _GoldenBitsDistribution(sample_calls)
 
         @function(
-            n_broadcast_samples=5,
-            dispatch="sequential",
+            max_evaluations=5,
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         def identity(value):
@@ -80,8 +81,9 @@ class TestSequentialLiftingWorkflowRun:
 
     def test_function_builds_one_stochastic_plan_for_a_lifted_call(self):
         @function(
-            n_broadcast_samples=8,
-            dispatch="sequential",
+            max_evaluations=8,
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         def identity(x):
@@ -99,23 +101,22 @@ class TestSequentialLiftingWorkflowRun:
         assert result.num_atoms == 8
         build_plan.assert_called_once()
 
-    def test_invalid_sample_count_fails_before_probe_or_event_commit(self):
+    def test_invalid_evaluation_count_fails_before_probe_or_event_commit(self):
         workflow = Function(
             lambda x: x,
             label="function",
-            n_broadcast_samples=8,
-            dispatch="auto",
+            max_evaluations=8,
         )
 
         with (
-            patch("probpipe.functions._function._resolve_dispatch") as resolve_dispatch,
+            patch("probpipe.functions._function._lifted_point_traceability") as traceability,
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit_invocation,
             workflow_run(seed=7),
-            pytest.raises(ValueError, match="n_broadcast_samples must be a positive integer"),
+            pytest.raises(ValueError, match="max_evaluations must be a positive integer"),
         ):
-            workflow.using(n_broadcast_samples=0)(Normal("x", loc=0.0, scale=1.0))
+            workflow.using(max_evaluations=0)(Normal("x", loc=0.0, scale=1.0))
 
-        resolve_dispatch.assert_not_called()
+        traceability.assert_not_called()
         commit_invocation.assert_not_called()
 
     def test_nested_sources_claim_raw_keys_by_row_major_logical_unit(self):
@@ -131,8 +132,9 @@ class TestSequentialLiftingWorkflowRun:
         )
 
         @function(
-            n_broadcast_samples=6,
-            dispatch="sequential",
+            max_evaluations=6,
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(combine=None),
         )
         def combine(row, first, second):
@@ -195,8 +197,9 @@ class TestSequentialLiftingWorkflowRun:
 
     def test_seeded_run_reproduces_distinct_lifted_occurrences(self):
         @function(
-            n_broadcast_samples=16,
-            dispatch="sequential",
+            max_evaluations=16,
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         def identity(x):
@@ -217,8 +220,9 @@ class TestSequentialLiftingWorkflowRun:
 
     def test_bare_lifted_calls_receive_independent_ephemeral_roots(self):
         @function(
-            n_broadcast_samples=16,
-            dispatch="sequential",
+            max_evaluations=16,
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         def identity(x):
@@ -237,19 +241,22 @@ class TestSequentialLiftingWorkflowRun:
 
     def test_non_stochastic_siblings_do_not_shift_later_lifting(self):
         @function(
-            n_broadcast_samples=16,
-            dispatch="sequential",
+            max_evaluations=16,
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         def identity(x):
             return x
 
-        @function(dispatch="sequential", output_spec=OutputSpec(deterministic=None))
+        @function(
+            traceable=False, executor="sequential", output_spec=OutputSpec(deterministic=None)
+        )
         def deterministic(x):
             return x + 1
 
         normal = Normal("x", loc=0.0, scale=1.0)
-        empirical = EmpiricalDistribution(jnp.asarray([1.0, 2.0, 3.0]), component="x")
+        empirical = EmpiricalDistribution(jnp.asarray([1.0, 2.0, 3.0]), output_name="x")
 
         def baseline():
             with workflow_run(seed=7):
@@ -272,10 +279,11 @@ class TestSequentialLiftingWorkflowRun:
         assert jnp.array_equal(actual[1].atoms, expected[1].atoms)
 
 
-def test_auto_probe_detects_nested_randomness_caught_by_user_code():
+def test_the_probe_detects_nested_randomness_caught_by_user_code():
     @function(
-        n_broadcast_samples=5,
-        dispatch="sequential",
+        max_evaluations=5,
+        traceable=False,
+        executor="sequential",
         output_spec=OutputSpec(inner_identity=None),
     )
     def inner_identity(value):
@@ -288,24 +296,25 @@ def test_auto_probe_detects_nested_randomness_caught_by_user_code():
             inner_identity(nested_dist)
         return value
 
-    auto = Function(
+    probed = Function(
         call_nested_and_catch,
         label="call_nested_and_catch",
-        n_broadcast_samples=5,
-        dispatch="auto",
+        max_evaluations=5,
         output_spec=OutputSpec(call_nested_and_catch=None),
     )
     sequential = Function(
         call_nested_and_catch,
         label="call_nested_and_catch",
-        n_broadcast_samples=5,
-        dispatch="sequential",
+        max_evaluations=5,
+        traceable=False,
+        executor="sequential",
         output_spec=OutputSpec(call_nested_and_catch=None),
     )
 
     @function(
-        n_broadcast_samples=5,
-        dispatch="sequential",
+        max_evaluations=5,
+        traceable=False,
+        executor="sequential",
         output_spec=OutputSpec(following_identity=None),
     )
     def following_identity(value):
@@ -318,4 +327,4 @@ def test_auto_probe_detects_nested_randomness_caught_by_user_code():
             workflow(outer_dist)
             return following_identity(outer_dist)._rows
 
-    assert jnp.array_equal(following_samples(auto), following_samples(sequential))
+    assert jnp.array_equal(following_samples(probed), following_samples(sequential))

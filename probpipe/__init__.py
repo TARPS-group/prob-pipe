@@ -40,7 +40,23 @@ from probpipe.core._array_backend import (
     register_array_backend,
 )
 from probpipe.core._batch import Batch, BatchSpec
+from probpipe.core._catalog import (
+    EntrySummary,
+    RegistryCatalog,
+    RegistryInfo,
+    SupportsRegistryCataloging,
+    registry_catalog,
+)
 from probpipe.core._dispatch import MathematicalDomainError, ResolutionError
+from probpipe.core._evaluation_points import (
+    EvaluationChunk,
+    EvaluationError,
+    EvaluationFailure,
+    EvaluationOutcomes,
+    EvaluationPoints,
+    SharedPayload,
+)
+from probpipe.core._executors import EvaluationExecutor, evaluate_at_points, executor_registry
 from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric import Numeric
 from probpipe.core._numeric_array import NumericArray
@@ -61,10 +77,9 @@ from probpipe.core._specs import (
 )
 from probpipe.core.config import (
     ProvenanceMode,
+    UnshippableSettingError,
     WorkflowKind,
-    notation_config,
-    prefect_config,
-    provenance_config,
+    config,
 )
 from probpipe.core.constraints import (
     Constraint,
@@ -93,6 +108,7 @@ from probpipe.core.transition import (
     with_conversion,
     with_resampling,
 )
+from probpipe.diagnostics import summarize
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import (
     SupportsApproximateConditioning,
@@ -216,7 +232,6 @@ from probpipe.values import (
     SupportsLogDetJacobian,
     is_differentiable,
     is_invertible,
-    set_default_n_broadcast_samples,
 )
 
 __all__ = [
@@ -245,6 +260,13 @@ __all__ = [
     "DistributionBatch",
     "DistributionSpec",
     "EmpiricalDistribution",
+    "EntrySummary",
+    "EvaluationChunk",
+    "EvaluationError",
+    "EvaluationExecutor",
+    "EvaluationFailure",
+    "EvaluationOutcomes",
+    "EvaluationPoints",
     "Exponential",
     "FullFactorialDesign",
     "Function",
@@ -291,11 +313,14 @@ __all__ = [
     "Record",
     "RecordBatch",
     "RecordSpec",
+    "RegistryCatalog",
+    "RegistryInfo",
     "ReplayCompatibilityError",
     "ReplayUnsupportedCallableError",
     "ResolutionError",
     "ResultKindError",
     "ResultSchemaError",
+    "SharedPayload",
     "StanModel",
     "StudentT",
     "SupportsApproximateConditioning",
@@ -311,6 +336,7 @@ __all__ = [
     "SupportsQuantile",
     "SupportsRandomLogProb",
     "SupportsRandomUnnormalizedLogProb",
+    "SupportsRegistryCataloging",
     "SupportsSampling",
     "SupportsUnnormalizedLogProb",
     "SupportsVariance",
@@ -320,6 +346,7 @@ __all__ = [
     "TruncatedNormal",
     "Uniform",
     "UnmanagedConcurrentWorkflowEntryError",
+    "UnshippableSettingError",
     "VonMisesFisher",
     "Weights",
     "Wishart",
@@ -330,12 +357,15 @@ __all__ = [
     "condition_on",
     "condition_on_nutpie",
     "conditional_distribution",
+    "config",
     "convert",
     "converter_registry",
     "cov",
     "distribution",
     "elliptical_slice",
+    "evaluate_at_points",
     "evaluation_rule_registry",
+    "executor_registry",
     "expectation",
     "factor",
     "function",
@@ -358,15 +388,12 @@ __all__ = [
     "mixture",
     "non_negative",
     "non_negative_integer",
-    "notation_config",
     "operation_registry",
     "positive",
     "positive_definite",
     "predictive_check",
-    "prefect_config",
     "prob",
     "provenance_ancestors",
-    "provenance_config",
     "provenance_dag",
     "pushforward",
     "quantile",
@@ -375,13 +402,14 @@ __all__ = [
     "real",
     "register_array_backend",
     "register_bijector",
+    "registry_catalog",
     "replay_run",
     "rwmh",
     "sample",
-    "set_default_n_broadcast_samples",
     "simplex",
     "sphere",
     "standard_deviation",
+    "summarize",
     "unit_interval",
     "unnormalized_log_prob",
     "unnormalized_prob",

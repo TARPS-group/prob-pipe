@@ -9,23 +9,14 @@ outer sweep layer of nested array + distribution broadcasts.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from itertools import product as cartesian_product
 from math import prod
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..values import _binding
-from ..values._function_base import _validate_stacked_output
-
-try:
-    from prefect import flow, task
-except ImportError:
-    task = flow = None
-
 from ..core._batch import Batch
+from ..core._evaluation_points import _requested_evaluation_points
 from ..core._expression import Expression
 from ..core._numeric_array import NumericArray
 from ..core._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
@@ -34,12 +25,15 @@ from ..core._opaque import Opaque
 from ..core._record_batch import RecordBatch, _MappedBatchColumns
 from ..core._repr import type_name
 from ..core._specs import OutputSpec, RecordSpec
-from ..core.config import WorkflowKind, prefect_config
+from ..core.config import WorkflowKind
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._distribution import Distribution
-from . import _broker, _context, _execution, _execution_contract, _plan, _recipe, _result
+from ..values import _binding
+from ..values._function_base import _validate_stacked_output
+from . import _plan, _recipe, _result
+from ._execution import evaluate_requested_points, sweep_cell_point_segment
 from ._result import _make_stack, _row_at_its_kind
 
 
@@ -49,13 +43,9 @@ def execute_sweep(
     values: dict[str, Any],
     plan: _plan.BroadcastPlan,
     stochastic_plan: _plan.StochasticPlan | None,
-    make_execution_config: Callable[
-        [],
-        _execution.WorkflowExecutionConfig,
+    swept_point_traceability: Callable[
+        [dict[str, Any], list[_binding.FunctionInputRef]], tuple[bool, str | None]
     ],
-    requested_dispatch: str,
-    resolve_dispatch: Callable[..., str],
-    require_jax_traceable: Callable[[dict[str, Any], list[_binding.FunctionInputRef]], None],
     distribution_broadcast: Callable[
         [
             dict[str, Any],
@@ -78,8 +68,10 @@ def execute_sweep(
 ) -> Any:
     """Execute pure or nested sweep regimes for one workflow call.
 
-    *route* is the selected route's name and exactness, which provenance
-    records. The aggregate is labeled *output_label* and carries
+    *swept_point_traceability* says whether JAX can trace one cell of a pure
+    sweep, given the values and the swept arguments, with the reason when it
+    cannot. *route* is the selected route's name and exactness, which
+    provenance records. The aggregate is labeled *output_label* and carries
     *output_expression*, the expression the call gives its result, when one
     is given.
     """
@@ -102,13 +94,10 @@ def execute_sweep(
             values=values,
             array_args=array_args,
             plan=plan,
-            make_execution_config=make_execution_config,
-            requested_dispatch=requested_dispatch,
-            resolve_dispatch=resolve_dispatch,
-            require_jax_traceable=require_jax_traceable,
+            swept_point_traceability=swept_point_traceability,
             workflow_kind=workflow_kind,
             function_name=function_name,
-            output_is_declared=output_spec is not None and output_spec.spec is not None,
+            output_is_declared=output_spec is not None and output_spec.term_spec is not None,
             output_label=output_label,
         )
         if output_spec is not None:
@@ -137,7 +126,7 @@ def execute_sweep(
             dist_args=dist_args,
             function_name=function_name,
             batch_shape=plan.sweep_batch_shape,
-            k=0,
+            max_evaluations=None,
             parents=provenance_parents,
             inputs=provenance_inputs,
             stochastic_plan=None,
@@ -178,7 +167,7 @@ def execute_sweep(
         dist_args=dist_args,
         function_name=function_name,
         batch_shape=plan.sweep_batch_shape,
-        k=stochastic_plan.n_broadcast_samples,
+        max_evaluations=stochastic_plan.max_evaluations,
         parents=provenance_parents,
         inputs=provenance_inputs,
         stochastic_plan=stochastic_plan,
@@ -246,97 +235,98 @@ def execute_sweep_rows(
     values: dict[str, Any],
     array_args: list[_binding.FunctionInputRef],
     plan: _plan.BroadcastPlan,
-    make_execution_config: Callable[
-        [],
-        _execution.WorkflowExecutionConfig,
+    swept_point_traceability: Callable[
+        [dict[str, Any], list[_binding.FunctionInputRef]], tuple[bool, str | None]
     ],
-    requested_dispatch: str,
-    resolve_dispatch: Callable[..., str],
-    require_jax_traceable: Callable[[dict[str, Any], list[_binding.FunctionInputRef]], None],
     workflow_kind: WorkflowKind = WorkflowKind.OFF,
     function_name: str,
     output_is_declared: bool = False,
     output_label: str,
 ) -> Any:
-    """Execute pure sweep rows through JAX vmap or row-wise execution."""
-    # Zero rows run nothing, so there is no body for a dispatch to trace and no
-    # per-row output for the paths to disagree over: every dispatch takes the
-    # same empty aggregation, which is what keeps the output schema independent
-    # of how the rows would have been executed.
+    """The result of each cell of a pure sweep, from one set of evaluation points, one per cell.
+
+    A sweep that JAX can trace, of one group of batches of arrays or records,
+    reads each cell from the batches' storage, through the body the probe
+    traces, which ``jax`` maps over every cell at once. Any other sweep reads
+    each cell by its coordinates, one cell at a time, as for a batch of
+    objects or for batches on different levels. It returns the cells' results
+    in row-major order, as a list, or stacked on a leading axis by ``jax``.
+    """
+    # Zero cells run nothing, so there is no body to trace and no per-cell
+    # output to disagree over: every executor takes the same empty aggregation,
+    # which keeps the output schema independent of how the cells would have run.
     if plan.n_sweep == 0:
         return []
+    sweep_batch_shape = plan.sweep_batch_shape
 
-    # A batch of stored objects has no columns for the mapped body to read.
-    has_object_batch = any(
-        isinstance(_binding.input_ref_value(values, ref), _ObjectBatch) for ref in array_args
-    )
-    jax_structure_supported = not (has_object_batch or len(plan.array_groups) > 1)
-    jax_contract = _execution_contract.make_execution_contract(
-        evaluator="jax_vmap",
-        transport=_execution_contract.transport_for_workflow_kind(workflow_kind),
-        stochastic_plan=None,
-    )
-    jax_supported = _execution_contract.supports_execution_contract(
-        jax_contract,
-        None,
-        jax_structure_supported=jax_structure_supported,
-    )
-    if requested_dispatch == "jax" and not jax_supported:
-        raise ValueError(
-            "dispatch='jax' can only sweep over batches of records or arrays with the same levels; use "
-            "dispatch='auto', 'sequential', or 'thread' for this call"
+    def point_segment(cell_index: int) -> Any:
+        return sweep_cell_point_segment(
+            tuple(int(axis_index) for axis_index in np.unravel_index(cell_index, sweep_batch_shape))
         )
 
-    dispatch = resolve_dispatch(
-        values,
-        array_args,
-        jax_supported=jax_supported,
+    swept_objects = any(
+        isinstance(_binding.input_ref_value(values, ref), _ObjectBatch) for ref in array_args
     )
-
-    if dispatch == "jax":
-        _broker._record_active_execution_contract(jax_contract)
-        if requested_dispatch == "jax":
-            require_jax_traceable(values, array_args)
-        return execute_sweep_rows_jax(
+    if swept_objects:
+        traceable, untraceable_reason = False, "it sweeps a batch of objects"
+    elif len(plan.array_groups) > 1:
+        traceable, untraceable_reason = False, "it sweeps batches on different levels"
+    else:
+        traceable, untraceable_reason = swept_point_traceability(values, array_args)
+    if not traceable:
+        evaluation_points = _requested_evaluation_points(
+            lambda cell_index: func(
+                **slice_sweep_values(
+                    values=values, index=int(cell_index), array_groups=plan.array_groups
+                )
+            ),
+            varying={"cell_index": np.arange(plan.n_sweep)},
+            origin=function_name,
+            traceable=False,
+            untraceable_reason=untraceable_reason,
+            point_noun="grid point",
+            point_segment=point_segment,
+        )
+        return list(
+            evaluate_requested_points(
+                evaluation_points,
+                stacked=False,
+                workflow_kind=workflow_kind,
+                function_label=function_name,
+                stochastic_plan=None,
+            )
+        )
+    evaluation_points = _requested_evaluation_points(
+        mapped_row_body(
             func=func,
             values=values,
             array_args=array_args,
-            n_total=plan.n_sweep,
-            axis_groups=plan.array_groups[0].axis_groups,
-            workflow_kind=workflow_kind,
-            function_name=function_name,
+            label=output_label,
             output_is_declared=output_is_declared,
-            output_label=output_label,
-        )
-
-    per_row_values = [
-        slice_sweep_values(
-            values=values,
-            index=i,
-            array_groups=plan.array_groups,
-        )
-        for i in range(plan.n_sweep)
-    ]
-    execution = make_execution_config()
-    request = _execution.WorkflowExecutionRequest(
-        func=func,
-        work_items=_execution.make_managed_work_items(
-            per_row_values,
-            unit_segments=tuple(
-                _execution.sweep_unit_segment(tuple(coordinates))
-                for coordinates in cartesian_product(
-                    *(range(axis) for axis in plan.sweep_batch_shape)
+        ),
+        varying={
+            "storage_rows": tuple(
+                mapped_storage(
+                    _binding.input_ref_value(values, ref),
+                    plan.n_sweep,
+                    axis_groups=plan.array_groups[0].axis_groups,
                 )
-            ),
-        ),
-        execution=execution,
-        contract=_execution_contract.make_execution_contract(
-            evaluator="rowwise",
-            transport=_execution_contract.transport_for_execution_mode(execution.mode),
-            stochastic_plan=None,
-        ),
+                for ref in array_args
+            )
+        },
+        origin=function_name,
+        traceable=True,
+        untraceable_reason=None,
+        point_noun="grid point",
+        point_segment=point_segment,
     )
-    return _execution.execute_many(request)
+    return evaluate_requested_points(
+        evaluation_points,
+        stacked=True,
+        workflow_kind=workflow_kind,
+        function_label=function_name,
+        stochastic_plan=None,
+    )
 
 
 def mapped_storage(
@@ -405,10 +395,10 @@ def _mapped_row(batch: Batch, label: str, row: Any) -> NumericArray | Record:
     """One element of the swept *batch*, rebuilt from the raw *row* the map reads.
 
     The element is labeled *label*. A batch of arrays yields an array under the
-    batch's element spec, and a batch of records a record of the row's fields.
+    spec of the batch's elements, and a batch of records a record of the row's fields.
     """
     if isinstance(batch, NumericArrayBatch):
-        return NumericArray(row, spec=batch.element_spec, label=label)
+        return NumericArray(row, spec=batch.element_spec.term_spec, label=label)
     return Record(row, label=label)
 
 
@@ -419,19 +409,19 @@ def mapped_row_body(
     array_args: Sequence[_binding.FunctionInputRef],
     label: str,
     output_is_declared: bool = False,
-) -> Callable[[Any], Any]:
-    """The body ``jax.vmap`` runs for one sweep row, and the probe traces.
+) -> Callable[..., Any]:
+    """The body of one cell of a sweep, which every executor runs and the probe traces.
 
     Both callers use this rather than each building its own: the probe's job is
-    to trace exactly what the executor runs, which two separately maintained
+    to trace exactly what ``jax`` maps, which two separately maintained
     functions cannot promise.
 
     *values* holds each swept batch at its reference in *array_args*, and the
     body receives one row of each batch's :func:`mapped_storage`. Inside the
     traced call each row is rebuilt at the kind of its batch's elements, which
     is an array or a record, so nothing infers a batch axis on the way in. On
-    the way out the row takes the kind of its own return, as a row-wise row
-    does, and a numeric array, record, or batch is then taken apart into
+    the way out the row takes the kind of its own return, as a cell evaluated
+    alone does, and a numeric array, record, or batch is then taken apart into
     :class:`_MappedBatchColumns` or :class:`_MappedBatchStore`: the map is about
     to add an axis that neither class's unflatten hook could name, and the
     executor names it afterwards from the sweep's levels.
@@ -440,7 +430,7 @@ def mapped_row_body(
     which case that template is the row's kind and nothing here re-derives one.
     """
 
-    def one_row(storage_rows):
+    def one_row(storage_rows: tuple[Any, ...]) -> Any:
         replacements = {
             ref: _mapped_row(_binding.input_ref_value(values, ref), ref.label, row)
             for ref, row in zip(array_args, storage_rows)
@@ -454,8 +444,8 @@ def mapped_row_body(
                 return _MappedBatchColumns.of_record(out)
             if isinstance(out, Opaque):
                 raise TypeError(
-                    f"{label}: dispatch='jax' cannot stack a row that returned "
-                    f"{type_name(out.value)}; it stacks only arrays, records, and batches"
+                    f"{label}: jax.vmap cannot stack a row that returned "
+                    f"{type_name(out.raw)}; it stacks only arrays, records, and batches"
                 )
         if isinstance(out, RecordBatch):
             return _MappedBatchColumns.of(out)
@@ -466,53 +456,6 @@ def mapped_row_body(
     return one_row
 
 
-def execute_sweep_rows_jax(
-    *,
-    func: Callable[..., Any],
-    values: dict[str, Any],
-    array_args: list[_binding.FunctionInputRef],
-    n_total: int,
-    axis_groups: tuple[tuple[int, ...], ...] | None = None,
-    workflow_kind: WorkflowKind = WorkflowKind.OFF,
-    function_name: str,
-    output_is_declared: bool = False,
-    output_label: str,
-) -> Any:
-    """Execute paired numeric sweep arguments through ``jax.vmap``."""
-    single_call = mapped_row_body(
-        func=func,
-        values=values,
-        array_args=array_args,
-        label=output_label,
-        output_is_declared=output_is_declared,
-    )
-
-    vmap_input = [
-        mapped_storage(_binding.input_ref_value(values, ref), n_total, axis_groups=axis_groups)
-        for ref in array_args
-    ]
-
-    def run_vmap():
-        with _context._workflow_jax_runtime_guard():
-            return jax.vmap(single_call)(tuple(vmap_input))
-
-    if workflow_kind in (WorkflowKind.TASK, WorkflowKind.FLOW):
-        if task is None or flow is None:
-            raise RuntimeError(
-                "Prefect task or flow execution was requested, but Prefect is not "
-                "installed. Install with: pip install probpipe[prefect]"
-            )
-        if workflow_kind is WorkflowKind.TASK:
-            run_vmap = task(name=f"{function_name}_vmap")(run_vmap)
-        else:
-            runner = prefect_config.resolve_task_runner()
-            run_vmap = flow(
-                name=f"{function_name}_vmap",
-                **({"task_runner": runner} if runner is not None else {}),
-            )(run_vmap)
-    return run_vmap()
-
-
 def make_sweep_provenance(
     *,
     values: Mapping[str, Any],
@@ -520,7 +463,7 @@ def make_sweep_provenance(
     dist_args: list[_binding.FunctionInputRef],
     function_name: str,
     batch_shape: tuple[int, ...],
-    k: int,
+    max_evaluations: int | None,
     parents: list[TrackedTerm] | None = None,
     inputs: Mapping[str, Any] | None = None,
     stochastic_plan: _plan.StochasticPlan | None = None,
@@ -529,7 +472,9 @@ def make_sweep_provenance(
     """Build provenance metadata for pure and nested sweep outputs.
 
     ``parents`` carries tracked call-level lineage; ``inputs`` carries the
-    original resolved plain values rather than per-cell sweep values.
+    original resolved plain values rather than per-cell sweep values. A nested
+    sweep's metadata records the ``max_evaluations`` of the lift in each cell,
+    which a pure sweep, given ``None``, does not have.
     Returns ``None`` when :attr:`ProvenanceMode.OFF` is active.
     """
     regime = "nested" if dist_args else "stack"
@@ -548,7 +493,7 @@ def make_sweep_provenance(
         metadata={
             "func": function_name,
             "batch_shape": tuple(batch_shape),
-            "k": k,
+            **({} if max_evaluations is None else {"max_evaluations": max_evaluations}),
             "ra_args": [ref.label for ref in array_args],
             "dist_args": [ref.label for ref in dist_args],
             **(dict(route) if route is not None else {}),

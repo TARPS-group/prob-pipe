@@ -2,7 +2,7 @@
 
 End-to-end coverage of the inference-method-registry path:
 ``condition_on.using(method="blackjax_sgld", method_options={"batch_size": …})``
-applied to ``(likelihood * prior, {"y": y})``,
+applied to ``(likelihood & prior, {"y": y})``,
 plus checks that the gradient estimator actually drives convergence
 toward the posterior mode on a 200-row Bayesian logistic regression.
 """
@@ -26,7 +26,6 @@ from probpipe import (
 )
 from probpipe.families import BernoulliFamily, GaussianFamily, glm_likelihood
 from probpipe.inference._blackjax_sgmcmc import (
-    BlackJAXSGHMCMethod,
     BlackJAXSGLDMethod,
     _build_grad_estimator,
 )
@@ -35,6 +34,11 @@ from probpipe.inference._minibatch import MinibatchedDistribution
 from tests._posterior import flat_chains
 from tests.inference._harness import validate_method
 from tests.inference.canonical import ObservationKernel
+
+
+def _run_through_the_registry(method: str, target, **options):
+    """The posterior *method* returns for *target*, run as ``condition_on`` runs it, with its run's key."""
+    return inference_method_registry.execute(target, method=method, **options)
 
 
 def _draws(posterior: EmpiricalDistribution) -> jax.Array:
@@ -60,7 +64,7 @@ def logistic_problem():
     # No-intercept logistic regression: prior dims pair 1-to-1 with X columns.
     lik = glm_likelihood("y", BernoulliFamily(), X=X)
     return {
-        "model": lik * prior,
+        "model": (lik & prior),
         "prior": prior,
         "likelihood": lik,
         "X": X,
@@ -161,12 +165,14 @@ class TestReproducibility:
             step_size=1e-3,
         )
         with workflow_run(seed=123):
-            post1 = BlackJAXSGLDMethod().execute(
+            post1 = _run_through_the_registry(
+                "blackjax_sgld",
                 observed_target(logistic_problem["model"], logistic_problem["data"]),
                 **kwargs,
             )
         with workflow_run(seed=123):
-            post2 = BlackJAXSGLDMethod().execute(
+            post2 = _run_through_the_registry(
+                "blackjax_sgld",
                 observed_target(logistic_problem["model"], logistic_problem["data"]),
                 **kwargs,
             )
@@ -180,12 +186,14 @@ class TestReproducibility:
             step_size=1e-3,
         )
         with workflow_run(seed=1):
-            post1 = BlackJAXSGLDMethod().execute(
+            post1 = _run_through_the_registry(
+                "blackjax_sgld",
                 observed_target(logistic_problem["model"], logistic_problem["data"]),
                 **kwargs,
             )
         with workflow_run(seed=2):
-            post2 = BlackJAXSGLDMethod().execute(
+            post2 = _run_through_the_registry(
+                "blackjax_sgld",
                 observed_target(logistic_problem["model"], logistic_problem["data"]),
                 **kwargs,
             )
@@ -202,18 +210,18 @@ class TestCheck:
         prior = MultivariateNormal("x", loc=jnp.zeros(2), cov=jnp.eye(2))
         info = BlackJAXSGLDMethod().check(prior, batch_size=10)
         assert not info.feasible
-        assert "likelihood * prior" in info.description
+        assert "likelihood & prior" in info.description
 
     def test_rejects_a_likelihood_that_scores_no_subset(self):
         """A likelihood kernel that cannot score a subset of its observations is rejected."""
         prior = MultivariateNormal("x", loc=jnp.zeros(2), cov=jnp.eye(2))
         likelihood = ObservationKernel(
             "y",
-            {"x": prior.event_spec.spec},
+            {"x": prior.event_spec.term_spec},
             NumericArraySpec((5, 2)),
             lambda x: tfd.Independent(tfd.Normal(jnp.broadcast_to(x, (5, 2)), 1.0), 2),
         )
-        target = observed_target(likelihood * prior, {"y": jnp.zeros((5, 2))})
+        target = observed_target((likelihood & prior), {"y": jnp.zeros((5, 2))})
         info = BlackJAXSGLDMethod().check(target, batch_size=2)
         assert not info.feasible
         assert "score a subset of its observations" in info.description
@@ -249,7 +257,8 @@ class TestConvergence:
 
     def test_sgld_recovers_logistic_coefficients(self, logistic_problem):
         with workflow_run(seed=42):
-            post = BlackJAXSGLDMethod().execute(
+            post = _run_through_the_registry(
+                "blackjax_sgld",
                 observed_target(logistic_problem["model"], logistic_problem["data"]),
                 batch_size=40,
                 num_results=5000,
@@ -269,7 +278,8 @@ class TestConvergence:
 
     def test_sghmc_recovers_logistic_coefficients(self, logistic_problem):
         with workflow_run(seed=42):
-            post = BlackJAXSGHMCMethod().execute(
+            post = _run_through_the_registry(
+                "blackjax_sghmc",
                 observed_target(logistic_problem["model"], logistic_problem["data"]),
                 batch_size=40,
                 num_results=5000,
@@ -312,7 +322,8 @@ class TestConditionOnDispatch:
     def test_chain_shape_is_num_results_by_event_shape(self, logistic_problem):
         """The draws are `(num_results, *event_shape)` for a single chain."""
         with workflow_run(seed=1):
-            post = BlackJAXSGLDMethod().execute(
+            post = _run_through_the_registry(
+                "blackjax_sgld",
                 observed_target(logistic_problem["model"], logistic_problem["data"]),
                 batch_size=20,
                 num_results=100,
@@ -324,7 +335,8 @@ class TestConditionOnDispatch:
     def test_warmup_discards_initial_samples(self, logistic_problem):
         """``num_warmup=N`` drops the first N samples; ``num_results`` retained."""
         with workflow_run(seed=3):
-            post = BlackJAXSGLDMethod().execute(
+            post = _run_through_the_registry(
+                "blackjax_sgld",
                 observed_target(logistic_problem["model"], logistic_problem["data"]),
                 batch_size=20,
                 num_results=300,
@@ -337,7 +349,8 @@ class TestConditionOnDispatch:
         """``init=`` overrides the prior-sampled default."""
         init = jnp.array([2.5, -1.5])
         with workflow_run(seed=0):
-            post = BlackJAXSGLDMethod().execute(
+            post = _run_through_the_registry(
+                "blackjax_sgld",
                 observed_target(logistic_problem["model"], logistic_problem["data"]),
                 batch_size=20,
                 num_results=50,
@@ -357,7 +370,7 @@ class TestConditionOnDispatch:
         n, p = 200, 2
         X = jax.random.normal(jax.random.PRNGKey(0), (n, p))
         y = X @ jnp.array([1.0, -0.5]) + 0.5 * jax.random.normal(jax.random.PRNGKey(1), (n,))
-        prior = MultivariateNormal("beta", jnp.zeros(p), cov=jnp.eye(p)) * HalfNormal(
+        prior = MultivariateNormal("beta", jnp.zeros(p), cov=jnp.eye(p)) & HalfNormal(
             "dispersion", 1.0
         )
         with workflow_run(seed=1):
@@ -369,7 +382,7 @@ class TestConditionOnDispatch:
                     "num_warmup": 0,
                     "step_size": 1e-4,
                 },
-            )(glm_likelihood("y", GaussianFamily(), X=X) * prior, {"y": y})
+            )((glm_likelihood("y", GaussianFamily(), X=X) & prior), {"y": y})
         assert float(_draws(post)[0, 2]) > 0.0
 
     def test_with_replacement_kwarg_is_accepted_and_dispatches(self, logistic_problem):

@@ -65,8 +65,10 @@ _OTHER_PACKAGES = frozenset(
 
 #: Declarations the implementation does not match yet, with the change each awaits.
 _PENDING: dict[str, str] = {
-    "Converter": "check and execute take the converter options as keywords, as V.4 forwards them",
-    "ConverterRegistry": "convert takes the converter options as keywords, as V.4 forwards them",
+    "Distribution": "III.7 declares [] by paths, in, output, without, and rename; the code has [] by key, "
+    "rename, and none of in, output, or without",
+    "ConditionalDistribution": "III.9 declares [] by paths, output, without, and rename on a kernel; "
+    "the code has none of them",
 }
 
 
@@ -82,8 +84,8 @@ def _tool():
 
 
 def _resolve(name: str):
-    if name == "__mul__":
-        return _distribution.Distribution.__mul__
+    if name in {"__and__", "__mul__", "__bool__"}:
+        return getattr(_distribution.Distribution, name)
     for module in _MODULES:
         if hasattr(module, name):
             return getattr(module, name)
@@ -117,13 +119,13 @@ class TestDeclarationsAreImplemented:
         findings = _tool().check([declaration], _resolve)
         assert not findings, "; ".join(f"{f.name} {f.problem}" for f in findings)
 
-    def test_a_kernel_composes_by_the_declared_signature(self):
+    def test_a_kernel_merges_by_the_declared_signature(self):
         tool = _tool()
-        (declaration,) = [d for d in tool.declarations(["IV.2"]) if _declared_name(d) == "__mul__"]
+        (declaration,) = [d for d in tool.declarations(["IV.2"]) if _declared_name(d) == "__and__"]
         findings = tool.check(
             [declaration],
             lambda name: (
-                _conditional.ConditionalDistribution.__mul__ if name == "__mul__" else None
+                _conditional.ConditionalDistribution.__and__ if name == "__and__" else None
             ),
         )
         assert not findings, findings

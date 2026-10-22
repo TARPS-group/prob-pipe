@@ -49,6 +49,7 @@ import numpy as np
 import pytest
 
 from probpipe import NumericArrayBatch, workflow_run
+from probpipe.core._specs import _has_record_outputs
 from tests._ops import (
     EmpiricalDistribution,
     condition_on,
@@ -211,14 +212,13 @@ def _at(raw: Any, path: str) -> Any:
     return node
 
 
-def _node(raw: Any, law: Any, path: str, summary: str | None = None) -> Any:
-    """The node at the event path *path* of *raw*, which is a raw draw or raw *summary* of *law*.
+def _node(raw: Any, law: Any, path: str) -> Any:
+    """The node at the event path *path* of *raw*, which is a raw draw or raw summary of *law*.
 
-    An exposed record's paths index its nested mapping, and a whole term's
-    paths start with its component, which stands for the whole raw value. A
-    summary such as ``mean`` names each component ``c`` of the event as
-    ``mean(c)``, so the node of an exposed record's summary is read under the
-    summary's name for the path's first segment.
+    The paths of an event spec in the positional form index its nested mapping,
+    and those of one in the keyword form start with its output name, which
+    stands for the whole raw value. A summary such as ``mean`` takes the
+    event's paths, so a draw and a summary are read alike.
 
     Raises
     ------
@@ -230,12 +230,11 @@ def _node(raw: Any, law: Any, path: str, summary: str | None = None) -> Any:
     declaration = law.event_spec
     raw = _raw_record(raw)
     head, _, rest = path.partition("/")
-    if declaration.exposes_record:
-        named = head if summary is None else f"{summary}({head})"
-        return _at(raw, named + path[len(head) :])
-    (component,) = declaration.components
-    if head != component:
-        raise AssertionError(f"{path!r} is not an event path of the whole term {component!r}")
+    if _has_record_outputs(declaration):
+        return _at(raw, path)
+    (output_name,) = declaration.outputs
+    if head != output_name:
+        raise AssertionError(f"{path!r} is not an event path of the whole term {output_name!r}")
     return _at(raw, rest)
 
 
@@ -285,7 +284,7 @@ def chains_at(posterior: Any, path: str, shape: tuple[int, ...]) -> np.ndarray:
 
     posterior = independent_draws(posterior)
     atoms = posterior.atoms
-    raw = atoms.values if isinstance(atoms, NumericArrayBatch) else _raw_record(atoms)
+    raw = atoms.raw if isinstance(atoms, NumericArrayBatch) else _raw_record(atoms)
     values = np.asarray(_node(raw, posterior, path), dtype=np.float64)
     chains = atoms.batch_shape[0] if len(atoms.axis_groups) > 1 else 1
     return values.reshape(chains, -1, *shape)
@@ -378,7 +377,7 @@ def assert_matches(
     for path, leaf in reference.leaves.items():
         shape = leaf.mean.shape
         chains = chains_at(posterior, path, shape)
-        estimate = _as_leaf(_node(means, posterior, path, "mean"), shape, path, "mean")
+        estimate = _as_leaf(_node(means, posterior, path), shape, path, "mean")
         mcse_mean = _mcse(chains, "mean")
         sd = np.ravel(np.sqrt(leaf.variance))
         if not consistent:
@@ -386,12 +385,10 @@ def assert_matches(
             comparisons.within("mean", path, estimate, leaf.mean, band)
             continue
         comparisons.within("mean", path, estimate, leaf.mean, Z * mcse_mean)
-        estimate_var = _as_leaf(
-            _node(variances, posterior, path, "variance"), shape, path, "variance"
-        )
+        estimate_var = _as_leaf(_node(variances, posterior, path), shape, path, "variance")
         mcse_var = _mcse_variance(chains)
         comparisons.within("variance", path, estimate_var, leaf.variance, Z * mcse_var)
-        node = np.asarray(_node(quantiles, posterior, path, "quantile"), dtype=np.float64)
+        node = np.asarray(_node(quantiles, posterior, path), dtype=np.float64)
         node = _as_leaf(node, (len(INTERVAL_LEVELS), *shape), path, "quantiles")
         for index, level in enumerate(INTERVAL_LEVELS):
             comparisons.within(

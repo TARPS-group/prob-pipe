@@ -11,14 +11,12 @@ from types import ModuleType
 import pytest
 
 from probpipe.functions import (
-    _broker,
     _call,
     _callable,
     _context,
     _descendants,
+    _evaluation_keys,
     _execution,
-    _execution_contract,
-    _managed,
     _plan,
     _replay,
     _rng,
@@ -27,14 +25,12 @@ from probpipe.values import _binding
 
 _WORKFLOW_MODULES = (
     _binding,
-    _broker,
     _call,
     _callable,
     _context,
     _descendants,
+    _evaluation_keys,
     _execution,
-    _execution_contract,
-    _managed,
     _plan,
     _replay,
     _rng,
@@ -45,13 +41,17 @@ _WORKFLOW_MODULES = (
     params=[
         _binding.FunctionInputRef("x"),
         _callable.CallableAnchor(False, "local_function", None, None),
-        _execution_contract.make_execution_contract(
-            evaluator="rowwise", transport="local_inline", stochastic_plan=None
-        ),
+        _execution.make_execution_contract(stochastic_plan=None),
         _rng.RandomEventIdentity(("invocation", 0), ("source", 0), ("singleton",)),
-        _managed.ManagedWorkItemToken(bytes(range(16))),
+        _evaluation_keys.EvaluationPointToken(bytes(range(16))),
     ],
-    ids=["input-ref", "callable-anchor", "execution-contract", "random-event", "managed-token"],
+    ids=[
+        "input-ref",
+        "callable-anchor",
+        "execution-contract",
+        "random-event",
+        "evaluation-point-token",
+    ],
 )
 def frozen_workflow_value(request):
     return request.param

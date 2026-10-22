@@ -22,9 +22,10 @@ Three rules are registered here:
    laws. A group enumerates through its root, so a view of an empirical law
    enumerates as the law does.
 
-A **floor** is the fallback on its stated domain. The registry ranks the floors
-in a tier of their own, below every other rule whatever its exactness and
-priority, and orders each tier as every dispatch registry does. A floor's check
+A **floor** is the fallback on its stated domain. Each floor declares
+``is_floor``, so the registry ranks it after every other rule whatever that
+rule's exactness and priority, and orders the floors among themselves as every
+dispatch registry orders its methods (II.7). A floor's check
 applies the test the planner applies to the argument at its parameter, its
 role included, so the floor is feasible where the direct call takes it and
 nowhere else.
@@ -48,11 +49,11 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..core._batch import Batch
+from ..core._catalog import registry_catalog
 from ..core._dispatch import (
     BinaryDispatchMethod,
     BinaryDispatchRegistry,
     Feasibility,
-    _Registration,
 )
 from ..distributions._capabilities import SupportsSampling
 from ..distributions._distribution import Distribution
@@ -62,14 +63,14 @@ from . import _descendants, _plan
 
 __all__ = ["FLOOR_PRIORITY", "evaluation_rule_registry"]
 
-#: The priority each floor registers with, which orders the floors among themselves.
-FLOOR_PRIORITY = -(2**31)
+#: The priority each floor registers with, which orders the floors among themselves;
+#: ``is_floor`` alone places them after every other rule.
+FLOOR_PRIORITY = 0
 
 #: The engine controls an engine-realized rule forwards when it calls the map.
 _FORWARDED_CONTROLS = (
-    "n_broadcast_samples",
-    "dispatch",
-    "max_workers",
+    "max_evaluations",
+    "num_samples",
     "include_inputs",
     "workflow_kind",
     "exact_only",
@@ -125,6 +126,10 @@ def _run_by_name(
 class _Floor(BinaryDispatchMethod):
     """A fallback on its stated domain, ranked below every other rule there."""
 
+    @property
+    def is_floor(self) -> bool:
+        return True
+
 
 class _SamplingLift(_Floor):
     """The floor on distribution operands: draws from the operand pushed through the map.
@@ -132,6 +137,10 @@ class _SamplingLift(_Floor):
     The result is an empirical law over the outputs, so the rule is approximate.
     A view samples through its parent, which must itself sample.
     """
+
+    @property
+    def description(self) -> str:
+        return "Draws of the operand pushed through the map, as an empirical law."
 
     @property
     def name(self) -> str:
@@ -214,6 +223,10 @@ class _ElementwiseSweep(_Floor):
     The result is the batch of the elementwise results on the operand's
     levels, so the rule is exact.
     """
+
+    @property
+    def description(self) -> str:
+        return "The map applied to each element of a batch operand."
 
     @property
     def name(self) -> str:
@@ -299,6 +312,10 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
     """
 
     @property
+    def description(self) -> str:
+        return "The map at every combination of empirical atoms, with their weights multiplied."
+
+    @property
     def name(self) -> str:
         return "empirical_enumeration"
 
@@ -326,7 +343,7 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
         """Feasible when the call lifts only laws and every lifted group enumerates.
 
         A group enumerates when its root is an empirical law, and the product of
-        the groups' atom counts is at most the ``n_broadcast_samples`` control.
+        the groups' atom counts is at most the ``max_evaluations`` control.
         The operand's root is read as the lift reads it, through views, batch
         elements, and registered descendants, so the decision does not depend
         on the order of the arguments. A call whose operand's root is not
@@ -335,8 +352,9 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
         Parameters
         ----------
         f : Function
-            The map the call applies, whose own ``n_broadcast_samples`` applies
-            when *controls* sets none.
+            The map the call applies, whose own ``max_evaluations`` applies
+            when *controls* sets none, as for a use of the registry outside a
+            call.
         operand : Distribution
             The law argument the registry dispatched on.
         parameter : str or None
@@ -345,7 +363,7 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
             The map's other arguments, by parameter name, with which the check
             plans the call's lift.
         controls : Mapping of str to Any, or None
-            The call's resolved controls, whose ``n_broadcast_samples`` bounds the
+            The call's resolved controls, whose ``max_evaluations`` bounds the
             product of the groups' atom counts.
 
         Returns
@@ -366,13 +384,16 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
             return Feasibility(
                 False, f"the call does not lift {_describe(operand)} alone as a distribution"
             )
-        count = (controls or {}).get("n_broadcast_samples", f.options["n_broadcast_samples"])
+        count = (controls or {}).get("max_evaluations")
+        if count is None:
+            # A direct use of the registry, outside a call, passes no controls.
+            count = f.options["max_evaluations"]
         stochastic = _plan.build_stochastic_plan(values, plan, count)
         if stochastic is None or stochastic.evaluation_mode != "exact":
             return Feasibility(
                 False,
                 f"every lifted distribution must be an empirical law, with at most "
-                f"n_broadcast_samples={count} combinations of their atoms",
+                f"max_evaluations={count} combinations of their atoms",
             )
         return Feasibility(True)
 
@@ -394,23 +415,12 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
 _ENGINE_RULES = frozenset({"sampling_lift", "elementwise_sweep", "empirical_enumeration"})
 
 
-class _EvaluationRuleRegistry(BinaryDispatchRegistry[BinaryDispatchMethod]):
-    """A binary dispatch registry whose floors rank in a tier below every other rule.
-
-    Within each tier, selection follows the order of every dispatch registry:
-    exactness, then priority, then specificity, then registration order. A
-    priority override therefore moves a floor only among the floors.
-    """
-
-    def _rank(self, registration: _Registration[BinaryDispatchMethod]) -> tuple[int, int, int]:
-        exactness, opt_in, priority = super()._rank(registration)
-        # The floor tier follows both exactness classes of the other rules.
-        tier = 2 if isinstance(registration.method, _Floor) else 0
-        return (tier + exactness, opt_in, priority)
-
-
-evaluation_rule_registry: BinaryDispatchRegistry[BinaryDispatchMethod] = _EvaluationRuleRegistry()
+evaluation_rule_registry: BinaryDispatchRegistry[BinaryDispatchMethod] = BinaryDispatchRegistry(
+    name="evaluation_rules",
+    description="Evaluation rules for a map applied to a law or a batch, keyed on both types.",
+)
 """The routes of a lifted application, keyed on the map's and the operand's types."""
+registry_catalog.register(evaluation_rule_registry)
 evaluation_rule_registry.register(_SamplingLift())
 evaluation_rule_registry.register(_ElementwiseSweep())
 evaluation_rule_registry.register(_EmpiricalEnumeration())

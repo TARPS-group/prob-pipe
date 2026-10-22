@@ -28,6 +28,8 @@ ProbPipe streamlines and automates those tasks, so you can:
 
 ## A short example
 
+> **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.
+
 <!-- --8<-- [start:quick-example] -->
 Consider a Bayesian logistic regression for the [Challenger O-ring data](https://en.wikipedia.org/wiki/Space_Shuttle_Challenger_disaster), which consists of temperatures of 23 shuttle launches and an indicator as to whether an O-ring was damaged.
 In January 1986, the Space Shuttle Challenger broke apart shortly after launch because an O-ring seal in one of its rocket boosters failed during unusually cold weather.
@@ -57,14 +59,14 @@ prior = Normal("beta", jnp.zeros(2), jnp.array([10.0, 1.0]))
 likelihood = glm_likelihood("damage", BernoulliFamily(), X=X)
 
 # The model is the joint distribution of beta and the damage indicators.
-model = likelihood * prior
+model = (likelihood & prior)
 
 # Conditioning the model on the observed damage gives the posterior of beta.
 # The seed makes the sampler's random draws reproducible.
 with workflow_run(seed=0):
     posterior = condition_on(model, {"damage": damage})
 
-print("posterior mean of beta:", mean(posterior["beta"]).raw())
+print("posterior mean of beta:", mean(posterior["beta"]).raw)
 
 # Every result records how it was computed.
 for name, result in [("mean of the prior", mean(prior)), ("posterior", posterior)]:
@@ -97,7 +99,7 @@ for method in ["blackjax_nuts", "tfp_nuts", "blackjax_rwmh"]:
         method_posterior = condition_on.using(method=method)(model, {"damage": damage})
     # Adds R-hat and effective sample size diagnostics to the posterior object.
     add_mcmc_diagnostics(method_posterior)
-    mean_slope = float(mean(method_posterior["beta"]).raw()[1])
+    mean_slope = float(mean(method_posterior["beta"]).raw[1])
     largest_rhat = max(method_posterior.diagnostics.mcmc.rhat.values())
     print(f"{method:<15}{mean_slope:>12.3f}{largest_rhat:>16.3f}")
 ```
@@ -132,7 +134,7 @@ with workflow_run(seed=2):
     damage_prob = challenger_damage_probability(posterior["beta"])
 
 print("P(damage at 31°F), posterior mean:", round(float(mean(damage_prob)), 3))
-print("P(damage at 31°F), 90% interval:", quantile(damage_prob, jnp.array([0.05, 0.95])).raw())
+print("P(damage at 31°F), 90% interval:", quantile(damage_prob, jnp.array([0.05, 0.95])).raw)
 
 # The forecast records how it was computed.
 prov_meta = damage_prob.provenance.metadata

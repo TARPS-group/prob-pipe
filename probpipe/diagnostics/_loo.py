@@ -35,6 +35,8 @@ import arviz as az
 import numpy as np
 import xarray as xr
 
+from ..core._numeric_array import NumericArray
+from ..core._numeric_array_batch import NumericArrayBatch
 from ..distributions._distribution import Distribution
 from ._datatree import _add_group
 from ._utils import _json_dumps_safe, _record_get, _safe_float
@@ -66,6 +68,9 @@ def _as_numpy(obj: Any) -> np.ndarray | None:
     """Best-effort conversion to NumPy array."""
     if obj is None:
         return None
+
+    if isinstance(obj, NumericArray | NumericArrayBatch):
+        return np.asarray(obj.raw)
 
     if isinstance(obj, xr.DataArray):
         try:
@@ -328,7 +333,7 @@ def add_loo(
 
     model : Distribution, optional
         The factored joint the posterior was conditioned from, such as
-        ``likelihood * prior``. When ``_annotations/arviz/log_likelihood`` is
+        ``likelihood & prior``. When ``_annotations/arviz/log_likelihood`` is
         missing, ``add_loo`` computes the pointwise log likelihoods from *model*
         and *data*, and needs no separate precomputation step.
 
@@ -543,7 +548,7 @@ def _add_log_likelihood(
         ``chain`` and ``draw``.
     model : Distribution
         The factored joint the posterior was conditioned from, such as
-        ``likelihood * prior``. Its likelihood factor scores each of its
+        ``likelihood & prior``. Its likelihood factor scores each of its
         conditionally independent observations, as the kernel
         :func:`~probpipe.families.glm_likelihood` returns does.
     data : Record or Mapping
@@ -572,20 +577,20 @@ def _add_log_likelihood(
     --------
     ::
 
-        add_loo(posterior, model=likelihood * prior, data={"y": y})
+        add_loo(posterior, model=likelihood & prior, data={"y": y})
         print(posterior.diagnostics.loo.elpd_loo)
     """
     import jax
     import jax.numpy as jnp
 
     from ..inference._inference_utils import (
-        flat_unflatten,
         model_factors,
         observed_target,
         parameter_given,
         unfactored_model_reason,
     )
     from ..inference._minibatch import _data_size, _reads_observations, _subset_scoring_reason
+    from ..operations._inference_target import _flat_unflatten
 
     target = observed_target(model, data)
     factors = model_factors(target)
@@ -599,7 +604,7 @@ def _add_log_likelihood(
             f"{_subset_scoring_reason(factors.likelihood)}"
         )
     likelihood, observed = factors.likelihood, factors.observed
-    unflatten = flat_unflatten(factors.prior)
+    unflatten = _flat_unflatten(factors.prior)
     from ..inference._approximate_distribution import _flat_chains
 
     # The draws in the prior's flat layout, (chains, draws, d).

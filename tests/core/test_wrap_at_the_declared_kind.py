@@ -70,7 +70,7 @@ class TestARawReturnWrapsIntoItsOwnKind:
         result = label(jnp.asarray(2))
 
         assert isinstance(result, Opaque)
-        assert result.value == "value-2"
+        assert result.raw == "value-2"
 
     def test_the_result_is_named_after_the_function(self):
         @function
@@ -173,7 +173,7 @@ class TestASampleShapeGetsADrawLevel:
 
         assert isinstance(drawn, NumericArrayBatch)
         assert drawn.batch_shape == (5,)
-        assert tuple(drawn.element_spec.shape) == (3,)
+        assert tuple(drawn.element_spec.term_spec.shape) == (3,)
         assert drawn.shape == (5, 3)
 
     def test_an_element_is_one_draw(self):
@@ -183,24 +183,24 @@ class TestASampleShapeGetsADrawLevel:
         assert drawn[2].shape == ()
 
     def test_a_joint_draws_a_batch_of_records_under_its_declaration(self):
-        """A law whose draws are a mapping of columns draws the batch its declaration names."""
+        """A law whose draws are a mapping of columns draws the batch its event spec names."""
         from probpipe import NumericRecordBatch
 
-        law = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)
+        law = Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=0.0, scale=1.0)
 
         drawn = sample(law, sample_shape=(4,))
 
         assert isinstance(drawn, NumericRecordBatch)
         assert (drawn.batch_shape, drawn.level_names) == ((4,), ("sample",))
-        assert drawn.element_spec == law.event_spec.spec
+        assert drawn.element_spec.term_spec == law.event_spec.term_spec
 
     def test_one_draw_of_a_joint_is_a_record_under_its_declaration(self):
-        law = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)
+        law = Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=0.0, scale=1.0)
 
         drawn = sample(law)
 
         assert isinstance(drawn, Record)
-        assert drawn.spec == law.event_spec.spec
+        assert drawn.spec == law.event_spec.term_spec
 
 
 class TestAnEmptyReturnKeepsItsHostsKind:
@@ -226,7 +226,7 @@ class TestAnEmptyReturnKeepsItsHostsKind:
         result = self._returned(sequence)
 
         assert isinstance(result, Opaque)
-        assert result.value == sequence
+        assert result.raw == sequence
 
     def test_an_empty_array_is_still_an_array(self):
         """Distinct from an empty container: the kind was never in doubt."""
@@ -254,7 +254,7 @@ class TestAReturnedSequenceIsOpaque:
 
         assert isinstance(result, Opaque)
         assert result.label == "f()"
-        assert result.value == value
+        assert result.raw == value
 
     def test_a_declared_batch_takes_the_sequence_as_its_elements(self):
         from probpipe import BatchSpec, NumericArrayBatch, NumericArraySpec
@@ -264,7 +264,7 @@ class TestAReturnedSequenceIsOpaque:
 
         assert isinstance(result, NumericArrayBatch)
         assert (result.batch_shape, result.level_names) == ((3,), ("item",))
-        np.testing.assert_array_equal(np.asarray(result.values), [1.0, 2.0, 3.0])
+        np.testing.assert_array_equal(np.asarray(result.raw), [1.0, 2.0, 3.0])
 
     def test_a_declared_batch_of_opaque_elements_stores_each_one(self):
         from probpipe import BatchSpec, OpaqueBatch, OpaqueSpec
@@ -273,7 +273,7 @@ class TestAReturnedSequenceIsOpaque:
         result = self._returned(["a", "b"], output_spec=OutputSpec(result=declared))
 
         assert isinstance(result, OpaqueBatch)
-        assert [result[0].value, result[1].value] == ["a", "b"]
+        assert [result[0].raw, result[1].raw] == ["a", "b"]
 
 
 class TestAnEmptyRecordHasNoBatch:
@@ -301,23 +301,32 @@ class TestAnEmptyRecordHasNoBatch:
             RecordBatch(
                 {},
                 "x",
-                element_spec=RecordSpec(),
+                element=RecordSpec(),
                 label="batch",
             )
+
+
+def _sweep_function(body, evaluation):
+    """`body` as a Function that JAX maps, or one claiming ``traceable=False``
+    that runs one row at a time on the sequential executor."""
+    if evaluation == "mapped":
+        return Function(body, label="f")
+    return Function(body, label="f", traceable=False, executor="sequential")
 
 
 class TestEachSweptRowTakesItsOwnKind:
     """A row is one call's return, so the rule that names a single return's kind
     is the rule that names a row's.
 
-    Every case runs under both dispatches. Which executor a sweep picks is a
-    performance decision, so a row's kind cannot depend on it: the mapped path
-    reads its rows through the same rule the row-wise path does, and the two
-    agree here rather than in prose.
+    Every case runs twice: mapped by JAX, and one row at a time for a function
+    that claims ``traceable=False``. How a sweep evaluates its rows is a
+    performance decision, so a row's kind cannot depend on it: the mapped
+    evaluation reads its rows through the same rule the one-at-a-time evaluation
+    does, and the two agree here rather than in prose.
     """
 
-    @pytest.fixture(params=["auto", "sequential"])
-    def dispatch(self, request):
+    @pytest.fixture(params=["mapped", "one-at-a-time"])
+    def evaluation(self, request):
         return request.param
 
     @staticmethod
@@ -328,33 +337,33 @@ class TestEachSweptRowTakesItsOwnKind:
         return NumericRecordBatch(
             {"x": jnp.arange(float(n))},
             "row",
-            element_spec=NumericRecordSpec(x=()),
+            element=NumericRecordSpec(x=()),
             label="rows",
         )
 
-    def _swept(self, body, dispatch):
-        return Function(body, label="f", dispatch=dispatch)(v=self._rows())
+    def _swept(self, body, evaluation):
+        return _sweep_function(body, evaluation)(v=self._rows())
 
-    def test_a_mapping_row_gives_a_batch_of_records(self, dispatch):
-        out = self._swept(lambda v: {"y": jnp.asarray(v["x"]) * 2}, dispatch)
+    def test_a_mapping_row_gives_a_batch_of_records(self, evaluation):
+        out = self._swept(lambda v: {"y": jnp.asarray(v["x"]) * 2}, evaluation)
 
         assert list(out.event_template) == ["y"]
         assert (out.batch_shape, out.level_names) == ((3,), ("row",))
         np.testing.assert_array_equal(np.asarray(out["y"]), np.arange(3.0) * 2)
 
-    def test_a_nested_mapping_row_keeps_its_subtree(self, dispatch):
+    def test_a_nested_mapping_row_keeps_its_subtree(self, evaluation):
         out = self._swept(
             lambda v: {"lo": jnp.asarray(v["x"]) - 1, "grp": {"hi": jnp.asarray(v["x"]) + 1}},
-            dispatch,
+            evaluation,
         )
 
         assert list(out.event_template) == ["lo", "grp/hi"]
         np.testing.assert_array_equal(np.asarray(out["grp/hi"]), np.arange(3.0) + 1)
 
-    def test_any_mapping_counts_not_only_dict(self, dispatch):
+    def test_any_mapping_counts_not_only_dict(self, evaluation):
         from collections import OrderedDict
 
-        out = self._swept(lambda v: OrderedDict(y=jnp.asarray(v["x"])), dispatch)
+        out = self._swept(lambda v: OrderedDict(y=jnp.asarray(v["x"])), evaluation)
 
         assert list(out.event_template) == ["y"]
 
@@ -369,17 +378,17 @@ class TestEachSweptRowTakesItsOwnKind:
         ],
         ids=["arrays", "objects", "callables", "empty", "nested"],
     )
-    def test_a_sequence_row_is_one_opaque_element(self, dispatch, body):
+    def test_a_sequence_row_is_one_opaque_element(self, evaluation, body):
         """A returned sequence is an Opaque, so each row stores one element and
         the sweep's level is the only one."""
         from probpipe import OpaqueBatch
 
-        out = self._swept(body, dispatch)
+        out = self._swept(body, evaluation)
 
         assert isinstance(out, OpaqueBatch)
         assert (out.batch_shape, out.level_names) == ((3,), ("row",))
 
-    def test_a_batch_row_keeps_the_level_it_named(self, dispatch):
+    def test_a_batch_row_keeps_the_level_it_named(self, evaluation):
         """A row that names its own level keeps that name inside the sweep's."""
         from probpipe import NumericRecordBatch
         from probpipe.core._specs import NumericRecordSpec
@@ -389,35 +398,35 @@ class TestEachSweptRowTakesItsOwnKind:
             return NumericRecordBatch(
                 {"y": jnp.stack([x, x * 2])},
                 "part",
-                element_spec=NumericRecordSpec(y=()),
+                element=NumericRecordSpec(y=()),
                 label="parts",
             )
 
-        out = self._swept(body, dispatch)
+        out = self._swept(body, evaluation)
 
         assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "part"))
 
-    def test_rows_of_differing_numeric_shape_are_refused(self, dispatch):
+    def test_rows_of_differing_numeric_shape_are_refused(self, evaluation):
         """An object column would record the disagreement as if it were the answer."""
         with pytest.raises(ValueError, match="differing shapes"):
-            self._swept(lambda v: jnp.ones(int(jnp.asarray(v["x"])) + 1), dispatch)
+            self._swept(lambda v: jnp.ones(int(jnp.asarray(v["x"])) + 1), evaluation)
 
 
 class TestASweptEmptyMappingHitsTheSameWall:
     """Per-row wrapping makes a `{}` row a `Record`, so the sweep reaches the
     field guard and says what the direct routes say."""
 
-    @pytest.mark.parametrize("dispatch", ["auto", "sequential"])
-    def test_a_swept_body_returning_an_empty_mapping_is_refused(self, dispatch):
+    @pytest.mark.parametrize("evaluation", ["mapped", "one-at-a-time"])
+    def test_a_swept_body_returning_an_empty_mapping_is_refused(self, evaluation):
         from probpipe import NumericRecordBatch
         from probpipe.core._specs import NumericRecordSpec
 
         rows = NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             "row",
-            element_spec=NumericRecordSpec(x=()),
+            element=NumericRecordSpec(x=()),
             label="rows",
         )
 
         with pytest.raises(ValueError, match="at least one field"):
-            Function(lambda v: {}, label="f", dispatch=dispatch)(v=rows)
+            _sweep_function(lambda v: {}, evaluation)(v=rows)

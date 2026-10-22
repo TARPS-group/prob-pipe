@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="496" height="248" viewBox="0 0 496 248" role="img">
+  <title>The merge of two records</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#424a53"/>
+    </marker>
+    <marker id="arrow-fault" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#cf222e"/>
+    </marker>
+  </defs>
+  <rect x="0.5" y="0.5" width="495" height="246" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <g transform="translate(37.9,45.5)">
+    <rect x="30.0" y="22.0" width="112.0" height="58.0" rx="8" fill="#eef6ff" stroke="#0550ae" stroke-width="1.6"/>
+    <rect x="40.0" y="29.0" width="49.3" height="17.0" rx="8.5" fill="#0550ae" stroke="#0550ae" stroke-width="1"/>
+    <text x="64.6" y="41.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">record</text>
+    <text x="97.3" y="42.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">r1</text>
+    <text x="42.0" y="67.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">a</text>
+    <circle cx="30.0" cy="63.0" r="4.5" fill="#0550ae" stroke="#0550ae" stroke-width="1.6"/>
+    <rect x="292.0" y="22.0" width="112.0" height="102.0" rx="8" fill="#eef6ff" stroke="#0550ae" stroke-width="1.6"/>
+    <rect x="302.0" y="29.0" width="49.3" height="17.0" rx="8.5" fill="#0550ae" stroke="#0550ae" stroke-width="1"/>
+    <text x="326.6" y="41.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">record</text>
+    <text x="359.3" y="42.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">r2</text>
+    <text x="304.0" y="67.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">b</text>
+    <text x="304.0" y="89.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="start">g</text>
+    <text x="320.0" y="111.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#59636e" text-anchor="start">c</text>
+    <path d="M 308.0,95.0 L 308.0,107.0 L 317.0,107.0" fill="none" stroke="#59636e" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="292.0" cy="63.0" r="4.5" fill="#0550ae" stroke="#0550ae" stroke-width="1.6"/>
+    <circle cx="292.0" cy="85.0" r="4.5" fill="#0550ae" stroke="#0550ae" stroke-width="1.6"/>
+    <path d="M 25.5,63.0 L 6.5,63.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <circle cx="0.0" cy="63.0" r="4.5" fill="#6e7781" stroke="#6e7781" stroke-width="1.6"/>
+    <text x="-10.0" y="67.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="end">a</text>
+    <path d="M 287.5,63.0 L 258.0,63.0 L 258.0,146.0 L 6.5,146.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <circle cx="0.0" cy="146.0" r="4.5" fill="#6e7781" stroke="#6e7781" stroke-width="1.6"/>
+    <text x="-10.0" y="150.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="end">b</text>
+    <path d="M 287.5,85.0 L 270.0,85.0 L 270.0,168.0 L 6.5,168.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <circle cx="0.0" cy="168.0" r="4.5" fill="#6e7781" stroke="#6e7781" stroke-width="1.6"/>
+    <text x="-10.0" y="172.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="end">g</text>
+    <rect x="0.0" y="0.0" width="440.0" height="184.0" rx="14" fill="none" stroke="#6e7781" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <rect x="4.0" y="-27.0" width="49.3" height="17.0" rx="8.5" fill="#0550ae" stroke="#0550ae" stroke-width="1"/>
+    <text x="28.6" y="-14.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">record</text>
+    <text x="61.3" y="-14.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">r1 &amp; r2</text>
+  </g>
+</svg>

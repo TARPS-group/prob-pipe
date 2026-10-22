@@ -125,7 +125,7 @@ class _Moments(
         return Normal("y", given["mu"], 1.0)
 
     def _conditional_marginal_guard(self, given, path):
-        """The marginal is of the kernel's y component at a positive mean."""
+        """The marginal is of the kernel's y output at a positive mean."""
         return path == "y" and given["mu"] > 0
 
 
@@ -134,7 +134,7 @@ class _GuardedDensity(_Direct):
         return given["mu"] > 0
 
 
-class _OpaqueSlots(ConditionalDistribution):
+class _OpaqueInputs(ConditionalDistribution):
     def __init__(self, data_spec=None):
         if data_spec is None:
             data_spec = OpaqueSpec()
@@ -214,7 +214,7 @@ class TestConditionalOperations:
     def test_sampling_twins_serve_monte_carlo_without_constructing_a_law(self, operation, method):
         kernel = _Direct()
         args = (lambda y: y,) if operation is expectation else ()
-        options = {"n_broadcast_samples": 64}
+        options = {"num_samples": 64}
         if method is not None:
             options["method"] = "sampling_lift" if operation is expectation else method
         view = operation.using(**options)
@@ -228,9 +228,9 @@ class TestConditionalOperations:
 
     def test_the_standard_deviation_takes_the_variances_monte_carlo_route(self):
         kernel = _Direct()
-        view = standard_deviation.using(n_broadcast_samples=64)
+        view = standard_deviation.using(num_samples=64)
         report = view.check(kernel, given={"mu": 2.0})
-        assert (report.route, report.exact) == ("identity", False)
+        assert (report.route, report.exact) == ("derived", False)
         with workflow_run(seed=42):
             result = view(kernel, given={"mu": 2.0})
         assert jnp.isfinite(result)
@@ -316,7 +316,7 @@ class TestConditionalOperations:
 
     def test_a_law_over_givens_defers_a_value_dependent_guard_without_sampling(self):
         def forbidden_draw(key):
-            raise AssertionError("a declaration-only check must not draw")
+            raise AssertionError("a spec-only check must not draw")
 
         given = distribution(sample=forbidden_draw, event_spec=RecordSpec(mu=REAL))
         report = marginal.check(_Moments(), "y", given=given)
@@ -325,7 +325,7 @@ class TestConditionalOperations:
 
     def test_a_law_over_givens_defers_the_guard_of_a_delegating_default(self):
         def forbidden_draw(key):
-            raise AssertionError("a declaration-only check must not draw")
+            raise AssertionError("a spec-only check must not draw")
 
         given = distribution(sample=forbidden_draw, event_spec=RecordSpec(mu=REAL))
         report = unnormalized_log_prob.check(_GuardedDensity(), 0.0, given=given)
@@ -334,7 +334,7 @@ class TestConditionalOperations:
 
     def test_a_law_over_givens_defers_fallback_without_applying_or_drawing(self):
         def forbidden_draw(key):
-            raise AssertionError("a declaration-only check must not draw")
+            raise AssertionError("a spec-only check must not draw")
 
         given = distribution(sample=forbidden_draw, event_spec=RecordSpec(mu=REAL))
         kernel = _Fallback()
@@ -347,7 +347,7 @@ class TestConditionalOperations:
         given = distribution(sample=lambda key: {"mu": 2.0}, event_spec=RecordSpec(mu=REAL))
         kernel = _Fallback()
         with workflow_run(seed=42):
-            result = mean.using(n_broadcast_samples=8)(kernel, given=given)
+            result = mean.using(num_samples=8)(kernel, given=given)
         np.testing.assert_allclose(mean(result), 2.0)
         assert kernel.calls
 
@@ -370,7 +370,7 @@ class TestConditionalOperations:
         data = sequence([1.0, 2.0, 3.0])
         law = condition_on(kernel, {"data": data})
         assert kernel.calls[0]["data"] is data
-        assert law.event_spec.spec.shape == (3,)
+        assert law.event_spec.term_spec.shape == (3,)
         np.testing.assert_allclose(mean(law), [1.0, 2.0, 3.0], rtol=0.0, atol=0.0)
         np.testing.assert_allclose(
             mean(kernel, given={"data": data}), [1.0, 2.0, 3.0], rtol=0.0, atol=0.0
@@ -400,7 +400,7 @@ class TestConditionalOperations:
 
             def _data(self, given):
                 theta = given["theta"]
-                data = theta.raw("group/a") if isinstance(theta, Record) else theta["group"]["a"]
+                data = theta["group/a"].raw if isinstance(theta, Record) else theta["group"]["a"]
                 return np.asarray(data)
 
         class Direct(Nested, SupportsConditionalMean):
@@ -413,42 +413,42 @@ class TestConditionalOperations:
         theta = record({"group": {"a": data, "b": np.ones(3)}})
         given = {"theta": theta}
         law = condition_on(kernel, given)
-        assert law.event_spec.spec.shape == (3,)
+        assert law.event_spec.term_spec.shape == (3,)
         report = mean.check(kernel, given=given)
-        assert report.result.spec.shape == (3,)
+        assert report.result.term_spec.shape == (3,)
         np.testing.assert_allclose(mean(kernel, given=given), data, rtol=0.0, atol=0.0)
         assert all(call["theta"] is theta for call in kernel.calls)
-        nested_data = theta.raw("group/a") if record is Record else theta["group"]["a"]
+        nested_data = theta["group/a"].raw if record is Record else theta["group"]["a"]
         assert nested_data is data
-        assert kernel.event_spec.spec.free_dims == frozenset({"n"})
+        assert kernel.event_spec.term_spec.free_dims == frozenset({"n"})
         bad = record({"group": {"a": data, "b": np.ones(2)}})
         with pytest.raises((ApplicabilityError, ValueError)):
             mean(kernel, given={"theta": bad})
 
     @pytest.mark.parametrize("data_spec", [OpaqueSpec(), OpaqueSpec(type=np.ndarray)])
-    def test_nested_opaque_slots_admit_numeric_values_at_binding(self, data_spec):
-        kernel = _OpaqueSlots(data_spec)
+    def test_nested_opaque_inputs_admit_numeric_values_at_binding(self, data_spec):
+        kernel = _OpaqueInputs(data_spec)
         given = {"theta": {"data": np.ones(3), "offset": 2.0}}
         law = condition_on(kernel, given)
         np.testing.assert_allclose(mean(law), 5.0)
         np.testing.assert_allclose(mean(kernel, given=given), 5.0)
 
     @pytest.mark.parametrize("data_spec", [OpaqueSpec(), OpaqueSpec(type=np.ndarray)])
-    def test_nested_opaque_slots_keep_value_admission_open_during_lifted_check(self, data_spec):
+    def test_nested_opaque_inputs_keep_value_admission_open_during_lifted_check(self, data_spec):
         def forbidden_draw(key):
-            raise AssertionError("a declaration-only check must not draw")
+            raise AssertionError("a spec-only check must not draw")
 
         given = distribution(
             sample=forbidden_draw,
             event_spec=RecordSpec(theta=RecordSpec(data=NumericArraySpec((3,)), offset=REAL)),
         )
-        kernel = _OpaqueSlots(data_spec)
+        kernel = _OpaqueInputs(data_spec)
         assert mean.check(kernel, given=given).feasible is None
         assert not kernel.calls
 
     @pytest.mark.parametrize("fused", [False, True])
-    def test_typed_opaque_slots_still_validate_concrete_values(self, fused):
-        kernel = _OpaqueSlots(OpaqueSpec(type=str))
+    def test_typed_opaque_inputs_still_validate_concrete_values(self, fused):
+        kernel = _OpaqueInputs(OpaqueSpec(type=str))
         given = {"theta": {"data": np.ones(3), "offset": 2.0}}
         with pytest.raises((ApplicabilityError, ValueError)):
             if fused:
@@ -475,9 +475,9 @@ class TestConditionalOperations:
         kernel = Vector()
         assert sample.check(
             kernel, sample_shape=(2,), given={"mu": jnp.ones(3)}
-        ).result.spec.element_spec.shape == (3,)
+        ).result.term_spec.element_spec.term_spec.shape == (3,)
         assert sample(kernel, sample_shape=(2,), given={"mu": jnp.ones(3)}).shape == (2, 3)
-        assert kernel.event_spec.spec.free_dims == frozenset({"n"})
+        assert kernel.event_spec.term_spec.free_dims == frozenset({"n"})
 
     @pytest.mark.parametrize("given", [{}, {"wrong": 1.0}, {"mu": jnp.ones(2)}])
     def test_invalid_given_fails_before_a_kernel_runs(self, given):
@@ -526,9 +526,9 @@ class TestConditionalOperations:
             sample(Normal("y", 0.0, 1.0), given={"mu": 1.0})
 
 
-class TestPartialSlots:
+class TestPartialInputs:
     @pytest.mark.parametrize("scale", [None, 3.0])
-    def test_fused_partial_binding_keeps_optional_slot_defaults(self, scale):
+    def test_fused_partial_binding_keeps_optional_input_defaults(self, scale):
         kernel = conditional_distribution(
             lambda theta, scale=2.0: Normal("y", theta["a"] + theta["b"], scale),
             given_spec={"theta": RecordSpec(a=REAL, b=REAL)},
@@ -546,7 +546,7 @@ class TestPartialSlots:
             conditioned = sample(law, sample_shape=(4,))
         np.testing.assert_array_equal(fused, conditioned)
 
-    def test_bound_leaves_are_reassembled_with_the_residual_slot(self):
+    def test_bound_leaves_are_reassembled_with_the_residual_input(self):
         kernel = conditional_distribution(
             lambda theta: Normal("y", theta["a"] + theta["b"], 1.0),
             given_spec={"theta": RecordSpec(a=REAL, b=REAL)},
@@ -557,7 +557,7 @@ class TestPartialSlots:
         np.testing.assert_allclose(mean(law), 5.0)
         assert "theta/a" in law.notation
 
-    def test_binding_every_leaf_dissolves_the_slot(self):
+    def test_binding_every_leaf_dissolves_the_input(self):
         kernel = conditional_distribution(
             lambda theta: Normal("y", theta["a"] + theta["b"], 1.0),
             given_spec={"theta": RecordSpec(a=REAL, b=REAL)},
@@ -592,11 +592,11 @@ class TestPartialSlots:
         kernel = Shared()
         given = {"theta/a": jnp.ones(3)}
         report = condition_on.check(kernel, given)
-        declared = report.result.spec
+        declared = report.result.term_spec
         partial = condition_on(kernel, given)
         assert declared.given_spec["theta"]["b"].shape == (3,)
         assert declared.event_spec == partial.event_spec
-        assert partial.event_spec.spec.shape == (3,)
+        assert partial.event_spec.term_spec.shape == (3,)
 
     def test_shared_dimensions_are_checked_across_bound_leaves(self):
         class Shared(_Direct):

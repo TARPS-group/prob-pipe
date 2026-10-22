@@ -55,8 +55,8 @@ class TestStaleDocs:
     def test_a_function_keyword_that_is_no_control_is_listed(self, root):
         _notebook(
             root / "docs" / "guide.ipynb",
-            "add = Function(lambda x, y: x + y, label='add', dispatch='sequential', y=2.0)",
-            "@pp.function(n_broadcast_samples=8, scale=2.0)\ndef scaled(x, scale):\n    return x",
+            "add = Function(lambda x, y: x + y, label='add', executor='sequential', y=2.0)",
+            "@pp.function(max_evaluations=8, scale=2.0)\ndef scaled(x, scale):\n    return x",
         )
         (root / "example_scripts" / "demo.py").write_text(
             "wrapped = function(lambda x: x, label='identity', seed=0)\n"
@@ -75,7 +75,7 @@ class TestStaleDocs:
         _notebook(
             root / "docs" / "guide.ipynb",
             "add = Function(lambda x, y: x + y, label='add', bind={'y': 2.0}, raw=True)",
-            "@function(label='f', output_label='value', dispatch='jax', workflow_kind=None)\n"
+            "@function(label='f', output_label='value', executor='jax', workflow_kind=None)\n"
             "def f(x):\n    return x",
             "g = Function(lambda **kw: 0, label='g', **controls)",
         )

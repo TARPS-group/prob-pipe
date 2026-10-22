@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import EmpiricalDistribution, Function, Normal, OutputSpec, function, workflow_run
+from probpipe.core._specs import _has_record_outputs
 from probpipe.functions import _call
 from probpipe.values import _binding
 
@@ -76,7 +77,7 @@ def _resolve_call(
 
 
 class TestWorkflowCallHelpers:
-    def test_input_refs_use_one_subscript_for_variadic_slots(self):
+    def test_input_refs_use_one_subscript_for_variadic_inputs(self):
         def collect(head, *items, **extras):
             return head, items, extras
 
@@ -187,23 +188,23 @@ class TestWorkflowCallHelpers:
 
     def test_unbindable_workflow_control_name_raises_like_python(self, identity_func):
         with pytest.raises(TypeError, match="unexpected keyword argument"):
-            _resolve_call(identity_func, "value", n_broadcast_samples=6)
+            _resolve_call(identity_func, "value", max_evaluations=6)
 
     def test_control_like_names_bind_when_declared(self):
-        def identity(x, n_broadcast_samples, include_inputs, seed):
+        def identity(x, max_evaluations, include_inputs, seed):
             return x
 
         call = _resolve_call(
             identity,
             "value",
-            n_broadcast_samples=6,
+            max_evaluations=6,
             include_inputs=True,
             seed=123,
         )
 
         assert call == {
             "x": "value",
-            "n_broadcast_samples": 6,
+            "max_evaluations": 6,
             "include_inputs": True,
             "seed": 123,
         }
@@ -236,7 +237,7 @@ class TestArgumentBinding:
         def unannotated(f, x):
             return f(x)
 
-        f = Function(increment, dispatch="sequential") if wrapped else increment
+        f = Function(increment, executor="sequential") if wrapped else increment
         for body in (apply, unannotated):
             bound = Function(body, bind={"f": f, "x": 3.0})
             assert bound.check().feasible is True
@@ -245,37 +246,37 @@ class TestArgumentBinding:
             assert float(bound(f=Function(lambda x: 2.0 * x))) == 6.0
 
     def test_positional_and_mixed_arguments_bind_like_python_calls(self, add_func):
-        wf = Function(add_func, label="add_func", dispatch="sequential")
+        wf = Function(add_func, label="add_func", executor="sequential")
 
         assert float(wf(jnp.asarray(1.0), jnp.asarray(2.0))) == 3.0
         assert float(wf(jnp.asarray(1.0), y=jnp.asarray(2.0))) == 3.0
 
     def test_duplicate_positional_and_keyword_argument_raises(self, add_func):
-        wf = Function(add_func, label="add_func", dispatch="sequential")
+        wf = Function(add_func, label="add_func", executor="sequential")
 
         with pytest.raises(TypeError, match="multiple values"):
             wf(jnp.asarray(1.0), x=jnp.asarray(2.0))
 
     def test_var_keyword_expands_extra_keywords(self, kwargs_recorder):
         identity, seen = kwargs_recorder
-        wf = Function(identity, label="identity", dispatch="sequential")
+        wf = Function(identity, label="identity", executor="sequential")
 
         assert float(wf(x=1.0, scale=2.0)) == 1.0
         assert seen == [{"scale": 2.0}]
 
     def test_literal_kwargs_argument_is_not_unpacked(self, kwargs_recorder):
         identity, seen = kwargs_recorder
-        wf = Function(identity, label="identity", dispatch="sequential")
+        wf = Function(identity, label="identity", executor="sequential")
 
         assert float(wf(x=1.0, kwargs={"scale": 2.0})) == 1.0
         assert seen == [{"kwargs": {"scale": 2.0}}]
 
     def test_bind_values_and_function_defaults_are_resolved_before_call(self, affine_func):
-        default_wf = Function(affine_func, label="affine_func", dispatch="sequential")
+        default_wf = Function(affine_func, label="affine_func", executor="sequential")
         bound_wf = Function(
             affine_func,
             label="affine_func",
-            dispatch="sequential",
+            executor="sequential",
             bind={"offset": 3.0, "scale": 2.0},
         )
 
@@ -284,7 +285,7 @@ class TestArgumentBinding:
         assert float(bound_wf(x=1.0, offset=4.0)) == 10.0
 
     def test_missing_required_input_raises_after_all_resolution_sources_fail(self, add_func):
-        wf = Function(add_func, label="add_func", dispatch="sequential")
+        wf = Function(add_func, label="add_func", executor="sequential")
 
         with pytest.raises(TypeError, match=r"add_func\(\) missing required argument 'y'"):
             wf(x=1.0)
@@ -299,20 +300,20 @@ class TestCallOptions:
         wf = Function(
             identity_func,
             label="identity_func",
-            n_broadcast_samples=20,
-            dispatch="sequential",
+            max_evaluations=20,
+            executor="sequential",
             output_spec=OutputSpec(identity_func=None),
         )
 
         with workflow_run(seed=42):
             result = wf.using(
-                n_broadcast_samples=6,
+                max_evaluations=6,
                 include_inputs=True,
             )(normal_dist)
 
         assert isinstance(result, EmpiricalDistribution)
         assert result.num_atoms == 6
-        assert result.event_spec.exposes_record
+        assert _has_record_outputs(result.event_spec)
 
     def test_workflow_run_reproduces_sampling_state_for_a_call(
         self,
@@ -322,8 +323,8 @@ class TestCallOptions:
         wf = Function(
             identity_func,
             label="identity_func",
-            n_broadcast_samples=8,
-            dispatch="sequential",
+            max_evaluations=8,
+            executor="sequential",
             output_spec=OutputSpec(identity_func=None),
         )
 

@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    EvaluationError,
     Function,
     Normal,
     NumericArraySpec,
@@ -31,10 +32,10 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core._expression import Conditioned
-from probpipe.functions import _replay
-from probpipe.functions._managed import (
-    ManagedAttemptState,
-    ManagedWorkItemToken,
+from probpipe.functions import _execution, _replay
+from probpipe.functions._evaluation_keys import (
+    EvaluationPointAttempt,
+    EvaluationPointToken,
 )
 from tests.functions import _replay_fixtures
 from tests.functions._replay_fixtures import (
@@ -53,8 +54,8 @@ def _lifted_draw(seed: int = 7):
     workflow = Function(
         replayable_identity,
         label="replayable_identity",
-        dispatch="sequential",
-        n_broadcast_samples=5,
+        executor="sequential",
+        max_evaluations=5,
         output_spec=OutputSpec(replayable_identity=None),
     )
     with workflow_run(seed=seed):
@@ -155,7 +156,7 @@ class TestReplayScope:
 
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
 
-    def test_nested_managed_result_has_a_standalone_replay_recipe(self):
+    def test_nested_evaluation_point_result_has_a_standalone_replay_recipe(self):
         captured = []
 
         def outer(value):
@@ -163,7 +164,7 @@ class TestReplayScope:
             captured.append(result)
             return result
 
-        workflow = Function(outer, label="outer", dispatch="sequential")
+        workflow = Function(outer, label="outer", executor="sequential")
         with workflow_run(seed=17):
             workflow(value=0.0)
         nested = captured[0]
@@ -226,7 +227,7 @@ class TestReplayScope:
 
     def test_caught_failed_root_is_rejected_when_scope_exits(self):
         original = _draw()
-        changed = Function(replayable_affine, label="replayable_affine", n_broadcast_samples=5)
+        changed = Function(replayable_affine, label="replayable_affine", max_evaluations=5)
 
         with (
             pytest.raises(ReplayCompatibilityError, match="did not complete"),
@@ -292,6 +293,47 @@ class TestReplayAdmission:
             replay_run(Provenance.from_dict(payload)),
         ):
             raise AssertionError("An unknown callable ABI was admitted")
+
+    def test_a_version_one_plan_that_records_n_broadcast_samples_is_refused_by_its_schema(self):
+        """The plan of version 2 records the lift's count as ``max_evaluations``."""
+        payload = _lifted_draw().provenance.to_dict()
+        plan = payload["controls"]["replay"]["plan"]
+        assert plan["schema"] == "probpipe.stochastic_plan/v2"
+        plan["schema"] = "probpipe.stochastic_plan/v1"
+        fields = plan["canonical_fields"]
+        fields["n_broadcast_samples"] = fields.pop("max_evaluations")
+        with (
+            patch(
+                "probpipe.functions._context.derive_event_key_words_from_encoded",
+                side_effect=AssertionError("derived key"),
+            ),
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=(
+                    r"cannot replay: this provenance has replay\.plan\.schema "
+                    r"'probpipe\.stochastic_plan/v1', but this ProbPipe version needs "
+                    r"'probpipe\.stochastic_plan/v2'\. Record the call again"
+                ),
+            ),
+            replay_run(Provenance.from_dict(payload)),
+        ):
+            raise AssertionError("a version-1 plan was admitted")
+
+    def test_a_version_two_plan_that_records_n_broadcast_samples_is_malformed(self):
+        payload = _lifted_draw().provenance.to_dict()
+        fields = payload["controls"]["replay"]["plan"]["canonical_fields"]
+        fields["n_broadcast_samples"] = fields.pop("max_evaluations")
+        with (
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=(
+                    r"canonical_fields lacks fields \['max_evaluations'\] and has unexpected "
+                    r"fields \['n_broadcast_samples'\]"
+                ),
+            ),
+            replay_run(Provenance.from_dict(payload)),
+        ):
+            raise AssertionError("a malformed plan was admitted")
 
     def test_an_anchor_that_names_its_declarations_signature_and_templates_is_refused(self):
         payload = _draw().provenance.to_dict()
@@ -655,10 +697,10 @@ class TestReplayAdmission:
                 id="plan-schema",
             ),
             pytest.param(
-                ("replay", "plan", "canonical_fields", "managed_child_policy"),
-                "unknown-managed-child/v99",
-                "managed_child_policy",
-                id="managed-child-policy",
+                ("replay", "plan", "canonical_fields", "evaluation_point_child_policy"),
+                "unknown-evaluation-point-child/v99",
+                "evaluation_point_child_policy",
+                id="evaluation-point-child-policy",
             ),
             pytest.param(
                 ("replay", "plan", "canonical_fields", "key_ownership"),
@@ -878,24 +920,24 @@ class TestReplayAdmission:
             [["invocation", 0], ["invocation", 1]],
             [
                 ["invocation", 0],
-                ["managed-unit", "unknown-managed/v99", "point", 0],
+                ["evaluation-point", "unknown-evaluation-point/v99", "point", 0],
                 ["child", 0],
             ],
             [
                 ["invocation", 0],
-                ["managed-unit", "probpipe.managed_work_item/v1", "point", 1],
+                ["evaluation-point", "probpipe.evaluation_point/v1", "point", 1],
                 ["child", 0],
             ],
             [
                 ["invocation", 0],
-                ["managed-unit", "probpipe.managed_work_item/v1", "sweep-cell"],
+                ["evaluation-point", "probpipe.evaluation_point/v1", "sweep-cell"],
                 ["child", 0],
             ],
             [
                 ["invocation", 0],
                 [
-                    "managed-unit",
-                    "probpipe.managed_work_item/v1",
+                    "evaluation-point",
+                    "probpipe.evaluation_point/v1",
                     "lifted-evaluation",
                     ["unknown-unit"],
                     0,
@@ -904,7 +946,7 @@ class TestReplayAdmission:
             ],
             [
                 ["invocation", 0],
-                ["managed-unit", "probpipe.managed_work_item/v1", "unknown-layout", 0],
+                ["evaluation-point", "probpipe.evaluation_point/v1", "unknown-layout", 0],
                 ["child", 0],
             ],
         ],
@@ -927,7 +969,7 @@ class TestReplayAdmission:
         unsupported = Function(
             lambda value: value,
             label="function",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(function=None),
         )
         with workflow_run(seed=3):
@@ -942,7 +984,7 @@ class TestReplayAdmission:
         inner = Function(
             lambda value: sample(Normal("inner", loc=value, scale=1.0)),
             label="function",
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(function=None),
         )
 
@@ -952,7 +994,7 @@ class TestReplayAdmission:
         outer = Function(
             nested,
             label="nested",
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(nested=None),
         )
         with workflow_run(seed=8):
@@ -969,7 +1011,7 @@ class TestReplayPreflight:
     @pytest.mark.parametrize(
         ("path", "replacement"),
         [
-            (("n_broadcast_samples",), 5.0),
+            (("max_evaluations",), 5.0),
             (("logical_units", 0, "flat_index"), False),
         ],
         ids=["float", "bool"],
@@ -978,7 +1020,7 @@ class TestReplayPreflight:
         workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
@@ -1006,7 +1048,7 @@ class TestReplayPreflight:
         workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
@@ -1014,7 +1056,7 @@ class TestReplayPreflight:
         changed = Function(
             replayable_affine,
             label="replayable_affine",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_affine=None),
         )
 
@@ -1031,7 +1073,7 @@ class TestReplayPreflight:
         workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
@@ -1039,7 +1081,7 @@ class TestReplayPreflight:
         changed = Function(
             lambda value: value,
             label="function",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(function=None),
         )
         candidate = Normal("value", loc=0.0, scale=1.0)
@@ -1055,7 +1097,7 @@ class TestReplayPreflight:
         workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
@@ -1074,7 +1116,7 @@ class TestReplayPreflight:
         changed = Function(
             changed_identity,
             label="changed_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(changed_identity=None),
         )
         candidate = Normal("value", loc=0.0, scale=1.0)
@@ -1098,7 +1140,7 @@ class TestReplayPreflight:
                 {"output_label": "b", "output_spec": OutputSpec(result=NumericArraySpec(()))},
             ),
         ],
-        ids=["output-label", "declared-component", "default-component"],
+        ids=["output-label", "declared-output", "default-output"],
     )
     def test_a_renamed_output_replays_to_the_same_draws(self, before, after):
         """A rename changes no value, so the replay reproduces the draws under the new names."""
@@ -1108,7 +1150,7 @@ class TestReplayPreflight:
             return Function(
                 replayable_identity,
                 label="replayable_identity",
-                n_broadcast_samples=5,
+                max_evaluations=5,
                 **options,
             )
 
@@ -1119,8 +1161,8 @@ class TestReplayPreflight:
             replayed = lifted(**after)(value=law)
 
         np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
-        assert list(replayed.event_spec.components) == list(
-            after.get("output_spec", OutputSpec(result=None)).components
+        assert list(replayed.event_spec.outputs) == list(
+            after.get("output_spec", OutputSpec(result=None)).outputs
         )
 
     def test_an_input_that_differs_only_in_its_expression_replays_to_the_same_draws(self):
@@ -1130,7 +1172,7 @@ class TestReplayPreflight:
             return Function(
                 replayable_identity,
                 label="replayable_identity",
-                n_broadcast_samples=5,
+                max_evaluations=5,
                 output_spec=OutputSpec(replayable_identity=None),
             )
 
@@ -1144,7 +1186,7 @@ class TestReplayPreflight:
         np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
         assert replayed.notation == "replayable_identity(value ~ value; y)"
 
-    @pytest.mark.parametrize("change", ["shape", "kind", "packaging", "declaration"])
+    @pytest.mark.parametrize("change", ["shape", "kind", "form", "output_spec"])
     def test_output_contract_drift_fails_before_sampling(self, change):
         record = RecordSpec(left=(), right=())
         declaration = OutputSpec(bundle=record)
@@ -1152,25 +1194,25 @@ class TestReplayPreflight:
             replayable_identity,
             output_label="result",
             output_spec=declaration,
-            dispatch="sequential",
-            n_broadcast_samples=8,
+            executor="sequential",
+            max_evaluations=8,
             label="identity",
         )
-        law = Normal("left", 0.0, 1.0) * Normal("right", 0.0, 1.0)
+        law = Normal("left", 0.0, 1.0) & Normal("right", 0.0, 1.0)
         with workflow_run(seed=4):
             original = baseline(value=law)
         declarations = {
             "shape": OutputSpec(bundle=RecordSpec(left=(2,), right=())),
             "kind": OutputSpec(bundle=OpaqueSpec()),
-            "packaging": OutputSpec(record),
-            "declaration": None,
+            "form": OutputSpec(record),
+            "output_spec": None,
         }
         changed = Function(
             replayable_identity,
             output_label="result",
             output_spec=declarations[change],
-            dispatch="sequential",
-            n_broadcast_samples=8,
+            executor="sequential",
+            max_evaluations=8,
             label="identity",
         )
         with (
@@ -1186,7 +1228,7 @@ class TestReplayPreflight:
         workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
@@ -1194,27 +1236,27 @@ class TestReplayPreflight:
         changed = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=6,
+            max_evaluations=6,
             output_spec=OutputSpec(replayable_identity=None),
         )
         candidate = Normal("value", loc=0.0, scale=1.0)
 
         with (
             patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
-            pytest.raises(ReplayCompatibilityError, match="n_broadcast_samples is 6, recorded 5"),
+            pytest.raises(ReplayCompatibilityError, match="max_evaluations is 6, recorded 5"),
             replay_run(original.provenance),
         ):
             changed(value=candidate)
 
     def test_direct_record_projection_drift_fails_before_key_derivation(self):
-        original_root = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=2.0, scale=1.0)
+        original_root = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=2.0, scale=1.0)
         with workflow_run(seed=4):
             original = sample(original_root["x"])
         assert original.provenance.controls["replay"]["plan"]["expected_effects"][0][
             "record_path"
         ] == ["x"]
 
-        candidate_root = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=2.0, scale=1.0)
+        candidate_root = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=2.0, scale=1.0)
         with (
             patch.object(type(candidate_root), "_sample", side_effect=AssertionError("sampled")),
             patch(
@@ -1233,16 +1275,18 @@ class TestReplayPreflight:
         original_workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=9,
-            dispatch="sequential",
+            max_evaluations=9,
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(replayable_identity=None),
         )
         replay_workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=9,
-            dispatch="thread",
-            max_workers=3,
+            max_evaluations=9,
+            traceable=False,
+            executor="thread",
+            executor_options={"max_workers": 3},
             output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=31):
@@ -1301,7 +1345,7 @@ class TestReplayPreflight:
         workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=8):
@@ -1357,19 +1401,43 @@ class TestReplayPreflight:
         ):
             pass
 
+    def test_a_call_deriving_keys_under_another_version_is_refused_naming_both(self):
+        original = _lifted_draw()
+        replay_workflow = Function(
+            replayable_identity,
+            label="replayable_identity",
+            executor="sequential",
+            max_evaluations=5,
+            output_spec=OutputSpec(replayable_identity=None),
+        )
+        with (
+            patch.object(_execution, "_RNG_ABI", "ProbPipe-RNG-v2"),
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=(
+                    r"^cannot replay: the recorded call derived its random keys under the random "
+                    r"number generator version 'ProbPipe-RNG-v1', and this call derives them "
+                    r"under 'ProbPipe-RNG-v2'\. Record the call again\.$"
+                ),
+            ),
+            replay_run(original.provenance),
+        ):
+            replay_workflow(value=Normal("value", loc=0.0, scale=1.0))
+
     def test_jax_to_rowwise_route_drift_preserves_values(self):
         original_workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=7,
-            dispatch="jax",
+            max_evaluations=7,
+            executor="jax",
             output_spec=OutputSpec(replayable_identity=None),
         )
         replay_workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=7,
-            dispatch="sequential",
+            max_evaluations=7,
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=41):
@@ -1431,11 +1499,11 @@ class TestReplayEventRegistry:
 
     def test_same_token_retry_is_idempotent_but_other_claims_fail(self):
         state = _replay._validate_provenance(_draw().provenance)
-        effect = state.expected_events[0].managed_effect()
-        token = ManagedWorkItemToken.create()
-        first = ManagedAttemptState.create(token)
-        retry = ManagedAttemptState.create(token)
-        unclaimed = ManagedAttemptState.create(token)
+        effect = state.expected_events[0].effect_claim()
+        token = EvaluationPointToken.create()
+        first = EvaluationPointAttempt.create(token)
+        retry = EvaluationPointAttempt.create(token)
+        unclaimed = EvaluationPointAttempt.create(token)
 
         state.claim_effect(effect, attempt=first)
         state.claim_effect(effect, attempt=retry)
@@ -1455,10 +1523,10 @@ class TestReplayEventRegistry:
 
         with pytest.raises(ReplayCompatibilityError, match="duplicated"):
             state.claim_effect(effect, attempt=retry)
-        with pytest.raises(ReplayCompatibilityError, match="different managed"):
+        with pytest.raises(ReplayCompatibilityError, match="different evaluation point"):
             state.claim_effect(
                 effect,
-                attempt=ManagedAttemptState.create(ManagedWorkItemToken.create()),
+                attempt=EvaluationPointAttempt.create(EvaluationPointToken.create()),
             )
 
         direct_state = _replay._validate_provenance(_draw().provenance)
@@ -1474,10 +1542,10 @@ class TestReplayEventRegistry:
 
     def test_replay_claim_batch_is_atomic(self):
         state = _replay._validate_provenance(_draw().provenance)
-        effect = state.expected_events[0].managed_effect()
+        effect = state.expected_events[0].effect_claim()
         unexpected = copy.deepcopy(effect)
         object.__setattr__(unexpected, "stochastic_source_id", ("source-group", 99))
-        attempt = ManagedAttemptState.create(ManagedWorkItemToken.create())
+        attempt = EvaluationPointAttempt.create(EvaluationPointToken.create())
 
         with pytest.raises(ReplayCompatibilityError, match="that the recorded call did not make"):
             state._commit_effect_batch(
@@ -1487,14 +1555,14 @@ class TestReplayEventRegistry:
             )
 
         claim = state.claims[state.expected_events[0].encoded_identity]
-        assert claim.work_item_token is None
+        assert claim.evaluation_point_token is None
         assert claim.attempt_tokens == set()
         assert claim.successful_attempt_token is None
 
     def test_remote_replay_scope_requires_its_complete_namespace(self):
         state = _replay._validate_provenance(_draw().provenance)
-        effect = state.expected_events[0].managed_effect()
-        attempt = ManagedAttemptState.create(ManagedWorkItemToken.create())
+        effect = state.expected_events[0].effect_claim()
+        attempt = EvaluationPointAttempt.create(EvaluationPointToken.create())
 
         with (
             pytest.raises(
@@ -1512,8 +1580,8 @@ class TestReplayEventRegistry:
 
     def test_remote_replay_scope_does_not_mask_worker_errors(self):
         state = _replay._validate_provenance(_draw().provenance)
-        effect = state.expected_events[0].managed_effect()
-        attempt = ManagedAttemptState.create(ManagedWorkItemToken.create())
+        effect = state.expected_events[0].effect_claim()
+        attempt = EvaluationPointAttempt.create(EvaluationPointToken.create())
 
         with (
             pytest.raises(ValueError, match="worker failed"),
@@ -1523,7 +1591,7 @@ class TestReplayEventRegistry:
 
     def test_plan_validation_uses_the_admission_index(self):
         state = _replay._validate_provenance(_draw().provenance)
-        effect = state.expected_events[0].managed_effect()
+        effect = state.expected_events[0].effect_claim()
 
         class IterationTrap(tuple):
             def __iter__(self):
@@ -1533,25 +1601,25 @@ class TestReplayEventRegistry:
         for _ in range(5):
             state.validate_effect_plan(_plan_for_effect(effect))
 
-    def test_managed_namespace_index_handles_nested_prefixes(self):
+    def test_evaluation_point_namespace_index_handles_nested_prefixes(self):
         state = _replay._validate_provenance(_draw().provenance)
         original = state.expected_events[0]
         outer_path = original.occurrence_path
-        outer_unit = (
-            "managed-unit",
-            "probpipe.managed_work_item/v1",
+        outer_point_segment = (
+            "evaluation-point",
+            "probpipe.evaluation_point/v1",
             "point",
             0,
         )
-        nested_parent = (*outer_path, outer_unit, ("child", 0))
-        nested_unit = (
-            "managed-unit",
-            "probpipe.managed_work_item/v1",
+        nested_parent = (*outer_path, outer_point_segment, ("child", 0))
+        nested_point_segment = (
+            "evaluation-point",
+            "probpipe.evaluation_point/v1",
             "sweep-cell",
             2,
         )
-        occurrence_path = (*nested_parent, nested_unit, ("child", 0))
-        effect = replace(original.managed_effect(), occurrence_path=occurrence_path)
+        occurrence_path = (*nested_parent, nested_point_segment, ("child", 0))
+        effect = replace(original.effect_claim(), occurrence_path=occurrence_path)
         expected = replace(
             original,
             occurrence_path=occurrence_path,
@@ -1561,16 +1629,20 @@ class TestReplayEventRegistry:
 
         class IterationTrap(tuple):
             def __iter__(self):
-                raise AssertionError("managed lookup rescanned expected events")
+                raise AssertionError("evaluation point lookup rescanned expected events")
 
         indexed.expected_events = IterationTrap(indexed.expected_events)
-        assert indexed.expected_effects_for_unit(outer_path, outer_unit) == (effect,)
-        assert indexed.expected_effects_for_unit(nested_parent, nested_unit) == (effect,)
+        assert indexed.expected_effects_for_evaluation_point(outer_path, outer_point_segment) == (
+            effect,
+        )
+        assert indexed.expected_effects_for_evaluation_point(
+            nested_parent, nested_point_segment
+        ) == (effect,)
 
     def test_remote_plan_validation_uses_its_namespace_index(self):
         state = _replay._validate_provenance(_draw().provenance)
-        effect = state.expected_events[0].managed_effect()
-        attempt = ManagedAttemptState.create(ManagedWorkItemToken.create())
+        effect = state.expected_events[0].effect_claim()
+        attempt = EvaluationPointAttempt.create(EvaluationPointToken.create())
         encoded = _replay._encoded_effect_identity(effect)
         registry = _replay._RemoteReplayClaims(
             expected_by_identity={encoded: effect},
@@ -1592,9 +1664,10 @@ class TestReplayEventRegistry:
         workflow = Function(
             replayable_optional_nested,
             label="replayable_optional_nested",
-            n_broadcast_samples=5,
-            dispatch="thread",
-            max_workers=2,
+            traceable=False,
+            max_evaluations=5,
+            executor="thread",
+            executor_options={"max_workers": 2},
             output_spec=OutputSpec(replayable_optional_nested=None),
         )
         with workflow_run(seed=71):
@@ -1606,10 +1679,11 @@ class TestReplayEventRegistry:
         )
 
         with (
-            pytest.raises(ReplayCompatibilityError, match="matches no draw of the recorded call"),
+            pytest.raises(EvaluationError, match="matches no draw of the recorded call") as raised,
             replay_run(original.provenance),
         ):
             workflow(value=Normal("value", loc=0.0, scale=1.0))
+        assert isinstance(raised.value.__cause__, ReplayCompatibilityError)
 
 
 def test_replay_provenance_inputs_are_not_mutated():

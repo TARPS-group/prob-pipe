@@ -3,7 +3,7 @@
 ``distribution`` builds a ``Distribution`` that claims the capability of each
 function it is given. Construction draws nothing and scores no value: it
 evaluates each function that traces in JAX abstractly against the event
-declaration, and it accepts a function that does not trace and an event of any
+spec, and it accepts a function that does not trace and an event of any
 kind.
 """
 
@@ -63,7 +63,7 @@ def _numpy_draw(key: Any) -> np.ndarray:
 
 
 def _law(**functions: Any) -> Distribution:
-    return distribution(event_spec=VECTOR, **functions, component="x")
+    return distribution(event_spec=VECTOR, **functions, output_name="x")
 
 
 class TestTheClaims:
@@ -220,11 +220,11 @@ class TestDensities:
 class TestTheArguments:
     def test_a_law_needs_a_function(self):
         with pytest.raises(TypeError, match="sample, log_prob, or unnormalized_log_prob"):
-            distribution(event_spec=VECTOR, component="x")
+            distribution(event_spec=VECTOR, output_name="x")
 
     def test_a_function_that_is_not_callable_raises_naming_it(self):
         with pytest.raises(TypeError, match="log_prob of 'x' must be callable"):
-            distribution(log_prob=1.0, event_spec=VECTOR, component="mu", label="x")
+            distribution(log_prob=1.0, event_spec=VECTOR, output_name="mu", label="x")
 
     def test_both_densities_raise(self):
         with pytest.raises(TypeError, match="not both"):
@@ -232,28 +232,28 @@ class TestTheArguments:
                 log_prob=_normal_density,
                 unnormalized_log_prob=_normal_density,
                 event_spec=VECTOR,
-                component="x",
+                output_name="x",
             )
 
     def test_an_event_spec_that_is_no_spec_raises(self):
         with pytest.raises(TypeError, match="event_spec"):
-            distribution(sample=_normal_draw, event_spec=(3,), component="x")
+            distribution(sample=_normal_draw, event_spec=(3,), output_name="x")
 
     def test_a_label_that_is_no_string_raises(self):
         with pytest.raises(TypeError, match="label"):
-            distribution(sample=_normal_draw, event_spec=VECTOR, component="x", label=3)
+            distribution(sample=_normal_draw, event_spec=VECTOR, output_name="x", label=3)
 
     def test_a_symbolic_dimension_is_accepted(self):
         law = distribution(
-            log_prob=_normal_density, event_spec=NumericArraySpec(("n",)), component="x"
+            log_prob=_normal_density, event_spec=NumericArraySpec(("n",)), output_name="x"
         )
-        assert law.event_spec.spec.free_dims == frozenset({"n"})
+        assert law.event_spec.term_spec.free_dims == frozenset({"n"})
 
 
 class TestTheDeclarationCheck:
     def test_the_draw_completes_the_declaration(self):
-        law = distribution(sample=_normal_draw, event_spec=NumericArraySpec((3,)), component="x")
-        assert law.event_spec.spec == VECTOR
+        law = distribution(sample=_normal_draw, event_spec=NumericArraySpec((3,)), output_name="x")
+        assert law.event_spec.term_spec == VECTOR
 
     def test_the_draw_fills_a_pending_type(self):
         law = distribution(sample=_normal_draw, event_spec=OutputSpec(y=None), label="x")
@@ -264,7 +264,7 @@ class TestTheDeclarationCheck:
             ValueError, match=r"sample of 'x' returns draws that do not match event_spec.*\(3,\)"
         ):
             distribution(
-                sample=_normal_draw, event_spec=NumericArraySpec((4,)), component="x", label="x"
+                sample=_normal_draw, event_spec=NumericArraySpec((4,)), output_name="x", label="x"
             )
 
     def test_a_draw_of_another_dtype_raises(self):
@@ -274,7 +274,7 @@ class TestTheDeclarationCheck:
             distribution(
                 sample=lambda key: jax.random.normal(key, (4,)),
                 event_spec=COUNTS,
-                component="y",
+                output_name="y",
                 label="y",
             )
 
@@ -287,7 +287,7 @@ class TestTheDeclarationCheck:
             law = distribution(
                 sample=lambda key: scale * jax.random.normal(key, (3,)),
                 event_spec=NumericArraySpec((4,)),
-                component="x",
+                output_name="x",
                 label="x",
             )
             return law._sample(jax.random.key(1))
@@ -296,12 +296,12 @@ class TestTheDeclarationCheck:
             jax.jit(build)(1.0)
 
     def test_a_sampler_that_does_not_trace_keeps_the_declaration_as_given(self):
-        law = distribution(sample=_numpy_draw, event_spec=NumericArraySpec((3,)), component="x")
-        assert law.event_spec.spec == NumericArraySpec((3,))
+        law = distribution(sample=_numpy_draw, event_spec=NumericArraySpec((3,)), output_name="x")
+        assert law.event_spec.term_spec == NumericArraySpec((3,))
 
     def test_a_density_that_returns_no_scalar_raises(self):
         with pytest.raises(ValueError, match="real scalar"):
-            distribution(log_prob=lambda value: -0.5 * value**2, event_spec=VECTOR, component="x")
+            distribution(log_prob=lambda value: -0.5 * value**2, event_spec=VECTOR, output_name="x")
 
     def test_a_pending_type_with_no_sampler_raises(self):
         with pytest.raises(TypeError, match="does not declare a type"):
@@ -340,7 +340,7 @@ class TestConstructionEvaluatesNothing:
         law = distribution(
             sample=lambda key: jax.random.poisson(key, 3.0, (4,)) - 5,
             event_spec=COUNTS,
-            component="y",
+            output_name="y",
         )
         assert isinstance(law, SupportsSampling)
 
@@ -374,7 +374,7 @@ def _word(key: Any) -> str:
 
 class TestEventsThatAreNotNumeric:
     def test_an_opaque_event_samples_one_key_at_a_time(self):
-        law = distribution(sample=_word, event_spec=OpaqueSpec(str), component="w")
+        law = distribution(sample=_word, event_spec=OpaqueSpec(str), output_name="w")
         assert not isinstance(law, NumericDistribution)
         key = jax.random.key(2)
         draws = law._sample(key, (2, 3))
@@ -383,8 +383,8 @@ class TestEventsThatAreNotNumeric:
         assert list(draws.reshape(-1)) == expected
 
     def test_an_opaque_event_samples_through_the_operation(self):
-        law = distribution(sample=_word, event_spec=OpaqueSpec(str), component="w")
-        assert sample(law).value in {"low", "mid", "high"}
+        law = distribution(sample=_word, event_spec=OpaqueSpec(str), output_name="w")
+        assert sample(law).raw in {"low", "mid", "high"}
         batch = sample(law, sample_shape=(5,))
         assert isinstance(batch, OpaqueBatch)
         assert batch.batch_shape == (5,)
@@ -404,7 +404,7 @@ class TestEventsThatAreNotNumeric:
         law = distribution(
             unnormalized_log_prob=lambda word: 0.0 if word == "mid" else -1.0,
             event_spec=OpaqueSpec(str),
-            component="w",
+            output_name="w",
         )
         assert float(law._unnormalized_log_prob("mid")) == 0.0
 
@@ -412,7 +412,7 @@ class TestEventsThatAreNotNumeric:
 def _counts(rate: Any) -> Distribution:
     """A simulator's law at a rate: four Poisson counts, drawn by JAX."""
     return distribution(
-        sample=lambda key: jax.random.poisson(key, rate, (4,)), event_spec=COUNTS, component="y"
+        sample=lambda key: jax.random.poisson(key, rate, (4,)), event_spec=COUNTS, output_name="y"
     )
 
 
@@ -435,7 +435,7 @@ class TestKernels:
 
     def test_a_joint_of_the_simulator_and_a_prior_samples(self):
         kernel = conditional_distribution(_counts, given_spec={"rate": POSITIVE}, label="y")
-        joint = kernel * probpipe.Gamma("rate", 4.0, 2.0)
+        joint = kernel & probpipe.Gamma("rate", 4.0, 2.0)
         draws = sample(joint, sample_shape=(6,))
         assert np.shape(np.asarray(draws["y"])) == (6, 4)
 
@@ -448,7 +448,7 @@ class TestKernels:
                 rng = np.random.default_rng(_numpy_seed(key))
                 return rng.poisson(float(rate), size=4).astype(np.int32)
 
-            return distribution(sample=draw, event_spec=COUNTS, component="y")
+            return distribution(sample=draw, event_spec=COUNTS, output_name="y")
 
         kernel = conditional_distribution(counts, given_spec={"rate": POSITIVE}, label="y")
         laws = [condition_on(kernel, {"rate": rate}) for rate in (1.0, 2.0, 3.0)]
@@ -475,6 +475,6 @@ class TestNormalization:
             sample=lambda key: jax.random.normal(key, ()),
             unnormalized_log_prob=lambda x: -0.5 * x**2,
             event_spec=REAL,
-            component="x",
+            output_name="x",
         )
         assert sample.check(law).route == "exact"

@@ -756,12 +756,9 @@ class TestFastEagerEquivalence:
 
     def test_fast_path_recovers_aniso(self, aniso_gaussian):
         # Confirm we are exercising the fast path: the traceable target.
-        from probpipe.inference._inference_utils import is_jax_traceable
+        from probpipe.inference._inference_utils import traces_in_jax
 
-        assert is_jax_traceable(
-            aniso_gaussian._unnormalized_log_prob,
-            jnp.zeros(2),
-        )
+        assert traces_in_jax(aniso_gaussian)
         with workflow_run(seed=7):
             result = rwmh(
                 dist=aniso_gaussian,
@@ -780,10 +777,10 @@ class TestFastEagerEquivalence:
 
     def test_eager_path_recovers_aniso(self):
         # Confirm we are exercising the eager path: the non-traceable target.
-        from probpipe.inference._inference_utils import is_jax_traceable
+        from probpipe.inference._inference_utils import traces_in_jax
 
         dist = _NumpyAnisoLogProbDist(label="np_aniso")
-        assert not is_jax_traceable(dist._unnormalized_log_prob, jnp.zeros(2))
+        assert not traces_in_jax(dist)
         # Lighter counts than the fast path: the Python loop is ~100x
         # slower per step. Observed across workflow seeds 0-15 and 1007: the
         # largest |mean| 0.03-0.43, whose MCSE is about 0.2 for the second

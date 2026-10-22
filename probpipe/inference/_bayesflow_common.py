@@ -27,19 +27,21 @@ import jax.numpy as jnp
 import numpy as np
 
 from .._messages import unknown_names
-from ..core._specs import _components_record
+from ..core._specs import _output_record
+from ..core.named_tree import _PATH_SEP
 from ..core.record import Record
 from ..custom_types import Array, PRNGKey
 from ..distributions._capabilities import SupportsConditionalSampling
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution, NumericDistribution
+from ..distributions._factored import _extract
 from ._inference_utils import refuse_seed_keywords
 
 if TYPE_CHECKING:
     from ..values import Function
 
-# Offline-simulation execution backend; values mirror ``Function``'s
-# dispatch names ("jax" = vmap the simulator, "sequential" = eager per-draw loop).
+# Offline-simulation execution backend; values match the names of ProbPipe's
+# executors ("jax" = vmap the simulator, "sequential" = eager per-draw loop).
 SimBackend = Literal["jax", "sequential"]
 
 # Internal adapter key for the simulated observation. User field names never
@@ -82,24 +84,24 @@ def _import_bayesflow() -> ModuleType:
     return bf
 
 
-def _observation_slot(prior: Any) -> str:
+def _observation_input(prior: Any) -> str:
     """The name of a learned kernel's observation field: ``observation``, unless the prior declares it.
 
-    A kernel's given slots and event components are disjoint, and the prior's
-    components name the parameters, so the observation takes the first of
+    A kernel's inputs and event outputs are disjoint, and the prior's
+    outputs name the parameters, so the observation takes the first of
     ``observation``, ``observation_``, and so on that the prior leaves free.
     """
-    slot = _OBSERVATION_KEY
-    while slot in prior.event_spec.components:
-        slot += "_"
-    return slot
+    input_name = _OBSERVATION_KEY
+    while input_name in prior.event_spec.outputs:
+        input_name += "_"
+    return input_name
 
 
 def _adapter_field_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
     """Positional internal keys (``theta_0``, ``theta_1``, ...) for the adapter.
 
     Both the training dict and the sample-side extraction derive these from the
-    leaf order of the record the prior's components form (``leaf_shapes`` keys; ==
+    leaf order of the record the prior's outputs form (``leaf_shapes`` keys; ==
     ``fields`` for a flat prior), so the mapping is deterministic across train
     and inference without storing it, and slash-delimited nested leaf paths
     never reach BayesFlow's key namespace.
@@ -117,7 +119,7 @@ def _validate_learn_inputs(
     fit_kwargs: Mapping[str, Any],
 ) -> Any:
     """Shared train-time validation for the amortized learners; returns the
-    record the prior's components form. Raises before any simulation runs.
+    record the prior's outputs form. Raises before any simulation runs.
 
     Parameters
     ----------
@@ -140,7 +142,7 @@ def _validate_learn_inputs(
     Returns
     -------
     Any
-        The record that the components of the prior's event form.
+        The record that the outputs of the prior's event form.
 
     Raises
     ------
@@ -172,7 +174,7 @@ def _validate_learn_inputs(
             f"{caller} requires a numeric prior over named parameters, such as a product of "
             f"named distributions; got {type(prior).__name__}, whose draws are not numeric"
         )
-    return _components_record(prior.event_spec)
+    return _output_record(prior.event_spec)
 
 
 @contextmanager
@@ -216,15 +218,15 @@ def _without_progress_bar() -> Iterator[None]:
 def _simulator_given(simulator: ConditionalDistribution, params: Any) -> Any:
     """The simulator's given values at *params*, the record of one prior draw.
 
-    A simulator whose given slots are the prior's components receives the record
+    A simulator whose inputs are the prior's outputs receives the record
     itself, so it may read a nested field by its leaf path; any other receives
-    the record of its slots.
+    the record of its inputs.
     """
-    slots = tuple(simulator.given_spec)
-    if set(slots) == set(params.fields):
+    input_names = tuple(simulator.given_spec)
+    if set(input_names) == set(params.fields):
         return params
     return Record(
-        {slot: params[slot] for slot in slots},
+        {input_name: params[input_name] for input_name in input_names},
         label="given",
     )
 
@@ -236,12 +238,9 @@ def _leaf_draws(draws: Any, leaf: str) -> Any:
     an array-drawing law's are the stacked array of its one leaf.
     """
     if isinstance(draws, Record):
-        return draws.raw(leaf)
+        return draws._raw_at(leaf)
     if isinstance(draws, Mapping):
-        node = draws
-        for part in leaf.split("/"):
-            node = node[part]
-        return node
+        return _extract(draws, tuple(leaf.split(_PATH_SEP)))
     return draws
 
 
@@ -267,7 +266,7 @@ def _simulate_offline(
     density), the raw constrained draws are returned.  The simulator itself always
     sees the constrained, structured draws.
     """
-    template = _components_record(prior.event_spec)
+    template = _output_record(prior.event_spec)
     # Iterate numeric leaves (slash paths like "outer/a" for nested priors; ==
     # top-level fields for flat priors). The adapter re-keys positionally, so
     # leaf paths never reach BayesFlow's namespace.

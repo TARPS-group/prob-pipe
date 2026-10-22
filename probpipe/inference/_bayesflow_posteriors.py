@@ -34,7 +34,7 @@ from .._messages import unknown_names
 from ..core._dispatch import Feasibility, MathematicalDomainError, ResolutionError
 from ..core._numeric_record import _reconstruct_from_vector
 from ..core._spec_base import NumericArraySpec
-from ..core._specs import _components_record
+from ..core._specs import _has_record_outputs, _output_record
 from ..core.record import Record
 from ..custom_types import Array
 from ..distributions._capabilities import (
@@ -49,6 +49,7 @@ from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
 from ..distributions._factored import _raw_record
 from ..functions import function
+from ..operations._condition import _inference_run_key
 from ..values import Function
 from ._approximate_distribution import _record_run
 from ._bayesflow_common import (
@@ -58,12 +59,12 @@ from ._bayesflow_common import (
     _import_bayesflow,
     _isolated_keras_seeding,
     _leaf_draws,
-    _observation_slot,
+    _observation_input,
     _simulate_offline,
     _validate_learn_inputs,
     _without_progress_bar,
 )
-from ._inference_utils import integer_seed, run_seed
+from ._inference_utils import integer_seed
 
 if TYPE_CHECKING:
     # Type-only: bayesflow/keras load at runtime in _import_bayesflow.
@@ -242,7 +243,7 @@ class _AmortizedPosterior(
 ):
     """A learned amortized posterior ``q(theta | y)``: a kernel from the observation to the parameters.
 
-    Its given slot is the observation, named ``observation`` unless the prior
+    Its input is the observation, named ``observation`` unless the prior
     declares that name, and its event is the parameters, declared as the prior
     declares them. Evaluating it at an observation yields the law whose draws
     each run the trained network once, with no retraining and no inference.
@@ -307,15 +308,15 @@ class _AmortizedPosterior(
         bijectors: dict[str, Function] | None = None,
         has_density: bool = False,
     ):
-        slot = _observation_slot(prior)
+        input_name = _observation_input(prior)
         super().__init__(
-            {slot: NumericArraySpec((data_dim,))},
+            {input_name: NumericArraySpec((data_dim,))},
             prior.event_spec,
             label=f"amortized_posterior_{method}",
         )
-        leaf_shapes = dict(_components_record(prior.event_spec).leaf_shapes)
+        leaf_shapes = dict(_output_record(prior.event_spec).leaf_shapes)
         attributes = {
-            "_slot": slot,
+            "_observation_input_name": input_name,
             "_approximator": approximator,
             "_prior": prior,
             "_simulator": simulator,
@@ -348,7 +349,7 @@ class _AmortizedPosterior(
         ----------
         given : Any
             The observation, or a mapping or ``Record`` that holds it at the
-            observation slot.
+            observation input.
 
         Returns
         -------
@@ -358,7 +359,7 @@ class _AmortizedPosterior(
         Raises
         ------
         KeyError
-            If a mapping or record *given* lacks the observation slot or names
+            If a mapping or record *given* lacks the observation input or names
             another key.
         ValueError
             If the observation's size is not the trained one.
@@ -366,10 +367,10 @@ class _AmortizedPosterior(
         if isinstance(given, Record):
             given = given.children
         if isinstance(given, Mapping):
-            others = sorted(set(given) - {self._slot})
+            others = sorted(set(given) - {self._observation_input_name})
             if others:
                 raise KeyError(self._unexpected_keys(others))
-            given = given[self._slot]
+            given = given[self._observation_input_name]
         obs_flat = np.ravel(np.asarray(given, dtype="float32"))
         if obs_flat.size != self._data_dim:
             raise ValueError(
@@ -402,12 +403,12 @@ class _AmortizedPosterior(
         return jnp.concatenate(cols, axis=-1)
 
     def _unexpected_keys(self, others: list[str]) -> str:
-        """The message for conditioning on *others*, keys other than the observation slot."""
-        return f"unexpected keys {others} for {self.label!r}; it conditions only on {self._slot!r}"
+        """The message for conditioning on *others*, keys other than the observation input."""
+        return f"unexpected keys {others} for {self.label!r}; it conditions only on {self._observation_input_name!r}"
 
     def _condition_on_guard(self, paths: tuple[str, ...]) -> Feasibility:
-        """Every path names the observation slot, since a parameter is conditioned by Bayes' rule."""
-        others = [path for path in paths if path != self._slot]
+        """Every path names the observation input, as a parameter is conditioned by Bayes' rule."""
+        others = [path for path in paths if path != self._observation_input_name]
         if others:
             return Feasibility(False, self._unexpected_keys(others), actionable=True)
         return Feasibility(True)
@@ -415,7 +416,7 @@ class _AmortizedPosterior(
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Distribution:
         """The learned law at the observation *given* binds, which samples the network.
 
-        *given* is a mapping or record keyed by the observation slot, or the
+        *given* is a mapping or record keyed by the observation input, or the
         observation itself. Evaluating the kernel runs no network and takes no
         method options. Each draw of the law runs the network at the
         observation, seeded by the draw's key, so ``workflow_run(seed=...)``
@@ -439,7 +440,7 @@ class _AmortizedPosterior(
         TypeError
             If a method option is given.
         KeyError
-            If *given* names a key other than the observation slot.
+            If *given* names a key other than the observation input.
         ValueError
             If the observation's size is not the trained one.
         """
@@ -462,8 +463,8 @@ class _AmortizedPosterior(
         count = int(np.prod(sample_shape)) if sample_shape else 1
         seed = int(jax.random.randint(key, (), 0, 2**31 - 1))
         flat = self._network_draws(self._observation(given), count, seed)
-        spec = self.event_spec.spec
-        if not self.event_spec.exposes_record:
+        spec = self.event_spec.term_spec
+        if not _has_record_outputs(self.event_spec):
             return flat.reshape(*sample_shape, *spec.shape)
         vector = flat.reshape(*sample_shape, flat.shape[-1]) if sample_shape else flat[0]
         return _reconstruct_from_vector(self.label, spec, vector)
@@ -525,7 +526,7 @@ def learn_amortized_posterior(
 
     Trains an amortized neural posterior estimator (NPE / FMPE / CMPE) from a
     ``prior`` and a ``simulator`` and returns the learned kernel from the
-    observation to the parameters, whose given slot is ``observation``.
+    observation to the parameters, whose input is ``observation``.
     ``condition_on(result, {"observation": y})`` evaluates it without retraining
     or MCMC and returns the law at ``y``, each of whose draws is one forward pass
     of the network; the evaluation is approximate, so ``exact_only=True`` refuses
@@ -579,7 +580,8 @@ def learn_amortized_posterior(
         How the offline simulation is executed. ``"jax"`` (default) vmaps the
         simulator and requires it to be JAX-traceable; ``"sequential"`` runs an
         eager per-draw loop, supporting non-JAX simulators (numpy / external
-        code) at the cost of speed. Mirrors ``Function``'s dispatch names.
+        code) at the cost of speed. The names match the executors ``jax`` and
+        ``sequential``.
     inference_network : bayesflow.networks.InferenceNetwork or None
         Overrides the method default (``CouplingFlow`` / ``FlowMatching`` /
         ``ConsistencyModel``). A ``CouplingFlow`` gives the posterior a density.
@@ -639,7 +641,7 @@ def learn_amortized_posterior(
     )
 
     bf = _import_bayesflow()
-    random_seed = integer_seed(run_seed("learn_amortized_posterior"))
+    random_seed = integer_seed(_inference_run_key("learn_amortized_posterior"))
     with _isolated_keras_seeding(random_seed):
         key = jax.random.PRNGKey(random_seed)
         named, y = _simulate_offline(

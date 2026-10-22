@@ -24,6 +24,8 @@ from typing import Any
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
+from .._messages import unknown_names
+from ..core._catalog import EntrySummary, registry_catalog
 from ..core._dispatch import MathematicalDomainError, ResolutionError
 from ..core._repr import type_name
 from ..core.constraints import (
@@ -56,6 +58,9 @@ BijectorFactory = Callable[[Constraint], "Function | tfb.Bijector"]
 
 #: The registered factories, keyed by a constraint type or by one constraint.
 _CONSTRAINT_BIJECTOR_REGISTRY: dict[type | Constraint, BijectorFactory] = {}
+
+#: The one-line description of each registered key, which the registry catalog shows.
+_BIJECTOR_DESCRIPTIONS: dict[type | Constraint, str] = {}
 
 #: The support each backend bijector without parameters maps the real line onto.
 _BACKEND_IMAGES: dict[type, Constraint] = {
@@ -121,7 +126,7 @@ def _is_affine(bijector: Function) -> bool:
 class _ForwardMap:
     """The forward map of a backend bijector at one point, named as the backend names it.
 
-    The name makes the bijector's label and output component the backend's
+    The name makes the bijector's label and its output's name the backend's
     name, as ``exp``, by the rule that names a Function and its output after
     its callable.
     """
@@ -200,7 +205,9 @@ def _as_bijector(value: Any, image: Constraint | None = None) -> Function:
     raise TypeError(f"bijector must be a Function or a TFP bijector; got {type_name(value)}")
 
 
-def register_bijector(key: type[Constraint] | Constraint, factory: BijectorFactory) -> None:
+def register_bijector(
+    key: type[Constraint] | Constraint, factory: BijectorFactory, *, description: str = ""
+) -> None:
     """Register a bijector factory for a constraint type or one constraint.
 
     Parameters
@@ -214,14 +221,25 @@ def register_bijector(key: type[Constraint] | Constraint, factory: BijectorFacto
         inverse and the log-determinant of its Jacobian, or a backend bijector,
         which enters as such a ``Function``. It receives the constraint, so it
         can read the constraint's parameters.
+    description : str, optional
+        A one-line description of the bijector, which the registry catalog
+        shows under ``"bijectors"``; empty by default.
+
+    Raises
+    ------
+    TypeError
+        If *description* is not a ``str``.
 
     Notes
     -----
-    Registering a key again replaces its factory. A registration for
-    ``Constraint`` itself would cover every constraint without a registration
-    of its own.
+    Registering a key again replaces its factory and its description. A
+    registration for ``Constraint`` itself would cover every constraint
+    without a registration of its own.
     """
+    if not isinstance(description, str):
+        raise TypeError(f"register_bijector's description must be a str, got {description!r}")
     _CONSTRAINT_BIJECTOR_REGISTRY[key] = factory
+    _BIJECTOR_DESCRIPTIONS[key] = description
 
 
 def bijector_for(constraint: Constraint) -> Function:
@@ -329,42 +347,170 @@ class _SimplexBijector(tfb.SoftmaxCentered):
         return super()._inverse_log_det_jacobian(y) + 0.5 * jnp.log(float(y.shape[-1]))
 
 
-register_bijector(_Real, lambda c: tfb.Identity())
-register_bijector(_Positive, lambda c: tfb.Exp())
+register_bijector(_Real, lambda c: tfb.Identity(), description="The identity on the real line.")
+register_bijector(_Positive, lambda c: tfb.Exp(), description="exp, onto the positive half-line.")
 # Softplus is defined at zero, which the boundary of the non-negative half-line includes.
-register_bijector(_NonNegative, lambda c: tfb.Softplus())
-register_bijector(_UnitInterval, lambda c: tfb.Sigmoid())
-register_bijector(_Interval, lambda c: tfb.Sigmoid(low=c.low, high=c.high))
-register_bijector(_GreaterThan, lambda c: tfb.Chain([tfb.Shift(c.lower_bound), tfb.Exp()]))
-register_bijector(_Simplex, lambda c: _SimplexBijector())
+register_bijector(
+    _NonNegative, lambda c: tfb.Softplus(), description="softplus, onto the non-negative half-line."
+)
+register_bijector(
+    _UnitInterval, lambda c: tfb.Sigmoid(), description="The sigmoid, onto the unit interval."
+)
+register_bijector(
+    _Interval,
+    lambda c: tfb.Sigmoid(low=c.low, high=c.high),
+    description="A sigmoid scaled onto the interval's bounds.",
+)
+register_bijector(
+    _GreaterThan,
+    lambda c: tfb.Chain([tfb.Shift(c.lower_bound), tfb.Exp()]),
+    description="exp shifted to the lower bound.",
+)
+register_bijector(
+    _Simplex,
+    lambda c: _SimplexBijector(),
+    description="The centered softmax from R^(K-1) onto the K-simplex.",
+)
 # ℝ^{n(n+1)/2} to a lower-triangular L, then to L Lᵀ; Chain applies its last bijector first.
 register_bijector(
-    _PositiveDefinite, lambda c: tfb.Chain([tfb.CholeskyOuterProduct(), tfb.FillScaleTriL()])
+    _PositiveDefinite,
+    lambda c: tfb.Chain([tfb.CholeskyOuterProduct(), tfb.FillScaleTriL()]),
+    description="A lower-triangular L filled from a vector, then L Lᵀ.",
 )
 
 
-def _no_smooth_bijector(reason: str) -> BijectorFactory:
-    """A factory that raises for a support onto which no smooth bijector exists."""
+def _register_no_smooth_bijector(key: type[Constraint], reason: str) -> None:
+    """Register for *key* a factory that raises, since no smooth bijector maps onto its support.
+
+    The catalog describes the entry by the same *reason* the factory raises
+    with, so the listing does not suggest that :func:`bijector_for` returns a
+    bijector for it.
+    """
 
     def _raise(constraint: Constraint) -> Function:
         raise MathematicalDomainError(f"{constraint!r} has no smooth bijector: {reason}")
 
-    return _raise
+    register_bijector(key, _raise, description=f"No smooth bijector: {reason}.")
 
 
-register_bijector(
+_register_no_smooth_bijector(
     _Sphere,
-    _no_smooth_bijector(
-        "no smooth global chart maps ℝⁿ onto the unit sphere; a stereographic projection "
-        "covers all but one point"
-    ),
+    "no smooth global chart maps ℝⁿ onto the unit sphere; a stereographic projection "
+    "covers all but one point",
 )
-register_bijector(
-    _Boolean,
-    _no_smooth_bijector("the support is discrete; a continuous relaxation can stand in"),
+_register_no_smooth_bijector(
+    _Boolean, "the support is discrete; a continuous relaxation can stand in"
 )
-register_bijector(_NonNegativeInteger, _no_smooth_bijector("the support is discrete"))
-register_bijector(
-    _IntegerInterval,
-    _no_smooth_bijector("the support is discrete; a continuous relaxation can stand in"),
+_register_no_smooth_bijector(_NonNegativeInteger, "the support is discrete")
+_register_no_smooth_bijector(
+    _IntegerInterval, "the support is discrete; a continuous relaxation can stand in"
 )
+
+
+# ---------------------------------------------------------------------------
+# The factory in the registry catalog
+# ---------------------------------------------------------------------------
+
+
+def _short_name(key: type | Constraint) -> str:
+    """A key's short catalog name: a type's name without leading underscores, or an instance's ``repr``."""
+    return key.__name__.lstrip("_") if isinstance(key, type) else repr(key)
+
+
+def _qualified_name(key: type | Constraint) -> str:
+    """A key's catalog name when its short name is shared: qualified by its module."""
+    if isinstance(key, type):
+        return f"{key.__module__}.{key.__qualname__}"
+    return f"{key!r} ({type(key).__module__}.{type(key).__qualname__})"
+
+
+def _entry_names(keys: list[type | Constraint]) -> dict[type | Constraint, str]:
+    """The catalog name of each registered key, unique among *keys*.
+
+    A key is named by its short name, as ``_Positive`` is named ``Positive``
+    and a constraint instance by its ``repr``. Where keys share a short name,
+    each key that ProbPipe does not define is named by its qualified name in
+    its place, so a third-party ``Positive`` is named
+    ``"mypackage.Positive"`` and the built-in keeps ``Positive``.
+    """
+    counts: dict[str, int] = {}
+    for key in keys:
+        counts[_short_name(key)] = counts.get(_short_name(key), 0) + 1
+    names = {}
+    for key in keys:
+        short = _short_name(key)
+        module = key.__module__ if isinstance(key, type) else type(key).__module__
+        builtin = module == "probpipe" or module.startswith("probpipe.")
+        names[key] = short if counts[short] == 1 or builtin else _qualified_name(key)
+    return names
+
+
+class _BijectorRegistryView:
+    """The constraint-to-bijector factory as the registry catalog lists it.
+
+    The factory maps a constraint, by instance and then by the nearest type in
+    its method-resolution order, to a function returning a bijector;
+    :func:`register_bijector` populates it and :func:`bijector_for` reads it.
+    This object implements
+    :class:`~probpipe.core._catalog.SupportsRegistryCataloging` over those
+    registrations, with one entry per registered key in name order, each
+    named as :func:`_entry_names` names it, and it is cataloged as
+    ``"bijectors"``. Each entry's description is the one
+    :func:`register_bijector` received. The factory does not rank its entries,
+    so each entry's ``priority`` and ``exact`` are ``None``.
+    """
+
+    name = "bijectors"
+    description = (
+        "Bijector factories onto each constrained support, by constraint instance and then type."
+    )
+    kind = "factory"
+
+    def entry_summaries(self) -> list[EntrySummary]:
+        """One :class:`~probpipe.core._catalog.EntrySummary` per registered key, in name order."""
+        names = _entry_names(list(_CONSTRAINT_BIJECTOR_REGISTRY))
+        summaries = [
+            EntrySummary(
+                name=names[key],
+                priority=None,
+                supported_types=(key,),
+                description=_BIJECTOR_DESCRIPTIONS.get(key, ""),
+                module_path=key.__module__ if isinstance(key, type) else type(key).__module__,
+            )
+            for key in _CONSTRAINT_BIJECTOR_REGISTRY
+        ]
+        return sorted(summaries, key=lambda summary: summary.name)
+
+    def describe_entry(self, name: str) -> EntrySummary:
+        """The :class:`~probpipe.core._catalog.EntrySummary` of the key named *name*.
+
+        Parameters
+        ----------
+        name : str
+            A registered key's catalog name, such as ``"Positive"``.
+
+        Returns
+        -------
+        EntrySummary
+            The key's summary, as :meth:`entry_summaries` reports it.
+
+        Raises
+        ------
+        KeyError
+            If no registered key has that name.
+        """
+        summaries = self.entry_summaries()
+        for summary in summaries:
+            if summary.name == name:
+                return summary
+        raise KeyError(
+            unknown_names(
+                "bijector entry",
+                [name],
+                [summary.name for summary in summaries],
+                plural="bijector entries",
+            )
+        )
+
+
+registry_catalog.register(_BijectorRegistryView())

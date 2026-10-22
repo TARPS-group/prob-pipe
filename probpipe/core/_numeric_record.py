@@ -18,6 +18,7 @@ lazy conversion contract, the flat-vector layout (``to_vector`` /
 
 from __future__ import annotations
 
+import html
 from collections.abc import Mapping
 from math import prod
 from typing import Any
@@ -36,14 +37,16 @@ from ._array_backend import (
 )
 from ._expression import Named
 from ._numeric import Numeric
+from ._repr import VALUE_INDENT, format_rows, rows_html, summary_with_values
 from ._shapes import NamesLike, _as_names
 from ._specs import (
     NumericArraySpec,
     NumericRecordSpec,
     RecordSpec,
 )
+from ._table import record_table
 from .named_tree import _PATH_SEP, _unflatten_paths
-from .record import Record, _derived_record_name, _not_a_field_mapping
+from .record import Record, _derived_record_name, _not_a_field_mapping, _raw_leaf
 from .tracked import _NO_DESCRIPTION, refuses_label_first
 
 # ``_is_numeric_leaf`` is defined in ``_array_backend`` (the shared leaf
@@ -84,13 +87,13 @@ class NumericRecord(Record, Numeric):
     returns a record with bare ``jax.Array`` leaves (unflatten
     cannot rebuild native containers); structural transforms
     (:meth:`~Record.without` / :meth:`~Record.merge` / :meth:`~Record.replace`
-    / :meth:`~Record.with_path_names`) and pickling reuse the native leaves
+    / :meth:`~Record.rename`) and pickling reuse the native leaves
     verbatim, so native types survive them.
 
     **Aliasing and mutation.** Native leaves are stored **by reference**, exactly as a
     plain :class:`Record` stores opaque leaves, and construction marks a NumPy
     array leaf read-only in place, so a write through the caller's handle or
-    through :meth:`~Record.raw` raises ``ValueError``. A ``pandas`` or ``xarray``
+    through :attr:`~Record.raw` raises ``ValueError``. A ``pandas`` or ``xarray``
     container carries no such flag, so mutating it in place after construction
     changes the record. Once that leaf has crossed a compute boundary,
     navigation and compute can disagree: navigation reflects the mutation, but
@@ -115,9 +118,12 @@ class NumericRecord(Record, Numeric):
     ``list(record.values())``, which returns the ordered list of native
     fields and is supported by any ``Record``.
 
+    Truth depends on the number of top-level fields, as for any record:
+    an empty record is false and every nonempty record is true.
+
     **Single-field records as scalars.** A ``NumericRecord`` with exactly one field
     behaves like a thin wrapper around that field's value: ``float(r)``, ``int(r)``,
-    ``bool(r)``, ``np.asarray(r)``, ``jnp.asarray(r)``, and the ``r.shape`` /
+    ``np.asarray(r)``, ``jnp.asarray(r)``, and the ``r.shape`` /
     ``r.dtype`` / ``r.ndim`` attributes all forward to the sole leaf (only the value
     coercions materialise it). A record with more than one field, or
     whose single child is a nested record — an interior node, not a field —
@@ -308,7 +314,7 @@ class NumericRecord(Record, Numeric):
         """The converted ``jax.Array`` for the field at *key*, at any depth.
 
         *key* must address a field; a path to an interior node is not a key
-        and is not valid input. Each path component descends one level,
+        and is not valid input. Each path segment descends one level,
         delegating the final hop to :meth:`_child_field_as_jax`.
         """
         child_name, sep, descendant_key = key.partition(_PATH_SEP)
@@ -409,6 +415,69 @@ class NumericRecord(Record, Numeric):
         """Return ``self`` — a ``NumericRecord`` is already numeric (identity)."""
         return self
 
+    # -- Display ------------------------------------------------------------
+
+    def __repr__(self) -> str:
+        """The class and the label, then one line for each field with its path and its value.
+
+        A nested path reads ``population/mu``. NumPy's printing formats each
+        value, so ``np.set_printoptions`` sets the precision and shortens a large
+        array with ``...``, and a shortened value ends with its shape. Only the
+        entries shown are read from the device. Inside a JAX trace, where the
+        values are tracers, and for a record with no fields, the repr is the
+        summary of the label and the field paths.
+
+        A record of summaries displays as a table under its label instead. Its
+        top-level fields are records over the same paths, with the same shape
+        at each path, and at least one of them records how it was computed, as
+        the term an operation returns does. The table has one row for each
+        path, or for each element of an array path, as ``y[0]``, and one column
+        for each top-level field, and its lines are indented by two spaces, as a
+        record's lines are. The line below the table states how each column
+        was computed: ``exact``, ``Monte Carlo`` with the number of draws, or
+        ``approximate``.
+        """
+        table = record_table(self)
+        if table is not None:
+            lines = table.lines(VALUE_INDENT)
+            return "\n".join([self._displayed_label(), *lines, table.footer])
+        return summary_with_values(
+            self._repr_summary(structure=False),
+            format_rows(self._value_rows(), VALUE_INDENT),
+            alone=self._repr_summary(),
+        )
+
+    def __str__(self) -> str:
+        """The lines of the repr's values alone, one for each field with its path and its value.
+
+        A record that displays as a table gives the table without its label and
+        the line below it. Inside a JAX trace, and for a record with no fields,
+        ``str()`` is the summary of the label and the field paths.
+        """
+        table = record_table(self)
+        if table is not None:
+            return "\n".join(table.lines())
+        rows = format_rows(self._value_rows())
+        return self._repr_summary() if rows is None else rows
+
+    def _repr_html_(self) -> str | None:
+        """The record as a two-column table of its field paths and values, for a notebook.
+
+        Each value is formatted as the repr formats it, and a record that the
+        repr shows as a table is an HTML table of the same rows and columns.
+        Inside a JAX trace, and for a record with no fields, the result is
+        ``None``, so the notebook shows the repr.
+        """
+        table = record_table(self)
+        if table is not None:
+            label = html.escape(self._displayed_label())
+            return f"<div><b>{label}</b>{table.html()}</div>"
+        return rows_html(self._repr_summary(structure=False), self._value_rows())
+
+    def _value_rows(self) -> list[tuple[str, Any]]:
+        """Each field's path and its stored array, in canonical order."""
+        return [(path, _raw_leaf(leaf)) for path, leaf in self._walk_leaves()]
+
     # -- Single-field scalar-like coercion ---------------------------------
 
     def _single_numeric_field(self) -> str:
@@ -434,7 +503,8 @@ class NumericRecord(Record, Numeric):
         return int(self._child_field_as_jax(self._single_numeric_field()))
 
     def __bool__(self) -> bool:
-        return bool(self._child_field_as_jax(self._single_numeric_field()))
+        """Whether this record has any top-level fields, regardless of their values."""
+        return len(self) != 0
 
     # The array conversions present the sole field rather than Numeric's flat
     # vector, an interim implementation detail until a record no longer presents
@@ -601,7 +671,7 @@ def _reconstruct_from_vector(
         return NumericRecordBatch(
             dict(zip(template.keys(), leaves, strict=True)),
             names,
-            element_spec=template,
+            element=template,
             axes_per_level=(len(batch_shape),) if len(names) == 1 else None,
             label=label,
         )

@@ -129,10 +129,10 @@ class _ObjectBatch[E](Batch[E]):
         The batch's label. Defaults to a list of its first eight members in
         row-major order over every batch axis, followed by ``…`` when more
         remain, as ``[predict(x), f(x)]``.
-    element_spec : TermSpec, optional
-        What every element satisfies, checked against each at construction. A
-        public class checks its type and gives its default through
-        :meth:`_resolved_element_spec`.
+    element : TermSpec, optional
+        The spec every element satisfies, checked against each at construction.
+        A public class checks its type and gives its default through
+        :meth:`_resolved_element_term_spec`.
     axes_per_level : int or sequence of int, optional
         How many axes each level holds, outermost first (a single int is one level's
         count); they must account for every batch axis. Defaults to one axis per
@@ -192,7 +192,7 @@ class _ObjectBatch[E](Batch[E]):
 
     #: What the shared spec admits, worded to follow "elements must" in the
     #: refusal a bad element earns.
-    _element_rule = "match element_spec"
+    _element_rule = "match the elements' spec"
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         refuse_label_first(
@@ -207,13 +207,13 @@ class _ObjectBatch[E](Batch[E]):
         level_names: NamesLike,
         *,
         label: str | None = None,
-        element_spec: TermSpec | None = None,
+        element: TermSpec | None = None,
         axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
         kind = type(self).__name__
         store = _as_object_array(elements, kind=kind)
-        element_spec = self._resolved_element_spec(store, element_spec)
+        element_term_spec = self._resolved_element_term_spec(store, element)
         names = _as_names(level_names, what=f"{kind} level_names")
         axes = (
             None
@@ -225,11 +225,13 @@ class _ObjectBatch[E](Batch[E]):
         object.__setattr__(self, "_store", store)
         _check_elements(
             store,
-            element_spec,
-            refusal=lambda element: self._element_refusal(element, element_spec),
+            element_term_spec,
+            refusal=lambda refused_element: self._element_refusal(
+                refused_element, element_term_spec
+            ),
             kind=kind,
         )
-        spec = BatchSpec._from_groups(element_spec, groups, names)
+        spec = BatchSpec._from_groups(element_term_spec, groups, names)
         if label is not None:
             self._init_batch(spec, label=label, provenance=provenance)
             return
@@ -238,8 +240,8 @@ class _ObjectBatch[E](Batch[E]):
         self._init_batch(spec, label=rendering[0], provenance=provenance)
         self._store_expression(expression, rendering)
 
-    def _resolved_element_spec(self, store: np.ndarray, element_spec: TermSpec | None) -> TermSpec:
-        """The spec every element of *store* must satisfy: *element_spec*, checked, or the default.
+    def _resolved_element_term_spec(self, store: np.ndarray, element: TermSpec | None) -> TermSpec:
+        """The spec every element of *store* must satisfy: *element*, checked, or the default.
 
         Each public class overrides this to check the type of a supplied spec
         and to give its default; this base requires a supplied spec.
@@ -248,29 +250,29 @@ class _ObjectBatch[E](Batch[E]):
         ----------
         store : numpy.ndarray
             The elements, already copied into a frozen object array.
-        element_spec : TermSpec or None
+        element : TermSpec or None
             The spec the caller supplied, or ``None``.
 
         Returns
         -------
         TermSpec
-            The element spec.
+            The spec every element satisfies.
 
         Raises
         ------
         TypeError
-            If *element_spec* is ``None``.
+            If *element* is ``None``.
         """
-        if element_spec is None:
-            raise TypeError(f"{type(self).__name__} requires element_spec")
-        return element_spec
+        if element is None:
+            raise TypeError(f"{type(self).__name__} requires element")
+        return element
 
     @classmethod
     def _over_store(cls, store: np.ndarray, *, spec: BatchSpec, label: str) -> Self:
         """This batch over *store* as given, without copying or re-checking it.
 
         The public constructor copies the elements, freezes the copy, and checks
-        every entry against the element spec — each O(batch_size), and each
+        every entry against the elements' spec — each O(batch_size), and each
         earning its cost against a caller who owns the array and may write to it
         or have filled it with the wrong thing. A caller holding a store it
         already froze and already validated has neither to defend against, and
@@ -279,7 +281,7 @@ class _ObjectBatch[E](Batch[E]):
 
         The store is shared, not copied, so this is a view: it is the caller's
         responsibility that the buffer is frozen and its entries satisfy *spec*'s
-        element spec.
+        elements' spec.
         """
         # ``object.__new__`` for the reason :meth:`_sub_batch_at` gives: a host's
         # own ``__new__`` may select a class from constructor arguments.
@@ -288,6 +290,7 @@ class _ObjectBatch[E](Batch[E]):
         batch._init_batch(spec, label=label)
         return batch
 
+    @property
     def raw(self) -> np.ndarray:
         """The storage view: the frozen object array of the stored elements, batch axes leading."""
         return self._store
@@ -367,8 +370,8 @@ class _ObjectBatch[E](Batch[E]):
             f"{label!r} is a {type(value).__name__}"
         )
 
-    def _element_refusal(self, element: Any, element_spec: TermSpec) -> str:
-        """Why *element_spec* refuses *element*, worded to follow "but" in the message.
+    def _element_refusal(self, element: Any, element_term_spec: TermSpec) -> str:
+        """Why *element_term_spec* refuses *element*, worded to follow "but" in the message.
 
         The default states :attr:`_element_rule`; a class whose spec refuses
         elements for more than one reason words each one.
@@ -485,18 +488,18 @@ def _from_iterable(elements: Iterable[Any], *, kind: str) -> np.ndarray:
 
 
 def _check_elements(
-    store: np.ndarray, element_spec: TermSpec, *, refusal: Callable[[Any], str], kind: str
+    store: np.ndarray, element_term_spec: TermSpec, *, refusal: Callable[[Any], str], kind: str
 ) -> None:
     """Fail on the first element the shared spec does not admit, naming its position.
 
     Checked at construction rather than left to ``is_valid`` because a batch
-    asserts its ``element_spec`` of *every* element: one that does not satisfy it
+    asserts its elements' spec of *every* element: one that does not satisfy it
     makes the batch's own spec a false statement, and where it sits is what a
     caller needs to hear. *refusal* says why the spec refuses an element, so each
     class supplies only its own wording.
     """
     for index, element in np.ndenumerate(store):
-        if not element_spec.is_valid(element):
+        if not element_term_spec.is_valid(element):
             position = index[0] if len(index) == 1 else index
             raise TypeError(
                 f"{kind}: element {position} is {type_name(element)}, but {refusal(element)}"

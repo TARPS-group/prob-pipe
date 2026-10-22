@@ -1,9 +1,9 @@
 """The batch forms of the two distribution kinds.
 
-A ``DistributionBatch`` holds separate laws sharing one event declaration, and a
-``ConditionalDistributionBatch`` separate kernels sharing one given declaration
-and one event declaration. Construction checks every element against the
-element spec and names the position that fails; the shared declarations are
+A ``DistributionBatch`` holds separate laws sharing one event spec, and a
+``ConditionalDistributionBatch`` separate kernels sharing one input spec and
+one event spec. Construction checks every element against the
+element spec and names the position that fails; the shared specs are
 views on the batch's spec; indexing and levels follow ``Batch``; and the kind
 table presents a law-valued or kernel-valued record field as the matching batch.
 """
@@ -58,7 +58,7 @@ class _Law(Distribution):
 
 
 class Kernel(ConditionalDistribution):
-    """A kernel over the slots and event it is given, giving a law over that event."""
+    """A kernel over the inputs and event it is given, giving a law over that event."""
 
     def _condition_on(self, given, /, **kwargs):
         return _Law(
@@ -68,7 +68,7 @@ class Kernel(ConditionalDistribution):
 
 
 def _laws(count: int, label: str = "x") -> list[Normal]:
-    """``count`` normal laws over one declaration, the law at position ``i`` with mean ``i``."""
+    """``count`` normal laws over one event spec, the law at position ``i`` with mean ``i``."""
     return [Normal(label, float(i), 1.0, label=label) for i in range(count)]
 
 
@@ -103,7 +103,7 @@ def _record_law(location: float) -> EmpiricalDistribution:
         NumericRecordBatch(
             {"x": x, "y": -x},
             "atom",
-            element_spec=spec,
+            element=spec,
             label="atoms",
         ),
         label="xy",
@@ -123,7 +123,7 @@ class TestDistributionBatchConstruction:
         )
         assert isinstance(batch, Batch)
         assert isinstance(batch.spec, BatchSpec)
-        assert batch.spec.element_spec == laws[0].spec
+        assert batch.spec.element_spec.term_spec == laws[0].spec
         assert batch.spec.is_valid(batch)
 
     def test_element_spec_defaults_to_the_first_element_spec(self):
@@ -133,8 +133,8 @@ class TestDistributionBatchConstruction:
             "law",
             label="laws",
         )
-        assert batch.element_spec == laws[0].spec
-        assert isinstance(batch.element_spec, DistributionSpec)
+        assert batch.element_spec.term_spec == laws[0].spec
+        assert isinstance(batch.element_spec.term_spec, DistributionSpec)
 
     def test_laws_of_different_families_share_one_declaration(self):
         laws = [Normal("x", 0.0, 1.0), Laplace("x", 0.0, 1.0), StudentT("x", 3.0, 0.0, 1.0)]
@@ -167,16 +167,16 @@ class TestDistributionBatchConstruction:
         batch = DistributionBatch(
             laws,
             "law",
-            element_spec=declared,
+            element=declared,
             label="laws",
         )
-        assert batch.element_spec == declared
+        assert batch.element_spec.term_spec == declared
         assert batch.event_spec == declared.event_spec
 
     @pytest.mark.parametrize(
         "stranger",
         [
-            pytest.param(Normal("other", 0.0, 1.0), id="other-component"),
+            pytest.param(Normal("other", 0.0, 1.0), id="other-output"),
             pytest.param(MultivariateNormal("x", jnp.zeros(2), cov=jnp.eye(2)), id="other-shape"),
             pytest.param(
                 _Law(
@@ -199,8 +199,8 @@ class TestDistributionBatchConstruction:
                 label="laws",
             )
 
-    def test_a_law_of_other_components_raises_naming_the_components(self):
-        with pytest.raises(TypeError, match=r"element 1 .*fields \['x'\] but the law \['other'\]"):
+    def test_a_law_of_other_outputs_raises_naming_the_outputs(self):
+        with pytest.raises(TypeError, match=r"element 1 .*outputs \['x'\] but the law \['other'\]"):
             DistributionBatch(
                 [Normal("x", 0.0, 1.0), Normal("other", 0.0, 1.0)],
                 "law",
@@ -226,7 +226,7 @@ class TestDistributionBatchConstruction:
             )
 
     def test_an_empty_batch_needs_an_element_spec(self):
-        with pytest.raises(ValueError, match="element_spec"):
+        with pytest.raises(ValueError, match="Pass it as element="):
             DistributionBatch(
                 [],
                 "law",
@@ -238,7 +238,7 @@ class TestDistributionBatchConstruction:
         batch = DistributionBatch(
             [],
             "law",
-            element_spec=declared,
+            element=declared,
             label="laws",
         )
         assert batch.batch_shape == (0,)
@@ -259,7 +259,7 @@ class TestDistributionBatchConstruction:
             DistributionBatch(
                 _laws(2),
                 "law",
-                element_spec=element_spec,
+                element=element_spec,
                 label="laws",
             )
 
@@ -283,8 +283,8 @@ class TestTheDefaultLabel:
             TypeError,
             match=r"^cannot derive a default label for an empty DistributionBatch; pass label=",
         ):
-            DistributionBatch([], "model", element_spec=spec)
-        assert DistributionBatch([], "model", element_spec=spec, label="none").batch_shape == (0,)
+            DistributionBatch([], "model", element=spec)
+        assert DistributionBatch([], "model", element=spec, label="none").batch_shape == (0,)
 
     def test_a_kernel_batch_lists_its_kernels(self):
         batch = ConditionalDistributionBatch(_kernels(2), "dataset")
@@ -299,7 +299,7 @@ class TestDistributionBatchDeclarations:
             "law",
             label="laws",
         )
-        assert batch.event_spec is batch.element_spec.event_spec
+        assert batch.event_spec is batch.element_spec.term_spec.event_spec
         assert batch.event_spec == laws[0].event_spec
 
     def test_a_batch_of_random_measures_declares_law_valued_draws(self):
@@ -317,25 +317,25 @@ class TestDistributionBatchDeclarations:
             label="measures",
         )
         assert batch.event_spec == OutputSpec(posterior=drawn)
-        assert batch.event_spec.spec == drawn
+        assert batch.event_spec.term_spec == drawn
 
     @pytest.mark.pending(
-        reason="a batch exposes the components of its element declaration",
+        reason="a batch exposes the outputs of its element's event spec",
         raises=AttributeError,
     )
-    def test_the_component_of_a_batch_of_laws_defaults_to_the_batch_label(self):
+    def test_the_output_of_a_batch_of_laws_defaults_to_the_batch_label(self):
         laws = _laws(2)
         batch = DistributionBatch(
             laws,
             "law",
             label="laws",
         )
-        assert dict(batch.components) == {"laws": laws[0].spec}
+        assert dict(batch.outputs) == {"laws": laws[0].spec}
 
     @pytest.mark.pending(
-        reason="a name key addresses the component of every element", raises=TypeError
+        reason="a name key addresses the output of every element", raises=TypeError
     )
-    def test_the_component_of_a_batch_of_laws_addresses_the_batch_itself(self):
+    def test_the_output_of_a_batch_of_laws_addresses_the_batch_itself(self):
         batch = DistributionBatch(
             _laws(2),
             "law",
@@ -501,8 +501,8 @@ class TestConditionalDistributionBatch:
             label="kernels",
         )
         assert isinstance(batch, Batch)
-        assert batch.element_spec == kernels[0].spec
-        assert isinstance(batch.element_spec, ConditionalDistributionSpec)
+        assert batch.element_spec.term_spec == kernels[0].spec
+        assert isinstance(batch.element_spec.term_spec, ConditionalDistributionSpec)
 
     def test_given_spec_and_event_spec_are_the_shared_declarations_read_from_spec(self):
         kernels = _kernels(2, given={"mu": SCALAR, "x": NumericArraySpec((3,))})
@@ -511,16 +511,16 @@ class TestConditionalDistributionBatch:
             "kernel",
             label="kernels",
         )
-        assert batch.given_spec is batch.element_spec.given_spec
-        assert batch.event_spec is batch.element_spec.event_spec
+        assert batch.given_spec is batch.element_spec.term_spec.given_spec
+        assert batch.event_spec is batch.element_spec.term_spec.event_spec
         assert batch.given_spec == kernels[0].given_spec
         assert batch.event_spec == kernels[0].event_spec
 
     @pytest.mark.parametrize(
         "stranger",
         [
-            pytest.param(_kernels(1, given={"sigma": SCALAR})[0], id="other-given-slot"),
-            pytest.param(_kernels(1, event=OutputSpec(z=SCALAR))[0], id="other-component"),
+            pytest.param(_kernels(1, given={"sigma": SCALAR})[0], id="other-input"),
+            pytest.param(_kernels(1, event=OutputSpec(z=SCALAR))[0], id="other-output"),
             pytest.param(Normal("y", 0.0, 1.0), id="a-law"),
             pytest.param("kernel", id="not-a-kernel"),
         ],
@@ -550,13 +550,13 @@ class TestConditionalDistributionBatch:
         batch = ConditionalDistributionBatch(
             kernels,
             "kernel",
-            element_spec=declared,
+            element=declared,
             label="kernels",
         )
         assert batch.given_spec == declared.given_spec
 
     def test_an_empty_batch_needs_an_element_spec(self):
-        with pytest.raises(ValueError, match="element_spec"):
+        with pytest.raises(ValueError, match="Pass it as element="):
             ConditionalDistributionBatch(
                 [],
                 "kernel",
@@ -566,7 +566,7 @@ class TestConditionalDistributionBatch:
         batch = ConditionalDistributionBatch(
             [],
             "kernel",
-            element_spec=declared,
+            element=declared,
             label="kernels",
         )
         assert batch.batch_shape == (0,)
@@ -584,7 +584,7 @@ class TestConditionalDistributionBatch:
             ConditionalDistributionBatch(
                 _kernels(2),
                 "kernel",
-                element_spec=element_spec,
+                element=element_spec,
                 label="kernels",
             )
 
@@ -655,25 +655,25 @@ class TestKindRegistration:
         batch = RecordBatch(
             {"prior": _objects(laws), "x": jnp.zeros(3)},
             "row",
-            element_spec=RecordSpec({"prior": laws[0].spec, "x": ()}),
+            element=RecordSpec({"prior": laws[0].spec, "x": ()}),
             label="design",
         )
         assert batch.batch_shape == (3,)
-        assert batch.element_spec["prior"] == laws[0].spec
+        assert batch.element_spec.term_spec["prior"] == laws[0].spec
 
     def test_reading_a_law_field_gives_a_distribution_batch_on_the_record_levels(self):
         laws = _laws(4)
         batch = RecordBatch(
             {"prior": _objects(laws, shape=(2, 2)), "x": jnp.zeros((2, 2))},
             ("chain", "draw"),
-            element_spec=RecordSpec({"prior": laws[0].spec, "x": ()}),
+            element=RecordSpec({"prior": laws[0].spec, "x": ()}),
             label="design",
         )
         column = batch["prior"]
         assert isinstance(column, DistributionBatch)
         assert column.axis_groups == ((2,), (2,))
         assert column.level_names == ("chain", "draw")
-        assert column.element_spec == laws[0].spec
+        assert column.element_spec.term_spec == laws[0].spec
         assert column.event_spec == laws[0].event_spec
         assert _mean_of(column[1, 0]) == 2.0
 
@@ -682,7 +682,7 @@ class TestKindRegistration:
         batch = RecordBatch(
             {"likelihood": _objects(kernels)},
             "row",
-            element_spec=RecordSpec({"likelihood": kernels[0].spec}),
+            element=RecordSpec({"likelihood": kernels[0].spec}),
             label="design",
         )
         column = batch["likelihood"]
@@ -699,7 +699,7 @@ class TestKindRegistration:
             RecordBatch(
                 {"prior": _objects(laws), "x": jnp.zeros(3)},
                 "row",
-                element_spec=RecordSpec({"prior": declared, "x": ()}),
+                element=RecordSpec({"prior": declared, "x": ()}),
                 label="design",
             )
 
@@ -715,7 +715,7 @@ class TestKindRegistration:
         column = RecordBatch.stack(records, level_name="row")["prior"]
         assert isinstance(column, DistributionBatch)
         assert column.level_names == ("row",)
-        assert column.element_spec == laws[0].spec
+        assert column.element_spec.term_spec == laws[0].spec
         assert [_mean_of(element) for element in column] == [0.0, 1.0, 2.0]
 
 
@@ -743,7 +743,7 @@ class TestOperationsSweepTheLaws:
             drawn = sample(batch, sample_shape=(7,))
         assert isinstance(drawn, NumericArrayBatch)
         assert (drawn.batch_shape, drawn.level_names) == ((4, 7), ("law", "sample"))
-        assert tuple(drawn.element_spec.shape) == ()
+        assert tuple(drawn.element_spec.term_spec.shape) == ()
 
     def test_each_law_draws_its_own_values(self):
         laws = [Normal("x", 100.0 * i, 1e-3) for i in range(3)]
@@ -756,7 +756,7 @@ class TestOperationsSweepTheLaws:
                 ),
                 sample_shape=(200,),
             )
-        np.testing.assert_allclose(drawn.values.mean(axis=-1), [0.0, 100.0, 200.0], atol=0.2)
+        np.testing.assert_allclose(drawn.raw.mean(axis=-1), [0.0, 100.0, 200.0], atol=0.2)
 
     def test_several_levels_stay_in_front_of_the_sample_level(self):
         batch = DistributionBatch(
@@ -790,8 +790,8 @@ class TestOperationsSweepTheLaws:
         )
         means, variances = mean(batch), variance(batch)
         assert isinstance(means, NumericArrayBatch) and means.batch_shape == (3,)
-        np.testing.assert_allclose(means.values, [0.0, 1.0, 2.0])
-        np.testing.assert_allclose(variances.values, [1.0, 4.0, 9.0])
+        np.testing.assert_allclose(means.raw, [0.0, 1.0, 2.0])
+        np.testing.assert_allclose(variances.raw, [1.0, 4.0, 9.0])
 
     def test_the_mean_of_each_record_law_is_a_record_batch(self):
         means = mean(
@@ -802,8 +802,8 @@ class TestOperationsSweepTheLaws:
             )
         )
         assert isinstance(means, NumericRecordBatch)
-        np.testing.assert_allclose(means["mean(x)"], [0.0, 1.0, 2.0])
-        np.testing.assert_allclose(means["mean(y)"], [0.0, -1.0, -2.0])
+        np.testing.assert_allclose(means["x"], [0.0, 1.0, 2.0])
+        np.testing.assert_allclose(means["y"], [0.0, -1.0, -2.0])
 
     def test_one_value_is_scored_under_each_law(self):
         laws = _laws(3)
@@ -817,4 +817,4 @@ class TestOperationsSweepTheLaws:
         )
         assert isinstance(scores, NumericArrayBatch) and scores.batch_shape == (3,)
         expected = [float(law._log_prob(0.0)) for law in laws]
-        np.testing.assert_allclose(scores.values, expected, rtol=1e-5)
+        np.testing.assert_allclose(scores.raw, expected, rtol=1e-5)

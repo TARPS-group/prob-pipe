@@ -42,8 +42,8 @@ import xarray as xr
 
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
-from ..functions import _broker, _context
-from ..functions._broker import _PROBPIPE_DISTRIBUTION_PROVIDER_ABI
+from ..functions import _context, _evaluation_keys
+from ..functions._evaluation_keys import _PROBPIPE_DISTRIBUTION_PROVIDER_ABI
 from ..validation._predictive_check import (
     _observed_event,
     _planned_statistics,
@@ -231,7 +231,7 @@ def _ppc_op(
     Parameters
     ----------
     posterior : Distribution
-        Prior or posterior over the kernel's given slots.
+        Prior or posterior over the kernel's inputs.
 
     test_fns : callable or sequence of callables
         One or more test statistics mapping data to a scalar.
@@ -262,7 +262,7 @@ def _ppc_op(
     results: dict[str, dict[str, Any]] = {}
     replicated_stats_by_fn: dict[str, np.ndarray | None] = {}
 
-    with _broker._managed_stochastic_scope():
+    with _evaluation_keys._operation_stochastic_scope():
         # One event draws the replications that every test statistic reads.
         effect_key = _claim_ppc_key(
             source_index=0,
@@ -423,7 +423,7 @@ def add_ppc(
     Parameters
     ----------
     posterior : Distribution
-        Prior or posterior over the kernel's given slots.
+        Prior or posterior over the kernel's inputs.
     test_fns : callable or sequence of callables
         One or more test statistics mapping data to a scalar.
     observed_data : optional
@@ -432,7 +432,7 @@ def add_ppc(
         :func:`~probpipe.validation.predictive_check` takes.
     kernel : ConditionalDistribution
         The law of the observations given the parameters, such as the
-        likelihood of a model ``likelihood * prior``.
+        likelihood of a model ``likelihood & prior``.
     n_replications : int
         Number of replicated datasets.
 
@@ -443,11 +443,12 @@ def add_ppc(
         sample, *test_fns* is neither a callable nor an iterable, a test
         function is not callable, or *n_replications* is not an integer.
     ValueError
-        If *posterior* does not produce every given slot of *kernel*, naming
-        the missing slots; if *posterior* produces a component that *kernel*
-        produces; if *test_fns* is empty or holds two test functions of the
-        same name; or if *n_replications* is not positive. Use distinct named
-        functions instead of multiple lambdas so result keys cannot collide.
+        If *posterior* has no output for some input of *kernel*, naming
+        the missing inputs; if *posterior* has an output of the same name as
+        an output of *kernel*; if *test_fns* is empty or holds two test
+        functions of the same name; or if *n_replications* is not positive.
+        Use distinct named functions instead of multiple lambdas so result
+        keys cannot collide.
     """
     payload = _ppc_op(
         posterior,

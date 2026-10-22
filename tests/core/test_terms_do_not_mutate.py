@@ -109,7 +109,7 @@ class TestTheCheckItself:
         assert assigned_state(holder) != before, "an in-place edit to cache went unseen"
 
     def test_it_catches_a_rebound_attribute(self):
-        joint = Normal("a", 0.0, 1.0) * Normal("b", 1.0, 2.0)
+        joint = Normal("a", 0.0, 1.0) & Normal("b", 1.0, 2.0)
         before = assigned_state(joint)
         object.__setattr__(joint, "_graph", None)
         assert assigned_state(joint) != before
@@ -123,10 +123,10 @@ class TestTheCheckItself:
 
 
 class TestAQueryLeavesTheTermUnchanged:
-    def test_a_factored_joint_is_unchanged_by_a_field_view(self):
+    def test_a_factored_joint_is_unchanged_by_a_coupled_marginal(self):
         # The view reads the joint's marginal report at the view's construction,
         # which fills nothing on the joint.
-        joint = Normal("a", 0.0, 1.0) * Normal("b", 1.0, 2.0)
+        joint = Normal("a", 0.0, 1.0) & Normal("b", 1.0, 2.0)
         before = assigned_state(joint)
         _ = joint["a"]
         assert assigned_state(joint) == before
@@ -134,7 +134,7 @@ class TestAQueryLeavesTheTermUnchanged:
 
 class TestAnOperationDoesNotMutateItsResultAfterBuildingIt:
     def test_conditioning_a_dependent_joint(self):
-        joint = _ShiftKernel() * Normal("z", loc=0.0, scale=1.0)
+        joint = _ShiftKernel() & Normal("z", loc=0.0, scale=1.0)
         conditioned = condition_on(joint, {"z": jnp.asarray(2.0)})
         # The result is complete when it is returned, and conditioning again
         # builds another result rather than editing this one.
@@ -143,7 +143,7 @@ class TestAnOperationDoesNotMutateItsResultAfterBuildingIt:
         assert assigned_state(conditioned) == before
         assert again is not conditioned
         # The operand is untouched, which is what §V.1 promises.
-        assert set(joint.event_spec.components) == {"z", "x"}
+        assert set(joint.event_spec.outputs) == {"z", "x"}
 
 
 class TestEveryMemoHolderDropsItsMemoOnACopy:

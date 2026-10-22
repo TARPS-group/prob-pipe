@@ -7,8 +7,8 @@ moments bounded by four standard errors.
 
 - GLM likelihoods composed with priors: the joint density, the prior
   predictive, and the Gaussian case's posterior against its closed form,
-  including a design left as a given slot;
-- ``PyMCModel``: the prior predictive, covariates as given slots, the
+  including a design left as an input;
+- ``PyMCModel``: the prior predictive, covariates as inputs, the
   normalized density against PyMC's ``logp``, and the unnormalized density
   and the posterior of a model with a potential;
 - a law of an unnormalized density from ``distribution``: sampling, conversion,
@@ -133,7 +133,7 @@ class TestGLM:
         """The joint's log-density is the GLM's under its canonical link plus the prior's."""
         dispersion = 0.7 if family.has_dispersion else None
         likelihood = glm_likelihood("y", family, X=_X, dispersion=dispersion)
-        joint = likelihood * MultivariateNormal("beta", jnp.zeros(2), cov=2.0 * jnp.eye(2))
+        joint = likelihood & MultivariateNormal("beta", jnp.zeros(2), cov=2.0 * jnp.eye(2))
         value = {"y": jnp.asarray(response, jnp.float32), "beta": jnp.asarray(_BETA, jnp.float32)}
         expected = density(np.asarray(_X, np.float64) @ _BETA, response) + (
             scipy.stats.multivariate_normal.logpdf(_BETA, np.zeros(2), 2.0 * np.eye(2))
@@ -142,7 +142,7 @@ class TestGLM:
 
     def test_the_prior_predictive_has_the_gaussian_moments(self):
         """``y = X beta + e`` has mean zero and variance ``v ||x_i||² + s²`` per observation."""
-        joint = glm_likelihood("y", GaussianFamily(), X=_X, dispersion=0.7) * MultivariateNormal(
+        joint = glm_likelihood("y", GaussianFamily(), X=_X, dispersion=0.7) & MultivariateNormal(
             "beta", jnp.zeros(2), cov=2.0 * jnp.eye(2)
         )
         with workflow_run(seed=11):
@@ -164,16 +164,16 @@ class TestGLM:
             posterior = condition_on.using(method_options=FIT)(case.model, case.data)
         assert_matches(posterior, case.reference, label="the default route on gaussian_linear")
 
-    def test_a_design_left_unbound_is_a_given_slot_of_the_joint(self):
+    def test_a_design_left_unbound_is_an_input_of_the_joint(self):
         likelihood = glm_likelihood("y", GaussianFamily(), dispersion=1.0)
-        joint = likelihood * MultivariateNormal("beta", jnp.zeros(2), cov=jnp.eye(2))
+        joint = likelihood & MultivariateNormal("beta", jnp.zeros(2), cov=jnp.eye(2))
         assert isinstance(joint, FactoredConditionalDistribution)
         assert list(joint.given_spec) == ["X"]
         bound = condition_on(joint, {"X": _X})
-        assert bound.event_spec.spec["y"].shape == (5,)
+        assert bound.event_spec.term_spec["y"].shape == (5,)
 
     def test_binding_the_design_and_the_response_gives_the_closed_form_posterior(self):
-        """One call binds the design as a given slot and conditions on the response.
+        """One call binds the design as an input and conditions on the response.
 
         The design is bound first and the response conditioned by Bayes'
         rule, so the result is the Gaussian closed form; the fit takes a few
@@ -182,7 +182,7 @@ class TestGLM:
         case = canonical.case("gaussian_linear")
         X = jnp.asarray(case.stan_data["X"], jnp.float32)
         prior = MultivariateNormal("beta", jnp.zeros(X.shape[1]), cov=4.0 * jnp.eye(X.shape[1]))
-        joint = glm_likelihood("y", GaussianFamily(), dispersion=1.0) * prior
+        joint = glm_likelihood("y", GaussianFamily(), dispersion=1.0) & prior
         with workflow_run(seed=0):
             posterior = condition_on.using(method="blackjax_nuts", method_options=FIT)(
                 joint, {"X": X, **case.data}
@@ -260,13 +260,13 @@ class TestPyMCModel:
             float(expected), rel=1e-5
         )
 
-    def test_a_covariate_is_a_given_slot_and_binding_it_returns_the_joint(self):
+    def test_a_covariate_is_an_input_and_binding_it_returns_the_joint(self):
         kernel = PyMCModel(_regression, label="regression")
         assert isinstance(kernel, ConditionalDistribution)
         assert list(kernel.given_spec) == ["x"]
         law = condition_on(kernel, {"x": np.linspace(-1, 1, 6)})
         assert isinstance(law, PyMCModel)
-        assert law.event_spec.spec["y"].shape == (6,)
+        assert law.event_spec.term_spec["y"].shape == (6,)
 
     def test_binding_the_covariate_and_the_response_gives_the_closed_form_posterior(self):
         """``beta ~ N(0, 1)`` and ``y ~ N(beta x, 1)`` give ``beta | y ~ N(xᵀy / (1 + xᵀx), 1 / (1 + xᵀx))``.
@@ -350,7 +350,7 @@ class TestPyMCModel:
         case = canonical.case("beta_bernoulli")
         pymc = case.pymc_model()
         value = {"theta": np.float32(0.3), "y": np.asarray(case.data["y"], np.float32)}
-        assert pymc.event_spec.spec["y"].dtype == np.dtype(jnp.result_type(int))
+        assert pymc.event_spec.term_spec["y"].dtype == np.dtype(jnp.result_type(int))
         expected = (
             scipy.stats.beta.logpdf(0.3, 1, 1)
             + scipy.stats.bernoulli.logpmf(np.asarray(value["y"]), 0.3).sum()
@@ -414,14 +414,14 @@ class TestUnnormalizedDensity:
                 law, sample_shape=(50,)
             )
         assert draws.batch_shape == (50,)
-        assert draws.element_spec == law.event_spec.spec
+        assert draws.element_spec.term_spec == law.event_spec.term_spec
         with workflow_run(seed=14):
             normalized = convert.using(method="blackjax_nuts", method_options=FIT)(
                 law, EmpiricalDistribution
             )
         # One row per atom, across the levels chain and draw.
-        atoms = np.reshape(np.asarray(normalized.atoms.values), (normalized.num_atoms, -1))
-        for draw in np.asarray(draws.values):
+        atoms = np.reshape(np.asarray(normalized.atoms.raw), (normalized.num_atoms, -1))
+        for draw in np.asarray(draws.raw):
             assert np.any(np.all(np.isclose(atoms, draw), axis=1))
 
     def test_conversion_through_a_method_keeps_the_declaration(self):
@@ -469,8 +469,10 @@ class TestUnnormalizedDensity:
 def _chain():
     """``x ~ N(1, 2)`` and ``y | x ~ N(2x + 1, 0.5)``: ``𝔼[y] = 3``, ``Var y = 16.25``, ``Cov = 8``."""
     x = Normal("x", 1.0, 2.0)
-    y = ObservationKernel("y", {"x": x.event_spec.spec}, REAL, lambda x: tfd.Normal(2 * x + 1, 0.5))
-    return y * x
+    y = ObservationKernel(
+        "y", {"x": x.event_spec.term_spec}, REAL, lambda x: tfd.Normal(2 * x + 1, 0.5)
+    )
+    return y & x
 
 
 class TestFactoredJoints:
@@ -489,35 +491,35 @@ class TestFactoredJoints:
         assert float(log_prob.using(raw=True)(_chain(), value)) == pytest.approx(expected, rel=1e-6)
 
     def test_the_edge_free_joint_has_each_factors_moments(self):
-        joint = Normal("a", 1.0, 2.0) * Gamma("b", 3.0, 2.0)
+        joint = Normal("a", 1.0, 2.0) & Gamma("b", 3.0, 2.0)
         means = mean.using(raw=True)(joint)
         variances = variance.using(raw=True)(joint)
-        assert float(means["mean(a)"]) == pytest.approx(1.0)
-        assert float(means["mean(b)"]) == pytest.approx(1.5)
-        assert float(variances["variance(a)"]) == pytest.approx(4.0)
-        assert float(variances["variance(b)"]) == pytest.approx(0.75)
+        assert float(means["a"]) == pytest.approx(1.0)
+        assert float(means["b"]) == pytest.approx(1.5)
+        assert float(variances["a"]) == pytest.approx(4.0)
+        assert float(variances["b"]) == pytest.approx(0.75)
 
     def test_a_dependent_joint_claims_no_moment_and_its_mean_is_estimated(self):
         """The mean of ``p(y | x) p(x)`` falls back to Monte Carlo, within four standard errors."""
         joint = _chain()
         assert not isinstance(joint, SupportsMean)
         with workflow_run(seed=16):
-            means = mean.using(method="monte_carlo", n_broadcast_samples=DRAWS, raw=True)(joint)
-        _within_mcse([means["mean(x)"], means["mean(y)"]], [1.0, 3.0], [2.0, np.sqrt(16.25)])
+            means = mean.using(method="monte_carlo", num_samples=DRAWS, raw=True)(joint)
+        _within_mcse([means["x"], means["y"]], [1.0, 3.0], [2.0, np.sqrt(16.25)])
 
     def test_the_mean_of_a_dependent_joint_is_exact_at_its_root_factor(self):
-        """``by_component`` gives ``E[x] = 1`` and ``Var x = 4`` exactly, and estimates ``y``."""
+        """``by_output`` gives ``E[x] = 1`` and ``Var x = 4`` exactly, and estimates ``y``."""
         joint = _chain()
-        assert mean.check(joint).route == "by_component"
+        assert mean.check(joint).route == "by_output"
         with workflow_run(seed=17):
-            means = mean.using(n_broadcast_samples=DRAWS, raw=True)(joint)
-            variances = variance.using(n_broadcast_samples=DRAWS, raw=True)(joint)
-        assert float(means["mean(x)"]) == pytest.approx(1.0, abs=1e-6)
-        assert float(variances["variance(x)"]) == pytest.approx(4.0, abs=1e-5)
-        _within_mcse(means["mean(y)"], 3.0, np.sqrt(16.25))
+            means = mean.using(num_samples=DRAWS, raw=True)(joint)
+            variances = variance.using(num_samples=DRAWS, raw=True)(joint)
+        assert float(means["x"]) == pytest.approx(1.0, abs=1e-6)
+        assert float(variances["x"]) == pytest.approx(4.0, abs=1e-5)
+        _within_mcse(means["y"], 3.0, np.sqrt(16.25))
         # Observed across seeds 17 to 20: errors of the estimated variance up to
         # 0.48, against a standard error of about 0.36.
-        np.testing.assert_allclose(float(variances["variance(y)"]), 16.25, atol=1.45, rtol=0)
+        np.testing.assert_allclose(float(variances["y"]), 16.25, atol=1.45, rtol=0)
 
     def test_the_marginal_of_the_root_factor_is_the_factor(self):
         marginal_x = marginal(_chain(), "x")
@@ -590,7 +592,7 @@ class TestLearnedKernels:
         _bayesflow()
         from probpipe.inference import learn_amortized_posterior
 
-        prior = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        prior = Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)
         with workflow_run(seed=0):
             kernel = learn_amortized_posterior(
                 prior, _shift_simulator(prior), num_simulations=3000, epochs=8
@@ -642,7 +644,7 @@ class TestLearnedKernels:
                 epochs=15,
             )
         observation = jnp.array([[0.6, -0.4]])
-        joint = likelihood * _shift_prior()
+        joint = likelihood & _shift_prior()
         with workflow_run(seed=0):
             posterior = condition_on.using(method="blackjax_nuts", method_options=FIT)(
                 joint, {"observation": observation}

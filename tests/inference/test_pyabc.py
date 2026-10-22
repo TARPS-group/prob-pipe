@@ -53,16 +53,16 @@ class _Simulator(ConditionalDistribution, SupportsConditionalSampling):
     """``y = theta + sigma * noise`` over the prior's fields, concatenated, which only samples."""
 
     def __init__(self, prior):
-        width = prior.event_spec.spec.vector_size
+        width = prior.event_spec.term_spec.vector_size
         super().__init__(
-            dict(prior.event_spec.components),
+            dict(prior.event_spec.outputs),
             OutputSpec(y=NumericArraySpec((width,))),
             label="y",
         )
 
     def _condition_on(self, given, /, **options):
         values = dict(given.children if isinstance(given, Record) else given)
-        theta = jnp.concatenate([jnp.ravel(values[slot]) for slot in self.given_spec])
+        theta = jnp.concatenate([jnp.ravel(values[input_name]) for input_name in self.given_spec])
         return Normal("y", theta, _SIGMA)
 
     def _conditional_sample(self, given, key, sample_shape=()):
@@ -74,7 +74,7 @@ def _model(prior):
     ``y = theta + sigma * noise`` (``sigma = 0.2``), the simulator a kernel that
     samples but has no density, composed with *prior*. For a single observation
     the posterior mean ~= y and std ~= 0.20."""
-    return _Simulator(prior) * prior
+    return _Simulator(prior) & prior
 
 
 def _observed(*values: float) -> dict:
@@ -89,9 +89,9 @@ def _product(*names: str):
 
 
 def _means(post) -> dict[str, np.ndarray]:
-    """The mean of each of the posterior's components, keyed by the component."""
+    """The mean of each of the posterior's outputs, keyed by the output name."""
     m = mean(post)
-    return {f: np.asarray(m[f"mean({f})"]).reshape(-1) for f in post.event_spec.components}
+    return {f: np.asarray(m[f]).reshape(-1) for f in post.event_spec.outputs}
 
 
 class TestPyABCCheck:
@@ -162,7 +162,7 @@ class TestPyABCRecovery:
 
     def test_recovery_multivariate(self):
         """Recovery with a multivariate prior — draws come back as the named
-        vector-valued component."""
+        vector-valued output."""
         prior = MultivariateNormal("m", loc=jnp.zeros(2), cov=jnp.eye(2) * 9.0)
         with workflow_run(seed=0):
             post = condition_on.using(
@@ -206,7 +206,7 @@ class TestPyABCWeightsAndDraws:
                 method_options={"n_particles": 200, "max_populations": 4},
             )(_model(_product("theta")), _observed(2.0))
         draws = np.asarray(flat_draws(post)["theta"]).reshape(-1)
-        weighted = float(np.asarray(mean(post)["mean(theta)"]).reshape(-1)[0])
+        weighted = float(np.asarray(mean(post)["theta"]).reshape(-1)[0])
         assert weighted != pytest.approx(float(draws.mean()), abs=1e-6)
 
     def test_reproducible_across_calls(self):
@@ -245,7 +245,7 @@ class TestPyABCWeightsAndDraws:
                     "max_populations": 3,
                 },
             )(_model(_product("a", "b")), _observed(2.0, -1.0))
-        assert set(post.event_spec.components) == {"a", "b"}
+        assert set(post.event_spec.outputs) == {"a", "b"}
 
     def test_custom_distance_fn_is_used(self):
         """A user-supplied distance_fn over the {"y": vector} sumstats replaces
@@ -434,7 +434,7 @@ class TestPyABCDistributionBacking:
     def test_rvs_gives_the_coordinates_of_a_prior_draw(self):
         prior = Beta("p", 2.0, 3.0)  # mean 0.4
         pd = PyABCDistribution(prior, jax.random.PRNGKey(0))
-        onto_support = bijector_for(prior.event_spec.spec.support).raw()
+        onto_support = bijector_for(prior.event_spec.term_spec.support).raw
         coordinates = jnp.array([pd.rvs()["p0"] for _ in range(2000)])
         draws = np.asarray(jax.vmap(onto_support)(coordinates))
         assert draws.mean() == pytest.approx(0.4, abs=0.03)
@@ -513,3 +513,39 @@ class TestProcessKeys:
 
         assert not np.array_equal(workers[0], workers[1])
         assert not np.array_equal(workers[0], own)
+
+
+class TestCompiledSimulator:
+    """pyabc's prior and simulator compile when they trace, and run eagerly otherwise."""
+
+    def test_a_function_that_does_not_trace_runs_eagerly_and_is_not_traced_again(self):
+        from probpipe.inference._pyabc import _compiled
+
+        python_runs: list = []
+
+        def to_number(x):
+            python_runs.append(x)
+            return float(x) + 1.0
+
+        compiled_to_number = _compiled(to_number)
+        assert compiled_to_number(jnp.asarray(1.0)) == 2.0
+        assert compiled_to_number(jnp.asarray(2.0)) == 3.0
+        # One failed trace, then an eager run for each call.
+        assert len(python_runs) == 3
+
+    def test_an_error_while_the_compiled_function_runs_propagates(self):
+        from probpipe.inference._pyabc import _compiled
+
+        python_runs: list = []
+
+        def simulate(x):
+            python_runs.append(x)
+
+            def solver(value):
+                raise ValueError("solver failed")
+
+            return jax.pure_callback(solver, jax.ShapeDtypeStruct(x.shape, x.dtype), x)
+
+        with pytest.raises(Exception, match="solver failed"):
+            _compiled(simulate)(jnp.ones(2))
+        assert len(python_runs) == 1

@@ -1,7 +1,7 @@
 """The program-defined families: laws that a backend program defines (VII.9).
 
 A program-defined model exposes the law its program defines, in the kind that
-law has, and its variable names determine its output components.
+law has, and its variable names determine its outputs.
 
 Provides:
   - ``StanModel`` – the kernel from a Stan program's data-block variables to its
@@ -72,34 +72,34 @@ __all__ = ["PyMCModel", "StanModel"]
 _BRIDGESTAN_MAKE_ARGS: tuple[str, ...] = ("TBB_LIBRARIES=tbb",)
 
 
-def _given_values(owner: str, given: Any, kwargs: Mapping[str, Any], slots: Any) -> dict[str, Any]:
-    """The values *given* and *kwargs* bind, by slot name.
+def _given_values(owner: str, given: Any, kwargs: Mapping[str, Any], inputs: Any) -> dict[str, Any]:
+    """The values *given* and *kwargs* bind, by input name.
 
     Parameters
     ----------
     owner : str
         The kernel's label, which the error message names.
     given : Record or Mapping[str, Any]
-        Values of some given slots, by slot name; a record contributes its top-level fields.
+        Values of some inputs, by input name; a record contributes its top-level fields.
     kwargs : Mapping[str, Any]
-        Further values by slot name, which take precedence over those of *given*.
-    slots : Iterable of str
-        The names of the kernel's given slots, such as its ``given_spec``.
+        Further values by input name, which take precedence over those of *given*.
+    inputs : Iterable of str
+        The names of the kernel's inputs, such as its ``given_spec``.
 
     Returns
     -------
     dict[str, Any]
-        Each value as received, by slot name.
+        Each value as received, by input name.
 
     Raises
     ------
     KeyError
-        If a name is not one of *slots*.
+        If a name is not one of *inputs*.
     """
     values = {**dict(given.children if isinstance(given, Record) else given), **kwargs}
-    unknown = sorted(set(values) - set(slots))
+    unknown = sorted(set(values) - set(inputs))
     if unknown:
-        raise KeyError(f"cannot condition {owner!r}: {unknown_names('given slot', unknown, slots)}")
+        raise KeyError(f"cannot condition {owner!r}: {unknown_names('input', unknown, inputs)}")
     return values
 
 
@@ -661,7 +661,7 @@ class _StanProgram:
         return tuple(variable.name for variable, _ in self.data)
 
     def given_spec(self, bound: Mapping[str, Any]) -> dict[str, NumericArraySpec]:
-        """The given slot of each data variable *bound* leaves unbound, typed as it is declared.
+        """The input of each data variable *bound* leaves unbound, typed as it is declared.
 
         A size that names a scalar variable of *bound* is that variable's value, and
         one that names another variable is the dimension of its name.
@@ -736,7 +736,7 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
     _transient_state = ("_memo",)
 
     #: ``StanModel`` builds the posterior, so the repr reads as its call.
-    _repr_component: ClassVar[str | None] = None
+    _repr_output_name: ClassVar[str | None] = None
 
     def __init__(self, label: str, program: _StanProgram, data: Mapping[str, Any]) -> None:
         super().__init__(
@@ -887,10 +887,10 @@ class StanModel(
 ):
     """The kernel from a Stan program's data-block variables to its unnormalized posterior.
 
-    The given slots are the data-block variables *data* leaves unbound, which the
+    The inputs are the data-block variables *data* leaves unbound, which the
     program does not divide into sizes, covariates, and observations, and the
-    event is the parameter record. Each slot is typed as its variable is declared,
-    and each parameter carries its dtype and the support its declared
+    event is the parameter record. Each input is typed as its variable is
+    declared, and each parameter carries its dtype and the support its declared
     constraint states; a size that names an unbound variable is the dimension of
     that name on both sides. It claims ``SupportsConditionalUnnormalizedLogProb``
     alone: binding every data variable yields the unnormalized posterior, whose density
@@ -924,8 +924,8 @@ class StanModel(
         declaration cannot be read.
     """
 
-    #: The constructor takes no component, so the repr shows none.
-    _repr_component: ClassVar[str | None] = None
+    #: The constructor takes no output name, so the repr shows none.
+    _repr_output_name: ClassVar[str | None] = None
 
     #: The program reads its observed variables' shapes from the data it
     #: receives, so ``condition_on`` leaves their givens to the program.
@@ -1015,7 +1015,7 @@ class StanModel(
         return law._unnormalized_log_prob(value)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The Stan file; the given slots are the data-block entries left unbound."""
+        """The Stan file; the inputs are the data-block entries left unbound."""
         return [("stan_file", repr(self.stan_file))]
 
 
@@ -1217,7 +1217,7 @@ class _PyMCProgram:
     The function is built with its arguments' defaults. An argument whose
     default is ``None`` and for which that build has a free variable of the
     same name is an observed variable, since passing ``None`` as its
-    ``observed`` value leaves it free; every other argument is a given slot.
+    ``observed`` value leaves it free; every other argument is an input.
 
     Parameters
     ----------
@@ -1341,7 +1341,7 @@ def _pymc_sample(self: PyMCModel, key: Any, sample_shape: tuple[int, ...] = ()) 
     seed = int(jax.random.randint(key, (), 0, 2**31 - 1))
     prior = pm.sample_prior_predictive(draws=n, model=self._program.build(), random_seed=seed).prior
     fields = {}
-    for name in self.event_spec.components:
+    for name in self.event_spec.outputs:
         values = jnp.asarray(prior[name].values[0])
         fields[name] = (
             values[0] if not sample_shape else values.reshape(*sample_shape, *values.shape[1:])
@@ -1353,7 +1353,7 @@ def _pymc_sample(self: PyMCModel, key: Any, sample_shape: tuple[int, ...] = ()) 
 
 
 class _PyMCModelMeta(type(Distribution)):
-    """The metaclass of ``PyMCModel``: a function with a given slot defines a kernel."""
+    """The metaclass of ``PyMCModel``: a function with an input defines a kernel."""
 
     def __call__(cls, model_fn: Callable[..., Any], *, label: str | None = None) -> Any:
         _import_pymc("PyMCModel")
@@ -1370,7 +1370,7 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
     The free variables are the parameters and the observed variables alike: an
     argument that the function passes as an observed variable's ``observed``
     value is an event field, and an observed variable's shape is the one the
-    build without its data gives. Any other argument is a given slot, so a
+    build without its data gives. Any other argument is an input, so a
     model with covariates constructs the kernel over them, whose law at given
     covariates is a ``PyMCModel``. It claims sampling, which draws from the prior predictive,
     and a normalized density. A model with a potential or an improper prior
@@ -1399,8 +1399,8 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
     #: receives, so ``condition_on`` leaves their givens to the program.
     _shapes_from_data: ClassVar[bool] = True
 
-    #: The constructor takes no component, so the repr shows none.
-    _repr_component: ClassVar[str | None] = None
+    #: The constructor takes no output name, so the repr shows none.
+    _repr_output_name: ClassVar[str | None] = None
 
     _capability_table: ClassVar = {
         SupportsLogProb: {"_log_prob": _pymc_density},
@@ -1457,7 +1457,7 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
                 {
                     name: data._raw_column(name)
                     for name in self._observed_names
-                    if name in data.event_template
+                    if data.event_template.is_field(name)
                 }
             )
         if isinstance(data, Record):
@@ -1569,26 +1569,26 @@ def _pymc_repr_arguments(program: _PyMCProgram) -> list[tuple[str, str]]:
 
 
 def _pymc_kernel_density(self: _PyMCKernel, given: Any, value: Any) -> Array:
-    """The joint log-density of the free variables at *value*, the given slots bound."""
+    """The joint log-density of the free variables at *value*, the inputs bound."""
     return self._condition_on(given)._unnormalized_log_prob(value)
 
 
 def _pymc_kernel_log_prob(self: _PyMCKernel, given: Any, value: Any) -> Array:
-    """The normalized joint log-density at *value*, the given slots bound."""
+    """The normalized joint log-density at *value*, the inputs bound."""
     return self._condition_on(given)._log_prob(value)
 
 
 def _pymc_kernel_sample(
     self: _PyMCKernel, given: Any, key: Any, sample_shape: tuple[int, ...] = ()
 ) -> Any:
-    """Prior predictive draws of the free variables, the given slots bound."""
+    """Prior predictive draws of the free variables, the inputs bound."""
     return self._condition_on(given)._sample(key, sample_shape)
 
 
 class _PyMCKernel(ConditionalDistribution):
     """The kernel from a PyMC model's given arguments to the joint law of its free variables.
 
-    Binding every given slot yields the ``PyMCModel`` of the function with those
+    Binding every input yields the ``PyMCModel`` of the function with those
     arguments bound. Its event dimensions are symbolic, since the given values
     may set them, and it claims the conditional twins of the capabilities that
     model claims: conditional sampling and the normalized density, or the
@@ -1600,7 +1600,7 @@ class _PyMCKernel(ConditionalDistribution):
     _shapes_from_data: ClassVar[bool] = True
 
     #: ``PyMCModel`` builds the kernel, so the repr reads as its call.
-    _repr_component: ClassVar[str | None] = None
+    _repr_output_name: ClassVar[str | None] = None
 
     _capability_table: ClassVar = {
         SupportsConditionalLogProb: {"_conditional_log_prob": _pymc_kernel_log_prob},
@@ -1620,7 +1620,7 @@ class _PyMCKernel(ConditionalDistribution):
 
     def __init__(self, label: str, program: _PyMCProgram) -> None:
         super().__init__(
-            {slot: OpaqueSpec() for slot in program.given},
+            {input_name: OpaqueSpec() for input_name in program.given},
             OutputSpec(program.event_record(symbolic=True)),
             label=_constructor_label(self, label, "PyMCModel"),
         )
@@ -1629,25 +1629,25 @@ class _PyMCKernel(ConditionalDistribution):
     def _condition_on(
         self, given: Record | Mapping[str, Any], /, **kwargs: Any
     ) -> Distribution | ConditionalDistribution:
-        """The model at a value of every given slot, or the kernel over the slots left.
+        """The model at a value of every input, or the kernel over the inputs left.
 
         Parameters
         ----------
         given : Record or Mapping[str, Any]
-            Values of some given slots, by slot name.
+            Values of some inputs, by input name.
         **kwargs : Any
-            Further values by slot name, which take precedence over those of *given*.
+            Further values by input name, which take precedence over those of *given*.
 
         Returns
         -------
         Distribution or ConditionalDistribution
             The ``PyMCModel`` of the program with the values bound, or a ``_PyMCKernel``
-            over the given slots left.
+            over the inputs left.
 
         Raises
         ------
         KeyError
-            If a name is not a given slot.
+            If a name is not an input.
         """
         values = _given_values(self.label, given, kwargs, self.given_spec)
         return PyMCModel(self._program.bind(values), label=self.label)

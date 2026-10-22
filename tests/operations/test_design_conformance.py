@@ -83,16 +83,16 @@ _PROSE = {
     ),
     "VI.6": ("def condition_on(d, given): ...",),
     "VI.7": ("def joint(A, B, **align): ...",),
-    "VI.8": ("def marginal(d, field): ...", "def factor(d, component_name): ..."),
+    "VI.8": ("def marginal(d, paths): ...", "def factor(d, output_name): ..."),
     "VI.9": ("def mixture(K, mixing): ...",),
     "VI.10": ("def convert(d, target): ...",),
 }
 
 #: Declarations the implementation does not match yet, with the change each awaits.
-_PENDING = {
-    "OperationSummary": "the registry catalog's EntrySummary is defined in core",
-    "OperationRegistry": "the registry catalog's SupportsRegistryCataloging is defined in core",
-}
+_PENDING: dict[str, str] = {}
+
+#: Routes VI.0's code blocks construct that the implementation names otherwise, with the change each awaits.
+_PENDING_ROUTES: dict[str, str] = {}
 
 #: Names the package exports that Part VI does not declare, with where each is declared.
 _DECLARED_ELSEWHERE = {
@@ -168,11 +168,18 @@ def _route_constructions() -> list:
                 and isinstance(call.func.value, ast.Name)
                 and call.func.attr in _HELPERS
             ):
+                route_name = ast.literal_eval(call.args[0])
+                marks = ()
+                if route_name in _PENDING_ROUTES:
+                    marks = pytest.mark.pending(
+                        reason=_PENDING_ROUTES[route_name], raises=AssertionError
+                    )
                 param = pytest.param(
                     call.func.value.id,
                     call.func.attr,
                     call,
                     id=f"{call.func.value.id}.{call.func.attr}",
+                    marks=marks,
                 )
                 constructions.append(param)
     return constructions

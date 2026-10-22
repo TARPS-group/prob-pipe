@@ -25,7 +25,7 @@ class Opaque(TrackedTerm, Annotated):
     :class:`~probpipe.OpaqueSpec`. Its batch form is
     :class:`~probpipe.OpaqueBatch`.
 
-    Its interface is :attr:`value` plus the identity every tracked term carries.
+    Its interface is :attr:`raw` plus the identity every tracked term carries.
     What the value affords is its own type's, once it is out.
 
     Parameters
@@ -114,12 +114,8 @@ class Opaque(TrackedTerm, Annotated):
         return view
 
     @property
-    def value(self) -> Any:
-        """The wrapped value, untracked."""
-        return self._value
-
     def raw(self) -> Any:
-        """The wrapped value, as :attr:`value` holds it."""
+        """The wrapped value. Untracked."""
         return self._value
 
     @property

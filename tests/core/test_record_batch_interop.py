@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    EmpiricalDistribution,
     Function,
     FunctionBatch,
     FunctionSpec,
@@ -29,13 +30,13 @@ from probpipe import (
     NumericArrayBatch,
     NumericArraySpec,
     NumericRecord,
-    Opaque,
     OpaqueBatch,
     OpaqueSpec,
     OutputSpec,
     Record,
     RecordSpec,
     function,
+    workflow_run,
 )
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._record_batch import RecordBatch
@@ -43,13 +44,23 @@ from probpipe.core._specs import NumericRecordSpec
 
 ELEMENT = NumericRecordSpec(a=(), b=(2,))
 
+# The controls of each way a call runs its evaluation points. ``default`` names
+# no executor, and a one-at-a-time executor runs a function that claims
+# ``traceable=False``, since ``jax`` maps any function it can trace.
+_EXECUTION: dict[str, dict[str, Any]] = {
+    "default": {},
+    "jax": {"executor": "jax"},
+    "sequential": {"executor": "sequential", "traceable": False},
+    "thread": {"executor": "thread", "traceable": False},
+}
+
 
 def _draws(n: int = 4, *, label: str = "draws") -> NumericRecordBatch:
     """*n* draws of a two-field numeric element, over a single ``draw`` level."""
     return NumericRecordBatch(
         {"a": jnp.arange(n, dtype=float), "b": jnp.ones((n, 2))},
         "draw",
-        element_spec=ELEMENT,
+        element=ELEMENT,
         axes_per_level=(1,),
         label=label,
     )
@@ -59,7 +70,7 @@ def _one_field(n: int = 4, *, label: str = "draws") -> NumericRecordBatch:
     return NumericRecordBatch(
         {"x": jnp.arange(n, dtype=float)},
         "draw",
-        element_spec=NumericRecordSpec(x=()),
+        element=NumericRecordSpec(x=()),
         axes_per_level=(1,),
         label=label,
     )
@@ -111,7 +122,7 @@ class TestFunctionBoundary:
         result = f()
 
         assert isinstance(result, NumericRecordBatch)
-        assert result.element_spec == batch.event_template
+        assert result.element_spec.term_spec == batch.event_template
 
     def test_a_declared_output_spec_checks_a_batch_column(self):
         from probpipe import BatchSpec
@@ -164,14 +175,14 @@ class TestBroadcastPlanning:
 class TestFieldExtraction:
     """A field view reads its column out of a batch."""
 
-    def test_a_field_view_extracts_its_column_from_a_batch(self):
-        joint = (Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)).with_label(
+    def test_a_coupled_marginal_extracts_its_column_from_a_batch(self):
+        joint = (Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=0.0, scale=1.0)).with_label(
             "joint"
         )
         batch = NumericRecordBatch(
             {"a": jnp.arange(4.0), "b": jnp.ones(4)},
             "draw",
-            element_spec=NumericRecordSpec(a=(), b=()),
+            element=NumericRecordSpec(a=(), b=()),
             axes_per_level=(1,),
             label="batch",
         )
@@ -180,20 +191,39 @@ class TestFieldExtraction:
 
 
 class TestDistributionBroadcastIndexing:
-    """Indexing one row of a batched per-argument sample gives a record."""
+    """One draw of a law over a batch of records reaches the body as one record."""
 
-    def test_indexing_a_batch_sample_gives_one_record(self):
-        from probpipe.functions._broadcast import _index_sample
+    @staticmethod
+    def _received(batch: NumericRecordBatch) -> list[Any]:
+        """What the body receives at each draw of a lifted call on the empirical law of *batch*."""
+        seen: list[Any] = []
 
-        row = _index_sample(_draws(4), 2)
+        def body(v):
+            seen.append(v)
+            return 0.0
 
-        assert isinstance(row, Record)
-        assert np.allclose(row["a"], 2.0)
+        law = EmpiricalDistribution(batch, label="law")
+        with workflow_run(seed=1):
+            Function(body, label="body", traceable=False, max_evaluations=batch.batch_shape[0])(
+                v=law
+            )
+        return seen
 
-    def test_indexing_a_single_field_batch_sample_gives_its_scalar(self):
-        from probpipe.functions._broadcast import _index_sample
+    def test_a_draw_of_a_batch_law_reaches_the_body_as_one_record(self):
+        seen = self._received(_draws(4))
 
-        assert np.allclose(_index_sample(_one_field(4), 3), 3.0)
+        assert len(seen) == 4
+        assert all(isinstance(row, Record) for row in seen)
+        np.testing.assert_allclose(sorted(float(row["a"]) for row in seen), [0.0, 1.0, 2.0, 3.0])
+        for row in seen:
+            np.testing.assert_allclose(row["b"], [1.0, 1.0])
+
+    def test_a_draw_of_a_single_field_batch_law_reaches_the_body_as_its_scalar(self):
+        seen = self._received(_one_field(4))
+
+        assert all(isinstance(row, Record) for row in seen)
+        assert all(np.allclose(row, float(row["x"])) for row in seen)
+        np.testing.assert_allclose(sorted(float(row["x"]) for row in seen), [0.0, 1.0, 2.0, 3.0])
 
 
 class TestDiagnosticsBridge:
@@ -218,7 +248,7 @@ class TestSiblingViewsZipThroughACall:
         batch = NumericRecordBatch(
             {"x": jnp.arange(3.0), "y": jnp.arange(3.0) * 10},
             "draw",
-            element_spec=RecordSpec(x=(), y=()),
+            element=RecordSpec(x=(), y=()),
             label="batch",
         )
         views = batch.select_all()
@@ -230,7 +260,7 @@ class TestSiblingViewsZipThroughACall:
         out = add(x=views["x"], y=views["y"])
 
         assert out.batch_shape == (3,)
-        np.testing.assert_allclose(out.values, [0.0, 11.0, 22.0])
+        np.testing.assert_allclose(out.raw, [0.0, 11.0, 22.0])
 
 
 class TestOpaqueColumnsAreRearrangedRaw:
@@ -246,7 +276,7 @@ class TestOpaqueColumnsAreRearrangedRaw:
                 "x": jnp.arange(3.0),
             },
             "draw",
-            element_spec=RecordSpec(tag=OpaqueSpec(), x=()),
+            element=RecordSpec(tag=OpaqueSpec(), x=()),
             label="batch",
         )
 
@@ -256,7 +286,7 @@ class TestOpaqueColumnsAreRearrangedRaw:
         assert isinstance(batch["tag"], OpaqueBatch)
         assert isinstance(batch._raw_column("tag"), np.ndarray)
         # An array field's column batch holds the stored array.
-        assert batch["x"].raw() is batch._raw_column("x")
+        assert batch["x"].raw is batch._raw_column("x")
 
 
 class TestRetypingADeclaredOutputKeepsColumnsWithTheirKeys:
@@ -268,7 +298,7 @@ class TestRetypingADeclaredOutputKeepsColumnsWithTheirKeys:
         batch = NumericRecordBatch(
             {"a": jnp.arange(3.0), "b": jnp.arange(3.0) * 10},
             "draw",
-            element_spec=RecordSpec(a=(), b=()),
+            element=RecordSpec(a=(), b=()),
             label="batch",
         )
 
@@ -294,7 +324,7 @@ class TestATransformCannotAddAnUnnamedLevel:
             return NumericRecordBatch(
                 {"s": x + jnp.zeros(2)},
                 "inner",
-                element_spec=RecordSpec(s=()),
+                element=RecordSpec(s=()),
                 axes_per_level=(1,),
                 label="batch",
             )
@@ -309,7 +339,7 @@ class TestATransformCannotAddAnUnnamedLevel:
         batch = NumericRecordBatch(
             {"s": jnp.zeros((3, 2))},
             ("outer", "inner"),
-            element_spec=RecordSpec(s=()),
+            element=RecordSpec(s=()),
             axes_per_level=(1, 1),
             label="batch",
         )
@@ -320,7 +350,7 @@ class TestATransformCannotAddAnUnnamedLevel:
         single = NumericRecordBatch(
             {"s": jnp.zeros(3)},
             "outer",
-            element_spec=RecordSpec(s=()),
+            element=RecordSpec(s=()),
             label="batch",
         )
         seen: list[Any] = []
@@ -336,7 +366,7 @@ class TestBatchFingerprinting:
         return NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             (level,),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=axes_per_level,
             label="batch",
         )
@@ -347,7 +377,7 @@ class TestBatchFingerprinting:
         batch = NumericRecordBatch(
             {"a": jnp.arange(3.0), "b": jnp.arange(3.0)},
             "draw",
-            element_spec=RecordSpec(a=(), b=()),
+            element=RecordSpec(a=(), b=()),
             label="batch",
         )
 
@@ -370,7 +400,7 @@ class TestBatchFingerprinting:
             return NumericRecordBatch(
                 {"a": jnp.arange(3.0), "b": jnp.arange(3.0) * 10},
                 "draw",
-                element_spec=RecordSpec(a=(), b=()),
+                element=RecordSpec(a=(), b=()),
                 label="batch",
             )
 
@@ -382,13 +412,13 @@ class TestBatchFingerprinting:
         ab = NumericRecordBatch(
             {"a": jnp.arange(3.0), "b": jnp.arange(3.0) * 10},
             "draw",
-            element_spec=RecordSpec(a=(), b=()),
+            element=RecordSpec(a=(), b=()),
             label="batch",
         )
         ba = NumericRecordBatch(
             {"a": jnp.arange(3.0) * 10, "b": jnp.arange(3.0)},
             "draw",
-            element_spec=RecordSpec(a=(), b=()),
+            element=RecordSpec(a=(), b=()),
             label="batch",
         )
 
@@ -400,14 +430,14 @@ class TestBatchFingerprinting:
         split = NumericRecordBatch(
             {"x": jnp.zeros((2, 3))},
             ("a", "b"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=(1, 1),
             label="batch",
         )
         joined = NumericRecordBatch(
             {"x": jnp.zeros((2, 3))},
             "a",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=(2,),
             label="batch",
         )
@@ -423,7 +453,7 @@ class TestMultiLevelSweeps:
         grid = NumericRecordBatch(
             {"x": jnp.arange(6.0).reshape(2, 3)},
             ("chain", "draw"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=(1, 1),
             label="batch",
         )
@@ -435,7 +465,7 @@ class TestMultiLevelSweeps:
         out = scale(p=grid)
 
         assert out.batch_shape == (2, 3)
-        np.testing.assert_allclose(out.values, np.arange(6.0).reshape(2, 3) * 10.0)
+        np.testing.assert_allclose(out.raw, np.arange(6.0).reshape(2, 3) * 10.0)
 
     def test_two_groups_and_a_returned_batch_keep_their_partition(self):
         """The aggregate mints one level per swept group, then the rows' own
@@ -444,13 +474,13 @@ class TestMultiLevelSweeps:
         a = NumericRecordBatch(
             {"a": jnp.arange(2.0)},
             "outer",
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="batch",
         )
         b = NumericRecordBatch(
             {"b": jnp.arange(3.0)},
             "inner",
-            element_spec=RecordSpec(b=()),
+            element=RecordSpec(b=()),
             label="batch",
         )
 
@@ -459,7 +489,7 @@ class TestMultiLevelSweeps:
             return NumericRecordBatch(
                 {"s": jnp.asarray(a["a"]) + jnp.asarray(b["b"]) + jnp.zeros(2)},
                 "rows",
-                element_spec=RecordSpec(s=()),
+                element=RecordSpec(s=()),
                 axes_per_level=(1,),
                 label="batch",
             )
@@ -472,16 +502,17 @@ class TestMultiLevelSweeps:
         np.testing.assert_allclose(np.asarray(out["s"]), np.asarray(expected))
 
 
-class TestAutoDispatchFallsBackForABatchReturningBody:
-    def test_the_default_dispatch_produces_the_sequential_result(self):
-        """The probe traces the vmap the dispatch is choosing, so a body vmap
-        cannot run — one returning a batch, whose added axis no level names —
-        resolves to sequential instead of failing mid-call. Dispatch paths
-        agree on results by contract, so the fallback changes speed alone."""
+class TestTheDefaultExecutorFallsBackForABatchReturningBody:
+    def test_the_default_executor_produces_the_one_at_a_time_result(self):
+        """The probe traces the vmap the executor choice depends on, so a body
+        vmap cannot run — one returning a batch, whose added axis no level
+        names — runs one evaluation point at a time instead of failing
+        mid-call. Executors agree on results by contract, so the fallback
+        changes speed alone."""
         source = NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             "draw",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="batch",
         )
 
@@ -489,7 +520,7 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
             return NumericRecordBatch(
                 {"s": jnp.asarray(v["x"]) + jnp.zeros(2)},
                 "inner",
-                element_spec=RecordSpec(s=()),
+                element=RecordSpec(s=()),
                 axes_per_level=(1,),
                 label="batch",
             )
@@ -501,10 +532,10 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
 
         assert out.level_names == ("draw", "inner")
         assert out.batch_shape == (3, 2)
-        # The fallback and an explicit sequential dispatch agree on values —
-        # the dispatch-equivalence contract — and both match the independently
+        # The fallback and an explicit sequential executor agree on values —
+        # the executor-equivalence contract — and both match the independently
         # computed result, so agreement is not two wrongs agreeing.
-        explicit = Function(body, label="body", dispatch="sequential")(v=source)
+        explicit = Function(body, label="body", traceable=False, executor="sequential")(v=source)
         np.testing.assert_allclose(np.asarray(out["s"]), np.asarray(explicit["s"]))
         np.testing.assert_allclose(np.asarray(out["s"]), [[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]])
 
@@ -512,7 +543,7 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
         source = NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             "draw",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="batch",
         )
 
@@ -523,7 +554,7 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
         out = double(v=source)
 
         assert out.batch_shape == (3,)
-        np.testing.assert_allclose(out.values, [0.0, 2.0, 4.0])
+        np.testing.assert_allclose(out.raw, [0.0, 2.0, 4.0])
 
 
 class TestSameRankTransformsCannotLieEither:
@@ -535,7 +566,7 @@ class TestSameRankTransformsCannotLieEither:
         batch = NumericRecordBatch(
             {"x": jnp.arange(2.0), "y": jnp.arange(2.0) * 10},
             "draw",
-            element_spec=RecordSpec(x=(), y=()),
+            element=RecordSpec(x=(), y=()),
             label="batch",
         )
 
@@ -553,7 +584,7 @@ class TestSameRankTransformsCannotLieEither:
         batch = NumericRecordBatch(
             {"x": jnp.arange(2.0), "y": jnp.arange(2.0)},
             "draw",
-            element_spec=RecordSpec(x=(), y=()),
+            element=RecordSpec(x=(), y=()),
             label="batch",
         )
         _, treedef = jtu.tree_flatten(batch)
@@ -576,7 +607,7 @@ class TestOpaqueBatchesStack:
                     "x": jnp.arange(2.0) + i,
                 },
                 "inner",
-                element_spec=RecordSpec(tag=OpaqueSpec(), x=()),
+                element=RecordSpec(tag=OpaqueSpec(), x=()),
                 label="batch",
             )
             for i in range(3)
@@ -595,7 +626,7 @@ class TestAnEmptySweepAnswersToItsTemplate:
         source = NumericRecordBatch(
             {"x": jnp.zeros((0,))},
             "design",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="batch",
         )
 
@@ -619,7 +650,7 @@ class TestATransformCannotResizeTheElement:
         return NumericRecordBatch(
             {"x": jnp.zeros((3, 2))},
             "draw",
-            element_spec=RecordSpec(x=(2,)),
+            element=RecordSpec(x=(2,)),
             label="batch",
         )
 
@@ -674,20 +705,20 @@ class TestZeroWidthEventsUnderExplicitJax:
         source = NumericRecordBatch(
             {"x": jnp.zeros((3, 0)), "row": jnp.arange(3.0)},
             "draw",
-            element_spec=RecordSpec(x=(0,), row=()),
+            element=RecordSpec(x=(0,), row=()),
             label="batch",
         )
 
         out = Function(
             lambda v: jnp.sum(jnp.asarray(v["x"])) + jnp.asarray(v["row"]),
             label="function",
-            dispatch="jax",
+            executor="jax",
         )(v=source)
 
         assert out.batch_shape == (3,)
         # Row identities survive, so the zero-width column really was carried
         # per row rather than the output being indistinguishable zeros.
-        np.testing.assert_allclose(out.values, [0.0, 1.0, 2.0])
+        np.testing.assert_allclose(out.raw, [0.0, 1.0, 2.0])
 
 
 class TestShapeCannotRecoverAxisProvenance:
@@ -702,7 +733,7 @@ class TestShapeCannotRecoverAxisProvenance:
         return NumericRecordBatch(
             {"x": jnp.arange(float(chain * draw)).reshape(chain, draw)},
             ("chain", "draw"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=(1, 1),
             label="batch",
         )
@@ -725,7 +756,7 @@ class TestATransformCannotRetypeTheElement:
         batch = NumericRecordBatch(
             {"x": jnp.zeros(3, dtype=jnp.float32)},
             "draw",
-            element_spec=RecordSpec(x=NumericArraySpec((), dtype=jnp.float32)),
+            element=RecordSpec(x=NumericArraySpec((), dtype=jnp.float32)),
             label="batch",
         )
 
@@ -738,7 +769,7 @@ class TestATransformCannotRetypeTheElement:
         batch = NumericRecordBatch(
             {"x": jnp.zeros(3, dtype=jnp.float16)},
             "draw",
-            element_spec=RecordSpec(x=NumericArraySpec((), dtype=jnp.float32)),
+            element=RecordSpec(x=NumericArraySpec((), dtype=jnp.float32)),
             label="batch",
         )
 
@@ -747,15 +778,15 @@ class TestATransformCannotRetypeTheElement:
         assert widened._raw_column("x").dtype == jnp.float32
 
 
-class TestZeroRowsAgreeAcrossDispatch:
-    def test_every_dispatch_takes_the_same_empty_aggregation(self):
+class TestZeroRowsAgreeAcrossExecutors:
+    def test_every_executor_takes_the_same_empty_aggregation(self):
         """Zero rows run nothing, so there is no body to trace and no per-row
         output for the paths to disagree over; the output schema must not
         depend on how the rows would have been executed."""
         source = NumericRecordBatch(
             {"x": jnp.zeros((2, 0))},
             ("a", "b"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=(1, 1),
             label="batch",
         )
@@ -764,14 +795,14 @@ class TestZeroRowsAgreeAcrossDispatch:
             return jnp.sum(jnp.asarray(v["x"]))
 
         results = {
-            name: Function(body, label="body", dispatch=name, output_spec=NumericArraySpec(()))(
-                v=source
-            )
-            for name in ("auto", "sequential", "jax")
+            name: Function(
+                body, label="body", output_spec=NumericArraySpec(()), **_EXECUTION[name]
+            )(v=source)
+            for name in ("default", "sequential", "thread", "jax")
         }
 
         types = {type(r).__name__ for r in results.values()}
-        specs = {repr(r.element_spec) for r in results.values()}
+        specs = {repr(r.element_spec.term_spec) for r in results.values()}
         assert len(types) == 1
         assert len(specs) == 1
 
@@ -788,7 +819,7 @@ class TestFunctionValuedColumnsStack:
             RecordBatch(
                 {"f": np.array([(lambda i=i, j=j: i * 10 + j) for j in range(2)], dtype=object)},
                 "inner",
-                element_spec=RecordSpec(f=FunctionSpec()),
+                element=RecordSpec(f=FunctionSpec()),
                 label="batch",
             )
             for i in range(3)
@@ -810,7 +841,7 @@ class TestAnEmpiricalTakesABatch:
         data = NumericRecordBatch(
             {"X": jnp.arange(4.0), "y": jnp.arange(4.0) * 10},
             "obs",
-            element_spec=RecordSpec(X=(), y=()),
+            element=RecordSpec(X=(), y=()),
             label="batch",
         )
 
@@ -825,8 +856,8 @@ class TestAnEmpiricalTakesABatch:
 
 
 def _stored(element):
-    """What an object batch's element view holds: an Opaque's value, a Function's callable."""
-    return element.value if isinstance(element, Opaque) else element.raw()
+    """What an object batch's element view holds, its raw form: an Opaque's value, a Function's callable."""
+    return element.raw
 
 
 class TestBatchValuedRowAggregation:
@@ -837,7 +868,7 @@ class TestBatchValuedRowAggregation:
         return NumericRecordBatch(
             {"x": jnp.arange(float(n))},
             "row",
-            element_spec=RecordSpec(x=NumericArraySpec(shape=())),
+            element=RecordSpec(x=NumericArraySpec(shape=())),
             label="batch",
         )
 
@@ -846,7 +877,7 @@ class TestBatchValuedRowAggregation:
         return NumericRecordBatch(
             {"y": jnp.zeros(n)},
             level,
-            element_spec=RecordSpec(y=NumericArraySpec(shape=())),
+            element=RecordSpec(y=NumericArraySpec(shape=())),
             label="batch",
         )
 
@@ -856,13 +887,13 @@ class TestBatchValuedRowAggregation:
             return OpaqueBatch(
                 ["north", "south-east"],
                 "item",
-                element_spec=OpaqueSpec(meta="authoritative"),
+                element=OpaqueSpec(meta="authoritative"),
                 label="labels",
             )
         return FunctionBatch(
             [lambda x: x + 1, lambda x: x * 2],
             "item",
-            element_spec=FunctionSpec(
+            element=FunctionSpec(
                 input_spec=InputSpec(RecordSpec(x=()).children),
                 output_spec=OutputSpec(result=NumericArraySpec(())),
             ),
@@ -897,19 +928,21 @@ class TestBatchValuedRowAggregation:
             with pytest.raises(
                 TypeError, match="some rows returned a batch and some did not"
             ) as exc:
-                Function(body, label="body", dispatch="sequential")(x=self._rows(2))
+                Function(body, label="body", traceable=False, executor="sequential")(
+                    x=self._rows(2)
+                )
             messages.append(str(exc.value))
         assert messages[0] == messages[1]
 
     @pytest.mark.parametrize("kind", ["opaque", "function"])
-    @pytest.mark.parametrize("dispatch", ["auto", "sequential"])
-    def test_object_batch_rows_keep_their_declaration(self, kind, dispatch):
+    @pytest.mark.parametrize("execution", ["default", "sequential"])
+    def test_object_batch_rows_keep_their_declaration(self, kind, execution):
         inner = self._inner_objects(kind)
 
-        result = Function(lambda x: inner, label="collect", dispatch=dispatch)(x=self._rows())
+        result = Function(lambda x: inner, label="collect", **_EXECUTION[execution])(x=self._rows())
 
         assert type(result) is type(inner)
-        assert result.element_spec == inner.element_spec
+        assert result.element_spec.term_spec == inner.element_spec.term_spec
         assert result.batch_shape == (3, 2)
         assert result.level_names == ("row", "item")
         assert result.axis_groups == ((3,), (2,))
@@ -920,7 +953,7 @@ class TestBatchValuedRowAggregation:
         if kind == "opaque":
 
             def evaluate(label):
-                return len(label.value)
+                return len(label.raw)
 
             expected = [5, 10]
         else:
@@ -929,7 +962,9 @@ class TestBatchValuedRowAggregation:
                 return f(3)
 
             expected = [4, 6]
-        downstream = Function(evaluate, label="evaluate", dispatch="sequential")(result)
+        downstream = Function(evaluate, label="evaluate", traceable=False, executor="sequential")(
+            result
+        )
         assert downstream.level_names == result.level_names
         assert downstream.axis_groups == result.axis_groups
         np.testing.assert_array_equal(np.asarray(downstream), np.tile(expected, (3, 1)))
@@ -938,13 +973,13 @@ class TestBatchValuedRowAggregation:
     def test_object_batch_rows_with_conflicting_declarations_are_refused(self, kind):
         first = self._inner_objects(kind)
         other_spec = OpaqueSpec(meta="different") if kind == "opaque" else FunctionSpec()
-        second = type(first)(list(first), "item", element_spec=other_spec, label="other")
+        second = type(first)(list(first), "item", element=other_spec, label="other")
 
         def body(x):
             return first if float(x["x"]) == 0 else second
 
         with pytest.raises(ValueError, match="returned batches that disagree"):
-            Function(body, label="body", dispatch="sequential")(x=self._rows(2))
+            Function(body, label="body", traceable=False, executor="sequential")(x=self._rows(2))
 
     @pytest.mark.parametrize(
         "second",
@@ -958,7 +993,7 @@ class TestBatchValuedRowAggregation:
             return self._inner(2) if float(x["x"]) < 0.5 else second(self)
 
         with pytest.raises(ValueError, match="returned batches that disagree"):
-            Function(body, label="body", dispatch="sequential")(x=self._rows())
+            Function(body, label="body", traceable=False, executor="sequential")(x=self._rows())
 
     def test_rows_disagreeing_on_their_element_spec_are_refused(self):
         def body(x):
@@ -967,17 +1002,17 @@ class TestBatchValuedRowAggregation:
             return NumericRecordBatch(
                 {"z": jnp.zeros(2)},
                 "inner",
-                element_spec=RecordSpec(z=NumericArraySpec(shape=())),
+                element=RecordSpec(z=NumericArraySpec(shape=())),
                 label="batch",
             )
 
         with pytest.raises(ValueError, match="returned batches that disagree"):
-            Function(body, label="body", dispatch="sequential")(x=self._rows())
+            Function(body, label="body", traceable=False, executor="sequential")(x=self._rows())
 
     def test_compatible_batch_rows_stack_with_the_sweep_in_front(self):
-        out = Function(lambda x: self._inner(2), label="function", dispatch="sequential")(
-            x=self._rows()
-        )
+        out = Function(
+            lambda x: self._inner(2), label="function", traceable=False, executor="sequential"
+        )(x=self._rows())
         assert out.batch_shape == (3, 2)
         assert out.level_names == ("row", "inner")
 
@@ -986,7 +1021,7 @@ class TestBatchValuedRowAggregation:
         return NumericArrayBatch(
             jnp.zeros(n),
             level,
-            element_spec=NumericArraySpec(shape=()),
+            element=NumericArraySpec(shape=()),
             label="inner",
         )
 
@@ -996,13 +1031,13 @@ class TestBatchValuedRowAggregation:
         Read as event shape instead, the rows' axis would say each cell holds
         one 2-vector where it holds two elements on a level.
         """
-        out = Function(lambda x: self._inner_array(2), label="function", dispatch="sequential")(
-            x=self._rows()
-        )
+        out = Function(
+            lambda x: self._inner_array(2), label="function", traceable=False, executor="sequential"
+        )(x=self._rows())
 
         assert isinstance(out, NumericArrayBatch)
         assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "inner"))
-        assert tuple(out.element_spec.shape) == ()
+        assert tuple(out.element_spec.term_spec.shape) == ()
 
     def test_array_batch_rows_stack_from_their_native_store(self):
         """A row's store is in native form, so stacking goes through its backend.
@@ -1018,7 +1053,7 @@ class TestBatchValuedRowAggregation:
             NumericArrayBatch(
                 pd.Series([1.0 * i, 2.0 * i]),
                 "inner",
-                element_spec=NumericArraySpec(shape=()),
+                element=NumericArraySpec(shape=()),
                 label="inner",
             )
             for i in range(1, 4)
@@ -1027,7 +1062,7 @@ class TestBatchValuedRowAggregation:
         out = _make_stack(rows, n=3, label="f", level_names=("sweep",))
 
         assert (out.batch_shape, out.level_names) == ((3, 2), ("sweep", "inner"))
-        np.testing.assert_allclose(np.asarray(out.values)[2], [3.0, 6.0])
+        np.testing.assert_allclose(np.asarray(out.raw)[2], [3.0, 6.0])
 
     def test_native_batch_rows_remain_usable_after_a_sweep_inside_jit(self):
         pd = pytest.importorskip("pandas")
@@ -1035,21 +1070,23 @@ class TestBatchValuedRowAggregation:
         inner = NumericArrayBatch(
             native,
             "inner",
-            element_spec=NumericArraySpec((), dtype=np.float64),
+            element=NumericArraySpec((), dtype=np.float64),
             label="held",
         )
         source = self._rows()
-        collect = Function(lambda row: inner, label="collect", dispatch="sequential")
+        collect = Function(
+            lambda row: inner, label="collect", traceable=False, executor="sequential"
+        )
         expected = np.tile([1.0, 2.0], (3, 1))
 
         np.testing.assert_array_equal(jax.jit(lambda: collect(source).as_jax())(), expected)
-        assert inner.values is native
+        assert inner.raw is native
         np.testing.assert_array_equal(inner.as_jax(), [1.0, 2.0])
         result = collect(source)
         assert result.level_names == ("row", "inner")
         assert result.axis_groups == ((3,), (2,))
         # The rows are stored as one JAX array, whose dtype the declaration records.
-        assert result.element_spec == NumericArraySpec((), dtype=np.float32)
+        assert result.element_spec.term_spec == NumericArraySpec((), dtype=np.float32)
         np.testing.assert_array_equal(np.asarray(result), expected)
 
     def test_array_batch_rows_disagreeing_on_their_multiplicity_are_refused(self):
@@ -1057,7 +1094,7 @@ class TestBatchValuedRowAggregation:
             return self._inner_array(2) if float(x["x"]) < 0.5 else self._inner_array(3)
 
         with pytest.raises(ValueError, match="returned batches that disagree"):
-            Function(body, label="body", dispatch="sequential")(x=self._rows())
+            Function(body, label="body", traceable=False, executor="sequential")(x=self._rows())
 
     def test_mixing_array_batch_and_record_batch_rows_is_refused(self):
         """The two kinds hold different things, so there is no one aggregate."""
@@ -1066,7 +1103,7 @@ class TestBatchValuedRowAggregation:
             return self._inner_array(2) if float(x["x"]) < 0.5 else self._inner(2)
 
         with pytest.raises(TypeError, match="returned batches of different kinds"):
-            Function(body, label="body", dispatch="sequential")(x=self._rows())
+            Function(body, label="body", traceable=False, executor="sequential")(x=self._rows())
 
     def test_a_returned_design_aggregates_as_a_plain_batch(self):
         """The aggregate is not itself a design: a subclass with its own
@@ -1074,15 +1111,18 @@ class TestBatchValuedRowAggregation:
         from probpipe.record.design import FullFactorialDesign
 
         out = Function(
-            lambda x: FullFactorialDesign(a=[1.0, 2.0]), label="function", dispatch="sequential"
+            lambda x: FullFactorialDesign(a=[1.0, 2.0]),
+            label="function",
+            traceable=False,
+            executor="sequential",
         )(x=self._rows())
         assert type(out) is NumericRecordBatch
         assert out.batch_shape == (3, 2)
 
 
-class TestDeclaredOpaqueOutputAcrossDispatches:
+class TestDeclaredOpaqueOutputAcrossExecutors:
     """A field the declaration calls opaque holds one value per row, whatever
-    those values look like — on every dispatch.
+    those values look like — on every executor.
 
     Stacking them numerically instead would turn each row's own axes into batch
     axes the levels never named, and the batch refuses its own output. The
@@ -1090,8 +1130,8 @@ class TestDeclaredOpaqueOutputAcrossDispatches:
     equivalence is asserted rather than assumed.
     """
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "jax", "auto"])
-    def test_an_opaque_field_of_arrays_is_one_object_per_row(self, dispatch):
+    @pytest.mark.parametrize("execution", ["sequential", "jax", "default"])
+    def test_an_opaque_field_of_arrays_is_one_object_per_row(self, execution):
         rows = NumericRecordBatch.stack(
             [
                 NumericRecord(
@@ -1106,7 +1146,7 @@ class TestDeclaredOpaqueOutputAcrossDispatches:
             level_name="row",
         )
 
-        @function(output_spec=RecordSpec(y=OpaqueSpec()), dispatch=dispatch)
+        @function(output_spec=RecordSpec(y=OpaqueSpec()), **_EXECUTION[execution])
         def make_vector(row):
             return {"y": jnp.array([row["i"], row["i"] + 1])}
 
@@ -1117,8 +1157,8 @@ class TestDeclaredOpaqueOutputAcrossDispatches:
         column = result._raw_column("y")
         assert column.dtype == object
         assert column.shape == (2,)
-        assert [int(v) for v in result[0].raw("y")] == [1, 2]
-        assert [int(v) for v in result[1].raw("y")] == [2, 3]
+        assert [int(v) for v in result[0]["y"].raw] == [1, 2]
+        assert [int(v) for v in result[1]["y"].raw] == [2, 3]
 
 
 class TestEveryBatchIsAnOperand:
@@ -1135,25 +1175,25 @@ class TestEveryBatchIsAnOperand:
         return NumericArrayBatch(
             jnp.arange(float(n)),
             "row",
-            element_spec=NumericArraySpec(shape=()),
+            element=NumericArraySpec(shape=()),
             label="rows",
         )
 
     def test_a_numeric_array_batch_reaches_the_body_as_an_element(self):
         seen: list = []
 
-        Function(lambda v: (seen.append(v), 0.0)[1], label="f", dispatch="sequential")(
-            v=self._numeric()
-        )
+        Function(
+            lambda v: (seen.append(v), 0.0)[1], label="f", traceable=False, executor="sequential"
+        )(v=self._numeric())
 
         assert seen
         assert all(isinstance(row, NumericArray) for row in seen)
         assert not any(isinstance(row, NumericArrayBatch) for row in seen)
 
     def test_sweeping_a_numeric_array_batch_keeps_its_level(self):
-        out = Function(lambda v: jnp.asarray(v) * 2.0, label="double", dispatch="sequential")(
-            v=self._numeric()
-        )
+        out = Function(
+            lambda v: jnp.asarray(v) * 2.0, label="double", traceable=False, executor="sequential"
+        )(v=self._numeric())
 
         assert (out.batch_shape, out.level_names) == ((3,), ("row",))
 
@@ -1162,7 +1202,9 @@ class TestEveryBatchIsAnOperand:
         `Opaque` holding the caller's own object."""
         seen: list = []
 
-        Function(lambda v: (seen.append(v), 0.0)[1], label="f", dispatch="sequential")(
+        Function(
+            lambda v: (seen.append(v), 0.0)[1], label="f", traceable=False, executor="sequential"
+        )(
             v=OpaqueBatch(
                 ["a", "b"],
                 "row",
@@ -1170,11 +1212,11 @@ class TestEveryBatchIsAnOperand:
             )
         )
 
-        assert [element.value for element in seen] == ["a", "b"]
+        assert [element.raw for element in seen] == ["a", "b"]
         assert [element.label for element in seen] == ["rows[row=0]", "rows[row=1]"]
 
     def test_a_function_batch_is_swept_too(self):
-        out = Function(lambda f: float(f()), label="call", dispatch="sequential")(
+        out = Function(lambda f: float(f()), label="call", traceable=False, executor="sequential")(
             f=FunctionBatch(
                 [lambda: 1.0, lambda: 2.0],
                 "row",
@@ -1183,10 +1225,10 @@ class TestEveryBatchIsAnOperand:
         )
 
         assert (out.batch_shape, out.level_names) == ((2,), ("row",))
-        np.testing.assert_allclose(out.values, [1.0, 2.0])
+        np.testing.assert_allclose(out.raw, [1.0, 2.0])
 
 
-class TestSweepingASingleStoreBatchAgreesAcrossDispatch:
+class TestSweepingASingleStoreBatchAgreesAcrossExecutors:
     """A row that returns a single-store batch keeps its levels, as a record row does."""
 
     @staticmethod
@@ -1194,7 +1236,7 @@ class TestSweepingASingleStoreBatchAgreesAcrossDispatch:
         return NumericArrayBatch(
             jnp.arange(float(n)),
             "row",
-            element_spec=NumericArraySpec(shape=()),
+            element=NumericArraySpec(shape=()),
             label="rows",
         )
 
@@ -1203,16 +1245,16 @@ class TestSweepingASingleStoreBatchAgreesAcrossDispatch:
         return NumericArrayBatch(
             jnp.stack([jnp.asarray(v), jnp.asarray(v)]),
             "inner",
-            element_spec=NumericArraySpec(shape=()),
+            element=NumericArraySpec(shape=()),
             label="i",
         )
 
-    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
-    def test_the_rows_own_level_survives(self, dispatch):
-        out = Function(self._inner, label="f", dispatch=dispatch)(v=self._rows())
+    @pytest.mark.parametrize("execution", ["default", "sequential", "thread", "jax"])
+    def test_the_rows_own_level_survives(self, execution):
+        out = Function(self._inner, label="f", **_EXECUTION[execution])(v=self._rows())
 
         assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "inner"))
-        np.testing.assert_allclose(out.values, np.repeat(np.arange(3.0), 2).reshape(3, 2))
+        np.testing.assert_allclose(out.raw, np.repeat(np.arange(3.0), 2).reshape(3, 2))
 
     def test_explicit_jax_maps_the_store_and_feeds_each_row_as_an_array(self):
         """One map over the batch's store serves every row, and the body receives each
@@ -1223,10 +1265,10 @@ class TestSweepingASingleStoreBatchAgreesAcrossDispatch:
             seen.append(v)
             return jnp.asarray(v) * 2.0
 
-        out = Function(double, label="double", dispatch="jax")(v=self._rows(5))
+        out = Function(double, label="double", executor="jax")(v=self._rows(5))
 
         assert seen and len(seen) < 5
         assert all(isinstance(row, NumericArray) for row in seen)
         assert all(row.spec == NumericArraySpec(shape=()) for row in seen)
         assert (out.batch_shape, out.level_names) == ((5,), ("row",))
-        np.testing.assert_allclose(out.values, 2.0 * np.arange(5.0))
+        np.testing.assert_allclose(out.raw, 2.0 * np.arange(5.0))

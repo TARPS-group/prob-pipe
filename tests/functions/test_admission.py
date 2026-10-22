@@ -79,16 +79,16 @@ class TestBinding:
         def affine(x, scale=2.0, *, shift=0.0):
             return scale * x + shift
 
-        assert float(affine(1.0).value) == 2.0
-        assert float(affine(1.0, 3.0, shift=1.0).value) == 4.0
+        assert float(affine(1.0).raw) == 2.0
+        assert float(affine(1.0, 3.0, shift=1.0).raw) == 4.0
 
     def test_an_absent_input_spec_adds_no_schema_constraints(self):
         @function
         def kind(x):
             return type(x).__name__
 
-        assert kind(jnp.ones(3)).value == "ArrayImpl"
-        assert kind("text").value == "str"
+        assert kind(jnp.ones(3)).raw == "ArrayImpl"
+        assert kind("text").raw == "str"
 
     def test_tracked_arguments_are_dependencies_and_others_inputs_by_parameter(self):
         @function
@@ -129,7 +129,7 @@ class TestWrap:
 
         assert seen[0] is array
 
-    def test_a_raw_collection_wraps_as_opaque_and_fails_a_numeric_slot(self):
+    def test_a_raw_collection_wraps_as_opaque_and_fails_a_numeric_input(self):
         wrapped = Function(
             lambda x: x,
             input_spec={"x": NumericArraySpec((2,))},
@@ -145,8 +145,8 @@ class TestWrap:
 class TestConversionPlanning:
     def test_a_backend_distribution_at_a_value_parameter_is_converted_and_lifted(self):
         @function(
-            n_broadcast_samples=6,
-            dispatch="sequential",
+            max_evaluations=6,
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         def identity(x):
@@ -306,8 +306,8 @@ class TestAdmission:
         assert seen == [kernel]
 
     @pytest.mark.parametrize("annotation", [Any, _AnyAlias], ids=["Any", "alias"])
-    @pytest.mark.parametrize("slot", ["parameter", "variadic positional", "variadic keyword"])
-    def test_a_kernel_at_a_slot_annotated_any_passes(self, slot, annotation):
+    @pytest.mark.parametrize("input_kind", ["parameter", "variadic positional", "variadic keyword"])
+    def test_a_kernel_at_an_input_annotated_any_passes(self, input_kind, annotation):
         seen = []
 
         def at_parameter(proposal):
@@ -326,20 +326,20 @@ class TestAdmission:
         at_args.__annotations__ = {"proposals": annotation}
         at_options.__annotations__ = {"options": annotation}
         kernel = _kernel()
-        if slot == "variadic keyword":
+        if input_kind == "variadic keyword":
             Function(
                 at_options,
                 label="body",
             )(proposal=kernel)
         else:
             Function(
-                at_parameter if slot == "parameter" else at_args,
+                at_parameter if input_kind == "parameter" else at_args,
                 label="body",
             )(kernel)
 
         assert len(seen) == 1 and seen[0] is kernel
 
-    def test_a_kernel_at_an_unannotated_variadic_slot_is_refused(self):
+    def test_a_kernel_at_an_unannotated_variadic_input_is_refused(self):
         def at_options(**options):
             return 0.0
 
@@ -353,8 +353,8 @@ class TestAdmission:
         wrapped = Function(
             lambda x: 2.0 * x,
             input_spec={"x": SCALAR},
-            n_broadcast_samples=6,
-            dispatch="sequential",
+            max_evaluations=6,
+            executor="sequential",
             label="double",
             output_spec=OutputSpec(double=None),
         )

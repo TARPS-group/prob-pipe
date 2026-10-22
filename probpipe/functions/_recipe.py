@@ -4,17 +4,22 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Mapping
+from math import prod
 from typing import Any
 
 from ..core.config import ProvenanceMode
-from . import _broker, _context, _execution_contract, _plan
-from ._managed import ManagedEffectClaim
+from . import _context, _evaluation_keys, _execution, _plan
+from ._evaluation_keys import (
+    _EVALUATION_POINT_CHILD_POLICY_ABI,
+    _EVALUATION_POINT_TAG,
+    StochasticEffectClaim,
+)
 from ._rng import RandomEventIdentity, encode_random_event
 
 _RNG_RECIPE_ABI = "probpipe.rng_recipe/v1"
 _REPLAY_ANCHOR_ABI = "probpipe.replay_anchor/v1"
-_STOCHASTIC_PLAN_ABI = "probpipe.stochastic_plan/v1"
-_MANAGED_CHILD_POLICY_ABI = "probpipe.managed_child/v1"
+_STOCHASTIC_PLAN_ABI = "probpipe.stochastic_plan/v2"
 
 
 def provenance_recipe_fields(
@@ -23,7 +28,7 @@ def provenance_recipe_fields(
     """Return exact controls/diagnostics for one successful active invocation."""
     if _context._active_provenance_mode() is ProvenanceMode.OFF:
         return {}, {}
-    snapshot = _broker._snapshot_active_recipe_state()
+    snapshot = _evaluation_keys._snapshot_active_recipe_state()
     if snapshot is None:
         return {}, {}
 
@@ -51,14 +56,7 @@ def provenance_recipe_fields(
         list(_iter_named_abi(compatibility_material, "descendant_adapter_abi"))
     )
     execution_diagnostics = [
-        {
-            "requested_dispatch": snapshot.requested_dispatch,
-            "requested_workflow_kind": snapshot.requested_workflow_kind,
-            "resolved_evaluator": contract.evaluator,
-            "resolved_transport": contract.transport,
-            "contract_abi": contract.abi,
-        }
-        for contract in snapshot.execution_contracts
+        _execution.execution_diagnostics(contract) for contract in snapshot.execution_contracts
     ]
     anchor = snapshot.callable_anchor
     if anchor is None:
@@ -87,11 +85,11 @@ def provenance_recipe_fields(
             "expected_effects": effect_anchors,
         },
         "compatibility": {
-            "execution_contract": _execution_contract.execution_contract_abi(),
+            "execution_contract": _execution.execution_contract_abi(),
             "sampling_abi": sampling_abis,
             "provider_abi": provider_abis,
             "descendant_adapter_abi": descendant_adapter_abis,
-            "key_adapter_abi": _execution_contract.key_adapter_abi(),
+            "key_adapter_abi": _execution.key_adapter_abi(),
         },
     }
     diagnostics = {
@@ -113,7 +111,11 @@ def provenance_recipe_fields(
 def serialize_stochastic_plan(
     plan: _plan.StochasticPlan | None,
 ) -> dict[str, Any]:
-    """Serialize only canonical plan fields under the version-1 plan ABI."""
+    """Serialize only canonical plan fields under the version-2 plan ABI.
+
+    Version 2 records the lift's count as ``max_evaluations``, a field that
+    version 1 named ``n_broadcast_samples``.
+    """
     if plan is None:
         return {
             "kind": "direct_operation",
@@ -121,13 +123,13 @@ def serialize_stochastic_plan(
             "arg_refs": [],
             "source_groups": [],
             "logical_units": [],
-            "n_broadcast_samples": None,
+            "max_evaluations": None,
             "sample_shape": None,
             "exact_group_order": [],
             "exact_combination_order": [],
             "repetitions_per_combination": None,
             "n_evaluations": None,
-            "managed_child_policy": _MANAGED_CHILD_POLICY_ABI,
+            "evaluation_point_child_policy": _EVALUATION_POINT_CHILD_POLICY_ABI,
             "key_ownership": "automatic",
         }
     return {
@@ -160,13 +162,13 @@ def serialize_stochastic_plan(
             }
             for unit in plan.logical_units
         ],
-        "n_broadcast_samples": plan.n_broadcast_samples,
+        "max_evaluations": plan.max_evaluations,
         "sample_shape": _json_value(plan.sample_shape),
         "exact_group_order": list(plan.exact_group_order),
         "exact_combination_order": _json_value(plan.exact_combination_order),
         "repetitions_per_combination": plan.repetitions_per_combination,
         "n_evaluations": plan.n_evaluations,
-        "managed_child_policy": _MANAGED_CHILD_POLICY_ABI,
+        "evaluation_point_child_policy": _EVALUATION_POINT_CHILD_POLICY_ABI,
         "key_ownership": "automatic" if plan.random_events else "none",
     }
 
@@ -179,7 +181,7 @@ def _serialize_ref(ref: Any) -> dict[str, Any]:
     }
 
 
-def _serialize_random_event(effect: ManagedEffectClaim) -> dict[str, Any]:
+def _serialize_random_event(effect: StochasticEffectClaim) -> dict[str, Any]:
     return {
         "occurrence_path": _structural_json_value(effect.occurrence_path),
         "occurrence_kind": effect.occurrence_kind,
@@ -189,7 +191,7 @@ def _serialize_random_event(effect: ManagedEffectClaim) -> dict[str, Any]:
     }
 
 
-def _serialize_effect_anchor(effect: ManagedEffectClaim) -> dict[str, Any]:
+def _serialize_effect_anchor(effect: StochasticEffectClaim) -> dict[str, Any]:
     return {
         "operation_kind": effect.operation_kind,
         "execution_mode": effect.execution_mode,
@@ -201,10 +203,41 @@ def _serialize_effect_anchor(effect: ManagedEffectClaim) -> dict[str, Any]:
     }
 
 
+def monte_carlo_draws(provenance: Any) -> dict[tuple[str, ...], int]:
+    """The Monte Carlo draws a call's provenance records, by the path of the part each drew.
+
+    The draws are the expected effects of the call's replay anchor, which
+    :func:`provenance_recipe_fields` writes, whose execution mode is
+    ``monte_carlo``. A nested call's draws are not the call's own, so they are
+    not counted.
+
+    Parameters
+    ----------
+    provenance : Provenance or None
+        The provenance of a call.
+
+    Returns
+    -------
+    dict of tuple of str to int
+        The number of draws of each part, keyed by the part's path as a tuple of
+        names, with ``()`` for the whole law. A call that records no anchor of
+        this version, or no Monte Carlo draws, gives an empty dict.
+    """
+    controls = getattr(provenance, "controls", None) or {}
+    anchor = controls.get("replay")
+    if not isinstance(anchor, Mapping) or anchor.get("schema") != _REPLAY_ANCHOR_ABI:
+        return {}
+    return {
+        tuple(effect["record_path"]): prod(effect["sample_shape"] or ())
+        for effect in anchor["plan"]["expected_effects"]
+        if effect["execution_mode"] == "monte_carlo"
+    }
+
+
 def _sort_effects(
-    effects: tuple[ManagedEffectClaim, ...],
+    effects: tuple[StochasticEffectClaim, ...],
     plan: _plan.StochasticPlan | None,
-) -> tuple[ManagedEffectClaim, ...]:
+) -> tuple[StochasticEffectClaim, ...]:
     plan_order = (
         {
             (event.stochastic_source_id, event.logical_unit_id): index
@@ -214,7 +247,7 @@ def _sort_effects(
         else {}
     )
 
-    def key(effect: ManagedEffectClaim):
+    def key(effect: StochasticEffectClaim):
         identity = RandomEventIdentity(
             occurrence_path=effect.occurrence_path,
             stochastic_source_id=effect.stochastic_source_id,
@@ -233,7 +266,7 @@ def _sort_effects(
 
 
 def _is_nested_automatic_effect(
-    effect: ManagedEffectClaim,
+    effect: StochasticEffectClaim,
     parent_occurrence_path: tuple[Any, ...],
 ) -> bool:
     """Return whether an effect belongs to a nested public Function invocation."""
@@ -245,14 +278,14 @@ def _is_nested_automatic_effect(
         isinstance(segment, tuple) and len(segment) > 0 and segment[0] == "scope"
         for segment in relative_path
     )
-    nested_managed_depth = (
+    nested_evaluation_point_depth = (
         sum(
-            isinstance(segment, tuple) and len(segment) > 0 and segment[0] == "managed-unit"
+            isinstance(segment, tuple) and len(segment) > 0 and segment[0] == _EVALUATION_POINT_TAG
             for segment in relative_path
         )
         > 1
     )
-    return nested_invocation or nested_scope or nested_managed_depth
+    return nested_invocation or nested_scope or nested_evaluation_point_depth
 
 
 def _ordered_unique(values: list[str]) -> list[str]:

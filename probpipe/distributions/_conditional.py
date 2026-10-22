@@ -2,7 +2,7 @@
 
 Provides:
   - ``ConditionalDistribution`` – a kernel ``K : S → P(T)``, which a value for
-    its given slots turns into a ``Distribution``.
+    its inputs turns into a ``Distribution``.
   - ``ConditionalDistributionSpec`` – the term spec of the conditional kind.
   - ``ConditionalNumericDistribution``, ``NumericConditionalDistribution``, and
     ``FullyNumericConditionalDistribution`` – the markers of a kernel whose
@@ -17,18 +17,22 @@ import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, NoReturn, Self
 
 import jax
 import jax.numpy as jnp
 
 from .._messages import label_given_first, unknown_names
+from ..core._compilation import _contains_embedded_calls
 from ..core._dispatch import Feasibility
+from ..core._execution_claims import Traceability, probe, spec_stand_in
 from ..core._expression import ELLIPSIS, Signature
+from ..core._immutable import transient_memo
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_default, format_names, public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
-from ..core._specs import InputSpec, OutputSpec
+from ..core._specs import InputSpec, OutputSpec, _has_record_outputs, _inputs_with_defaults
+from ..core.named_tree import _PATH_SEP
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import Annotated, TrackedTerm, _TrackedTermMeta
@@ -48,17 +52,21 @@ from ._distribution import (
     DEFAULT_LABEL,
     Distribution,
     DistributionSpec,
+    _cached_raw,
     _check_marker_claims,
     _complete_event_spec,
-    _compose_operands,
     _constructor_label,
     _detached_term,
     _event_repr_parts,
     _given_label,
     _law_repr,
+    _merge_operands,
     _no_free_dims,
     _record_default_expression,
+    _refuse_distribution_multiplication,
+    _refuse_distribution_truth_value,
     _unify_declarations,
+    _value_at_declared_kind,
 )
 
 if TYPE_CHECKING:
@@ -75,7 +83,7 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# The declarations of a kernel
+# The input and event specs of a kernel
 # ---------------------------------------------------------------------------
 
 
@@ -84,61 +92,70 @@ def _complete_given_spec(given_spec: Any) -> InputSpec:
 
     Parameters
     ----------
-    given_spec : InputSpec or Mapping[str, TermSpec]
-        The term spec of each given slot's value, keyed by slot name.
+    given_spec : InputSpec, Mapping, RecordSpec, or OutputSpec
+        The term spec of each input's value, keyed by input name.
 
     Returns
     -------
     InputSpec
         *given_spec* itself when it is an ``InputSpec``, and an ``InputSpec`` built
-        from the mapping otherwise.
+        from the source's top-level fields or outputs otherwise.
 
     Raises
     ------
     TypeError
-        If *given_spec* is not a mapping of term specs.
+        If *given_spec* is unsupported, has an unspecified output type, or
+        contains an input type other than a term spec or a tuple shape.
     ValueError
-        If it has no slots, since binding the last given returns a
-        ``Distribution``, or a slot name is not an identifier.
+        If it has no inputs, since binding the last input returns a
+        ``Distribution``, or an input name is not an identifier.
     """
-    if not isinstance(given_spec, InputSpec):
-        if not isinstance(given_spec, Mapping):
-            raise TypeError(
-                f"given_spec must be an InputSpec or a mapping of term specs, got "
-                f"{type(given_spec).__name__}"
-            )
-        given_spec = InputSpec(given_spec)
+    given_spec = _read_given_inputs(given_spec)
     if not len(given_spec):
         raise ValueError(
-            "given_spec is empty, but a ConditionalDistribution needs at least one given slot; "
-            "use a Distribution for a law with no given slots"
+            "given_spec is empty, but a ConditionalDistribution needs at least one input; "
+            "use a Distribution for a law with no inputs"
         )
     return given_spec
 
 
-def _unknown_slots(label: str, unknown: list[str], slots: Iterable[str]) -> str:
-    """The message that *unknown* name no given slot of the kernel *label*."""
-    return f"cannot bind {label!r}: {unknown_names('given slot', unknown, list(slots))}"
+def _read_given_inputs(given_spec: Any) -> InputSpec:
+    """Read the supported input sources with the kernel's source diagnostics."""
+    if isinstance(given_spec, (Distribution, DistributionSpec)):
+        kind = "Distribution" if isinstance(given_spec, Distribution) else "DistributionSpec"
+        raise TypeError(
+            f"given_spec cannot be a {kind}. "
+            "Pass its event_spec to declare the inputs its outputs supply"
+        )
+    try:
+        return given_spec if isinstance(given_spec, InputSpec) else InputSpec(given_spec)
+    except TypeError as error:
+        raise TypeError(f"given_spec: {error}") from None
 
 
-def _missing_slots(label: str, missing: list[str]) -> str:
-    """The message that a binding of every slot of the kernel *label* leaves *missing* out."""
-    slots = f"slot {missing[0]!r}" if len(missing) == 1 else f"slots {missing}"
-    return f"cannot bind {label!r}: missing a value for the required given {slots}"
+def _unknown_inputs(label: str, unknown: list[str], inputs: Iterable[str]) -> str:
+    """The message that *unknown* name no input of the kernel *label*."""
+    return f"cannot bind {label!r}: {unknown_names('input', unknown, list(inputs))}"
+
+
+def _missing_inputs(label: str, missing: list[str]) -> str:
+    """The message that a binding of every input of the kernel *label* leaves *missing* out."""
+    inputs = f"input {missing[0]!r}" if len(missing) == 1 else f"inputs {missing}"
+    return f"cannot bind {label!r}: missing a value for the required {inputs}"
 
 
 def _check_disjoint_sides(given_spec: InputSpec, event_spec: OutputSpec, owner: str) -> None:
-    """Raise ``ValueError`` if a given slot shares a name with a produced component."""
-    shared = set(given_spec) & set(event_spec.components)
+    """Raise ``ValueError`` if an input shares a name with an output."""
+    shared = set(given_spec) & set(event_spec.outputs)
     if shared:
         raise ValueError(
-            f"{owner} names {sorted(shared)} both as a given slot and as an output field; "
+            f"{owner} names {sorted(shared)} both as an input and as an output field; "
             f"rename one of them"
         )
 
 
 def _given_is_numeric(given_spec: InputSpec) -> bool:
-    """Whether every given slot declares a numeric term."""
+    """Whether every input declares a numeric term."""
     return all(isinstance(spec, NumericSpec) for spec in given_spec.values())
 
 
@@ -146,47 +163,45 @@ def _given_is_numeric(given_spec: InputSpec) -> bool:
 # Renaming the given side
 # ---------------------------------------------------------------------------
 
-_PATH_SEP = "/"
-
 
 def _given_leaf_specs(given_spec: InputSpec) -> dict[str, TermSpec]:
     """The spec of each leaf of the given side, keyed by its path, in canonical order.
 
-    A leaf is a slot, or a field of a structured slot, whose path starts with
-    the slot.
+    A leaf is an input, or a field of a structured input, whose path starts with
+    the input.
     """
     leaves: dict[str, TermSpec] = {}
-    for slot, spec in given_spec.items():
+    for input_name, spec in given_spec.items():
         if isinstance(spec, RecordSpec):
-            leaves.update({f"{slot}{_PATH_SEP}{key}": spec[key] for key in spec})
+            leaves.update({f"{input_name}{_PATH_SEP}{key}": spec[key] for key in spec})
         else:
-            leaves[slot] = spec
+            leaves[input_name] = spec
     return leaves
 
 
-def _moved_slots(
+def _moved_inputs(
     given_spec: InputSpec, moves: Mapping[str, str]
 ) -> tuple[InputSpec, dict[str, str]]:
     """The given side with each node at a key of *moves* moved to its new exact path.
 
-    A key is the path of a slot or of a node within a structured slot, and its
-    target is the node's new path, so a move may split a field out of a slot or
-    group slots into a structured one. The moves apply simultaneously, a node
+    A key is the path of an input or of a node within a structured input, and its
+    target is the node's new path, so a move may split a field out of an input or
+    group inputs into a structured one. The moves apply simultaneously, a node
     below a moved node moves with it unless it is moved itself, a node renamed
     within its parent keeps its position, a moved node is appended to its new
-    parent, and a structured slot that the moves empty dissolves.
+    parent, and a structured input that the moves empty dissolves.
 
     Parameters
     ----------
     given_spec : InputSpec
-        The kernel's given slots, whose nodes the moves address.
+        The kernel's inputs, whose nodes the moves address.
     moves : Mapping[str, str]
         The new exact path of each node to move, keyed by the node's current path.
 
     Returns
     -------
     tuple of InputSpec and dict
-        The moved slots, and the path of each of their leaves' original leaf,
+        The moved inputs, and the path of each of their leaves' original leaf,
         keyed by the leaf's new path.
 
     Raises
@@ -196,7 +211,7 @@ def _moved_slots(
     ValueError
         If a target is empty or has an empty segment, lies inside its own node,
         or equals or contains another target, two nodes land on one path, or a
-        new slot name is not an identifier.
+        new input name is not an identifier.
     """
     leaves = _given_leaf_specs(given_spec)
     nodes = {
@@ -206,21 +221,18 @@ def _moved_slots(
     }
     for old, new in moves.items():
         if old not in nodes:
-            raise KeyError(
-                f"with_path_names(): {unknown_names('given slot path', [old], sorted(nodes))}"
-            )
+            raise KeyError(f"rename(): {unknown_names('input path', [old], sorted(nodes))}")
         if not isinstance(new, str):
             raise ValueError(
-                f"with_path_names(): the new path of {old!r} must be a string; got "
-                f"{type(new).__name__}"
+                f"rename(): the new path of {old!r} must be a string; got {type(new).__name__}"
             )
         if not new or not all(new.split(_PATH_SEP)):
             raise ValueError(
-                f"with_path_names(): invalid new path {new!r} for {old!r}; each part between "
-                f"'/' must be non-empty"
+                f"rename(): invalid new path {new!r} for {old!r}; each part between "
+                f"{_PATH_SEP!r} must be non-empty"
             )
         if new.startswith(old + _PATH_SEP):
-            raise ValueError(f"with_path_names(): cannot move {old!r} inside itself, to {new!r}")
+            raise ValueError(f"rename(): cannot move {old!r} inside itself, to {new!r}")
     targets = list(moves.values())
     for first, target in enumerate(targets):
         for other in targets[first + 1 :]:
@@ -229,9 +241,7 @@ def _moved_slots(
                 or other.startswith(target + _PATH_SEP)
                 or target.startswith(other + _PATH_SEP)
             ):
-                raise ValueError(
-                    f"with_path_names(): the new paths {target!r} and {other!r} overlap"
-                )
+                raise ValueError(f"rename(): the new paths {target!r} and {other!r} overlap")
 
     def parent(path: str) -> str:
         return path.rpartition(_PATH_SEP)[0]
@@ -258,11 +268,10 @@ def _moved_slots(
             node = node.setdefault(group, {})
             if not isinstance(node, dict):
                 raise ValueError(
-                    f"with_path_names(): cannot move to {target!r} because {group!r} is a "
-                    f"field, not a group"
+                    f"rename(): cannot move to {target!r} because {group!r} is a field, not a group"
                 )
         if name in node:
-            raise ValueError(f"with_path_names(): two given slot paths would be at {target!r}")
+            raise ValueError(f"rename(): two input paths would be at {target!r}")
         node[name] = leaves[path]
         origins[target] = path
 
@@ -271,25 +280,25 @@ def _moved_slots(
             return RecordSpec({name: spec_of(child) for name, child in node.items()})
         return node
 
-    moved_spec = InputSpec({slot: spec_of(node) for slot, node in tree.items()})
-    # An optional slot stays optional when it moves whole to a slot of its own;
-    # grouped into a structured slot, it is part of a value the binding supplies.
+    moved_spec = InputSpec({input_name: spec_of(node) for input_name, node in tree.items()})
+    # An optional input stays optional when it moves whole to an input of its own;
+    # grouped into a structured input, it is part of a value the binding supplies.
     optional = []
-    for slot in given_spec.optional:
-        target = moves.get(slot, slot)
-        split = any(old.startswith(slot + _PATH_SEP) for old in moves)
+    for input_name in given_spec.optional:
+        target = moves.get(input_name, input_name)
+        split = any(old.startswith(input_name + _PATH_SEP) for old in moves)
         joined = any(new.startswith(target + _PATH_SEP) for new in moves.values())
         if target in moved_spec and not split and not joined:
             optional.append(target)
     return moved_spec.with_optional(*optional), origins
 
 
-#: The kernel that ``with_path_names`` returns, installed by the views module at import.
+#: The kernel that ``rename`` returns, installed by the views module at import.
 _renamed_kernel_factory: Callable[..., Any] | None = None
 
 
 def _install_renamed_kernel(factory: Callable[..., Any]) -> None:
-    """Install the factory of the kernel that renames at its boundary for ``with_path_names``.
+    """Install the factory of the kernel that renames at its boundary for ``rename``.
 
     Called once, by the views module at import, so this module never imports the
     module that imports it.
@@ -305,15 +314,15 @@ def _install_renamed_kernel(factory: Callable[..., Any]) -> None:
 
 @dataclass(frozen=True, init=False)
 class ConditionalDistributionSpec(TermSpec):
-    """The conditional kind's term spec: the given slots and the event declaration.
+    """The conditional kind's term spec: the inputs and the event spec.
 
     Parameters
     ----------
-    given_spec : InputSpec or Mapping[str, TermSpec]
-        The named slots a kernel conditions on, at least one.
+    given_spec : InputSpec, Mapping, RecordSpec, or OutputSpec
+        The named inputs a kernel conditions on, at least one.
     event_spec : OutputSpec or RecordSpec
-        The declaration of one produced draw, as for ``DistributionSpec``. A
-        bare ``RecordSpec`` completes to the exposed form.
+        The output spec of one produced draw, as for ``DistributionSpec``. A
+        bare ``RecordSpec`` completes to the positional form over it.
 
     Raises
     ------
@@ -321,13 +330,13 @@ class ConditionalDistributionSpec(TermSpec):
         If *event_spec* is neither an ``OutputSpec`` nor a ``RecordSpec``, or
         *given_spec* is not a mapping of term specs.
     ValueError
-        If *given_spec* has no slots, the event declaration has a type hole, or
-        a given slot shares a name with a produced component.
+        If *given_spec* has no inputs, the event spec leaves its type
+        unspecified, or an input shares a name with an output.
 
     Notes
     -----
-    ``is_valid`` accepts a ``ConditionalDistribution`` whose given slots have
-    the same names and specs that unify with these, and whose event declaration
+    ``is_valid`` accepts a ``ConditionalDistribution`` whose inputs have
+    the same names and specs that unify with these, and whose event spec
     unifies with this one, both sides in one dimension scope.
     """
 
@@ -335,7 +344,9 @@ class ConditionalDistributionSpec(TermSpec):
     event_spec: OutputSpec
 
     def __init__(
-        self, given_spec: InputSpec | Mapping[str, TermSpec], event_spec: OutputSpec | RecordSpec
+        self,
+        given_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec,
+        event_spec: OutputSpec | RecordSpec,
     ) -> None:
         if isinstance(event_spec, RecordSpec):
             event_spec = OutputSpec(event_spec)
@@ -344,7 +355,7 @@ class ConditionalDistributionSpec(TermSpec):
                 f"ConditionalDistributionSpec.event_spec must be an OutputSpec or a RecordSpec, "
                 f"got {type(event_spec).__name__}"
             )
-        if event_spec.spec is None:
+        if event_spec.term_spec is None:
             raise ValueError("ConditionalDistributionSpec.event_spec does not declare a type")
         given_spec = _complete_given_spec(given_spec)
         _check_disjoint_sides(given_spec, event_spec, "ConditionalDistributionSpec")
@@ -354,14 +365,14 @@ class ConditionalDistributionSpec(TermSpec):
     @property
     def free_dims(self) -> frozenset[str]:
         """The unbound dimensions of both sides, which share one scope."""
-        return self.given_spec.free_dims | self.event_spec.spec.free_dims
+        return self.given_spec.free_dims | self.event_spec.term_spec.free_dims
 
     def _substitute_dims(self, bindings: Mapping[str, int | str]) -> ConditionalDistributionSpec:
         """This spec with *bindings* substituted on both sides."""
         declaration = self.event_spec
         return ConditionalDistributionSpec(
             self.given_spec._substitute_dims(bindings),
-            declaration._with_spec(declaration.spec._substitute_dims(bindings)),
+            declaration._with_term_spec(declaration.term_spec._substitute_dims(bindings)),
         )
 
     def _unify_with(
@@ -372,33 +383,35 @@ class ConditionalDistributionSpec(TermSpec):
         Parameters
         ----------
         given_spec : InputSpec
-            The other kernel's given slots.
+            The other kernel's inputs.
         event_spec : OutputSpec
-            The other kernel's event declaration.
+            The other kernel's event spec.
         bindings : dict[str, int]
             The size of each symbolic dimension bound so far, keyed by its name,
             which unification extends in place.
         path : str
-            The location of the declaration that error messages name, such as
-            ``"the declaration"``.
+            The location of the specs that error messages name, such as
+            ``"the specs"``.
 
         Raises
         ------
         ValueError
-            If the given slots differ in name or their specs do not unify, or the
-            event declarations do not.
+            If the inputs differ in name or their specs do not unify, or the
+            event specs do not.
         """
         if set(self.given_spec) != set(given_spec):
             raise ValueError(
-                f"{path} declares the given slots {sorted(self.given_spec)}, but the kernel "
+                f"{path} declares the inputs {sorted(self.given_spec)}, but the kernel "
                 f"conditions on {sorted(given_spec)}"
             )
         for name, spec in self.given_spec.items():
-            _unify_specs(spec, given_spec[name], bindings, f"{path}/given/{name}")
+            _unify_specs(
+                spec, given_spec[name], bindings, f"{path}{_PATH_SEP}given{_PATH_SEP}{name}"
+            )
         _unify_declarations(self.event_spec, event_spec, bindings, path)
 
     def _bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
-        """Bind both sides against the declarations *value* carries."""
+        """Bind both sides against the input and event specs *value* carries."""
         if not isinstance(value, ConditionalDistribution):
             raise ValueError(f"{path} does not conform to its field spec ({self!r})")
         self._unify_with(value.given_spec, value.event_spec, bindings, path)
@@ -411,7 +424,7 @@ class ConditionalDistributionSpec(TermSpec):
         return True
 
     def __repr__(self) -> str:
-        """The given slots and the event declaration, as the constructor takes them."""
+        """The inputs and the event spec, as the constructor takes them."""
         return term_repr(
             "ConditionalDistributionSpec",
             None,
@@ -419,11 +432,11 @@ class ConditionalDistributionSpec(TermSpec):
         )
 
     def is_valid(self, value: Any) -> bool:
-        """Whether *value* is a ``ConditionalDistribution`` whose declarations match these."""
+        """Whether *value* is a ``ConditionalDistribution`` whose specs match these."""
         if not isinstance(value, ConditionalDistribution):
             return False
         try:
-            self._unify_with(value.given_spec, value.event_spec, {}, "the declaration")
+            self._unify_with(value.given_spec, value.event_spec, {}, "the specs")
         except ValueError:
             return False
         return True
@@ -437,8 +450,8 @@ class ConditionalDistributionSpec(TermSpec):
 class _ConditionalDistributionMeta(_TrackedTermMeta):
     """The metaclass of every conditional distribution.
 
-    Construction checks that the instance holds its declarations, and a numeric
-    marker's membership is read from the declarations whatever the class, as
+    Construction checks that the instance holds its input and event specs, and
+    a numeric marker's membership is read from them whatever the class, as
     for ``NumericDistribution``. Creating a class checks each capability guard
     it defines, as for ``Distribution``.
     """
@@ -471,22 +484,22 @@ class _ConditionalDistributionMeta(_TrackedTermMeta):
 class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_ConditionalDistributionMeta):
     """A probability kernel ``K : S → P(T)``: a law over its event for each given value.
 
-    Supplying a value for the given slots yields an ordinary ``Distribution``
+    Supplying a value for the inputs yields an ordinary ``Distribution``
     over what the kernel produces. A kernel always conditions on at least one
-    slot, since binding the last one returns a ``Distribution``, and the two
+    input, since binding the last one returns a ``Distribution``, and the two
     kinds are distinct: neither inherits from the other.
 
     The kernel stores one ``ConditionalDistributionSpec``, its :attr:`spec`;
     :attr:`given_spec` and :attr:`event_spec` are views on it. The event
-    declaration is read as a ``Distribution``'s is: a bare ``RecordSpec``
-    exposes its fields, and an ``OutputSpec`` names the component of a whole
-    term. The given slots and the produced
-    components are distinct roles, so their names are disjoint even when the
-    two spaces coincide, as in a Markov kernel ``state → next_state``. Symbolic
-    dimensions are scoped over both sides jointly.
+    spec is read as a ``Distribution``'s is: the fields of a bare
+    ``RecordSpec`` are the outputs, and an ``OutputSpec`` names the output of
+    a whole term. The inputs and the outputs are distinct roles, so their
+    names are disjoint even when the two spaces coincide, as in a Markov
+    kernel ``state → next_state``. Symbolic dimensions are scoped over both
+    sides jointly.
 
     Users call operations rather than methods: ``condition_on(K, s)`` binds the
-    given slots, and ``sample(K, given=s)``, ``log_prob(K, y, given=s)``, and
+    inputs, and ``sample(K, given=s)``, ``log_prob(K, y, given=s)``, and
     ``mean(K, given=s)`` are the fused conditional calls, equal to the same
     operation on ``condition_on(K, s)``. A subclass implements
     :meth:`_condition_on`, and it may claim the conditional capabilities.
@@ -512,11 +525,11 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
 
     Parameters
     ----------
-    given_spec : InputSpec or Mapping[str, TermSpec]
-        The named slots the kernel conditions on, at least one; the keys are
+    given_spec : InputSpec, Mapping, RecordSpec, or OutputSpec
+        The named inputs the kernel conditions on, at least one; the keys are
         Python identifiers.
     event_spec : OutputSpec or RecordSpec
-        The declaration of one produced draw, completed as above.
+        The output spec of one produced draw, completed as above.
     label : str, optional
         The kernel's label, a non-empty string, ``p`` by default. A subclass's
         constructor passes the label its caller gave, or its own default.
@@ -534,8 +547,8 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         term specs, or *event_spec* is neither an ``OutputSpec`` nor a
         ``RecordSpec``.
     ValueError
-        If *given_spec* has no slots, *event_spec* has a type hole, or a given
-        slot shares a name with a produced component.
+        If *given_spec* has no inputs, *event_spec* leaves its type unspecified,
+        or an input shares a name with an output.
     """
 
     #: The label the constructor gives when it is given none, which the repr leaves out;
@@ -548,13 +561,13 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     #: that holds other bound values must build its own.
     _transient_state = ("_memo",)
 
-    #: Where the constructor takes the component of a whole-term event, which the
+    #: Where the constructor takes the name of a whole-term event's output, which the
     #: repr follows, as for a law.
-    _repr_component: ClassVar[str | None] = "first"
+    _repr_output_name: ClassVar[str | None] = "first"
 
     def __init__(
         self,
-        given_spec: InputSpec | Mapping[str, TermSpec],
+        given_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec,
         event_spec: OutputSpec | TermSpec,
         *,
         label: str | None = None,
@@ -569,9 +582,11 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         self._init_declaration(given_spec, event_spec)
 
     def _init_declaration(
-        self, given_spec: InputSpec | Mapping[str, TermSpec], event_spec: OutputSpec | TermSpec
+        self,
+        given_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec,
+        event_spec: OutputSpec | TermSpec,
     ) -> None:
-        """Complete both declarations and store them as this kernel's spec.
+        """Complete the input spec and the event spec and store them as this kernel's spec.
 
         The constructor calls this after setting the label; a class that bypasses
         the constructor calls it itself.
@@ -586,30 +601,75 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
 
     # -- the representation -------------------------------------------------
 
+    @property
     def raw(self) -> ConditionalDistribution:
-        """This kernel detached from the workflow, under its label and declarations.
+        """This kernel detached from the workflow, under its label and specs.
 
         A kernel is represented by itself, so its raw form is a copy that shares
         its representation and carries no provenance, no annotations, and no
         reference to a batch it was an element of.
-        """
-        return _detached_term(self)
 
-    # -- the declarations ---------------------------------------------------
+        Every read returns the same copy, which refuses provenance, since every
+        reader shares it. ``with_label`` gives a copy of it that can carry
+        provenance.
+        """
+        return _cached_raw(self, lambda: _detached_term(self))
+
+    # -- the input and event specs -----------------------------------------
 
     @property
     def spec(self) -> ConditionalDistributionSpec:
-        """The kernel's term spec, the one stored source of both declarations."""
+        """The kernel's term spec, the one stored source of its input and event specs."""
         return self._spec
+
+    def _traceability(self) -> Traceability:
+        """Whether JAX can trace this kernel's density, or its sampler when it has none (V.13).
+
+        It is traceable, embeddable, or host-only, and inference methods read it
+        instead of tracing the kernel.
+
+        The value is derived from the kernel's parts the first time it is read
+        and kept for the kernel's life: a family is traceable, the kernel of a
+        function takes the traceability of the law its function returned when
+        the kernel was built, a kernel built from other kernels or laws takes
+        the least permissive of theirs, and any other kernel is probed once, as
+        :meth:`_derived_traceability` states.
+
+        Returns
+        -------
+        Traceability
+            The kernel's traceability.
+        """
+        memo = transient_memo(self)
+        if "traceability" not in memo:
+            memo["traceability"] = self._derived_traceability()
+        return memo["traceability"]
+
+    def _derived_traceability(self) -> Traceability:
+        """The traceability of a kernel that states none: its density probed at one given value.
+
+        The density is traced at a stand-in of each required input and of
+        one value of the event, each dimension not yet bound of size one. A
+        kernel without a density probes its sampler at one key instead, and one
+        whose inputs or event have no stand-in is
+        host-only. A subclass whose methods are JAX code, or are built from
+        parts that state their traceability, overrides this.
+
+        Returns
+        -------
+        Traceability
+            ``TRACEABLE`` when the probe traced, and ``HOST_ONLY`` otherwise.
+        """
+        return _probed_kernel_traceability(self)
 
     @property
     def given_spec(self) -> InputSpec:
-        """The named slots the kernel conditions on, read from :attr:`spec`."""
+        """The named inputs the kernel conditions on, read from :attr:`spec`."""
         return self.spec.given_spec
 
     @property
     def event_spec(self) -> OutputSpec:
-        """The output declaration of one produced draw, read from :attr:`spec`."""
+        """The output spec of one produced draw, read from :attr:`spec`."""
         return self.spec.event_spec
 
     # -- dimension and name transforms --------------------------------------
@@ -667,21 +727,21 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
             names,
         )
 
-    def with_path_names(
+    def rename(
         self, mapping: Mapping[str, str] | None = None, /, **kwargs: str
     ) -> ConditionalDistribution:
-        """Rename or move given slots and event paths, ``old -> new``.
+        """Rename or move inputs and event paths, ``old -> new``.
 
-        A key that starts with a given slot addresses the given side, and one
-        that starts with a produced component the event side, which behaves as
-        :meth:`Distribution.with_path_names`. On the given side a target is the
-        node's new exact path, so it may split or group slots, since a kernel has
+        A key that starts with an input's name addresses the given side, and
+        one that starts with an output's name the event side, which behaves as
+        :meth:`Distribution.rename`. On the given side a target is the
+        node's new exact path, so it may split or group inputs, since a kernel has
         no signature that fixes its top level: ``{"a": "theta/a"}`` moves the
-        slot ``a`` into a structured slot ``theta``, and ``{"theta/a": "a"}``
-        moves the field back out as a slot. A node renamed within its parent
+        input ``a`` into a structured input ``theta``, and ``{"theta/a": "a"}``
+        moves the field back out as an input. A node renamed within its parent
         keeps its position, a moved node is appended to its new parent, and a
-        structured slot that the moves empty dissolves. The kernel is unchanged:
-        the result translates a given value to this kernel's slots before
+        structured input that the moves empty dissolves. The kernel is unchanged:
+        the result translates a given value to this kernel's inputs before
         binding it, and renames what the binding returns.
 
         Parameters
@@ -703,7 +763,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         ValueError
             If a target is empty or malformed, a node is renamed twice, no
             renames are given, a given target lies inside its own node or
-            overlaps another, two nodes land on one path, a slot name is not an
+            overlaps another, two nodes land on one path, an input name is not an
             identifier, or the renamed sides share a name.
         NotImplementedError
             If this kernel is factored, since a joint renames through its factors.
@@ -712,26 +772,26 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         for source in (mapping or {}), kwargs:
             for old, new in source.items():
                 if old in pairs:
-                    raise ValueError(f"with_path_names(): {old!r} is renamed more than once")
+                    raise ValueError(f"rename(): {old!r} is renamed more than once")
                 pairs[old] = new
         if not pairs:
-            raise ValueError("with_path_names() requires at least one rename")
+            raise ValueError("rename() requires at least one rename")
         moves: dict[str, str] = {}
         renames: dict[str, str] = {}
         for old, new in pairs.items():
             head = old.split(_PATH_SEP, 1)[0]
             if head in self.given_spec:
                 moves[old] = new
-            elif head in self.event_spec.components:
+            elif head in self.event_spec.outputs:
                 renames[old] = new
             else:
                 raise KeyError(
-                    f"with_path_names(): {old!r} is neither a given slot nor a field of "
-                    f"{self.label!r}; given slots: {list(self.given_spec)}, fields: "
-                    f"{list(self.event_spec.components)}"
+                    f"rename(): {old!r} is neither an input nor a field of "
+                    f"{self.label!r}; inputs: {list(self.given_spec)}, fields: "
+                    f"{list(self.event_spec.outputs)}"
                 )
-        given_spec, origins = _moved_slots(self.given_spec, moves)
-        event_spec = self.event_spec.with_path_names(renames) if renames else self.event_spec
+        given_spec, origins = _moved_inputs(self.given_spec, moves)
+        event_spec = self.event_spec.rename(renames) if renames else self.event_spec
         _check_disjoint_sides(given_spec, event_spec, repr(self.label))
         if _renamed_kernel_factory is None:
             raise RuntimeError("the renamed kernel is not installed; import probpipe")
@@ -744,7 +804,10 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         operation: str,
         arguments: Mapping[str, Any],
     ) -> Self:
-        """A copy of this kernel holding the declarations, with provenance recording *operation*."""
+        """A copy of this kernel holding *given_spec* and *event_spec*.
+
+        Its provenance records *operation*.
+        """
         clone = self._shallow_copy()
         object.__setattr__(clone, "_spec", ConditionalDistributionSpec(given_spec, event_spec))
         object.__setattr__(clone, "_provenance", None)
@@ -764,7 +827,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         Parameters
         ----------
         given : Record or Mapping[str, Any]
-            Values for some or all of the given slots, by slot name; every given
+            Values for some or all of the inputs, by input name; every given
             value arrives here.
         **options : Any
             Options that configure the kernel or the method that evaluates it,
@@ -773,23 +836,53 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         Returns
         -------
         Distribution or ConditionalDistribution
-            A ``Distribution`` when every slot is bound, and otherwise the
-            kernel over the remaining slots.
+            A ``Distribution`` when every input is bound, and otherwise the
+            kernel over the remaining inputs.
         """
 
-    # -- composition ------------------------------------------------------------
+    def __mul__(self, other: object) -> Any:
+        """Refuse ``*`` between distributions. Use ``&`` to merge them.
 
-    def __mul__(
+        Parameters
+        ----------
+        other : object
+            The right operand.
+
+        Returns
+        -------
+        Any
+            ``NotImplemented`` for an operand of another kind.
+
+        Raises
+        ------
+        TypeError
+            If *other* is a distribution or a conditional distribution.
+        """
+        return _refuse_distribution_multiplication(other)
+
+    def __bool__(self) -> NoReturn:
+        """Refuse a truth value, so ``a and b`` raises. Use ``a & b`` to merge.
+
+        Raises
+        ------
+        TypeError
+            Always: a distribution has no truth value.
+        """
+        _refuse_distribution_truth_value()
+
+    # -- merge ------------------------------------------------------------
+
+    def __and__(
         self, other: Distribution | ConditionalDistribution
     ) -> FactoredConditionalDistribution | Distribution:
-        """The joint of this kernel and *other*, composed conditional-first.
+        """The joint of this kernel and *other*, merged conditional-first.
 
         This kernel may condition on what *other* produces. The result is a
-        ``FactoredDistribution`` when *other* meets every given, and a
-        ``FactoredConditionalDistribution`` over the unmet givens otherwise;
-        see :meth:`Distribution.__mul__`.
+        ``FactoredDistribution`` when *other* meets every input, and a
+        ``FactoredConditionalDistribution`` over the unmet inputs otherwise;
+        see :meth:`Distribution.__and__`.
         """
-        return _compose_operands(self, other)
+        return _merge_operands(self, other)
 
     # -- notation ---------------------------------------------------------------
 
@@ -797,34 +890,34 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     def notation(self) -> str:
         """The kernel's label followed by its signature, as ``glm(y | beta)``, which ``str()`` returns.
 
-        The signature lists the event components in declaration order, then
-        `` | `` and every given slot in declaration order, then ``;`` and the
+        The signature lists the event outputs in declaration order, then
+        `` | `` and every input in declaration order, then ``;`` and the
         paths the kernel holds fixed at given values when it holds any, as
-        ``glm(y | sigma; beta)``. Components, slots, and paths are each joined by
+        ``glm(y | sigma; beta)``. Outputs, inputs, and paths are each joined by
         ``", "``. A product without a label reads factor by factor, as
         ``lik(y | beta)·prior(beta | tau)``. The notation is a rendering of the
         kernel's expression, made each time it is shown, which shows at most
-        the current ``notation_config.max_depth`` nested levels. No operation
+        the current ``config.notation.max_depth`` nested levels. No operation
         reads the notation.
         """
         return self._expression.render_notation(self._own_signature(), warn=True)
 
     def _own_signature(self) -> Signature:
-        """The signature the declaration states: the event components, then the given slots.
+        """The signature the kernel's specs state: the event outputs, then the inputs.
 
-        An optional slot shows its default, as ``n0=50.0``, or ``n0=…`` where
+        An optional input shows its default, as ``n0=50.0``, or ``n0=…`` where
         the default is not a scalar or the kernel does not know its value.
         """
         known = self._given_defaults()
         defaults = tuple(
-            (slot, format_default(known[slot]) if slot in known else ELLIPSIS)
-            for slot in self.given_spec
-            if slot in self.given_spec.optional
+            (input_name, format_default(known[input_name]) if input_name in known else ELLIPSIS)
+            for input_name in self.given_spec
+            if input_name in self.given_spec.optional
         )
-        return Signature(tuple(self.event_spec.components), tuple(self.given_spec), defaults)
+        return Signature(tuple(self.event_spec.outputs), tuple(self.given_spec), defaults)
 
     def _given_defaults(self) -> Mapping[str, Any]:
-        """The value each optional given slot takes when a binding omits it, where the kernel knows it."""
+        """The value each optional input takes when a binding omits it, if the kernel knows it."""
         return {}
 
     def __str__(self) -> str:
@@ -834,9 +927,9 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     def __repr__(self) -> str:
         """A call of the kernel's public constructor, followed by the paths it holds fixed.
 
-        The component, the family parameters, and the given slots come first,
+        The output's name, the family parameters, and the inputs come first,
         as ``given=('mu',)``, then ``label=`` and ``event_spec=`` where they
-        differ from the constructor's defaults, and the slots that conditioning
+        differ from the constructor's defaults, and the inputs that conditioning
         bound follow as ``fixed=(...)``, as for a law.
         """
         arguments = [*self._repr_arguments(), ("given", format_names(self.given_spec))]
@@ -855,7 +948,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         return []
 
     def _event_repr_parts(self) -> tuple[str | None, str | None]:
-        """The component of the event and the declaration's repr, as for a law."""
+        """The name of the event's output and the event spec's repr, as for a law."""
         return _event_repr_parts(self.event_spec)
 
 
@@ -867,7 +960,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
 def _event_is_numeric(value: Any) -> bool:
     declared = getattr(value, "_spec", None)
     return isinstance(declared, ConditionalDistributionSpec) and isinstance(
-        declared.event_spec.spec, NumericSpec
+        declared.event_spec.term_spec, NumericSpec
     )
 
 
@@ -882,7 +975,7 @@ class ConditionalNumericDistribution(ConditionalDistribution):
     """The marker of a kernel whose event side is numeric.
 
     Every ``K(s, ·)`` is then a ``NumericDistribution``. Membership is read from
-    the event declaration, and a class that inherits the marker claims it for
+    the event spec, and a class that inherits the marker claims it for
     every instance, which construction checks. The marker adds no operations.
     """
 
@@ -890,9 +983,9 @@ class ConditionalNumericDistribution(ConditionalDistribution):
 
 
 class NumericConditionalDistribution(ConditionalDistribution):
-    """The marker of a kernel whose given side is numeric: every slot declares a numeric term.
+    """The marker of a kernel whose given side is numeric: every input declares a numeric term.
 
-    Membership is read from the given slots, as for
+    Membership is read from the inputs, as for
     :class:`ConditionalNumericDistribution`.
     """
 
@@ -910,11 +1003,11 @@ class FullyNumericConditionalDistribution(
 _DECLARATION_MARKERS[ConditionalNumericDistribution] = (_event_is_numeric, "a numeric event")
 _DECLARATION_MARKERS[NumericConditionalDistribution] = (
     _given_side_is_numeric,
-    "numeric given slots",
+    "numeric inputs",
 )
 _DECLARATION_MARKERS[FullyNumericConditionalDistribution] = (
     lambda value: _event_is_numeric(value) and _given_side_is_numeric(value),
-    "numeric given slots and a numeric event",
+    "numeric inputs and a numeric event",
 )
 
 
@@ -932,7 +1025,7 @@ _DERIVED_TWINS: tuple[tuple[type, type, str], ...] = (
 )
 
 
-def _probed_guard(method: str, condition: str) -> Callable[..., Feasibility]:
+def _returned_law_guard(method: str, condition: str) -> Callable[..., Feasibility]:
     """The guard of a derived twin: the report of the law's guard of *method*.
 
     The report is the one the law the function returned at construction gave,
@@ -947,12 +1040,12 @@ def _probed_guard(method: str, condition: str) -> Callable[..., Feasibility]:
 
 
 def _kernel_sample(self: Any, given: Any, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
-    """Draws of the law the function returns at a value of every given slot."""
+    """Draws of the law the function returns at a value of every input."""
     return self._law(given)._sample(key, sample_shape)
 
 
 def _kernel_log_prob(self: Any, given: Any, value: Any) -> Any:
-    """The log-density of *value* under the law the function returns at a value of every slot."""
+    """The log-density of *value* under the law the function returns at a value of every input."""
     return self._law(given)._log_prob(value)
 
 
@@ -964,19 +1057,19 @@ def _kernel_unnormalized_log_prob(self: Any, given: Any, value: Any) -> Any:
 _FUNCTION_KERNEL_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
     SupportsConditionalSampling: {
         "_conditional_sample": _kernel_sample,
-        "_conditional_sample_guard": _probed_guard(
+        "_conditional_sample_guard": _returned_law_guard(
             "_sample", "The law the function returns admits the draw, as its guard reports."
         ),
     },
     SupportsConditionalLogProb: {
         "_conditional_log_prob": _kernel_log_prob,
-        "_conditional_log_prob_guard": _probed_guard(
+        "_conditional_log_prob_guard": _returned_law_guard(
             "_log_prob", "The law the function returns admits the density, as its guard reports."
         ),
     },
     SupportsConditionalUnnormalizedLogProb: {
         "_conditional_unnormalized_log_prob": _kernel_unnormalized_log_prob,
-        "_conditional_unnormalized_log_prob_guard": _probed_guard(
+        "_conditional_unnormalized_log_prob_guard": _returned_law_guard(
             "_unnormalized_log_prob",
             "The law the function returns admits the unnormalized density, as its guard reports.",
         ),
@@ -984,35 +1077,15 @@ _FUNCTION_KERNEL_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
 }
 
 
-def _argument(spec: TermSpec, slot: str, value: Any) -> Any:
-    """*value* at the kind its slot *spec* declares, as the function receives it.
-
-    A record slot's value is a ``Record`` and an array slot's an array, as a
-    function's body receives a draw; a value of another kind is passed as it is.
-    """
-    if isinstance(spec, RecordSpec):
-        return (
-            value
-            if isinstance(value, Record)
-            else Record(
-                value,
-                label=slot,
-            )
-        )
-    if isinstance(spec, NumericArraySpec):
-        return jnp.asarray(value)
-    return value
-
-
 def _declared_law(law: Any, event_spec: OutputSpec, label: str) -> Distribution:
-    """*law*, the function's result, checked against the kernel's event declaration.
+    """*law*, the function's result, checked against the kernel's event spec.
 
     Parameters
     ----------
     law : Any
         The value the kernel's function returned, which must be a ``Distribution``.
     event_spec : OutputSpec
-        The kernel's event declaration, which the declaration of *law* must unify
+        The kernel's event spec, which the event spec of *law* must unify
         with.
     label : str
         The kernel's label, which error messages name.
@@ -1027,7 +1100,7 @@ def _declared_law(law: Any, event_spec: OutputSpec, label: str) -> Distribution:
     TypeError
         If *law* is not a ``Distribution``.
     ValueError
-        If its event declaration does not agree with *event_spec*.
+        If its event spec does not agree with *event_spec*.
     """
     if not isinstance(law, Distribution):
         raise TypeError(
@@ -1044,10 +1117,10 @@ def _declared_law(law: Any, event_spec: OutputSpec, label: str) -> Distribution:
 class _FunctionKernel(ConditionalDistribution):
     """The kernel of a function of its given values: its law at a value is the one the function returns.
 
-    :func:`conditional_distribution` builds it. Binding every required slot
+    :func:`conditional_distribution` builds it. Binding every required input
     calls the function with each value as the argument of that name, at the
-    kind its slot declares, and with its default for each optional slot left
-    unbound, and returns the law the call returns; binding fewer slots returns
+    kind its input declares, and with its default for each optional input left
+    unbound, and returns the law the call returns; binding fewer inputs returns
     the kernel over the others. The kernel claims the conditional
     twin of sampling, of the normalized density, and of the unnormalized
     density exactly when the law its function returned at construction claims
@@ -1058,14 +1131,17 @@ class _FunctionKernel(ConditionalDistribution):
     label : str
         The kernel's label.
     fn : callable
-        The function, called with every given slot's value by name.
+        The function, called with every input's value by name.
     given_spec : InputSpec
-        The given slots, one per parameter of *fn*.
+        The inputs, one per parameter of *fn*.
     event_spec : OutputSpec
-        The declaration of the law *fn* returns.
+        The event spec of the law *fn* returns.
     guards : Mapping[str, Feasibility]
         The report of the law's guard of each capability it claims, keyed by
         the capability's method.
+    traceability : Traceability
+        The traceability of the law *fn* returned at construction, which the
+        kernel takes as its own.
     """
 
     _capability_table: ClassVar = _FUNCTION_KERNEL_CAPABILITIES
@@ -1078,6 +1154,7 @@ class _FunctionKernel(ConditionalDistribution):
         given_spec: InputSpec,
         event_spec: OutputSpec,
         guards: Mapping[str, Feasibility],
+        traceability: Traceability,
     ) -> _FunctionKernel:
         claimed = [twin for _, twin, method in _DERIVED_TWINS if method in guards]
         return object.__new__(_capability_subclass(_FunctionKernel, claimed))
@@ -1089,6 +1166,7 @@ class _FunctionKernel(ConditionalDistribution):
         given_spec: InputSpec,
         event_spec: OutputSpec,
         guards: Mapping[str, Feasibility],
+        traceability: Traceability,
     ) -> None:
         super().__init__(
             given_spec,
@@ -1096,12 +1174,17 @@ class _FunctionKernel(ConditionalDistribution):
             label=label,
         )
         object.__setattr__(self, "_fn", fn)
-        object.__setattr__(self, "_slots", given_spec)
+        object.__setattr__(self, "_traceability_at_construction", traceability)
+        object.__setattr__(self, "_inputs", given_spec)
         object.__setattr__(self, "_bound", {})
         object.__setattr__(self, "_guards", dict(guards))
 
+    def _derived_traceability(self) -> Traceability:
+        """The traceability of the law the function returned when the kernel was built."""
+        return self._traceability_at_construction
+
     def _given_defaults(self) -> Mapping[str, Any]:
-        """The defaults of the function's parameters, which its optional slots take."""
+        """The defaults of the function's parameters, which its optional inputs take."""
         try:
             parameters = inspect.signature(self._fn).parameters
         except (TypeError, ValueError):
@@ -1115,31 +1198,31 @@ class _FunctionKernel(ConditionalDistribution):
     def _condition_on(
         self, given: Record | Mapping[str, Any], /, **options: Any
     ) -> Distribution | ConditionalDistribution:
-        """The law the function returns at a value of every given slot, or the kernel over the rest.
+        """The law the function returns at a value of every input, or the kernel over the rest.
 
         Parameters
         ----------
         given : Record or Mapping[str, Any]
-            Values of some or all given slots, keyed by slot name.
+            Values of some or all inputs, keyed by input name.
         **options : Any
             The options of the call, which must be empty.
 
         Returns
         -------
         Distribution or ConditionalDistribution
-            The returned law once every required slot is bound. Otherwise a copy of
+            The returned law once every required input is bound. Otherwise a copy of
             this kernel that holds the bound values and conditions on the other
-            slots.
+            inputs.
 
         Raises
         ------
         TypeError
             If an option is passed, since evaluating the function reads none.
         KeyError
-            If *given* names a key that is not a given slot.
+            If *given* names a key that is not an input.
         ValueError
-            If a value does not conform to its slot, or the returned law departs
-            from the kernel's event declaration.
+            If a value does not conform to its input, or the returned law departs
+            from the kernel's event spec.
         """
         if options:
             raise TypeError(
@@ -1153,17 +1236,17 @@ class _FunctionKernel(ConditionalDistribution):
         rest = self._shallow_copy()
         object.__setattr__(rest, "_provenance", None)
         object.__setattr__(rest, "_bound", {**self._bound, **self._arguments(values)})
-        left = self.given_spec.without(*values)
+        left = self.given_spec.without(*(name for name in values if name in self.given_spec))
         object.__setattr__(rest, "_spec", ConditionalDistributionSpec(left, self.event_spec))
         return rest
 
     def _given_values(self, given: Any) -> dict[str, Any]:
-        """The values *given* holds, by given slot.
+        """The values *given* holds, by input.
 
         Parameters
         ----------
         given : Record or Mapping[str, Any]
-            Values of some or all given slots, keyed by slot name.
+            Values of some or all inputs, keyed by input name.
 
         Returns
         -------
@@ -1174,73 +1257,82 @@ class _FunctionKernel(ConditionalDistribution):
         Raises
         ------
         KeyError
-            If *given* names a key that is not a given slot.
+            If *given* names a key that is not an input.
         """
         values = dict((given.children if isinstance(given, Record) else given).items())
         unknown = sorted(set(values) - set(self.given_spec))
         if unknown:
-            raise KeyError(_unknown_slots(self.label, unknown, self.given_spec))
+            raise KeyError(_unknown_inputs(self.label, unknown, self.given_spec))
         return values
 
     def _check_conformance(self, values: Mapping[str, Any]) -> None:
-        """Raise ``ValueError`` if a value does not conform to its slot."""
-        InputSpec({slot: self.given_spec[slot] for slot in values}).bind_dims_from_value(
-            dict(values)
-        )
+        """Raise ``ValueError`` if a value does not conform to its input."""
+        InputSpec(
+            {input_name: self.given_spec[input_name] for input_name in values}
+        ).bind_dims_from_value(dict(values))
 
     def _arguments(self, values: Mapping[str, Any]) -> dict[str, Any]:
-        """*values* at the kinds their slots declare, as the function receives them."""
-        return {slot: _argument(self._slots[slot], slot, value) for slot, value in values.items()}
+        """*values* at the kinds their inputs declare, as the function receives them."""
+        return {
+            input_name: _value_at_declared_kind(self._inputs[input_name], input_name, value)
+            for input_name, value in values.items()
+        }
 
     def _law(self, given: Any) -> Distribution:
-        """The law the function returns at *given*, a value of every required slot.
+        """The law the function returns at *given*, a value of every required input.
 
-        An optional slot that *given* leaves out takes the function's default.
+        An optional input that *given* leaves out takes the function's default.
 
         Parameters
         ----------
         given : Record or Mapping[str, Any]
-            Values of the slots this kernel conditions on, keyed by slot name.
+            Values of the inputs this kernel conditions on, keyed by input name.
 
         Returns
         -------
         Distribution
             The law the function returns at the values a partly bound kernel holds and
-            at *given*, checked against the kernel's event declaration.
+            at *given*, checked against the kernel's event spec.
 
         Raises
         ------
         KeyError
-            If a required slot has no value, or *given* names another key.
+            If a required input has no value, or *given* names another key.
         ValueError
-            If a value does not conform to its slot, or the law departs from the
-            kernel's event declaration.
+            If a value does not conform to its input, or the law departs from the
+            kernel's event spec.
         """
         values = self._given_values(given)
-        missing = [slot for slot in self.given_spec.required if slot not in values]
+        missing = [
+            input_name for input_name in self.given_spec.required if input_name not in values
+        ]
         if missing:
-            raise KeyError(_missing_slots(self.label, missing))
+            raise KeyError(_missing_inputs(self.label, missing))
         self._check_conformance(values)
         law = self._fn(**self._bound, **self._arguments(values))
         return _declared_law(law, self.event_spec, self.label)
 
 
 @dataclass(frozen=True)
-class _Probe:
-    """What the law a function returns at stand-ins of its slots declares and claims.
+class _AbstractEvaluation:
+    """What the law a function returns at stand-ins of its inputs declares and claims.
 
     Attributes
     ----------
     event_spec : OutputSpec
-        The law's event declaration, a support that depends on the given values
+        The law's event spec, a support that depends on the given values
         left undeclared.
     guards : Mapping[str, Feasibility]
         The report of the law's guard of each derived capability it claims,
         keyed by the capability's method.
+    traceability : Traceability
+        The law's traceability, which the kernel takes as its own, since the
+        function traced to return it.
     """
 
     event_spec: OutputSpec
     guards: Mapping[str, Feasibility]
+    traceability: Traceability
 
 
 def _stand_in(spec: TermSpec, path: str, label: str) -> Any:
@@ -1249,9 +1341,9 @@ def _stand_in(spec: TermSpec, path: str, label: str) -> Any:
     Parameters
     ----------
     spec : TermSpec
-        The term spec of a given slot, or of a field within a record slot.
+        The term spec of an input, or of a field within a record input.
     path : str
-        The path of that slot or field within the given side, which error messages
+        The path of that input or field within the given side, which error messages
         name.
     label : str
         The kernel's label, which error messages name.
@@ -1272,18 +1364,19 @@ def _stand_in(spec: TermSpec, path: str, label: str) -> Any:
     if isinstance(spec, NumericArraySpec):
         if spec.free_dims:
             raise TypeError(
-                f"given slot {path!r} of {label!r} has unbound dimensions "
+                f"input {path!r} of {label!r} has unbound dimensions "
                 f"{sorted(spec.free_dims)}, but conditional_distribution needs a fixed shape for "
-                f"each required given slot; give a concrete shape, such as NumericArraySpec((3,))"
+                f"each required input; give a concrete shape, such as NumericArraySpec((3,))"
             )
         dtype = spec.dtype if spec.dtype is not None else jnp.result_type(float)
         return jax.ShapeDtypeStruct(tuple(spec.shape), dtype)
     if isinstance(spec, RecordSpec):
         return {
-            key: _stand_in(child, f"{path}/{key}", label) for key, child in spec.children.items()
+            key: _stand_in(child, f"{path}{_PATH_SEP}{key}", label)
+            for key, child in spec.children.items()
         }
     raise TypeError(
-        f"given slot {path!r} of {label!r} must be declared as an array or a record of arrays; "
+        f"input {path!r} of {label!r} must be declared as an array or a record of arrays; "
         f"got {type(spec).__name__}"
     )
 
@@ -1303,12 +1396,14 @@ def _value_free(spec: TermSpec) -> TermSpec:
     return spec
 
 
-def _probe(label: str, fn: Callable[..., Distribution], slots: InputSpec) -> _Probe:
-    """The declaration and the guards of the law *fn* returns, evaluated abstractly.
+def _evaluate_abstractly(
+    label: str, fn: Callable[..., Distribution], inputs: InputSpec
+) -> _AbstractEvaluation:
+    """The event spec and the guards of the law *fn* returns, evaluated abstractly.
 
     *fn* runs once under ``jax.eval_shape``, with a traced stand-in of each
-    required slot's type at the kind the slot declares, so no value is assumed,
-    and with its default for each optional slot; a support that a given value
+    required input's type at the kind the input declares, so no value is assumed,
+    and with its default for each optional input; a support that a given value
     sets holds a traced bound, and is left undeclared.
 
     Parameters
@@ -1317,34 +1412,40 @@ def _probe(label: str, fn: Callable[..., Distribution], slots: InputSpec) -> _Pr
         The kernel's label, which error messages name.
     fn : callable
         The function of the given values that returns a law.
-    slots : InputSpec
-        The kernel's given slots, which name the parameters of *fn*.
+    inputs : InputSpec
+        The kernel's inputs, which name the parameters of *fn*.
 
     Returns
     -------
-    _Probe
-        The event declaration of the returned law, and the report of the guard of
+    _AbstractEvaluation
+        The event spec of the returned law, and the report of the guard of
         each derived capability it claims.
 
     Raises
     ------
     TypeError
-        If a slot has no stand-in, or *fn* returns something other than a law.
+        If an input has no stand-in, or *fn* returns something other than a law.
     """
     stand_ins = {
-        slot: _stand_in(spec, slot, label)
-        for slot, spec in slots.items()
-        if slot not in slots.optional
+        input_name: _stand_in(spec, input_name, label)
+        for input_name, spec in inputs.items()
+        if input_name not in inputs.optional
     }
     found: dict[str, Any] = {}
 
     def evaluate(values: Mapping[str, Any]) -> Any:
-        law = fn(**{slot: _argument(slots[slot], slot, value) for slot, value in values.items()})
+        law = fn(
+            **{
+                input_name: _value_at_declared_kind(inputs[input_name], input_name, value)
+                for input_name, value in values.items()
+            }
+        )
         if not isinstance(law, Distribution):
             raise TypeError(
                 f"the function of {label!r} must return a Distribution; got {type(law).__name__}"
             )
         found["event_spec"] = law.event_spec
+        found["traceability"] = law._traceability()
         found["guards"] = {
             method: _capability_guard(law, method)
             for capability, _, method in _DERIVED_TWINS
@@ -1352,17 +1453,32 @@ def _probe(label: str, fn: Callable[..., Distribution], slots: InputSpec) -> _Pr
         }
         return jnp.zeros(())
 
-    jax.eval_shape(evaluate, stand_ins)
+    try:
+        traced = jax.make_jaxpr(evaluate)(stand_ins)
+    except jax.errors.TracerArrayConversionError as error:
+        raise TypeError(
+            f"the function of {label!r} converts a traced given to NumPy, so it cannot be traced. "
+            "Wrap the code that is not JAX in @function(traceable=False, output_spec=...)"
+        ) from error
     declaration = found["event_spec"]
-    return _Probe(declaration._with_spec(_value_free(declaration.spec)), found["guards"])
+    return _AbstractEvaluation(
+        declaration._with_term_spec(_value_free(declaration.term_spec)),
+        found["guards"],
+        Traceability.least_permissive(found["traceability"], Traceability.EMBEDDABLE)
+        if _contains_embedded_calls(traced, validate_tokens=False)
+        else found["traceability"],
+    )
 
 
-def _slots_of(
-    label: str, fn: Callable[..., Any], given_spec: InputSpec | Mapping[str, TermSpec] | None
+def _inputs_of(
+    label: str,
+    fn: Callable[..., Any],
+    given_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec | None,
 ) -> InputSpec:
-    """The given slots of the kernel of *fn*: one per parameter, declared by *given_spec* or its annotation.
+    """The inputs of the kernel of *fn*, one per parameter.
 
-    A parameter with a default is an optional slot, which a binding may omit,
+    *given_spec* or the parameter's annotation declares each input. A
+    parameter with a default is an optional input, which a binding may omit,
     and its default's value declares it when neither *given_spec* nor its
     annotation does.
 
@@ -1371,15 +1487,15 @@ def _slots_of(
     label : str
         The kernel's label, which error messages name.
     fn : callable
-        The function whose parameters are the slots.
-    given_spec : InputSpec or Mapping[str, TermSpec] or None
+        The function whose parameters are the inputs.
+    given_spec : InputSpec, Mapping, RecordSpec, or OutputSpec or None
         The specs of some or all parameters, keyed by parameter name. ``None``
-        declares every slot by its annotation or its default.
+        declares every input by its annotation or its default.
 
     Returns
     -------
     InputSpec
-        One slot per parameter of *fn*, in signature order, with each parameter
+        One input per parameter of *fn*, in signature order, with each parameter
         that has a default marked optional.
 
     Raises
@@ -1389,29 +1505,45 @@ def _slots_of(
         variadic or positional-only, or a parameter without a default is
         declared by neither.
     """
-    declared = dict((given_spec or {}).items())
+    declared_spec = _read_given_inputs(given_spec)
+    declared = dict(declared_spec.items())
     try:
         signature = inspect.signature(fn, eval_str=True)
     except NameError:
         signature = inspect.signature(fn)
     unknown = sorted(set(declared) - set(signature.parameters))
     if unknown:
+        parameter_names = list(signature.parameters)
+        declared_names = list(declared)
+        if (
+            isinstance(given_spec, OutputSpec)
+            and isinstance(given_spec.term_spec, RecordSpec)
+            and len(parameter_names) == 1
+            and parameter_names[0] not in declared
+        ):
+            group = parameter_names[0]
+            raise TypeError(
+                f"given_spec declares the fields {' and '.join(declared_names)} of the group {group}, "
+                f"but {label} takes {group} itself. Pass event_spec[[{group!r}]]"
+            )
         raise TypeError(
-            f"given_spec of {label!r}: "
-            f"{unknown_names('parameter', unknown, list(signature.parameters))}"
+            f"given_spec declares {' and '.join(unknown)}, but {label} takes only "
+            f"{' and '.join(parameter_names)}. Pass event_spec.without({', '.join(map(repr, unknown))}) "
+            f"or event_spec[{parameter_names!r}]"
         )
-    slots: dict[str, TermSpec] = {}
+    _inputs_with_defaults(declared_spec, signature.parameters, function_name=label)
+    inputs: dict[str, TermSpec] = {}
     optional: list[str] = []
     for parameter in signature.parameters.values():
         if parameter.kind in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD):
             raise TypeError(
-                f"the parameter {parameter.name!r} of {label!r} is variadic, but each given slot "
+                f"the parameter {parameter.name!r} of {label!r} is variadic, but each input "
                 f"must be a named parameter"
             )
         if parameter.kind is parameter.POSITIONAL_ONLY:
             raise TypeError(
                 f"the parameter {parameter.name!r} of {label!r} is positional-only, but given "
-                f"slot values are passed by name; make it a regular parameter"
+                f"input values are passed by name; make it a regular parameter"
             )
         spec = declared.get(parameter.name, parameter.annotation)
         if parameter.default is not parameter.empty:
@@ -1420,66 +1552,66 @@ def _slots_of(
                 spec = RecordSpec.infer_from({"default": parameter.default}).children["default"]
         if not isinstance(spec, TermSpec):
             raise TypeError(
-                f"the given slot {parameter.name!r} of {label!r} declares no term spec. Pass "
+                f"the input {parameter.name!r} of {label!r} declares no term spec. Pass "
                 f"given_spec={{{parameter.name!r}: NumericArraySpec(())}} for a real scalar, or "
                 f"NumericArraySpec((n,)) for a vector of length n, or annotate the parameter "
                 f"with the spec"
             )
-        slots[parameter.name] = spec
-    return InputSpec(slots).with_optional(*optional)
+        inputs[parameter.name] = spec
+    return InputSpec(inputs).with_optional(*optional)
 
 
 def _agreed_event_spec(label: str, declared: OutputSpec | TermSpec, law: OutputSpec) -> OutputSpec:
-    """*declared*, completed from *law*, the declaration of the law the function returns.
+    """*declared*, completed from *law*, the event spec of the law the function returns.
 
     Parameters
     ----------
     label : str
         The kernel's label, which error messages name.
     declared : OutputSpec or TermSpec
-        The event declaration the caller passed. A bare ``RecordSpec`` exposes
-        its fields, and any other bare term spec declares a whole term under the
-        component of *law*.
+        The event spec the caller passed. The fields of a bare ``RecordSpec``
+        are its outputs, and any other bare term spec declares a whole term
+        under the name of *law*'s one output.
     law : OutputSpec
-        The event declaration of the law the function returns at the stand-ins.
+        The event spec of the law the function returns at the stand-ins.
 
     Returns
     -------
     OutputSpec
-        *declared* under its own components and packaging, holding the
-        unification of its type with the type of *law*.
+        *declared* with its own outputs and form, holding the unification of
+        its type with the type of *law*.
 
     Raises
     ------
     ValueError
-        If *declared* names other components or another packaging than *law*,
-        or its type does not unify with the law's.
+        If *declared* names other outputs than *law* or has another form, or
+        its type does not unify with the law's.
     """
     if isinstance(declared, OutputSpec):
         declaration = declared
     elif isinstance(declared, RecordSpec):
         declaration = OutputSpec(declared)
-    elif not law.exposes_record and len(law.components) == 1:
-        declaration = OutputSpec.default(declared, component=next(iter(law.components)))
+    elif not _has_record_outputs(law) and len(law.outputs) == 1:
+        declaration = OutputSpec.default(declared, output_name=next(iter(law.outputs)))
     else:
         raise ValueError(
-            f"event_spec of {label!r} needs an explicit OutputSpec for the law's components "
-            f"{list(law.components)}"
+            f"event_spec of {label!r} needs an explicit OutputSpec for the law's outputs "
+            f"{list(law.outputs)}"
         )
-    if declaration.exposes_record != law.exposes_record or tuple(declaration.components) != tuple(
-        law.components
-    ):
+    if _has_record_outputs(declaration) != _has_record_outputs(law) or tuple(
+        declaration.outputs
+    ) != tuple(law.outputs):
         raise ValueError(
-            f"event_spec of {label!r} declares the fields {list(declaration.components)}, but its "
-            f"function returns a law with {list(law.components)}"
+            f"event_spec of {label!r} declares the outputs {list(declaration.outputs)}, but its "
+            f"function returns a law with the outputs {list(law.outputs)}; make them match"
         )
-    return declaration.with_spec(law.spec)
+    return declaration.with_term_spec(law.term_spec)
 
 
 def _function_kernel(
     label: str | None,
     fn: Any,
-    given_spec: InputSpec | Mapping[str, TermSpec] | None,
+    given_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec | None,
     event_spec: OutputSpec | TermSpec | None,
 ) -> ConditionalDistribution:
     """The kernel of *fn*, labeled *label* or after the function.
@@ -1491,12 +1623,12 @@ def _function_kernel(
         ``ℙ`` for a lambda or a callable without a name.
     fn : callable
         The function of the given values that returns a law.
-    given_spec : InputSpec or Mapping[str, TermSpec] or None
-        The specs of some or all given slots, keyed by parameter name, which
-        :func:`_slots_of` completes.
+    given_spec : InputSpec, Mapping, RecordSpec, or OutputSpec or None
+        The specs of some or all inputs, keyed by parameter name, which
+        :func:`_inputs_of` completes.
     event_spec : OutputSpec or TermSpec or None
-        The declared event, which must agree with the declaration of the law *fn*
-        returns. ``None`` takes the returned law's declaration.
+        The declared event, which must agree with the event spec of the law *fn*
+        returns. ``None`` takes the returned law's event spec.
 
     Returns
     -------
@@ -1507,7 +1639,7 @@ def _function_kernel(
     Raises
     ------
     TypeError
-        If *fn* is not callable, or as :func:`_slots_of` and :func:`_probe` raise.
+        If *fn* is not callable, or as :func:`_inputs_of` and :func:`_evaluate_abstractly` raise.
     ValueError
         As :func:`_agreed_event_spec` raises.
     """
@@ -1516,14 +1648,21 @@ def _function_kernel(
     if label is None:
         name = getattr(fn, "__name__", None)
         label = name if isinstance(name, str) and name.isidentifier() else DEFAULT_LABEL
-    slots = _slots_of(label, fn, given_spec)
-    probe = _probe(label, fn, slots)
+    inputs = _inputs_of(label, fn, given_spec)
+    abstract_evaluation = _evaluate_abstractly(label, fn, inputs)
     declaration = (
-        probe.event_spec
+        abstract_evaluation.event_spec
         if event_spec is None
-        else _agreed_event_spec(label, event_spec, probe.event_spec)
+        else _agreed_event_spec(label, event_spec, abstract_evaluation.event_spec)
     )
-    return _FunctionKernel(label, fn, slots, declaration, probe.guards)
+    return _FunctionKernel(
+        label,
+        fn,
+        inputs,
+        declaration,
+        abstract_evaluation.guards,
+        abstract_evaluation.traceability,
+    )
 
 
 def conditional_distribution(
@@ -1531,24 +1670,24 @@ def conditional_distribution(
     /,
     *,
     label: str | None = None,
-    given_spec: InputSpec | Mapping[str, TermSpec] | None = None,
+    given_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec | None = None,
     event_spec: OutputSpec | TermSpec | None = None,
 ) -> Any:
     """Build a ``ConditionalDistribution`` from a function of its given values that returns a law.
 
-    Each parameter of the function is a given slot, declared by its entry in
+    Each parameter of the function is an input, declared by its entry in
     *given_spec* or else by its annotation, which is then a term spec. A
-    parameter with a default is an optional slot, which its default's value
+    parameter with a default is an optional input, which its default's value
     declares when neither does. Construction evaluates the function once,
-    abstractly, at stand-ins of the required slots' types and at the defaults
-    of the optional ones, and reads the law it returns: its event declaration
+    abstractly, at stand-ins of the required inputs' types and at the defaults
+    of the optional ones, and reads the law it returns: its event spec
     is the kernel's, unless *event_spec* declares one that agrees with it, and
     the kernel claims conditional sampling and the conditional density exactly
     when that law claims sampling and a density, each with the law's guard.
-    Binding every required slot calls the function with each value as the
-    argument of that name, at the kind its slot declares, and with its default
-    for each optional slot left unbound, and returns the law the call returns;
-    binding fewer slots returns the kernel over the rest.
+    Binding every required input calls the function with each value as the
+    argument of that name, at the kind its input declares, and with its default
+    for each optional input left unbound, and returns the law the call returns;
+    binding fewer inputs returns the kernel over the rest.
 
     The kernel is labeled *label*, or after the function's ``__name__``, and
     ``ℙ`` for a lambda. The call form takes the function first::
@@ -1557,21 +1696,21 @@ def conditional_distribution(
             lambda mu, tau: Normal("y", mu, tau), label="lik", given_spec={"mu": real, "tau": scale}
         )
 
-    An optional slot holds a constant of the model. In a joint, a factor that
-    produces a component of its name meets it, so one kernel serves a model
-    with the default and a model with a prior on the slot::
+    An optional input holds a constant of the model. In a joint, a factor that
+    produces an output of its name meets it, so one kernel serves a model
+    with the default and a model with a prior on the input::
 
         counts = conditional_distribution(
             lambda r, n0=50.0: Poisson("y", n0 * jnp.exp(r)),
             label="counts",
             given_spec={"r": real},
         )
-        fixed = counts * Normal("r", 0.0, 1.0)                           # n0 is 50
-        uncertain = counts * (Normal("r", 0.0, 1.0) * LogNormal("n0", 4.0, 0.3))
+        fixed = counts & Normal("r", 0.0, 1.0)                           # n0 is 50
+        uncertain = counts & (Normal("r", 0.0, 1.0) & LogNormal("n0", 4.0, 0.3))
 
     and the decorator form labels the kernel after the function, or as given::
 
-        @conditional_distribution(given_spec=prior.event_spec.components)
+        @conditional_distribution(given_spec=prior.event_spec.outputs)
         def y(population, groups, sigma=1.0):
             return Normal("y", population["mu"] + population["tau"] * groups["theta"], sigma)
 
@@ -1583,12 +1722,12 @@ def conditional_distribution(
     label : str, optional
         The kernel's label. Defaults to the function's ``__name__``, and to
         ``ℙ`` for a lambda or a callable without a name.
-    given_spec : InputSpec or Mapping[str, TermSpec], optional
-        The specs of some or all given slots, keyed by parameter.
+    given_spec : InputSpec, Mapping, RecordSpec, or OutputSpec, optional
+        The specs of some or all inputs, keyed by parameter.
     event_spec : OutputSpec or TermSpec, optional
-        The event declaration, which must name the components of the returned
+        The event spec, which must name the outputs of the returned
         law and unify with its type. A bare term spec other than a record
-        declares the returned law's one component.
+        declares the returned law's one output.
 
     Returns
     -------
@@ -1601,20 +1740,20 @@ def conditional_distribution(
         If *fn* is a string, since the label is the keyword *label*; if *label*
         is not a non-empty string; if a parameter without a default declares no
         term spec, a parameter is variadic or positional-only, or *given_spec*
-        names a key that is not a parameter; if a required slot is
+        names a key that is not a parameter; if a required input is
         neither an array nor a record of arrays, or declares free dimensions;
         or if the function returns something other than a law.
     ValueError
         If *event_spec* is a bare term spec other than a ``RecordSpec`` while the
-        returned law exposes a record or has more than one component, if
-        *event_spec* names other components or another packaging than the
-        returned law, or if its type does not unify with the law's.
+        returned law's outputs are a record's fields or it has more than one
+        output, if *event_spec* names other outputs than the returned law or has
+        another form, or if its type does not unify with the law's.
 
     Notes
     -----
     The function computes the kernel's conditional draws and densities, so it
     must be pure, as ``ConditionalDistribution`` states. A value that changes
-    between calls belongs in a given slot, as ``sigma`` is in the decorator
+    between calls belongs in an input, as ``sigma`` is in the decorator
     example, and not in a global. A function that does not compile with its
     unmet givens traced, such as one that converts a given to a Python number,
     runs uncompiled.
@@ -1630,3 +1769,47 @@ def conditional_distribution(
         return _function_kernel(label, function, given_spec, event_spec)
 
     return decorate
+
+
+def _probed_kernel_traceability(kernel: ConditionalDistribution) -> Traceability:
+    """*kernel*'s density traced at stand-ins of its required inputs and one event value.
+
+    A kernel without a density traces its sampler at one key instead.
+    """
+    given_spec = kernel.given_spec
+    given_stand_ins = {
+        input_name: spec_stand_in(spec, unbound_size=1)
+        for input_name, spec in given_spec.items()
+        if input_name not in given_spec.optional
+    }
+    if any(stand_in is None for stand_in in given_stand_ins.values()):
+        return Traceability.HOST_ONLY
+
+    def given_values(stand_ins: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            input_name: _value_at_declared_kind(given_spec[input_name], input_name, value)
+            for input_name, value in stand_ins.items()
+        }
+
+    event = kernel.event_spec.term_spec
+    event_stand_in = spec_stand_in(event, unbound_size=1)
+    if isinstance(kernel, SupportsConditionalUnnormalizedLogProb) and event_stand_in is not None:
+        probe_result = probe(
+            None,
+            lambda stand_ins: kernel._conditional_unnormalized_log_prob(
+                given_values(stand_ins[0]),
+                _value_at_declared_kind(event, kernel.label, stand_ins[1]),
+            ),
+            (given_stand_ins, event_stand_in),
+            label=kernel.label,
+        )
+    elif isinstance(kernel, SupportsConditionalSampling):
+        probe_result = probe(
+            None,
+            lambda stand_ins: kernel._conditional_sample(given_values(stand_ins[0]), stand_ins[1]),
+            (given_stand_ins, jax.random.key(0)),
+            label=kernel.label,
+        )
+    else:
+        return Traceability.HOST_ONLY
+    return probe_result.traceability

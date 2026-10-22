@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -12,30 +12,32 @@ import numpy as np
 import pyabc
 from pyabc.sampler import SingleCoreSampler
 
+from ..core._compilation import _trace_cache_key, compiled_or_eager
 from ..core._dispatch import Feasibility
 from ..custom_types import PRNGKey
 from ..distributions._capabilities import SupportsConditionalSampling
 from ..distributions._conditional import ConditionalDistribution
+from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
-from ..operations._condition import InferenceMethod, _UnnormalizedConditional
+from ..operations._condition import InferenceMethod
+from ..operations._inference_target import (
+    InferenceTarget,
+    _described,
+    _flat_unflatten,
+)
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
     _declared_vector,
-    described,
-    flat_unflatten,
     flat_vector,
     integer_seed,
     model_factors,
     parameter_given,
-    run_seed,
     unconstrained_coordinates,
     unfactored_model_reason,
 )
 
 if TYPE_CHECKING:
     from xarray import DataTree
-
-    from ..distributions._distribution import Distribution
 
 
 # Key under which the simulated/observed vector lives in pyabc's sumstat dict.
@@ -127,7 +129,7 @@ class PyABCDistribution(pyabc.Distribution):
         """The coordinates of a prior draw at a key and the log-density at coordinates, compiled."""
         if "_draw" not in self.__dict__:
             prior = self._prior
-            unflatten = flat_unflatten(prior)
+            unflatten = _flat_unflatten(prior)
             coordinates = unconstrained_coordinates(prior)
 
             def log_density(z: Any) -> Any:
@@ -177,24 +179,20 @@ def _compiled(fn: Callable[..., Any]) -> Callable[..., Any]:
     samples with a JAX loop, as a Gamma or a Poisson draw does. The compiled
     form traces once and is reused at every particle. A function that does not
     trace, such as a simulator that calls NumPy or an external program, runs
-    eagerly instead: the first call decides, and the later calls keep its choice.
+    eagerly instead, by the rule of
+    :func:`~probpipe.core._compilation.compiled_or_eager`: the first trace at
+    each shape and dtype of the arguments decides for them, and an error
+    raised while the compiled form runs propagates.
     """
-    compiled = jax.jit(fn)
-    chosen: list[Callable[..., Any]] = []
+    compiled_fn = jax.jit(fn)
+    decision_record: dict[Hashable, Any] = {}
 
-    def run(*args: Any) -> Any:
-        if chosen:
-            return chosen[0](*args)
-        try:
-            value = compiled(*args)
-        except Exception:
-            # The function does not trace; an error of its own raises again eagerly.
-            chosen.append(fn)
-            return fn(*args)
-        chosen.append(compiled)
-        return value
+    def run_compiled_or_eager(*args: Any) -> Any:
+        return compiled_or_eager(
+            decision_record, "pyabc", compiled_fn, fn, *args, trace_cache_key=_trace_cache_key(args)
+        )
 
-    return run
+    return run_compiled_or_eager
 
 
 def _smc_diagnostics(history: Any) -> DataTree:
@@ -255,11 +253,15 @@ class PyABCSMCMethod(InferenceMethod):
     )
 
     @property
+    def description(self) -> str:
+        return "Sequential Monte Carlo ABC through pyabc, for a likelihood that simulates."
+
+    @property
     def name(self) -> str:
         return "pyabc_smcabc"
 
     def supported_types(self) -> tuple[type, ...]:
-        return (_UnnormalizedConditional,)
+        return (Distribution,)
 
     @property
     def priority(self) -> int:
@@ -278,7 +280,7 @@ class PyABCSMCMethod(InferenceMethod):
                 feasible=False,
                 description=(
                     "the likelihood must be a ConditionalDistribution that can be sampled, "
-                    f"since ABC simulates from it; got {described(factors.likelihood)}"
+                    f"since ABC simulates from it; got {_described(factors.likelihood)}"
                 ),
             )
         # Feasible means the prior can flatten, sample, *and* score jointly.
@@ -294,31 +296,33 @@ class PyABCSMCMethod(InferenceMethod):
             return Feasibility(
                 feasible=False,
                 description=(
-                    f"the joint density of the prior {described(factors.prior)} is not finite "
+                    f"the joint density of the prior {_described(factors.prior)} is not finite "
                     f"at a draw from it"
                 ),
             )
         return Feasibility(feasible=True)
 
-    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
+    def execute(
+        self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any
+    ) -> EmpiricalDistribution:
         """Run SMC-ABC and return a weighted posterior.
 
-        The run's seed is drawn from a workflow-owned random event, so
-        ``workflow_run(seed=...)`` reproduces the run, and an unscoped call
-        runs afresh. The seed fixes the JAX keys of the prior's draws and of
+        The run's random key fixes the JAX keys of the prior's draws and of
         the simulator. It also seeds numpy's global generator for the duration
         of the run, and pyabc draws its perturbations from that generator. The
         caller's numpy state is restored afterwards.
 
         Parameters
         ----------
-        target : Distribution
+        target : InferenceTarget
             The unnormalized conditional of a factored joint at its observed
             fields: a prior that flattens to a parameter vector and carries a
             joint density, a likelihood kernel that samples, the simulator, and
             the observed value, flattened (after ``summary_fn``) to the target
             vector.
-        **kwargs : Any
+        key : PRNGKey
+            The run's random key.
+        **options : Any
             The call's ``method_options``:
 
             - ``n_particles`` (int, default 100): SMC population size.
@@ -372,29 +376,29 @@ class PyABCSMCMethod(InferenceMethod):
         TypeError
             If a keyword is none of the options above.
         """
-        self._check_options(kwargs)
+        self._check_options(options)
         factors = model_factors(target)
         prior = factors.prior
         simulator = factors.likelihood
 
-        n_particles = int(kwargs.get("n_particles", 100))
-        max_populations = int(kwargs.get("max_populations", 4))
-        eps_alpha = float(kwargs.get("eps_alpha", 0.5))
-        random_seed = integer_seed(run_seed(self.name))
-        summary_fn: _SummaryFn | None = kwargs.get("summary_fn")
-        distance_fn: _DistanceFn = kwargs.get("distance_fn") or _euclidean_distance
-        sampler = kwargs.get("sampler") or SingleCoreSampler()
-        eps = kwargs.get("eps")
+        n_particles = int(options.get("n_particles", 100))
+        max_populations = int(options.get("max_populations", 4))
+        eps_alpha = float(options.get("eps_alpha", 0.5))
+        random_seed = integer_seed(key)
+        summary_fn: _SummaryFn | None = options.get("summary_fn")
+        distance_fn: _DistanceFn = options.get("distance_fn") or _euclidean_distance
+        sampler = options.get("sampler") or SingleCoreSampler()
+        eps = options.get("eps")
         if eps is None:
             eps = pyabc.QuantileEpsilon(alpha=eps_alpha)
-        transitions = kwargs.get("transitions")
+        transitions = options.get("transitions")
 
         prior_key, sim_key0 = jax.random.split(jax.random.PRNGKey(random_seed))
         pyabc_prior = PyABCDistribution(prior, prior_key)
         d = pyabc_prior._d
 
         x0 = {_DATA_KEY: _summarize(flat_vector(factors.observed)[None, :], summary_fn)}
-        unflatten = flat_unflatten(prior)
+        unflatten = _flat_unflatten(prior)
         coordinates = unconstrained_coordinates(prior)
 
         sim_keys = _ProcessKeys(sim_key0)
@@ -423,14 +427,14 @@ class PyABCSMCMethod(InferenceMethod):
         # Forward any caller-supplied stopping criteria to run(); pyabc's own
         # defaults apply for those omitted.
         run_kwargs = {
-            k: kwargs[k]
+            k: options[k]
             for k in (
                 "minimum_epsilon",
                 "min_acceptance_rate",
                 "max_total_nr_simulations",
                 "max_walltime",
             )
-            if k in kwargs
+            if k in options
         }
         # pyabc draws its perturbations from numpy's global RNG; seed it for a
         # reproducible run and restore the caller's state afterwards.
@@ -449,14 +453,12 @@ class PyABCSMCMethod(InferenceMethod):
         flat = jax.vmap(coordinates.forward)(jnp.asarray(particles))
         weights = np.asarray(weights, dtype=float)
 
-        # Lift the flat columns back to name-keyed Records via the target's declaration.
+        # Lift the flat columns back to name-keyed Records via the target's event spec.
         return make_posterior(
+            target,
             [flat],
-            parents=(target,),
             method="pyabc_smcabc",
             weights=jnp.asarray(weights / weights.sum()),
-            event_spec=target.event_spec,
-            field_order=list(target.event_spec.components),
             annotations=_smc_diagnostics(history),
             n_particles=n_particles,
             max_populations=max_populations,

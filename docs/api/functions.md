@@ -37,6 +37,50 @@ assert float(compute(1.0)) == 8.0
 assert float(compute(1.0, scale=3.0)) == 12.0
 ```
 
+A plain operation runs its coordinating route in the calling thread. An
+executor named on that operation applies to the evaluation points its route
+requests, including opaque calls inside stored JAX programs. A plain Function
+body continues to run as an evaluation point on its selected executor.
+
+## Opaque functions inside JAX
+
+Wrap code that uses NumPy or an external executable in a `Function` with
+`traceable=False` and a concrete numeric `output_spec`, including every output
+leaf's shape and dtype. JAX traces the surrounding computation without running
+the opaque body. At execution, a host callback sends its evaluation points to
+an executor and checks the returned values against the output spec. A missing
+shape, a missing dtype, or a host-only return value is refused during tracing.
+For example:
+
+```python
+import jax
+import jax.numpy as jnp
+import numpy as np
+from probpipe import Function, NumericArraySpec
+
+solver = Function(
+    lambda x: np.asarray(x, dtype="float32") + np.float32(1),
+    traceable=False,
+    output_spec=NumericArraySpec((), dtype="float32"),
+)
+assert float(jax.jit(lambda x: solver(x))(jnp.float32(2))) == 3
+```
+
+An embedded evaluation cannot draw workflow randomness. Gradients through an
+opaque function without a derivative are refused, naming that function.
+A JAX program opened directly by the user uses the default host context; a
+named executor emits a warning in that case. ProbPipe's stored programs carry
+the running call's context through a dynamic token.
+
+A failed embedded evaluation stops the compiled program and raises
+`EvaluationError`; a host-side executor refusal retains its own exception type
+when the program runs through ProbPipe. A directly opened JAX program also
+raises on failure, although JAX wraps the callback's exception.
+
+A declared `float64` output requires `jax_enable_x64=True` when the call opens,
+for both ordinary calls and `apply`. Enable it before calling, or declare a
+`float32` output. An undeclared output still records the dtype actually stored.
+
 ## Differentiability and invertibility
 
 ::: probpipe.SupportsDifferentiation
@@ -58,3 +102,10 @@ assert float(compute(1.0, scale=3.0)) == 12.0
 ::: probpipe.ResultKindError
 
 ::: probpipe.ResultSchemaError
+
+## Failed evaluations
+
+A call that evaluates a function many times, such as a call lifted over a distribution, runs every evaluation and keeps the outputs that succeeded.
+When some evaluations fail, the call then raises `EvaluationError`, which names each failed one and is chained to the first failure's exception.
+
+::: probpipe.EvaluationError

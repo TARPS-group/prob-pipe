@@ -56,7 +56,9 @@ A few conventions keep PRs consistent; the PR template
   stale description is a review blocker. The PR text follows the writing
   rules of `STYLE_GUIDE.md` §10, whose rules 9 and 10 keep it free of plan
   labels and self-contained. Scratch planning artifacts, such as `*_plan.md`
-  files, stay off the branch.
+  files, stay off the branch. The one exception is `plans/`, which holds the shared
+  plans of a multi-PR push while it runs and is deleted once its sections
+  have moved into `design/` (`plans/README.md`).
 - **CHANGELOG** — a PR with a user-visible change adds its entry to
   `CHANGELOG.md` in the same PR, under `## [Unreleased]` and the one heading
   of its change type, such as `### Added` or `### Changed (breaking)`.
@@ -160,7 +162,7 @@ must check correctness against an **independent baseline** (an analytic
 result, an exact reference computation, a known invariant, or finite
 differences for gradients) — and where the claim is distributional,
 check both location and spread. Tolerances on stochastic or trained
-components are **measured, not guessed**: run the test's configuration
+estimators are **measured, not guessed**: run the test's configuration
 across a few seeds, bound the observed spread with modest margin, and
 document the measured range in a comment next to the assertion. Full
 conventions in [STYLE_GUIDE.md § 8.6](STYLE_GUIDE.md#86-numerical-correctness-and-tolerances).
@@ -314,7 +316,7 @@ ways to opt in:
 ```python
 # Per-process (notebook, REPL, script):
 import probpipe
-probpipe.prefect_config.workflow_kind = probpipe.WorkflowKind.TASK
+probpipe.config.prefect.workflow_kind = probpipe.WorkflowKind.TASK
 ```
 
 ```bash

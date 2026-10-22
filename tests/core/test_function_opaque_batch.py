@@ -158,7 +158,7 @@ class TestConstruction:
         )
 
         assert batch.batch_shape == (3,)
-        assert [batch[i].value for i in range(3)] == ["0", "1", "2"]
+        assert [batch[i].raw for i in range(3)] == ["0", "1", "2"]
 
 
 class TestConstructionRefusals:
@@ -183,12 +183,12 @@ class TestConstructionRefusals:
     def test_an_element_of_the_wrong_type_names_the_spec(self):
         """A typed spec refuses on type, which the message says rather than blaming a mapping."""
         with pytest.raises(
-            TypeError, match=r"element 1 is str, but elements must match element_spec OpaqueSpec"
+            TypeError, match=r"element 1 is str, but elements must match OpaqueSpec"
         ):
             OpaqueBatch(
                 [1, "a"],
                 "site",
-                element_spec=OpaqueSpec(type=int),
+                element=OpaqueSpec(type=int),
                 label="batch",
             )
 
@@ -258,7 +258,7 @@ class TestConstructionRefusals:
             cls(
                 [lambda: 1],
                 "variant",
-                element_spec=spec,
+                element=spec,
                 label="batch",
             )
 
@@ -325,10 +325,10 @@ class TestSpec:
         assert functions.spec == BatchSpec(FunctionSpec(), variant=3)
 
     def test_element_spec_is_a_view_of_the_declared_kind(self, functions, labels):
-        assert isinstance(functions.element_spec, FunctionSpec)
-        assert isinstance(labels.element_spec, OpaqueSpec)
-        assert functions.element_spec is functions.spec.element_spec
-        assert labels.element_spec is labels.spec.element_spec
+        assert isinstance(functions.element_spec.term_spec, FunctionSpec)
+        assert isinstance(labels.element_spec.term_spec, OpaqueSpec)
+        assert functions.element_spec.term_spec is functions.spec.element_spec.term_spec
+        assert labels.element_spec.term_spec is labels.spec.element_spec.term_spec
 
     def test_an_element_spec_may_be_given(self):
         declared = FunctionSpec(
@@ -337,16 +337,16 @@ class TestSpec:
         batch = FunctionBatch(
             [lambda x: x],
             "variant",
-            element_spec=declared,
+            element=declared,
             label="batch",
         )
 
-        assert batch.element_spec == declared
-        assert batch.spec.element_spec == declared
+        assert batch.element_spec.term_spec == declared
+        assert batch.spec.element_spec.term_spec == declared
 
     def test_opaque_elements_and_their_batch_both_have_kind_specs(self, labels):
         """The opaque base kind and its batch both use the common spec protocol."""
-        assert isinstance(labels.element_spec, TermSpec)
+        assert isinstance(labels.element_spec.term_spec, TermSpec)
         assert isinstance(labels.spec, TermSpec)
 
     def test_is_valid_reads_every_part_of_the_spec(self, functions):
@@ -372,7 +372,7 @@ class TestSpec:
             FunctionBatch(
                 three,
                 "variant",
-                element_spec=FunctionSpec(InputSpec(RecordSpec(x=()).children)),
+                element=FunctionSpec(InputSpec(RecordSpec(x=()).children)),
                 label="batch",
             )
         )
@@ -381,13 +381,13 @@ class TestSpec:
 class TestElements:
     def test_an_element_holds_the_object_that_was_stored(self, labels):
         stored = ["north", "east", "south"]
-        assert [labels[i].value for i in range(3)] == stored
+        assert [labels[i].raw for i in range(3)] == stored
 
     def test_an_opaque_element_is_an_opaque_named_by_its_position(self, labels):
         element = labels[1]
         assert isinstance(element, Opaque)
         assert element.label == "s[site=1]"
-        assert element.spec == labels.element_spec
+        assert element.spec == labels.element_spec.term_spec
 
     def test_a_callable_element_is_a_function_named_by_its_position(self, functions):
         element = functions[1]
@@ -417,6 +417,7 @@ class TestElements:
             def __init__(self, label):
                 self._init_tracked(label)
 
+            @property
             def raw(self):
                 return self
 
@@ -465,7 +466,7 @@ class TestElements:
         element = batch[1]
         assert copies == [stored[1]]
         assert element is not stored[1]
-        assert element.value is stored[1].value
+        assert element.raw is stored[1].raw
         assert element.label == "s[site=1]"
         assert [term.label for term in stored] == ["north", "east"]
         assert [term._expression for term in stored] == expressions
@@ -487,7 +488,7 @@ class TestElements:
         )
 
         assert batch.batch_shape == (2,)
-        np.testing.assert_array_equal(np.asarray(batch[1].value), np.ones(3))
+        np.testing.assert_array_equal(np.asarray(batch[1].raw), np.ones(3))
 
     def test_an_object_array_of_arrays_is_not_unpacked(self):
         """The other input path: a supplied object array, copied rather than built.
@@ -506,7 +507,7 @@ class TestElements:
         )
 
         assert batch.batch_shape == (2,)
-        np.testing.assert_array_equal(np.asarray(batch[1].value), np.ones(3))
+        np.testing.assert_array_equal(np.asarray(batch[1].raw), np.ones(3))
 
     def test_elements_holding_sequences_are_not_unpacked(self):
         batch = OpaqueBatch(
@@ -516,7 +517,7 @@ class TestElements:
         )
 
         assert batch.batch_shape == (2,)
-        assert batch[0].value == [1, 2]
+        assert batch[0].raw == [1, 2]
 
 
 class TestTheStorageContractIsSatisfiable:
@@ -553,7 +554,7 @@ class TestTheStorageContractIsSatisfiable:
         assert np.shares_memory(function_grid[0]._store, function_grid._store)
 
     def test_a_descending_slice_is_presented_in_the_order_given(self, labels):
-        assert [labels[::-1][i].value for i in range(3)] == ["south", "east", "north"]
+        assert [labels[::-1][i].raw for i in range(3)] == ["south", "east", "north"]
 
     def test_a_stepped_slice_is_presented_in_the_order_given(self, functions):
         assert [f(1) for f in functions[::2]] == [1, 3]
@@ -563,7 +564,7 @@ class TestTheStorageContractIsSatisfiable:
 
         assert whole is not labels
         assert np.shares_memory(whole._store, labels._store)
-        assert [whole[i].value for i in range(3)] == [labels[i].value for i in range(3)]
+        assert [whole[i].raw for i in range(3)] == [labels[i].raw for i in range(3)]
 
     def test_the_store_cannot_be_written_through(self, labels):
         """A view shares the buffer, so a writable store would reach the parent."""
@@ -584,8 +585,8 @@ class TestTheStorageContractIsSatisfiable:
 
         store[1] = {"a": 1}
 
-        assert batch[1].value == "south"
-        assert batch.element_spec.is_valid(batch[1].value)
+        assert batch[1].raw == "south"
+        assert batch.element_spec.term_spec.is_valid(batch[1].raw)
 
     def test_an_empty_selection_is_a_batch_of_nothing(self, labels):
         """Reachable by selection though the constructor refuses it — see Notes."""
@@ -722,14 +723,16 @@ class TestTheLabelFirstFormIsRefusedWithAHint:
             FunctionBatch("ab", "m")
 
 
-class TestFieldKeys:
-    def test_these_elements_have_no_fields(self, functions):
-        with pytest.raises(TypeError, match="its elements have no named fields"):
+class TestPaths:
+    def test_a_batch_of_functions_is_indexed_by_position_only(self, functions):
+        with pytest.raises(TypeError, match="indexing its elements by path is not supported yet"):
             functions["anything"]
 
-    def test_the_message_names_the_concrete_class(self, labels):
-        with pytest.raises(TypeError, match="cannot index OpaqueBatch by"):
+    def test_opaque_elements_have_no_paths(self, labels):
+        with pytest.raises(TypeError, match="cannot index OpaqueBatch 's' by 'anything'"):
             labels["anything"]
+        assert "anything" not in labels
+        assert "north" not in labels  # membership never tests the elements
 
 
 class TestRoundTrips:
@@ -743,13 +746,13 @@ class TestRoundTrips:
 
         assert restored.label == labels.label
         assert restored.level_names == labels.level_names
-        assert [restored[i].value for i in range(3)] == ["north", "east", "south"]
+        assert [restored[i].raw for i in range(3)] == ["north", "east", "south"]
 
     def test_a_view_survives_pickling(self, labels):
         restored = pickle.loads(pickle.dumps(labels[0:2]))
 
         assert restored.label == "s[site=0:2]"
-        assert [restored[i].value for i in range(2)] == ["north", "east"]
+        assert [restored[i].raw for i in range(2)] == ["north", "east"]
 
     def test_the_store_travels_without_being_declared(self, labels):
         """`Batch.__getstate__` walks the MRO, so `_store` needs no restating."""
@@ -814,7 +817,7 @@ class TestProvenance:
         assert element.provenance is None
 
     def test_the_caller_can_still_set_its_own_provenance_afterwards(self, full_provenance_mode):
-        """The write-once slot stays the caller's to spend."""
+        """The write-once provenance stays the caller's to spend."""
         element = Record(
             {"x": 1.0},
             label="r",
@@ -877,4 +880,4 @@ class TestTheseAreBatches:
 
         text = repr(batch)
         assert text.startswith("OpaqueBatch(") and "levels={'site': 2}" in text
-        assert "element_spec=OpaqueSpec(" in text and "<locals>._Unreadable" in text
+        assert "element=OpaqueSpec(" in text and "<locals>._Unreadable" in text

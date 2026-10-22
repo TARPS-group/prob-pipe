@@ -68,17 +68,17 @@ def _observations(prior, shape, obs_var=1.0, *, traceable=True):
     """``y ~ N(theta, obs_var)`` entrywise over *shape*, composed with *prior*.
 
     ``theta`` is the concatenation of the prior's fields, in the order of its
-    components, broadcast against the rows of ``y``, so the likelihood is
+    outputs, broadcast against the rows of ``y``, so the likelihood is
     conjugate for any Gaussian prior. ``obs_var > 1`` weakens the likelihood so
     the prior covariance (its cross-field structure in particular) materially
     shapes the closed-form posterior. A likelihood that is not traceable reads
     its parameters through NumPy, as a BridgeStan, SciPy, or external
     simulator likelihood would.
     """
-    slots = dict(prior.event_spec.components)
+    inputs = dict(prior.event_spec.outputs)
 
     def build(**values):
-        parts = [jnp.atleast_1d(values[slot]) for slot in slots]
+        parts = [jnp.atleast_1d(values[input_name]) for input_name in inputs]
         if not traceable:
             parts = [jnp.asarray(np.asarray(part)) for part in parts]
         theta = jnp.concatenate(parts)
@@ -86,7 +86,7 @@ def _observations(prior, shape, obs_var=1.0, *, traceable=True):
             tfd.Normal(jnp.broadcast_to(theta, shape), jnp.sqrt(obs_var)), len(shape)
         )
 
-    return ObservationKernel("y", slots, NumericArraySpec(shape), build) * prior
+    return ObservationKernel("y", inputs, NumericArraySpec(shape), build) & prior
 
 
 @pytest.fixture(scope="module")
@@ -172,7 +172,7 @@ class TestGaussianPriorDetection:
         assert _gaussian_prior_params(batch) is None
 
     def test_product_of_normals_block_diagonal(self):
-        prior = Normal("a", loc=1.0, scale=0.5) * Normal("b", loc=-2.0, scale=0.7)
+        prior = Normal("a", loc=1.0, scale=0.5) & Normal("b", loc=-2.0, scale=0.7)
         params = _gaussian_prior_params(prior)
         assert params is not None
         mean, cov = params
@@ -186,13 +186,13 @@ class TestGaussianPriorDetection:
     def test_product_mixed_normal_and_mvn(self):
         """Block assembly must respect field order for *both* mean and cov.
 
-        Distinct non-zero component means and distinct diagonal variances
+        Distinct non-zero means and distinct diagonal variances
         pin the block order exactly: a field-order permutation in
         ``_gaussian_prior_params`` would scramble the mean *and* the cov
         diagonal away from the field-order concatenation
         ``[theta, beta_0, beta_1]``.
         """
-        prior = Normal("theta", loc=3.0, scale=1.0) * MultivariateNormal(
+        prior = Normal("theta", loc=3.0, scale=1.0) & MultivariateNormal(
             "beta",
             loc=jnp.array([5.0, -1.0]),
             cov=jnp.diag(jnp.array([0.5, 2.0])),
@@ -221,8 +221,8 @@ class TestGaussianPriorDetection:
     def test_non_gaussian_returns_none(self, prior):
         assert _gaussian_prior_params(prior) is None
 
-    def test_product_with_non_gaussian_component_returns_none(self):
-        prior = Normal("a", loc=0.0, scale=1.0) * Gamma("b", concentration=2.0, rate=1.0)
+    def test_product_with_non_gaussian_factor_returns_none(self):
+        prior = Normal("a", loc=0.0, scale=1.0) & Gamma("b", concentration=2.0, rate=1.0)
         assert _gaussian_prior_params(prior) is None
 
 
@@ -409,7 +409,7 @@ class TestPosteriorRecovery:
         the closed-form per-coordinate spread and *no* cross-correlation.
         """
         sigma_prior = np.diag([1.0, 4.0])
-        prior = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=2.0)
+        prior = Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=0.0, scale=2.0)
         n, obs_var = 15, 3.0
         rng = np.random.default_rng(1)
         truth = np.array([0.8, -1.2])

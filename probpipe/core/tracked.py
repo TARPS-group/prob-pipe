@@ -21,6 +21,7 @@ their constructor via :meth:`TrackedTerm._init_tracked`.
 from __future__ import annotations
 
 import functools
+import inspect
 from abc import abstractmethod
 from collections.abc import Callable, Mapping
 
@@ -168,7 +169,7 @@ def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
 _NO_DESCRIPTION = "<no description>"
 
 
-#: The ASCII name a lambda takes as an output component.
+#: The ASCII name a lambda takes as an output name.
 _LAMBDA_NAME = "f"
 
 
@@ -256,7 +257,7 @@ class _TrackedTermMeta(_ProtocolMeta):
     ``ABCMeta``) so ``TrackedTerm`` hosts can mix in ``@runtime_checkable``
     protocols (``SupportsSampling``, ``SupportsLogProb``, …) without a
     metaclass conflict. ``_ProtocolMeta`` is itself an ``ABCMeta``
-    subclass, so an abstract method such as :meth:`TrackedTerm.raw` keeps a class
+    subclass, so an abstract member such as :attr:`TrackedTerm.raw` keeps a class
     that does not define it from being instantiated.
     """
 
@@ -289,6 +290,73 @@ class _TrackedTermMeta(_ProtocolMeta):
         return instance
 
 
+class _RawFormProvenance:
+    """The provenance slot of a raw form: it reports none and refuses any."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<raw form>"
+
+
+#: The mark a raw form holds in its provenance slot (see :func:`_as_raw_form`).
+_RAW_FORM = _RawFormProvenance()
+
+
+def _as_raw_form[T: TrackedTerm](term: T) -> T:
+    """Mark *term*, a detached copy, as the raw form every reader of ``raw`` shares.
+
+    Provenance is write-once and attached in place, so a shared copy that took
+    one reader's provenance would show it to every later reader. The mark makes
+    :meth:`TrackedTerm.with_provenance` refuse, and :attr:`TrackedTerm.provenance`
+    reads it as ``None``. A copy of the term, through ``with_label``, ``copy``, or
+    ``pickle``, does not carry the mark.
+
+    Parameters
+    ----------
+    term : TrackedTerm
+        A detached copy that no reader has seen yet.
+
+    Returns
+    -------
+    TrackedTerm
+        *term*, marked.
+    """
+    object.__setattr__(term, "_provenance", _RAW_FORM)
+    return term
+
+
+def _is_raw_form(term: Any) -> bool:
+    """Whether *term* is a raw form that :func:`_as_raw_form` marked."""
+    return getattr(term, "_provenance", None) is _RAW_FORM
+
+
+def _check_raw_is_a_property(cls: type) -> None:
+    """Refuse *cls* unless ``raw`` resolves on it to a property.
+
+    Any attribute named ``raw`` satisfies an abstract ``raw`` property, so a
+    method, a class or static method, a cached function, or a mixin's method
+    would make ``term.raw`` something other than the representation. The lookup
+    is static, so it reads the attribute the class resolves without running it.
+
+    Parameters
+    ----------
+    cls : type
+        The class being created.
+
+    Raises
+    ------
+    TypeError
+        If ``raw`` on *cls* is anything but a property.
+    """
+    attribute = inspect.getattr_static(cls, "raw", None)
+    if attribute is not None and not isinstance(attribute, property):
+        raise TypeError(
+            f"Cannot define {cls.__name__}: raw is a {type(attribute).__name__}, but it must be "
+            "a property. Decorate it with @property."
+        )
+
+
 class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     """Identity mixin: a :attr:`label` and a write-once :attr:`provenance`.
 
@@ -300,7 +368,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
 
     The label is set at construction, either supplied by the caller or derived
     from the inputs. Every transform preserves it; only :meth:`with_label`
-    replaces it, returning a copy. ``with_path_names`` on the named-tree types
+    replaces it, returning a copy. ``rename`` on the named-tree types
     renames the fields within an object and preserves the object's label.
 
     The label is read from the term's **expression**, a private immutable tree
@@ -321,8 +389,10 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     returns a new term. Construction assigns inside the window the metaclass
     opens, so a host's ``__init__`` is written normally.
 
-    :meth:`raw` is the one access to the representation, and it is abstract:
-    each kind defines it, as its section of the design states.
+    :attr:`raw` is the one access to the representation, and it is an abstract
+    property: each kind defines it, as its section of the design states. A
+    subclass on which ``raw`` resolves to anything but a property raises
+    ``TypeError`` when the class is created.
 
     Attributes
     ----------
@@ -353,6 +423,22 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     _expression: Expression
     _provenance: Provenance | None
     __slots__ = ()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Refuse a subclass on which ``raw`` is anything but a property.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            The class keywords, passed on to the next class in the MRO.
+
+        Raises
+        ------
+        TypeError
+            If ``raw`` on the class is anything but a property.
+        """
+        super().__init_subclass__(**kwargs)
+        _check_raw_is_a_property(cls)
 
     def _init_tracked(
         self,
@@ -386,7 +472,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         """Store *expression* and the label it renders, on a term that no caller holds yet.
 
         The label is rendered once, now, at the current
-        ``notation_config.max_depth``, and the term keeps it, together with
+        ``config.notation.max_depth``, and the term keeps it, together with
         what its rendering left out, which a display of the label warns about.
         A kind whose state derives from its label overrides this, so the state
         follows the expression.
@@ -407,14 +493,14 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         object.__setattr__(self, "_label_collapse", collapse)
 
     def _own_signature(self) -> Signature | None:
-        """The signature the term's declaration states; ``None`` for a value, which has none."""
+        """The signature the term's specs state; ``None`` for a value, which has none."""
         return None
 
     def _embedded_expression(self) -> Expression:
         """The term's expression as a child of another node, recording the term's own signature.
 
         A node holds no term, so a node that has a law, a kernel, or a function
-        as a child records the signature that the term's declaration states. A
+        as a child records the signature that the term's specs state. A
         value's expression is returned as it is.
         """
         own = self._own_signature()
@@ -435,12 +521,21 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         """Human-readable label of this object.
 
         The label is rendered from the term's expression once, when the term is
-        built, and shows at most the ``notation_config.max_depth`` levels set
+        built, and shows at most the ``config.notation.max_depth`` levels set
         then. A later setting changes the labels of terms built afterwards, and
         the notation of a law, a kernel, or a function, which is rendered each
         time it is shown.
         """
         return self._label
+
+    def _repr_summary(self) -> str:
+        """The term as another term's repr or an error message shows it.
+
+        The repr itself by default. A numeric term returns the summary of its
+        label and structure that heads its repr, without the values below it,
+        so showing it reads no entry.
+        """
+        return repr(self)
 
     def _displayed_label(self) -> str:
         """The stored label, as the repr shows it.
@@ -466,7 +561,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         ``_decoupled_state`` declaration.
 
         This relabels the object *itself*. To rename the named fields inside a
-        structured object, use ``with_path_names`` on the named-tree types.
+        structured object, use ``rename`` on the named-tree types.
 
         Parameters
         ----------
@@ -545,6 +640,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
 
     # -- the representation --------------------------------------------------
 
+    @property
     @abstractmethod
     def raw(self) -> Any:
         """The term's representation, detached from the workflow.
@@ -560,8 +656,12 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
 
     @property
     def provenance(self) -> Provenance | None:
-        """Provenance describing how this object was produced, or ``None``."""
-        return getattr(self, "_provenance", None)
+        """Provenance describing how this object was produced, or ``None``.
+
+        A raw form, such as the standalone law a law's :attr:`raw` returns, has none.
+        """
+        provenance = getattr(self, "_provenance", None)
+        return None if provenance is _RAW_FORM else provenance
 
     def with_provenance(self, provenance: Provenance | None) -> Self:
         """Attach provenance to this object (write-once) and return it.
@@ -583,16 +683,45 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         Raises
         ------
         RuntimeError
-            If provenance is already set (provenance is write-once).
+            If provenance is already set (provenance is write-once), or if this
+            object is a raw form, which every reader of :attr:`raw` shares and so
+            carries no provenance.
         """
         if provenance is None:
             return self
-        if getattr(self, "_provenance", None) is not None:
-            raise RuntimeError(f"provenance of {self!r} is already set; it can be set only once")
+        current = getattr(self, "_provenance", None)
+        if current is _RAW_FORM:
+            raise RuntimeError(
+                f"Cannot attach provenance to {self.label!r}: it is the raw form of a term, "
+                "which carries none. Use with_label for a copy that can carry it."
+            )
+        if current is not None:
+            raise RuntimeError(
+                f"provenance of {self._repr_summary()} is already set; it can be set only once"
+            )
         object.__setattr__(self, "_provenance", provenance)
         return self
 
     # -- copying -------------------------------------------------------------
+
+    def __getstate__(self) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Return this object's state, with a raw form's provenance mark cleared.
+
+        A copy or an unpickled object is not the raw form every reader shares,
+        so it is a term of its own that can take provenance.
+
+        Returns
+        -------
+        tuple of (dict or None, dict or None)
+            The instance dictionary and the assigned slots, as
+            :meth:`Immutable.__getstate__` returns them.
+        """
+        instance_dict, slots = super().__getstate__()
+        if instance_dict is not None and instance_dict.get("_provenance") is _RAW_FORM:
+            instance_dict = {**instance_dict, "_provenance": None}
+        if slots is not None and slots.get("_provenance") is _RAW_FORM:
+            slots = {**slots, "_provenance": None}
+        return (instance_dict, slots)
 
     def _shallow_copy(self) -> Self:
         """Return a shallow copy holding the same state, entries shared.

@@ -36,15 +36,15 @@ class TestTheFunction:
 
         assert isinstance(wrapped, Function)
         assert wrapped.label == "predict"
-        assert wrapped.raw() is predict
+        assert wrapped.raw is predict
 
     def test_the_decorator_takes_construction_time_controls(self):
-        @function(n_broadcast_samples=500, dispatch="jax")
+        @function(max_evaluations=500, executor="jax")
         def predict(theta, x):
             return x * theta
 
-        assert predict.options["n_broadcast_samples"] == 500
-        assert predict.options["dispatch"] == "jax"
+        assert predict.options["max_evaluations"] == 500
+        assert predict.options["executor"] == "jax"
 
     def test_a_call_agrees_with_plain_evaluation_adding_the_wrap_and_the_provenance(self):
         @function
@@ -55,7 +55,7 @@ class TestTheFunction:
         result = predict(2.0, x)
 
         assert isinstance(result, NumericArray)
-        np.testing.assert_allclose(result.value, predict.apply(2.0, x))
+        np.testing.assert_allclose(result.raw, predict.apply(2.0, x))
         assert result.provenance is not None
         assert result.provenance.parents[0].label == "predict"
 
@@ -90,7 +90,7 @@ class TestTheEngine:
         "controls", [{"exact_only": True}, {"method": "elementwise_sweep"}], ids=lambda c: str(c)
     )
     def test_a_lift_failure_ends_the_call_before_the_route_is_selected(self, controls):
-        @function(dispatch="sequential")
+        @function(executor="sequential", traceable=False)
         def add(x, y):
             return x + y
 
@@ -100,13 +100,13 @@ class TestTheEngine:
                 NumericArrayBatch(
                     jnp.arange(2.0),
                     "row",
-                    element_spec=scalar,
+                    element=scalar,
                     label="x",
                 ),
                 NumericArrayBatch(
                     jnp.arange(3.0),
                     "row",
-                    element_spec=scalar,
+                    element=scalar,
                     label="y",
                 ),
             )
@@ -136,8 +136,9 @@ class TestCheck:
 
     def test_check_causes_no_random_event(self):
         @function(
-            n_broadcast_samples=8,
-            dispatch="sequential",
+            max_evaluations=8,
+            executor="sequential",
+            traceable=False,
             output_spec=OutputSpec(identity=None),
         )
         def identity(x):
@@ -160,7 +161,7 @@ class TestCheck:
         def identity(x):
             return x
 
-        identity.using(n_broadcast_samples=16).check(standard_normal())
+        identity.using(max_evaluations=16).check(standard_normal())
 
     def test_an_argument_that_does_not_bind_raises_as_the_call_would(self):
         @function

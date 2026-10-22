@@ -125,7 +125,7 @@ expectations, etc.), apply `STYLE_GUIDE.md` §8.6 and check:
   A baseline that runs the code path under test is a finding.
 
 - **Tolerance appropriateness** — Flag both overly loose (masks bugs) and overly
-  tight (flaky) tolerances, and a tolerance on a stochastic component without
+  tight (flaky) tolerances, and a tolerance on a stochastic estimator without
   the measured range that `STYLE_GUIDE.md` §8.6 asks for.
 
 - **Shape and broadcasting** — Do tests verify output shapes, especially for

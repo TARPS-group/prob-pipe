@@ -29,7 +29,7 @@ def _location_kernel(prior, n=N, scale=1.0):
     """The kernel ``y ~ Normal(mu, scale)``, iid over *n* observations, given *prior*'s ``mu``."""
     return conditional_distribution(
         lambda mu: Normal("y", mu * jnp.ones(n), scale),
-        given_spec=prior.event_spec.components,
+        given_spec=prior.event_spec.outputs,
         label="y_given_mu",
     )
 
@@ -79,8 +79,8 @@ class TestPredictiveCheck:
             result = predictive_check(likelihood, prior, sample_mean, num_replications=50)
         assert result["replicated_statistics"].num_atoms == 50
         # The law is labeled by the statistic, and the record's field view by its key.
-        assert str(result.raw()["replicated_statistics"]) == "sample_mean(replicated_statistics)"
-        assert result["test_fn_name"].value == "sample_mean"
+        assert str(result.raw["replicated_statistics"]) == "sample_mean(replicated_statistics)"
+        assert result["test_fn_name"].raw == "sample_mean"
         assert "observed_statistic" not in result
         assert "p_value" not in result
 
@@ -98,8 +98,8 @@ class TestPredictiveCheck:
             result = predictive_check(
                 likelihood, prior, [sample_mean, sample_max], observed_data, num_replications=30
             )
-        assert result["sample_mean/test_fn_name"].value == "sample_mean"
-        assert result["sample_max/test_fn_name"].value == "sample_max"
+        assert result["sample_mean/test_fn_name"].raw == "sample_mean"
+        assert result["sample_max/test_fn_name"].raw == "sample_max"
         assert result.at_path("sample_max")["replicated_statistics"].num_atoms == 30
         assert float(result["sample_max/observed_statistic"]) == pytest.approx(
             float(observed_data.max())
@@ -113,8 +113,8 @@ class TestPredictiveCheck:
             result = predictive_check(
                 likelihood, prior, [sample_mean, sample_sum], num_replications=40
             )
-        means = np.asarray(result["sample_mean/replicated_statistics"].atoms.values)
-        sums = np.asarray(result["sample_sum/replicated_statistics"].atoms.values)
+        means = np.asarray(result["sample_mean/replicated_statistics"].atoms.raw)
+        sums = np.asarray(result["sample_sum/replicated_statistics"].atoms.raw)
         np.testing.assert_allclose(sums, N * means, rtol=1e-5)
 
     def test_a_statistic_jax_cannot_trace_is_computed_in_a_loop(self, prior, likelihood):
@@ -126,8 +126,8 @@ class TestPredictiveCheck:
                 likelihood, prior, [sample_mean, host_mean], num_replications=25
             )
         np.testing.assert_allclose(
-            np.asarray(result["host_mean/replicated_statistics"].atoms.values),
-            np.asarray(result["sample_mean/replicated_statistics"].atoms.values),
+            np.asarray(result["host_mean/replicated_statistics"].atoms.raw),
+            np.asarray(result["sample_mean/replicated_statistics"].atoms.raw),
             rtol=1e-6,
         )
 
@@ -330,7 +330,7 @@ class TestCalibration:
             law = Normal("mu", loc, scale)
             if source == "empirical posterior":
                 draws = np.random.default_rng(7).normal(loc, scale, size=20_000)
-                law = EmpiricalDistribution(jnp.asarray(draws, jnp.float32), component="mu")
+                law = EmpiricalDistribution(jnp.asarray(draws, jnp.float32), output_name="mu")
         with workflow_run(seed=11):
             result = predictive_check(
                 _location_kernel(law),
@@ -364,8 +364,8 @@ class TestCalibration:
         whatever ``mu``.
         """
         kernel = conditional_distribution(
-            lambda mu: Normal("a", mu, 1.0) * Normal("b", mu * jnp.ones(3), 2.0),
-            given_spec=prior.event_spec.components,
+            lambda mu: Normal("a", mu, 1.0) & Normal("b", mu * jnp.ones(3), 2.0),
+            given_spec=prior.event_spec.outputs,
             label="ab",
         )
 
@@ -419,8 +419,8 @@ class TestForms:
                 )
         assert float(results[0]["p_value"]) == float(results[1]["p_value"])
         np.testing.assert_array_equal(
-            results[0]["replicated_statistics"].atoms.values,
-            results[1]["replicated_statistics"].atoms.values,
+            results[0]["replicated_statistics"].atoms.raw,
+            results[1]["replicated_statistics"].atoms.raw,
         )
 
     def test_a_numeric_record_of_draws_is_checked_as_its_rows(self, observed_data):
@@ -442,18 +442,18 @@ class TestForms:
     def test_an_empirical_law_draws_its_atoms(self):
         """Each replication's parameter is an atom of the empirical law."""
         atoms = np.array([0.5, 1.0, 1.5, 2.0, 2.5], dtype=np.float32)
-        law = EmpiricalDistribution(jnp.asarray(atoms), component="mu")
+        law = EmpiricalDistribution(jnp.asarray(atoms), output_name="mu")
         with workflow_run(seed=3):
             result = predictive_check(
                 _location_kernel(law, n=10, scale=1e-4), law, sample_mean, num_replications=20
             )
-        means = np.asarray(result["replicated_statistics"].atoms.values)
+        means = np.asarray(result["replicated_statistics"].atoms.raw)
         nearest = np.abs(means[:, None] - atoms).argmin(axis=1)
         # The kernel's scale of 1e-4 puts each replication's mean within 1e-4 of its atom.
         np.testing.assert_allclose(means, atoms[nearest], rtol=0, atol=2e-4)
         assert np.unique(nearest).size > 1
 
-    def test_the_data_may_map_the_kernel_components(self, prior, likelihood, observed_data):
+    def test_the_data_may_map_the_kernel_outputs(self, prior, likelihood, observed_data):
         with workflow_run(seed=9):
             as_value = predictive_check(
                 likelihood, prior, sample_max, observed_data, num_replications=30
@@ -505,7 +505,7 @@ class TestRandomness:
     @staticmethod
     def _replications(likelihood, prior):
         check = predictive_check(likelihood, prior, sample_mean, num_replications=20)
-        return np.asarray(check["replicated_statistics"].atoms.values)
+        return np.asarray(check["replicated_statistics"].atoms.raw)
 
     def test_a_seed_reproduces_the_replications_and_another_seed_changes_them(
         self, prior, likelihood
@@ -537,8 +537,8 @@ class TestRandomness:
 # ---------------------------------------------------------------------------
 
 
-class TestOptionalSlots:
-    """The replications take an optional slot's default unless the law produces the slot."""
+class TestOptionalInputs:
+    """The replications take an optional input's default unless the law produces the input."""
 
     @staticmethod
     def _scaled():
@@ -554,17 +554,17 @@ class TestOptionalSlots:
         replicated = np.asarray(check["replicated_statistics"].atoms)
         np.testing.assert_allclose(replicated.mean(), 4.0, rtol=0.05)
 
-    def test_the_replications_take_the_slot_the_law_produces(self):
-        law = Normal("mu", 0.0, 1e-3) * Normal("scale", 3.0, 1e-3)
+    def test_the_replications_take_the_input_the_law_produces(self):
+        law = Normal("mu", 0.0, 1e-3) & Normal("scale", 3.0, 1e-3)
         with workflow_run(seed=0):
             check = predictive_check(self._scaled(), law, sample_variance)
         replicated = np.asarray(check["replicated_statistics"].atoms)
         np.testing.assert_allclose(replicated.mean(), 9.0, rtol=0.05)
 
-    def test_the_error_names_only_the_required_slots(self, prior, observed_data):
+    def test_the_error_names_only_the_required_inputs(self, prior, observed_data):
         kernel = conditional_distribution(
             lambda mu, sigma, scale=1.0: Normal("y", mu * jnp.ones(N), sigma * scale),
-            given_spec={"mu": prior.event_spec.components["mu"], "sigma": NumericArraySpec(())},
+            given_spec={"mu": prior.event_spec.outputs["mu"], "sigma": NumericArraySpec(())},
             label="y_given_mu_sigma",
         )
         with pytest.raises(ValueError, match=r"does not produce \['sigma'\], which kernel"):
@@ -572,10 +572,10 @@ class TestOptionalSlots:
 
 
 class TestErrors:
-    def test_a_law_that_misses_a_given_slot_raises_naming_it(self, prior, observed_data):
+    def test_a_law_that_misses_an_input_raises_naming_it(self, prior, observed_data):
         kernel = conditional_distribution(
             lambda mu, sigma: Normal("y", mu * jnp.ones(N), sigma),
-            given_spec={"mu": prior.event_spec.components["mu"], "sigma": NumericArraySpec(())},
+            given_spec={"mu": prior.event_spec.outputs["mu"], "sigma": NumericArraySpec(())},
             label="y_given_mu_sigma",
         )
         with pytest.raises(ValueError, match=r"does not produce \['sigma'\]"):
@@ -590,8 +590,8 @@ class TestErrors:
             predictive_check(_Simulator(), prior, sample_mean, observed_data)
 
     def test_a_law_that_produces_the_observations_raises(self, prior, likelihood):
-        with pytest.raises(ValueError, match="'y' is produced by both"):
-            predictive_check(likelihood, likelihood * prior, sample_mean)
+        with pytest.raises(ValueError, match="both have the output 'y'"):
+            predictive_check(likelihood, (likelihood & prior), sample_mean)
 
     @pytest.mark.parametrize(
         ("test_fns", "error", "match"),

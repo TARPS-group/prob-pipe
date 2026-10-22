@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import logging
 from itertools import permutations
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -26,16 +27,18 @@ from probpipe import (
     Record,
     RecordBatch,
     RecordSpec,
+    ResolutionError,
     log_prob,
     mean,
     workflow_run,
 )
 from probpipe.core._record_batch import _MappedBatchColumns
 from probpipe.core.constraints import positive
-from probpipe.functions import _execution, _function, _sweep
+from probpipe.functions import _execution, _sweep
 from probpipe.functions._plan import build_broadcast_plan, build_stochastic_plan
 from probpipe.values import _binding
 
+from ..core._requester_calls import requester, requester_call
 from ._design_helpers import atom_leaves
 
 
@@ -54,6 +57,17 @@ def _numeric_record_batch(
     )
 
 
+# The controls of each way a call runs its evaluation points. ``default`` names
+# no executor, and a one-at-a-time executor runs a function that claims
+# ``traceable=False``, since ``jax`` maps any function it can trace.
+_EXECUTION: dict[str, dict[str, Any]] = {
+    "default": {},
+    "jax": {"executor": "jax"},
+    "sequential": {"executor": "sequential", "traceable": False},
+    "thread": {"executor": "thread", "traceable": False},
+}
+
+
 def _ref(name: str) -> _binding.FunctionInputRef:
     return _binding.FunctionInputRef(name)
 
@@ -66,8 +80,8 @@ def _plan(values):
     return build_broadcast_plan(values=values, signature_info=signature_info)
 
 
-def _stochastic_plan(values, n_broadcast_samples):
-    return build_stochastic_plan(values, _plan(values), n_broadcast_samples)
+def _stochastic_plan(values, max_evaluations):
+    return build_stochastic_plan(values, _plan(values), max_evaluations)
 
 
 def _unexpected_distribution_broadcast(*args, **kwargs):
@@ -78,22 +92,19 @@ def _require_not_called(*args, **kwargs):
     raise AssertionError("JAX traceability should not be required")
 
 
-def _record_probes(monkeypatch: pytest.MonkeyPatch) -> list[tuple[bool, bool]]:
-    """Record each JAX traceability probe as two flags.
+@pytest.fixture
+def sweep_executors(monkeypatch):
+    """The executor that ran each set of evaluation points a sweep asks for, recorded as each set runs."""
+    executors: list[str | None] = []
+    evaluate_requested_points = _sweep.evaluate_requested_points
 
-    The first flag says whether the probe traced swept values as dynamic inputs.
-    The second says whether the probe succeeded.
-    """
-    probes: list[tuple[bool, bool]] = []
-    original = _function._jax_traceability_error
+    def recording_evaluate_requested_points(evaluation_points, **options):
+        outputs = evaluate_requested_points(evaluation_points, **options)
+        executors.append(_execution.executor_that_ran(evaluation_points))
+        return outputs
 
-    def probe(*args: object, **kwargs: object) -> Exception | None:
-        error = original(*args, **kwargs)
-        probes.append((bool(kwargs.get("dynamic_refs")), error is None))
-        return error
-
-    monkeypatch.setattr(_function, "_jax_traceability_error", probe)
-    return probes
+    monkeypatch.setattr(_sweep, "evaluate_requested_points", recording_evaluate_requested_points)
+    return executors
 
 
 class TestSliceSweepValues:
@@ -180,73 +191,57 @@ class TestSliceSweepValues:
 
 
 class TestExecuteSweep:
-    def test_row_wise_sweep_uses_execution_request(self, monkeypatch):
+    def test_an_untraceable_sweep_runs_one_grid_point_per_cell_on_the_named_executor(
+        self, monkeypatch
+    ):
         values = {"p": _numeric_record_batch("x", range(3))}
         plan = _plan(values)
-        execution = _execution.WorkflowExecutionConfig(
-            mode="thread",
-            max_workers=2,
-            name="double",
-        )
-        seen = {}
+        requested = []
+        evaluate_requested_points = _sweep.evaluate_requested_points
+
+        def spy(evaluation_points, **options):
+            requested.append(evaluation_points)
+            return evaluate_requested_points(evaluation_points, **options)
+
+        monkeypatch.setattr(_sweep, "evaluate_requested_points", spy)
 
         def double(p):
             return 2.0 * p["x"]
 
-        def resolve_dispatch(values, array_args, *, jax_supported):
-            return "thread"
+        thread_requester = requester(executor="thread", executor_options={"max_workers": 2})
+        with requester_call(thread_requester):
+            result = _sweep.execute_sweep(
+                func=double,
+                values=values,
+                plan=plan,
+                stochastic_plan=None,
+                swept_point_traceability=lambda values, refs: (False, "it claims traceable=False"),
+                distribution_broadcast=_unexpected_distribution_broadcast,
+                function_name="double",
+            )
+            (evaluation_points,) = requested
+            executor = _execution.executor_that_ran(evaluation_points)
 
-        def fake_execute_many(request):
-            seen["request"] = request
-            return [request.func(**item.call_values()) for item in request.work_items]
-
-        monkeypatch.setattr(
-            _sweep._execution,
-            "execute_many",
-            fake_execute_many,
-        )
-
-        result = _sweep.execute_sweep(
-            func=double,
-            values=values,
-            plan=plan,
-            stochastic_plan=None,
-            make_execution_config=lambda: execution,
-            requested_dispatch="thread",
-            resolve_dispatch=resolve_dispatch,
-            require_jax_traceable=_require_not_called,
-            distribution_broadcast=_unexpected_distribution_broadcast,
-            function_name="double",
-        )
-
-        request = seen["request"]
-        assert request.execution is execution
-        assert request.func is double
-        assert [float(item.call_values()["p"]["x"]) for item in request.work_items] == [
-            0.0,
-            1.0,
-            2.0,
-        ]
-        np.testing.assert_allclose(result.values, jnp.asarray([0.0, 2.0, 4.0]))
+        assert executor == "thread"
+        assert len(evaluation_points) == 3
+        assert evaluation_points.traceable is False
+        assert evaluation_points.point_noun == "grid point"
+        assert [
+            int(evaluation_points._arguments_at(point_index)["cell_index"])
+            for point_index in range(3)
+        ] == [0, 1, 2]
+        np.testing.assert_allclose(result.raw, jnp.asarray([0.0, 2.0, 4.0]))
 
     def test_include_inputs_is_rejected_for_sweep(self):
         values = {"p": _numeric_record_batch("x", range(1))}
         plan = _plan(values)
-        execution = _execution.WorkflowExecutionConfig(
-            mode="sequential",
-            name="identity",
-        )
-
         with pytest.raises(NotImplementedError, match="include_inputs=True"):
             _sweep.execute_sweep(
                 func=lambda p: p["x"],
                 values=values,
                 plan=plan,
                 stochastic_plan=None,
-                make_execution_config=lambda: execution,
-                requested_dispatch="sequential",
-                resolve_dispatch=lambda *args, **kwargs: "sequential",
-                require_jax_traceable=_require_not_called,
+                swept_point_traceability=_require_not_called,
                 distribution_broadcast=_unexpected_distribution_broadcast,
                 function_name="identity",
                 include_inputs=True,
@@ -259,10 +254,6 @@ class TestExecuteSweep:
         }
         plan = _plan(values)
         stochastic_plan = _stochastic_plan(values, 7)
-        execution = _execution.WorkflowExecutionConfig(
-            mode="sequential",
-            name="nested",
-        )
         calls = []
 
         def distribution_broadcast(
@@ -286,17 +277,14 @@ class TestExecuteSweep:
             values=values,
             plan=plan,
             stochastic_plan=stochastic_plan,
-            make_execution_config=lambda: execution,
-            requested_dispatch="sequential",
-            resolve_dispatch=lambda *args, **kwargs: "sequential",
-            require_jax_traceable=_require_not_called,
+            swept_point_traceability=_require_not_called,
             distribution_broadcast=distribution_broadcast,
             function_name="nested",
         )
 
         assert isinstance(result, DistributionBatch)
         assert result.batch_shape == (2,)
-        assert [float(mean(component)) for component in result] == [
+        assert [float(mean(law)) for law in result] == [
             0.0,
             1.0,
         ]
@@ -315,26 +303,26 @@ class TestExecuteSweep:
             },
         ]
         assert result.provenance.operation == "workflow.nested"
-        assert result.provenance.metadata["k"] == 7
+        assert result.provenance.metadata["max_evaluations"] == 7
 
 
 class TestPairedNumericSweeps:
-    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    @pytest.mark.parametrize("executor", [None, "jax"], ids=["default", "jax"])
     @pytest.mark.parametrize("shape", [(12,), (2, 3)])
     @pytest.mark.parametrize("record", [False, True])
-    def test_paired_inputs_vectorize_and_match_sequential(self, dispatch, shape, record):
+    def test_paired_inputs_vectorize_and_match_one_cell_at_a_time(self, executor, shape, record):
         a = NumericArrayBatch(
             jnp.arange(np.prod(shape)).reshape(shape),
             "row",
             label="a",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             axes_per_level=(len(shape),),
         )
         b = NumericArrayBatch(
             2 * a.as_jax(),
             "row",
             label="b",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             axes_per_level=(len(shape),),
         )
         if record:
@@ -342,7 +330,7 @@ class TestPairedNumericSweeps:
                 {"x": b.as_jax()},
                 "row",
                 label="b",
-                element_spec=RecordSpec(x=()),
+                element=RecordSpec(x=()),
                 axes_per_level=(len(shape),),
             )
         calls = []
@@ -351,22 +339,22 @@ class TestPairedNumericSweeps:
             calls.append(1)
             return a + (b["x"] if record else b)
 
-        mapped = Function(body, label="sum", dispatch=dispatch)(a, b)
+        mapped = Function(body, label="sum", executor=executor)(a, b)
         assert len(calls) == 2
-        sequential = Function(body, label="sum", dispatch="sequential")(a, b)
+        sequential = Function(body, label="sum", traceable=False, executor="sequential")(a, b)
         np.testing.assert_array_equal(np.asarray(mapped), 3 * a.as_jax())
         np.testing.assert_array_equal(np.asarray(mapped), np.asarray(sequential))
-        assert mapped.element_spec == sequential.element_spec
+        assert mapped.element_spec.term_spec == sequential.element_spec.term_spec
         assert mapped.level_names == sequential.level_names == ("row",)
         assert mapped.axis_groups == sequential.axis_groups == (shape,)
 
-    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
-    def test_outer_product_remains_rowwise_or_is_refused(self, dispatch):
+    @pytest.mark.parametrize("executor", [None, "jax"], ids=["default", "jax"])
+    def test_outer_product_remains_rowwise_or_is_refused(self, executor):
         a = NumericArrayBatch(jnp.arange(3.0), "a", label="a")
         b = NumericArrayBatch(jnp.arange(2.0), "b", label="b")
-        wrapped = Function(lambda a, b: a + b, label="sum", dispatch=dispatch)
-        if dispatch == "jax":
-            with pytest.raises(ValueError, match="same levels"):
+        wrapped = Function(lambda a, b: a + b, label="sum", executor=executor)
+        if executor == "jax":
+            with pytest.raises(ResolutionError, match="it sweeps batches on different levels"):
                 wrapped(a, b)
         else:
             np.testing.assert_array_equal(
@@ -378,11 +366,11 @@ class TestPairedNumericSweeps:
         data = jnp.arange(6.0).reshape(3, 1, 2)
         if record:
             batch = NumericRecordBatch(
-                {"x": data}, ("site", "replicate"), label="data", element_spec=RecordSpec(x=(2,))
+                {"x": data}, ("site", "replicate"), label="data", element=RecordSpec(x=(2,))
             )
         else:
             batch = NumericArrayBatch(
-                data, ("site", "replicate"), label="data", element_spec=NumericArraySpec((2,))
+                data, ("site", "replicate"), label="data", element=NumericArraySpec((2,))
             )
         actual = _sweep.mapped_storage(batch, 24, axis_groups=((2, 3), (4, 1)))
         if record:
@@ -392,58 +380,72 @@ class TestPairedNumericSweeps:
 
     def test_mapped_storage_validates_row_count_for_empty_events(self):
         batch = NumericArrayBatch(
-            jnp.empty((2, 0)), "row", label="empty", element_spec=NumericArraySpec((0,))
+            jnp.empty((2, 0)), "row", label="empty", element=NumericArraySpec((0,))
         )
         with pytest.raises(ValueError, match="row count 3"):
             _sweep.mapped_storage(batch, 3)
 
 
 class TestNestedSweepProbes:
-    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
-    def test_numeric_sweep_probes_once_and_keeps_per_cell_draws(self, monkeypatch, dispatch):
-        probes = _record_probes(monkeypatch)
+    @pytest.mark.parametrize("executor", [None, "jax"], ids=["default", "jax"])
+    def test_numeric_sweep_probes_once_and_keeps_per_cell_draws(self, probe_attempts, executor):
+        probes = probe_attempts
         rows = NumericArrayBatch(jnp.arange(4.0), "row", label="shift")
         law = Normal("noise", 0.0, 1.0)
-        wrapped = Function(
-            lambda shift, noise: shift + noise,
-            label="shift",
-            dispatch=dispatch,
-            n_broadcast_samples=7,
-        )
+
+        def shift(shift, noise):
+            return shift + noise
+
+        wrapped = Function(shift, label="shift", executor=executor, max_evaluations=7)
         with workflow_run(seed=12):
             mapped = wrapped(rows, law)
-        assert probes == [(True, True)]
+        assert probes == [True]
+        one_at_a_time = Function(
+            shift, label="shift", traceable=False, executor="sequential", max_evaluations=7
+        )
         with workflow_run(seed=12):
-            sequential = wrapped.using(dispatch="sequential")(rows, law)
+            sequential = one_at_a_time(rows, law)
         for index in range(4):
             np.testing.assert_array_equal(
                 np.asarray(mapped[index].atoms), np.asarray(sequential[index].atoms)
             )
         assert not np.array_equal(np.asarray(mapped[0].atoms), np.asarray(mapped[1].atoms) - 1)
 
-    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
-    def test_fixed_numeric_branch_retains_per_cell_dispatch(self, monkeypatch, dispatch):
-        probes = _record_probes(monkeypatch)
+    @pytest.mark.parametrize("executor", [None, "jax"], ids=["default", "jax"])
+    def test_a_branch_on_the_swept_value_runs_every_cell_one_draw_at_a_time(
+        self, probe_attempts, executor
+    ):
+        probes = probe_attempts
 
         def body(shift, noise):
             return noise + shift if float(shift) > 0 else noise - shift
 
         rows = NumericArrayBatch(jnp.array([-1.0, 2.0]), "row", label="shift")
         law = Normal("noise", 0.0, 1.0)
-        wrapped = Function(body, label="branch", dispatch=dispatch, n_broadcast_samples=7)
+        wrapped = Function(body, label="branch", executor=executor, max_evaluations=7)
+        if executor == "jax":
+            with pytest.raises(ResolutionError, match="executor 'jax' cannot run"):
+                wrapped(rows, law)
+            # The first cell's probe fails and is stored, so the call stops there.
+            assert probes == [False]
+            return
         with workflow_run(seed=12):
             actual = wrapped(rows, law)
-        # The branch fails the probe with dynamic shifts, and each cell traces
-        # with its own shift fixed.
-        assert probes == [(True, False), (False, True), (False, True)]
+        # A cell's shift is data of one shape and dtype, so the cells share one
+        # probe, which the branch on its value fails.
+        assert probes == [False]
+        one_at_a_time = Function(
+            body, label="branch", traceable=False, executor="sequential", max_evaluations=7
+        )
         with workflow_run(seed=12):
-            expected = wrapped.using(dispatch="sequential")(rows, law)
+            expected = one_at_a_time(rows, law)
         with workflow_run(seed=12):
             noise = Function(
                 lambda shift, noise: noise,
                 label="noise",
-                dispatch="sequential",
-                n_broadcast_samples=7,
+                traceable=False,
+                executor="sequential",
+                max_evaluations=7,
             )(rows, law)
         # The else branch adds 1 at the shift -1, and the if branch adds 2 at the shift 2.
         for index, offset in enumerate([1.0, 2.0]):
@@ -454,21 +456,18 @@ class TestNestedSweepProbes:
                 np.asarray(actual[index].atoms), np.asarray(noise[index].atoms) + offset
             )
 
-    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
-    def test_untraceable_numeric_sweep_shares_its_first_cell_check(
-        self, monkeypatch, caplog, dispatch
-    ):
-        probes = _record_probes(monkeypatch)
+    @pytest.mark.parametrize("executor", [None, "jax"], ids=["default", "jax"])
+    def test_untraceable_numeric_sweep_probes_once(self, probe_attempts, caplog, executor):
+        probes = probe_attempts
         rows = NumericArrayBatch(jnp.arange(5.0), "row", label="shift")
         law = Normal("noise", 0.0, 1.0)
-        wrapped = Function(
-            lambda shift, noise: float(noise) + float(shift),
-            label="untraceable",
-            dispatch=dispatch,
-            n_broadcast_samples=7,
-        )
-        if dispatch == "jax":
-            with pytest.raises(ValueError, match="failed while tracing"):
+
+        def untraceable(shift, noise):
+            return float(noise) + float(shift)
+
+        wrapped = Function(untraceable, label="untraceable", executor=executor, max_evaluations=7)
+        if executor == "jax":
+            with pytest.raises(ResolutionError, match="executor 'jax' cannot run"):
                 wrapped(rows, law)
         else:
             with (
@@ -478,38 +477,49 @@ class TestNestedSweepProbes:
                 actual = wrapped(rows, law)
             logged = [record for record in caplog.records if "not JAX-traceable" in record.message]
             assert len(logged) == 1
+            one_at_a_time = Function(
+                untraceable,
+                label="untraceable",
+                traceable=False,
+                executor="sequential",
+                max_evaluations=7,
+            )
             with workflow_run(seed=12):
-                expected = wrapped.using(dispatch="sequential")(rows, law)
+                expected = one_at_a_time(rows, law)
             for index in range(5):
                 np.testing.assert_array_equal(
                     np.asarray(actual[index].atoms), np.asarray(expected[index].atoms)
                 )
-        # One probe with dynamic shifts and one with the first cell's shift fixed.
-        assert probes == [(True, False), (False, False)]
+        # One probe, with the shift as data, which every cell shares.
+        assert probes == [False]
 
-    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
-    def test_object_cells_keep_their_own_traceability_check(self, monkeypatch, dispatch):
-        probes = _record_probes(monkeypatch)
+    @pytest.mark.parametrize("executor", [None, "jax"], ids=["default", "jax"])
+    def test_object_cells_keep_their_own_traceability_check(self, probe_attempts, executor):
+        probes = probe_attempts
 
         def body(mode, noise):
-            return float(noise) if mode.value == "python" else noise + 1
+            return float(noise) if mode.raw == "python" else noise + 1
 
         rows = OpaqueBatch(["mapped", "python"], "row", label="mode")
         law = Normal("noise", 0.0, 1.0)
-        wrapped = Function(body, label="branch", dispatch=dispatch, n_broadcast_samples=7)
-        if dispatch == "jax":
-            with pytest.raises(ValueError, match="failed while tracing"):
+        wrapped = Function(body, label="branch", executor=executor, max_evaluations=7)
+        if executor == "jax":
+            with pytest.raises(ResolutionError, match="executor 'jax' cannot run"):
                 wrapped(rows, law)
         else:
             with workflow_run(seed=12):
                 actual = wrapped(rows, law)
+            one_at_a_time = Function(
+                body, label="branch", traceable=False, executor="sequential", max_evaluations=7
+            )
             with workflow_run(seed=12):
-                expected = wrapped.using(dispatch="sequential")(rows, law)
+                expected = one_at_a_time(rows, law)
             for index in range(2):
                 np.testing.assert_array_equal(
                     np.asarray(actual[index].atoms), np.asarray(expected[index].atoms)
                 )
-        assert probes == [(False, True), (False, False)]
+        # A cell's mode is a value passed as it is, so each cell is probed for itself.
+        assert probes == [True, False]
 
 
 class TestASweptBodyThatReturnsABatch:
@@ -548,24 +558,16 @@ class TestASweptBodyThatReturnsABatch:
             level_name="k",
         )
 
-    def test_the_sweep_takes_the_mapped_path(self, monkeypatch):
-        """The mapped executor runs, with no fall back to row-wise dispatch.
+    def test_the_sweep_takes_the_mapped_path(self, sweep_executors):
+        """The ``jax`` executor runs, with no fall back to the row-wise path.
 
         The discriminating assertion: every other test in this class passes on
         the sequential path too, so only this one distinguishes vectorizing from
         agreeing with the oracle.
         """
-        reached = []
-        real = _sweep.execute_sweep_rows_jax
-
-        def spy(**kwargs):
-            reached.append(1)
-            return real(**kwargs)
-
-        monkeypatch.setattr(_sweep, "execute_sweep_rows_jax", spy)
         Function(self._body, label="swept")(self._rows(4))
 
-        assert reached == [1]
+        assert sweep_executors == ["jax"]
 
     def test_the_levels_are_the_sweeps_then_the_bodys(self):
         out = Function(self._body, label="swept")(self._rows(4))
@@ -581,46 +583,42 @@ class TestASweptBodyThatReturnsABatch:
         assert out.batch_size == 12
         assert np.shape(out._raw_column("y")) == (4, 3)
 
-    def test_it_matches_sequential_dispatch(self):
+    def test_it_matches_the_sequential_executor(self):
         mapped = Function(self._body, label="swept")(self._rows(4))
-        sequential = Function(self._body, label="swept", dispatch="sequential")(self._rows(4))
+        sequential = Function(self._body, label="swept", traceable=False, executor="sequential")(
+            self._rows(4)
+        )
 
-        assert mapped.element_spec == sequential.element_spec
+        assert mapped.element_spec.term_spec == sequential.element_spec.term_spec
         assert mapped.level_names == sequential.level_names
         assert mapped.axis_groups == sequential.axis_groups
         np.testing.assert_allclose(np.asarray(mapped["y"]), np.asarray(sequential["y"]))
 
-    def test_a_multi_axis_level_reshapes_on_the_mapped_path(self, monkeypatch):
+    def test_a_multi_axis_level_reshapes_on_the_mapped_path(self, sweep_executors):
         """One level spanning two axes, swept under the map.
 
-        The mapped executor flattens the sweep to a single axis of
+        The ``jax`` executor flattens the sweep to a single axis of
         ``prod(batch_shape)`` and the carrier restores its shape afterwards, so
         a sweep of rank greater than one is what exercises that reshape. It
         takes a single argument on purpose: two array arguments make two zip
-        groups, which sets ``jax_supported`` false and would quietly measure
-        row-wise dispatch instead.
+        groups, which JAX cannot trace as one sweep, and would quietly measure
+        the row-wise path instead.
         """
-        reached = []
-        real = _sweep.execute_sweep_rows_jax
-
-        def spy(**kwargs):
-            reached.append(1)
-            return real(**kwargs)
-
-        monkeypatch.setattr(_sweep, "execute_sweep_rows_jax", spy)
 
         grid = RecordBatch(
             {"x": jnp.arange(6.0).reshape(2, 3)},
             "cell",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=(2,),
             label="batch",
         )
 
         mapped = Function(self._body, label="swept")(grid)
-        sequential = Function(self._body, label="swept", dispatch="sequential")(grid)
+        assert sweep_executors == ["jax"]
+        sequential = Function(self._body, label="swept", traceable=False, executor="sequential")(
+            grid
+        )
 
-        assert reached == [1]
         assert mapped.level_names == ("cell", "k")
         assert mapped.axis_groups == ((2, 3), (3,))
         assert mapped.batch_shape == (2, 3, 3)
@@ -632,7 +630,7 @@ class TestASweptBodyThatReturnsABatch:
 
         Group structure, not only total size: collapsing the sweep onto one flat
         leading axis agrees on ``batch_size`` and loses which axis belongs to
-        which level. Two array arguments take row-wise dispatch, so this pins
+        which level. Two array arguments take the row-wise path, so this pins
         the aggregation rather than the mapped path.
         """
 
@@ -661,7 +659,9 @@ class TestASweptBodyThatReturnsABatch:
         )
 
         mapped = Function(body, label="swept")(first, second)
-        sequential = Function(body, label="swept", dispatch="sequential")(first, second)
+        sequential = Function(body, label="swept", traceable=False, executor="sequential")(
+            first, second
+        )
 
         assert mapped.level_names == ("a", "b", "k")
         assert mapped.axis_groups == ((2,), (3,), (2,))
@@ -684,10 +684,12 @@ class TestASweptBodyThatReturnsABatch:
             )
 
         mapped = Function(body, label="swept")(self._rows(3))
-        sequential = Function(body, label="swept", dispatch="sequential")(self._rows(3))
+        sequential = Function(body, label="swept", traceable=False, executor="sequential")(
+            self._rows(3)
+        )
 
         assert mapped.level_names == ("row", "k")
-        assert mapped.element_spec == sequential.element_spec
+        assert mapped.element_spec.term_spec == sequential.element_spec.term_spec
         np.testing.assert_allclose(
             np.asarray(mapped._raw_column("inner/y")),
             np.asarray(sequential._raw_column("inner/y")),
@@ -736,21 +738,21 @@ def numeric_sweep_source(request):
     return NumericRecordBatch(
         {"x": values},
         levels,
-        element_spec=RecordSpec(x=NumericArraySpec((), dtype=np.float32)),
+        element=RecordSpec(x=NumericArraySpec((), dtype=np.float32)),
         axes_per_level=axes_per_level,
         label="inputs",
     )
 
 
 class TestNumericArraySweep:
-    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
+    @pytest.mark.parametrize("execution", ["default", "sequential", "jax"])
     @pytest.mark.parametrize(
         "declared_shape, event_shape",
         [(("d",), (2,)), (("d", "d"), (2, 2)), (("d", 3), (2, 3))],
         ids=["symbolic", "repeated-symbol", "partially-symbolic"],
     )
     def test_symbolic_numeric_rows_bind_their_event_dimensions(
-        self, numeric_sweep_source, dispatch, declared_shape, event_shape
+        self, numeric_sweep_source, execution, declared_shape, event_shape
     ):
         source = numeric_sweep_source
         native = np.arange(1, np.prod(event_shape) + 1, dtype=np.float32).reshape(event_shape)
@@ -761,14 +763,14 @@ class TestNumericArraySweep:
             label="original",
         )
 
-        result = Function(lambda row: value, label="repeated", dispatch=dispatch)(source)
+        result = Function(lambda row: value, label="repeated", **_EXECUTION[execution])(source)
 
         assert isinstance(result, NumericArrayBatch)
-        # The rows are stored as one JAX array, whose dtype the declaration records.
-        assert result.element_spec == NumericArraySpec(
+        # The rows are stored as one JAX array, whose dtype the element spec records.
+        assert result.element_spec.term_spec == NumericArraySpec(
             event_shape, dtype=np.float32, support=positive
         )
-        assert result.values.dtype == np.float32
+        assert result.raw.dtype == np.float32
         assert result.batch_shape == source.batch_shape
         assert result.level_names == source.level_names
         assert result.axis_groups == source.axis_groups
@@ -777,7 +779,7 @@ class TestNumericArraySweep:
         )
         assert value.spec is declared
         assert value.spec.shape == declared_shape
-        assert value.value is native
+        assert value.raw is native
         assert value.label == "original"
         assert value.provenance is None
 
@@ -799,12 +801,17 @@ class TestNumericArraySweep:
             outputs.reverse()
         source = _numeric_record_batch("x", range(3))
 
-        result = Function(lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential")(
-            source
-        )
+        result = Function(
+            lambda row: outputs[int(row["x"])],
+            label="mixed",
+            traceable=False,
+            executor="sequential",
+        )(source)
 
-        assert result.element_spec == NumericArraySpec((2,), dtype=np.float32, support=positive)
-        assert result.values.dtype == np.float32
+        assert result.element_spec.term_spec == NumericArraySpec(
+            (2,), dtype=np.float32, support=positive
+        )
+        assert result.raw.dtype == np.float32
         assert result.batch_shape == source.batch_shape
         assert result.level_names == source.level_names
         assert result.axis_groups == source.axis_groups
@@ -814,11 +821,11 @@ class TestNumericArraySweep:
             declarations[::-1] if reverse else declarations
         )
 
-    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
+    @pytest.mark.parametrize("execution", ["default", "sequential", "jax"])
     @pytest.mark.parametrize("representation", ["raw", "tracked", "declared"])
     @pytest.mark.parametrize("event_shape", [(), (2,)], ids=["scalar", "vector"])
     def test_numeric_results_keep_their_declaration_and_levels(
-        self, numeric_sweep_source, dispatch, representation, event_shape
+        self, numeric_sweep_source, execution, representation, event_shape
     ):
         source = numeric_sweep_source
         declared = NumericArraySpec(event_shape, dtype=np.float64, support=positive)
@@ -835,12 +842,12 @@ class TestNumericArraySweep:
                 label="row-result",
             )
 
-        result = Function(body, label="shift", dispatch=dispatch)(source)
+        result = Function(body, label="shift", **_EXECUTION[execution])(source)
 
         expected = np.asarray(source["x"]) * 2 + 1
         if event_shape:
             expected = np.stack([expected, expected + 1], axis=-1)
-        # The rows are stored as one JAX array, whose dtype the declaration records.
+        # The rows are stored as one JAX array, whose dtype the element spec records.
         expected_spec = NumericArraySpec(
             event_shape,
             dtype=np.float32,
@@ -850,34 +857,36 @@ class TestNumericArraySweep:
         assert result.batch_shape == source.batch_shape
         assert result.level_names == source.level_names
         assert result.axis_groups == source.axis_groups
-        assert result.element_spec == expected_spec
-        assert result.values.dtype == np.float32
+        assert result.element_spec.term_spec == expected_spec
+        assert result.raw.dtype == np.float32
         assert result.provenance is not None
         np.testing.assert_array_equal(np.asarray(result), expected)
 
-    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
-    def test_nested_density_results_compose_after_the_sweep(self, numeric_sweep_source, dispatch):
+    @pytest.mark.parametrize("execution", ["default", "sequential", "jax"])
+    def test_nested_density_results_compose_after_the_sweep(self, numeric_sweep_source, execution):
         source = numeric_sweep_source
         law = Normal("x", 0.0, 1.0)
-        result = Function(lambda row: log_prob(law, row["x"]), label="score", dispatch=dispatch)(
-            source
-        )
+        result = Function(
+            lambda row: log_prob(law, row["x"]), label="score", **_EXECUTION[execution]
+        )(source)
 
         expected = -0.5 * np.asarray(source["x"], dtype=np.float64) ** 2 - 0.5 * np.log(2 * np.pi)
         assert isinstance(result, NumericArrayBatch)
         assert result.axis_groups == source.axis_groups
         assert result.level_names == source.level_names
         # log_prob declares only the shape, so completion takes the produced dtype (II.2).
-        assert result.element_spec == NumericArraySpec((), dtype=np.float32)
+        assert result.element_spec.term_spec == NumericArraySpec((), dtype=np.float32)
         np.testing.assert_allclose(np.asarray(result), expected, rtol=2e-7, atol=1e-7)
 
-        shifted = Function(lambda value: value + 1, label="function", dispatch="sequential")(result)
+        shifted = Function(
+            lambda value: value + 1, label="function", traceable=False, executor="sequential"
+        )(result)
         assert shifted.axis_groups == source.axis_groups
         assert shifted.level_names == source.level_names
         np.testing.assert_allclose(np.asarray(shifted), expected + 1, rtol=2e-7, atol=1e-7)
 
-    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
-    def test_native_numeric_results_keep_their_source(self, numeric_sweep_source, dispatch):
+    @pytest.mark.parametrize("execution", ["default", "sequential", "jax"])
+    def test_native_numeric_results_keep_their_source(self, numeric_sweep_source, execution):
         pd = pytest.importorskip("pandas")
         native = pd.Series([1.0, 2.0], index=[5, 7])
         declared = NumericArraySpec((2,), dtype=np.float64, support=positive)
@@ -887,19 +896,21 @@ class TestNumericArraySweep:
             label="original",
         )
 
-        result = Function(lambda row: value, label="repeated", dispatch=dispatch)(
+        result = Function(lambda row: value, label="repeated", **_EXECUTION[execution])(
             numeric_sweep_source
         )
 
-        # The rows are stored as one JAX array, whose dtype the declaration records.
-        assert result.values.dtype == np.float32
-        assert result.element_spec == NumericArraySpec((2,), dtype=np.float32, support=positive)
+        # The rows are stored as one JAX array, whose dtype the element spec records.
+        assert result.raw.dtype == np.float32
+        assert result.element_spec.term_spec == NumericArraySpec(
+            (2,), dtype=np.float32, support=positive
+        )
         assert result.axis_groups == numeric_sweep_source.axis_groups
         assert result.level_names == numeric_sweep_source.level_names
         np.testing.assert_array_equal(
             np.asarray(result), np.broadcast_to([1.0, 2.0], (*numeric_sweep_source.batch_shape, 2))
         )
-        assert value.value is native
+        assert value.raw is native
         assert value.label == "original"
         assert value.spec == declared
         assert value.provenance is None
@@ -924,7 +935,8 @@ class TestNumericArraySweep:
             Function(
                 lambda row: first if float(row["x"]) == 0 else second,
                 label="different",
-                dispatch="sequential",
+                traceable=False,
+                executor="sequential",
             )(source)
 
     @pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reverse"])
@@ -949,19 +961,22 @@ class TestNumericArraySweep:
             source = _numeric_record_batch("x", range(2))
 
             result = Function(
-                lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential"
+                lambda row: outputs[int(row["x"])],
+                label="mixed",
+                traceable=False,
+                executor="sequential",
             )(source)
 
         expected = np.stack([np.full(event_shape, 1.25), np.full(event_shape, 2.5)])
         if reverse:
             expected = expected[::-1]
         stored = np.dtype(np.float64 if x64 else np.float32)
-        assert result.element_spec == NumericArraySpec(event_shape, dtype=stored)
+        assert result.element_spec.term_spec == NumericArraySpec(event_shape, dtype=stored)
         assert result.dtype == stored
         assert result.level_names == source.level_names
         assert result.axis_groups == source.axis_groups
         np.testing.assert_array_equal(np.asarray(result), expected)
-        assert first.value is native
+        assert first.raw is native
         assert first.spec.dtype == np.dtype(np.float64)
         assert second.spec.dtype == np.dtype(np.float32)
 
@@ -986,11 +1001,16 @@ class TestNumericArraySweep:
         )
         outputs = [second, first] if reverse else [first, second]
 
-        result = Function(lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential")(
-            _numeric_record_batch("x", range(2))
-        )
+        result = Function(
+            lambda row: outputs[int(row["x"])],
+            label="mixed",
+            traceable=False,
+            executor="sequential",
+        )(_numeric_record_batch("x", range(2)))
 
-        assert result.element_spec == NumericArraySpec((), dtype=expected_dtype, support=support)
+        assert result.element_spec.term_spec == NumericArraySpec(
+            (), dtype=expected_dtype, support=support
+        )
         np.testing.assert_array_equal(np.asarray(result), [2.0, 1.0] if reverse else [1.0, 2.0])
 
     @pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reverse"])
@@ -1012,12 +1032,17 @@ class TestNumericArraySweep:
             outputs.reverse()
         source = _numeric_record_batch("x", range(2))
 
-        result = Function(lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential")(
-            source
-        )
+        result = Function(
+            lambda row: outputs[int(row["x"])],
+            label="mixed",
+            traceable=False,
+            executor="sequential",
+        )(source)
 
-        assert result.element_spec == NumericArraySpec((), dtype=expected_dtype, support=positive)
-        assert result.values.dtype == np.dtype(expected_dtype)
+        assert result.element_spec.term_spec == NumericArraySpec(
+            (), dtype=expected_dtype, support=positive
+        )
+        assert result.raw.dtype == np.dtype(expected_dtype)
         assert result.batch_shape == source.batch_shape
         assert result.level_names == source.level_names
         assert result.axis_groups == source.axis_groups
@@ -1043,21 +1068,29 @@ class TestNumericArraySweep:
             batch = Function(
                 lambda row, outputs=outputs: outputs[int(row["x"])],
                 label="mixed",
-                dispatch="sequential",
+                traceable=False,
+                executor="sequential",
             )(source)
             batches.append(batch)
-            assert batch.element_spec == NumericArraySpec((), dtype=np.float16, support=positive)
-            assert batch.values.dtype == np.float16
+            assert batch.element_spec.term_spec == NumericArraySpec(
+                (), dtype=np.float16, support=positive
+            )
+            assert batch.raw.dtype == np.float16
             assert batch.level_names == source.level_names
             assert batch.axis_groups == source.axis_groups
             np.testing.assert_array_equal(np.asarray(batch), [1, 1, 1])
 
         result = Function(
-            lambda row: batches[int(row["x"])], label="combined", dispatch="sequential"
+            lambda row: batches[int(row["x"])],
+            label="combined",
+            traceable=False,
+            executor="sequential",
         )(_numeric_record_batch("x", range(2), level_name="outer"))
 
-        assert result.element_spec == NumericArraySpec((), dtype=np.float16, support=positive)
-        assert result.values.dtype == np.float16
+        assert result.element_spec.term_spec == NumericArraySpec(
+            (), dtype=np.float16, support=positive
+        )
+        assert result.raw.dtype == np.float16
         assert result.batch_shape == (2, 3)
         assert result.level_names == ("outer", "row")
         assert result.axis_groups == ((2,), (3,))
@@ -1086,12 +1119,15 @@ class TestNumericArraySweep:
         if reverse:
             outputs.reverse()
 
-        result = Function(lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential")(
-            _numeric_record_batch("x", range(2))
-        )
+        result = Function(
+            lambda row: outputs[int(row["x"])],
+            label="mixed",
+            traceable=False,
+            executor="sequential",
+        )(_numeric_record_batch("x", range(2)))
 
-        # The rows are stored as one JAX array, whose dtype the declaration records.
-        assert result.element_spec == NumericArraySpec((), dtype=np.float32)
+        # The rows are stored as one JAX array, whose dtype the element spec records.
+        assert result.element_spec.term_spec == NumericArraySpec((), dtype=np.float32)
         np.testing.assert_array_equal(np.asarray(result), [2.5, 1.0] if reverse else [1.0, 2.5])
 
     @pytest.mark.parametrize("raw_value", [-1.0, 1.0], ids=["negative", "positive"])
@@ -1111,13 +1147,16 @@ class TestNumericArraySweep:
         result = Function(
             lambda row: value if (float(row["x"]) == 0) == tracked_first else raw,
             label="mixed",
-            dispatch="sequential",
+            traceable=False,
+            executor="sequential",
         )(source)
 
         expected = np.stack([np.full(event_shape, raw_value), np.full(event_shape, 2.0)])
         if tracked_first:
             expected = expected[::-1]
-        assert result.element_spec == NumericArraySpec(event_shape, dtype=result.values.dtype)
+        assert result.element_spec.term_spec == NumericArraySpec(
+            event_shape, dtype=result.raw.dtype
+        )
         assert result.batch_shape == source.batch_shape
         assert result.level_names == source.level_names
         assert result.axis_groups == source.axis_groups
@@ -1140,13 +1179,16 @@ class TestNumericArraySweep:
         outputs.insert(raw_position, -1.0)
         source = _numeric_record_batch("x", range(3))
 
-        result = Function(lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential")(
-            source
-        )
+        result = Function(
+            lambda row: outputs[int(row["x"])],
+            label="mixed",
+            traceable=False,
+            executor="sequential",
+        )(source)
 
         expected = [2.0, 3.0]
         expected.insert(raw_position, -1.0)
-        assert result.element_spec == NumericArraySpec((), dtype=result.values.dtype)
+        assert result.element_spec.term_spec == NumericArraySpec((), dtype=result.raw.dtype)
         assert result.batch_shape == source.batch_shape
         assert result.level_names == source.level_names
         assert result.axis_groups == source.axis_groups
@@ -1159,7 +1201,7 @@ class TestASweptBatchOfArrays:
         return NumericArrayBatch(
             jnp.arange(24.0).reshape(2, 4, 3),
             ("rows", "cols"),
-            element_spec=NumericArraySpec((3,)),
+            element=NumericArraySpec((3,)),
             axes_per_level=(1, 1),
             label="grid",
         )
@@ -1188,18 +1230,18 @@ class TestASweptBatchOfArrays:
         with pytest.raises(TypeError, match="DistributionBatch stores objects"):
             _sweep.mapped_storage(laws, 2)
 
-    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
-    def test_every_dispatch_sweeps_it_alike_at_its_levels(self, dispatch):
+    @pytest.mark.parametrize("execution", ["default", "sequential", "jax"])
+    def test_every_executor_sweeps_it_alike_at_its_levels(self, execution):
         rows: list = []
 
         def norm(v):
             rows.append(v)
             return jnp.sum(jnp.asarray(v) ** 2)
 
-        result = Function(norm, label="norm", dispatch=dispatch)(self._grid())
+        result = Function(norm, label="norm", **_EXECUTION[execution])(self._grid())
 
         assert all(isinstance(row, NumericArray) for row in rows)
-        assert len(rows) == 8 if dispatch == "sequential" else len(rows) < 8
+        assert len(rows) == 8 if execution == "sequential" else len(rows) < 8
         assert (result.level_names, result.axis_groups) == (("rows", "cols"), ((2,), (4,)))
         np.testing.assert_allclose(
             np.asarray(result), np.sum(np.arange(24.0).reshape(2, 4, 3) ** 2, axis=-1)
@@ -1210,8 +1252,8 @@ class TestANestedSweepOfRecordRows:
     """A call over a batch of records and a law lifts the law at each record row.
 
     The body receives each row as a record and reads its fields. The rows are
-    fixed within each row's lift, so the auto and jax dispatches map the law's
-    atoms or draws at each row.
+    fixed within each row's lift, so the default and ``jax`` executors map the
+    law's atoms or draws at each row.
     """
 
     @staticmethod
@@ -1225,16 +1267,16 @@ class TestANestedSweepOfRecordRows:
     def _shift(row, mu):
         return row["x"] * mu + row["y"]
 
-    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
-    def test_each_row_lifts_the_law_through_its_fields(self, dispatch):
+    @pytest.mark.parametrize("execution", ["default", "sequential", "jax"])
+    def test_each_row_lifts_the_law_through_its_fields(self, execution):
         seen = []
 
         def shift(row, mu):
             seen.append((type(row), isinstance(mu, jax.core.Tracer)))
             return self._shift(row, mu)
 
-        law = EmpiricalDistribution(jnp.array([1.0, 2.0, 4.0]), component="mu", label="prior")
-        result = Function(shift, label="shift", dispatch=dispatch)(self._rows(), law)
+        law = EmpiricalDistribution(jnp.array([1.0, 2.0, 4.0]), output_name="mu", label="prior")
+        result = Function(shift, label="shift", **_EXECUTION[execution])(self._rows(), law)
 
         assert isinstance(result, DistributionBatch)
         assert (result.batch_shape, result.level_names) == ((3,), ("row",))
@@ -1242,17 +1284,17 @@ class TestANestedSweepOfRecordRows:
         expected = [[11.0, 12.0, 14.0], [22.0, 24.0, 28.0], [33.0, 36.0, 42.0]]
         np.testing.assert_allclose([atom_leaves(row_law)[0] for row_law in result], expected)
         assert {row_type for row_type, _ in seen} == {NumericRecord}
-        assert {traced for _, traced in seen} == {dispatch != "sequential"}
+        assert {traced for _, traced in seen} == {execution != "sequential"}
 
-    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
-    def test_a_mapped_dispatch_draws_the_atoms_sequential_dispatch_draws(self, dispatch):
-        def lift(dispatch):
+    @pytest.mark.parametrize("execution", ["default", "jax"])
+    def test_a_mapped_lift_draws_the_atoms_the_sequential_executor_draws(self, execution):
+        def lift(execution):
             with workflow_run(seed=0):
                 return Function(
-                    self._shift, label="shift", dispatch=dispatch, n_broadcast_samples=6
+                    self._shift, label="shift", **_EXECUTION[execution], max_evaluations=6
                 )(self._rows(), Normal("mu", 0.0, 1.0))
 
-        mapped, sequential = lift(dispatch), lift("sequential")
+        mapped, sequential = lift(execution), lift("sequential")
 
         assert (mapped.batch_shape, mapped.level_names) == (sequential.batch_shape, ("row",))
         np.testing.assert_allclose(
@@ -1264,9 +1306,9 @@ class TestANestedSweepOfRecordRows:
     @pytest.mark.parametrize("fields", [("x",), ("x", "y")], ids=["one-field", "two-fields"])
     def test_a_row_displays_as_the_call_of_its_record(self, fields):
         law = Normal("mu", 0.0, 1.0, label="prior")
-        result = Function(lambda row, mu: row["x"] * mu, label="scale", dispatch="sequential")(
-            self._rows(fields), law
-        )
+        result = Function(
+            lambda row, mu: row["x"] * mu, label="scale", traceable=False, executor="sequential"
+        )(self._rows(fields), law)
 
         assert [str(row_law) for row_law in result] == [
             f"scale(rows[row={i}], mu ~ prior)" for i in range(3)
@@ -1274,7 +1316,7 @@ class TestANestedSweepOfRecordRows:
 
 
 class TestARecordedDtypeIsTheStoredDtype:
-    """A sweep or a lift stacks its rows into one array, whose dtype its declaration records.
+    """A sweep or a lift stacks its rows into one array, whose dtype its spec records.
 
     JAX's 64-bit mode is off in the suite, so a 64-bit row is stored as a 32-bit one.
     """
@@ -1284,7 +1326,7 @@ class TestARecordedDtypeIsTheStoredDtype:
         return NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             "row",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="rows",
         )
 
@@ -1298,7 +1340,7 @@ class TestARecordedDtypeIsTheStoredDtype:
             ),
         }
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax"])
+    @pytest.mark.parametrize("execution", ["sequential", "thread", "jax"])
     @pytest.mark.parametrize("body", ["raw", "tracked"])
     @pytest.mark.parametrize(
         "declaration",
@@ -1308,52 +1350,67 @@ class TestARecordedDtypeIsTheStoredDtype:
             OutputSpec(value=None),
             NumericArraySpec((3,), dtype="float64"),
         ],
-        ids=["undeclared", "shape-only", "type-hole", "float64"],
+        ids=["undeclared", "shape-only", "unspecified-type", "float64"],
     )
-    def test_a_sweep_of_64_bit_rows_records_the_stored_dtype(self, dispatch, body, declaration):
+    def test_a_sweep_of_64_bit_rows_records_the_stored_dtype(self, execution, body, declaration):
         assert not jax.config.jax_enable_x64
         wrapped = Function(
             self._bodies()[body],
             output_spec=declaration
             if isinstance(declaration, OutputSpec) or declaration is None
-            else OutputSpec.default(declaration, component="f"),
-            dispatch=dispatch,
+            else OutputSpec.default(declaration, output_name="f"),
+            **_EXECUTION[execution],
             label="f",
         )
+        if (
+            isinstance(declaration, NumericArraySpec)
+            and declaration.dtype is not None
+            and declaration.dtype == np.dtype("float64")
+        ):
+            with pytest.raises(ValueError, match="jax_enable_x64"):
+                wrapped(self._rows())
+            return
         result = wrapped(self._rows())
-        assert np.asarray(result.values).dtype == np.float32
-        assert result.element_spec == NumericArraySpec((3,), dtype="float32")
+        assert np.asarray(result.raw).dtype == np.float32
+        assert result.element_spec.term_spec == NumericArraySpec((3,), dtype="float32")
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax"])
+    @pytest.mark.parametrize("execution", ["sequential", "thread", "jax"])
     @pytest.mark.parametrize(
         "declaration",
         [None, NumericArraySpec((3,)), NumericArraySpec((3,), dtype="float64")],
         ids=["undeclared", "shape-only", "float64"],
     )
-    def test_a_lift_of_64_bit_draws_records_the_stored_dtype(self, dispatch, declaration):
+    def test_a_lift_of_64_bit_draws_records_the_stored_dtype(self, execution, declaration):
         wrapped = Function(
             lambda x: np.arange(3.0),
-            output_spec=OutputSpec.default(declaration, component="f"),
-            dispatch=dispatch,
-            n_broadcast_samples=5,
+            output_spec=OutputSpec.default(declaration, output_name="f"),
+            **_EXECUTION[execution],
+            max_evaluations=5,
             label="f",
         )
-        result = wrapped(EmpiricalDistribution(jnp.arange(3.0), component="x"))
-        assert np.asarray(result.atoms.values).dtype == np.float32
-        assert result.atoms.element_spec.dtype == np.float32
-        assert result.event_spec.components["f"].dtype == np.float32
+        if (
+            isinstance(declaration, NumericArraySpec)
+            and declaration.dtype is not None
+            and declaration.dtype == np.dtype("float64")
+        ):
+            with pytest.raises(ValueError, match="jax_enable_x64"):
+                wrapped(EmpiricalDistribution(jnp.arange(3.0), output_name="x"))
+            return
+        result = wrapped(EmpiricalDistribution(jnp.arange(3.0), output_name="x"))
+        assert np.asarray(result.atoms.raw).dtype == np.float32
+        assert result.atoms.element_spec.term_spec.dtype == np.float32
+        assert result.event_spec.outputs["f"].dtype == np.float32
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax"])
-    def test_a_declared_64_bit_record_field_records_the_stored_dtype(self, dispatch):
+    @pytest.mark.parametrize("execution", ["sequential", "thread", "jax"])
+    def test_a_declared_64_bit_record_field_refuses_disabled_64_bit_mode(self, execution):
         wrapped = Function(
             lambda row: {"y": np.arange(3.0)},
             output_spec=RecordSpec(y=NumericArraySpec((3,), dtype="float64")),
-            dispatch=dispatch,
+            **_EXECUTION[execution],
             label="f",
         )
-        result = wrapped(self._rows())
-        assert result._raw_column("y").dtype == np.float32
-        assert result.element_spec["y"] == NumericArraySpec((3,), dtype="float32")
+        with pytest.raises(ValueError, match="jax_enable_x64"):
+            wrapped(self._rows())
 
     @pytest.mark.parametrize("output", ["array", "record"])
     def test_sequential_and_jax_sweeps_agree_on_a_dtype_record_leaves_leave_unset(self, output):
@@ -1368,19 +1425,19 @@ class TestARecordedDtypeIsTheStoredDtype:
             ],
             level_name="draw",
         )
-        assert rows.element_spec["value"].dtype is None
+        assert rows.element_spec.term_spec["value"].dtype is None
 
         def body(row):
             value = row["value"] + 1
             return value if output == "array" else {"y": value}
 
         specs = {
-            dispatch: Function(
+            execution: Function(
                 body,
-                dispatch=dispatch,
+                **_EXECUTION[execution],
                 label="f",
-            )(rows).element_spec
-            for dispatch in ("sequential", "thread", "jax")
+            )(rows).element_spec.term_spec
+            for execution in ("sequential", "thread", "jax")
         }
         assert specs["sequential"] == specs["thread"] == specs["jax"]
         if output == "array":

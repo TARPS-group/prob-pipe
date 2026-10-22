@@ -1,7 +1,7 @@
 """Contract tests for the ``NamedTree`` substrate.
 
 Asserts the shared tree contract every family inherits: the public class,
-``with_path_names`` renaming semantics, the mappings-are-never-leaves rule,
+``rename`` renaming semantics, the mappings-are-never-leaves rule,
 ``is_multi_field``, and the declared-leaf-type validation hook.
 """
 
@@ -79,7 +79,7 @@ class TestErrorPaths:
         )
         assert r.replace() is r
 
-    def test_with_path_names_field_vs_prefix_collision(self):
+    def test_rename_field_vs_prefix_collision(self):
         # Renaming a leaf onto a name already used as a path prefix (here the
         # subtree ``n``) is the field-versus-prefix collision.
         r = Record(
@@ -93,7 +93,7 @@ class TestErrorPaths:
             label="r",
         )
         with pytest.raises(ValueError, match="cannot move 'm' to 'n': that path is already taken"):
-            r.with_path_names(m="n")
+            r.rename(m="n")
 
 
 # ===========================================================================
@@ -154,11 +154,11 @@ class TestIsMultiField:
 
 
 # ===========================================================================
-# 3. with_path_names
+# 3. rename
 # ===========================================================================
 
 
-class TestWithPathNames:
+class TestRename:
     @pytest.fixture
     def record(self):
         return Record(
@@ -173,26 +173,26 @@ class TestWithPathNames:
         )
 
     def test_a_single_name_addresses_a_top_level_node(self, record):
-        renamed = record.with_path_names(x="y")
+        renamed = record.rename(x="y")
         assert tuple(renamed.keys()) == ("y", "g/mu", "g/sigma")
         assert tuple(renamed.event_template.keys()) == ("y", "g/mu", "g/sigma")
 
     def test_a_nested_node_takes_its_full_path(self, record):
         with pytest.raises(KeyError):
-            record.with_path_names(mu="loc")
+            record.rename(mu="loc")
 
     def test_full_path(self, record):
         # A rename within a group spells the full new path.
-        renamed = record.with_path_names({"g/mu": "g/loc"})
+        renamed = record.rename({"g/mu": "g/loc"})
         assert tuple(renamed.keys()) == ("x", "g/loc", "g/sigma")
 
     def test_interior_node_rename(self, record):
-        renamed = record.with_path_names(g="group")
+        renamed = record.rename(g="group")
         assert tuple(renamed.keys()) == ("x", "group/mu", "group/sigma")
         assert tuple(renamed.event_template.keys()) == ("x", "group/mu", "group/sigma")
 
     def test_values_and_order_unchanged(self, record):
-        renamed = record.with_path_names({"g/mu": "g/loc"})
+        renamed = record.rename({"g/mu": "g/loc"})
         assert renamed["g/loc"] == record["g/mu"]
         assert tuple(renamed.children) == tuple(record.children)
 
@@ -201,7 +201,7 @@ class TestWithPathNames:
             {"a": 1.0, "b": 2.0},
             label="r",
         )
-        swapped = r.with_path_names(a="b", b="a")
+        swapped = r.rename(a="b", b="a")
         assert swapped["b"] == 1.0
         assert swapped["a"] == 2.0
 
@@ -216,12 +216,12 @@ class TestWithPathNames:
             },
             label="r",
         )
-        assert tuple(r.with_path_names(beta="b").keys()) == ("b/beta", "s")
-        assert tuple(r.with_path_names({"beta/beta": "beta/b"}).keys()) == ("beta/b", "s")
+        assert tuple(r.rename(beta="b").keys()) == ("b/beta", "s")
+        assert tuple(r.rename({"beta/beta": "beta/b"}).keys()) == ("beta/b", "s")
 
     def test_missing_key_raises(self, record):
         with pytest.raises(KeyError):
-            record.with_path_names(nope="x")
+            record.rename(nope="x")
 
     @pytest.mark.parametrize(
         "tree",
@@ -234,32 +234,35 @@ class TestWithPathNames:
         ids=["record", "spec", "batch", "declaration"],
     )
     def test_a_missing_key_names_the_paths_the_tree_has(self, record, tree):
-        with pytest.raises(KeyError, match=r"the paths are \['x', 'g', 'g/mu', 'g/sigma'\]"):
-            tree(record).with_path_names(mu="loc")
+        with pytest.raises(
+            KeyError,
+            match=r"unknown path 'mu' in .*; available paths: \['x', 'g', 'g/mu', 'g/sigma'\]",
+        ):
+            tree(record).rename(mu="loc")
 
     def test_sibling_collision_raises(self, record):
         with pytest.raises(ValueError, match="already taken"):
-            record.with_path_names({"g/mu": "g/sigma"})
+            record.rename({"g/mu": "g/sigma"})
 
     def test_malformed_new_name_raises(self, record):
         with pytest.raises(ValueError, match="non-empty"):
-            record.with_path_names(x="")
+            record.rename(x="")
         # A target is a path, so only an empty segment malforms it.
         for target in ("a//b", "/a", "a/"):
             with pytest.raises(ValueError, match="empty segment"):
-                record.with_path_names(x=target)
+                record.rename(x=target)
 
     def test_no_renames_raises(self, record):
         with pytest.raises(ValueError):
-            record.with_path_names()
+            record.rename()
 
     def test_duplicate_rename_of_one_node_raises(self, record):
         with pytest.raises(ValueError, match="more than once"):
-            record.with_path_names({"x": "a"}, x="b")
+            record.rename({"x": "a"}, x="b")
 
     def test_template_family_preserved(self):
         t = RecordSpec(a=(), b=(2,))
-        renamed = t.with_path_names(a="alpha")
+        renamed = t.rename(a="alpha")
         assert isinstance(renamed, NumericRecordSpec)
         assert tuple(renamed.keys()) == ("alpha", "b")
 
@@ -268,7 +271,7 @@ class TestWithPathNames:
             {"a": jnp.array(1.0)},
             label="nr",
         )
-        renamed = nr.with_path_names(a="alpha")
+        renamed = nr.rename(a="alpha")
         assert isinstance(renamed, NumericRecord)
         assert tuple(renamed.keys()) == ("alpha",)
 
@@ -277,13 +280,13 @@ class TestWithPathNames:
             {"a": 1.0, "b": 2.0},
             label="record(a,b)",
         )  # operation-derived (auto)
-        renamed = auto.with_path_names(a="alpha")
+        renamed = auto.rename(a="alpha")
         assert renamed.label == auto.label
         named = Record(
             {"a": 1.0, "b": 2.0},
             label="mine",
         )
-        renamed_named = named.with_path_names(a="alpha")
+        renamed_named = named.rename(a="alpha")
         assert renamed_named.label == "mine"
 
     def test_explicit_template_metadata_survives(self):
@@ -293,7 +296,7 @@ class TestWithPathNames:
             event_template=RecordSpec(a=spec),
             label="r",
         )
-        renamed = r.with_path_names(a="alpha")
+        renamed = r.rename(a="alpha")
         assert renamed.event_template["alpha"] == spec
 
     def test_record_batch_defers(self):
@@ -303,10 +306,10 @@ class TestWithPathNames:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="batch",
         )
-        renamed = ra.with_path_names(a="b")
+        renamed = ra.rename(a="b")
         assert list(renamed.event_template) == ["b"]
 
 
@@ -327,18 +330,18 @@ class TestPathMoves:
         )
 
     def test_a_bare_target_moves_a_nested_field_to_the_top_level(self, record):
-        moved = record.with_path_names({"g/mu": "mu"})
+        moved = record.rename({"g/mu": "mu"})
         assert tuple(moved.keys()) == ("x", "g/sigma", "mu")
         assert moved["mu"] == 2.0
         assert tuple(moved.event_template.keys()) == tuple(moved.keys())
 
     def test_a_path_target_moves_a_top_level_field_into_a_group(self, record):
-        moved = record.with_path_names({"x": "g/x"})
+        moved = record.rename({"x": "g/x"})
         assert tuple(moved.keys()) == ("g/mu", "g/sigma", "g/x")
         assert moved["g/x"] == 1.0
 
     def test_a_move_into_a_missing_group_creates_it(self, record):
-        moved = record.with_path_names({"x": "h/k/x"})
+        moved = record.rename({"x": "h/k/x"})
         assert tuple(moved.keys()) == ("g/mu", "g/sigma", "h/k/x")
         assert tuple(moved.event_template.keys()) == tuple(moved.keys())
 
@@ -353,7 +356,7 @@ class TestPathMoves:
             },
             label="r",
         )
-        moved = record.with_path_names({"g/mu": "mu"})
+        moved = record.rename({"g/mu": "mu"})
         assert tuple(moved.children) == ("x", "mu")
         assert tuple(moved.event_template.children) == ("x", "mu")
 
@@ -368,7 +371,7 @@ class TestPathMoves:
             },
             label="r",
         )
-        moved = record.with_path_names({"g/mu": "g"})
+        moved = record.rename({"g/mu": "g"})
         assert tuple(moved.keys()) == ("x", "g")
         assert moved["g"] == 2.0
 
@@ -383,27 +386,27 @@ class TestPathMoves:
             },
             label="r",
         )
-        moved = record.with_path_names({"g/mu": "mu", "x": "g/x"})
+        moved = record.rename({"g/mu": "mu", "x": "g/x"})
         assert tuple(moved.keys()) == ("g/x", "mu")
 
     def test_moved_nodes_append_in_the_order_the_renames_are_given(self, record):
-        forward = record.with_path_names({"x": "h/x", "g/sigma": "h/sigma"})
-        backward = record.with_path_names({"g/sigma": "h/sigma", "x": "h/x"})
+        forward = record.rename({"x": "h/x", "g/sigma": "h/sigma"})
+        backward = record.rename({"g/sigma": "h/sigma", "x": "h/x"})
         assert tuple(forward.keys()) == ("g/mu", "h/x", "h/sigma")
         assert tuple(backward.keys()) == ("g/mu", "h/sigma", "h/x")
 
     def test_a_descendant_with_its_own_target_leaves_its_moved_ancestor(self, record):
-        moved = record.with_path_names({"g": "h", "g/mu": "mu"})
+        moved = record.rename({"g": "h", "g/mu": "mu"})
         assert tuple(moved.keys()) == ("x", "h/sigma", "mu")
 
     def test_moves_apply_simultaneously(self, record):
-        moved = record.with_path_names({"x": "g/x", "g/mu": "x"})
+        moved = record.rename({"x": "g/x", "g/mu": "x"})
         assert tuple(moved.keys()) == ("g/sigma", "g/x", "x")
         assert (moved["g/x"], moved["x"]) == (1.0, 2.0)
 
     def test_a_schema_moves_as_its_record_does(self, record):
-        moved = record.event_template.with_path_names({"g/mu": "mu"})
-        assert moved == record.with_path_names({"g/mu": "mu"}).event_template
+        moved = record.event_template.rename({"g/mu": "mu"})
+        assert moved == record.rename({"g/mu": "mu"}).event_template
         assert isinstance(moved, NumericRecordSpec)
 
     def test_a_moved_numeric_record_keeps_its_family_and_its_leaves(self):
@@ -417,7 +420,7 @@ class TestPathMoves:
             },
             label="nr",
         )
-        moved = nr.with_path_names({"a": "g/a"})
+        moved = nr.rename({"a": "g/a"})
         assert isinstance(moved, NumericRecord)
         assert tuple(moved.keys()) == ("g/b", "g/a")
         assert jnp.array_equal(moved.to_vector(), jnp.array([2.0, 3.0, 1.0]))
@@ -436,13 +439,13 @@ class TestPathMoves:
     )
     def test_a_move_the_tree_cannot_take_raises(self, record, renames, match):
         with pytest.raises(ValueError, match=match):
-            record.with_path_names(renames)
+            record.rename(renames)
         with pytest.raises(ValueError, match=match):
-            record.event_template.with_path_names(renames)
+            record.event_template.rename(renames)
 
     def test_renaming_a_node_twice_raises_before_its_targets_are_read(self, record):
         with pytest.raises(ValueError, match="more than once"):
-            record.with_path_names({"g/mu": "mu"}, **{"g/mu": "g/m"})
+            record.rename({"g/mu": "mu"}, **{"g/mu": "g/m"})
 
 
 # ===========================================================================
@@ -461,7 +464,7 @@ class TestMappingsAreNeverLeaves:
         )
         assert type(r) is NumericRecord
         assert tuple(r.keys()) == ("cfg/a", "cfg/b", "x")
-        assert isinstance(r.raw("cfg/a"), jnp.ndarray)
+        assert isinstance(r.raw["cfg"]["a"], jnp.ndarray)
         assert isinstance(r.at_path("cfg"), NumericRecord)
 
     def test_mapping_value_with_opaque_leaf_stays_plain(self):
@@ -473,7 +476,7 @@ class TestMappingsAreNeverLeaves:
         )
         assert type(r) is Record
         assert tuple(r.keys()) == ("cfg/label", "cfg/scale")
-        assert r.raw("cfg/label") == "horseshoe"  # opaque leaf, stored as-is
+        assert r["cfg/label"].raw == "horseshoe"  # opaque leaf, stored as-is
         assert isinstance(r.at_path("cfg"), Record)
 
     def test_multi_level_nested_mapping_materializes(self):
@@ -678,12 +681,12 @@ class TestRecordAutoPromotion:
             label="r",
         )
         # A native backend leaf is first-class numeric: the record promotes
-        # and the leaf is stored verbatim, which raw() returns.
+        # and the leaf is stored verbatim, which raw returns.
         from probpipe import NumericRecord
 
         assert type(r) is NumericRecord
-        assert r.raw("a") is da
-        assert type(r.raw("a")) is xr.DataArray
+        assert r["a"].raw is da
+        assert type(r["a"].raw) is xr.DataArray
 
     def test_edits_rederive_promotion_and_demotion(self):
         mixed = Record(
@@ -698,7 +701,8 @@ class TestRecordAutoPromotion:
         assert type(numeric.replace(b="tag")) is Record
         assert (
             type(
-                numeric.merge(
+                numeric
+                & (
                     Record(
                         {"c": "tag"},
                         label="r",
@@ -736,7 +740,7 @@ class TestRecordAutoPromotion:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="batch",
         )
         assert type(ra) is NumericRecordBatch
@@ -744,7 +748,7 @@ class TestRecordAutoPromotion:
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="batch",
         )
         assert type(nrb) is NumericRecordBatch
@@ -801,13 +805,16 @@ class TestValueLevelEntryPoints:
 
 
 def test_a_merge_names_the_fields_both_sides_have():
-    with pytest.raises(ValueError, match="cannot merge: both have the field 'obs'"):
-        Record(
-            {"obs": 1.0},
-            label="r",
-        ).merge(
+    with pytest.raises(ValueError, match=r"since both have 'obs'\. Rename one"):
+        (
             Record(
-                {"obs": 2.0},
-                label="s",
+                {"obs": 1.0},
+                label="r",
+            )
+            & (
+                Record(
+                    {"obs": 2.0},
+                    label="s",
+                )
             )
         )

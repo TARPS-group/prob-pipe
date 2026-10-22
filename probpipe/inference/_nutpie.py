@@ -8,22 +8,21 @@ from typing import Any
 import numpy as np
 
 from ..core._dispatch import Feasibility
-from ..core._specs import OutputSpec
-from ..custom_types import ArrayLike
+from ..custom_types import ArrayLike, PRNGKey
+from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
-from ..families._programs import _parameter_record_at
 from ..functions import function
-from ..operations._condition import InferenceMethod, _UnnormalizedConditional
+from ..operations._condition import InferenceMethod, _inference_run_key
+from ..operations._inference_target import InferenceTarget, _described
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
-    described,
     extract_chain_columns,
     integer_seed,
     joint_and_given,
-    posterior_var_order,
+    observed_target,
     refuse_seed_keywords,
-    run_seed,
 )
+from ._pymc_method import _pymc_parameter_shapes
 
 logger = logging.getLogger(__name__)
 
@@ -89,11 +88,11 @@ def condition_on_nutpie(
     return _nutpie_posterior(
         model,
         data,
-        model,
+        observed_target(model, data),
         num_results=num_results,
         num_warmup=num_warmup,
         num_chains=num_chains,
-        random_seed=integer_seed(run_seed("nutpie_nuts")),
+        random_seed=integer_seed(_inference_run_key("nutpie_nuts")),
         **kwargs,
     )
 
@@ -101,7 +100,7 @@ def condition_on_nutpie(
 def _nutpie_posterior(
     model: Any,
     data: Any,
-    parent: Any,
+    target: InferenceTarget,
     *,
     num_results: int = 1000,
     num_warmup: int = 500,
@@ -109,7 +108,7 @@ def _nutpie_posterior(
     random_seed: int,
     **kwargs: Any,
 ) -> EmpiricalDistribution:
-    """nutpie's posterior of *model* at *data*, whose provenance names *parent*.
+    """nutpie's posterior of *model* at *data*, the posterior of *target*.
 
     Parameters
     ----------
@@ -120,8 +119,9 @@ def _nutpie_posterior(
         A ``StanModel``'s data, as a dict, or the observed values of a
         ``PyMCModel``; a Stan program's posterior ignores it, since its data
         are bound.
-    parent : Any
-        The term the posterior's provenance names as its parent.
+    target : InferenceTarget
+        The target of *model* at *data*, whose parameters the chains draw and
+        which the posterior's provenance names as its parent.
     num_results : int
         Number of draws each chain keeps, which nutpie takes as ``draws``.
     num_warmup : int
@@ -153,16 +153,14 @@ def _nutpie_posterior(
 
     compiled, pymc_build = _compile_for_nutpie(model, data)
 
-    # Build the parameter record in canonical field order from the
-    # conditioned build before sampling (fail fast on a dynamic-RV /
-    # non-concrete model). A Stan model declares its parameter blocks, with
-    # their dtypes and supports, and the trace gives their shapes.
+    # A PyMC model's shapes come from its build at the data, before sampling,
+    # so a dynamic-RV or non-concrete model fails fast. A Stan model's come from
+    # the trace.
     if pymc_build is not None:
-        param_names = list(model._conditioned_param_names(pymc_build))
-        event_spec = OutputSpec(model._parameter_record_for(pymc_build, param_names))
+        parameter_shapes = _pymc_parameter_shapes(target, model, pymc_build)
     else:
-        param_names = list(model.event_spec.components)
-        event_spec = None
+        parameter_shapes = None
+    parameter_names = list(target.event_spec.outputs)
 
     trace = nutpie.sample(
         compiled,
@@ -172,24 +170,21 @@ def _nutpie_posterior(
         seed=random_seed,
         **kwargs,
     )
-    if event_spec is None:
-        shapes = {name: np.shape(trace.posterior[name].values)[2:] for name in param_names}
-        event_spec = OutputSpec(_parameter_record_at(model.event_spec.spec, shapes))
-
-    # Extract the parameters alone, in nutpie's natural ``data_vars`` order
-    # (it sorts alphabetically); ``field_order`` lets make_posterior realign
-    # columns to the parameters by name, so we don't depend on the orders
-    # matching.
-    field_order = posterior_var_order(trace, param_names)
-    chains, _ = _extract_chains(trace, num_chains, keep_names=field_order)
+    # nutpie sorts the trace's variables by name, so the parameters are extracted
+    # by name, in the target's order, without a program's transformed and
+    # generated variables.
+    chains, _ = _extract_chains(trace, num_chains, keep_names=parameter_names)
+    if parameter_shapes is None:
+        parameter_shapes = {
+            name: np.shape(trace.posterior[name].values)[2:] for name in parameter_names
+        }
 
     return make_posterior(
+        target,
         chains,
-        parents=(parent,),
         method="nutpie_nuts",
         annotations=trace,
-        event_spec=event_spec,
-        field_order=field_order,
+        parameter_shapes=parameter_shapes,
         num_results=num_results,
         num_warmup=num_warmup,
         num_chains=num_chains,
@@ -253,8 +248,8 @@ def _extract_chains(
     keep_names : list of str or None
         If given, extract exactly these variables, in this order, instead
         of ``posterior.data_vars`` order (which nutpie sorts
-        alphabetically). Callers pass the parameter names, so the chain
-        columns align with the template and omit a Stan program's
+        alphabetically). Callers pass the target's parameters in its order, so the
+        chains are in the target's flat layout and omit a Stan program's
         transformed and generated variables.
 
     Returns
@@ -306,11 +301,15 @@ class NutpieNutsMethod(InferenceMethod):
         self._supported = (_StanPosterior, PyMCModel)
 
     @property
+    def description(self) -> str:
+        return "NUTS through nutpie, for a Stan program or a PyMC model."
+
+    @property
     def name(self) -> str:
         return "nutpie_nuts"
 
     def supported_types(self) -> tuple[type, ...]:
-        return (*self._supported, _UnnormalizedConditional)
+        return (Distribution,)
 
     @property
     def priority(self) -> int:
@@ -322,7 +321,7 @@ class NutpieNutsMethod(InferenceMethod):
         if not isinstance(dist, self._supported):
             return Feasibility(
                 feasible=False,
-                description=f"the model must be a StanModel or PyMCModel; got {described(dist)}",
+                description=f"the model must be a StanModel or PyMCModel; got {_described(dist)}",
             )
         if given is not None and not isinstance(dist, self._pymc_model_type):
             return Feasibility(
@@ -341,12 +340,14 @@ class NutpieNutsMethod(InferenceMethod):
             )
         return Feasibility(feasible=True)
 
-    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
+    def execute(
+        self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any
+    ) -> EmpiricalDistribution:
         """nutpie's NUTS on the program the target carries, at the observed values it binds.
 
         The posterior's provenance names the target as its parent.
         """
-        self._check_options(kwargs)
+        self._check_options(options)
         dist, observed = joint_and_given(target)
-        seed = integer_seed(run_seed(self.name))
-        return _nutpie_posterior(dist, observed, target, random_seed=seed, **kwargs)
+        seed = integer_seed(key)
+        return _nutpie_posterior(dist, observed, target, random_seed=seed, **options)

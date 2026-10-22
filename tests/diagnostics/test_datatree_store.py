@@ -16,7 +16,7 @@ from probpipe.diagnostics._datatree_store import (
     to_named_posterior_dataset,
 )
 from probpipe.diagnostics._view_base import NotComputed
-from probpipe.inference._approximate_distribution import make_posterior
+from probpipe.inference._approximate_distribution import _posterior_from_chains
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -191,7 +191,9 @@ class TestToNamedPosteriorDataset:
         specs = {p: NumericArraySpec(tuple(shapes.get(p, ()))) for p in params}
         width = sum(int(np.prod(spec.shape)) for spec in specs.values())
         chains = [rng.standard_normal((n_draws, width)) for _ in range(n_chains)]
-        return make_posterior(chains, (), "test", event_spec=OutputSpec(RecordSpec(**specs)))
+        return _posterior_from_chains(
+            chains, (), "test", event_spec=OutputSpec(RecordSpec(**specs))
+        )
 
     def test_output_is_dataset(self):
         post = self._posterior(["mu", "sigma"])
@@ -216,7 +218,7 @@ class TestToNamedPosteriorDataset:
         assert ds["alpha"].shape == (2, 50)
 
     def test_a_law_without_chains_is_refused(self):
-        law = EmpiricalDistribution(np.array([1.0, 2.0]), component="x")
+        law = EmpiricalDistribution(np.array([1.0, 2.0]), output_name="x")
         with pytest.raises(ValueError, match="levels"):
             to_named_posterior_dataset(law)
 

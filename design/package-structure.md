@@ -9,7 +9,7 @@ The package layout realizes the design reference as an import architecture: one 
 - **One package per layer.** Packages mirror the reference's parts in dependency order, and a module realizes one section or one coherent piece of one.
 - **Imports point downward.** Each package imports only from packages above it in the tree below. There are no import cycles, and no lazy imports to avoid one.
 - **Registration is upward** (II.7). A lower layer defines a registry and higher layers populate it at import time, so capability becomes available to the operations without the operations importing their providers.
-- **A spec is placed with the type it admits.** `FunctionSpec` is in the value layer with the kind it describes, and `DistributionSpec` and `ConditionalDistributionSpec` are with the distribution classes. The rule bends only where layering forbids it, since `core/` cannot import the value layer: `TermSpec` is what the tracked base stores, `RecordSpec` is the schema the shared layer itself uses, `InputSpec` and `OutputSpec` are the declarations the kind specs carry, and `Numeric` and `NumericSpec` are the interface pair the numeric kinds and their specs implement, so all of them are in `core/` with `NumericArraySpec`, `OpaqueSpec`, and `Constraint`. The same placement rule covers each type's batch form.
+- **A spec is placed with the type it admits.** `FunctionSpec` is in the value layer with the kind it describes, and `DistributionSpec` and `ConditionalDistributionSpec` are with the distribution classes. The rule bends only where layering forbids it, since `core/` cannot import the value layer: `TermSpec` is what the tracked base stores, `RecordSpec` is the schema the shared layer itself uses, `InputSpec` and `OutputSpec` are the input and output specs the kind specs carry, and `Numeric` and `NumericSpec` are the interface pair the numeric kinds and their specs implement, so all of them are in `core/` with `NumericArraySpec`, `OpaqueSpec`, and `Constraint`. The same placement rule covers each type's batch form.
 - **Modules are private, packages are public.** Every module is underscore-prefixed. A package's `__init__` exports its public names, and the top-level `probpipe` namespace re-exports the curated public API, which is the only import a user needs.
 - **Tests mirror the tree**, as `tests/<package>/test_<module>.py`.
 
@@ -27,7 +27,7 @@ probpipe/
 │   ├── _constraints.py        #   Constraint and the constraint factories (II.3)
 │   ├── _shapes.py             #   the reading of shape, level-name, and axis-count arguments (II.1, II.5)
 │   ├── _spec_base.py          #   TermSpec and dimension unification (II.1), NumericSpec (II.3), NumericArraySpec, OpaqueSpec (III.1–III.2)
-│   ├── _specs.py              #   InputSpec, OutputSpec and component projection contracts (II.2)
+│   ├── _specs.py              #   InputSpec and OutputSpec: input specs, output specs, their selection and merge (II.2)
 │   ├── _kinds.py              #   the kind table: register_kind, term_class_for_spec, batch_class_for_spec (II.1)
 │   ├── _numeric.py            #   Numeric, the flat-vector interface of the numeric kinds (II.3)
 │   ├── _array_backend.py      #   the array-backend registry for native numeric leaves (II.3)
@@ -36,7 +36,14 @@ probpipe/
 │   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.5)
 │   ├── _dispatch.py           #   dispatch methods and registries, Feasibility, MethodInfo, ResolutionError, MathematicalDomainError (II.7)
 │   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.7)
-│   ├── _compilation.py        #   compiled_or_eager: a compiled call that falls back to the eager call
+│   ├── _compilation.py        #   compiled_or_eager: a JAX program traced before it runs, or the eager call;
+│   │                          #   the program store, its static settings, and dynamic call tokens (V.9)
+│   ├── _call_context.py       #   the call context: the per-call state a call carries into its workers (V.2)
+│   ├── _execution_claims.py   #   execution claims, the probe, and its stored results; traceability (V.13)
+│   ├── _evaluation_points.py  #   EvaluationPoints, EvaluationChunk, SharedPayload, EvaluationOutcomes,
+│   │                          #     EvaluationFailure, EvaluationError (V.9)
+│   ├── _executors.py          #   EvaluationExecutor, executor_registry and its built-in executors,
+│   │                          #     and the dispatcher that runs a set on its call's executor (V.9)
 │   └── _config.py             #   library configuration
 ├── values/                    # the value layer (III.1–III.6; LinOp, III.4, is in linalg/)
 │   ├── _numeric_array.py      #   NumericArray (III.1)
@@ -60,18 +67,19 @@ probpipe/
 │   └── _batch.py              #   LinOpBatch
 ├── distributions/             # the distribution layer (III.7–IV.4)
 │   ├── _distribution.py       #   Distribution, NumericDistribution, DistributionSpec (III.7)
-│   ├── _views.py              #   FieldView (III.7–III.8)
+│   ├── _views.py              #   CoupledMarginal (III.7–III.8)
 │   ├── _capabilities.py       #   the Supports* protocols (III.8)
 │   ├── _conditional.py        #   ConditionalDistribution, its markers and spec (III.9), conditional_distribution (IV.4)
 │   ├── _from_functions.py     #   distribution: a law from a sampler, a density, or both (IV.4)
 │   ├── _batches.py            #   DistributionBatch, ConditionalDistributionBatch (III.10)
 │   ├── _factored.py           #   SupportsFactors and the factored classes (IV.1)
-│   ├── _composition.py        #   the * engine behind __mul__ (IV.2)
+│   ├── _merge.py        #   the merge engine behind & (IV.2)
 │   ├── _empirical.py          #   EmpiricalDistribution (VII.2) — the closure family the
 │   │                          #     lift and the Monte Carlo fallbacks construct
 │   └── _conversion.py         #   Converter, ConverterRegistry (IV.3)
 ├── functions/                 # Part V — Function and its engine
 │   ├── _function.py           #   the engine installed on Function at import; the decorator; the using method (V.1, V.2)
+│   ├── _boundary.py           #   embedded opaque calls: staging, host callbacks, and token inspection (V.9)
 │   ├── _call.py               #   binding, wrap, conversion planning, admission; ApplicabilityError (V.3, V.4)
 │   ├── _plan.py               #   lift classification, root-ancestor grouping, and the result declaration (V.5, V.6)
 │   ├── _rules.py              #   the evaluation-rule registry: consulted by the engine,
@@ -82,9 +90,9 @@ probpipe/
 │   ├── _rng.py                #   structural event identity, the versioned key derivation (V.8)
 │   ├── _context.py            #   workflow scopes and frames: workflow_run (V.8)
 │   ├── _replay.py             #   replay_run, replay records and anchors; the cache key (V.8)
-│   ├── _broker.py             #   managed work items: keys across threads, tasks, and flows (V.8, V.9)
-│   ├── _execution.py          #   the jax / sequential / thread dispatch modes, the execution contract (V.9)
-│   ├── _orchestration.py      #   optional tracing (V.9)
+│   ├── _evaluation_keys.py    #   evaluation points: keys across threads, tasks, and flows (V.8, V.9)
+│   ├── _execution.py          #   running evaluation points across threads and tasks, the execution contract (V.9)
+│   ├── _orchestration.py      #   optional recording (V.9)
 │   ├── _result.py             #   assembly, output inference, declaration enforcement and errors, kind-directed wrap, identity (V.10)
 │   └── _reparameterization.py #   bijector_for, register_bijector (V.12)
 ├── operations/                # Part VI — the operations
@@ -98,6 +106,7 @@ probpipe/
 │   │                          #     random_log_prob, random_unnormalized_log_prob (VI.4)
 │   ├── _moments.py            #   mean, variance, standard_deviation, cov, quantile, expectation (VI.5)
 │   ├── _condition.py          #   condition_on, the inference registry (VI.6)
+│   ├── _inference_target.py   #   InferenceTarget, ModelFactors, the unnormalized conditional (VI.6)
 │   ├── _joint.py              #   joint (VI.7)
 │   ├── _marginal.py           #   marginal, factor (VI.8)
 │   ├── _mixture.py            #   mixture (VI.9)
@@ -118,6 +127,7 @@ probpipe/
 ├── designs/                   # designs: batches materialized from per-field candidate sets, over any element spec
 ├── inference/                 # the registered inference methods (VI.6)
 ├── diagnostics/               # diagnostics over inference results
+├── testing/                   # check_executor, the conformance check of an executor (V.9)
 └── validation/                # predictive checks and model comparison
 ```
 
@@ -126,8 +136,8 @@ probpipe/
 - **`core/`** is Part II plus `RecordSpec` (III.5), which the shared layer needs: generic, type-agnostic, and importable by everything.
 - **`values/`** is the value layer of Part III, covering every leaf kind, `Function`'s base included (III.3); `LinOp` subclasses it and the spec references it, both below the distribution layer.
 - **`linalg/`** is the linear subtype and its operator algebra, kept as its own package because the structured subclasses and composites are a coherent domain of their own.
-- **`distributions/`** is the distribution layer of Parts III and IV, through composition and conversion. `EmpiricalDistribution` is here rather than with the other families: it is the closure family that the lift and every Monte Carlo fallback construct, so it must be below the code that uses it. Its Part VII entry is unchanged, and the placement is the single exception to part-per-package.
-- **`functions/`** is the `Function` engine, installed on the III.3 base at import, one package because it is one machine. Controls, binding, normalization, lift classification, planning, route resolution, the workflow scopes and structural keys, replay and caching, execution under a dispatch mode, orchestration, and return are the steps of one stack (V.1), and they change together. The constraint-to-bijector factory is here too, since a bijector is a `Function` (V.12). It is above `distributions/` because lifting samples distributions and materializes empirical results.
+- **`distributions/`** is the distribution layer of Parts III and IV, through merging and conversion. `EmpiricalDistribution` is here rather than with the other families: it is the closure family that the lift and every Monte Carlo fallback construct, so it must be below the code that uses it. Its Part VII entry is unchanged, and the placement is the single exception to part-per-package.
+- **`functions/`** is the `Function` engine, installed on the III.3 base at import, one package because it is one machine. Controls, binding, normalization, lift classification, planning, route resolution, the workflow scopes and structural keys, replay and caching, execution on executors, orchestration, and return are the steps of one stack (V.1), and they change together. The constraint-to-bijector factory is here too, since a bijector is a `Function` (V.12). It is above `distributions/` because lifting samples distributions and materializes empirical results.
 - **`operations/`** is thin by design, matching what the operations are: a declaration wrapped by the decorator with its routes registered beside it, one module per operation section (VI.1–VI.10) above `_operation.py`, which holds VI.0's decorator, route protocol, resolution, and registry. VI.11's batching is the engine's sweep, so it is no module here. The inference-method registry is defined here with `condition_on` and populated from above; the evaluation-rule registry is defined with the engine (`functions/_rules.py`), which consults it, with `pushforward` as the operation form of its rules on laws.
 - **`families/`** implements the catalog: constructors and capability implementations, registering its evaluation rules and converters upward at import.
 - **`inference/`**, **`diagnostics/`**, and **`validation/`** are outside the reference's parts: inference methods register into the VI.6 registry, and diagnostics and validation are application layers over the public operations.
@@ -157,11 +167,9 @@ The spec implementation in `core/` is divided into three files: `core/_spec_base
 | `functions/_normalization.py` | `functions/_call.py`; conversion executes later under the IV.3 plan (V.4) |
 | `functions/_contract.py`, `functions/_descendants.py` | `functions/_plan.py`: the per-call binding of the declared inputs and the root-ancestor capture (V.5, V.6) |
 | `functions/_callable.py`, `functions/_recipe.py` | `functions/_replay.py`: the callable anchors and the recorded recipes (V.8) |
-| `functions/_managed.py` | `functions/_broker.py` (V.8, V.9) |
-| `functions/_execution_contract.py` | `functions/_execution.py` (V.9) |
 | `functions/_errors.py` | `functions/`, each error beside the step that raises it (V.1) |
 | `linalg/linear_operator.py`, `linalg/operations.py`, `linalg/utils.py` | `linalg/_linop.py`, `linalg/_structured.py`, `linalg/_composites.py`; the free-function queries become `LinOp` methods (III.4) |
 | `record/design.py` | `designs/`, generalized from `RecordBatch` to any element spec |
 | `inference/_minibatch.py` | `inference/`, in place: `MinibatchedDistribution` is a `RandomMeasure` member (VII.5) |
 | `_weights.py`, `_array_utils.py`, `_dtype.py`, `_messages.py`, `custom_types.py` | private helpers, unchanged |
-| `diagnostics/`, `validation/` | in place; a predictive check takes the kernel of the observations and a law over its given slots, and reads its replications from their composition, as `mixture` does (VI.9) |
+| `diagnostics/`, `validation/` | in place; a predictive check takes the kernel of the observations and a law over its inputs, and reads its replications from their merge, as `mixture` does (VI.9) |

@@ -23,7 +23,8 @@ from probpipe import (
 )
 from probpipe.families import GaussianFamily, glm_likelihood
 from probpipe.functions import _context, _rng
-from probpipe.inference._inference_utils import integer_seed, run_seed
+from probpipe.inference._inference_utils import integer_seed
+from probpipe.operations._condition import _inference_run_key
 from probpipe.validation import (
     Reference,
     score_posterior,
@@ -43,7 +44,7 @@ def _check_setup():
     prior = Normal("mu", 0.0, 1.0)
     likelihood = conditional_distribution(
         lambda mu: Normal("y", mu * jnp.ones(6), 1.0),
-        given_spec=prior.event_spec.components,
+        given_spec=prior.event_spec.outputs,
         label="y_given_mu",
     )
     return likelihood, prior
@@ -64,7 +65,7 @@ class TestPredictiveCheckBroker:
                 result = predictive_check(
                     likelihood, prior, jnp.mean, num_replications=num_replications
                 )
-            return np.asarray(result["replicated_statistics"].atoms.values), derive
+            return np.asarray(result["replicated_statistics"].atoms.raw), derive
 
         first, first_derive = run(8)
         second, second_derive = run(8)
@@ -118,7 +119,7 @@ class TestPredictiveCheckBroker:
 
         commit.assert_not_called()
 
-    def test_a_missing_given_slot_fails_before_event_commit(self):
+    def test_a_missing_input_fails_before_event_commit(self):
         likelihood, _ = _check_setup()
         other = Normal("tau", 0.0, 1.0)
 
@@ -135,8 +136,8 @@ class TestPredictiveCheckBroker:
 class _FakeConditionOn:
     """A stand-in for ``condition_on`` that records its observed values and returns zero draws.
 
-    A fit also records the seed it reads through ``run_seed``, as an inference
-    method does, so the seed is a key of the workflow scope the fit runs in.
+    A fit also records the seed of its run's key, as the registry derives it for an
+    inference method, so the seed is a key of the workflow scope the fit runs in.
     The evaluation of a kernel reads no seed.
     """
 
@@ -146,11 +147,11 @@ class _FakeConditionOn:
 
     def __call__(self, d, given):
         self.observations.append(np.asarray(given["y"]))
-        return EmpiricalDistribution(jnp.zeros((4, 1)), component="beta")
+        return EmpiricalDistribution(jnp.zeros((4, 1)), output_name="beta")
 
     def using(self, *, method=None, method_options=None):
         def fit(d, given):
-            self.seeds.append(integer_seed(run_seed("fake")))
+            self.seeds.append(integer_seed(_inference_run_key("fake")))
             return self(d, given)
 
         return fit
@@ -161,7 +162,7 @@ def _conjugate_calibration(**options):
     prior = Normal("mu", 0.0, 1.0)
     likelihood = conditional_distribution(
         lambda mu: Normal("y", mu * jnp.ones(3), 1.0),
-        given_spec=prior.event_spec.components,
+        given_spec=prior.event_spec.outputs,
         label="y_given_mu",
     )
     exact = conditional_distribution(
@@ -170,7 +171,7 @@ def _conjugate_calibration(**options):
         label="posterior",
     )
     return simulation_based_calibration(
-        likelihood * prior,
+        (likelihood & prior),
         observed="y",
         posterior=exact,
         num_posterior_draws=10,
@@ -183,7 +184,7 @@ class TestSimulationBasedCalibrationBroker:
     def _model():
         x = jnp.ones((3, 1))
         prior = MultivariateNormal("beta", loc=jnp.zeros(1), cov=jnp.eye(1))
-        return glm_likelihood("y", GaussianFamily(), X=x, dispersion=1.0) * prior
+        return glm_likelihood("y", GaussianFamily(), X=x, dispersion=1.0) & prior
 
     def test_a_call_in_a_seeded_scope_reproduces_its_ranks(self):
         with workflow_run(seed=7):
@@ -308,8 +309,8 @@ class TestSimulationBasedCalibrationBroker:
 
         commit.assert_not_called()
 
-    def test_a_posterior_whose_slots_miss_the_observed_fields_fails_before_event_commit(self):
-        other_slot = conditional_distribution(
+    def test_a_posterior_whose_inputs_miss_the_observed_fields_fails_before_event_commit(self):
+        other_input = conditional_distribution(
             lambda x, z: Normal("beta", x + z, 1.0),
             given_spec={"x": NumericArraySpec(()), "z": NumericArraySpec(())},
             label="posterior",
@@ -317,12 +318,12 @@ class TestSimulationBasedCalibrationBroker:
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
-            pytest.raises(ValueError, match="given slots"),
+            pytest.raises(ValueError, match="inputs"),
         ):
             simulation_based_calibration(
                 self._model(),
                 observed="y",
-                posterior=other_slot,
+                posterior=other_input,
                 num_simulations=2,
                 num_posterior_draws=4,
             )

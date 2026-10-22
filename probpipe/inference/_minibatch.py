@@ -57,10 +57,10 @@ from ..distributions._capabilities import (
 )
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution, DistributionSpec
-from ..distributions._factored import _components_of
+from ..distributions._factored import _outputs_of
 from ..families._random_functions import RandomFunction, RandomMeasure
+from ..operations._inference_target import _described
 from ..values._function_base import FunctionSpec
-from ._inference_utils import described
 
 __all__ = ["MinibatchedDistribution"]
 
@@ -109,16 +109,16 @@ def _draw_indices(
     return jax.random.permutation(key, n)[:batch_size]
 
 
-def _parameter_declaration(prior: Any, component: str) -> OutputSpec:
-    """The declaration of the parameters *prior* is a law over.
+def _parameter_declaration(prior: Any, output_name: str) -> OutputSpec:
+    """The event spec of the parameters *prior* is a law over.
 
     A prior that is not a distribution declares nothing, so its parameters are
-    opaque under *component*.
+    opaque under *output_name*.
     """
     try:
         return prior.event_spec
     except AttributeError:
-        return OutputSpec(**{component: OpaqueSpec()})
+        return OutputSpec(**{output_name: OpaqueSpec()})
 
 
 def _reads_observations(likelihood: Any) -> bool:
@@ -132,14 +132,14 @@ def _subset_scoring_reason(likelihood: Any) -> str:
     """Why *likelihood*, which :func:`_reads_observations` rejects, cannot be minibatched."""
     return (
         "the likelihood must be a ConditionalDistribution that can score a subset of its "
-        f"observations, such as one from glm_likelihood; got {described(likelihood)}"
+        f"observations, such as one from glm_likelihood; got {_described(likelihood)}"
     )
 
 
 def _likelihood_given(prior: Any, likelihood: ConditionalDistribution, theta: Any) -> dict:
     """The likelihood's given values at *theta*, a draw of *prior*."""
-    components = _components_of(prior.event_spec, theta)
-    return {slot: components[slot] for slot in likelihood.given_spec}
+    outputs = _outputs_of(prior.event_spec, theta)
+    return {input_name: outputs[input_name] for input_name in likelihood.given_spec}
 
 
 # ---------------------------------------------------------------------------
@@ -207,8 +207,8 @@ class MinibatchedDistribution(
         ``[1, len(data)]``.
     """
 
-    #: The constructor takes no component, so the repr shows none.
-    _repr_component: ClassVar[str | None] = None
+    #: The constructor takes no output name, so the repr shows none.
+    _repr_output_name: ClassVar[str | None] = None
 
     def __init__(
         self,
@@ -223,7 +223,7 @@ class MinibatchedDistribution(
         if not isinstance(prior, SupportsLogProb):
             raise TypeError(
                 f"MinibatchedDistribution: prior must have a log-density (SupportsLogProb); "
-                f"got {described(prior)}"
+                f"got {_described(prior)}"
             )
         if not _reads_observations(likelihood):
             raise TypeError(f"MinibatchedDistribution: {_subset_scoring_reason(likelihood)}")
@@ -256,7 +256,7 @@ class MinibatchedDistribution(
         # declares them.
         self._draw_event_spec = _parameter_declaration(prior, "parameters")
 
-        # A draw is one fixed-minibatch target, the measure's one component.
+        # A draw is one fixed-minibatch target, the measure's one output.
         super().__init__("target", DistributionSpec(self._draw_event_spec), label=label)
         if expression is not None:
             self._store_expression(expression)

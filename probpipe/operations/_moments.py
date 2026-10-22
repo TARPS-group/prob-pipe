@@ -8,15 +8,19 @@ matching protocol, ``closed_form``, and a Monte Carlo fallback,
 capability returns the law's own moment, and a numeric fallback returns that
 moment of the empirical law of its draws. ``mean``, ``variance``, and
 ``quantile`` are computed coordinate by coordinate, so they also carry the
-structural route ``by_component``: for a law whose event is a record, it
-computes each component that has an exact route of its own by that route, on
-the component's view, and the other components together, so a dependent joint's
-root factors keep their closed forms. ``cov`` couples components and has no
-such route.
+structural route ``by_output``: for a law whose event is a record, it splits
+the event into its top-level outputs and computes each output that has an
+exact route of its own by that route, on the output's view, and the outputs
+without one together, as one block, so a dependent joint's root factors keep
+their closed forms. ``cov`` couples the outputs, so it has no such route.
 
-A moment of the event's kind keeps the event's packaging and derives its
-term specs, support included, and it names each component for the moment, so
-the mean of a law over ``mu`` and ``tau`` holds ``mean(mu)`` and ``mean(tau)``.
+A moment of the event's kind keeps the event's outputs, in the same form, and
+derives its term specs, support included, so the mean of a law over ``mu`` and
+``tau`` is a record whose fields are ``mu`` and ``tau``. Selection therefore
+commutes with a summary: for a law whose outputs are a record's fields, the part of
+``mean(d)`` at an event path ``p`` and ``mean(d[p])`` have one estimand, and
+they are equal where both take exact routes. ``cov`` is declared under the
+output ``cov``.
 A moment of ``d`` is labeled by the moment of a draw of ``d``, as
 ``𝔼[(mu, tau) ~ d]``, ``𝕍[...]``, ``√𝕍[...]``, ``ℂ[...]``, or ``ℚ[...]``, and
 the law of a function lifted over laws contributes its notation in place of the
@@ -30,16 +34,19 @@ operation ``mean(pushforward(d, f))``, so the integrand receives draws of
 in closed form, and otherwise the route ``pushforward_mean`` builds the
 pushforward by an evaluation rule and takes its mean. Its method names are
 therefore the evaluation rules', and an integration rule registered with the
-evaluation-rule registry serves both operations.
+evaluation-rule registry serves both operations. The route spends the call's
+``num_samples`` as the pushforward's ``max_evaluations``, since each draw is
+one evaluation of the integrand.
 
 ``standard_deviation(d)`` is the derived operation ``sqrt(variance(d))``, taken
-coordinate by coordinate. Its one route is the body route of its identity, so
-the call takes the routes of ``variance``, ``by_component`` included, and the
-identity passes the call's ``exact_only`` and ``n_broadcast_samples`` to
-``variance``.
+coordinate by coordinate. Its one route is the body route of its formula, so
+the call takes the routes of ``variance``, ``by_output`` included, and the
+derived route passes the call's ``exact_only``, ``max_evaluations``, and
+``num_samples`` to ``variance``.
 
 The draws of every Monte Carlo route are workflow-owned random events, and
-their number is the ``n_broadcast_samples`` control.
+their number is the ``num_samples`` control, which the call's provenance
+records.
 """
 
 from __future__ import annotations
@@ -56,6 +63,11 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._batch import Batch, BatchSpec, _flat_batch_spec
+from ..core._call_context import (
+    _collecting_call_accumulators,
+    _note_num_samples_used,
+    _NumSamplesUsed,
+)
 from ..core._dispatch import (
     Feasibility,
     MathematicalDomainError,
@@ -72,7 +84,7 @@ from ..core._record_batch import RecordBatch, _batch_class_for, _batch_over
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_names
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
-from ..core._specs import OutputSpec
+from ..core._specs import OutputSpec, _has_record_outputs
 from ..core.constraints import (
     _Boolean,
     _IntegerInterval,
@@ -117,7 +129,7 @@ from ._pushforward import (
     _bound_parameter,
     _call_at,
     _EvaluationRules,
-    _integrand_conditions,
+    _integrand_applicability_checks,
     _output_label,
     pushforward,
 )
@@ -134,7 +146,7 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# The declarations of the moments
+# The output specs of the moments
 # ---------------------------------------------------------------------------
 
 
@@ -163,8 +175,9 @@ def _hull(support: Any) -> Any:
 
 
 def _elementwise(spec: BatchSpec, term: Callable[[TermSpec], TermSpec]) -> BatchSpec:
-    """The batch spec on *spec*'s levels whose element is *term* of *spec*'s element."""
-    return BatchSpec._from_groups(term(spec.element_spec), spec.axis_groups, spec.level_names)
+    """The batch spec on *spec*'s levels whose elements' spec is *term* of *spec*'s, under the same name."""
+    element_spec = spec.element_spec._with_term_spec(term(spec.element_spec.term_spec))
+    return BatchSpec._from_groups(element_spec, spec.axis_groups, spec.level_names)
 
 
 def _mean_term(spec: TermSpec) -> TermSpec:
@@ -221,7 +234,7 @@ def _array_leaves(spec: TermSpec) -> list[NumericArraySpec]:
         batch_shape = tuple(spec.batch_shape)
         return [
             NumericArraySpec((*batch_shape, *leaf.shape), leaf.dtype)
-            for leaf in _array_leaves(spec.element_spec)
+            for leaf in _array_leaves(spec.element_spec.term_spec)
         ]
     if isinstance(spec, NumericArraySpec):
         return [spec]
@@ -230,62 +243,18 @@ def _array_leaves(spec: TermSpec) -> list[NumericArraySpec]:
     return []
 
 
-def _summary_name(summary: str, components: Any) -> str:
-    """The component a summary of *components* takes, the summary's call on them, as ``cov(mu, tau)``."""
-    return f"{summary}({', '.join(components)})"
+def _summary_declaration(declaration: OutputSpec, term: TermSpec) -> OutputSpec:
+    """The output spec of a summary of each output of *declaration*, whose type is *term*.
 
-
-def _named_record(record: RecordSpec, summary: str) -> RecordSpec:
-    """*record* with each immediate field named for *summary*, as ``mean(mu)``."""
-    return record.with_path_names(
-        {name: _summary_name(summary, [name]) for name in record.children}
-    )
-
-
-def _summary_declaration(declaration: OutputSpec, summary: str, term: TermSpec) -> OutputSpec:
-    """The declaration of a summary of each component of *declaration*, whose type is *term*.
-
-    Each component is named for the summary, as ``mean(theta)``, in the
-    declaration's packaging. A summary whose type is a law, as the mean of a law
-    over laws is, exposes that law's event, since a law takes its event's
-    components.
+    The summary takes the outputs of *declaration*, in the same form, so the mean
+    of a law over ``mu`` and ``tau`` is a record whose fields are ``mu`` and
+    ``tau``, and the mean of a law over ``theta`` is declared under ``theta``.
+    A summary whose type is a law, as the mean of a law over laws is, takes
+    the positional form over that law, since a law's outputs are its event's.
     """
     if isinstance(term, DistributionSpec):
         return OutputSpec(term)
-    if declaration.exposes_record:
-        return OutputSpec(_named_record(cast(RecordSpec, term), summary))
-    ((name, _),) = declaration.components.items()
-    return OutputSpec(**{_summary_name(summary, [name]): term})
-
-
-def _named_value(value: Any, summary: str, declaration: OutputSpec) -> Any:
-    """*value*, a summary of each component of *declaration*, with its fields named for *summary*.
-
-    A route returns the summary keyed by the law's components, as a record, a
-    batch of records, or a mapping. An exposed record's components are the
-    value's fields, which take the summary's names, and any other value is
-    returned as it is.
-    """
-    if not declaration.exposes_record:
-        return value
-    if isinstance(value, (Record, RecordBatch)):
-        names = value.children if isinstance(value, Record) else value.element_spec.children
-        return value.with_path_names({name: _summary_name(summary, [name]) for name in names})
-    if isinstance(value, Mapping):
-        return {_summary_name(summary, [name]): field for name, field in value.items()}
-    return value
-
-
-def _summary_route(
-    summary: str, execute: Callable[[BoundCall, OutputSpec | None], Any]
-) -> Callable[[BoundCall, OutputSpec | None], Any]:
-    """*execute*, whose value is keyed by the law's components, with its fields named for *summary*."""
-
-    def named(call: BoundCall, result: OutputSpec | None) -> Any:
-        return _named_value(execute(call, result), summary, call.operands["d"].event_spec)
-
-    named.__doc__ = execute.__doc__
-    return named
+    return declaration._with_term_spec(term)
 
 
 def _capability(method: str) -> Callable[[BoundCall, OutputSpec | None], Any]:
@@ -300,28 +269,27 @@ def _capability(method: str) -> Callable[[BoundCall, OutputSpec | None], Any]:
 
 
 def _mean_result(d: DistributionSpec) -> OutputSpec:
-    """A value of the event's kind, each component named ``mean(...)`` in the event's packaging.
+    """A value of the event's kind, under the event's outputs and in the same form.
 
     Its term specs are those of an average: floating, on the hull of the
     event's support, so the mean of a Bernoulli event lies in the unit interval.
     """
-    return _summary_declaration(d.event_spec, "mean", _mean_term(d.event_spec.spec))
+    return _summary_declaration(d.event_spec, _mean_term(d.event_spec.term_spec))
 
 
 def _variance_result(d: DistributionSpec) -> OutputSpec:
-    """A value of the event's kind with non-negative floating leaves, each component named ``variance(...)``."""
-    return _summary_declaration(d.event_spec, "variance", _variance_term(d.event_spec.spec))
+    """A value of the event's kind with non-negative floating leaves, under the event's outputs."""
+    return _summary_declaration(d.event_spec, _variance_term(d.event_spec.term_spec))
 
 
 def _cov_result(d: DistributionSpec) -> OutputSpec | None:
-    """The dense covariance of the flattened draw, a ``(size, size)`` array under ``cov(...)``.
+    """The dense covariance of the flat draw, a ``(size, size)`` array under the output ``cov``.
 
-    The component names every component of the event, as ``cov(mu, tau)``. The
-    size is the number of the event's coordinates; an event with free
+    The size is the number of the event's coordinates; an event with free
     dimensions leaves it to the returned value.
     """
-    name = _summary_name("cov", d.event_spec.components)
-    leaves = _array_leaves(d.event_spec.spec)
+    name = "cov"
+    leaves = _array_leaves(d.event_spec.term_spec)
     if any(leaf.free_dims for leaf in leaves):
         return OutputSpec(**{name: None})
     size = sum(prod(leaf.shape) for leaf in leaves)
@@ -336,7 +304,7 @@ def _quantile_result(d: DistributionSpec, q: TermSpec) -> OutputSpec:
     Parameters
     ----------
     d : DistributionSpec
-        The law's spec, whose event declaration the quantile's declaration
+        The law's spec, whose event spec the quantile's output spec
         follows.
     q : TermSpec
         The spec of the levels: a scalar for one level, or an array whose shape
@@ -345,9 +313,8 @@ def _quantile_result(d: DistributionSpec, q: TermSpec) -> OutputSpec:
     Returns
     -------
     OutputSpec
-        The event's declaration in its packaging, with the event's shapes and
-        each component ``x`` named ``quantile(x)``. Plural levels give its batch
-        form.
+        The event spec, with its outputs, form, and shapes.
+        Plural levels give its batch form.
 
     Raises
     ------
@@ -361,39 +328,43 @@ def _quantile_result(d: DistributionSpec, q: TermSpec) -> OutputSpec:
         raise ApplicabilityError(
             f"quantile: q must be a number or an array of numbers; got {name}{hint}"
         )
-    element = _summary_declaration(d.event_spec, "quantile", _quantile_term(d.event_spec.spec))
+    element = _summary_declaration(d.event_spec, _quantile_term(d.event_spec.term_spec))
     if not q.shape:
         return element
-    return element._with_spec(BatchSpec(element.spec, quantile=q.shape))
+    return element._with_term_spec(BatchSpec(element.term_spec, quantile=q.shape))
 
 
 def _expectation_result(f: TermSpec) -> OutputSpec | None:
-    """The mean of the integrand's output declaration, as ``mean(pushforward(d, f))`` declares it.
+    """The mean of the integrand's output spec, as ``mean(pushforward(d, f))`` declares it.
 
-    Each of the integrand's components is named ``mean(...)``, with an average's
-    term specs. An integrand that declares no output leaves the declaration to
-    the returned value.
+    It takes the integrand's outputs, in the same form, with an average's term
+    specs. An integrand that declares no output leaves the output spec to the
+    returned value.
     """
-    if isinstance(f, FunctionSpec) and f.output_spec is not None and f.output_spec.spec is not None:
-        return _summary_declaration(f.output_spec, "mean", _mean_term(f.output_spec.spec))
+    if (
+        isinstance(f, FunctionSpec)
+        and f.output_spec is not None
+        and f.output_spec.term_spec is not None
+    ):
+        return _summary_declaration(f.output_spec, _mean_term(f.output_spec.term_spec))
     return None
 
 
 def _is_numeric(spec: TermSpec | None) -> bool:
     """Whether *spec* declares a numeric value: an array, a record of arrays, or a batch of either."""
     if isinstance(spec, BatchSpec):
-        spec = _flat_batch_spec(spec).element_spec
+        spec = _flat_batch_spec(spec).element_spec.term_spec
     return isinstance(spec, NumericSpec)
 
 
 def _numeric_event(d: DistributionSpec) -> bool:
     """The law draws a numeric value: an array, a record of arrays, or a batch of either."""
-    return _is_numeric(d.event_spec.spec)
+    return _is_numeric(d.event_spec.term_spec)
 
 
 def _event_typed_variance(d: DistributionSpec) -> bool:
     """The event has an event-typed variance, which a measure-valued event lacks in general."""
-    return not isinstance(d.event_spec.spec, DistributionSpec)
+    return not isinstance(d.event_spec.term_spec, DistributionSpec)
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +390,7 @@ def _can_average(call: BoundCall, result: OutputSpec | None) -> Feasibility:
     The estimate assumes the mean is finite. The average of function-valued
     draws is not implemented.
     """
-    event = call.operands["d"].event_spec.spec
+    event = call.operands["d"].event_spec.term_spec
     if isinstance(event, FunctionSpec):
         return Feasibility(False, "the average of function-valued draws is not implemented yet")
     if not (_is_numeric(event) or isinstance(event, DistributionSpec)):
@@ -435,7 +406,7 @@ def _can_average_squares(call: BoundCall, result: OutputSpec | None) -> Feasibil
     The estimate assumes the variance is finite. The pointwise variance of
     function-valued draws is not implemented.
     """
-    event = call.operands["d"].event_spec.spec
+    event = call.operands["d"].event_spec.term_spec
     if isinstance(event, FunctionSpec):
         return Feasibility(
             False, "the pointwise variance of function-valued draws is not implemented yet"
@@ -449,16 +420,22 @@ def _can_average_squares(call: BoundCall, result: OutputSpec | None) -> Feasibil
 
 
 def _monte_carlo_draws(call: BoundCall, operation_kind: str) -> Any:
-    """``n_broadcast_samples`` workflow-owned draws of the law, the draw axis leading."""
-    return _workflow_draws(
+    """``num_samples`` workflow-owned draws of the law, the draw axis leading.
+
+    The count is noted as a ``num_samples`` the call used, so the call's provenance records it.
+    """
+    count = call.controls["num_samples"]
+    draws = _workflow_draws(
         call.operands["d"],
-        (call.controls["n_broadcast_samples"],),
+        (count,),
         operation_kind=operation_kind,
         execution_mode="monte_carlo",
     )
+    _note_num_samples_used(count)
+    return draws
 
 
-#: The label, the component, and the level of the empirical law of a fallback's draws.
+#: The label, the output, and the level of the empirical law of a fallback's draws.
 _DRAWS = "draws"
 
 
@@ -467,7 +444,7 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
 
     Draws of an array event are its atoms along their leading axis. Draws of a
     record event are its atoms as the batch of records the law's event
-    declaration calls for, whether they arrive as a nested mapping of raw
+    spec calls for, whether they arrive as a nested mapping of raw
     columns or as a record of columns. A batch of records is taken as it is.
     Draws of a batch-valued event are its atoms on one level before the
     event's own levels.
@@ -475,12 +452,12 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
     # The empirical law is internal, so it takes a fixed name, which a derived
     # label could not be: a label may hold ``~``, a space, ``;``, or ``/``.
     name = _DRAWS
-    event = call.operands["d"].event_spec.spec
+    event = call.operands["d"].event_spec.term_spec
     if isinstance(event, BatchSpec):
         if isinstance(draws, (RecordBatch, Mapping)):
             raw = _raw_record(draws)
         else:
-            raw = jnp.asarray(draws.raw() if isinstance(draws, Batch) else draws)
+            raw = jnp.asarray(draws.raw if isinstance(draws, Batch) else draws)
         level = name
         while level in _flat_batch_spec(event).level_names:
             level += "_"
@@ -488,16 +465,16 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
         atoms = _batch_over(raw, _flat_batch_spec(BatchSpec(event, {level: count})), name)
         return EmpiricalDistribution(atoms, label=name, event_spec=OutputSpec(**{name: event}))
     if isinstance(draws, Batch):
-        records = isinstance(draws.element_spec, RecordSpec)
-        return EmpiricalDistribution(draws, component=None if records else name, label=name)
+        records = isinstance(draws.element_spec.term_spec, RecordSpec)
+        return EmpiricalDistribution(draws, output_name=None if records else name, label=name)
     if not isinstance(event, RecordSpec):
         return EmpiricalDistribution(
-            jnp.asarray(draws), component=name, label=name, level=SAMPLE_LEVEL
+            jnp.asarray(draws), output_name=name, label=name, level=SAMPLE_LEVEL
         )
     atoms = _batch_class_for(event)(
         _raw_record(draws),
         SAMPLE_LEVEL,
-        element_spec=event,
+        element=event,
         label=name,
     )
     return EmpiricalDistribution(atoms, label=name)
@@ -520,16 +497,12 @@ def _mc_mean(call: BoundCall, result: OutputSpec | None) -> Any:
     whose draws are laws it is their finite mixture with equal weights, the
     Monte Carlo estimate of the mean measure.
     """
-    if _is_numeric(call.operands["d"].event_spec.spec):
-        return _named_value(
-            _empirical_of(call, _monte_carlo_draws(call, "mean"))._mean(),
-            "mean",
-            call.operands["d"].event_spec,
-        )
+    if _is_numeric(call.operands["d"].event_spec.term_spec):
+        return _empirical_of(call, _monte_carlo_draws(call, "mean"))._mean()
     if _mixture_factory is None:
         raise RuntimeError("the mixture family is not installed; import probpipe")
     draws = _monte_carlo_draws(call, "mean")
-    stored = draws.raw() if isinstance(draws, Batch) else draws
+    stored = draws.raw if isinstance(draws, Batch) else draws
     laws = list(np.asarray(stored, dtype=object).reshape(-1))
     return _mixture_factory(laws, jnp.full(len(laws), 1.0 / len(laws)), label=_call_label(call))
 
@@ -540,11 +513,7 @@ def _mc_variance(call: BoundCall, result: OutputSpec | None) -> Any:
     Each coordinate's variance is the mean squared deviation of the draws from
     their mean, dividing by the number of draws.
     """
-    return _named_value(
-        _empirical_of(call, _monte_carlo_draws(call, "variance"))._variance(),
-        "variance",
-        call.operands["d"].event_spec,
-    )
+    return _empirical_of(call, _monte_carlo_draws(call, "variance"))._variance()
 
 
 def _dense(covariance: Any) -> Any:
@@ -601,105 +570,103 @@ def _mc_quantile(call: BoundCall, result: OutputSpec | None) -> Any:
     levels = _check_levels(call.operands["q"])
     draws = _monte_carlo_draws(call, "quantile")
     quantiles = _empirical_of(call, draws)._quantile(levels)
-    return _record_batch(
-        _named_value(quantiles, "quantile", call.operands["d"].event_spec), call, result
-    )
+    return _record_batch(quantiles, call, result)
 
 
 # ---------------------------------------------------------------------------
-# The summaries component by component
+# The summaries output by output
 # ---------------------------------------------------------------------------
 
 
-def _view(d: Distribution, components: tuple[str, ...]) -> Distribution:
-    """The view of *d* at one component, or the selection of several."""
-    return d[components[0]] if len(components) == 1 else d[components]
+def _view(d: Distribution, outputs: tuple[str, ...]) -> Distribution:
+    """The view of *d* at one output, or the selection of several."""
+    return d[outputs[0]] if len(outputs) == 1 else d[outputs]
 
 
-def _block_values(view: Distribution, value: Any, summary: str) -> dict[str, Any]:
-    """The raw *value* of a summary of *view*, keyed by the components of the view's event.
+def _block_values(view: Distribution, value: Any) -> dict[str, Any]:
+    """The raw *value* of a summary of *view*, keyed by the outputs of the view's event.
 
-    A view that exposes a record returns the summary keyed by its components'
-    summary names, as ``mean(mu)``, and a view of one whole term returns that
-    term's summary.
+    A view whose outputs are a record's fields returns the summary keyed by
+    them, and a view in the keyword form returns its one output's summary.
     """
     declaration = view.event_spec
-    if declaration.exposes_record:
-        return {name: value[_summary_name(summary, [name])] for name in declaration.components}
-    ((name, _),) = declaration.components.items()
+    if _has_record_outputs(declaration):
+        return {name: value[name] for name in declaration.outputs}
+    ((name, _),) = declaration.outputs.items()
     return {name: value}
 
 
 @dataclass(frozen=True)
 class _Block:
-    """Components of the law that one resolution of the operation computes together.
+    """Outputs of the law that one resolution of the operation computes together.
 
     Attributes
     ----------
-    components : tuple of str
-        The components, in event order.
+    outputs : tuple of str
+        The outputs, in event order.
     view : Distribution
-        The law's view at the components: the view of one, or the selection of
+        The law's view at the outputs: the view of one, or the selection of
         several.
     report : Feasibility
         The operation's report on the view, which names the route it selects
         and that route's exactness.
     """
 
-    components: tuple[str, ...]
+    outputs: tuple[str, ...]
     view: Distribution
     report: Feasibility
 
 
 @dataclass(frozen=True)
 class _Partition:
-    """How ``by_component`` splits a call: its blocks in event order, and the split's report."""
+    """How ``by_output`` splits a call: its blocks in event order, and the split's report."""
 
     blocks: tuple[_Block, ...]
     report: Feasibility
 
 
-class _ByComponent(_DelegatingRoute):
-    """The summary of each component of a record event, by the route that component's view selects.
+class _ByOutput(_DelegatingRoute):
+    """The summary of each top-level output of a record event, by the route its view selects.
 
     ``mean``, ``variance``, and ``quantile`` are computed coordinate by
-    coordinate, so the summary of a law ``d`` whose event exposes a record is
+    coordinate, so the summary of a law ``d`` whose event is a record is
     the record of the summaries of the views ``d[B]`` over any partition of its
-    components into blocks ``B``. The route forms the partition from the
-    operation's own resolution on each component's view: a component for which
-    the operation selects an exact route is a block of its own, and the other
-    components form one block, whose draws they share. Each block is resolved
+    outputs into blocks ``B``. The route forms the partition from the
+    operation's own resolution on each output's view: an output for which
+    the operation selects an exact route is a block of its own, and the outputs
+    without one form one block, whose draws they share. Each block is resolved
     and run as the operation resolves a call on its view, under the call's
     controls with ``method`` unset and ``exact_only`` that of the candidate,
     inside the call itself, so its draws are the call's own.
 
     The route's exactness is that of its blocks: it is exact when every block's
     route is, and approximate otherwise. It applies when the event is a record
-    of at least two components, at least one of which has an exact route, and
-    the other components have a route together, so a law with no exact
-    component keeps the Monte Carlo fallback. It splits the top-level
-    components only, so a record-valued component is one block, whose route its
-    view selects. The result's provenance names, for each block, its
-    components, its route, and that route's exactness.
+    of at least two outputs, at least one of which has an exact route, and
+    the outputs without one have a route together, so a law none of whose
+    outputs has an exact route keeps the Monte Carlo fallback. It splits the
+    top-level outputs only, so a record-valued output is one block, whose
+    route its view selects. The result's provenance names, for each block, its
+    outputs, its route, that route's exactness, and the ``num_samples`` of a
+    block whose route drew Monte Carlo samples.
 
     Parameters
     ----------
     summary : str
-        The summary's name, as each component of its result is named:
+        The operation's name, which the route's error messages give:
         ``"mean"``, ``"variance"``, or ``"quantile"``.
     """
 
     source = RouteSource.STRUCTURAL
 
     def __init__(self, summary: str) -> None:
-        super().__init__("by_component")
+        super().__init__("by_output")
         self.summary = summary
 
     @property
     def condition(self) -> str:
         """The route's feasibility condition in words."""
         return (
-            "the event is a record of several components, at least one of which has an exact "
+            "the event is a record of several outputs, at least one of which has an exact "
             "route of its own, and the rest of which have a route together"
         )
 
@@ -719,7 +686,7 @@ class _ByComponent(_DelegatingRoute):
     def _resolve(self, call: BoundCall, view: Distribution, exact_only: bool) -> Feasibility:
         """The operation's report on *view*: the route it selects and that route's exactness.
 
-        A view the operation does not apply to, as a measure-valued component
+        A view the operation does not apply to, as a measure-valued output
         has no event-typed variance, is infeasible.
         """
         operation = call.operation
@@ -738,28 +705,28 @@ class _ByComponent(_DelegatingRoute):
         """This route's entries in the call's memo, which last as long as the call."""
         return call._memo.setdefault(self.name, {})
 
-    def _view_at(self, call: BoundCall, components: tuple[str, ...]) -> Distribution:
-        """The law's view at *components*, built once per call."""
+    def _view_at(self, call: BoundCall, outputs: tuple[str, ...]) -> Distribution:
+        """The law's view at *outputs*, built once per call."""
         views = self._memo(call).setdefault("views", {})
-        if components not in views:
-            views[components] = _view(call.operands["d"], components)
-        return views[components]
+        if outputs not in views:
+            views[outputs] = _view(call.operands["d"], outputs)
+        return views[outputs]
 
     def _classified(self, call: BoundCall) -> dict[str, Feasibility]:
-        """Each component's report restricted to exact routes, resolved once per call.
+        """Each output's report restricted to exact routes, resolved once per call.
 
-        A component is exact exactly when this report is feasible. Both of the
+        An output is exact exactly when this report is feasible. Both of the
         route's candidates read it: the operation selects an exact route on a
-        view whenever one applies, so restricting the component's resolution to
-        exact routes finds the components that are exact under either.
+        view whenever one applies, so restricting the output's resolution to
+        exact routes finds the outputs that are exact under either.
         """
         memo = self._memo(call)
-        if "components" not in memo:
-            memo["components"] = {
+        if "outputs" not in memo:
+            memo["outputs"] = {
                 c: self._resolve(call, self._view_at(call, (c,)), True)
-                for c in call.operands["d"].event_spec.components
+                for c in call.operands["d"].event_spec.outputs
             }
-        return memo["components"]
+        return memo["outputs"]
 
     def _partition(self, call: BoundCall, exact_only: bool) -> _Partition:
         """The blocks of the call, in event order, with the report of the split.
@@ -772,16 +739,16 @@ class _ByComponent(_DelegatingRoute):
         call : BoundCall
             The call, whose law is ``call.operands["d"]``.
         exact_only : bool
-            Whether the block of the components without an exact route is
+            Whether the block of the outputs without an exact route is
             restricted to exact routes.
 
         Returns
         -------
         _Partition
             The blocks and the split's report, which is infeasible when the
-            event is not a record of several components, when no component has
-            an exact route, or when the other components have no route
-            together; unresolved when a component's resolution is; and
+            event is not a record of several outputs, when no output has
+            an exact route, or when the outputs without one have no route
+            together; unresolved when an output's resolution is; and
             otherwise feasible, exact exactly when every block's route is.
         """
         memo = self._memo(call)
@@ -790,26 +757,26 @@ class _ByComponent(_DelegatingRoute):
         return memo["partition", exact_only]
 
     def _split(self, call: BoundCall, exact_only: bool) -> _Partition:
-        """The partition :meth:`_partition` returns, computed from the components' reports."""
+        """The partition :meth:`_partition` returns, computed from the outputs' reports."""
         d = call.operands["d"]
         if (
             not isinstance(d, Distribution)
-            or not d.event_spec.exposes_record
-            or len(d.event_spec.components) < 2
+            or not _has_record_outputs(d.event_spec)
+            or len(d.event_spec.outputs) < 2
         ):
-            reason = "the event is not a record of several components"
+            reason = "the event is not a record of several outputs"
             return _Partition((), Feasibility(False, reason))
-        components = tuple(d.event_spec.components)
+        outputs = tuple(d.event_spec.outputs)
         reports = self._classified(call)
         unresolved = [report for report in reports.values() if report.feasible is None]
         if unresolved:
             pending = tuple(dict.fromkeys(item for report in unresolved for item in report.pending))
             return _Partition((), Feasibility(None, pending=pending))
-        exact = tuple(c for c in components if reports[c].feasible is True)
+        exact = tuple(c for c in outputs if reports[c].feasible is True)
         if not exact:
-            return _Partition((), Feasibility(False, f"no component has an exact {self.summary}"))
+            return _Partition((), Feasibility(False, f"no output has an exact {self.summary}"))
         blocks = {c: _Block((c,), self._view_at(call, (c,)), reports[c]) for c in exact}
-        rest = tuple(c for c in components if c not in blocks)
+        rest = tuple(c for c in outputs if c not in blocks)
         if rest:
             view = self._view_at(call, rest)
             remaining = self._resolve(call, view, exact_only)
@@ -818,24 +785,24 @@ class _ByComponent(_DelegatingRoute):
             if remaining.feasible is False:
                 return _Partition((), self._declined(call, exact, rest, exact_only))
             blocks[rest[0]] = _Block(rest, view, remaining)
-        ordered = tuple(blocks[c] for c in components if c in blocks)
+        ordered = tuple(blocks[c] for c in outputs if c in blocks)
         exactness = all(block.report.exact is True for block in ordered)
         return _Partition(ordered, PointReport(True, exact=exactness))
 
     def _declined(
         self, call: BoundCall, exact: tuple[str, ...], rest: tuple[str, ...], exact_only: bool
     ) -> Feasibility:
-        """The report when the components in *rest* have no route together.
+        """The report when the outputs in *rest* have no route together.
 
         When the call itself sets ``exact_only``, the report says how to
-        compute the exact components, and the call's error leads with it.
+        compute the exact outputs, and the call's error leads with it.
         """
         if not exact_only:
             return Feasibility(
-                False, f"the components {format_names(rest)} have no {self.summary} route"
+                False, f"the outputs {format_names(rest)} have no {self.summary} route"
             )
         reason = (
-            f"the components {format_names(rest)} have no exact {self.summary}, but "
+            f"the outputs {format_names(rest)} have no exact {self.summary}, but "
             f"{format_names(exact)} do"
         )
         if not call.controls["exact_only"]:
@@ -847,27 +814,45 @@ class _ByComponent(_DelegatingRoute):
         )
         return Feasibility(
             False,
-            f"{reason}; call {self.summary} on the view of each component that does, as "
+            f"{reason}; call {self.summary} on the view of each output that does, as "
             f"{self.summary}({arguments})",
             actionable=True,
         )
 
-    def _run_block(self, call: BoundCall, block: _Block, exact_only: bool) -> tuple[Any, str, bool]:
-        """The raw summary of *block*, with the route that computed it and that route's exactness.
+    def _run_block(self, call: BoundCall, block: _Block, exact_only: bool) -> tuple[Any, dict]:
+        """The raw summary of *block*, with the metadata of how it was computed.
 
         The block is resolved and run as the operation runs a call on its view,
-        inside this call, so its draws are this call's own.
+        inside this call, so its draws count toward this call's. The metadata
+        names the block's outputs, the route that computed it, that route's
+        exactness, and, when the route drew Monte Carlo samples, their number
+        as ``num_samples``.
         """
         operation = call.operation
         controls = self._controls(call, exact_only)
-        point, declared, _ = operation._plan_point(self._values(call, block.view), controls)
+        route_inputs, result_declaration, _ = operation._plan_route_inputs(
+            self._values(call, block.view), controls
+        )
         candidates = operation._route_candidates(controls)
-        candidate, report = selected(operation.label, controls, candidates, point, declared)
-        value, settled_exactness = settled(candidate.run(point, declared, report))
+        candidate, report = selected(
+            operation.label, controls, candidates, route_inputs, result_declaration
+        )
+        with _collecting_call_accumulators("always") as block_context:
+            block_value, settled_exactness = settled(
+                candidate.run(route_inputs, result_declaration, report)
+            )
         exactness = (
             candidate.exactness(report) if settled_exactness is None else settled_exactness
         ) is True
-        return value, candidate.route_name, exactness
+        block_metadata: dict[str, Any] = {
+            "outputs": list(block.outputs),
+            "route": candidate.route_name,
+            "exact": exactness,
+        }
+        block_num_samples_used = cast(_NumSamplesUsed, block_context.num_samples_used)
+        if block_num_samples_used.provenance_num_samples is not None:
+            block_metadata["num_samples"] = block_num_samples_used.provenance_num_samples
+        return block_value, block_metadata
 
     def probe(
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
@@ -885,7 +870,7 @@ class _ByComponent(_DelegatingRoute):
         call : BoundCall
             The call, whose law is ``call.operands["d"]``.
         result : OutputSpec or None
-            The call's result declaration.
+            The output spec of the call's result.
         method : str or None
             Unused; a ``method`` control names this route itself.
         exact_only : bool
@@ -894,9 +879,9 @@ class _ByComponent(_DelegatingRoute):
         Returns
         -------
         Any
-            The summary keyed by the law's components, each named for the
-            summary, as a term whose provenance records each block's
-            components, route, and exactness; under ``raw``, its raw form.
+            The summary keyed by the law's outputs, as a term whose
+            provenance records each block's outputs, route, exactness, and
+            Monte Carlo draws; under ``raw``, its raw form.
 
         Raises
         ------
@@ -904,7 +889,7 @@ class _ByComponent(_DelegatingRoute):
             If the split does not realize the call, which a probe reports first.
         MathematicalDomainError
             If a block's route finds its summary undefined, as for a Cauchy
-            component's mean.
+            output's mean.
         """
         d = call.operands["d"]
         partition = self._partition(call, exact_only)
@@ -913,24 +898,22 @@ class _ByComponent(_DelegatingRoute):
                 f"{call.operation.label}: route {self.name!r} does not apply: "
                 f"{partition.report.description}"
             )
-        values: dict[str, Any] = {}
-        records = []
+        output_values: dict[str, Any] = {}
+        blocks_metadata = []
         for block in partition.blocks:
-            value, route, exactness = self._run_block(call, block, exact_only)
-            values.update(_block_values(block.view, value, self.summary))
-            records.append(
-                {"components": list(block.components), "route": route, "exact": exactness}
-            )
-        assembled = {c: values[c] for c in d.event_spec.components}
+            block_value, block_metadata = self._run_block(call, block, exact_only)
+            output_values.update(_block_values(block.view, block_value))
+            blocks_metadata.append(block_metadata)
+        assembled = {c: output_values[c] for c in d.event_spec.outputs}
         # A quantile at several levels is a batch of records, which
         # ``_record_batch`` assembles; any other value passes through it.
-        value = _record_batch(_named_value(assembled, self.summary, d.event_spec), call, result)
+        summary_value = _record_batch(assembled, call, result)
         return _assembled(
-            value,
+            summary_value,
             call,
             result,
             parents=[d],
-            metadata={"route": self.name, "blocks": records},
+            metadata={"route": self.name, "blocks": blocks_metadata},
         )
 
 
@@ -950,17 +933,17 @@ def mean(d: Distribution):
     element there.
 
     The routes, in selection order, are the law's closed form,
-    ``closed_form``; ``by_component``, which computes each component of a
-    record event by the route that component's view selects; and the Monte
+    ``closed_form``; ``by_output``, which computes each output of a
+    record event by the route its own view selects; and the Monte
     Carlo fallback, ``monte_carlo``. A dependent joint claims no mean, so when
-    one of its components, such as a root factor, has an exact mean, its mean
-    takes ``by_component``: that component's mean is exact, and the result as
+    one of its outputs, such as a root factor, has an exact mean, its mean
+    takes ``by_output``: that output's mean is exact, and the result as
     a whole is approximate.
 
     Parameters
     ----------
     d : Distribution
-        The law, whose ``_mean`` gives the closed form, whose components' views
+        The law, whose ``_mean`` gives the closed form, whose outputs' views
         give their own means otherwise, and whose draws the Monte Carlo
         fallback averages.
 
@@ -974,9 +957,9 @@ def mean(d: Distribution):
     ------
     ResolutionError
         If *d* has no closed-form mean and does not sample, or, under
-        ``exact_only``, if a component of a record event has no exact mean.
+        ``exact_only``, if an output of a record event has no exact mean.
     MathematicalDomainError
-        If the mean of *d*, or of a component whose own route is exact, is
+        If the mean of *d*, or of an output whose own route is exact, is
         known to be undefined, as a Cauchy law's is.
     """
 
@@ -987,26 +970,26 @@ mean.capability_route(
     protocol=SupportsMean,
     method="_mean",
     exact=True,
-    execute=_summary_route("mean", _capability("_mean")),
+    execute=_capability("_mean"),
 )
-mean.register_route(_ByComponent("mean"))
+mean.register_route(_ByOutput("mean"))
 mean.fallback_route("monte_carlo", check=_can_average, execute=_mc_mean, exact=False)
 
 
-@operation(result=_variance_result, conditions=(_event_typed_variance,))
+@operation(result=_variance_result, applicability_checks=(_event_typed_variance,))
 def variance(d: Distribution):
     """The variance of ``X ~ d``, a value shaped like one draw.
 
     A batch-valued law's variance is elementwise, as its mean is. The routes
     are those of ``mean``: the closed form, ``closed_form``;
-    ``by_component``, which computes each component of a record event by the
-    route that component's view selects; and the Monte Carlo fallback,
+    ``by_output``, which computes each output of a record event by the
+    route its own view selects; and the Monte Carlo fallback,
     ``monte_carlo``.
 
     Parameters
     ----------
     d : Distribution
-        The law, whose ``_variance`` gives the closed form, whose components'
+        The law, whose ``_variance`` gives the closed form, whose outputs'
         views give their own variances otherwise, and whose draws the Monte
         Carlo fallback uses.
 
@@ -1023,9 +1006,9 @@ def variance(d: Distribution):
         general.
     ResolutionError
         If *d* has no closed-form variance and does not sample, or, under
-        ``exact_only``, if a component of a record event has no exact variance.
+        ``exact_only``, if an output of a record event has no exact variance.
     MathematicalDomainError
-        If the variance of *d*, or of a component whose own route is exact, is
+        If the variance of *d*, or of an output whose own route is exact, is
         known to be undefined, as a Cauchy law's is.
     """
 
@@ -1036,27 +1019,28 @@ variance.capability_route(
     protocol=SupportsVariance,
     method="_variance",
     exact=True,
-    execute=_summary_route("variance", _capability("_variance")),
+    execute=_capability("_variance"),
 )
-variance.register_route(_ByComponent("variance"))
+variance.register_route(_ByOutput("variance"))
 variance.fallback_route(
     "monte_carlo", check=_can_average_squares, execute=_mc_variance, exact=False
 )
 
 
 def _standard_deviation_result(d: DistributionSpec) -> OutputSpec:
-    """A value of the event's kind with non-negative floating leaves, each component named ``standard_deviation(...)``."""
-    return _summary_declaration(
-        d.event_spec, "standard_deviation", _variance_term(d.event_spec.spec)
-    )
+    """A value of the event's kind with non-negative floating leaves, under the event's outputs."""
+    return _summary_declaration(d.event_spec, _variance_term(d.event_spec.term_spec))
 
 
 def _root(value: Any) -> Any:
     """The square root of each coordinate of *value*: of each array leaf, or of a function's values.
 
-    A function's square root takes the function's parameters, where its
-    signature can be read.
+    A mapping's square root is the mapping of its fields' square roots, under
+    the same keys. A function's square root takes the function's parameters,
+    where its signature can be read.
     """
+    if isinstance(value, Mapping):
+        return {name: _root(field) for name, field in value.items()}
     if callable(value):
 
         def root(*args: Any, **kwargs: Any) -> Any:
@@ -1069,23 +1053,6 @@ def _root(value: Any) -> Any:
     return jax.tree.map(jnp.sqrt, value)
 
 
-def _square_root(variance_value: Any, declaration: OutputSpec) -> Any:
-    """The standard deviation of a law whose event is *declaration*, from its raw variance.
-
-    Each coordinate's standard deviation is the square root of its variance.
-    The variance of an exposed record is keyed by its components' variance
-    names, as ``variance(mu)``, and the result by their standard deviation
-    names, as ``standard_deviation(mu)``.
-    """
-    if declaration.exposes_record and isinstance(variance_value, Mapping):
-        by_component = {
-            name: _root(variance_value[_summary_name("variance", [name])])
-            for name in declaration.components
-        }
-        return _named_value(by_component, "standard_deviation", declaration)
-    return _root(variance_value)
-
-
 def _variance_applies(d: Any) -> Any:
     """``variance`` has a route for the law."""
     return variance.check(d)
@@ -1093,21 +1060,22 @@ def _variance_applies(d: Any) -> Any:
 
 @operation(
     result=_standard_deviation_result,
-    conditions=(_event_typed_variance,),
-    identity_check=_variance_applies,
+    applicability_checks=(_event_typed_variance,),
+    derived_route_check=_variance_applies,
 )
 def standard_deviation(d: Distribution):
     """The standard deviation ``sqrt(variance(d))`` of ``X ~ d``, a value shaped like one draw.
 
     Each coordinate's standard deviation is the square root of its variance,
-    so a record-drawing law's is a ``Record`` with a field for each component,
+    so a record-drawing law's is a ``Record`` with a field for each output,
     and a random function's is its pointwise standard deviation function.
 
     The call takes the routes of ``variance``: its closed form, its
-    ``by_component`` route, and its Monte Carlo fallback. ``exact_only`` and
-    ``n_broadcast_samples`` set on this operation pass to ``variance``, but
-    ``method`` does not, so a route of ``variance`` is chosen on
-    ``variance.using(method=...)``.
+    ``by_output`` route, and its Monte Carlo fallback. ``exact_only``,
+    ``max_evaluations``, and ``num_samples`` set on this operation pass to
+    ``variance``, but ``method`` does not, so a route of ``variance`` is chosen
+    on ``variance.using(method=...)``. When ``variance`` draws Monte Carlo
+    samples, the call's provenance records their number as ``num_samples``.
 
     Parameters
     ----------
@@ -1118,8 +1086,8 @@ def standard_deviation(d: Distribution):
     -------
     TrackedTerm
         The standard deviation at the law's declared event kind, with
-        non-negative leaves, labeled ``√𝕍[(mu, tau) ~ d]``, each component
-        named ``standard_deviation(...)``.
+        non-negative leaves under the event's outputs, labeled
+        ``√𝕍[(mu, tau) ~ d]``.
 
     Raises
     ------
@@ -1132,10 +1100,10 @@ def standard_deviation(d: Distribution):
     MathematicalDomainError
         If the variance of *d* is known to be undefined, as a Cauchy law's is.
     """
-    return _square_root(variance.using(raw=True)(d), d.event_spec)
+    return _root(variance.using(raw=True)(d))
 
 
-@operation(result=_cov_result, conditions=(_numeric_event,))
+@operation(result=_cov_result, applicability_checks=(_numeric_event,))
 def cov(d: Distribution):
     """The covariance of the flattened draw of ``X ~ d``, a ``(size, size)`` array.
 
@@ -1181,14 +1149,14 @@ cov.capability_route(
 cov.fallback_route("monte_carlo", check=_can_sample, execute=_mc_cov, exact=False)
 
 
-@operation(result=_quantile_result, conditions=(_numeric_event,))
+@operation(result=_quantile_result, applicability_checks=(_numeric_event,))
 def quantile(d: Distribution, q: Any):
     """The per-coordinate quantiles of ``X ~ d`` at the levels *q*.
 
     A batch-valued law's quantiles are elementwise, as its mean is. The routes
-    are the law's closed form, ``closed_form``; ``by_component``,
-    which computes each component of a record event by the route that
-    component's view selects; and the Monte Carlo fallback, ``monte_carlo``,
+    are the law's closed form, ``closed_form``; ``by_output``,
+    which computes each output of a record event by the route its own
+    view selects; and the Monte Carlo fallback, ``monte_carlo``,
     which ``using(method=...)`` selects among. The fallback's quantile
     at a level ``q`` is the generalized
     inverse ``inf{x : F(x) >= q}`` of each coordinate's CDF over the draws, as
@@ -1216,7 +1184,7 @@ def quantile(d: Distribution, q: Any):
         If a concrete level lies outside ``[0, 1]``.
     ResolutionError
         If *d* has no closed-form quantiles and does not sample, or, under
-        ``exact_only``, if a component of a record event has no exact
+        ``exact_only``, if an output of a record event has no exact
         quantiles.
     """
 
@@ -1228,9 +1196,7 @@ def _closed_form_quantile(call: BoundCall, result: OutputSpec | None) -> Any:
     records.
     """
     quantiles = call.operands["d"]._quantile(_check_levels(call.operands["q"]))
-    return _record_batch(
-        _named_value(quantiles, "quantile", call.operands["d"].event_spec), call, result
-    )
+    return _record_batch(quantiles, call, result)
 
 
 quantile.capability_route(
@@ -1241,26 +1207,40 @@ quantile.capability_route(
     exact=True,
     execute=_closed_form_quantile,
 )
-quantile.register_route(_ByComponent("quantile"))
+quantile.register_route(_ByOutput("quantile"))
 quantile.fallback_route("monte_carlo", check=_can_sample, execute=_mc_quantile, exact=False)
 
 
 class _PushforwardMean(_EvaluationRules):
-    """The identity of ``expectation``: a rule of ``pushforward`` builds the law ``f♯d``, and ``mean`` averages it.
+    """The derived route of ``expectation``: a rule of ``pushforward`` builds the law ``f♯d``, and ``mean`` averages it.
 
     The route runs ``pushforward``'s route and then ``mean`` on the law it
     returns, so its method names are the evaluation rules'. The engine runs both
-    steps in the scope of an identity (VI.0). The route ranks once, as an
-    identity: among the approximate routes, and under ``exact_only`` among the
+    steps in the scope of a derived route (VI.0). The route ranks once, as a
+    derived route: among the approximate routes, and under ``exact_only`` among the
     exact ones, with the rule and the mean both restricted to exact routes. The
     mean's route is chosen only once the law exists, so without ``exact_only``
     the probe reports the rule's exactness when it is approximate and leaves it
     open otherwise, which the call's report states as approximate, and it
     defers the mean's check; the run records the exactness of both steps.
+
+    Each draw of the law is one evaluation of the integrand, so the call's
+    resolved ``num_samples`` is the map's ``max_evaluations``, whatever the map
+    sets, and the call's own ``max_evaluations`` is not passed to the map. When
+    the sampling lift builds the law, the call's provenance records its
+    ``num_samples``.
     """
+
+    #: The controls the run forwards to the call of the map, besides the
+    #: ``max_evaluations`` that the call's ``num_samples`` gives.
+    _forwarded = tuple(name for name in _EvaluationRules._forwarded if name != "max_evaluations")
 
     def __init__(self) -> None:
         super().__init__("pushforward_mean")
+
+    def _forwarded_controls(self, call: BoundCall) -> dict[str, Any]:
+        """The controls the caller set, with the call's ``num_samples`` as the map's ``max_evaluations``."""
+        return super()._forwarded_controls(call) | {"max_evaluations": call.controls["num_samples"]}
 
     @property
     def condition(self) -> str:
@@ -1290,10 +1270,13 @@ class _PushforwardMean(_EvaluationRules):
     ) -> Any:
         """The mean of the pushforward law the selected rule returns, with the exactness of both steps."""
         law = super().run(call, result, method=method, exact_only=exact_only)
+        provenance = getattr(law, "provenance", None)
+        if provenance is not None and provenance.metadata.get("route") == "sampling_lift":
+            _note_num_samples_used(call.controls["num_samples"])
         averaged = mean(law)
         steps = (_recorded_exactness(law), _recorded_exactness(averaged))
         exact = False if False in steps else (True if steps == (True, True) else None)
-        return RouteOutcome(averaged.raw(), exact)
+        return RouteOutcome(averaged.raw, exact)
 
 
 def _recorded_exactness(term: Any) -> bool | None:
@@ -1305,8 +1288,8 @@ def _recorded_exactness(term: Any) -> bool | None:
 @operation(
     result=_expectation_result,
     roles={"f": (FunctionSpec,)},
-    conditions=_integrand_conditions("expectation"),
-    identity_route=_PushforwardMean(),
+    applicability_checks=_integrand_applicability_checks("expectation"),
+    derived_route=_PushforwardMean(),
 )
 def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = None):
     """The expectation ``𝔼[f(X)]`` for ``X ~ d``, defined as ``mean(pushforward(d, f))``.
@@ -1316,14 +1299,17 @@ def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
     the expectation in closed form, and otherwise the route ``pushforward_mean``
     builds the pushforward by an evaluation rule, which
     ``using(method=...)`` names, and takes its mean. Under ``exact_only``
-    both steps are restricted to exact routes.
+    both steps are restricted to exact routes. The pushforward evaluates the
+    integrand at most ``num_samples`` times, the call's control, so
+    ``expectation.using(num_samples=n)`` sets the number of draws of a Monte
+    Carlo estimate, and the call's provenance records it.
 
     Parameters
     ----------
     d : Distribution
         The law to integrate against.
     f : callable or Function
-        Maps one draw to a value; a ``Function``'s output declaration names the
+        Maps one draw to a value; a ``Function``'s output spec names the
         result's kind. Exactly one of its parameters has no default and is
         absent from *fixed_args*, and each draw binds it.
     fixed_args : mapping of str to Any, optional
@@ -1337,7 +1323,7 @@ def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
     Returns
     -------
     TrackedTerm
-        ``𝔼[f(X)]`` at the kind the integrand's output declaration names,
+        ``𝔼[f(X)]`` at the kind the integrand's output spec names,
         labeled ``𝔼[f(mu ~ d)]`` by the integrand's label: a ``Function``'s
         label, a callable's ``__name__``, and ``𝒻`` for a lambda.
 
@@ -1368,11 +1354,11 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
     fixed = dict(call.operands.get("fixed_args") or {})
     parameter = _bound_parameter(f, fixed, subject="expectation")
     operation = isinstance(f, Operation)
-    body = f if operation else f.raw()
+    body = f if operation else f.raw
     constants = {**({} if operation else f._bind), **fixed}
     if constants:
         constants = dict(presented_arguments(f._signature_info, constants))
-    record = isinstance(call.operands["d"].event_spec.spec, RecordSpec)
+    record = isinstance(call.operands["d"].event_spec.term_spec, RecordSpec)
     first = next(iter(f.signature.parameters.values()), None)
     positional = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
     if (
@@ -1392,10 +1378,8 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
 
 
 def _closed_form_expectation(call: BoundCall, result: OutputSpec | None) -> Any:
-    """``d._expectation(f)``, each component of the integrand's output named ``mean(...)``."""
-    value = call.operands["d"]._expectation(_integrand(call))
-    declared = _as_function(call.operands["f"], subject="expectation").output_spec
-    return value if declared is None else _named_value(value, "mean", declared)
+    """``d._expectation(f)``, under the integrand's outputs."""
+    return call.operands["d"]._expectation(_integrand(call))
 
 
 expectation.capability_route(

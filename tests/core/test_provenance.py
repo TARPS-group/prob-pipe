@@ -267,7 +267,7 @@ class TestBijectorTransformedDistributionProvenance:
         assert td.provenance.metadata["bijector"] == "chain_of_exp_of_shift"
 
     def test_transform_with_empirical_base(self):
-        ed = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="x", label="x")
+        ed = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), output_name="x", label="x")
         td = BijectorTransformedDistribution("td", ed, tfb.Exp())
         assert td.provenance is not None
         assert td.provenance.operation == "transform"
@@ -283,7 +283,7 @@ class TestBijectorTransformedDistributionProvenance:
 
 class TestConditioningProvenance:
     def test_product_condition_on(self):
-        joint = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=1.0, scale=2.0, label="y")
+        joint = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=1.0, scale=2.0, label="y")
         cond = condition_on(joint, {"x": jnp.array(0.0)})
         assert cond.provenance is not None
         assert cond.provenance.operation == "workflow.condition_on"
@@ -296,7 +296,7 @@ class TestConditioningProvenance:
         ]
 
     def test_condition_on_records_plain_observation_by_parameter(self):
-        joint = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=1.0, scale=2.0)
+        joint = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=1.0, scale=2.0)
 
         at_zero = condition_on(joint, {"x": jnp.array(0.0)})
         at_five = condition_on(joint, {"x": jnp.array(5.0)})
@@ -311,7 +311,7 @@ class TestConditioningProvenance:
         )
 
     def test_dependent_joint_condition_on(self):
-        joint = _ShiftKernel() * Normal("z", loc=0.0, scale=1.0)
+        joint = _ShiftKernel() & Normal("z", loc=0.0, scale=1.0)
         cond = condition_on_operation(joint, {"z": jnp.array(1.0)})
         assert cond.provenance.operation == "workflow.condition_on"
         # The operation, the joint, and the slice's law, whose own record names its stage.
@@ -323,7 +323,7 @@ class TestConditioningProvenance:
         assert isinstance(cond.provenance.parents[0], ParentInfo)
 
     def test_gaussian_condition_on(self):
-        jg = MultivariateNormal("x", jnp.zeros(1), cov=jnp.eye(1)) * MultivariateNormal(
+        jg = MultivariateNormal("x", jnp.zeros(1), cov=jnp.eye(1)) & MultivariateNormal(
             "y", jnp.zeros(1), cov=jnp.eye(1), label="y"
         )
         cond = condition_on(jg, {"x": jnp.array([0.0])})
@@ -350,8 +350,9 @@ class TestBroadcastingProvenance:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
-            n_broadcast_samples=20,
+            traceable=False,
+            executor="sequential",
+            max_evaluations=20,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):
@@ -364,7 +365,7 @@ class TestBroadcastingProvenance:
         assert result.provenance.parents[0].parent is wf
         assert result.provenance.parents[1].parent is n
         assert result.provenance.metadata["dispatch"] == "sequential"
-        assert result.provenance.metadata["n_samples"] == 20
+        assert result.provenance.metadata["max_evaluations"] == 20
         assert result.provenance.metadata["func"] == "identity"
         assert result.provenance.metadata["broadcast_args"] == ["x"]
 
@@ -377,8 +378,8 @@ class TestBroadcastingProvenance:
         wf = Function(
             double,
             label="double",
-            dispatch="jax",
-            n_broadcast_samples=20,
+            executor="jax",
+            max_evaluations=20,
             output_spec=OutputSpec(double=None),
         )
         with workflow_run(seed=42):
@@ -388,8 +389,10 @@ class TestBroadcastingProvenance:
         assert result.provenance.operation == "broadcast"
         assert result.provenance.metadata["dispatch"] == "jax"
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
-    def test_broadcast_records_static_plain_inputs(self, dispatch):
+    @pytest.mark.parametrize(
+        ("executor", "traceable"), [("sequential", False), ("jax", None)], ids=["sequential", "jax"]
+    )
+    def test_broadcast_records_static_plain_inputs(self, executor, traceable):
         n = Normal("input_normal", loc=0.0, scale=1.0)
 
         def shift(x: float, offset: float = 2.0) -> float:
@@ -398,8 +401,9 @@ class TestBroadcastingProvenance:
         wf = Function(
             shift,
             label="shift",
-            dispatch=dispatch,
-            n_broadcast_samples=5,
+            traceable=traceable,
+            executor=executor,
+            max_evaluations=5,
             output_spec=OutputSpec(shift=None),
         )
 
@@ -420,8 +424,8 @@ class TestBroadcastingProvenance:
         wf = Function(
             add,
             label="add",
-            dispatch="sequential",
-            n_broadcast_samples=20,
+            executor="sequential",
+            max_evaluations=20,
             output_spec=OutputSpec(add=None),
         )
         with workflow_run(seed=42):
@@ -432,7 +436,7 @@ class TestBroadcastingProvenance:
 
     def test_broadcast_enumerate_provenance(self):
         """Enumeration path should also get provenance."""
-        ed = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="x")
+        ed = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), output_name="x")
         n = Normal("n", loc=0.0, scale=1.0)
 
         def add(a: float, b: float) -> float:
@@ -441,8 +445,8 @@ class TestBroadcastingProvenance:
         wf = Function(
             add,
             label="add",
-            dispatch="sequential",
-            n_broadcast_samples=20,
+            executor="sequential",
+            max_evaluations=20,
             output_spec=OutputSpec(add=None),
         )
         with workflow_run(seed=42):
@@ -494,8 +498,8 @@ class TestBroadcastingProvenance:
         wf = Function(
             add_noise,
             label="add_noise",
-            dispatch="sequential",
-            n_broadcast_samples=5,
+            executor="sequential",
+            max_evaluations=5,
             output_spec=OutputSpec(add_noise=None),
         )
 
@@ -518,11 +522,11 @@ class TestProvenanceChains:
     def test_two_step_chain(self):
         """convert → condition_on creates a 2-step chain.
 
-        The converted law keeps the source's component, which the joint conditions on.
+        The converted law keeps the source's output, which the joint conditions on.
         """
         src = StudentT("prior", df=5.0, loc=0.0, scale=1.0, label="prior")
         converted = convert(src, Normal)
-        joint = converted * Normal("y", loc=0.0, scale=1.0)
+        joint = converted & Normal("y", loc=0.0, scale=1.0)
         cond = condition_on(joint, {"prior": jnp.array(0.0)})
 
         # cond's provenance points to joint
@@ -545,8 +549,8 @@ class TestProvenanceChains:
         wf = Function(
             log_val,
             label="log_val",
-            dispatch="sequential",
-            n_broadcast_samples=20,
+            executor="sequential",
+            max_evaluations=20,
             output_spec=OutputSpec(log_val=None),
         )
         with workflow_run(seed=42):
@@ -765,8 +769,8 @@ class TestProvenanceAncestors:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
-            n_broadcast_samples=10,
+            executor="sequential",
+            max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):
@@ -791,8 +795,8 @@ class TestProvenanceAncestors:
         wf = Function(
             add,
             label="add",
-            dispatch="sequential",
-            n_broadcast_samples=10,
+            executor="sequential",
+            max_evaluations=10,
             output_spec=OutputSpec(add=None),
         )
         with workflow_run(seed=42):
@@ -883,8 +887,8 @@ class TestProvenanceDag:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
-            n_broadcast_samples=10,
+            executor="sequential",
+            max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):
@@ -947,7 +951,7 @@ class TestProvenanceDag:
 
 class TestProvenanceModes:
     def test_lightweight_is_default(self):
-        assert probpipe.provenance_config.mode is ProvenanceMode.LIGHTWEIGHT
+        assert probpipe.config.provenance.mode is ProvenanceMode.LIGHTWEIGHT
 
     def test_lightweight_stores_parent_info(self):
         """LIGHTWEIGHT mode stores ParentInfo descriptors, not live refs."""
@@ -959,8 +963,8 @@ class TestProvenanceModes:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
-            n_broadcast_samples=10,
+            executor="sequential",
+            max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):
@@ -984,8 +988,8 @@ class TestProvenanceModes:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
-            n_broadcast_samples=10,
+            executor="sequential",
+            max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):
@@ -1018,8 +1022,8 @@ class TestProvenanceModes:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
-            n_broadcast_samples=10,
+            executor="sequential",
+            max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):
@@ -1043,8 +1047,8 @@ class TestProvenanceModes:
         wf = Function(
             add,
             label="add",
-            dispatch="sequential",
-            n_broadcast_samples=10,
+            executor="sequential",
+            max_evaluations=10,
             output_spec=OutputSpec(add=None),
         )
         with workflow_run(seed=42):
@@ -1068,8 +1072,8 @@ class TestProvenanceModes:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
-            n_broadcast_samples=10,
+            executor="sequential",
+            max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):
@@ -1081,7 +1085,7 @@ class TestProvenanceModes:
 
     def test_off_mode_no_provenance(self):
         """OFF mode attaches no provenance to workflow results."""
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         n = Normal("input", loc=0.0, scale=1.0)
 
         def identity(x: float) -> float:
@@ -1090,8 +1094,8 @@ class TestProvenanceModes:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
-            n_broadcast_samples=10,
+            executor="sequential",
+            max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):
@@ -1100,12 +1104,12 @@ class TestProvenanceModes:
 
     def test_mode_setter_rejects_non_enum(self):
         with pytest.raises(TypeError, match="ProvenanceMode"):
-            probpipe.provenance_config.mode = "full"
+            probpipe.config.provenance.mode = "full"
 
     def test_reset_restores_lightweight(self):
-        probpipe.provenance_config.mode = ProvenanceMode.FULL
-        probpipe.provenance_config.reset()
-        assert probpipe.provenance_config.mode is ProvenanceMode.LIGHTWEIGHT
+        probpipe.config.provenance.mode = ProvenanceMode.FULL
+        probpipe.config.provenance.reset()
+        assert probpipe.config.provenance.mode is ProvenanceMode.LIGHTWEIGHT
 
     def test_lightweight_parent_is_garbage_collected(self):
         """LIGHTWEIGHT mode does not prevent the parent from being GC'd."""
@@ -1147,7 +1151,7 @@ class TestProvenanceModes:
 
     def test_off_mode_ancestors_empty(self):
         """In OFF mode provenance_ancestors returns an empty list."""
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         n = Normal("input", loc=0.0, scale=1.0)
 
         def identity(x: float) -> float:
@@ -1156,8 +1160,8 @@ class TestProvenanceModes:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
-            n_broadcast_samples=10,
+            executor="sequential",
+            max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):
@@ -1167,7 +1171,7 @@ class TestProvenanceModes:
     def test_off_mode_dag_single_node(self):
         """In OFF mode provenance_dag renders only the root node with no edges."""
         pytest.importorskip("graphviz")
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         n = Normal("input", loc=0.0, scale=1.0)
 
         def identity(x: float) -> float:
@@ -1176,8 +1180,8 @@ class TestProvenanceModes:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
-            n_broadcast_samples=10,
+            executor="sequential",
+            max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
         with workflow_run(seed=42):

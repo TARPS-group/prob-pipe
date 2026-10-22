@@ -39,7 +39,7 @@ def simple_model():
     x = np.asarray(np.linspace(-1, 1, 20)).astype(np.float32)
     X = jnp.asarray(np.stack([np.ones_like(x), x], axis=1))
     prior = MultivariateNormal("beta", loc=jnp.zeros(2), cov=5.0 * jnp.eye(2))
-    return glm_likelihood("y", PoissonFamily(), X=X) * prior
+    return glm_likelihood("y", PoissonFamily(), X=X) & prior
 
 
 @pytest.fixture
@@ -88,7 +88,7 @@ class TestInferenceMethodRegistry:
             posterior = condition_on.using(method_options={"num_results": 50, "num_warmup": 20})(
                 simple_model, data
             )
-        assert mean(posterior)["mean(beta)"].shape == (2,)
+        assert mean(posterior)["beta"].shape == (2,)
 
     def test_exact_only_refuses_every_inference_method(self, simple_model, data):
         """Every registered method is approximate, so an exact-only call resolves to nothing."""
@@ -400,11 +400,11 @@ def gaussian_model():
     prior = Normal("mu", loc=0.0, scale=1.0)
     likelihood = ObservationKernel(
         "y",
-        {"mu": prior.event_spec.spec},
+        {"mu": prior.event_spec.term_spec},
         NumericArraySpec((3,)),
         lambda mu: tfd.Independent(tfd.Normal(jnp.broadcast_to(mu, (3,)), 1.0), 1),
     )
-    return likelihood * prior
+    return likelihood & prior
 
 
 @pytest.fixture
@@ -469,7 +469,7 @@ def _logistic_target():
     from probpipe.operations._condition import _unnormalized_conditional
 
     X = jnp.array([[1.0, 0.5], [1.0, -0.3], [1.0, 1.2], [1.0, -1.1]])
-    joint = glm_likelihood("y", BernoulliFamily(), X=X) * MultivariateNormal(
+    joint = glm_likelihood("y", BernoulliFamily(), X=X) & MultivariateNormal(
         "beta", jnp.zeros(2), jnp.eye(2)
     )
     return _unnormalized_conditional(
@@ -495,7 +495,8 @@ class TestTargets:
         joint, given = joint_and_given(target)
         assert joint is simple_model
         assert set(given.fields) == {"y"}
-        assert observed_target(simple_model, None) is simple_model
+        assert observed_target(simple_model, None).joint is simple_model
+        assert observed_target(simple_model, None).conditions_on_nothing
 
     def test_a_keyed_target_is_its_own_model(self):
         from probpipe.inference._inference_utils import joint_and_given, observed_parts
@@ -503,7 +504,7 @@ class TestTargets:
         target = _logistic_target()
         assert observed_parts(target) == (target, None)
         joint, given = joint_and_given(target)
-        assert set(joint.event_spec.components) == {"y", "beta"}
+        assert set(joint.event_spec.outputs) == {"y", "beta"}
         assert set(given.fields) == {"y"}
 
     def test_the_gradient_method_normalizes_a_keyed_target(self):
@@ -512,14 +513,14 @@ class TestTargets:
         assert (info.feasible, info.method_name) == (True, "blackjax_nuts")
         with workflow_run(seed=0):
             posterior = inference_method_registry.execute(target, num_results=30, num_warmup=30)
-        assert set(posterior.event_spec.components) == {"beta"}
+        assert set(posterior.event_spec.outputs) == {"beta"}
         assert flat_draws(posterior)["beta"].shape == (4 * 30, 2)
 
     def test_the_random_walk_normalizes_a_keyed_target(self):
         posterior = inference_method_registry.execute(
             _logistic_target(), method="blackjax_rwmh", num_results=20, num_warmup=30
         )
-        assert set(posterior.event_spec.components) == {"beta"}
+        assert set(posterior.event_spec.outputs) == {"beta"}
         assert flat_draws(posterior)["beta"].shape == (4 * 20, 2)
 
     def test_a_keyed_target_starts_at_a_draw_of_its_joint(self):
@@ -532,7 +533,7 @@ class TestTargets:
     def test_a_target_without_a_density_is_refused_by_the_gradient_method(self):
         from probpipe.operations._condition import condition_on as condition_on_operation
 
-        simulator = Normal("theta", 0.0, 1.0) * Normal("y", 0.0, 1.0)
+        simulator = Normal("theta", 0.0, 1.0) & Normal("y", 0.0, 1.0)
         target = condition_on_operation.using(method="unnormalized")(
             _WithoutDensity(simulator), {"y": 0.3}
         )

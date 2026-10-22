@@ -19,7 +19,7 @@ from .named_tree import NamedTree
 
 
 def _require_hashable(value: Any, *, context: str) -> None:
-    """Fail at construction when a schema component cannot be hashed."""
+    """Fail at construction when a part of a schema cannot be hashed."""
     try:
         hash(value)
     except TypeError as error:
@@ -742,8 +742,8 @@ def _known_type(first: OpaqueSpec, second: OpaqueSpec) -> OpaqueSpec:
 
 def _opaque_value(value: Any) -> Any:
     """*value*, or the value it wraps when it is a tracked opaque value, an ``Opaque``."""
-    if isinstance(getattr(value, "spec", None), OpaqueSpec) and hasattr(value, "value"):
-        return value.value
+    if isinstance(getattr(value, "spec", None), OpaqueSpec) and hasattr(type(value), "raw"):
+        return value.raw
     return value
 
 
