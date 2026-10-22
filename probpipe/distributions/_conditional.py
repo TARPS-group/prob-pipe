@@ -89,7 +89,7 @@ def _complete_given_spec(given_spec: Any) -> InputSpec:
 
     Parameters
     ----------
-    given_spec : InputSpec or Mapping[str, TermSpec]
+    given_spec : InputSpec, Mapping, RecordSpec, or OutputSpec
         The term spec of each input's value, keyed by input name.
 
     Returns
@@ -106,19 +106,27 @@ def _complete_given_spec(given_spec: Any) -> InputSpec:
         If it has no inputs, since binding the last input returns a
         ``Distribution``, or an input name is not an identifier.
     """
-    if not isinstance(given_spec, InputSpec):
-        if not isinstance(given_spec, Mapping):
-            raise TypeError(
-                f"given_spec must be an InputSpec or a mapping of term specs, got "
-                f"{type(given_spec).__name__}"
-            )
-        given_spec = InputSpec(given_spec)
+    given_spec = _read_given_inputs(given_spec)
     if not len(given_spec):
         raise ValueError(
             "given_spec is empty, but a ConditionalDistribution needs at least one input; "
             "use a Distribution for a law with no inputs"
         )
     return given_spec
+
+
+def _read_given_inputs(given_spec: Any) -> InputSpec:
+    """Read the supported input sources with the kernel's source diagnostics."""
+    if isinstance(given_spec, (Distribution, DistributionSpec)):
+        kind = "Distribution" if isinstance(given_spec, Distribution) else "DistributionSpec"
+        raise TypeError(
+            f"given_spec cannot be a {kind}. "
+            "Pass its event_spec to declare the inputs its outputs supply"
+        )
+    try:
+        return given_spec if isinstance(given_spec, InputSpec) else InputSpec(given_spec)
+    except TypeError as error:
+        raise TypeError(f"given_spec: {error}") from None
 
 
 def _unknown_inputs(label: str, unknown: list[str], inputs: Iterable[str]) -> str:
@@ -312,7 +320,7 @@ class ConditionalDistributionSpec(TermSpec):
 
     Parameters
     ----------
-    given_spec : InputSpec or Mapping[str, TermSpec]
+    given_spec : InputSpec, Mapping, RecordSpec, or OutputSpec
         The named inputs a kernel conditions on, at least one.
     event_spec : OutputSpec or RecordSpec
         The output spec of one produced draw, as for ``DistributionSpec``. A
@@ -517,7 +525,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
 
     Parameters
     ----------
-    given_spec : InputSpec or Mapping[str, TermSpec]
+    given_spec : InputSpec, Mapping, RecordSpec, or OutputSpec
         The named inputs the kernel conditions on, at least one; the keys are
         Python identifiers.
     event_spec : OutputSpec or RecordSpec
@@ -1438,7 +1446,7 @@ def _inputs_of(
         The kernel's label, which error messages name.
     fn : callable
         The function whose parameters are the inputs.
-    given_spec : InputSpec or Mapping[str, TermSpec] or None
+    given_spec : InputSpec, Mapping, RecordSpec, or OutputSpec or None
         The specs of some or all parameters, keyed by parameter name. ``None``
         declares every input by its annotation or its default.
 
@@ -1455,16 +1463,31 @@ def _inputs_of(
         variadic or positional-only, or a parameter without a default is
         declared by neither.
     """
-    declared = dict((given_spec or {}).items())
+    declared_spec = _read_given_inputs(given_spec)
+    declared = dict(declared_spec.items())
     try:
         signature = inspect.signature(fn, eval_str=True)
     except NameError:
         signature = inspect.signature(fn)
     unknown = sorted(set(declared) - set(signature.parameters))
     if unknown:
+        parameter_names = list(signature.parameters)
+        declared_names = list(declared)
+        if (
+            isinstance(given_spec, OutputSpec)
+            and isinstance(given_spec.term_spec, RecordSpec)
+            and len(parameter_names) == 1
+            and parameter_names[0] not in declared
+        ):
+            group = parameter_names[0]
+            raise TypeError(
+                f"given_spec declares the fields {' and '.join(declared_names)} of the group {group}, "
+                f"but {label} takes {group} itself. Pass event_spec[[{group!r}]]"
+            )
         raise TypeError(
-            f"given_spec of {label!r}: "
-            f"{unknown_names('parameter', unknown, list(signature.parameters))}"
+            f"given_spec declares {' and '.join(unknown)}, but {label} takes only "
+            f"{' and '.join(parameter_names)}. Pass event_spec.without({', '.join(map(repr, unknown))}) "
+            f"or event_spec[{parameter_names!r}]"
         )
     inputs: dict[str, TermSpec] = {}
     optional: list[str] = []
@@ -1557,7 +1580,7 @@ def _function_kernel(
         ``ℙ`` for a lambda or a callable without a name.
     fn : callable
         The function of the given values that returns a law.
-    given_spec : InputSpec or Mapping[str, TermSpec] or None
+    given_spec : InputSpec, Mapping, RecordSpec, or OutputSpec or None
         The specs of some or all inputs, keyed by parameter name, which
         :func:`_inputs_of` completes.
     event_spec : OutputSpec or TermSpec or None
@@ -1656,7 +1679,7 @@ def conditional_distribution(
     label : str, optional
         The kernel's label. Defaults to the function's ``__name__``, and to
         ``ℙ`` for a lambda or a callable without a name.
-    given_spec : InputSpec or Mapping[str, TermSpec], optional
+    given_spec : InputSpec, Mapping, RecordSpec, or OutputSpec, optional
         The specs of some or all inputs, keyed by parameter.
     event_spec : OutputSpec or TermSpec, optional
         The event spec, which must name the outputs of the returned

@@ -235,7 +235,7 @@ class TestConstructionErrors:
         with pytest.raises(ValueError, match="identifiers"):
             _kernel(given={input_name: SCALAR})
 
-    @pytest.mark.parametrize("input_term_spec", [None, (3,), 3.0])
+    @pytest.mark.parametrize("input_term_spec", [None, 3.0])
     def test_an_input_that_is_not_a_term_spec_raises(self, input_term_spec):
         with pytest.raises(TypeError, match="TermSpec"):
             _kernel(given={"mu": input_term_spec})

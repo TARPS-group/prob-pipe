@@ -151,7 +151,6 @@ class TestOutputSpec:
             ((RecordSpec(x=()), RecordSpec(y=())), {}),
             ((RecordSpec(x=()),), {"y": spec}),
             ((), {"x": None, "y": spec}),
-            ((), {"x": ()}),
         ]:
             with pytest.raises(TypeError):
                 OutputSpec(*args, **kwargs)
@@ -742,7 +741,7 @@ class TestDeclarationConstruction:
         with pytest.raises(ValueError, match="output names must be non-empty"):
             OutputSpec(**{name: NumericArraySpec(())})
 
-    @pytest.mark.parametrize("value", [None, (), {}, 1, "spec"])
+    @pytest.mark.parametrize("value", [None, {}, 1, "spec"])
     def test_inputs_require_specs(self, value):
         with pytest.raises(TypeError):
             InputSpec(x=value)
@@ -1528,9 +1527,8 @@ class TestDeclarationMessages:
         with pytest.raises(TypeError, match=r"cannot take a NumericArraySpec positionally; name"):
             OutputSpec(NumericArraySpec(()))
 
-    def test_a_shape_tuple_input_is_told_to_use_an_array_spec(self):
-        with pytest.raises(TypeError, match=r"input 'x' needs a TermSpec, got tuple; use Num"):
-            InputSpec(x=(3,))
+    def test_a_shape_tuple_input_is_an_array_spec(self):
+        assert InputSpec(x=(3,))["x"] == NumericArraySpec((3,))
 
     def test_an_unknown_optional_input_lists_the_inputs(self):
         with pytest.raises(KeyError, match=r"unknown input 'y'; available inputs: \['x'\]"):

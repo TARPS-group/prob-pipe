@@ -32,6 +32,30 @@ The values themselves are on [Values and records](values.md).
 
 ## Input and output specs
 
+An `InputSpec` reads another input spec, a mapping, a `RecordSpec`'s top-level
+fields, or an `OutputSpec`'s outputs. Copying an input spec preserves its optional
+inputs. Tuple shapes are shorthand for `NumericArraySpec`, in input declarations
+and keyword output declarations alike:
+
+```python
+from probpipe import InputSpec, OutputSpec, RecordSpec
+
+inputs = InputSpec(mu=(), observations=(100,))
+event = OutputSpec(RecordSpec(mu=(), sigma=()))
+mu_input = InputSpec(event[["mu"]])
+```
+
+Pass a law's `event_spec` directly as `given_spec` when a kernel takes those
+outputs as inputs. Use `event_spec[["mu"]]` to retain one output, or
+`event_spec.without("sigma")` to remove an output. To pass a whole record as one
+input, retain its named group with list selection. These declarations name
+inputs; passing the law itself does not describe their types.
+
+Input list selection retains declaration order and optional flags. Merging
+input specs with `left & right` retains the first type of a shared input after
+checking compatibility. A shared input is optional only when both sides mark it
+optional.
+
 ::: probpipe.InputSpec
 
 ::: probpipe.OutputSpec

@@ -53,7 +53,12 @@ from ..core._numeric_array import _inferred_spec
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_default, format_names, public_class_name, term_repr, type_name
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
-from ..core._specs import InputSpec, OpaqueSpec, OutputSpec, _root_output_name
+from ..core._specs import (
+    InputSpec,
+    OpaqueSpec,
+    OutputSpec,
+    _root_output_name,
+)
 from ..core.config import WorkflowKind, _checked_count, config
 from ..core.named_tree import _PATH_SEP
 from ..core.tracked import Annotated, TrackedTerm, _callable_label, _callable_name
@@ -994,7 +999,7 @@ class Function(TrackedTerm, Annotated):
     label : str, optional
         Optional non-empty display alias. Defaults to the callable name, or ``𝒻``
         for a lambda; a callable without a name requires an explicit label.
-    input_spec : InputSpec or Mapping[str, TermSpec] or None
+    input_spec : InputSpec, Mapping, RecordSpec, or OutputSpec or None
         Authoritative inputs matching fixed signature parameters by name.
         Declared inputs cannot accompany variadic parameters. Defaults and
         construction bindings must satisfy the input spec.
@@ -1260,12 +1265,10 @@ class Function(TrackedTerm, Annotated):
                 f"Function output_label must be a non-empty string; got {output_label!r}"
             )
         if input_spec is not None and not isinstance(input_spec, InputSpec):
-            if not isinstance(input_spec, Mapping):
-                raise TypeError(
-                    "input_spec must be an InputSpec, a mapping, or None; "
-                    f"got {type(input_spec).__name__}"
-                )
-            input_spec = InputSpec(input_spec)
+            try:
+                input_spec = InputSpec(input_spec)
+            except TypeError as error:
+                raise TypeError(f"input_spec: {error}") from None
         output_name = _callable_output_name(metadata_source)
         output_spec = _complete_output_spec(output_spec, output_name=output_name)
         construction_bindings = dict(bind or {})

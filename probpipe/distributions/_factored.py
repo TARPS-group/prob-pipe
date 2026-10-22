@@ -49,6 +49,7 @@ from ..core._specs import (
     _has_record_outputs,
     _merged_output_record,
     _root_output_name,
+    _unify_input_types,
 )
 from ..core.named_tree import _PATH_SEP, _unflatten_paths
 from ..core.provenance import Provenance
@@ -316,40 +317,6 @@ def _flattened(
     return tuple(flat), bindings
 
 
-def _unify_either_way(
-    first: TermSpec, second: TermSpec, bindings: dict[str, int], path: str
-) -> None:
-    """Unify two specs that meet as equals, whichever direction admits the other.
-
-    Parameters
-    ----------
-    first : TermSpec
-        The spec of one unmet input.
-    second : TermSpec
-        The spec of another unmet input of the same name.
-    bindings : dict[str, int]
-        The size of each symbolic dimension bound so far, keyed by its name, which
-        the direction that unifies extends in place.
-    path : str
-        The location that error messages name, such as ``"the input 'x'"``.
-
-    Raises
-    ------
-    ValueError
-        If neither direction unifies, with the error of the first.
-    """
-    trial = dict(bindings)
-    try:
-        _unify_specs(first, second, trial, path)
-    except ValueError as forward:
-        trial = dict(bindings)
-        try:
-            _unify_specs(second, first, trial, path)
-        except ValueError:
-            raise forward from None
-    bindings.update(trial)
-
-
 def _factor_graph(
     factors: Sequence[Factor], scope: Mapping[str, int] | None = None
 ) -> _FactorGraph:
@@ -412,7 +379,6 @@ def _factor_graph(
     output_term_specs = outputs_record.children
     edges: list[tuple[int, int, str]] = []
     unmet: dict[str, TermSpec] = {}
-    required: set[str] = set()
     for index, factor in enumerate(factors):
         given = _given_of(factor)
         if given is None:
@@ -420,10 +386,8 @@ def _factor_graph(
         for input_name, input_term_spec in given.items():
             producer = producers.get(input_name)
             if producer is None:
-                if input_name not in given.optional:
-                    required.add(input_name)
                 if input_name in unmet:
-                    _unify_either_way(
+                    _unify_input_types(
                         unmet[input_name], input_term_spec, bindings, f"the input {input_name!r}"
                     )
                     if isinstance(unmet[input_name], OpaqueSpec) and isinstance(
@@ -463,11 +427,18 @@ def _factor_graph(
             values_word="draws",
         )
     )
+    unmet_inputs = InputSpec()
+    for factor in factors:
+        given = _given_of(factor)
+        if given is not None:
+            names = [name for name in given if name not in producers]
+            if names:
+                unmet_inputs = unmet_inputs & given[names]
     return _FactorGraph(
         factors=factors,
         producers=producers,
         edges=tuple(edges),
-        unmet=InputSpec(unmet).with_optional(*(set(unmet) - required)) if required else None,
+        unmet=unmet_inputs if unmet_inputs.required else None,
         event_spec=event_spec,
         scope=bindings,
     )
