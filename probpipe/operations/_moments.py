@@ -56,14 +56,18 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from math import prod
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from ..core._batch import Batch, BatchSpec, _flat_batch_spec
-from ..core._call_context import _collecting_num_samples_used, _note_num_samples_used
+from ..core._call_context import (
+    _collecting_call_accumulators,
+    _note_num_samples_used,
+    _NumSamplesUsed,
+)
 from ..core._dispatch import (
     Feasibility,
     MathematicalDomainError,
@@ -832,7 +836,7 @@ class _ByOutput(_DelegatingRoute):
         candidate, report = selected(
             operation.label, controls, candidates, route_inputs, result_declaration
         )
-        with _collecting_num_samples_used("always") as block_num_samples_used:
+        with _collecting_call_accumulators("always") as block_context:
             block_value, settled_exactness = settled(
                 candidate.run(route_inputs, result_declaration, report)
             )
@@ -844,6 +848,7 @@ class _ByOutput(_DelegatingRoute):
             "route": candidate.route_name,
             "exact": exactness,
         }
+        block_num_samples_used = cast(_NumSamplesUsed, block_context.num_samples_used)
         if block_num_samples_used.provenance_num_samples is not None:
             block_metadata["num_samples"] = block_num_samples_used.provenance_num_samples
         return block_value, block_metadata

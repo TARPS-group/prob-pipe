@@ -361,6 +361,11 @@ class EvaluationChunk:                   # a contiguous slice of evaluation poin
     start: int
     stop: int
     def run(self, shared_payload: SharedPayload) -> EvaluationOutcomes: ...   # one outcome per evaluation point, in order
+
+@dataclass(frozen=True)
+class SharedPayload:                     # what an executor passes to EvaluationChunk.run without reading it
+    fn: Callable[..., Any]                # the callable
+    shared_arguments: Mapping[str, Any]  # the arguments every evaluation point shares
 ```
 
 **Running a chunk.** An executor runs a set of evaluation points by its **chunks**, and `EvaluationChunk.run` does the same wherever it runs:

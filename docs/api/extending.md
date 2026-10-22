@@ -184,6 +184,96 @@ The registry ships three rules: the sampling lift and the elementwise sweep, whi
 
 ::: probpipe.array_backend_for
 
+## A new executor
+
+An executor decides how the evaluations a call asks for run: one after another, on threads, in worker processes, compiled by JAX, or on a cluster.
+It never decides what they compute, so changing the executor changes no result beyond the last bit of rounding.
+The evaluations of one callable that one request asks for, such as 200 runs of a simulator at 200 parameter values, form one `EvaluationPoints`, and an executor runs it by its chunks.
+A user names an executor on a `Function`, as `simulate.using(executor="thread", executor_options={"max_workers": 8})`.
+For now a lifted call and a sweep still run by their `dispatch` control, and a call only checks the executor's name and options; they move onto executors in a coming change.
+
+ProbPipe ships four executors in `executor_registry`:
+
+- `jax`, which maps a callable JAX can trace over every evaluation point at once, and is selected automatically for one;
+- `sequential`, which runs the evaluation points one after another, and is selected automatically for every other callable;
+- `thread`, which runs chunks on a pool of threads, with the options `max_workers` and `chunk_size`;
+- `process`, which runs chunks in worker processes started under the calling process's JAX settings, with the options `max_workers`, `chunk_size`, and `start_method`.
+
+`thread` and `process` run only when named, since user code may not be safe to run in several threads or to send to another process.
+
+A new executor subclasses `EvaluationExecutor`, sets its `name` and `description`, and implements `check` and `execute`.
+Its options are the parameters of `execute` after the set of evaluation points, which `check` takes too.
+`execute` runs every chunk, passing each the set's shared payload, and returns one outcome per evaluation point in order; `EvaluationOutcomes.merge` restores that order from chunks that finished in any order.
+A chunk pickles, so an executor may run it in another process or on another machine, and `shipping_check()` reports whether the set can be sent.
+Pickling a chunk again, to retry it after its first run was lost, gives the retry the same random keys.
+An executor that runs chunks elsewhere returns `EvaluationOutcomes.lost(chunk, reason)` for a chunk that never finished.
+An executor with no `priority` runs only when named.
+`check_executor`, in `probpipe.testing`, checks an executor against the contract before it is registered:
+
+<!-- docs-test: skip, a Slurm cluster and submitit -->
+```python
+import submitit
+
+from probpipe import EvaluationExecutor, EvaluationOutcomes, executor_registry
+from probpipe.testing import check_executor
+
+
+def run_chunk(chunk, shared_payload):
+    return chunk.run(shared_payload)
+
+
+class SlurmExecutor(EvaluationExecutor):
+    name = "slurm"
+    description = "Run chunks of evaluation points as Slurm array jobs."
+
+    def check(self, evaluation_points, /, *, n_jobs=1, partition="short", retries=0):
+        return evaluation_points.shipping_check()
+
+    def execute(self, evaluation_points, /, *, n_jobs=1, partition="short", retries=0):
+        cluster = submitit.AutoExecutor(folder="slurm_logs")
+        cluster.update_parameters(slurm_partition=partition)
+        shared_payload = evaluation_points.shared_payload()
+        pending_chunks = evaluation_points.chunks(num_chunks=n_jobs)
+        chunk_outcomes, failed_jobs = [], []
+        for _ in range(retries + 1):
+            jobs = cluster.map_array(run_chunk, pending_chunks, [shared_payload] * len(pending_chunks))
+            failed_jobs = []
+            for chunk, job in zip(pending_chunks, jobs):
+                try:
+                    chunk_outcomes.append(job.result())   # errors of user code are in the outcomes
+                except Exception as job_error:            # the job itself died
+                    failed_jobs.append((chunk, job_error))
+            pending_chunks = [chunk for chunk, _ in failed_jobs]
+            if not pending_chunks:
+                break
+        chunk_outcomes += [EvaluationOutcomes.lost(chunk, str(job_error)) for chunk, job_error in failed_jobs]
+        return EvaluationOutcomes.merge(chunk_outcomes)
+
+
+check_executor(SlurmExecutor())
+executor_registry.register(SlurmExecutor())
+```
+
+::: probpipe.EvaluationExecutor
+    options:
+      members:
+        - check
+        - execute
+
+::: probpipe.executor_registry
+
+::: probpipe.EvaluationPoints
+
+::: probpipe.EvaluationChunk
+
+::: probpipe.SharedPayload
+
+::: probpipe.EvaluationOutcomes
+
+::: probpipe.EvaluationFailure
+
+::: probpipe.testing.check_executor
+
 ## Dispatch registries
 
 A dispatch registry holds named methods and selects one for a call by the types of its arguments.
@@ -247,11 +337,12 @@ It answers three queries:
 - `registry_catalog.describe("inference")`: one registry's entries in its own order, each with its priority where the registry ranks its entries and its exactness where the registry declares it, with a dispatch registry's floors and its opt-in-only methods each in a section of their own;
 - `registry_catalog["inference"].describe_entry("blackjax_nuts")`: one entry, as an `EntrySummary`.
 
-The catalog holds five registries:
+The catalog holds six registries:
 
 - `"bijectors"`: the bijector factories that `bijector_for` selects from;
 - `"converters"`: `converter_registry`;
 - `"evaluation_rules"`: `evaluation_rule_registry`;
+- `"executors"`: `executor_registry`;
 - `"inference"`: `inference_method_registry`;
 - `"operations"`: `operation_registry`.
 

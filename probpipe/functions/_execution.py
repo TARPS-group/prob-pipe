@@ -13,9 +13,10 @@ replay record stores and a replay checks.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator
+import threading
+from collections.abc import Callable, Generator, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, replace
 from functools import partial
 from time import sleep
@@ -27,6 +28,10 @@ except ImportError:
     task = flow = None
 
 from ..core._call_context import _carrying_call_context
+from ..core._evaluation_points import (
+    _install_evaluation_point_scopes,
+    _UnscopedEvaluationPoints,
+)
 from ..core.config import WorkflowKind
 from . import _context, _evaluation_keys
 from ._evaluation_keys import (
@@ -924,3 +929,233 @@ def _ensure_prefect_available() -> None:
             "Prefect task or flow execution was requested, but Prefect is not installed. "
             "Install with: pip install probpipe[prefect]"
         )
+
+
+# ---------------------------------------------------------------------------
+# The workflow scopes of a set of evaluation points (core._evaluation_points)
+# ---------------------------------------------------------------------------
+
+
+class _WorkflowEvaluationPointScopes:
+    """The workflow scope of each evaluation point of one set, under the call that built the set.
+
+    A ProbPipe draw made inside an evaluation point takes its random key from
+    the evaluation point's segment of the workflow, which this issues when the
+    set is built and registers with the call's key broker. In the calling
+    process an evaluation point runs in the scope that :func:`execute_many`
+    gives each evaluation point. A chunk sent to another process reserves an
+    attempt for each of its evaluation points with the broker, so a draw there
+    takes the key it takes here, and the claims the worker makes return with
+    the chunk's outcomes.
+
+    Parameters
+    ----------
+    num_evaluation_points : int
+        The size of the set.
+    set_position : int
+        The set's position among the sets its call asks for, which keeps its
+        evaluation points' segments apart from those of the call's other sets.
+    """
+
+    def __init__(self, num_evaluation_points: int, set_position: int) -> None:
+        self._parent_frame = _context._capture_active_workflow_frame()
+        self._parent_broker = _evaluation_keys._capture_active_broker()
+        self._issued_points = issue_evaluation_points(
+            [{}] * num_evaluation_points,
+            point_segments=[
+                sweep_cell_point_segment((set_position, point_index))
+                for point_index in range(num_evaluation_points)
+            ],
+        )
+        if self._parent_broker is not None:
+            self._parent_broker.register_evaluation_points(self._issued_points)
+        self._attempts_lock = threading.Lock()
+        self._outstanding_attempts: dict[int, EvaluationPointAttempt] = {}
+
+    @contextmanager
+    def point_scope(self, point_index: int) -> Generator[None, None, None]:
+        """The scope evaluation point *point_index* runs in, in the calling process.
+
+        A reservation the evaluation point holds from a chunk sent elsewhere
+        is released first, since the evaluation point now runs here.
+        """
+        self._release_outstanding_attempt(point_index)
+        with _evaluation_point_scope(
+            self._issued_points[point_index], self._parent_frame, self._parent_broker
+        ):
+            yield
+
+    def vectorized_scope(self) -> AbstractContextManager[None]:
+        """The scope one call on stacked evaluation points runs in, which refuses workflow draws."""
+        return _context._workflow_jax_runtime_guard()
+
+    def mapped_scope(self) -> AbstractContextManager[None]:
+        """The scope a ``jax.vmap`` over the evaluation points runs in, which refuses workflow draws."""
+        return _context._workflow_jax_runtime_guard()
+
+    def shipped(self, point_indices: range) -> _ShippedEvaluationPointScopes:
+        """Scopes for *point_indices* that pickle, each reserved as an attempt with the call's broker.
+
+        Shipping an evaluation point again, as an executor that retries a
+        chunk does, releases its earlier reservation, so the new attempt is a
+        retry with the same keys.
+        """
+        reserved_points: dict[int, tuple[IssuedEvaluationPoint, EvaluationPointAttempt, Any]] = {}
+        for point_index in point_indices:
+            issued_point = self._issued_points[point_index]
+            attempt = EvaluationPointAttempt.create(issued_point.frame.token)
+            parent_envelope = None
+            if self._parent_broker is not None:
+                self._release_outstanding_attempt(point_index)
+                parent_envelope = self._parent_broker.reserve_remote_evaluation_point_attempt(
+                    issued_point.frame, attempt, parent_authority=True
+                )
+                with self._attempts_lock:
+                    self._outstanding_attempts[point_index] = attempt
+            reserved_points[point_index] = (issued_point, attempt, parent_envelope)
+        return _ShippedEvaluationPointScopes(reserved_points)
+
+    def claim_reports(self) -> tuple[Any, ...]:
+        """No reports: the evaluation points of the calling process claim with the broker directly."""
+        return ()
+
+    def accept_claim_reports(self, claim_reports: Iterable[EvaluationPointClaimReport]) -> None:
+        """Add the claims that runs in other processes made to the call's record of draws.
+
+        A report of an attempt that a later shipping replaced is ignored, since
+        its reservation was released.
+        """
+        for claim_report in claim_reports:
+            with self._attempts_lock:
+                reported_point = next(
+                    (
+                        point_index
+                        for point_index, attempt in self._outstanding_attempts.items()
+                        if attempt.attempt_token == claim_report.attempt.attempt_token
+                    ),
+                    None,
+                )
+                if reported_point is None:
+                    continue
+                del self._outstanding_attempts[reported_point]
+            if self._parent_broker is not None:
+                self._parent_broker.accept_remote_claim_report(claim_report)
+
+    def close(self) -> None:
+        """Release every reservation no report answered, and check that every evaluation point joined."""
+        if self._parent_broker is None:
+            return
+        for point_index in list(self._outstanding_attempts):
+            self._release_outstanding_attempt(point_index)
+        self._parent_broker.cancel_unstarted_evaluation_points(self._issued_points)
+        self._parent_broker.assert_evaluation_points_joined(self._issued_points)
+
+    def _release_outstanding_attempt(self, point_index: int) -> None:
+        """Release the reservation evaluation point *point_index* holds for a run elsewhere, if any."""
+        with self._attempts_lock:
+            outstanding_attempt = self._outstanding_attempts.pop(point_index, None)
+        if outstanding_attempt is not None and self._parent_broker is not None:
+            self._parent_broker.abort_remote_evaluation_point_attempt(outstanding_attempt)
+
+
+class _ShippedEvaluationPointScopes:
+    """The workflow scopes of a chunk's evaluation points, as a worker process receives them.
+
+    Each evaluation point runs in a frame rebuilt from its call's workflow
+    and in the attempt its call reserved, and its claims are reported back
+    with the chunk's outcomes.
+
+    Parameters
+    ----------
+    reserved_points : Mapping of int to tuple
+        For each point index, the issued evaluation point, its reserved
+        attempt, and the envelope of its call's authority, ``None`` outside a
+        call that draws.
+    """
+
+    def __init__(
+        self,
+        reserved_points: Mapping[int, tuple[IssuedEvaluationPoint, EvaluationPointAttempt, Any]],
+    ) -> None:
+        self._reserved_points = dict(reserved_points)
+        self._claim_reports: list[EvaluationPointClaimReport] = []
+
+    @contextmanager
+    def point_scope(self, point_index: int) -> Generator[None, None, None]:
+        """The scope evaluation point *point_index* runs in, in the worker process."""
+        _, attempt, parent_envelope = self._reserved_points[point_index]
+        if parent_envelope is None:
+            with _context._transported_workflow_frame(None):
+                yield
+            return
+        with _context._transported_workflow_frame(parent_envelope.root_words):
+            remote_parent = None
+            try:
+                with _evaluation_keys._remote_evaluation_point_stochastic_scope(
+                    parent_envelope, attempt
+                ) as remote_parent:
+                    yield
+            finally:
+                if remote_parent is not None:
+                    self._claim_reports.append(remote_parent.report())
+
+    def vectorized_scope(self) -> AbstractContextManager[None]:
+        """The scope one call on stacked evaluation points runs in, which refuses workflow draws."""
+        return _context._workflow_jax_runtime_guard()
+
+    def mapped_scope(self) -> AbstractContextManager[None]:
+        """The scope a ``jax.vmap`` over the evaluation points runs in, which refuses workflow draws."""
+        return _context._workflow_jax_runtime_guard()
+
+    def shipped(self, point_indices: range) -> _ShippedEvaluationPointScopes:
+        """These scopes, cut to *point_indices*."""
+        return _ShippedEvaluationPointScopes(
+            {point_index: self._reserved_points[point_index] for point_index in point_indices}
+        )
+
+    def claim_reports(self) -> tuple[EvaluationPointClaimReport, ...]:
+        """The claims the evaluation points made in this process, for the call to accept."""
+        return tuple(self._claim_reports)
+
+    def accept_claim_reports(self, claim_reports: Iterable[EvaluationPointClaimReport]) -> None:
+        """Nothing to accept in a worker process."""
+        return None
+
+    def close(self) -> None:
+        """Nothing to release in a worker process."""
+        return None
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle the reservations, without the reports, which a worker makes afresh."""
+        return (_ShippedEvaluationPointScopes, (self._reserved_points,))
+
+
+@contextmanager
+def _requester_workflow_scope() -> Generator[None, None, None]:
+    """The workflow position from which code asks for sets of evaluation points, as a lifted call does.
+
+    Inside it a key broker of its own is active under the running call, as
+    for a nested call, so a set of evaluation points built there issues its
+    evaluation points' keys from it. A set built inside a function body
+    without it has no key broker: its evaluation points draw keys in the
+    order they run, and a worker process refuses their draws.
+    """
+    with _context._ephemeral_workflow_run(), _evaluation_keys._function_stochastic_scope():
+        yield
+
+
+def _evaluation_point_scopes(
+    num_evaluation_points: int, set_position: int
+) -> _WorkflowEvaluationPointScopes | _UnscopedEvaluationPoints:
+    """The workflow scopes of a new set of evaluation points, built under the running call.
+
+    Inside a route probe or a JAX body, where workflow draws are refused, the
+    evaluation points run in no scope, as :func:`execute_many` runs its
+    evaluation points there.
+    """
+    if _context._workflow_side_effects_forbidden():
+        return _UnscopedEvaluationPoints()
+    return _WorkflowEvaluationPointScopes(num_evaluation_points, set_position)
+
+
+_install_evaluation_point_scopes(_evaluation_point_scopes)
