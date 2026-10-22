@@ -1917,6 +1917,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   # after: the solver's error propagates, and the kernel's function ran once
   ```
 
+- **The controls `dispatch` and `max_workers` are removed: lifted calls,
+  sweeps, and plain calls run on executors.** Name the executor with
+  `executor` and its options with `executor_options`. Passing `dispatch=` or
+  `max_workers=` raises `TypeError`, which names the unknown control. A call
+  that names an executor while `workflow_kind` selects Prefect warns that the
+  executor runs nothing, since Prefect runs the evaluations.
+
+  ```python
+  # before
+  growth.using(dispatch="thread", max_workers=8)(prior)
+  # after
+  growth.using(executor="thread", executor_options={"max_workers": 8})(prior)
+  ```
+
+- **A function JAX can trace is mapped by `jax` whatever executor is named.**
+  `dispatch="sequential"` ran such a function one draw at a time, and
+  `executor="sequential"` does not: claim `traceable=False` to run it one draw
+  at a time. The draws agree up to the last bit of rounding.
+
+  ```python
+  # before: one draw at a time
+  growth.using(dispatch="sequential")(prior)
+  # after: one draw at a time
+  Function(growth_body, traceable=False)(prior)
+  ```
+
+- **A lifted call or a sweep whose evaluation fails raises `EvaluationError`.**
+  The call runs every draw or grid point, keeps the outputs that succeeded,
+  and raises `EvaluationError`, a `RuntimeError` chained to the first
+  failure's exception, whose `failures` name each failed one. A plain call
+  still raises the exception its body raised.
+
+  ```python
+  # before
+  try:
+      simulate(prior)
+  except ValueError: ...
+  # after
+  try:
+      simulate(prior)
+  except EvaluationError as error:
+      error.failures   # each failed draw's index, kind, and error
+  ```
+
+- **Replay refuses a call recorded before this change.** The execution
+  contract no longer names an evaluator and a transport, since no executor
+  changes a result, so its version is `probpipe.workflow_rng_execution/v2`,
+  and a replay record notes the executor the call named, `executor` and
+  `executor_options`, in place of `requested_dispatch` and
+  `requested_workflow_kind`. Record the call again.
+
+- **A lifted call's `metadata["dispatch"]` names the executor that ran its
+  evaluations:** `"jax"`, `"sequential"`, `"thread"`, `"process"`, a
+  user's executor, or `"prefect"` when Prefect ran them one task per draw.
+  Under Prefect it named the local dispatch mode before. The same call before
+  and after:
+
+  ```python
+  simulate.using(workflow_kind=WorkflowKind.TASK)(prior).provenance.metadata["dispatch"]
+  # before: "sequential"; after: "prefect"
+  ```
+
+- **`EvaluationPoints` built outside the ProbPipe call that asks for the
+  evaluations raises `RuntimeError`,** as inside a function's body, where no
+  place in the workflow gives the evaluation points their random keys. Ask
+  for the evaluations through a ProbPipe call, such as a lifted call.
+
 ### Added
 
 - **`summarize(d)` collects a law's standard summaries in one record that
@@ -3030,8 +3097,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   set as one unit, and `using(executor=None)` removes the choice. A call
   checks them when it opens: an executor that is not registered raises
   `ResolutionError`, and an option the executor does not take raises
-  `ValueError`. Lifted calls and sweeps keep the `dispatch` control until they
-  move onto executors.
+  `ValueError`.
 
 - **`EvaluationError` names every failed evaluation.** A set of evaluations
   runs every evaluation, keeps the outputs that succeeded, and then raises
@@ -3079,6 +3145,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   x.event_spec["a"]                            # OutputSpec(a=NumericArraySpec(()))
   x.event_spec.without("sigma") & ke.event_spec   # ke: a kernel ke(e | sigma)
   # OutputSpec(RecordSpec(a=..., e=...))
+  ```
+
+- **`evaluate_at_points` asks for the evaluations of a callable at many
+  arguments.** Code inside a ProbPipe call, such as a route of an operation,
+  passes the arguments that vary, stacked on a leading axis, and those every
+  evaluation shares, and receives each evaluation's output, or under
+  `stacked=True` the outputs stacked on a leading axis, from the executor the
+  call chooses.
+
+  ```python
+  from probpipe import evaluate_at_points
+  simulations = evaluate_at_points(simulate, varying={"theta": thetas}, shared={"data": y},
+                                   origin="simulate", output_spec=simulate.output_spec)
   ```
 
 ### Changed

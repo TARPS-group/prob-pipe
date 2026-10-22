@@ -198,8 +198,6 @@ class _ReplayState:
     root_completed: bool = False
     source_artifact_drift: bool = False
     source_location_drift: bool = False
-    requested_dispatch: str | None = None
-    requested_workflow_kind: str | None = None
     actual_execution: list[dict[str, Any]] = field(default_factory=list)
     claims: dict[bytes, _ReplayEventClaim] = field(init=False)
     canonical_plan_json: bytes = field(init=False, repr=False)
@@ -304,46 +302,23 @@ class _ReplayState:
             )
         ):
             raise ReplayCompatibilityError(
-                f"cannot replay with evaluator {contract.evaluator!r} and transport "
-                f"{contract.transport!r}: this route cannot derive random keys the way the "
-                "recorded call did. Record the call again."
+                "cannot replay: this call cannot derive random keys the way the recorded call "
+                "did. Record the call again."
             )
-        if self.requested_dispatch is None or self.requested_workflow_kind is None:
-            raise ReplayCompatibilityError(
-                "the current Function did not declare its requested execution route"
-            )
-        route = {
-            "requested_dispatch": self.requested_dispatch,
-            "requested_workflow_kind": self.requested_workflow_kind,
-            "resolved_evaluator": contract.evaluator,
-            "resolved_transport": contract.transport,
-            "contract_abi": contract.abi,
-        }
-        if route not in self.actual_execution:
-            self.actual_execution.append(route)
+        execution = _execution.execution_diagnostics(contract)
+        if execution not in self.actual_execution:
+            self.actual_execution.append(execution)
 
     def validate_effect_plan(self, plan: Any) -> None:
         """Match one planned effect before its stochastic occurrence is committed."""
         _require_planned_draw(self.effect_anchors_by_source_unit, plan, worker=False)
 
-    def record_requested_execution(self, dispatch: str, workflow_kind: str) -> None:
-        """Capture current request diagnostics before route resolution."""
-        requested = (dispatch, workflow_kind)
-        existing = (self.requested_dispatch, self.requested_workflow_kind)
-        if existing != (None, None) and existing != requested:
-            raise ReplayCompatibilityError(
-                "one replayed Function declared conflicting execution requests"
-            )
-        self.requested_dispatch, self.requested_workflow_kind = requested
-
     def diagnostics(self) -> dict[str, Any]:
         """Return non-authoritative source and route drift observations."""
-        recorded_routes = [
+        recorded_execution = [
             {
-                "requested_dispatch": item.get("requested_dispatch"),
-                "requested_workflow_kind": item.get("requested_workflow_kind"),
-                "resolved_evaluator": item.get("resolved_evaluator"),
-                "resolved_transport": item.get("resolved_transport"),
+                "executor": item.get("executor"),
+                "executor_options": item.get("executor_options"),
                 "contract_abi": item.get("contract_abi"),
             }
             for item in self.recorded_execution
@@ -351,8 +326,8 @@ class _ReplayState:
         return {
             "source_artifact_drift": self.source_artifact_drift,
             "source_location_drift": self.source_location_drift,
-            "execution_drift": recorded_routes != self.actual_execution,
-            "recorded_execution": recorded_routes,
+            "execution_drift": recorded_execution != self.actual_execution,
+            "recorded_execution": recorded_execution,
             "current_execution": copy.deepcopy(self.actual_execution),
         }
 
@@ -876,12 +851,6 @@ def _validate_active_execution_contract(contract: Any) -> None:
     state = _ACTIVE_REPLAY_STATE.get()
     if state is not None and _REPLAY_FUNCTION_DEPTH.get() == 1:
         state.validate_execution_contract(contract)
-
-
-def _record_active_requested_execution(dispatch: str, workflow_kind: str) -> None:
-    state = _ACTIVE_REPLAY_STATE.get()
-    if state is not None and _REPLAY_FUNCTION_DEPTH.get() == 1:
-        state.record_requested_execution(dispatch, workflow_kind)
 
 
 def _active_replay_diagnostics() -> dict[str, Any] | None:

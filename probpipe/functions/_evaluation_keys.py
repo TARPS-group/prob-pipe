@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from enum import Enum
-from threading import Event, Lock
+from threading import Lock
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from ..custom_types import PRNGKey
@@ -210,42 +210,6 @@ class EvaluationPointClaimReport:
             child_count=self.child_count,
             effects=self.effects,
             successful_effects=self.successful_effects,
-        )
-
-
-@dataclass(frozen=True)
-class EvaluationPointPrefectPayload:
-    """Serializable Prefect task input for an initial or coordinated attempt."""
-
-    evaluation_point: IssuedEvaluationPoint
-    attempt: EvaluationPointAttempt
-    parent_envelope: EvaluationPointParentEnvelope | None = None
-
-    def __post_init__(self) -> None:
-        _validate_evaluation_point_prefect_payload_fields(
-            evaluation_point=self.evaluation_point,
-            attempt=self.attempt,
-            parent_envelope=self.parent_envelope,
-        )
-
-
-@dataclass(frozen=True)
-class EvaluationPointOutcome:
-    """Serializable Prefect result with operational claim information."""
-
-    index: int
-    output: Any = None
-    error: Exception | None = None
-    coordination_required: bool = False
-    report: EvaluationPointClaimReport | None = None
-
-    def __post_init__(self) -> None:
-        _validate_evaluation_point_outcome_fields(
-            index=self.index,
-            output=self.output,
-            error=self.error,
-            coordination_required=self.coordination_required,
-            report=self.report,
         )
 
 
@@ -533,8 +497,6 @@ class _BrokerRecipeSnapshot:
     rng_origin: dict[str, str | int | None]
     effects: tuple[StochasticEffectClaim, ...]
     execution_contracts: tuple[WorkflowRngExecutionContract, ...]
-    requested_dispatch: str | None
-    requested_workflow_kind: str | None
     callable_anchor: CallableAnchor | None
 
 
@@ -584,8 +546,6 @@ class _AutomaticKeyBroker:
     _effects_by_identity: dict[tuple[Any, ...], StochasticEffectClaim] = field(default_factory=dict)
     _effects_lock: Any = field(default_factory=Lock, repr=False)
     _lock: Any = field(default_factory=Lock, repr=False)
-    _requested_dispatch: str | None = None
-    _requested_workflow_kind: str | None = None
     _callable_anchor: CallableAnchor | None = None
     _replay_state: Any = None
 
@@ -605,7 +565,6 @@ class _AutomaticKeyBroker:
             record_path=plan.record_path,
             descendant_descriptor=plan.descendant_descriptor,
         )
-        _guard_remote_coordination(self._frame)
         _context._guard_automatic_key_request()
         _context._guard_caller_jax_trace(plan.operation_kind)
         self.validate_replay_effect_plan(plan)
@@ -686,15 +645,6 @@ class _AutomaticKeyBroker:
         self._assert_broker_open()
         if contract not in self._execution_contracts:
             self._execution_contracts.append(contract)
-
-    def set_requested_execution(self, dispatch: str, workflow_kind: str) -> None:
-        """Record the public execution request independently from its resolution."""
-        self._assert_broker_open()
-        requested = (dispatch, workflow_kind)
-        existing_request = (self._requested_dispatch, self._requested_workflow_kind)
-        if existing_request != (None, None) and existing_request != requested:
-            raise RuntimeError("a Function broker already has a different execution request")
-        self._requested_dispatch, self._requested_workflow_kind = requested
 
     def set_callable_anchor(self, anchor: CallableAnchor) -> None:
         """Attach the immutable definition anchor for this public Function."""
@@ -1017,10 +967,8 @@ class _AutomaticKeyBroker:
         self,
         frame: EvaluationPointFrame,
         attempt: EvaluationPointAttempt,
-        *,
-        parent_authority: bool,
-    ) -> EvaluationPointParentEnvelope | None:
-        """Reserve a remote attempt before submission and optionally bind authority."""
+    ) -> EvaluationPointParentEnvelope:
+        """Reserve a remote attempt before submission and bind the parent's authority to it."""
         with self._evaluation_point_claims.lock:
             claim_state = self._validate_evaluation_point_attempt_unlocked(attempt, frame)
             claim_state.seen_attempts.add(attempt.attempt_token)
@@ -1030,9 +978,6 @@ class _AutomaticKeyBroker:
             claim_state.active_effect_identities.clear()
             claim_state.status = _EvaluationPointStatus.ACTIVE
             retry_effects = tuple(claim_state.effect_claims_by_identity.values())
-        if not parent_authority:
-            return None
-
         try:
             envelope = self._make_remote_parent_envelope(
                 frame,
@@ -1055,7 +1000,6 @@ class _AutomaticKeyBroker:
         retry_effects: tuple[StochasticEffectClaim, ...],
     ) -> EvaluationPointParentEnvelope:
         """Materialize authority for an already-reserved remote attempt."""
-        _guard_remote_coordination(self._frame)
         parent_invocation = self._ensure_parent_invocation()
         from . import _replay
 
@@ -1142,11 +1086,9 @@ class _AutomaticKeyBroker:
         claim_state = self._require_active_remote_attempt_unlocked(report.attempt, report.frame)
         parent_path = claim_state.active_parent_occurrence_path
         if parent_path is None:
-            if report.child_count or report.effects or report.successful_effects:
-                raise RuntimeError(
-                    "a rootless remote coordination probe cannot report stochastic claims"
-                )
-            return claim_state, ()
+            raise RuntimeError(
+                "a remote evaluation point attempt reported before its parent authorized it"
+            )
 
         prefix = (*parent_path, report.frame.point_segment)
         for effect in (*report.effects, *report.successful_effects):
@@ -1272,37 +1214,6 @@ _ACTIVE_EVALUATION_POINT_ATTEMPT: ContextVar[_EvaluationPointAttemptContext | No
     "probpipe_active_evaluation_point_attempt",
     default=None,
 )
-
-
-@dataclass(slots=True)
-class _RemoteCoordinationObservation:
-    """Attempt-local observation that survives caught probe exceptions."""
-
-    _effect_observed: Event = field(default_factory=Event, repr=False)
-
-    @property
-    def effect_observed(self) -> bool:
-        """Return whether any thread requested workflow-owned randomness."""
-        return self._effect_observed.is_set()
-
-    def observe_effect(self) -> None:
-        """Record a workflow-owned effect from any worker thread."""
-        self._effect_observed.set()
-
-
-class _RemoteCoordinationRequired(RuntimeError):
-    """Signal that a remote evaluation point needs parent RNG authority."""
-
-
-def _guard_remote_coordination(
-    frame: _context._WorkflowFrame | None,
-) -> None:
-    """Require parent authority before a rootless remote effect can commit."""
-    observation = _context._find_remote_coordination_observation(frame)
-    if observation is None:
-        return
-    observation.observe_effect()
-    raise _RemoteCoordinationRequired
 
 
 @dataclass(slots=True)
@@ -1510,16 +1421,6 @@ def _record_active_execution_contract(
         broker.record_execution_contract(contract)
 
 
-def _record_active_requested_execution(dispatch: str, workflow_kind: str) -> None:
-    """Attach requested route diagnostics to the current public invocation."""
-    from . import _replay
-
-    _replay._record_active_requested_execution(dispatch, workflow_kind)
-    broker = _ACTIVE_AUTOMATIC_KEY_BROKER.get()
-    if broker is not None:
-        broker.set_requested_execution(dispatch, workflow_kind)
-
-
 def _snapshot_active_recipe_state() -> _BrokerRecipeSnapshot | None:
     """Snapshot a successful active invocation without operational ownership data."""
     broker = _ACTIVE_AUTOMATIC_KEY_BROKER.get()
@@ -1536,42 +1437,8 @@ def _snapshot_active_recipe_state() -> _BrokerRecipeSnapshot | None:
         rng_origin=_context._describe_rng_origin(invocation.frame),
         effects=effects,
         execution_contracts=tuple(broker._execution_contracts),
-        requested_dispatch=broker._requested_dispatch,
-        requested_workflow_kind=broker._requested_workflow_kind,
         callable_anchor=broker._callable_anchor,
     )
-
-
-@contextmanager
-def _remote_coordination_probe_scope() -> Generator[_RemoteCoordinationObservation, None, None]:
-    """Run a remote evaluation point without permitting automatic stochastic commit."""
-    observation = _RemoteCoordinationObservation()
-    frame = _context._capture_active_workflow_frame()
-    if frame is None:
-        raise RuntimeError("remote coordination requires a transported workflow frame")
-    with frame.state.lock:
-        is_rootless_transport = (
-            frame.kind == "evaluation_point"
-            and frame.seed_words is None
-            and frame.parent is None
-            and frame.state.path_prefix == ()
-            and frame.state.root_words is None
-            and frame.state.point_segment is None
-        )
-        if not is_rootless_transport:
-            raise RuntimeError("remote coordination requires a rootless transported frame")
-        frame.state.remote_coordination_observation = observation
-    attempt_token = _ACTIVE_EVALUATION_POINT_ATTEMPT.set(None)
-    broker_token = _ACTIVE_AUTOMATIC_KEY_BROKER.set(None)
-    try:
-        yield observation
-    finally:
-        try:
-            with frame.state.lock:
-                frame.state.remote_coordination_observation = None
-        finally:
-            _ACTIVE_AUTOMATIC_KEY_BROKER.reset(broker_token)
-            _ACTIVE_EVALUATION_POINT_ATTEMPT.reset(attempt_token)
 
 
 @contextmanager
@@ -2039,79 +1906,6 @@ def _validated_evaluation_point_claim_report_snapshot(
     )
 
 
-def _validate_evaluation_point_prefect_payload_fields(
-    *,
-    evaluation_point: object,
-    attempt: object,
-    parent_envelope: object,
-) -> None:
-    """Validate a complete worker payload, including its nested authority."""
-    if not isinstance(evaluation_point, IssuedEvaluationPoint) or not isinstance(
-        attempt,
-        EvaluationPointAttempt,
-    ):
-        raise TypeError("evaluation point Prefect payloads require an evaluation point and attempt")
-    _validate_issued_evaluation_point_fields(
-        index=evaluation_point.index,
-        arguments=evaluation_point.arguments,
-        frame=evaluation_point.frame,
-    )
-    _validate_evaluation_point_attempt_fields(
-        evaluation_point_token=attempt.evaluation_point_token,
-        attempt_token=attempt.attempt_token,
-    )
-    if parent_envelope is not None and not isinstance(
-        parent_envelope, EvaluationPointParentEnvelope
-    ):
-        raise TypeError("evaluation point Prefect parent authority must be an envelope or None")
-    if attempt.evaluation_point_token != evaluation_point.frame.token:
-        raise ValueError("evaluation point payload attempt must own its evaluation point")
-    if parent_envelope is not None:
-        _validate_evaluation_point_parent_envelope_fields(
-            root_words=parent_envelope.root_words,
-            parent_occurrence_path=parent_envelope.parent_occurrence_path,
-            frame=parent_envelope.frame,
-            attempt=parent_envelope.attempt,
-            replay_expected_effects=parent_envelope.replay_expected_effects,
-            retry_effects=parent_envelope.retry_effects,
-        )
-        if parent_envelope.frame != evaluation_point.frame or parent_envelope.attempt != attempt:
-            raise ValueError(
-                "evaluation point payload parent authority must match its evaluation point and attempt"
-            )
-
-
-def _validate_evaluation_point_outcome_fields(
-    *,
-    index: object,
-    output: object,
-    error: object,
-    coordination_required: object,
-    report: object,
-) -> None:
-    """Validate one worker result without trusting its dataclass annotation."""
-    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
-        raise TypeError("evaluation point outcome indexes must be non-negative integers")
-    if type(coordination_required) is not bool:
-        raise TypeError("evaluation point outcome coordination flag must be a bool")
-    if error is not None and not isinstance(error, Exception):
-        raise TypeError("evaluation point outcome errors must be Exception values or None")
-    if report is not None:
-        if not isinstance(report, EvaluationPointClaimReport):
-            raise TypeError("evaluation point outcome reports must be claim reports or None")
-        _validate_evaluation_point_claim_report_fields(
-            frame=report.frame,
-            attempt=report.attempt,
-            child_count=report.child_count,
-            effects=report.effects,
-            successful_effects=report.successful_effects,
-        )
-    if coordination_required and error is not None:
-        raise ValueError("evaluation point coordination outcomes cannot contain errors")
-    if error is not None and output is not None:
-        raise ValueError("evaluation point error outcomes cannot contain successful values")
-
-
 def _validated_evaluation_point_frame_snapshot(frame: object) -> EvaluationPointFrame:
     """Deeply reconstruct one transported evaluation point frame."""
     if not isinstance(frame, EvaluationPointFrame):
@@ -2190,53 +1984,6 @@ def _validated_evaluation_point_parent_envelope_snapshot(
         replay_expected_effects=replay_expected_effects,
         retry_effects=tuple(
             _validated_effect_claim_snapshot(effect) for effect in parent.retry_effects
-        ),
-    )
-
-
-def _validated_evaluation_point_prefect_payload_snapshot(
-    payload: object,
-) -> EvaluationPointPrefectPayload:
-    """Deeply reconstruct a payload before worker submission or execution."""
-    if not isinstance(payload, EvaluationPointPrefectPayload):
-        raise TypeError("transported worker payloads must be EvaluationPointPrefectPayload values")
-    if not isinstance(payload.evaluation_point, IssuedEvaluationPoint) or not isinstance(
-        payload.attempt,
-        EvaluationPointAttempt,
-    ):
-        raise TypeError("evaluation point Prefect payloads require an evaluation point and attempt")
-    if payload.parent_envelope is not None and not isinstance(
-        payload.parent_envelope, EvaluationPointParentEnvelope
-    ):
-        raise TypeError("evaluation point Prefect parent authority must be an envelope or None")
-    return EvaluationPointPrefectPayload(
-        evaluation_point=_validated_issued_evaluation_point_snapshot(payload.evaluation_point),
-        attempt=_validated_evaluation_point_attempt_snapshot(payload.attempt),
-        parent_envelope=(
-            None
-            if payload.parent_envelope is None
-            else _validated_evaluation_point_parent_envelope_snapshot(payload.parent_envelope)
-        ),
-    )
-
-
-def _validated_evaluation_point_outcome_snapshot(
-    outcome: object,
-) -> EvaluationPointOutcome:
-    """Deeply reconstruct a worker outcome before parent-side admission."""
-    if not isinstance(outcome, EvaluationPointOutcome):
-        raise TypeError("transported worker outcomes must be EvaluationPointOutcome values")
-    if outcome.report is not None and not isinstance(outcome.report, EvaluationPointClaimReport):
-        raise TypeError("evaluation point outcome reports must be claim reports or None")
-    return EvaluationPointOutcome(
-        index=outcome.index,
-        output=outcome.output,
-        error=outcome.error,
-        coordination_required=outcome.coordination_required,
-        report=(
-            None
-            if outcome.report is None
-            else _validated_evaluation_point_claim_report_snapshot(outcome.report)
         ),
     )
 

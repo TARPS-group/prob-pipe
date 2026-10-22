@@ -17,15 +17,16 @@ Provides:
     and :func:`_note_num_samples_used`;
   - :func:`_jax_settings_snapshot`, the JAX settings a root call holds fixed;
   - :meth:`_CallContext.with_static_settings`, the context a compiled JAX
-    program's body is traced under;
-  - :class:`_ContextBoundFunction` and :func:`_carrying_call_context`, which
-    carry the call context into a worker.
+    program's body is traced under.
+
+An evaluation point carries the call context into the worker that runs it,
+as its chunk, an ``EvaluationChunk``, holds its call's evaluation context.
 """
 
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, fields, replace
@@ -823,52 +824,6 @@ def _jax_settings_snapshot() -> Mapping[str, Any]:
             for setting_name in _SHIPPED_JAX_SETTING_NAMES
         }
     )
-
-
-class _ContextBoundFunction:
-    """A work function bound to the call context it runs under, in whatever worker runs it.
-
-    Each call of the wrapper runs one piece of work: it installs the bound
-    context with accumulators for that work alone, and merges them into the
-    context's when the work succeeds, so a failed piece of work leaves nothing
-    behind. The wrapper pickles wherever the work function does, for a worker
-    process.
-
-    Parameters
-    ----------
-    work_function : callable
-        The work function.
-    call_context : _CallContext
-        The evaluation context of the call that dispatches *work_function*.
-    """
-
-    def __init__(self, work_function: Callable[..., Any], call_context: _CallContext) -> None:
-        self.work_function = work_function
-        self.call_context = call_context
-
-    def __call__(self, /, *args: Any, **kwargs: Any) -> Any:
-        """*work_function*'s result, computed under the bound call context.
-
-        ``self`` is positional-only, so a work function's own parameter named
-        ``self`` binds as a keyword argument.
-        """
-        with _under_call_context(self.call_context), _collecting_call_accumulators("always"):
-            return self.work_function(*args, **kwargs)
-
-
-def _carrying_call_context(work_function: Callable[..., Any]) -> Callable[..., Any]:
-    """*work_function*, run under the call context in effect, in whatever worker runs it.
-
-    A worker thread starts without the calling thread's context, and a worker
-    process without the calling process's, so without the carrier a body run in
-    a worker would read the session's settings in place of an active ``config``
-    block, lose an ``exact_only`` a derived route passes, and note its Monte Carlo
-    draws nowhere. In the default context *work_function* is returned as it is.
-    """
-    current_context = current_call_context()
-    if current_context.is_default():
-        return work_function
-    return _ContextBoundFunction(work_function, current_context.evaluation_context())
 
 
 # ---------------------------------------------------------------------------

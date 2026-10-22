@@ -253,8 +253,8 @@ The registry ships three rules: the sampling lift and the elementwise sweep, whi
 An executor decides how the evaluations a call asks for run: one after another, on threads, in worker processes, compiled by JAX, or on a cluster.
 It never decides what they compute, so changing the executor changes no result beyond the last bit of rounding.
 The evaluations of one callable that one request asks for, such as 200 runs of a simulator at 200 parameter values, form one `EvaluationPoints`, and an executor runs it by its chunks.
-A user names an executor on a `Function`, as `simulate.using(executor="thread", executor_options={"max_workers": 8})`.
-For now a lifted call and a sweep still run by their `dispatch` control, and a call only checks the executor's name and options; they move onto executors in a coming change.
+A user names an executor on a `Function`, as `simulate.using(executor="thread", executor_options={"max_workers": 8})`, and a lifted call, a sweep, and a plain call of `simulate` then run their evaluations on it.
+A function JAX can trace is mapped by `jax` whatever executor is named.
 
 ProbPipe ships four executors in `executor_registry`:
 
@@ -317,6 +317,10 @@ class SlurmExecutor(EvaluationExecutor):
 check_executor(SlurmExecutor())
 executor_registry.register(SlurmExecutor())
 ```
+
+Code that runs inside a ProbPipe call, such as a route of an operation, asks for the evaluations of a callable at many arguments with `evaluate_at_points`, which builds one `EvaluationPoints` and runs it on the executor the call chooses.
+
+::: probpipe.evaluate_at_points
 
 ::: probpipe.EvaluationExecutor
     options:

@@ -728,8 +728,6 @@ _CONTROL_DEFAULTS: Mapping[str, Any] = MappingProxyType(
         "workflow_kind": WorkflowKind.DEFAULT,
         "max_evaluations": None,
         "num_samples": None,
-        "dispatch": "auto",
-        "max_workers": None,
         "executor": None,
         "executor_options": MappingProxyType({}),
         "include_inputs": False,
@@ -747,7 +745,6 @@ _DEFAULTED_BY_NONE = frozenset(
     {
         "max_evaluations",
         "num_samples",
-        "max_workers",
         "executor",
         "executor_options",
         "method",
@@ -796,8 +793,8 @@ def _in_child_call_context(
     an enclosing derived route passes controls, and it opens the child context that
     :meth:`~probpipe.core._call_context._CallContext.child_for_call` derives,
     which holds the view's resolved controls, for the extent of the call. A
-    root call also takes the snapshot of the session's values that the work it
-    dispatches reads.
+    root call also takes the snapshot of the session's values that its
+    evaluation points read.
     """
 
     def decorate(entry_method: Callable[..., Any]) -> Callable[..., Any]:
@@ -988,7 +985,7 @@ class Function(TrackedTerm, Annotated):
 
     ``apply`` binds arguments and validates one raw evaluation, returning the
     body's result unchanged. Calling the Function runs the installed workflow
-    engine, which adds lifting, dispatch, result identity, and provenance.
+    engine, which adds lifting, execution, result identity, and provenance.
 
     Parameters
     ----------
@@ -1059,18 +1056,11 @@ class Function(TrackedTerm, Annotated):
           and that a conversion of an argument takes where its converter draws,
           a positive integer. The default is ``config.sampling.num_samples``,
           1024.
-        - ``dispatch`` ({"auto", "jax", "sequential", "thread"}): evaluation
-          dispatch interpreted by the engine, "auto" by default.
-        - ``max_workers`` (int or None): positive thread-worker count, or the
-          executor default.
         - ``executor`` (str or None): the name of the executor that runs the
-          sets of evaluation points of this function's calls, such as
-          ``"thread"`` or a cluster executor a user registers; None, the
-          default, inherits an enclosing call's executor or else selects one
-          automatically. A function JAX can trace is always compiled by
-          ``"jax"``. Interim: a lifted call and a sweep still run by
-          ``dispatch`` until they move onto executors, so for now a call only
-          checks the executor's name and options when it opens.
+          evaluations of this function's calls, such as ``"thread"`` or a
+          cluster executor a user registers; None, the default, inherits an
+          enclosing call's executor or else selects one automatically. A
+          function JAX can trace is always compiled by ``"jax"``.
         - ``executor_options`` (Mapping or None): the options of the executor
           named with them, or of the automatically selected one when no
           executor is named, such as ``{"max_workers": 8}``; the executor
@@ -1099,17 +1089,17 @@ class Function(TrackedTerm, Annotated):
     Raises
     ------
     TypeError
-        For an invalid name, callable, declaration type, workflow kind, or
-        worker-count type, a ``traceable`` or ``vectorized`` claim that is not
+        For an invalid name, callable, declaration type, or workflow kind, a
+        ``traceable`` or ``vectorized`` claim that is not
         a bool, a control of the wrong type, or a keyword that is
         no control, which the message names; for a label given before the
         callable, as ``Function("g", g)``, or as a second positional argument,
         as ``Function(g, "g")``; and for a callable given as ``fn=`` or
         ``func=``.
     ValueError
-        For mismatched inputs, invalid defaults or bindings, unknown
-        dispatch, a nonpositive worker, evaluation, or draw count, conversions for a
-        parameter the signature lacks, or invalid output names.
+        For mismatched inputs, invalid defaults or bindings, a nonpositive
+        evaluation or draw count, conversions for a parameter the signature
+        lacks, or invalid output names.
     NotImplementedError
         If a differentiability claim is given, which Function does not carry
         yet.
@@ -1120,8 +1110,6 @@ class Function(TrackedTerm, Annotated):
         For the removed keywords ``seed``, ``input_template``, and
         ``output_template``, one warning for each one given, pointing at the
         caller's line.
-    UserWarning
-        If ``max_workers`` is set with a dispatch other than ``"thread"``.
 
     Notes
     -----
@@ -1410,12 +1398,6 @@ class Function(TrackedTerm, Annotated):
         -------
         Self
             A shallow copy, which shares the wrapped callable and the declarations.
-
-        Warns
-        -----
-        UserWarning
-            If the copy's ``max_workers`` is set with a dispatch other than
-            ``"thread"``, pointing at the caller's line.
         """
         unknown_control_names = controls.keys() - _CONTROL_DEFAULTS.keys()
         if unknown_control_names:
@@ -1817,22 +1799,6 @@ def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) 
     ValueError
         If a control's value is inadmissible, such as a nonpositive count.
     """
-    dispatch = options["dispatch"]
-    if dispatch not in ("auto", "jax", "sequential", "thread"):
-        raise ValueError(f"dispatch must be one of auto, jax, sequential, thread; got {dispatch!r}")
-    workers = options["max_workers"]
-    if workers is not None:
-        if not isinstance(workers, int):
-            raise TypeError(
-                f"max_workers must be a positive integer or None; got {type(workers).__name__}"
-            )
-        if workers <= 0:
-            raise ValueError(f"max_workers must be a positive integer or None; got {workers!r}")
-        if dispatch != "thread":
-            warnings.warn(
-                f"max_workers configures only dispatch='thread'; ignoring it for dispatch={dispatch!r}.",
-                skip_file_prefixes=_WARNING_SKIP_PREFIXES,
-            )
     if not isinstance(options["workflow_kind"], WorkflowKind):
         raise TypeError(
             f"workflow_kind must be a WorkflowKind enum member; got {options['workflow_kind']!r}"
