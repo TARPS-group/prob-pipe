@@ -31,6 +31,7 @@ from ..core._record_spec import RecordSpec
 from ..core._repr import format_default, format_names, public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OutputSpec, _has_record_outputs
+from ..core.named_tree import _PATH_SEP
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import Annotated, TrackedTerm, _TrackedTermMeta
@@ -150,8 +151,6 @@ def _given_is_numeric(given_spec: InputSpec) -> bool:
 # Renaming the given side
 # ---------------------------------------------------------------------------
 
-_PATH_SEP = "/"
-
 
 def _given_leaf_specs(given_spec: InputSpec) -> dict[str, TermSpec]:
     """The spec of each leaf of the given side, keyed by its path, in canonical order.
@@ -221,7 +220,7 @@ def _moved_inputs(
         if not new or not all(new.split(_PATH_SEP)):
             raise ValueError(
                 f"with_path_names(): invalid new path {new!r} for {old!r}; each part between "
-                f"'/' must be non-empty"
+                f"{_PATH_SEP!r} must be non-empty"
             )
         if new.startswith(old + _PATH_SEP):
             raise ValueError(f"with_path_names(): cannot move {old!r} inside itself, to {new!r}")
@@ -398,7 +397,9 @@ class ConditionalDistributionSpec(TermSpec):
                 f"conditions on {sorted(given_spec)}"
             )
         for name, spec in self.given_spec.items():
-            _unify_specs(spec, given_spec[name], bindings, f"{path}/given/{name}")
+            _unify_specs(
+                spec, given_spec[name], bindings, f"{path}{_PATH_SEP}given{_PATH_SEP}{name}"
+            )
         _unify_declarations(self.event_spec, event_spec, bindings, path)
 
     def _bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
@@ -1331,7 +1332,8 @@ def _stand_in(spec: TermSpec, path: str, label: str) -> Any:
         return jax.ShapeDtypeStruct(tuple(spec.shape), dtype)
     if isinstance(spec, RecordSpec):
         return {
-            key: _stand_in(child, f"{path}/{key}", label) for key, child in spec.children.items()
+            key: _stand_in(child, f"{path}{_PATH_SEP}{key}", label)
+            for key, child in spec.children.items()
         }
     raise TypeError(
         f"input {path!r} of {label!r} must be declared as an array or a record of arrays; "

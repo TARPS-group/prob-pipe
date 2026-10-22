@@ -527,9 +527,7 @@ class TestMakePosteriorRecordTarget:
         ) * Normal("s", 0.0, 1.0)
         chain = jax.random.normal(jax.random.PRNGKey(0), (40, 3))
         post = make_posterior([chain], parents=(prior,), method="test", event_spec=prior.event_spec)
-        assert post["params/a"].event_spec.term_spec == prior.event_spec.term_spec.at_path(
-            ("params", "a")
-        )
+        assert post["params/a"].event_spec.term_spec == prior.event_spec.term_spec["params/a"]
         assert convert(post, KDEDistribution).event_spec == prior.event_spec
 
     def test_a_nested_target_keeps_its_groups(self):
@@ -969,15 +967,15 @@ class TestPosteriorFieldView:
     def test_getitem_without_template_uses_single_field_autowrap(self):
         """Without a multi-field template, an inference result
         wraps the chain as a single-field Record keyed by ``posterior``.
-        Indexing the field returns a view; accessing a different name
-        raises ``KeyError``."""
+        Indexing the field returns a view; a law over a single array has no
+        paths, so another name raises ``TypeError``."""
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         dist = posterior_of([chain], label="x")
         # The auto-wrap field is "posterior"; that should resolve to a view.
         view = dist["posterior"]
         assert view is not None
         # Other names raise.
-        with pytest.raises(KeyError):
+        with pytest.raises(TypeError, match="since its draws are single values with no paths"):
             dist["nonexistent"]
 
     def test_outputs(self, posterior):

@@ -17,6 +17,7 @@ from types import TracebackType
 from typing import Any
 
 from .._messages import count
+from ..core.named_tree import _PATH_SEP
 from ..core.provenance import Provenance
 from . import _context, _execution
 from ._callable import CallableAnchor
@@ -1785,7 +1786,7 @@ def _describe_draw(effect: Any) -> str:
     """A short description of one random draw, such as ``sample with sample_shape=(3,)``."""
     text = str(effect.operation_kind).replace("_", " ")
     if effect.record_path:
-        text += f" of {'/'.join(effect.record_path)!r}"
+        text += f" of {_PATH_SEP.join(effect.record_path)!r}"
     if effect.sample_shape is not None:
         text += f" with sample_shape={tuple(effect.sample_shape)}"
     return text

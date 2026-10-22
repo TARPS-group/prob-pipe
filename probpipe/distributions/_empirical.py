@@ -36,8 +36,8 @@ from ..core._record_batch import RecordBatch, _batch_class_for
 from ..core._record_spec import NumericRecordSpec, RecordSpec
 from ..core._repr import format_value
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
-from ..core._specs import OutputSpec
-from ..core.named_tree import _unflatten_paths
+from ..core._specs import OutputSpec, _single_output_name
+from ..core.named_tree import _PATH_SEP, _unflatten_paths
 from ..linalg import DenseLinOp
 from ._capabilities import (
     SupportsCovariance,
@@ -50,12 +50,10 @@ from ._capabilities import (
     _capability_subclass,
 )
 from ._distribution import (
-    _EMPTY_SELECTION,
     DEFAULT_LABEL,
     Distribution,
     _constructor_label,
-    _shared_final_names,
-    _single_output_name,
+    _read_event_paths,
     _whole_term_event,
 )
 from ._factored import _raw_record, _stacked
@@ -68,13 +66,12 @@ if TYPE_CHECKING:
 
 __all__ = ["EmpiricalDistribution"]
 
-_PATH_SEP = "/"
 
 #: The moments an instance claims when its event is numeric.
 _NUMERIC_MOMENTS = (SupportsMean, SupportsVariance, SupportsCovariance, SupportsQuantile)
 
 #: A requested event path, its segments within one atom, and its node's spec.
-type _Selected = tuple[str, tuple[str, ...], TermSpec]
+type _RequestedNode = tuple[str, tuple[str, ...], TermSpec]
 
 
 # ---------------------------------------------------------------------------
@@ -783,21 +780,21 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
 
     # -- marginals --------------------------------------------------------------
 
-    def _marginal(self, path: str | tuple[str, ...]) -> EmpiricalDistribution:
-        """The empirical law of the atoms projected onto *path*, under the same weights.
+    def _marginal(self, paths: str | tuple[str, ...]) -> EmpiricalDistribution:
+        """The empirical law of the atoms projected onto *paths*, under the same weights.
 
-        A single event path yields the leaf or subtree at that path whole, under
-        an output named by the path's final segment. A tuple of event paths
-        yields a law whose outputs are the selected nodes, named by their final
-        segments. Either way the result keeps this law's label, the projected
+        A single event path yields the leaf or group at that path whole, under
+        an output named by the path's last name. A list of event paths yields a
+        law over the record that keeps each node at its own path, in this law's
+        order. Either way the result keeps this law's label, the projected
         atoms keep the stored atoms' levels, and the result holds no reference
         to this law.
 
         Parameters
         ----------
-        path : str or tuple of str
-            An event path of this law, or a tuple of event paths to select
-            jointly.
+        paths : str or tuple of str
+            An event path of this law, or a list of event paths to select
+            jointly, as :func:`~probpipe.core._shapes._as_paths` reads them.
 
         Returns
         -------
@@ -810,79 +807,70 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
             If a path is not an event path of this law.
         TypeError
             If a path is not a string.
-        ValueError
-            If a selection names no path, or two of its paths share a final
-            segment.
         """
-        selected = self._selection(path)
-        if isinstance(path, str):
-            ((requested, segments, node),) = selected
+        requested_nodes = self._requested_nodes(paths)
+        if isinstance(paths, str):
+            ((requested, segments, node),) = requested_nodes
             atoms = self._projection(segments, node)
             declaration = OutputSpec(**{requested.rsplit(_PATH_SEP, 1)[-1]: node})
         else:
-            atoms = self._selection_batch(selected)
+            atoms = self._atoms_at_paths(requested_nodes)
             declaration = OutputSpec(atoms.element_spec)
         return EmpiricalDistribution(atoms, self._w, label=self.label, event_spec=declaration)
 
-    def _marginal_guard(self, path: str | tuple[str, ...]) -> Feasibility | bool:
-        """Whether *path* is an event path, or a selection of them with distinct final segments.
+    def _marginal_guard(self, paths: str | tuple[str, ...]) -> Feasibility | bool:
+        """Whether *paths* is an event path, or a list of them.
 
         The marginal is exact at every such path.
         """
         try:
-            self._selection(path)
+            self._requested_nodes(paths)
         except (KeyError, TypeError, ValueError) as error:
             return Feasibility(False, str(error.args[0]) if error.args else repr(error))
         return True
 
-    def _selection(self, path: str | tuple[str, ...]) -> tuple[_Selected, ...]:
+    def _requested_nodes(self, paths: str | tuple[str, ...]) -> tuple[_RequestedNode, ...]:
         """Each requested event path with its segments within one atom and its node's spec.
 
         Parameters
         ----------
-        path : str or tuple of str
-            An event path of this law, or a tuple of event paths to select
+        paths : str or tuple of str
+            An event path of this law, or a list of event paths to select
             jointly.
 
         Returns
         -------
-        tuple of _Selected
-            One ``(path, segments, spec)`` triple per requested path, in the order
-            requested. The segments leave out the name of a whole term's output, so they
-            address the node within one atom.
+        tuple of _RequestedNode
+            One ``(path, segments, spec)`` triple per requested path, a list of
+            paths in this law's order. The segments leave out the name of a whole
+            term's output, so they address the node within one atom.
 
         Raises
         ------
         KeyError
-            If a path is not an event path of this law.
+            If this law is over a record and a path is not one of its paths.
         TypeError
-            If a path is not a string.
+            If a path is not a string, or this law is over a value with no
+            paths, such as an array.
         ValueError
-            If a selection names no path, or two of its paths share a final
-            segment.
+            If a path is malformed, or a list of paths names a path twice or a
+            path inside another.
         """
-        paths = (path,) if isinstance(path, str) else tuple(path)
-        if not paths:
-            raise ValueError(_EMPTY_SELECTION)
+        read_paths = _read_event_paths(
+            self.event_spec, self.label, paths, action=f"take the marginal of {self.label!r} at"
+        )
         output_name = _single_output_name(self.event_spec)
-        selected = []
-        for requested in paths:
-            if not isinstance(requested, str):
-                raise TypeError(f"a field path must be a string; got {type(requested).__name__}")
-            try:
-                node = _node_at(self.event_spec, requested)
-            except KeyError:
-                raise KeyError(
-                    f"{requested!r} is not an event path of {self.label!r}; its fields: "
-                    f"{list(self.event_spec.outputs)}"
-                ) from None
+        requested_nodes = []
+        for requested in read_paths if isinstance(read_paths, tuple) else (read_paths,):
             segments = tuple(requested.split(_PATH_SEP))
-            selected.append((requested, segments if output_name is None else segments[1:], node))
-        if not isinstance(path, str):
-            finals = [requested.rsplit(_PATH_SEP, 1)[-1] for requested in paths]
-            if len(set(finals)) < len(finals):
-                raise ValueError(_shared_final_names(paths))
-        return tuple(selected)
+            requested_nodes.append(
+                (
+                    requested,
+                    segments if output_name is None else segments[1:],
+                    _node_at(self.event_spec, requested),
+                )
+            )
+        return tuple(requested_nodes)
 
     def _projection(self, segments: tuple[str, ...], node: TermSpec) -> Batch:
         """The atoms projected onto the node at *segments* within one atom, in its batch form."""
@@ -893,22 +881,22 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         # the atoms' levels, and an interior node as the sub-batch beneath it.
         return atoms[_PATH_SEP.join(segments)]
 
-    def _selection_batch(self, selected: tuple[_Selected, ...]) -> RecordBatch:
-        """The atoms projected onto the selected nodes, one field per node under its final segment.
+    def _atoms_at_paths(self, requested_nodes: tuple[_RequestedNode, ...]) -> RecordBatch:
+        """The atoms projected onto the requested nodes, each node at its own path.
 
-        The batch's label is the stored atoms' label indexed by the selected
+        The batch's label is the stored atoms' label indexed by the requested
         paths, grouped as design II.4 states, as in ``(x·y)[('a', 'b')]``.
         """
         atoms = self._atoms
         expression = Indexed(
-            atoms._expression, repr(tuple(requested for requested, _, _ in selected))
+            atoms._expression, repr(tuple(requested for requested, _, _ in requested_nodes))
         )
         if isinstance(self.event_spec.term_spec, BatchSpec):
             shape = _atom_shape(atoms, self.event_spec.term_spec)
             column = np.empty(shape, dtype=object)
             for index in np.ndindex(shape):
                 column[index] = atoms[index]
-            fields = {requested.rsplit(_PATH_SEP, 1)[-1]: node for requested, _, node in selected}
+            fields = {requested: node for requested, _, node in requested_nodes}
             batch = RecordBatch(
                 {name: column for name in fields},
                 atoms.level_names[
@@ -926,20 +914,19 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         stored = atoms._raw_columns() if is_record else {}
         columns: dict[str, Any] = {}
         fields: dict[str, TermSpec] = {}
-        for requested, segments, node in selected:
-            final = requested.rsplit(_PATH_SEP, 1)[-1]
-            fields[final] = node
+        for requested, segments, node in requested_nodes:
+            fields[requested] = node
             if not is_record:
-                columns[final] = atoms.raw
+                columns[requested] = atoms.raw
                 continue
             prefix = _PATH_SEP.join(segments)
             for leaf, column in stored.items():
                 if not prefix:
-                    columns[f"{final}{_PATH_SEP}{leaf}"] = column
+                    columns[f"{requested}{_PATH_SEP}{leaf}"] = column
                 elif leaf == prefix:
-                    columns[final] = column
+                    columns[requested] = column
                 elif leaf.startswith(prefix + _PATH_SEP):
-                    columns[f"{final}{_PATH_SEP}{leaf[len(prefix) + 1 :]}"] = column
+                    columns[f"{requested}{_PATH_SEP}{leaf[len(prefix) + 1 :]}"] = column
         element = RecordSpec(fields)
         batch_class = NumericRecordBatch if isinstance(element, NumericRecordSpec) else RecordBatch
         batch = batch_class(

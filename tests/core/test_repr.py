@@ -514,25 +514,26 @@ class TestDistributions:
         assert repr(renamed) == repr(kde) + ".with_path_names({'a': 'g/a'})"
         assert repr(renamed.with_label("other")) == repr(renamed) + ".with_label('other')"
 
-    def test_a_reordered_marginal_reads_as_the_joint_under_its_declaration(self):
-        """No rename states a reorder, so the repr shows the reordered event spec.
-
-        The kernel ``y`` conditions on ``a``, so no product lists ``a`` first.
-        """
+    def test_a_marginal_at_a_list_of_paths_keeps_the_joint_order(self):
+        """The kernel ``y`` conditions on ``a``, and the marginal lists the factors as the joint does."""
         likelihood = conditional_distribution(
             lambda a: Normal("y", a, 1.0), given_spec={"a": NumericArraySpec(())}, label="y"
         )
         joint = likelihood * Normal("a", 0.0, 1.0, label="a")
-        reordered = repr(joint._marginal(("a", "y")))
-        assert reordered.startswith("FactoredDistribution(\n    factors=(")
-        assert "label='y·a'" not in reordered
-        assert reordered.index("a=NumericArraySpec") < reordered.index("y=NumericArraySpec")
+        assert repr(joint._marginal(("a", "y"))) == (
+            "FactoredDistribution(\n"
+            "    factors=(\n"
+            "        ConditionalDistribution('y', given=('a',), label='y'),\n"
+            "        Normal('a', loc=0.0, scale=1.0, label='a'),\n"
+            "    ),\n"
+            ")"
+        )
 
-    def test_a_marginal_in_another_product_order_reads_as_that_product(self):
+    def test_a_marginal_named_out_of_order_reads_as_the_joint_product(self):
         joint = Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0)
         assert repr(joint._marginal(("b", "a"))) == (
             "FactoredDistribution(\n"
-            "    factors=(Gamma('b', concentration=2.0, rate=1.0), Normal('a', loc=0.0, scale=1.0)),\n"
+            "    factors=(Normal('a', loc=0.0, scale=1.0), Gamma('b', concentration=2.0, rate=1.0)),\n"
             ")"
         )
 

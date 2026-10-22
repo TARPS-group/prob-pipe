@@ -2,8 +2,8 @@
 
 Provides:
   - ``FieldView`` – the ``Distribution`` that ``d[path]`` returns for a node
-    below a law's whole term, or for a selection of several nodes, holding a
-    reference to its parent.
+    below a law's whole term, or for a list of paths, holding a reference to
+    its parent.
   - the renamed law and the renamed kernel that ``with_path_names`` returns
     when the values must carry new names and the family does not rebuild
     itself under them, which this module installs on the two distribution
@@ -32,9 +32,17 @@ from ..core._object_batch import _is_object_array
 from ..core._record_batch import RecordBatch, _batch_over, _stacked_batches
 from ..core._record_spec import RecordSpec
 from ..core._repr import WIDTH, call_repr, format_names, mapping_repr
+from ..core._shapes import PathsLike
 from ..core._spec_base import NumericSpec, TermSpec
-from ..core._specs import InputSpec, OutputSpec, _has_record_outputs, _output_record
-from ..core.named_tree import _unflatten_paths
+from ..core._specs import (
+    InputSpec,
+    OutputSpec,
+    _has_record_outputs,
+    _output_record,
+    _root_output_name,
+    _single_output_name,
+)
+from ..core.named_tree import _PATH_SEP, _unflatten_paths
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
@@ -72,7 +80,6 @@ from ._conditional import (
 )
 from ._distribution import (
     _COPY_SOURCE,
-    _EMPTY_SELECTION,
     Distribution,
     _cached_raw,
     _fixed_paths,
@@ -80,12 +87,12 @@ from ._distribution import (
     _install_copy_source,
     _install_field_view,
     _install_renamed_law,
+    _is_event_path,
     _keeps_fixed_paths,
     _law_repr,
     _no_free_dims,
-    _root_output_name,
-    _shared_final_names,
-    _single_output_name,
+    _not_an_event_path,
+    _read_event_paths,
 )
 from ._factored import (
     FactoredConditionalDistribution,
@@ -93,12 +100,14 @@ from ._factored import (
     SupportsFactors,
     _closed_factors,
     _derived_product,
+    _extract,
     _factor_graph,
     _FactorGraph,
     _is_named,
     _joined_label,
     _product_of,
     _raw_record,
+    _SoleField,
     _with_named,
 )
 
@@ -106,8 +115,6 @@ if TYPE_CHECKING:
     from ..custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = ["FieldView"]
-
-_PATH_SEP = "/"
 
 
 # ---------------------------------------------------------------------------
@@ -139,72 +146,46 @@ def _node_at(declaration: OutputSpec, path: str) -> TermSpec:
     KeyError
         If *path* is not a path of *declaration*.
     """
-    segments = tuple(path.split(_PATH_SEP))
-    if not path or not all(segments):
-        raise KeyError(path)
-    output_name = _single_output_name(declaration)
-    spec = declaration.term_spec
-    if output_name is None:
-        return spec.at_path(*segments)
-    head, *rest = segments
-    if head != output_name:
-        raise KeyError(path)
-    if not rest:
-        return spec
-    if not isinstance(spec, RecordSpec):
-        raise KeyError(path)
-    return spec.at_path(*rest)
+    try:
+        paths = _output_record(declaration)
+    except TypeError:
+        raise KeyError(path) from None
+    return paths._node_at(path)
 
 
 def _final_segment(path: str) -> str:
     return path.rsplit(_PATH_SEP, 1)[-1]
 
 
-def _view_declaration(declaration: OutputSpec, path: str | tuple[str, ...]) -> OutputSpec:
-    """The event spec of the view at *path* of a law declared by *declaration*.
+def _view_declaration(declaration: OutputSpec, paths: str | tuple[str, ...]) -> OutputSpec:
+    """The event spec of the view at *paths* of a law declared by *declaration*.
 
-    One path gives the node whole under an output named by its final segment,
-    and a tuple of paths gives the positional form over a record of the nodes,
-    in order.
+    One path gives the node whole under an output named by its last name.
+    A list of paths gives the positional form over the record that keeps each
+    node at its own path, in the canonical order of *declaration*.
 
     Parameters
     ----------
     declaration : OutputSpec
         The parent law's event spec.
-    path : str or tuple of str
-        A path of *declaration*, or a tuple of paths to select jointly.
+    paths : str or tuple of str
+        A path of *declaration*, or a list of paths to select jointly, as
+        :func:`~probpipe.core._shapes._as_paths` reads them.
 
     Returns
     -------
     OutputSpec
         The keyword form for one path, and the positional form over a record for
-        a tuple.
+        a list.
 
     Raises
     ------
-    TypeError
-        If *path* is neither a string nor a tuple of strings.
     KeyError
         If a path is not a path of *declaration*.
-    ValueError
-        If the tuple is empty, since an empty selection is malformed, or two
-        selected paths share their final segment, so their outputs would
-        collide.
     """
-    if isinstance(path, str):
-        return OutputSpec(**{_final_segment(path): _node_at(declaration, path)})
-    if not isinstance(path, tuple) or not all(isinstance(each, str) for each in path):
-        raise TypeError(f"a field path must be a string or a tuple of strings; got {path!r}")
-    if not path:
-        raise ValueError(_EMPTY_SELECTION)
-    nodes: dict[str, TermSpec] = {}
-    for each in path:
-        node = _node_at(declaration, each)
-        output_name = _final_segment(each)
-        if output_name in nodes:
-            raise ValueError(_shared_final_names(path))
-        nodes[output_name] = node
-    return OutputSpec(RecordSpec(nodes))
+    if isinstance(paths, str):
+        return OutputSpec(**{_final_segment(paths): _node_at(declaration, paths)})
+    return OutputSpec(_output_record(declaration)[paths])
 
 
 def _draw_segments(declaration: OutputSpec, path: str) -> tuple[str, ...]:
@@ -279,126 +260,87 @@ def _is_within(path: str, ancestor: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _extract(value: Any, segments: tuple[str, ...]) -> Any:
-    """The node at *segments* below the top of *value*, a raw value shaped like a draw.
+def _projector(declaration: OutputSpec, paths: str | tuple[str, ...]) -> Callable[[Any], Any]:
+    """pi for a law declared by *declaration*: the extraction of its node at *paths*.
 
-    *value* is in raw form, so a value with paths is a nested mapping of raw
-    leaves, which each segment indexes. With no segments *value* is returned
-    whole.
-
-    Parameters
-    ----------
-    value : Any
-        A raw value shaped like a draw, such as a draw or a mean.
-    segments : tuple of str
-        The segments of the node's path below the top of *value*.
-
-    Returns
-    -------
-    Any
-        The raw node, with any leading batch axes of *value* kept on its leaves.
-
-    Raises
-    ------
-    TypeError
-        If *segments* is not empty and *value* is not a mapping.
+    A list of paths, in the canonical order of *declaration*, extracts the
+    record that keeps each selected node at its own path. The paths are read
+    now, so the extraction does not follow a later change to whatever supplied
+    them. A ``Record`` holding draws, as the lift holds a record law's draws,
+    gives its node at the path, or a ``Record`` of the selected nodes, and any
+    other value is read in its raw form and gives the raw node, or the nested
+    mapping of the selected nodes. Leading batch axes stay on every leaf.
     """
-    for segment in segments:
-        if not isinstance(value, Mapping):
-            raise TypeError(
-                f"the node at {_PATH_SEP.join(segments)!r} cannot be read from a "
-                f"{type(value).__name__}; a raw value with paths is a mapping"
-            )
-        value = value[segment]
-    return value
-
-
-def _projector(declaration: OutputSpec, path: str | tuple[str, ...]) -> Callable[[Any], Any]:
-    """pi for a law declared by *declaration*: the extraction of its node at *path*.
-
-    A tuple of paths extracts the record of the selected nodes, keyed by
-    output name. The paths are read now, so the extraction does not follow a later
-    change to whatever supplied them. A ``Record`` holding draws, as the lift
-    holds a record law's draws, gives its node at the path, or a ``Record`` of
-    the selected nodes, and any other value is read in its raw form and gives
-    the raw node, or the mapping of the selected nodes. Leading batch axes stay
-    on every leaf.
-    """
-    single = isinstance(path, str)
-    paths = (path,) if single else tuple(path)
-    segments = [_draw_segments(declaration, each) for each in paths]
-    outputs = [_final_segment(each) for each in paths]
+    single = isinstance(paths, str)
+    listed_paths = (paths,) if single else tuple(paths)
+    segments = [_draw_segments(declaration, selected_path) for selected_path in listed_paths]
 
     def project(value: Any) -> Any:
         if isinstance(value, Record):
-            nodes = [value.at_path(*each) if each else value for each in segments]
+            nodes = [
+                value[_PATH_SEP.join(selected_path)] if selected_path else value
+                for selected_path in segments
+            ]
             if single:
                 return nodes[0]
             return Record(
-                {output_name: _raw_record(node) for output_name, node in zip(outputs, nodes)},
+                {
+                    selected_path: _raw_record(node)
+                    for selected_path, node in zip(listed_paths, nodes)
+                },
                 label=value.label,
             )
         raw = _raw_record(value)
-        nodes = [_extract(raw, each) for each in segments]
-        return nodes[0] if single else dict(zip(outputs, nodes))
+        nodes = [_extract(raw, selected_path) for selected_path in segments]
+        return nodes[0] if single else _unflatten_paths(dict(zip(listed_paths, nodes)))
 
     return project
 
 
-def _as_paths(path: str | tuple[str, ...]) -> tuple[str, ...]:
-    """*path* as a tuple of paths: a selection as it is, and anything else as a tuple of one.
-
-    A malformed path, such as an integer, is a tuple of one, so the expression
-    of a call on it is built and the call's result rule refuses the path.
-    """
+def _path_tuple(path: str | tuple[str, ...]) -> tuple[str, ...]:
+    """*path* as a tuple of paths: a list of paths as it is, and one path as a tuple of one."""
     return tuple(path) if isinstance(path, tuple) else (path,)
 
 
-def _marginal_expression_at(law: Distribution, path: str | tuple[str, ...]) -> Expression:
-    """The expression of the marginal of *law* at *path*, which the view of *law* at *path* carries too.
+def _marginal_expression_at(law: Distribution, paths: str | tuple[str, ...]) -> Expression:
+    """The expression of the marginal of *law* at *paths*, which the view of *law* at *paths* carries too.
 
     A marginal over the whole events of some factors, none of which conditions
     on an output outside them, is those factors (VI.8): one factor gives its
-    own expression, and several their product without a label, which reads
-    factor by factor when it declares the outputs in the order of the
-    paths, as ``a(a)·b(b)``, and otherwise by the joined label, as
-    ``(lik·prior)(mu, y)``. The factors of a field view are its parent's, at
-    the parent's paths. The marginal of a view at its whole event is the view,
-    and any other marginal is *law* selected at *path*, which keeps *law*'s
-    label. The marginal holds the paths its factors hold fixed, followed by
-    those *law* holds.
+    own expression, and several their product without a label, in the law's
+    order, which reads factor by factor, as ``a(a)·b(b)``. The factors of a
+    field view are its parent's, at the parent's paths. The marginal of a view
+    at its whole event is the view, and any other marginal is *law* selected
+    at *paths*, which keeps *law*'s label. The marginal holds the paths its
+    factors hold fixed, followed by those *law* holds.
 
     Parameters
     ----------
     law : Distribution
         The law, which may be a field view.
-    path : str or tuple of str
-        An event path of *law*, or a tuple of them.
+    paths : str or tuple of str
+        An event path of *law*, or a list of them in *law*'s canonical order.
 
     Returns
     -------
     Expression
         The expression of the marginal.
     """
-    requested = _as_paths(path)
-    owner, paths = law, requested
+    requested = _path_tuple(paths)
+    owner, listed_paths = law, requested
     if isinstance(law, FieldView):
-        parent_paths = tuple(law._parent_path(each) for each in requested)
-        if parent_paths == _as_paths(law.path):
+        parent_paths = tuple(law._parent_path(selected_path) for selected_path in requested)
+        if parent_paths == _path_tuple(law.path):
             return law._expression
         if None not in parent_paths:
-            owner, paths = law.parent, cast("tuple[str, ...]", parent_paths)
-    closed = _closed_factors(owner, paths)
+            owner, listed_paths = law.parent, cast("tuple[str, ...]", parent_paths)
+    closed = _closed_factors(owner, listed_paths)
     held = _fixed_paths(owner) + _fixed_paths(law)
     if closed is None:
-        return Selected(law._embedded_expression(), requested)
+        return Selected(law._embedded_expression(), requested, listed=isinstance(paths, tuple))
     if len(closed) == 1:
         return closed[0]._embedded_expression().with_fixed(held)
-    product: Expression = _product_of(closed)
-    declared = [name for part in closed for name in part.event_spec.outputs]
-    if declared != [_final_segment(each) for each in requested]:
-        product = Selected(product, requested)
-    return product.with_fixed(held)
+    return _product_of(closed).with_fixed(held)
 
 
 def _carrying(law: Any, expression: Expression) -> Any:
@@ -429,14 +371,6 @@ def _keeps_expression(term: Any, source: Any) -> Any:
         expression = Selected(expression, tuple(term.event_spec.outputs))
     term._store_expression(expression)
     return term
-
-
-def _named_as(law: Distribution, outputs: Sequence[str]) -> Distribution:
-    """*law* with its outputs renamed, in order, to *outputs*."""
-    renames = {
-        found: wanted for found, wanted in zip(law.event_spec.outputs, outputs) if found != wanted
-    }
-    return law.with_path_names(renames) if renames else law
 
 
 # ---------------------------------------------------------------------------
@@ -708,21 +642,21 @@ def _view_log_prob_guard(self: FieldView) -> Feasibility:
     return _capability_guard(self._parent, "_marginal", self._path)
 
 
-def _view_marginal(self: FieldView, path: str | tuple[str, ...]) -> Distribution:
-    """Path composition: the parent's marginal at the parent's paths for *path*.
+def _view_marginal(self: FieldView, paths: str | tuple[str, ...]) -> Distribution:
+    """Path composition: the parent's marginal at the parent's paths for *paths*.
 
-    *path* is an event path of the view, or a tuple of them, and the result's
-    outputs are named by the paths of the view. The result carries the
-    expression ``marginal`` gives it: the parent's factors whose whole events
-    the paths select, and otherwise the view selected at *path*.
+    *paths* is an event path of the view, or a list of them, and the result is
+    indexed by the paths of the view. The result carries the expression
+    ``marginal`` gives it: the parent's factors whose whole events the paths
+    select, and otherwise the view selected at *paths*.
 
     Parameters
     ----------
     self : FieldView
         The view whose capability subclass installs this function as
         ``_marginal``.
-    path : str or tuple of str
-        An event path of the view, or a tuple of them.
+    paths : str or tuple of str
+        An event path of the view, or a list of them.
 
     Returns
     -------
@@ -734,64 +668,65 @@ def _view_marginal(self: FieldView, path: str | tuple[str, ...]) -> Distribution
     KeyError
         If a path is not an event path of the view.
     """
-    paths = (path,) if isinstance(path, str) else tuple(path)
-    parent_paths = self._parent_paths(paths)
-    marginal = self._parent._marginal(
-        parent_paths[0] if isinstance(path, str) else tuple(parent_paths)
-    )
-    named = _named_as(marginal, [_final_segment(each) for each in paths])
-    return _carrying(named, _marginal_expression_at(self, path))
+    request = _ordered_paths_of(self, paths)
+    parent_request = self._parent_request(request)
+    marginal = self._parent._marginal(parent_request.paths)
+    if parent_request.group is not None:
+        marginal = _law_of_group(marginal, parent_request.group)
+    if parent_request.renames:
+        marginal = marginal.with_path_names(parent_request.renames)
+    return _carrying(marginal, _marginal_expression_at(self, request))
 
 
-def _view_marginal_guard(self: FieldView, path: str | tuple[str, ...]) -> Feasibility:
-    """The parent's marginal guard at the parent's paths for *path*, paths of the view.
+def _view_marginal_guard(self: FieldView, paths: str | tuple[str, ...]) -> Feasibility:
+    """The parent's marginal guard at the parent's paths for *paths*, paths of the view.
 
-    A path of the view starts with its output's name, and a tuple of paths selects
-    several nodes, whose final segments must differ.
+    For a group that the view's list of paths cut down, the parent's paths are
+    the selected paths below it.
     """
-    paths = (path,) if isinstance(path, str) else tuple(path)
-    if not paths:
-        return Feasibility(False, _EMPTY_SELECTION)
-    parent_paths = []
-    for each in paths:
-        parent_path = self._parent_path(each)
-        if parent_path is None:
-            return Feasibility(False, f"{each!r} is not an event path of the view")
-        parent_paths.append(parent_path)
-    outputs = [_final_segment(each) for each in paths]
-    if len(set(outputs)) < len(outputs):
-        return Feasibility(False, _shared_final_names(paths))
-    return _capability_guard(
-        self._parent, "_marginal", parent_paths[0] if isinstance(path, str) else tuple(parent_paths)
-    )
+    try:
+        parent_request = self._parent_request(_ordered_paths_of(self, paths))
+    except (KeyError, TypeError) as error:
+        return Feasibility(False, str(error.args[0]))
+    return _capability_guard(self._parent, "_marginal", parent_request.paths)
 
 
-def _view_marginal_capabilities(self: FieldView, path: str | tuple[str, ...]) -> frozenset[type]:
-    """The parent's report of its marginal at the parent's paths for *path*, paths of the view.
+def _view_marginal_capabilities(self: FieldView, paths: str | tuple[str, ...]) -> frozenset[type]:
+    """The parent's report of its marginal at the parent's paths for *paths*, paths of the view.
 
     Parameters
     ----------
     self : FieldView
         The view whose capability subclass installs this function as
         ``_marginal_capabilities``.
-    path : str or tuple of str
-        An event path of the view, or a tuple of them.
+    paths : str or tuple of str
+        An event path of the view, or a list of them.
 
     Returns
     -------
     frozenset of type
-        The capability protocols the parent reports for that marginal.
+        The capability protocols the parent reports for that marginal. For a
+        group that the view's list of paths cut down, the parent's paths are
+        the selected paths below it.
 
     Raises
     ------
     KeyError
         If a path is not an event path of the view.
     """
-    paths = (path,) if isinstance(path, str) else tuple(path)
-    parent_paths = self._parent_paths(paths)
-    return _marginal_claims(
-        self._parent, parent_paths[0] if isinstance(path, str) else tuple(parent_paths)
-    )
+    parent_request = self._parent_request(_ordered_paths_of(self, paths))
+    return _marginal_claims(self._parent, parent_request.paths)
+
+
+def _law_of_group(law: Distribution, group: str) -> Distribution:
+    """The law of the group at *group*, whole under its last name, from *law*.
+
+    *law* exposes the record that keeps a list of paths at their paths, each
+    below *group*, so *group* is a chain of groups above them. The group moves
+    to the top, and the law of the record's one field is that group whole.
+    """
+    name = _final_segment(group)
+    return _SoleField(law if group == name else law.with_path_names({group: name}))
 
 
 def _view_condition_on(self: FieldView, given: Any, /, **options: Any) -> Distribution:
@@ -799,7 +734,9 @@ def _view_condition_on(self: FieldView, given: Any, /, **options: Any) -> Distri
 
     *given* is keyed by event paths of the view. The parent is conditioned at
     the parent's paths for them, and the result is the view of the conditioned
-    parent at each of the view's nodes that keeps a field unconditioned.
+    parent at each of the view's nodes that keeps a field unconditioned. A
+    value given at a group that the view's list of paths cut down conditions
+    the parent at each selected path below the group.
 
     Parameters
     ----------
@@ -814,7 +751,7 @@ def _view_condition_on(self: FieldView, given: Any, /, **options: Any) -> Distri
     Returns
     -------
     Distribution
-        The view of the conditioned parent, under the view's output names.
+        The view of the conditioned parent, at the view's paths.
 
     Raises
     ------
@@ -824,19 +761,20 @@ def _view_condition_on(self: FieldView, given: Any, /, **options: Any) -> Distri
         If *given* covers every field of the view.
     """
     items = list(given.items())
-    parent_paths = self._parent_paths([path for path, _ in items])
-    kept = self._kept_outputs([path for path, _ in items])
+    kept = self._kept_nodes([path for path, _ in items])
     if not kept:
         raise ValueError(_fixes_every_field(self.label))
-    conditioned = self._parent._condition_on(
-        {parent_path: value for parent_path, (_, value) in zip(parent_paths, items)}, **options
-    )
-    if isinstance(self._path, str):
-        return _named_as(FieldView(conditioned, self._path), kept)
-    nodes = self._output_paths()
-    return _named_as(
-        FieldView(conditioned, tuple(nodes[output_name] for output_name in kept)), kept
-    )
+    parent_given: dict[str, Any] = {}
+    for path, value in items:
+        parent_request = self._parent_request(path)
+        if parent_request.group is None:
+            parent_given[cast(str, parent_request.paths)] = value
+            continue
+        raw = _raw_record(value)
+        for selected in parent_request.paths:
+            parent_given[selected] = _extract(raw, tuple(_below(selected, path).split(_PATH_SEP)))
+    conditioned = self._parent._condition_on(parent_given, **options)
+    return FieldView(conditioned, self._path if isinstance(self._path, str) else kept)
 
 
 def _view_condition_on_guard(self: FieldView, paths: tuple[str, ...]) -> Feasibility:
@@ -844,15 +782,72 @@ def _view_condition_on_guard(self: FieldView, paths: tuple[str, ...]) -> Feasibi
 
     Some field of the view must remain unconditioned.
     """
-    parent_paths = []
+    parent_paths: list[str] = []
     for path in paths:
-        parent_path = self._parent_path(path)
-        if parent_path is None:
-            return Feasibility(False, f"{path!r} is not an event path of the view")
-        parent_paths.append(parent_path)
-    if not self._kept_outputs(paths):
+        try:
+            parent_request = self._parent_request(path)
+        except (KeyError, TypeError) as error:
+            return Feasibility(False, str(error.args[0]))
+        parent_paths.extend(_path_tuple(parent_request.paths))
+    if not self._kept_nodes(paths):
         return Feasibility(False, _fixes_every_field(self.label))
     return _capability_guard(self._parent, "_condition_on", tuple(parent_paths))
+
+
+def _ordered_paths_of(
+    law: Distribution | ConditionalDistribution, paths: str | tuple[str, ...]
+) -> str | tuple[str, ...]:
+    """*paths*, one path or a list of paths of *law*'s event, a list in its canonical order.
+
+    Parameters
+    ----------
+    law : Distribution or ConditionalDistribution
+        The term whose event the paths address.
+    paths : str or tuple of str
+        One path, or a list of paths.
+
+    Returns
+    -------
+    str or tuple of str
+        The one path, or the list of paths in canonical order.
+
+    Raises
+    ------
+    KeyError
+        If *law* is over a record and a path is not one of its paths.
+    TypeError
+        If *law* is over a value with no paths, such as an array.
+    """
+    return _read_event_paths(
+        law.event_spec, law.label, paths, action=f"take a marginal of {law.label!r} at"
+    )
+
+
+@dataclass(frozen=True)
+class _ParentRequest:
+    """A request of a field view, a path or a list of paths of its event, stated on its parent.
+
+    Attributes
+    ----------
+    paths : str or tuple of str
+        The parent's path, or its list of paths in the parent's canonical
+        order, at which the parent's marginal or view answers the request.
+    group : str or None
+        For one path of a view over a list of paths that names a group the list
+        cut down, that path: the parent's law at *paths* keeps the group at its
+        path, and the request is the law of that group (:func:`_law_of_group`).
+        Otherwise None.
+    renames : Mapping[str, str] or None
+        For a view over one path whose output differs from the parent's
+        node path, the rename the parent's law at *paths* takes to be indexed
+        by the view's paths: for a list of paths, the move of the parent's node
+        to the output, and for the output itself, the rename of the
+        whole term to it. Otherwise None.
+    """
+
+    paths: str | tuple[str, ...]
+    group: str | None = None
+    renames: Mapping[str, str] | None = None
 
 
 def _parent_guard(method: str, owner: str = "FieldView") -> Callable[..., Feasibility]:
@@ -941,13 +936,13 @@ _VIEW_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
 
 
 def _derived_protocols(
-    parent: Distribution, node: TermSpec, path: str | tuple[str, ...]
+    parent: Distribution, node: TermSpec, paths: str | tuple[str, ...]
 ) -> set[type]:
-    """The capabilities a view of *parent* at *path* derives, over the event declared by *node*.
+    """The capabilities a view of *parent* at *paths* derives, over the event declared by *node*.
 
     The projection rows derive from the parent's own capabilities. The density
     rows, and the moment rows the parent does not claim, derive from the
-    parent's report of its marginal at *path*, read once, here: the view claims
+    parent's report of its marginal at *paths*, read once, here: the view claims
     the normalized density when the report includes it, and otherwise the
     unnormalized one when the report includes that, and it claims each moment
     the report includes. The covariance and quantile rows need a numeric node
@@ -964,7 +959,7 @@ def _derived_protocols(
     derived.update(protocol for protocol in moments if isinstance(parent, protocol))
     if isinstance(parent, SupportsMarginals):
         derived.add(SupportsMarginals)
-        report = _marginal_claims(parent, path)
+        report = _marginal_claims(parent, paths)
         if SupportsLogProb in report:
             derived.add(SupportsLogProb)
         elif SupportsUnnormalizedLogProb in report:
@@ -982,15 +977,18 @@ def _derived_protocols(
 
 
 class FieldView(Distribution):
-    """The law of the field or field group at one event path of a parent law.
+    """The law of the node at one event path of a parent law, or of the nodes at a list of paths.
 
-    ``d[path]`` returns a ``FieldView`` for a node below the law's whole term;
-    it is never constructed by hand. The view holds a reference to its parent
-    rather than a detached law, so sibling views co-sample from one parent
-    draw and the correlation between them is preserved. Its event spec is the
-    parent's schema at the path, the leaf or subtree whole, under an output
-    named by the path's final segment. A tuple of paths selects several nodes:
-    the view's outputs are those nodes, in order.
+    ``d[path]`` returns a ``FieldView`` for a node below the law's whole term,
+    and ``d[paths]`` for a list or a tuple of paths; it is never constructed by
+    hand. The view holds a reference to its parent rather than a detached law,
+    so sibling views co-sample from one parent draw and the correlation between
+    them is preserved. For one path, its event spec is the parent's schema at
+    the path, the leaf or group whole, under an output named by the path's
+    last name. For a list of paths, its event spec is the positional form over
+    the record that keeps each node at its own path, in the parent's order
+    whatever the order of the list, so ``grouped["g/e", "a"]`` draws records
+    ``{a, g: {e}}``.
 
     The view displays as the detached marginal at its path does, and its repr
     names the class and the path, which distinguishes it from that marginal.
@@ -1038,34 +1036,41 @@ class FieldView(Distribution):
     ----------
     parent : Distribution
         The law whose event the view reads.
-    path : str or tuple of str
-        An event path of *parent*, a slash path that starts with an output's name,
-        or a tuple of them.
+    path : str, or list or tuple of str
+        An event path of *parent*, a slash path that starts with an output's
+        name, or a list of them.
 
     Raises
     ------
     KeyError
-        If a path is not an event path of *parent*.
+        If *parent* is over a record and a path is not one of its paths.
     TypeError
-        If *parent* is not a ``Distribution``, or *path* is neither a string
-        nor a tuple of strings.
+        If *parent* is not a ``Distribution``, *path* is neither a string nor
+        a list or tuple of strings, or *parent* is over a value with no paths.
     ValueError
-        If the tuple is empty, or two selected paths share their final segment.
+        If a path is empty or has an empty name, or a list of paths is empty,
+        names a path twice, or holds a path inside another.
     """
 
     _capability_table = _VIEW_CAPABILITIES
 
-    def __new__(cls, parent: Distribution, path: str | tuple[str, ...]) -> FieldView:
+    def __new__(cls, parent: Distribution, path: PathsLike) -> FieldView:
         if not isinstance(parent, Distribution):
             raise TypeError(
                 f"FieldView: parent must be a Distribution; got {type(parent).__name__}"
             )
+        path = _read_event_paths(
+            parent.event_spec, parent.label, path, action=f"index {parent.label!r} by"
+        )
         declaration = _view_declaration(parent.event_spec, path)
         return object.__new__(
             _capability_subclass(FieldView, _derived_protocols(parent, declaration.term_spec, path))
         )
 
-    def __init__(self, parent: Distribution, path: str | tuple[str, ...]) -> None:
+    def __init__(self, parent: Distribution, path: PathsLike) -> None:
+        path = _read_event_paths(
+            parent.event_spec, parent.label, path, action=f"index {parent.label!r} by"
+        )
         declaration = _view_declaration(parent.event_spec, path)
         self._init_tracked(parent.label)
         self._init_annotations(None)
@@ -1088,77 +1093,113 @@ class FieldView(Distribution):
 
     @property
     def path(self) -> str | tuple[str, ...]:
-        """The event path of the parent that this view reads, or the tuple of them."""
+        """The event path of the parent that this view reads, or the tuple of them in the parent's order."""
         return self._path
 
-    def _output_paths(self) -> dict[str, str]:
-        """Each output of the view, with the parent's path of its node."""
-        if isinstance(self._path, str):
-            return {_single_output_name(self.event_spec): self._path}
-        return dict(zip(self.event_spec.outputs, self._path))
+    def _selected_paths(self) -> tuple[str, ...]:
+        """The parent's paths of the nodes this view reads, in the parent's order."""
+        return _path_tuple(self._path)
 
-    def _parent_path(self, path: Any) -> str | None:
-        """The parent's path for *path*, an event path of this view, or None if it is not one.
+    def _parent_request(self, request: str | tuple[str, ...]) -> _ParentRequest:
+        """*request*, a path or a list of paths of this view in its order, stated on the parent.
 
-        The view's paths start with an output's name, which stands for the node
-        the view reads at that output.
-        """
-        if not isinstance(path, str):
-            return None
-        try:
-            _node_at(self.event_spec, path)
-        except KeyError:
-            return None
-        head, _, rest = path.partition(_PATH_SEP)
-        node = self._output_paths()[head]
-        return f"{node}{_PATH_SEP}{rest}" if rest else node
-
-    def _parent_paths(self, paths: Sequence[str]) -> list[str]:
-        """The parent's path for each of *paths*, event paths of this view.
+        A view over one path names its node by the path's last name, so a path
+        of the view is the parent's path with the output in place of the
+        node's path, and a list of paths moves the parent's node back to the
+        output. A view over a list of paths keeps the parent's paths, so a
+        path at or below a selected node is the parent's own, and a group that
+        the list cut down stands for the selected paths below it.
 
         Parameters
         ----------
-        paths : sequence of str
-            Paths that each start with the name of an output of this view.
+        request : str or tuple of str
+            One path of this view, or a list of them in its order.
 
         Returns
         -------
-        list of str
-            One parent path per entry of *paths*, in the same order.
+        _ParentRequest
+            The request stated on the parent.
 
         Raises
         ------
         KeyError
-            If a path is not an event path of the view.
+            If this view is over a record and a path is not one of its paths.
+        TypeError
+            If this view is over a value with no paths, such as an array.
         """
-        parent_paths = []
-        for path in paths:
-            parent_path = self._parent_path(path)
-            if parent_path is None:
-                raise KeyError(path)
-            parent_paths.append(parent_path)
-        return parent_paths
+        requested = _path_tuple(request)
+        for path in requested:
+            if not _is_event_path(self.event_spec, path):
+                listed = requested if isinstance(request, tuple) else ()
+                raise _not_an_event_path(self.event_spec, self.label, path, listed)
+        if isinstance(self._path, str):
+            output_name = cast(str, _single_output_name(self.event_spec))
+            parent_paths = tuple(self._path + path[len(output_name) :] for path in requested)
+            if isinstance(request, str):
+                # A view renamed by its output names the node otherwise than
+                # the parent's path does.
+                node_name = _final_segment(self._path)
+                if request != output_name or node_name == output_name:
+                    return _ParentRequest(parent_paths[0])
+                return _ParentRequest(parent_paths[0], renames={node_name: output_name})
+            renames = None if self._path == output_name else {self._path: output_name}
+            return _ParentRequest(parent_paths, renames=renames)
+        if isinstance(request, str):
+            if self._is_selected(request):
+                return _ParentRequest(request)
+            return _ParentRequest(self._selected_below(request), group=request)
+        parent_paths: list[str] = []
+        for path in requested:
+            parent_paths.extend((path,) if self._is_selected(path) else self._selected_below(path))
+        return _ParentRequest(tuple(parent_paths))
 
-    def _kept_outputs(self, paths: Sequence[str]) -> list[str]:
-        """The view's outputs with a field that no path in *paths* covers."""
+    def _is_selected(self, path: str) -> bool:
+        """Whether *path*, a path of this view, is at or below a node the view reads."""
+        return any(_is_within(path, selected) for selected in self._selected_paths())
+
+    def _selected_below(self, group: str) -> tuple[str, ...]:
+        """The paths of the nodes this view reads below *group*, a group the list of paths cut down."""
+        return tuple(selected for selected in self._selected_paths() if _is_within(selected, group))
+
+    def _parent_path(self, path: Any) -> str | None:
+        """The parent's path for *path*, an event path of this view, or None if it has none.
+
+        A path has none when it is not an event path of the view, or names a
+        group that the view's list of paths cut down.
+        """
+        if not isinstance(path, str):
+            return None
+        try:
+            request = self._parent_request(path)
+        except (KeyError, TypeError):
+            return None
+        return None if request.group is not None else cast(str, request.paths)
+
+    def _kept_nodes(self, paths: Sequence[str]) -> tuple[str, ...]:
+        """The parent's paths of the nodes this view reads that keep a field no path of *paths* covers.
+
+        *paths* are paths of the view.
+        """
         leaves = [
             leaf
             for leaf in _leaf_paths(self.event_spec)
             if not any(_is_within(leaf, path) for path in paths)
         ]
-        return [
-            output_name
-            for output_name in self.event_spec.outputs
-            if any(_is_within(leaf, output_name) for leaf in leaves)
-        ]
+        if isinstance(self._path, str):
+            return (self._path,) if leaves else ()
+        return tuple(
+            selected
+            for selected in self._path
+            if any(_is_within(leaf, selected) for leaf in leaves)
+        )
 
     def _project(self, value: Any) -> Any:
         """pi: the view's node of *value*, a raw parent draw or a value shaped like one.
 
         The node is in raw form: a leaf's raw value, or the nested mapping of a
-        group's raw leaves, and a selection gives the mapping of its nodes keyed
-        by output name. Leading batch axes stay on every leaf. A ``Record`` or a
-        batch of records is read through that raw form.
+        group's raw leaves, and a list of paths gives the nested mapping that
+        keeps each node at its path. Leading batch axes stay on every leaf. A
+        ``Record`` or a batch of records is read through that raw form.
         """
         return _projector(self._parent.event_spec, self._path)(_raw_record(value))
 
@@ -1168,7 +1209,7 @@ class FieldView(Distribution):
         Returns
         -------
         list of int
-            The indices into the parent's flat vector, output by output.
+            The indices into the parent's flat vector, node by node.
 
         Raises
         ------
@@ -1177,24 +1218,26 @@ class FieldView(Distribution):
         """
         return [
             index
-            for path in self._output_paths().values()
+            for path in self._selected_paths()
             for index in _coordinate_range(self._parent.event_spec, path)
         ]
 
-    def __getitem__(self, key: str | tuple[str, ...]) -> Distribution:
-        """This view under its output, the parent's view at a path within it, or a selection.
+    def __getitem__(self, paths: PathsLike) -> Distribution:
+        """This view itself, or the law at a path or a list of paths of the view.
 
-        A path of the view starts with its output's name, so ``d["a"]["a/b/c"]``
-        reads the node that ``d["a/b/c"]`` reads. A tuple of paths of the view
-        selects several nodes, as the parent's view at the tuple of their
-        paths, named by the view's paths. The result is labeled as the marginal
-        of this view at *key* is labeled (:func:`marginal`), and it holds the
-        paths this view holds fixed.
+        A tuple is a list of paths; a nested path is written with ``/``.
+        A path of a view over one path starts with its output's name, so
+        ``d["a"]["a/b/c"]`` reads the node that ``d["a/b/c"]`` reads. A list of
+        paths of the view gives the law whose event keeps each node at its path
+        of the view. A view over a list of paths keeps its parent's paths, so
+        ``d["a", "g/c"]["g/c"]`` reads the node that ``d["g/c"]`` reads. The
+        result is labeled as the marginal of this view at *paths* is labeled
+        (:func:`marginal`), and it holds the paths this view holds fixed.
 
         Parameters
         ----------
-        key : str or tuple of str
-            An event path of the view, or a tuple of them.
+        paths : str, or list or tuple of str
+            An event path of the view, or a list of them.
 
         Returns
         -------
@@ -1204,27 +1247,27 @@ class FieldView(Distribution):
         Raises
         ------
         KeyError
-            If *key* is not an event path of the view, or a tuple of them.
+            If the view is over a record and a path is not one of its paths.
+        TypeError
+            If *paths* is neither a string nor a list or tuple of strings, or
+            the view is over a value with no paths, such as an array.
         ValueError
-            If *key* is an empty tuple, or two selected paths share their final
-            segment.
+            If a path is empty or has an empty name, or a list of paths is
+            empty, names a path twice, or holds a path inside another.
         """
-        if isinstance(key, str):
-            parent_path = self._parent_path(key)
-            if parent_path is None:
-                raise KeyError(_not_an_event_path(self, key))
-            if parent_path == self._path:
-                return self
-            return self._sub_view(key, parent_path)
-        if not isinstance(key, tuple) or not all(isinstance(each, str) for each in key):
-            raise KeyError(f"a field path must be a string or a tuple of strings; got {key!r}")
-        if not key:
-            raise ValueError(_EMPTY_SELECTION)
-        for each in key:
-            if self._parent_path(each) is None:
-                raise KeyError(_not_an_event_path(self, each))
-        selection = self._sub_view(key, tuple(self._parent_paths(key)))
-        return _named_as(selection, [_final_segment(each) for each in key])
+        request = _read_event_paths(
+            self.event_spec,
+            self.label,
+            paths,
+            action=f"index {self.label!r} by",
+        )
+        parent_request = self._parent_request(request)
+        if parent_request.group is not None:
+            return FieldView(self, request)
+        if parent_request.paths == self._path:
+            return self
+        view = self._sub_view(request, parent_request.paths)
+        return view.with_path_names(parent_request.renames) if parent_request.renames else view
 
     def _sub_view(
         self, key: str | tuple[str, ...], parent_path: str | tuple[str, ...]
@@ -1345,17 +1388,6 @@ class FieldView(Distribution):
 # ---------------------------------------------------------------------------
 
 
-def _has_path(declaration: OutputSpec, path: Any) -> bool:
-    """Whether *path* is a path of *declaration*."""
-    if not isinstance(path, str):
-        return False
-    try:
-        _node_at(declaration, path)
-    except KeyError:
-        return False
-    return True
-
-
 def _draw_path(declaration: OutputSpec, path: str) -> str:
     """*path*, a path of *declaration*, as the path of its node within a draw."""
     return _PATH_SEP.join(_draw_segments(declaration, path))
@@ -1369,12 +1401,6 @@ def _leaves_at(declaration: OutputSpec, path: str) -> list[str]:
 def _below(path: str, node: str) -> str:
     """*path*, a path at or below *node*, relative to *node*."""
     return path[len(node) + 1 :]
-
-
-def _shared_final_segment(paths: Sequence[str]) -> bool:
-    """Whether two of *paths* share their final segment, so that their outputs collide."""
-    outputs = [_final_segment(path) for path in paths]
-    return len(set(outputs)) < len(outputs)
 
 
 def _field_moves(
@@ -1655,23 +1681,52 @@ class _EventRenames:
         return _renamed_by_leaves(law, _declared_like(law.event_spec, specs), moved)
 
     def marginal(
-        self, law: Distribution, paths: Sequence[str], originals: Sequence[str]
+        self,
+        law: Distribution,
+        paths: Sequence[str],
+        originals: Sequence[str],
+        *,
+        list_of_paths: bool,
     ) -> Distribution:
         """*law*, the marginal at the original nodes *originals*, as the marginal at *paths*.
 
-        A marginal names each node by the final segment of its path, so each
-        field of an original node takes the final segment of the renamed path
-        followed by the field's path below the renamed node, in the renamed
-        order.
+        A marginal at one path names its node by the path's last name, so each
+        field of the original node takes the last name of the renamed path
+        followed by the field's path below the renamed node. A marginal at a
+        list of paths keeps each node at its path, so each field of an
+        original node, which *law* keeps at its original path, takes its
+        renamed path. Either way the fields come in the renamed order.
+
+        Parameters
+        ----------
+        law : Distribution
+            The parent's marginal at *originals*.
+        paths : sequence of str
+            Paths of the renamed declaration, in its canonical order.
+        originals : sequence of str
+            The original node each of *paths* holds.
+        list_of_paths : bool
+            Whether the marginal is at a list of paths rather than at one path.
+
+        Returns
+        -------
+        Distribution
+            *law* under the renamed paths.
         """
         moved: dict[str, str] = {}
         specs: dict[str, TermSpec] = {}
         for path, original in zip(paths, originals, strict=True):
             held = {self.leaves[old]: old for old in _leaves_at(self.declaration, original)}
             for new in _leaves_at(self.renamed, path):
-                field = _final_segment(original) + held[new][len(original) :]
-                moved[field] = _final_segment(path) + new[len(path) :]
-                specs[moved[field]] = _node_at(law.event_spec, field)
+                if list_of_paths:
+                    field, target = held[new], new
+                else:
+                    field = _final_segment(original) + held[new][len(original) :]
+                    target = _final_segment(path) + new[len(path) :]
+                moved[field] = target
+                specs[target] = _node_at(law.event_spec, field)
+        if list_of_paths:
+            return _renamed_by_leaves(law, OutputSpec(RecordSpec(specs)), moved)
         return _renamed_by_leaves(law, _declared_like(law.event_spec, specs), moved)
 
 
@@ -1706,7 +1761,7 @@ def _original_nodes(
     """
     originals = []
     for path in paths:
-        if not _has_path(declaration, path):
+        if not _is_event_path(declaration, path):
             raise KeyError(path)
         original = event.original(path)
         if original is None:
@@ -1723,24 +1778,31 @@ def _regrouped_path(path: str, owner: str) -> str:
     )
 
 
-def _not_an_event_path(law: Any, path: str) -> str:
-    """The message that *path* is not an event path of *law*, with the fields it has."""
-    return (
-        f"{path!r} is not an event path of {law.label!r}; its fields: "
-        f"{list(law.event_spec.outputs)}"
-    )
-
-
 def _unreached(
     event: _EventRenames, declaration: OutputSpec, paths: Sequence[str], owner: str
 ) -> Feasibility | None:
     """Why *paths*, of the law *owner* declared by *declaration*, miss the parent, or None."""
     for path in paths:
-        if not _has_path(declaration, path):
+        if not _is_event_path(declaration, path):
             return Feasibility(False, f"{path!r} is not an event path of {owner!r}")
         if event.original(path) is None:
             return Feasibility(False, _regrouped_path(path, owner))
     return None
+
+
+def _exposed_under(law: Distribution, output_name: str) -> Distribution:
+    """*law* declared as the exposed record that holds its event under *output_name*.
+
+    A law whose event is the whole term *output_name* keeps its paths, and a law
+    that exposes a record has its paths moved below *output_name*, so a list of
+    paths of a packaged joint keeps the joint's output above the kept nodes.
+    """
+    source = law.event_spec
+    whole = _single_output_name(source) is not None
+    leaves = {
+        leaf: leaf if whole else f"{output_name}{_PATH_SEP}{leaf}" for leaf in _leaf_paths(source)
+    }
+    return _renamed_by_leaves(law, OutputSpec(RecordSpec({output_name: source.term_spec})), leaves)
 
 
 def _renamed_by_leaves(
@@ -1810,17 +1872,17 @@ def _renamed_unnormalized_log_prob(self: _RenamedDistribution, value: Any) -> Ar
     return self._parent._unnormalized_log_prob(self._event.undraw(value))
 
 
-def _renamed_marginal(self: _RenamedDistribution, path: str | tuple[str, ...]) -> Distribution:
-    """The parent's marginal at the original nodes for *path*, named and arranged by *path*.
+def _renamed_marginal(self: _RenamedDistribution, paths: str | tuple[str, ...]) -> Distribution:
+    """The parent's marginal at the original nodes for *paths*, named and arranged by *paths*.
 
-    The marginal is this law selected at *path*, so it keeps this law's label.
+    The marginal is this law selected at *paths*, so it keeps this law's label.
 
     Parameters
     ----------
     self : _RenamedDistribution
         The renamed law whose capability subclass installs this function as
         ``_marginal``.
-    path : str or tuple of str
+    paths : str or tuple of str
         An event path of this law, or a tuple of them.
 
     Returns
@@ -1833,41 +1895,43 @@ def _renamed_marginal(self: _RenamedDistribution, path: str | tuple[str, ...]) -
     KeyError
         If a path is not an event path of this law.
     ValueError
-        If a path holds no single node of the parent, or two selected paths
-        share their final segment.
+        If a path holds no single node of the parent.
     """
-    paths = (path,) if isinstance(path, str) else tuple(path)
-    originals = self._originals(paths)
-    if _shared_final_segment(paths):
-        raise ValueError(_shared_final_names(paths))
-    marginal = self._parent._marginal(originals[0] if isinstance(path, str) else tuple(originals))
+    request = _ordered_paths_of(self, paths)
+    listed_paths = _path_tuple(request)
+    originals = self._originals(listed_paths)
+    marginal = self._parent._marginal(
+        originals[0] if isinstance(request, str) else tuple(originals)
+    )
     return _carrying(
-        self._event.marginal(marginal, paths, originals), _marginal_expression_at(self, path)
+        self._event.marginal(
+            marginal, listed_paths, originals, list_of_paths=isinstance(request, tuple)
+        ),
+        _marginal_expression_at(self, request),
     )
 
 
-def _renamed_marginal_guard(self: _RenamedDistribution, path: str | tuple[str, ...]) -> Feasibility:
-    """The parent's marginal guard at the original nodes for *path*, paths of this law.
+def _renamed_marginal_guard(
+    self: _RenamedDistribution, paths: str | tuple[str, ...]
+) -> Feasibility:
+    """The parent's marginal guard at the original nodes for *paths*, paths of this law.
 
-    Each path must hold one node of the parent, and a tuple of paths selects
-    several nodes, whose final segments must differ.
+    Each path must hold one node of the parent.
     """
-    paths = (path,) if isinstance(path, str) else tuple(path)
-    unreached = _unreached(self._event, self.event_spec, paths, self.label)
+    listed_paths = (paths,) if isinstance(paths, str) else tuple(paths)
+    unreached = _unreached(self._event, self.event_spec, listed_paths, self.label)
     if unreached is not None:
         return unreached
-    if _shared_final_segment(paths):
-        return Feasibility(False, _shared_final_names(paths))
-    originals = self._originals(paths)
+    originals = self._originals(listed_paths)
     return _capability_guard(
-        self._parent, "_marginal", originals[0] if isinstance(path, str) else tuple(originals)
+        self._parent, "_marginal", originals[0] if isinstance(paths, str) else tuple(originals)
     )
 
 
 def _renamed_marginal_capabilities(
-    self: _RenamedDistribution, path: str | tuple[str, ...]
+    self: _RenamedDistribution, paths: str | tuple[str, ...]
 ) -> frozenset[type]:
-    """The parent's report of its marginal at the original nodes for *path*.
+    """The parent's report of its marginal at the original nodes for *paths*.
 
     A path that holds no single node of the parent, as a regrouping node does,
     has no exact marginal here, which the marginal guard reports, so its report
@@ -1878,7 +1942,7 @@ def _renamed_marginal_capabilities(
     self : _RenamedDistribution
         The renamed law whose capability subclass installs this function as
         ``_marginal_capabilities``.
-    path : str or tuple of str
+    paths : str or tuple of str
         An event path of this law, or a tuple of them.
 
     Returns
@@ -1891,15 +1955,15 @@ def _renamed_marginal_capabilities(
     KeyError
         If a path is not an event path of this law.
     """
-    paths = (path,) if isinstance(path, str) else tuple(path)
-    for each in paths:
-        if not _has_path(self.event_spec, each):
+    listed_paths = (paths,) if isinstance(paths, str) else tuple(paths)
+    for each in listed_paths:
+        if not _is_event_path(self.event_spec, each):
             raise KeyError(each)
-    if any(self._event.original(each) is None for each in paths):
+    if any(self._event.original(each) is None for each in listed_paths):
         return frozenset()
-    originals = self._originals(paths)
+    originals = self._originals(listed_paths)
     return _marginal_claims(
-        self._parent, originals[0] if isinstance(path, str) else tuple(originals)
+        self._parent, originals[0] if isinstance(paths, str) else tuple(originals)
     )
 
 
@@ -2687,9 +2751,9 @@ def _renamed_conditional_expectation(
 
 
 def _renamed_conditional_marginal(
-    self: _RenamedConditionalDistribution, given: Any, path: str | tuple[str, ...]
+    self: _RenamedConditionalDistribution, given: Any, paths: str | tuple[str, ...]
 ) -> Distribution:
-    """The parent's marginal at the translated given and the original nodes, arranged by *path*.
+    """The parent's marginal at the translated given and the original nodes, arranged by *paths*.
 
     Parameters
     ----------
@@ -2699,7 +2763,7 @@ def _renamed_conditional_marginal(
     given : Record or Mapping[str, Any]
         A value of every input of this kernel, keyed by input name or by a path
         into a structured input.
-    path : str or tuple of str
+    paths : str or tuple of str
         An event path of this kernel, or a tuple of them.
 
     Returns
@@ -2712,38 +2776,35 @@ def _renamed_conditional_marginal(
     KeyError
         If a path is not an event path of this kernel.
     ValueError
-        If a path holds no single node of the parent, or two selected paths
-        share their final segment.
+        If a path holds no single node of the parent.
     """
-    paths = (path,) if isinstance(path, str) else tuple(path)
-    originals = _original_nodes(self._event, self.event_spec, paths, self._parent.label)
-    if _shared_final_segment(paths):
-        raise ValueError(_shared_final_names(paths))
+    request = _ordered_paths_of(self, paths)
+    listed_paths = _path_tuple(request)
+    originals = _original_nodes(self._event, self.event_spec, listed_paths, self._parent.label)
     marginal = self._parent._conditional_marginal(
-        self._parent_given(given), originals[0] if isinstance(path, str) else tuple(originals)
+        self._parent_given(given), originals[0] if isinstance(request, str) else tuple(originals)
     )
-    return self._event.marginal(marginal, paths, originals)
+    return self._event.marginal(
+        marginal, listed_paths, originals, list_of_paths=isinstance(request, tuple)
+    )
 
 
 def _renamed_conditional_marginal_guard(
-    self: _RenamedConditionalDistribution, path: str | tuple[str, ...]
+    self: _RenamedConditionalDistribution, paths: str | tuple[str, ...]
 ) -> Feasibility:
-    """The parent's conditional marginal guard at the original nodes for *path*.
+    """The parent's conditional marginal guard at the original nodes for *paths*.
 
-    Each path must hold one node of the parent, and a tuple of paths selects
-    several nodes, whose final segments must differ.
+    Each path must hold one node of the parent.
     """
-    paths = (path,) if isinstance(path, str) else tuple(path)
-    unreached = _unreached(self._event, self.event_spec, paths, self.label)
+    listed_paths = (paths,) if isinstance(paths, str) else tuple(paths)
+    unreached = _unreached(self._event, self.event_spec, listed_paths, self.label)
     if unreached is not None:
         return unreached
-    if _shared_final_segment(paths):
-        return Feasibility(False, _shared_final_names(paths))
-    originals = _original_nodes(self._event, self.event_spec, paths, self._parent.label)
+    originals = _original_nodes(self._event, self.event_spec, listed_paths, self._parent.label)
     return _capability_guard(
         self._parent,
         "_conditional_marginal",
-        originals[0] if isinstance(path, str) else tuple(originals),
+        originals[0] if isinstance(paths, str) else tuple(originals),
     )
 
 

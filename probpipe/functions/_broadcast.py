@@ -44,7 +44,7 @@ from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec
 from ..core._specs import OutputSpec
 from ..core.config import WorkflowKind, _checked_count, config
-from ..core.named_tree import _unflatten_paths
+from ..core.named_tree import _PATH_SEP, _unflatten_paths
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
@@ -611,7 +611,9 @@ def _batch_columns(atoms: Batch) -> dict[str, Any]:
 
 def _prefixed(prefix: str, columns: Mapping[str, Any]) -> dict[str, Any]:
     """*columns* keyed under *prefix*, an unnamed column taking *prefix* itself."""
-    return {f"{prefix}/{path}" if path else prefix: column for path, column in columns.items()}
+    return {
+        f"{prefix}{_PATH_SEP}{path}" if path else prefix: column for path, column in columns.items()
+    }
 
 
 def _validate_max_evaluations(max_evaluations: int) -> None:
@@ -1294,7 +1296,7 @@ def batch_field(spec: Any, prefix: str = "") -> tuple[str, tuple[str, ...]] | No
         path = f"{prefix}{name}"
         if isinstance(child, BatchSpec):
             return path, tuple(child.level_names)
-        held = batch_field(child, f"{path}/")
+        held = batch_field(child, f"{path}{_PATH_SEP}")
         if held is not None:
             return held
     return None

@@ -87,6 +87,7 @@ from ..core._spec_base import (
     _full_array_shape_or_none,
 )
 from ..core._specs import InputSpec, OutputSpec, _has_record_outputs, _output_record
+from ..core.named_tree import _PATH_SEP
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..distributions._capabilities import (
@@ -139,7 +140,6 @@ from ._sample import _record_batch, _sample_result, _sample_shape, sample
 
 __all__ = ["InferenceMethod", "condition_on", "inference_method_registry"]
 
-_PATH_SEP = "/"
 
 #: The name of the route that returns the exact stage's result.
 _UNNORMALIZED = "unnormalized"
@@ -1301,7 +1301,7 @@ def _spec_at(declaration: Any, path: str) -> TermSpec | None:
     The path's first segment names an output of an output spec or an
     input of an input spec, and the rest addresses a node of its record.
     """
-    head, _, rest = path.partition("/")
+    head, _, rest = path.partition(_PATH_SEP)
     parts = declaration.outputs if isinstance(declaration, OutputSpec) else declaration
     spec = parts.get(head) if isinstance(parts, Mapping) else None
     if spec is None or not rest:
@@ -1584,7 +1584,7 @@ def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec | None:
             bindings: dict[str, int] = {}
             for key in keys:
                 _bind_given_dims_from_spec(
-                    _spec_at(d.given_spec, key), given[key], bindings, f"given/{key}"
+                    _spec_at(d.given_spec, key), given[key], bindings, f"given{_PATH_SEP}{key}"
                 )
             left = _remaining_given_spec(d.given_spec, keys).with_dim_sizes(**bindings)
             event = d.event_spec.with_dim_sizes(**bindings)

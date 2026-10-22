@@ -37,6 +37,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
+from ..core.named_tree import _PATH_SEP
 from ..distributions._batches import _element_source
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
@@ -44,7 +45,6 @@ from ..distributions._views import FieldView, _copy_source, _projector, _Renamed
 
 _DISTRIBUTION_SAMPLING_ABI = "probpipe.distribution_sampling/v1"
 _DESCRIPTOR_DOMAIN = b"ProbPipe-descendant-descriptor-v1\0"
-_PATH_SEP = "/"
 
 
 @dataclass(frozen=True)

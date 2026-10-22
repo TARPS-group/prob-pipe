@@ -1686,6 +1686,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   # before: [7, 7, 7]
   # after:  [1024, 1024, 1024]
   ```
+- **A path is a `str`, and a list or a tuple of `str` is a list of paths.**
+  `[]` on a `Record`, a `RecordSpec`, a batch, and a law reads its argument
+  one way: `"g/c"` is one path, and `["a", "g/c"]` or `("a", "g/c")` a list of
+  paths. A tuple was one nested path on records and batches before, so
+  replace `record["g", "c"]` with `record["g/c"]`, and `at_path(("g", "c"))`
+  with `at_path("g", "c")`. A missing path from a tuple whose `/`-joined form
+  is a path says so and gives the nested path. Some calls still run and
+  return something else, so check these:
+
+  ```python
+  site = Record({"habitat": {"forest": 0.7, "wetland": 0.3}, "forest": 2.0}, label="site")
+  site["habitat", "forest"]
+  # before: 0.7, the nested value
+  # after:  the record {habitat: {forest, wetland}, forest}
+
+  grouped["a", "g/c"].event_spec   # grouped is a law over {a, g: {c, e}}
+  # before: OutputSpec(RecordSpec(a=..., c=...))
+  # after:  OutputSpec(RecordSpec(a=..., g=RecordSpec(c=...)))
+
+  sample(grouped["a", "g/c"]).label
+  # before: "(a, c) ~ Normal·Normal·Normal"
+  # after:  "(a, g/c) ~ Normal·Normal·Normal"
+
+  marginal(a_law * b_law, ["b", "a"]).notation
+  # before: "b(b)·a(a)"
+  # after:  "a(a)·b(b)", in the law's order
+
+  "g" in draw         # draw a record {a, g: {c, e}}
+  # before: False
+  # after:  True
+  1.0 in sample(Normal("x", 0.0, 1.0), sample_shape=3)
+  # before: True when a draw equals 1.0
+  # after:  False; a batch tests paths, never its elements
+  ```
+
+  - One path gives the node there, a group included: `record["g"]` is the
+    group's record, and `spec["g"]` its `RecordSpec`, where both raised
+    `KeyError` before. `at_path` still gives any node.
+  - A list of paths keeps each node at its own path, in the term's order,
+    whatever order the list gives, and a law indexed by several paths no
+    longer raises when two of them end in the same name. A list of one path
+    keeps the name: `record[["g"]]` is the record `{g: {c, e}}`.
+  - `marginal(d, field)` is `marginal(d, paths)`, and takes a list too.
+  - A malformed list of paths raises before anything is looked up: an empty
+    path or name, as in `"g//c"`, and an empty list, a path given twice, or a
+    path inside another raise `ValueError`. `batch[()]` raises instead of
+    returning the whole batch. A path and a position in one `[]`, a list of
+    positions, a set, and an iterator raise `TypeError`.
+  - `without`, `select`, `replace`, `is_field`, and the keys of
+    `with_path_names` take one `str` path per argument, so `without("a", "a")`
+    and `without("g", "g/c")` raise `ValueError`, and a tuple raises
+    `TypeError`. `is_field` takes one path, `is_field("g/c")`.
+  - `in` on a law works, where it raised `TypeError`.
+  - A law over a single value has no paths, so `Normal("x", 0.0, 1.0)["y"]`
+    raises `TypeError` where it raised `KeyError`. A batch of arrays or
+    opaque values raises `TypeError` for a path, as before. A missing path of
+    a record, or of a law or batch over records, still raises `KeyError`.
+- **`select` keys each path by its last name.** `record.select("a", "g/c")`
+  is `{"a": ..., "c": ...}`, so the result splats into a call, where it was
+  keyed `"g/c"`. Two paths with one last name raise `ValueError`; name one
+  with a keyword, as `select("s1/theta", other="s2/theta")`. `RecordBatch.select`
+  changes the same way.
 
 - **A lifted function that draws from NumPy's or Python's global random
   generator gives each point its own noise, with a warning.** Before, JAX
