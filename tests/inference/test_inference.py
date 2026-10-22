@@ -1,13 +1,16 @@
 """Tests for the probpipe.inference package.
 
 Covers:
-- make_posterior: an inference result's levels, annotations, warmup, and draws
-- make_posterior with a record target: named draws
+- make_posterior: the posterior of an inference target, its event and its provenance
+- the private builder of a result: its levels, annotations, warmup, and draws, with a record target too
 - FieldView: output views, select, broadcasting
 - rwmh Function: basic sampling with SupportsLogProb
 """
 
 from __future__ import annotations
+
+import inspect
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -18,10 +21,12 @@ from probpipe import (
     EmpiricalDistribution,
     MultivariateNormal,
     Normal,
+    NumericRecord,
     NumericRecordBatch,
     OpaqueSpec,
     Record,
     RecordSpec,
+    conditional_distribution,
     mean,
     sample,
     variance,
@@ -29,10 +34,10 @@ from probpipe import (
 )
 from probpipe.core._record_batch import RecordBatch
 from probpipe.core._specs import NumericArraySpec, OutputSpec
-from probpipe.distributions import FieldView
-from probpipe.inference import rwmh
-from probpipe.inference._approximate_distribution import make_posterior
-from probpipe.inference._inference_utils import build_mcmc_datatree
+from probpipe.distributions import Distribution, FieldView
+from probpipe.inference import make_posterior, rwmh
+from probpipe.inference._approximate_distribution import _posterior_from_chains
+from probpipe.inference._inference_utils import build_mcmc_datatree, observed_target
 from tests._posterior import (
     arviz_data,
     flat_chains,
@@ -49,12 +54,140 @@ from tests._posterior import (
 # ---------------------------------------------------------------------------
 
 
-class TestMakePosterior:
+def _regression_target() -> Any:
+    """The target of ``y ~ Normal(sum(beta) + mu, 1)`` at three observations: ``beta`` (2,) and ``mu``."""
+    likelihood = conditional_distribution(
+        lambda beta, mu: Normal("y", (jnp.sum(beta) + mu) * jnp.ones(3), 1.0),
+        given_spec={"beta": NumericArraySpec((2,)), "mu": NumericArraySpec(())},
+        label="likelihood",
+    )
+    model = likelihood * (
+        MultivariateNormal("beta", jnp.zeros(2), jnp.eye(2)) * Normal("mu", 0.0, 1.0)
+    )
+    return observed_target(model, {"y": jnp.array([0.4, 0.9, -0.1])})
+
+
+class _ProgramLike(Distribution):
+    """A law over a record whose array length a name stands for, as a program's data fix it."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            OutputSpec(RecordSpec(theta=NumericArraySpec(("n",)), sigma=NumericArraySpec(()))),
+            label="program",
+        )
+
+    def _unnormalized_log_prob(self, value: Any) -> Any:
+        return -jnp.sum(jnp.asarray(value["theta"]) ** 2)
+
+
+class _WithOpaqueLeaf(Distribution):
+    """A law over a record with a leaf that is not numeric, which no flat layout holds."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            OutputSpec(RecordSpec(a=NumericArraySpec(()), b=OpaqueSpec())), label="opaque"
+        )
+
+    def _unnormalized_log_prob(self, value: Any) -> Any:
+        return jnp.zeros(())
+
+
+class TestMakePosteriorOfATarget:
+    """The posterior a method returns: its target's event, laid out as the target lays out positions."""
+
+    def test_the_posterior_declares_the_targets_event(self):
+        target = _regression_target()
+        chain = jax.random.normal(jax.random.key(0), (10, 3))
+        posterior = make_posterior(target, [chain], method="test")
+        assert posterior.event_spec == target.event_spec
+        assert tuple(posterior.atoms.level_names) == ("chain", "draw")
+        assert method_of(posterior) == "test"
+
+    def test_a_chain_of_vectors_reads_back_as_the_targets_draws(self):
+        target = _regression_target()
+        chain = jax.random.normal(jax.random.key(0), (10, 3))
+        posterior = make_posterior(target, [chain], method="test")
+        draws = flat_draws(posterior)
+        for index in (0, 7):
+            expected = NumericRecord.from_vector(
+                target.event_spec.term_spec, chain[index], label="theta"
+            )
+            np.testing.assert_array_equal(draws["beta"][index], np.ravel(expected["beta"]))
+            np.testing.assert_array_equal(draws["mu"][index], np.squeeze(expected["mu"]))
+
+    def test_the_provenance_names_the_target(self, full_provenance_mode):
+        target = _regression_target()
+        posterior = make_posterior(target, [jnp.zeros((4, 3))], method="test", num_results=4)
+        assert posterior.provenance.operation == "test"
+        (parent,) = posterior.provenance.parents
+        assert parent.parent is target
+        assert posterior.provenance.metadata["num_results"] == 4
+
+    def test_a_target_of_one_array_is_named_by_its_output(self):
+        target = observed_target(Normal("x", jnp.zeros(2), 1.0), None)
+        posterior = make_posterior(target, [jnp.ones((5, 2))], method="test")
+        assert list(posterior.event_spec.outputs) == ["x"]
+        assert posterior.event_spec == target.event_spec
+
+    def test_parameter_shapes_fix_the_shapes_a_program_leaves_open(self):
+        target = observed_target(_ProgramLike(), None)
+        chain = jnp.arange(8.0).reshape(2, 4)
+        posterior = make_posterior(
+            target, [chain], method="test", parameter_shapes={"theta": (3,), "sigma": ()}
+        )
+        record = posterior.event_spec.term_spec
+        assert record["theta"].shape == (3,)
+        assert record["sigma"].shape == ()
+        np.testing.assert_array_equal(flat_draws(posterior)["theta"][1], [4.0, 5.0, 6.0])
+
+    def test_parameter_shapes_must_give_every_output(self):
+        target = observed_target(_ProgramLike(), None)
+        with pytest.raises(ValueError, match=r"it has no shape for \['sigma'\]"):
+            make_posterior(
+                target, [jnp.zeros((2, 3))], method="test", parameter_shapes={"theta": (3,)}
+            )
+
+    def test_parameter_shapes_need_a_record_event(self):
+        target = observed_target(Normal("x", jnp.zeros(2), 1.0), None)
+        with pytest.raises(TypeError, match="its parameters are one NumericArraySpec"):
+            make_posterior(target, [jnp.zeros((2, 2))], method="test", parameter_shapes={"x": (2,)})
+
+    def test_parameter_shapes_must_name_only_outputs(self):
+        target = observed_target(_ProgramLike(), None)
+        shapes = {"theta": (3,), "sigma": (), "zeta": (7,)}
+        with pytest.raises(ValueError, match=r"it names no parameter \['zeta'\]"):
+            make_posterior(target, [jnp.zeros((2, 4))], method="test", parameter_shapes=shapes)
+
+    def test_no_chains_raise(self):
+        with pytest.raises(ValueError, match="chains must hold at least one chain"):
+            make_posterior(_regression_target(), [], method="test")
+
+    def test_chains_of_different_lengths_raise(self):
+        chains = [jnp.zeros((4, 3)), jnp.zeros((5, 3))]
+        with pytest.raises(ValueError, match="all chains must have the same length"):
+            make_posterior(_regression_target(), chains, method="test")
+
+    def test_a_chain_not_in_the_targets_layout_raises(self):
+        with pytest.raises(ValueError, match="each draw has 2 values"):
+            make_posterior(_regression_target(), [jnp.zeros((4, 2))], method="test")
+
+    def test_a_target_with_a_leaf_that_is_no_numeric_array_raises(self):
+        target = observed_target(_WithOpaqueLeaf(), None)
+        with pytest.raises(ValueError, match=r"'b'.*its spec is OpaqueSpec"):
+            make_posterior(target, [jnp.zeros((4, 1))], method="test")
+
+    def test_the_target_comes_first_and_the_method_by_keyword(self):
+        parameters = inspect.signature(make_posterior).parameters
+        assert list(parameters)[:2] == ["target", "chains"]
+        assert parameters["method"].kind is inspect.Parameter.KEYWORD_ONLY
+
+
+class TestTheResultOfARun:
     """An inference result: the empirical law of a run's draws on the levels chain and draw."""
 
     @pytest.fixture
     def two_chain_dist(self):
-        """Two chains, 50 draws each, 2D event, built via make_posterior."""
+        """Two chains, 50 draws each, 2D event, built by the private builder."""
         chain1 = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
         chain2 = jax.random.normal(jax.random.PRNGKey(1), (50, 2))
         warmup1 = jax.random.normal(jax.random.PRNGKey(2), (10, 2))
@@ -62,7 +195,7 @@ class TestMakePosterior:
         chains = [chain1, chain2]
         annotations = build_mcmc_datatree(chains, warmup_chains=[warmup1, warmup2])
         prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
-        return make_posterior(
+        return _posterior_from_chains(
             chains,
             parents=(prior,),
             method="test",
@@ -123,7 +256,7 @@ class TestMakePosterior:
 
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
         prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
-        posterior = make_posterior(
+        posterior = _posterior_from_chains(
             [chain],
             parents=(prior,),
             method="test",
@@ -138,7 +271,7 @@ class TestMakePosterior:
 
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
         prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
-        posterior = make_posterior(
+        posterior = _posterior_from_chains(
             [chain],
             parents=(prior,),
             method="test",
@@ -194,14 +327,14 @@ class TestMakePosterior:
         assert "levels={'chain': 2, 'draw': 50}" in r
 
     def test_make_posterior_forwards_weights(self):
-        """make_posterior(weights=) flows through to the posterior so a
+        """_posterior_from_chains(weights=) flows through to the posterior so a
         weighted backend (e.g. SMC-ABC) keeps its importance weights and
         the weighted mean reflects them."""
         # Two particles at 0 and 10; weighting the second 0.8 pulls the
         # mean from the unweighted 5 to 0.2*0 + 0.8*10 = 8.
         chain = jnp.array([[0.0], [10.0]])
         prior = Normal("theta", loc=0.0, scale=1.0)
-        post = make_posterior(
+        post = _posterior_from_chains(
             [chain],
             parents=(prior,),
             method="test",
@@ -215,7 +348,7 @@ class TestMakePosterior:
         (the weighted-mean change is opt-in, not a default behaviour shift)."""
         chain = jnp.array([[0.0], [10.0]])
         prior = Normal("theta", loc=0.0, scale=1.0)
-        post = make_posterior([chain], parents=(prior,), method="test")
+        post = _posterior_from_chains([chain], parents=(prior,), method="test")
         np.testing.assert_allclose(np.asarray(mean(post)).ravel(), [5.0], atol=1e-6)
 
 
@@ -231,7 +364,7 @@ class TestMakePosteriorRecordTarget:
         # 3 scalar params → flat draw vectors of size 3
         chain = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
         prior = MultivariateNormal("z", loc=jnp.zeros(3), cov=jnp.eye(3))
-        return make_posterior(
+        return _posterior_from_chains(
             [chain],
             parents=(prior,),
             method="test",
@@ -251,7 +384,7 @@ class TestMakePosteriorRecordTarget:
 
     def test_the_atoms_of_one_output_are_labeled_by_it(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (10, 2))
-        posterior = make_posterior(
+        posterior = _posterior_from_chains(
             [chain], parents=(), method="test", event_spec=OutputSpec(beta=NumericArraySpec((2,)))
         )
         assert posterior.atoms.label == "beta"
@@ -282,7 +415,7 @@ class TestMakePosteriorRecordTarget:
     def test_without_template_returns_array(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 3))
         prior = MultivariateNormal("z", loc=jnp.zeros(3), cov=jnp.eye(3))
-        post = make_posterior([chain], parents=(prior,), method="test")
+        post = _posterior_from_chains([chain], parents=(prior,), method="test")
         draws = flat_draws(post)
         assert isinstance(draws, jnp.ndarray)
         assert draws.shape == (50, 3)
@@ -295,44 +428,19 @@ class TestMakePosteriorRecordTarget:
         """A posterior over a one-field record declares the field's shape, as its draws have it."""
         width = int(np.prod(shape))
         chains = [jnp.zeros((5, width)), jnp.ones((5, width))]
-        post = make_posterior(chains, parents=(), method="test", event_spec=RecordSpec(theta=shape))
+        post = _posterior_from_chains(
+            chains, parents=(), method="test", event_spec=RecordSpec(theta=shape)
+        )
         assert post.event_spec.term_spec["theta"].shape == shape
         assert flat_draws(post)["theta"].shape == (10, *shape)
         assert jnp.shape(post._mean()["theta"]) == shape
 
-    def test_field_order_reassembles_by_name(self):
-        """field_order maps chain column-blocks to template fields by name.
-
-        The chain's columns are laid out in a different order than the
-        template (``b`` block, then scalar ``a``). Passing ``field_order``
-        must reassemble each field from its own columns — not split the
-        flat chain positionally in template order (which would scramble
-        the draws).
-        """
-        template = RecordSpec(a=(), b=(2,))  # sizes: a=1, b=2
-        # Columns laid out in field_order = (b, a): [b0, b1, a0].
-        b_block = jnp.array([[10.0, 11.0], [12.0, 13.0]])  # (2, 2)
-        a_block = jnp.array([[1.0], [2.0]])  # (2, 1)
-        chain = jnp.concatenate([b_block, a_block], axis=-1)  # (2, 3)
-        prior = MultivariateNormal("z", loc=jnp.zeros(3), cov=jnp.eye(3))
-        post = make_posterior(
-            [chain],
-            parents=(prior,),
-            method="test",
-            event_spec=template,
-            field_order=["b", "a"],
-        )
-        draws = flat_draws(post)
-        # a is the trailing column; b is the leading 2-column block.
-        np.testing.assert_allclose(np.asarray(draws["a"]), [1.0, 2.0])
-        np.testing.assert_allclose(np.asarray(draws["b"]), b_block)
-
-    def test_field_order_none_is_positional(self):
-        """field_order=None keeps the historical positional layout."""
+    def test_the_columns_follow_the_records_order(self):
+        """The columns of a chain are the leaves of the record, in its order."""
         template = RecordSpec(a=(), b=(2,))
         chain = jnp.array([[1.0, 10.0, 11.0], [2.0, 12.0, 13.0]])  # a, then b
         prior = MultivariateNormal("z", loc=jnp.zeros(3), cov=jnp.eye(3))
-        post = make_posterior(
+        post = _posterior_from_chains(
             [chain],
             parents=(prior,),
             method="test",
@@ -342,107 +450,43 @@ class TestMakePosteriorRecordTarget:
         np.testing.assert_allclose(np.asarray(draws["a"]), [1.0, 2.0])
         np.testing.assert_allclose(np.asarray(draws["b"]), [[10.0, 11.0], [12.0, 13.0]])
 
-    def test_field_order_must_be_permutation(self):
-        """A field_order that isn't a permutation of template fields raises."""
-        template = RecordSpec(a=(), b=())
-        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
-        prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
-        with pytest.raises(ValueError, match="not a permutation"):
-            make_posterior(
-                [chain],
-                parents=(prior,),
-                method="test",
-                event_spec=template,
-                field_order=["a", "c"],
-            )
-
-    def test_field_order_chain_too_wide_raises(self):
-        """With field_order, a chain wider than the template's total flat
-        size raises rather than silently dropping the extra columns in the
-        permutation gather."""
+    def test_a_chain_wider_than_the_record_raises(self):
+        """A chain wider than the record's flat size raises rather than dropping columns."""
         template = RecordSpec(a=(), b=())  # total flat size 2
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 3))  # 3 columns
         prior = MultivariateNormal("z", loc=jnp.zeros(3), cov=jnp.eye(3))
         with pytest.raises(ValueError, match="each draw has"):
-            make_posterior(
+            _posterior_from_chains(
                 [chain],
                 parents=(prior,),
                 method="test",
                 event_spec=template,
-                field_order=["a", "b"],
             )
 
-    def test_field_order_chain_too_narrow_raises(self):
-        """With field_order, a chain narrower than the template's total
-        flat size raises clearly rather than clamping the out-of-bounds
-        gather indices."""
+    def test_a_chain_narrower_than_the_record_raises(self):
+        """A chain narrower than the record's flat size raises."""
         template = RecordSpec(a=(), b=(), c=())  # total flat size 3
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))  # 2 columns
         prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
         with pytest.raises(ValueError, match="each draw has"):
-            make_posterior(
+            _posterior_from_chains(
                 [chain],
                 parents=(prior,),
                 method="test",
                 event_spec=template,
-                field_order=["a", "b", "c"],
             )
 
-    def test_field_order_without_template_raises(self):
-        """field_order without an event_spec is a caller error, not a
-        silent no-op."""
-        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
-        prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
-        with pytest.raises(ValueError, match="requires an event_spec"):
-            make_posterior(
-                [chain],
-                parents=(prior,),
-                method="test",
-                field_order=["a", "b"],
-            )
-
-    def test_field_order_single_field_invalid_permutation_raises(self):
-        """field_order is validated even for a single-field template, so a
-        wrong name is caught rather than silently ignored."""
-        template = RecordSpec(a=())
-        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 1))
-        prior = MultivariateNormal("z", loc=jnp.zeros(1), cov=jnp.eye(1))
-        with pytest.raises(ValueError, match="not a permutation"):
-            make_posterior(
-                [chain],
-                parents=(prior,),
-                method="test",
-                event_spec=template,
-                field_order=["b"],
-            )
-
-    def test_field_order_single_field_width_mismatch_raises(self):
-        """With field_order, the chain width is validated for a
-        single-field template too — not only for multi-field ones."""
+    def test_a_one_field_record_checks_the_width(self):
+        """The chain width is checked for a one-field record too."""
         template = RecordSpec(a=(2,))  # flat size 2
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 3))  # 3 columns
         prior = MultivariateNormal("z", loc=jnp.zeros(3), cov=jnp.eye(3))
         with pytest.raises(ValueError, match="each draw has"):
-            make_posterior(
+            _posterior_from_chains(
                 [chain],
                 parents=(prior,),
                 method="test",
                 event_spec=template,
-                field_order=["a"],
-            )
-
-    def test_field_order_opaque_template_raises_clear_error(self):
-        """field_order cannot compute a permutation for opaque fields."""
-        template = RecordSpec(a=OpaqueSpec(), b=())
-        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
-        prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
-        with pytest.raises(ValueError, match=r"draws of 'a'.*its spec is OpaqueSpec"):
-            make_posterior(
-                [chain],
-                parents=(prior,),
-                method="test",
-                event_spec=template,
-                field_order=["a", "b"],
             )
 
     def test_multi_field_opaque_template_raises_clear_error(self):
@@ -451,7 +495,7 @@ class TestMakePosteriorRecordTarget:
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
         prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
         with pytest.raises(ValueError, match=r"draws of 'a'.*its spec is OpaqueSpec"):
-            make_posterior(
+            _posterior_from_chains(
                 [chain],
                 parents=(prior,),
                 method="test",
@@ -467,7 +511,7 @@ class TestMakePosteriorRecordTarget:
         vector_size = 3 + 4  # 3 + 2*2
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, vector_size))
         prior = MultivariateNormal("z", loc=jnp.zeros(vector_size), cov=jnp.eye(vector_size))
-        post = make_posterior(
+        post = _posterior_from_chains(
             [chain],
             parents=(prior,),
             method="test",
@@ -484,7 +528,7 @@ class TestMakePosteriorRecordTarget:
         warmup = jax.random.normal(jax.random.PRNGKey(1), (10, 2))
         annotations = build_mcmc_datatree([chain], warmup_chains=[warmup])
         prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
-        post = make_posterior(
+        post = _posterior_from_chains(
             [chain],
             parents=(prior,),
             method="test",
@@ -505,7 +549,7 @@ class TestMakePosteriorRecordTarget:
         vector_size = 3  # a + b + scale
         chain = jax.random.normal(jax.random.PRNGKey(0), (30, vector_size))
         prior = MultivariateNormal("z", loc=jnp.zeros(vector_size), cov=jnp.eye(vector_size))
-        post = make_posterior(
+        post = _posterior_from_chains(
             [chain],
             parents=(prior,),
             method="test",
@@ -526,7 +570,9 @@ class TestMakePosteriorRecordTarget:
             {"a": "params/a", "b": "params/b"}
         ) * Normal("s", 0.0, 1.0)
         chain = jax.random.normal(jax.random.PRNGKey(0), (40, 3))
-        post = make_posterior([chain], parents=(prior,), method="test", event_spec=prior.event_spec)
+        post = _posterior_from_chains(
+            [chain], parents=(prior,), method="test", event_spec=prior.event_spec
+        )
         assert post["params/a"].event_spec.term_spec == prior.event_spec.term_spec["params/a"]
         assert convert(post, KDEDistribution).event_spec == prior.event_spec
 
@@ -543,7 +589,7 @@ class TestMakePosteriorRecordTarget:
             loc=jnp.zeros(vector_size),
             cov=jnp.eye(vector_size),
         )
-        post = make_posterior(
+        post = _posterior_from_chains(
             [chain],
             parents=(prior,),
             method="test",
@@ -590,7 +636,7 @@ class TestMakePosteriorRecordTarget:
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         annotations = build_mcmc_datatree([chain])
         prior = MultivariateNormal("z", loc=jnp.zeros(3), cov=jnp.eye(3))
-        post = make_posterior(
+        post = _posterior_from_chains(
             [chain],
             parents=(prior,),
             method="test",
@@ -610,7 +656,7 @@ class TestMakePosteriorRecordTarget:
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 5))
         warmup = jax.random.normal(jax.random.PRNGKey(1), (4, 5))
         prior = MultivariateNormal("z", loc=jnp.zeros(5), cov=jnp.eye(5))
-        post = make_posterior(
+        post = _posterior_from_chains(
             [chain],
             parents=(prior,),
             method="test",
@@ -628,7 +674,7 @@ class TestMakePosteriorRecordTarget:
     def test_the_arviz_draws_of_a_whole_term_are_named_by_its_output(self):
         prior = MultivariateNormal("theta", loc=jnp.zeros(3), cov=jnp.eye(3))
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        post = make_posterior(
+        post = _posterior_from_chains(
             [chain],
             parents=(prior,),
             method="test",
@@ -948,7 +994,7 @@ class TestPosteriorFieldView:
     def posterior(self, template):
         chain = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
         prior = MultivariateNormal("z", loc=jnp.zeros(3), cov=jnp.eye(3))
-        return make_posterior(
+        return _posterior_from_chains(
             [chain],
             parents=(prior,),
             method="test",
@@ -996,7 +1042,7 @@ class TestPosteriorFieldView:
         template = RecordSpec(vec=(5,), scalar=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 6))
         prior = MultivariateNormal("z", loc=jnp.zeros(6), cov=jnp.eye(6))
-        post = make_posterior([chain], parents=(prior,), method="test", event_spec=template)
+        post = _posterior_from_chains([chain], parents=(prior,), method="test", event_spec=template)
         assert post["scalar"].event_shape == ()
         assert post["vec"].event_shape == (5,)
 
@@ -1029,7 +1075,7 @@ class TestPosteriorFieldView:
         template = RecordSpec(a=(), b=())
         chain = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
         prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
-        post = make_posterior([chain], parents=(prior,), method="test", event_spec=template)
+        post = _posterior_from_chains([chain], parents=(prior,), method="test", event_spec=template)
         view = post["a"]
         # Mean of column 0 (field "a"): (1+3+5)/3 = 3.0
         np.testing.assert_allclose(float(view._mean()), 3.0, atol=1e-5)
@@ -1072,7 +1118,7 @@ class TestViewProtocolDuckTyping:
         template = RecordSpec(a=(), b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
         prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
-        post = make_posterior([chain], parents=(prior,), method="test", event_spec=template)
+        post = _posterior_from_chains([chain], parents=(prior,), method="test", event_spec=template)
         view = post["a"]
         assert not isinstance(view, SupportsLogProb)
 
@@ -1086,7 +1132,7 @@ class TestViewProtocolDuckTyping:
         template = RecordSpec(a=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
         prior = Normal("x", 0, 1)
-        post = make_posterior([chain], parents=(prior,), method="test", event_spec=template)
+        post = _posterior_from_chains([chain], parents=(prior,), method="test", event_spec=template)
         assert isinstance(post["a"], SupportsSampling)
 
     def test_view_always_isinstance_mean_variance(self):
@@ -1126,7 +1172,7 @@ class TestViewProtocolDuckTyping:
         template = RecordSpec(a=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
         prior = Normal("x", 0, 1)
-        post = make_posterior([chain], parents=(prior,), method="test", event_spec=template)
+        post = _posterior_from_chains([chain], parents=(prior,), method="test", event_spec=template)
         view_without = post["a"]
         assert not isinstance(view_without, SupportsLogProb)
 
@@ -1329,7 +1375,7 @@ class TestEndToEndValuesPipeline:
         # 3 scalar fields → flat draw vectors of size 3
         chain = jax.random.normal(jax.random.PRNGKey(0), (200, 3))
         prior = MultivariateNormal("z", loc=jnp.zeros(3), cov=jnp.eye(3))
-        post = make_posterior(
+        post = _posterior_from_chains(
             [chain],
             parents=(prior,),
             method="test",

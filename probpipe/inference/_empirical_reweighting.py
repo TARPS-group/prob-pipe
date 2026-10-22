@@ -18,16 +18,20 @@ from ..core._dispatch import Feasibility
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._repr import format_outputs
 from ..core._specs import OutputSpec, _has_record_outputs
+from ..custom_types import PRNGKey
 from ..distributions._capabilities import SupportsConditionalLogProb
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..operations._condition import InferenceMethod
+from ..operations._inference_target import (
+    InferenceTarget,
+    _described,
+    _flat_record_spec,
+    _flat_unflatten,
+)
 from ._approximate_distribution import _record_run
 from ._inference_utils import (
-    described,
-    flat_record,
-    flat_unflatten,
     model_factors,
     parameter_given,
     traces_in_jax,
@@ -38,7 +42,7 @@ __all__: list[str] = []
 
 
 def _flat_atoms(prior: EmpiricalDistribution) -> jnp.ndarray:
-    """The atoms of *prior* as one array ``(atoms, d)`` in the layout :func:`flat_unflatten` reads.
+    """The atoms of *prior* as one array ``(atoms, d)`` in the flat layout of the prior's draws.
 
     Parameters
     ----------
@@ -57,7 +61,7 @@ def _flat_atoms(prior: EmpiricalDistribution) -> jnp.ndarray:
     """
     count = prior.num_atoms
     rows = prior._rows
-    record = flat_record(prior)
+    record = _flat_record_spec(prior)
     if record is None:
         columns = [rows] if not isinstance(rows, dict) else list(rows.values())
     else:
@@ -132,7 +136,7 @@ class EmpiricalReweightingMethod(InferenceMethod):
         if not isinstance(factors.prior, EmpiricalDistribution):
             return Feasibility(
                 False,
-                f"the prior must be an EmpiricalDistribution; got {described(factors.prior)}",
+                f"the prior must be an EmpiricalDistribution; got {_described(factors.prior)}",
             )
         likelihood = factors.likelihood
         if not isinstance(likelihood, ConditionalDistribution) or not isinstance(
@@ -141,7 +145,7 @@ class EmpiricalReweightingMethod(InferenceMethod):
             return Feasibility(
                 False,
                 "the likelihood must be a ConditionalDistribution with a conditional "
-                f"log-density (SupportsConditionalLogProb); got {described(likelihood)}",
+                f"log-density (SupportsConditionalLogProb); got {_described(likelihood)}",
             )
         try:
             _flat_atoms(factors.prior)
@@ -149,15 +153,19 @@ class EmpiricalReweightingMethod(InferenceMethod):
             return Feasibility(False, f"the prior's atoms must be numeric: {error}")
         return Feasibility(True)
 
-    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
+    def execute(
+        self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any
+    ) -> EmpiricalDistribution:
         """The prior's atoms, each weighted by its prior weight times the likelihood there.
 
         Parameters
         ----------
-        target : Distribution
+        target : InferenceTarget
             The unnormalized conditional of a factored joint at observed values,
             which ``check`` admits.
-        **kwargs : Any
+        key : PRNGKey
+            The run's random key, which the method does not read, since it draws nothing.
+        **options : Any
             The call's ``method_options``, of which the method reads none.
 
         Returns
@@ -171,10 +179,10 @@ class EmpiricalReweightingMethod(InferenceMethod):
         ValueError
             If the observed values have zero likelihood at every atom.
         """
-        self._check_options(kwargs)
+        self._check_options(options)
         factors = model_factors(target)
         prior, likelihood = factors.prior, factors.likelihood
-        unflatten = flat_unflatten(prior)
+        unflatten = _flat_unflatten(prior)
 
         def log_likelihood(theta: jnp.ndarray) -> jnp.ndarray:
             given = parameter_given(factors, unflatten(theta))

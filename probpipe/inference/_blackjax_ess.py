@@ -34,7 +34,7 @@ import numpy as np
 
 from ..core._dispatch import Feasibility
 from ..core.record import Record
-from ..custom_types import Array, ArrayLike
+from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions._capabilities import (
     SupportsConditionalUnnormalizedLogProb,
     SupportsUnnormalizedLogProb,
@@ -43,18 +43,17 @@ from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import FactoredDistribution
 from ..families import MultivariateNormal, Normal
-from ..operations._condition import InferenceMethod, _UnnormalizedConditional
+from ..operations._condition import InferenceMethod, _inference_run_key
+from ..operations._inference_target import InferenceTarget, _described
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
     as_prng_key,
     build_mcmc_datatree,
-    described,
     get_init_state,
     likelihood_flat,
     model_factors,
     observed_target,
     parallel_chain_map,
-    run_seed,
     traces_in_jax,
     unfactored_model_reason,
 )
@@ -133,7 +132,7 @@ def _run_ess_chains(
     num_results: int,
     num_warmup: int,
     num_chains: int,
-    random_seed: int,
+    random_seed: int | PRNGKey,
 ) -> tuple[list[Array], list[Array] | None, dict[str, np.ndarray]]:
     """Run ``num_chains`` ESS chains via ``lax.scan`` + ``vmap``.
 
@@ -236,7 +235,7 @@ def elliptical_slice(
         num_warmup=num_warmup,
         num_chains=num_chains,
         init=init,
-        random_seed=run_seed("blackjax_ess"),
+        random_seed=_inference_run_key("blackjax_ess"),
     )
 
 
@@ -247,7 +246,7 @@ def _elliptical_slice(
     num_warmup: int,
     num_chains: int,
     init: ArrayLike | None,
-    random_seed: int,
+    random_seed: int | PRNGKey,
 ) -> EmpiricalDistribution:
     """Elliptical slice chains on the unnormalized conditional *target* of a factored joint."""
     factors = model_factors(target)
@@ -256,7 +255,7 @@ def _elliptical_slice(
     gp = _gaussian_prior_params(factors.prior)
     if gp is None:
         raise TypeError(
-            f"cannot run elliptical_slice: the prior must be Gaussian; got {described(factors.prior)}"
+            f"cannot run elliptical_slice: the prior must be Gaussian; got {_described(factors.prior)}"
         )
     prior_mean, prior_cov = gp
     init_state = get_init_state(factors.prior, init, random_seed=random_seed)
@@ -278,11 +277,10 @@ def _elliptical_slice(
 
     annotations = build_mcmc_datatree(chains, sample_stats, warmup_chains=warmups)
     return make_posterior(
+        target,
         chains,
-        parents=(target,),
         method="elliptical_slice",
         annotations=annotations,
-        event_spec=target.event_spec,
         num_results=num_results,
         num_warmup=num_warmup,
         num_chains=num_chains,
@@ -320,7 +318,7 @@ class BlackJAXESSMethod(InferenceMethod):
         return "blackjax_elliptical_slice"
 
     def supported_types(self) -> tuple[type, ...]:
-        return (_UnnormalizedConditional,)
+        return (Distribution,)
 
     @property
     def priority(self) -> int:
@@ -335,7 +333,7 @@ class BlackJAXESSMethod(InferenceMethod):
         if gp is None:
             return Feasibility(
                 feasible=False,
-                description=f"the prior must be Gaussian; got {described(factors.prior)}",
+                description=f"the prior must be Gaussian; got {_described(factors.prior)}",
             )
         likelihood = factors.likelihood
         if not isinstance(
@@ -345,7 +343,7 @@ class BlackJAXESSMethod(InferenceMethod):
                 feasible=False,
                 description=(
                     "the likelihood must have an unnormalized log-density "
-                    f"(SupportsConditionalUnnormalizedLogProb); got {described(likelihood)}"
+                    f"(SupportsConditionalUnnormalizedLogProb); got {_described(likelihood)}"
                 ),
             )
         # The runner traces the BlackJAX ESS step under ``lax.scan``, with no
@@ -358,14 +356,16 @@ class BlackJAXESSMethod(InferenceMethod):
             )
         return Feasibility(feasible=True)
 
-    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
+    def execute(
+        self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any
+    ) -> EmpiricalDistribution:
         """Elliptical slice chains on the joint the target conditions, at its data."""
-        self._check_options(kwargs)
+        self._check_options(options)
         return _elliptical_slice(
             target,
-            num_results=kwargs.get("num_results", 1000),
-            num_warmup=kwargs.get("num_warmup", 500),
-            num_chains=kwargs.get("num_chains", 4),
-            init=kwargs.get("init"),
-            random_seed=run_seed(self.name),
+            num_results=options.get("num_results", 1000),
+            num_warmup=options.get("num_warmup", 500),
+            num_chains=options.get("num_chains", 4),
+            init=options.get("init"),
+            random_seed=key,
         )

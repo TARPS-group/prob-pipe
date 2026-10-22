@@ -7,13 +7,19 @@ model are isolated in ``TestHelpers``.
 
 from unittest.mock import MagicMock, patch
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 nutpie = pytest.importorskip("nutpie")
 
-from probpipe import EmpiricalDistribution, NumericArraySpec, workflow_run
+from probpipe import (
+    EmpiricalDistribution,
+    NumericArraySpec,
+    inference_method_registry,
+    workflow_run,
+)
 from probpipe.core.constraints import real
 from probpipe.inference._nutpie import (
     _compile_for_nutpie,
@@ -185,7 +191,6 @@ class TestMethodOptions:
 
     def _sampled_with(self, tmp_path, **options):
         from probpipe.families import StanModel
-        from probpipe.inference._nutpie import NutpieNutsMethod
 
         program = tmp_path / "program.stan"
         program.write_text("parameters { real mu; } model { }")
@@ -194,7 +199,9 @@ class TestMethodOptions:
             patch.object(nutpie, "compile_stan_model", _compile_stan_model),
             patch.object(nutpie, "sample", return_value=_stan_trace()) as sample,
         ):
-            NutpieNutsMethod().execute(posterior, num_results=3, num_chains=2, **options)
+            inference_method_registry.execute(
+                posterior, method="nutpie_nuts", num_results=3, num_chains=2, **options
+            )
         return sample.call_args.kwargs
 
     def test_progress_bar_is_passed_to_the_sampler(self, tmp_path):
@@ -479,7 +486,9 @@ class TestNutpieIntegration:
         model = PyMCModel(_gaussian_pymc_fn, label="gaussian")
         target = condition_on.using(method="unnormalized")(model, {"y": np.array([0.0, 1.0])})
         with workflow_run(seed=0):
-            result = NutpieNutsMethod().execute(target, num_results=30, num_warmup=30, num_chains=1)
+            result = NutpieNutsMethod().execute(
+                target, key=jax.random.key(0), num_results=30, num_warmup=30, num_chains=1
+            )
         (parent,) = result.provenance.parents
         assert (parent.type_name, parent.provenance) == (
             "_UnnormalizedConditional",

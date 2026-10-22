@@ -1764,6 +1764,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   # after:  each draw has its own noise, and a UserWarning names simulate
   ```
 
+- **An inference method receives an `InferenceTarget` and its run's random key.**
+  `InferenceMethod.execute(target, /, *, key, **options)` takes the key as a
+  required keyword, which `condition_on` derives for each run from the
+  enclosing `workflow_run`; the private `run_seed` is removed. Every target is
+  an `InferenceTarget`: a law that is itself unnormalized arrives as the
+  target of conditioning it on nothing. A method that recognized a law by its
+  class, such as a program's posterior, now lists `Distribution` in
+  `supported_types`, since a method that lists only the law's class is never
+  selected, and reads the law from `target.joint` in `check`. A posterior's
+  provenance names the target as its parent, and the target's names the
+  model; the target of conditioning a law on nothing is that law, so the
+  posterior of `rwmh(law)` still names `law`. Seeded draws of the built-in methods are unchanged.
+
+  ```python
+  # before
+  def execute(self, target, /, **options):
+      key = run_seed(self.name)
+      ...
+  # after
+  def execute(self, target, /, *, key, **options):
+      ...
+  ```
+
+- **`make_posterior` is public, and takes the target first.** It reads the
+  posterior's event and the layout of the chains from the target, so
+  `event_spec=` and `field_order=` are gone: a backend whose trace orders its
+  variables differently extracts them in the target's order. A program whose
+  array sizes come from its data passes `parameter_shapes=`.
+
+  ```python
+  # before
+  make_posterior(chains, (target,), "my_method", event_spec=prior.event_spec, field_order=names)
+  # after
+  from probpipe.inference import make_posterior
+  make_posterior(target, chains, method="my_method")
+  ```
+
+- **The posterior of a law over one array is named by the law's output.**
+  A law that is not a parametric family and whose event is one array, such as
+  one built from a log-density alone, gave a posterior whose output was
+  `posterior`; it now takes the law's output, as every other target's
+  posterior does. The same call before and after:
+
+  ```python
+  posterior = inference_method_registry.execute(law, method="blackjax_nuts")  # law's output is "x"
+  # before: list(posterior.event_spec.outputs) == ["posterior"]
+  # after:  list(posterior.event_spec.outputs) == ["x"]
+  ```
+
+- **A run of `empirical_reweighting` takes one random event of its workflow.**
+  Every method run now receives a key, so the random draws made after an
+  `empirical_reweighting` run in one `workflow_run` get different keys. The
+  posterior itself is unchanged. The same code before and after:
+
+  ```python
+  with workflow_run(seed=0):
+      posterior = condition_on.using(method="empirical_reweighting")(model, observed)
+      later = sample(Normal("z", 0.0, 1.0), 3)
+  # before and after: posterior is the same law
+  # before: later held one set of draws; after: it holds another
+  ```
+
 ### Added
 
 - **`summarize(d)` collects a law's standard summaries in one record that
@@ -2899,6 +2961,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`cloudpickle` is a direct dependency**, which the `process` executor uses
   to send closures and functions defined in a notebook to worker processes.
+
+- **The interface of an inference target is public.** `probpipe.inference`
+  exports `InferenceTarget`, the protocol every inference method receives:
+  a law over the model's unobserved quantities, with the model as `joint`, the
+  observed values as `given`, and the model's prior and likelihood as
+  `factors()`, which returns a `ModelFactors`. `make_posterior` builds a
+  method's result from chains of the `to_vector` coordinates of draws.
+  [A new inference method](docs/api/extending.md) shows a method written
+  against them.
 
 ### Changed
 

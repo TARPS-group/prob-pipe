@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from probpipe import EmpiricalDistribution, NumericArraySpec, OutputSpec, RecordSpec
-from probpipe.inference._approximate_distribution import make_posterior
+from probpipe.inference._approximate_distribution import _posterior_from_chains
 
 
 def _posterior(
@@ -19,7 +19,7 @@ def _posterior(
     rng = np.random.default_rng(seed)
     draws = np.stack([rng.standard_normal((n_chains, n_draws)) for _ in param_names], axis=-1)
     event = OutputSpec(RecordSpec(**{p: NumericArraySpec(()) for p in param_names}))
-    return make_posterior(list(draws), (), "test", event_spec=event)
+    return _posterior_from_chains(list(draws), (), "test", event_spec=event)
 
 
 @pytest.fixture

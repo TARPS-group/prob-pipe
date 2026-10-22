@@ -495,7 +495,8 @@ class TestTargets:
         joint, given = joint_and_given(target)
         assert joint is simple_model
         assert set(given.fields) == {"y"}
-        assert observed_target(simple_model, None) is simple_model
+        assert observed_target(simple_model, None).joint is simple_model
+        assert observed_target(simple_model, None).conditions_on_nothing
 
     def test_a_keyed_target_is_its_own_model(self):
         from probpipe.inference._inference_utils import joint_and_given, observed_parts

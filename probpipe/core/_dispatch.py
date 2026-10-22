@@ -789,7 +789,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             If there are fewer positional arguments than the registry's arity
             requires, none included.
         """
-        key = self._cache_key(args)
+        cache_key = self._cache_key(args)
         if method is not None:
             named = self._named(method)
             if not self._passes_exact_only(named, exact_only):
@@ -799,21 +799,31 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
                 raise ResolutionError(_unresolved(method, info.pending))
             if not info.feasible:
                 raise ResolutionError(f"method {method!r} does not apply: {info.description}")
-            return named.method.execute(*args, **kwargs)
+            return self._run_selected(named, args, kwargs)
         tried: list[str] = []
         lead = ""
-        for candidate in self._candidates(key, exact_only):
+        for candidate in self._candidates(cache_key, exact_only):
             info = candidate.method.check(*args, **kwargs)
             if info.feasible is None:
                 raise ResolutionError(_unresolved(candidate.name, info.pending))
             if info.feasible is True:
-                return candidate.method.execute(*args, **kwargs)
+                return self._run_selected(candidate, args, kwargs)
             tried.append(f"{candidate.name}: {info.description or 'infeasible'}")
             if info.actionable and not lead:
                 lead = info.description
-        raise ResolutionError(self._no_method_message(key, tried, exact_only, lead=lead))
+        raise ResolutionError(self._no_method_message(cache_key, tried, exact_only, lead=lead))
 
     # -- internals ----------------------------------------------------------
+
+    def _run_selected(
+        self, registration: _Registration[M], args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> Any:
+        """The result of the method of *registration*, which :meth:`execute` selected, on the call.
+
+        A registry whose methods receive more than the call's arguments, as an
+        inference method receives its run key, overrides it.
+        """
+        return registration.method.execute(*args, **kwargs)
 
     @staticmethod
     def _report(registration: _Registration[M], feasibility: Feasibility) -> MethodInfo:

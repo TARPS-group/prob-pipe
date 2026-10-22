@@ -48,11 +48,12 @@ from blackjax.mcmc.dynamic_hmc import (
 )
 
 from ..core._dispatch import Feasibility
-from ..custom_types import Array
+from ..custom_types import Array, PRNGKey
 from ..distributions._capabilities import SupportsUnnormalizedLogProb
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..operations._condition import InferenceMethod
+from ..operations._inference_target import InferenceTarget
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
     UNTRACEABLE_DENSITY,
@@ -63,7 +64,6 @@ from ._inference_utils import (
     observed_parts,
     parallel_chain_map,
     run_chain_scan,
-    run_seed,
     traces_in_jax,
     unconstrained_chain,
 )
@@ -345,7 +345,7 @@ class _BlackJAXMCMCMethod(InferenceMethod):
         if not traces_in_jax(model):
             return Feasibility(feasible=False, description=UNTRACEABLE_DENSITY)
         try:
-            target_flat, flat_init, _ = build_target_log_prob_flat(model, observed)
+            target_flat, flat_init = build_target_log_prob_flat(model, observed)
             unconstrained_chain(target_flat, flat_init, model)
         except Exception as e:
             return Feasibility(
@@ -354,22 +354,23 @@ class _BlackJAXMCMCMethod(InferenceMethod):
             )
         return Feasibility(feasible=True)
 
-    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
+    def execute(
+        self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any
+    ) -> EmpiricalDistribution:
         """Chains of the BlackJAX kernel on the flat form of the target's unnormalized density."""
-        self._check_options(kwargs)
-        random_seed = run_seed(self.name)
+        self._check_options(options)
         model, observed = observed_parts(target)
-        target_flat, flat_init, event_spec = build_target_log_prob_flat(
+        target_flat, flat_init = build_target_log_prob_flat(
             model,
             observed,
-            init=kwargs.get("init"),
-            random_seed=random_seed,
+            init=options.get("init"),
+            random_seed=key,
         )
-        num_results: int = kwargs.get("num_results", 1000)
-        num_warmup: int = kwargs.get("num_warmup", 500)
-        num_chains: int = kwargs.get("num_chains", 4)
-        step_size: float = kwargs.get("step_size", 0.1)
-        num_integration_steps: int = kwargs.get("num_integration_steps", 10)
+        num_results: int = options.get("num_results", 1000)
+        num_warmup: int = options.get("num_warmup", 500)
+        num_chains: int = options.get("num_chains", 4)
+        step_size: float = options.get("step_size", 0.1)
+        num_integration_steps: int = options.get("num_integration_steps", 10)
 
         density, init, constrain = unconstrained_chain(target_flat, flat_init, model)
         chains, sample_stats = _run_blackjax_chains(
@@ -380,17 +381,16 @@ class _BlackJAXMCMCMethod(InferenceMethod):
             num_warmup=num_warmup,
             num_chains=num_chains,
             step_size=step_size,
-            random_seed=random_seed,
+            random_seed=key,
             num_integration_steps=num_integration_steps,
         )
         chains = [constrain(chain) for chain in chains]
         annotations = build_mcmc_datatree(chains, sample_stats)
         return make_posterior(
+            target,
             chains,
-            parents=(target,),
             method=self._method_name,
             annotations=annotations,
-            event_spec=event_spec,
             num_results=num_results,
             num_warmup=num_warmup,
             num_chains=num_chains,

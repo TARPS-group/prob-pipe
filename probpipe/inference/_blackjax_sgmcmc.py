@@ -37,17 +37,19 @@ import jax.numpy as jnp
 from ..core._dispatch import Feasibility
 from ..custom_types import Array, PRNGKey
 from ..distributions._capabilities import SupportsLogProb
+from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..families._random_functions import RandomMeasure
-from ..operations._condition import InferenceMethod, _UnnormalizedConditional
+from ..operations._condition import InferenceMethod
+from ..operations._inference_target import (
+    InferenceTarget,
+    _described,
+    _flat_unflatten,
+)
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
-    as_prng_key,
-    described,
-    flat_unflatten,
     get_init_state,
     model_factors,
-    run_seed,
     unfactored_model_reason,
 )
 from ._minibatch import MinibatchedDistribution, _reads_observations, _subset_scoring_reason
@@ -125,7 +127,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         return self._method_description
 
     def supported_types(self) -> tuple[type, ...]:
-        return (_UnnormalizedConditional,)
+        return (Distribution,)
 
     @property
     def priority(self) -> int | None:
@@ -143,7 +145,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
                 feasible=False,
                 description=(
                     f"the prior must have a log-density (SupportsLogProb); got "
-                    f"{described(factors.prior)}"
+                    f"{_described(factors.prior)}"
                 ),
             )
         if not _reads_observations(factors.likelihood):
@@ -161,16 +163,17 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
     # -- execution -----------------------------------------------------------
 
-    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
+    def execute(
+        self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any
+    ) -> EmpiricalDistribution:
         """Run the SGMCMC kernel; return an :class:`~probpipe.EmpiricalDistribution`."""
-        self._check_options(kwargs)
+        self._check_options(options)
         factors = model_factors(target)
-        batch_size: int = kwargs["batch_size"]
-        num_results: int = kwargs.get("num_results", 1000)
-        num_warmup: int = kwargs.get("num_warmup", 0)
-        step_size: float = kwargs.get("step_size", 1e-3)
-        random_seed: PRNGKey = run_seed(self.name)
-        with_replacement: bool = kwargs.get("with_replacement", False)
+        batch_size: int = options["batch_size"]
+        num_results: int = options.get("num_results", 1000)
+        num_warmup: int = options.get("num_warmup", 0)
+        step_size: float = options.get("step_size", 1e-3)
+        with_replacement: bool = options.get("with_replacement", False)
 
         # The minibatched random measure supplies the stochastic gradients from
         # the prior and likelihood factors ``check()`` validated.
@@ -184,16 +187,16 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         )
 
         # The chain moves in the prior's flat coordinates.
-        grad_estimator = _build_grad_estimator(measure, flat_unflatten(factors.prior))
-        algorithm = self._build_algorithm(grad_estimator, **kwargs)
-        init = get_init_state(factors.prior, kwargs.get("init"), random_seed=random_seed)
+        grad_estimator = _build_grad_estimator(measure, _flat_unflatten(factors.prior))
+        algorithm = self._build_algorithm(grad_estimator, **options)
+        init = get_init_state(factors.prior, options.get("init"), random_seed=key)
         state = algorithm.init(init)
 
         # Iterate. The kernel itself jits within run_loop's step closure.
         positions = _run_sgmcmc_loop(
             algorithm,
             state,
-            as_prng_key(random_seed),
+            key,
             step_size,
             num_warmup,
             num_results,
@@ -201,11 +204,10 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
         chain = jnp.stack(positions, axis=0)
         return make_posterior(
+            target,
             [chain],
-            parents=(target,),
             method=self._method_name,
             annotations=None,
-            event_spec=target.event_spec,
             num_results=num_results,
             num_warmup=num_warmup,
             num_chains=1,

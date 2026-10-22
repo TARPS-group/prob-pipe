@@ -24,18 +24,20 @@ from ..core._dispatch import (
     UnarySupportedTypes,
 )
 from ..operations._condition import InferenceMethod, inference_method_registry
-from ._bayesflow_likelihoods import (
-    BayesFlowLikelihood,
-    BayesFlowRatio,
-    learn_amortized_likelihood,
-    learn_amortized_ratio,
-)
+from ..operations._inference_target import InferenceTarget, ModelFactors
+from ._approximate_distribution import make_posterior
 
 # Amortized SBI (optional ``[bayesflow]`` extra). keras/bayesflow load lazily on
 # first call, so these eager imports stay cheap. The trained artifacts are
 # kernels: an amortized posterior claims ``SupportsApproximateConditioning``, and
 # a learned likelihood or ratio composes with a prior into a joint whose
 # conditional the registered methods normalize.
+from ._bayesflow_likelihoods import (
+    BayesFlowLikelihood,
+    BayesFlowRatio,
+    learn_amortized_likelihood,
+    learn_amortized_ratio,
+)
 from ._bayesflow_posteriors import learn_amortized_posterior
 from ._blackjax_ess import elliptical_slice
 from ._blackjax_rwmh import rwmh
@@ -52,9 +54,11 @@ __all__ = [
     "BinarySupportedTypes",
     "Feasibility",
     "InferenceMethod",
+    "InferenceTarget",
     "MathematicalDomainError",
     "MethodInfo",
     "MinibatchedDistribution",
+    "ModelFactors",
     "ResolutionError",
     "UnaryDispatchMethod",
     "UnaryDispatchRegistry",
@@ -65,6 +69,7 @@ __all__ = [
     "learn_amortized_likelihood",
     "learn_amortized_posterior",
     "learn_amortized_ratio",
+    "make_posterior",
     "rwmh",
 ]
 

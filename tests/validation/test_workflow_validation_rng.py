@@ -23,7 +23,8 @@ from probpipe import (
 )
 from probpipe.families import GaussianFamily, glm_likelihood
 from probpipe.functions import _context, _rng
-from probpipe.inference._inference_utils import integer_seed, run_seed
+from probpipe.inference._inference_utils import integer_seed
+from probpipe.operations._condition import _inference_run_key
 from probpipe.validation import (
     Reference,
     score_posterior,
@@ -135,8 +136,8 @@ class TestPredictiveCheckBroker:
 class _FakeConditionOn:
     """A stand-in for ``condition_on`` that records its observed values and returns zero draws.
 
-    A fit also records the seed it reads through ``run_seed``, as an inference
-    method does, so the seed is a key of the workflow scope the fit runs in.
+    A fit also records the seed of its run's key, as the registry derives it for an
+    inference method, so the seed is a key of the workflow scope the fit runs in.
     The evaluation of a kernel reads no seed.
     """
 
@@ -150,7 +151,7 @@ class _FakeConditionOn:
 
     def using(self, *, method=None, method_options=None):
         def fit(d, given):
-            self.seeds.append(integer_seed(run_seed("fake")))
+            self.seeds.append(integer_seed(_inference_run_key("fake")))
             return self(d, given)
 
         return fit

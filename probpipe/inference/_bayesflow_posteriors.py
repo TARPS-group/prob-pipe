@@ -49,6 +49,7 @@ from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
 from ..distributions._factored import _raw_record
 from ..functions import function
+from ..operations._condition import _inference_run_key
 from ..values import Function
 from ._approximate_distribution import _record_run
 from ._bayesflow_common import (
@@ -63,7 +64,7 @@ from ._bayesflow_common import (
     _validate_learn_inputs,
     _without_progress_bar,
 )
-from ._inference_utils import integer_seed, run_seed
+from ._inference_utils import integer_seed
 
 if TYPE_CHECKING:
     # Type-only: bayesflow/keras load at runtime in _import_bayesflow.
@@ -639,7 +640,7 @@ def learn_amortized_posterior(
     )
 
     bf = _import_bayesflow()
-    random_seed = integer_seed(run_seed("learn_amortized_posterior"))
+    random_seed = integer_seed(_inference_run_key("learn_amortized_posterior"))
     with _isolated_keras_seeding(random_seed):
         key = jax.random.PRNGKey(random_seed)
         named, y = _simulate_offline(

@@ -42,6 +42,7 @@ from ..distributions._capabilities import (
 )
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ..distributions._distribution import Distribution, _class_label, _constructor_label
+from ..operations._condition import _inference_run_key
 from ._bayesflow_common import (
     _OBSERVATION_KEY,
     SimBackend,
@@ -52,7 +53,7 @@ from ._bayesflow_common import (
     _simulate_offline,
     _validate_learn_inputs,
 )
-from ._inference_utils import integer_seed, run_seed
+from ._inference_utils import integer_seed
 
 if TYPE_CHECKING:
     from bayesflow.approximators import ContinuousApproximator, RatioApproximator
@@ -561,7 +562,7 @@ def _train_offline(
     leaf_keys = tuple(record.leaf_shapes)
 
     bf = _import_bayesflow()
-    random_seed = integer_seed(run_seed(caller))
+    random_seed = integer_seed(_inference_run_key(caller))
     with _isolated_keras_seeding(random_seed):
         key = jax.random.PRNGKey(random_seed)
         k_jitter = None

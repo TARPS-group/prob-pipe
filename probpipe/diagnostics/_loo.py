@@ -584,13 +584,13 @@ def _add_log_likelihood(
     import jax.numpy as jnp
 
     from ..inference._inference_utils import (
-        flat_unflatten,
         model_factors,
         observed_target,
         parameter_given,
         unfactored_model_reason,
     )
     from ..inference._minibatch import _data_size, _reads_observations, _subset_scoring_reason
+    from ..operations._inference_target import _flat_unflatten
 
     target = observed_target(model, data)
     factors = model_factors(target)
@@ -604,7 +604,7 @@ def _add_log_likelihood(
             f"{_subset_scoring_reason(factors.likelihood)}"
         )
     likelihood, observed = factors.likelihood, factors.observed
-    unflatten = flat_unflatten(factors.prior)
+    unflatten = _flat_unflatten(factors.prior)
     from ..inference._approximate_distribution import _flat_chains
 
     # The draws in the prior's flat layout, (chains, draws, d).

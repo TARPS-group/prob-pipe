@@ -15,7 +15,7 @@ import numpy as np
 from probpipe import MultivariateNormal, RecordSpec
 from probpipe.diagnostics._arviz_bridge import extract_draws
 from probpipe.diagnostics._datatree_store import to_named_posterior_dataset
-from probpipe.inference._approximate_distribution import make_posterior
+from probpipe.inference._approximate_distribution import _posterior_from_chains
 
 
 def _posterior(template, vector_size, *, n_chains=2, n_draws=30, seed0=0):
@@ -25,7 +25,7 @@ def _posterior(template, vector_size, *, n_chains=2, n_draws=30, seed0=0):
         jax.random.normal(jax.random.PRNGKey(seed0 + i), (n_draws, vector_size))
         for i in range(n_chains)
     ]
-    post = make_posterior(chains, parents=(prior,), method="test", event_spec=template)
+    post = _posterior_from_chains(chains, parents=(prior,), method="test", event_spec=template)
     return post, chains
 
 
