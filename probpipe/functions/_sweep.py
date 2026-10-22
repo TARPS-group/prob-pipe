@@ -412,11 +412,13 @@ def _mapped_row(batch: Batch, label: str, row: Any) -> NumericArray | Record:
     """One element of the swept *batch*, rebuilt from the raw *row* the map reads.
 
     The element is labeled *label*. A batch of arrays yields an array under the
-    spec of the batch's elements, and a batch of records a record of the row's fields.
+    spec of the batch's elements, and a batch of records a record of the row's
+    fields, in the batch's order. JAX maps a dict with its keys sorted, so the
+    row's own order is not the batch's.
     """
     if isinstance(batch, NumericArrayBatch):
         return NumericArray(row, spec=batch.element_spec.term_spec, label=label)
-    return Record(row, label=label)
+    return Record({path: row[path] for path in batch.event_template}, label=label)
 
 
 def mapped_row_body(

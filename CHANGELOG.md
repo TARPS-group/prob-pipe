@@ -5010,6 +5010,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   setting is part of a compiled JAX program's cache key, and an inert one,
   which changes no computed value, is not.
 
+- **A record keeps its declared field order through a sweep or a lift.** A
+  function that declares a record input received the record's fields in
+  alphabetical order under a `jax` sweep or a lift, and refused it, because
+  JAX maps a dict with its keys sorted. A lifted function that returns a
+  dict, and a law that `distribution(sample=...)` builds from a sampler that
+  returns a dict, had their fields sorted in the same way. Each now keeps the
+  declared order, or the order the function wrote:
+
+  ```python
+  spec = NumericRecordSpec(r=NumericArraySpec(()), m=NumericArraySpec(()))
+
+  @function(input_spec=InputSpec(x=spec))
+  def difference(x):
+      return x["r"] - x["m"]
+
+  batch = NumericRecordBatch({"r": jnp.arange(3.0), "m": jnp.ones(3)}, level_names=("draw",))
+  difference(batch)  # before: EvaluationError, after: [-1. 0. 1.]
+  ```
+
 ### Removed
 
 - **sbijax dropped (breaking).** The `sbijax`-backed simulation-based
