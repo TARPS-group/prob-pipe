@@ -4,8 +4,8 @@ A method registered in a fresh registry records the target and the key
 ``condition_on`` hands it, so the tests read the three forms of target: a model
 at observed values of its fields, a law that is itself unnormalized, and a model
 at data it does not declare as fields. Each is checked against the contract of
-``InferenceTarget``: its parts, the flat layout of ``unflatten`` and
-``log_density``, and ``factors``. The key is checked against the contract of
+``InferenceTarget``: its parts, its density as a law's, read at a vector
+through ``from_vector``, and ``factors``. The key is checked against the contract of
 ``InferenceMethod.execute``: one per run, derived from the enclosing workflow.
 """
 
@@ -24,10 +24,13 @@ from probpipe import (
     MultivariateNormal,
     Normal,
     NumericArraySpec,
+    NumericRecord,
     OutputSpec,
     Record,
+    SupportsUnnormalizedLogProb,
     condition_on,
     conditional_distribution,
+    unnormalized_log_prob,
     workflow_run,
 )
 from probpipe.core._dispatch import Feasibility
@@ -39,7 +42,6 @@ from probpipe.inference import (
     ModelFactors,
     inference_method_registry,
 )
-from probpipe.inference._inference_utils import flat_vector
 from probpipe.operations._condition import _inference_run_key, _InferenceMethodRegistry
 from probpipe.operations._operation import _RegistryRoute
 
@@ -155,16 +157,6 @@ class _DataModel(Distribution):
         return jnp.sum(norm.logpdf(data, theta, 1.0))
 
 
-class _OfUnknownLength(Distribution):
-    """A law over an array whose length a name stands for, so no flat layout holds it."""
-
-    def __init__(self) -> None:
-        super().__init__(OutputSpec(z=NumericArraySpec(("n",))), label="unknown_length")
-
-    def _unnormalized_log_prob(self, value: Any) -> Any:
-        return -jnp.sum(jnp.asarray(value) ** 2)
-
-
 class _WithoutDensity(Distribution, SupportsSampling):
     """A law over a scalar that only samples."""
 
@@ -213,90 +205,69 @@ class TestEveryMethodReceivesAnInferenceTarget:
 
 
 # ---------------------------------------------------------------------------
-# The flat layout
+# The target as a law
 # ---------------------------------------------------------------------------
 
 
-class TestTheFlatLayout:
-    def test_a_record_event_lays_out_its_fields_in_the_events_order(self, received_target):
-        target = received_target(_by_condition_on, _regression(), {"y": Y})
-        position = jnp.array([1.0, 2.0, 3.0])
-        draw = target.unflatten(position)
-        assert isinstance(draw, Record)
-        widths = {"beta": 2, "mu": 1}
-        expected, offset = {}, 0
-        for field in target.event_spec.outputs:
-            expected[field] = position[offset : offset + widths[field]]
-            offset += widths[field]
-        np.testing.assert_array_equal(np.ravel(draw["beta"]), expected["beta"])
-        np.testing.assert_array_equal(np.ravel(draw["mu"]), expected["mu"])
-        np.testing.assert_array_equal(flat_vector(draw), position)
+def _density_at(target: Any, vec: Any) -> Any:
+    """The target's unnormalized log-density at *vec*, read through ``from_vector``, as a JAX array."""
+    value = NumericRecord.from_vector(target.event_spec.term_spec, vec, label="theta")
+    return jnp.asarray(unnormalized_log_prob(target, value))
 
-    def test_an_event_of_one_array_is_that_array_in_its_shape(self, received_target):
-        target = received_target(_by_the_registry, _UnnormalizedMatrix())
-        draw = target.unflatten(jnp.arange(4.0))
-        np.testing.assert_array_equal(draw, jnp.arange(4.0).reshape(2, 2))
 
-    def test_the_log_density_is_the_joints_at_the_position_and_the_observed_values(
-        self, received_target
-    ):
+class TestTheTargetIsALaw:
+    def test_its_density_at_a_vector_is_the_joints_at_the_observed_values(self, received_target):
         target = received_target(_by_condition_on, _regression(), {"y": Y})
-        position = jnp.array([0.3, -0.2, 0.5])
-        draw = target.unflatten(position)
-        expected = _log_joint(jnp.ravel(draw["beta"]), jnp.squeeze(draw["mu"]))
-        np.testing.assert_allclose(target.log_density(position), expected, rtol=1e-5)
-        assert jnp.shape(target.log_density(position)) == ()
+        vec = jnp.array([0.3, -0.2, 0.5])
+        value = NumericRecord.from_vector(target.event_spec.term_spec, vec, label="theta")
+        expected = _log_joint(jnp.ravel(value["beta"]), jnp.squeeze(value["mu"]))
+        np.testing.assert_allclose(_density_at(target, vec), expected, rtol=1e-5)
 
-    def test_the_log_density_compiles_and_differentiates_for_a_jax_model(self, received_target):
+    def test_its_density_at_a_vector_compiles_maps_and_differentiates(self, received_target):
         target = received_target(_by_condition_on, _regression(), {"y": Y})
-        position = jnp.array([0.3, -0.2, 0.5])
+        vec = jnp.array([0.3, -0.2, 0.5])
+
+        def density(v: Any) -> Any:
+            return _density_at(target, v)
+
+        np.testing.assert_allclose(jax.jit(density)(vec), density(vec), rtol=1e-6)
         np.testing.assert_allclose(
-            jax.jit(target.log_density)(position), target.log_density(position), rtol=1e-6
+            jax.vmap(density)(jnp.stack([vec, vec])), density(vec), rtol=1e-6
         )
-        gradient = jax.grad(target.log_density)(position)
+        gradient = jax.grad(density)(vec)
         assert gradient.shape == (3,)
         assert bool(jnp.all(jnp.isfinite(gradient)))
 
-    def test_the_log_density_of_a_law_conditioned_on_nothing_is_its_own(self, received_target):
-        target = received_target(_by_the_registry, _UnnormalizedMatrix())
-        np.testing.assert_allclose(target.log_density(jnp.full(4, 2.0)), -8.0)
+    def test_the_density_of_a_law_conditioned_on_nothing_is_its_own(self, received_target):
+        law = _UnnormalizedMatrix()
+        target = received_target(_by_the_registry, law)
+        value = jnp.full((2, 2), 2.0)
+        np.testing.assert_allclose(unnormalized_log_prob(target, value), -8.0)
 
-    def test_the_log_density_of_a_model_at_data_reads_the_data(self, received_target):
+    def test_the_density_of_a_model_at_data_reads_the_data(self, received_target):
         model, data = _DataModel(), jnp.array([1.0, 2.0])
         target = received_target(_by_the_registry, model, data)
         np.testing.assert_allclose(
-            target.log_density(jnp.array([1.5])), jnp.sum(norm.logpdf(data, 1.5, 1.0)), rtol=1e-6
+            unnormalized_log_prob(target, jnp.asarray(1.5)),
+            jnp.sum(norm.logpdf(data, 1.5, 1.0)),
+            rtol=1e-6,
         )
 
-    def test_a_target_without_a_flat_layout_refuses_a_position(self, received_target):
-        target = received_target(_by_the_registry, _OfUnknownLength())
-        with pytest.raises(TypeError, match="cannot lay out the draws of _OfUnknownLength"):
-            target.unflatten(jnp.zeros(3))
-        with pytest.raises(TypeError, match="cannot lay out the draws"):
-            target.log_density(jnp.zeros(3))
+    def test_a_target_has_a_density_exactly_when_its_model_has_one(self, received_target):
+        assert isinstance(
+            received_target(_by_condition_on, _regression(), {"y": Y}), SupportsUnnormalizedLogProb
+        )
+        assert not isinstance(
+            received_target(_by_the_registry, _WithoutDensity()), SupportsUnnormalizedLogProb
+        )
 
-    @pytest.mark.parametrize("length", [2, 4])
-    def test_a_position_of_the_wrong_length_raises_for_a_record(self, received_target, length):
+    def test_the_target_of_conditioning_on_nothing_records_no_condition_on(self, received_target):
+        target = received_target(_by_the_registry, _UnnormalizedMatrix())
+        assert target.provenance is None
+
+    def test_a_target_at_observed_values_records_condition_on(self, received_target):
         target = received_target(_by_condition_on, _regression(), {"y": Y})
-        with pytest.raises(ValueError, match=r"a position holds its 3 parameter values"):
-            target.unflatten(jnp.zeros(length))
-        with pytest.raises(ValueError, match=r"Pass an array of shape \(3,\)"):
-            target.log_density(jnp.zeros(length))
-
-    def test_a_position_of_the_wrong_length_raises_for_an_array(self, received_target):
-        target = received_target(_by_the_registry, _UnnormalizedMatrix())
-        with pytest.raises(ValueError, match=r"a position holds its 4 parameter values"):
-            target.unflatten(jnp.zeros(3))
-
-    def test_a_scalar_is_no_position(self, received_target):
-        target = received_target(_by_the_registry, _UnnormalizedMatrix())
-        with pytest.raises(ValueError, match=r"cannot read a position of shape \(\)"):
-            target.unflatten(jnp.zeros(()))
-
-    def test_a_target_without_a_density_refuses_log_density(self, received_target):
-        target = received_target(_by_the_registry, _WithoutDensity())
-        with pytest.raises(TypeError, match="unnormalized log-density"):
-            target.log_density(jnp.zeros(1))
+        assert target.provenance.operation == "condition_on"
 
 
 # ---------------------------------------------------------------------------

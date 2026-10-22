@@ -1711,7 +1711,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   class, such as a program's posterior, now lists `Distribution` in
   `supported_types`, since a method that lists only the law's class is never
   selected, and reads the law from `target.joint` in `check`. A posterior's
-  provenance names the target as its parent, and the target's names the law. Seeded draws of the built-in methods are unchanged.
+  provenance names the target as its parent, and the target's names the
+  model; the target of conditioning a law on nothing is that law, so the
+  posterior of `rwmh(law)` still names `law`. Seeded draws of the built-in methods are unchanged.
 
   ```python
   # before
@@ -2900,12 +2902,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The interface of an inference target is public.** `probpipe.inference`
   exports `InferenceTarget`, the protocol every inference method receives:
-  the model as `joint`, the observed values as `given`, the model's prior and
-  likelihood as `factors()`, which returns a `ModelFactors`, and the target's
-  unnormalized log-density at a position in its flat layout as
-  `log_density`, read back as a draw by `unflatten`. `make_posterior` builds a
-  method's result from chains of positions. [A new inference method](docs/api/extending.md)
-  shows a method written against them.
+  a law over the model's unobserved quantities, with the model as `joint`, the
+  observed values as `given`, and the model's prior and likelihood as
+  `factors()`, which returns a `ModelFactors`. `make_posterior` builds a
+  method's result from chains of the `to_vector` coordinates of draws.
+  [A new inference method](docs/api/extending.md) shows a method written
+  against them.
 
 ### Changed
 

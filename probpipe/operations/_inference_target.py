@@ -1,9 +1,8 @@
 """The target of an inference method: the law ``condition_on`` asks a method to normalize.
 
 ``condition_on`` hands each inference method one :class:`InferenceTarget`, and a
-method reads the model, the observed values, the target's density in a flat
-layout, and the model's prior and likelihood through it.
-``_UnnormalizedConditional`` is the one implementation.
+method reads the model, the observed values, and the model's prior and
+likelihood through it. ``_UnnormalizedConditional`` is the one implementation.
 """
 
 from __future__ import annotations
@@ -61,28 +60,32 @@ class InferenceTarget(Protocol):
        log-density alone, is the target of conditioning on nothing. ``given``
        is an empty ``Record``, and :attr:`joint` is that law.
 
-    **The flat layout.** :meth:`log_density` and :meth:`unflatten` take a
-    *position*: one 1-D array that holds a value of every parameter. The
-    leaves of :attr:`event_spec` are laid out one after another in the
-    event's order, nested records depth first, each leaf raveled in row-major
-    order; an event of one array is that array raveled. A chain of positions
-    of shape ``(num_draws, size)`` is what
-    :func:`~probpipe.inference.make_posterior` takes. The layout needs every
-    leaf to be a numeric array of known shape, so a target whose event holds
-    anything else, or whose shapes a program fixes only when it runs, has no
-    flat layout.
+    A target is a law: it has the event spec, the label, and the capabilities
+    of a :class:`~probpipe.Distribution`. It has an unnormalized density, read
+    through :func:`~probpipe.unnormalized_log_prob`, exactly when the model has
+    one, so a method states the capabilities it needs in its ``check``: a
+    method that evaluates a density requires
+    :class:`~probpipe.SupportsUnnormalizedLogProb`, and one that simulates
+    reads :meth:`factors`.
+
+    A method that works on vectors uses the ``to_vector`` layout of the
+    event's values: ``NumericRecord.from_vector(target.event_spec.term_spec,
+    vec, label=...)`` reads a vector as a value of the parameters, and the
+    chains :func:`~probpipe.inference.make_posterior` takes hold the
+    ``to_vector`` coordinates of draws.
 
     A target is immutable: a method reads it and never changes it.
 
     Examples
     --------
     A method that weights draws of the prior by the likelihood reads the
-    target's factors, and one that runs a chain reads its density::
+    target's factors, and one that runs a chain evaluates its density at a
+    vector::
 
         factors = target.factors()          # None when the model has no prior and likelihood
-        position = jnp.zeros(size)          # a position in the flat layout
-        target.log_density(position)        # the unnormalized log-density there
-        target.unflatten(position)          # the same parameters as a draw of the event
+        spec = target.event_spec.term_spec  # a NumericRecordSpec, whose vector_size is d
+        value = NumericRecord.from_vector(spec, vec, label="theta")
+        unnormalized_log_prob(target, value)
     """
 
     @property
@@ -103,59 +106,6 @@ class InferenceTarget(Protocol):
     @property
     def given(self) -> Any:
         """The observed values: a ``Record`` of fields, the data a model takes, or an empty ``Record``."""
-        ...
-
-    def log_density(self, position: Array) -> Array:
-        """The unnormalized log-density of the parameters at *position*, a scalar.
-
-        It equals the model's joint log-density at ``unflatten(position)`` and
-        the observed values, up to a constant that does not depend on the
-        parameters. It is a JAX function of *position* when the model's density
-        is written in JAX, so a method may compile and differentiate it then.
-
-        Parameters
-        ----------
-        position : Array
-            A value of the parameters in the flat layout, of shape ``(size,)``.
-
-        Returns
-        -------
-        Array
-            The log-density, of shape ``()``.
-
-        Raises
-        ------
-        TypeError
-            If the model has no unnormalized log-density, or the target has no
-            flat layout.
-        ValueError
-            If *position* does not hold one value of every parameter.
-        """
-        ...
-
-    def unflatten(self, position: Array) -> Any:
-        """*position*, a value of the parameters in the flat layout, as a draw of the target's event.
-
-        A record event gives a :class:`~probpipe.Record` of the parameters, and
-        an event of one array gives that array in its shape.
-
-        Parameters
-        ----------
-        position : Array
-            A value of the parameters in the flat layout, of shape ``(size,)``.
-
-        Returns
-        -------
-        Record or Array
-            The draw the position lays out.
-
-        Raises
-        ------
-        TypeError
-            If the target has no flat layout.
-        ValueError
-            If *position* does not hold one value of every parameter.
-        """
         ...
 
     def factors(self) -> ModelFactors | None:
@@ -271,13 +221,16 @@ class _UnnormalizedConditional(Distribution):
         self._joint = joint
         self._given = given
         self._keyed = keyed
-        self.with_provenance(
-            Provenance.create(
-                "condition_on",
-                parents=[joint],
-                metadata={"stage": "exact", "route": "inference_methods"},
+        # Conditioning on nothing is the identity, so that target is its joint
+        # and records no condition_on of its own (_lineage_term).
+        if not self.conditions_on_nothing:
+            self.with_provenance(
+                Provenance.create(
+                    "condition_on",
+                    parents=[joint],
+                    metadata={"stage": "exact", "route": "inference_methods"},
+                )
             )
-        )
 
     @classmethod
     def _conditioned_on_nothing(cls, law: Distribution) -> _UnnormalizedConditional:
@@ -307,19 +260,6 @@ class _UnnormalizedConditional(Distribution):
     def conditions_on_nothing(self) -> bool:
         """Whether the target is its joint at no given values."""
         return self._keyed and not self._given.fields
-
-    def log_density(self, position: Array) -> Array:
-        """The unnormalized log-density at *position*; see :meth:`InferenceTarget.log_density`."""
-        if not isinstance(self, SupportsUnnormalizedLogProb):
-            raise TypeError(
-                f"cannot evaluate the log-density of {_described(self)}: the model must have an "
-                f"unnormalized log-density (SupportsUnnormalizedLogProb)"
-            )
-        return self._unnormalized_log_prob(self.unflatten(position))
-
-    def unflatten(self, position: Array) -> Any:
-        """*position* as a draw of the event; see :meth:`InferenceTarget.unflatten`."""
-        return _flat_unflatten(self)(position)
 
     def factors(self) -> ModelFactors | None:
         """The model's prior, likelihood, and observed value; see :meth:`InferenceTarget.factors`.
@@ -374,6 +314,13 @@ class _UnnormalizedConditional(Distribution):
         if self._keyed and self._given.fields:
             fields.append(("conditioned", format_names(self._given.keys())))
         return fields
+
+
+def _lineage_term(target: Any) -> Any:
+    """The term a result of *target* names in its provenance: the law itself for conditioning on nothing."""
+    if isinstance(target, _UnnormalizedConditional) and target.conditions_on_nothing:
+        return target.joint
+    return target
 
 
 def _as_inference_target(law: Distribution) -> _UnnormalizedConditional:

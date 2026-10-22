@@ -21,6 +21,7 @@ from probpipe import (
     EmpiricalDistribution,
     MultivariateNormal,
     Normal,
+    NumericRecord,
     NumericRecordBatch,
     OpaqueSpec,
     Record,
@@ -102,13 +103,15 @@ class TestMakePosteriorOfATarget:
         assert tuple(posterior.atoms.level_names) == ("chain", "draw")
         assert method_of(posterior) == "test"
 
-    def test_a_chain_of_positions_reads_back_as_the_targets_draws(self):
+    def test_a_chain_of_vectors_reads_back_as_the_targets_draws(self):
         target = _regression_target()
         chain = jax.random.normal(jax.random.key(0), (10, 3))
         posterior = make_posterior(target, [chain], method="test")
         draws = flat_draws(posterior)
         for index in (0, 7):
-            expected = target.unflatten(chain[index])
+            expected = NumericRecord.from_vector(
+                target.event_spec.term_spec, chain[index], label="theta"
+            )
             np.testing.assert_array_equal(draws["beta"][index], np.ravel(expected["beta"]))
             np.testing.assert_array_equal(draws["mu"][index], np.squeeze(expected["mu"]))
 

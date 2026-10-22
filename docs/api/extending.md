@@ -29,18 +29,26 @@ It subclasses `InferenceMethod`, declares `name` and `supported_types`, implemen
 
 A method reads the model through its target, which is an `InferenceTarget`. It reads the model as `target.joint` and the observed values as `target.given`, and `target.factors()` gives a merged model's prior and likelihood.
 Every target is an `InferenceTarget`, so a method's `supported_types` admits `Distribution`, and a method that runs one kind of model, such as a Stan program, recognizes it in `check` through `target.joint`.
-Most methods run on the target's density in its flat layout, where one position is a 1-D array that holds a value of every parameter: `target.log_density(position)` is the unnormalized log-density there, and `target.unflatten(position)` is the same parameters as a draw of the event.
+A target is a law, so a method reads its density with `unnormalized_log_prob(target, value)`, which applies when the model has a density; a method that requires one states `SupportsUnnormalizedLogProb` in its `check`, and a method that simulates reads `target.factors()` instead.
+A method that works on vectors uses the `to_vector` layout of the event's values: `NumericRecord.from_vector(target.event_spec.term_spec, vec, label=...)` reads a vector as a value of the parameters.
 `execute` also receives the run's random key as the keyword `key`, which `condition_on` derives from the enclosing `workflow_run`, so a seed reproduces the run; a method draws all of its randomness from that key.
-`make_posterior` turns chains of positions into the posterior the method returns.
+`make_posterior` turns chains of such vectors into the posterior the method returns.
 
-This method draws positions from a normal proposal and weights each by the target's density over the proposal's:
+This method draws vectors from a normal proposal and weights each by the target's density over the proposal's:
 
 ```python
 import jax
 import jax.numpy as jnp
 from jax.scipy.stats import norm
 
-from probpipe import Distribution, NumericRecordSpec, SupportsUnnormalizedLogProb, inference_method_registry
+from probpipe import (
+    Distribution,
+    NumericRecord,
+    NumericRecordSpec,
+    SupportsUnnormalizedLogProb,
+    inference_method_registry,
+    unnormalized_log_prob,
+)
 from probpipe.inference import Feasibility, InferenceMethod, InferenceTarget, make_posterior
 
 
@@ -69,12 +77,17 @@ class ImportanceSampling(InferenceMethod):
         self._check_options(options)
         num_draws = options.get("num_draws", 2000)
         scale = options.get("proposal_scale", 2.0)
-        size = target.event_spec.term_spec.vector_size  # the length of one position
-        positions = scale * jax.random.normal(key, (num_draws, size))
-        log_proposal = jnp.sum(norm.logpdf(positions, 0.0, scale), axis=-1)
-        log_weights = jax.vmap(target.log_density)(positions) - log_proposal
+        spec = target.event_spec.term_spec
+        vectors = scale * jax.random.normal(key, (num_draws, spec.vector_size))
+
+        def log_density(vec):  # a JAX array, so jax.vmap and jax.grad apply
+            value = NumericRecord.from_vector(spec, vec, label="theta")
+            return jnp.asarray(unnormalized_log_prob(target, value))
+
+        log_proposal = jnp.sum(norm.logpdf(vectors, 0.0, scale), axis=-1)
+        log_weights = jax.vmap(log_density)(vectors) - log_proposal
         return make_posterior(
-            target, [positions], method=self.name, weights=jax.nn.softmax(log_weights)
+            target, [vectors], method=self.name, weights=jax.nn.softmax(log_weights)
         )
 
 

@@ -31,7 +31,7 @@ from ..custom_types import Array, ArrayLike
 from ..distributions._distribution import Distribution, _complete_event_spec
 from ..distributions._empirical import EmpiricalDistribution
 from ..families._programs import _parameter_record_at
-from ..operations._inference_target import InferenceTarget
+from ..operations._inference_target import InferenceTarget, _lineage_term
 
 __all__ = ["make_posterior"]
 
@@ -62,10 +62,10 @@ def make_posterior(
     whose atoms are the draws on the levels ``chain`` and ``draw``, labeled by
     the target's outputs, as ``beta`` or ``(K, r, phi)``. Its event spec is
     the target's, so a record of parameters keeps its fields' supports, shapes,
-    and nested groups. Each chain holds positions in the target's flat layout
-    (:class:`~probpipe.inference.InferenceTarget`), which the result reads back
-    as draws of the parameters. Its provenance names the method, with the
-    target as its parent. Its annotations are a ``DataTree`` whose root
+    and nested groups. Each chain holds the ``to_vector`` coordinates of draws
+    of the target's event, which the result reads back as draws of the
+    parameters. Its provenance names the method, with the target as its
+    parent, or the law itself for the target of conditioning a law on nothing. Its annotations are a ``DataTree`` whose root
     attribute ``method`` is *method*, and which stores the method's
     diagnostics, sample statistics, and warmup draws as ArviZ-compatible
     groups under ``arviz/``.
@@ -75,8 +75,9 @@ def make_posterior(
     target : InferenceTarget
         The target the method ran on.
     chains : list of Array
-        Per-chain draws, each of shape ``(num_draws, size)`` in the target's
-        flat layout; the chains have equal lengths.
+        Per-chain draws, each of shape ``(num_draws, vector_size)``: row ``i``
+        is ``to_vector()`` of draw ``i`` of the target's event. The chains have
+        equal lengths.
     method : str
         The inference method's name, by which the ``method`` control selects it,
         such as ``"tfp_nuts"`` or ``"blackjax_rwmh"``.
@@ -84,7 +85,7 @@ def make_posterior(
         The method's diagnostics, sample statistics, and warmup draws, as
         ArviZ groups of a ``DataTree``, such as ``sample_stats``. A
         ``posterior`` or ``warmup`` group whose one variable ``params`` holds
-        positions of shape ``(chains, draws, size)`` is stored with one
+        vectors of shape ``(chains, draws, vector_size)`` is stored with one
         variable per leaf of the result, named by its path with ``.`` between
         the parts, since a ``DataTree`` variable has no ``/`` in its name.
     parameter_shapes : Mapping of str to tuple of int, or None
@@ -111,7 +112,7 @@ def make_posterior(
     ------
     ValueError
         If *chains* is empty or the chains differ in length, a draw's width is
-        not the target's flat size, or *parameter_shapes* misses an output of
+        not the ``vector_size`` of the target's event, or *parameter_shapes* misses an output of
         the target or names one it does not have.
     TypeError
         If the target's event has a leaf that is not a numeric array, or
@@ -119,10 +120,10 @@ def make_posterior(
 
     Examples
     --------
-    A method that draws positions of the target's parameters returns them as a
+    A method that draws vectors of the target's parameters returns them as a
     posterior::
 
-        chain = jnp.stack(positions)                     # (num_draws, size)
+        chain = jnp.stack(vectors)                       # (num_draws, vector_size)
         return make_posterior(target, [chain], method="my_method")
     """
     return _posterior_from_chains(
@@ -548,6 +549,10 @@ def _record_run(
     result._init_annotations(xr.DataTree.from_dict(dicto))
 
     result.with_provenance(
-        Provenance.create(method, parents=list(parents), metadata={"method": method, **meta})
+        Provenance.create(
+            method,
+            parents=[_lineage_term(parent) for parent in parents],
+            metadata={"method": method, **meta},
+        )
     )
     return result
