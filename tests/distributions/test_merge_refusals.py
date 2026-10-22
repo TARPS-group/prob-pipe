@@ -98,8 +98,79 @@ def test_renamed_siblings_remain_coupled():
 
 def test_a_root_and_its_rename_remain_coupled():
     root = _root()
-    with pytest.raises(ValueError, match="both read draws"):
+    with pytest.raises(ValueError) as error:
         root & root.rename({"a": "left", "b": "right"})
+    assert str(error.value) == (
+        "cannot merge d & d: both are drawn from the same law, which a merge would treat as "
+        "independent"
+    )
+
+
+def _joint():
+    return Normal("a", 0.0, 1.0, label="pa") & Normal("b", 0.0, 1.0, label="pb")
+
+
+@pytest.mark.parametrize(
+    "merge",
+    [
+        lambda j: j & j["a"].rename(a="z"),
+        lambda j: j["a"].rename(a="z") & j,
+        lambda j: j["a"] & j.rename(a="z", b="w"),
+        lambda j: j["a"].rename(a="z") & j.rename(a="p", b="q"),
+        lambda j: (j["a"] & Normal("c", 0.0, 1.0)).rename({"a": "g/a", "c": "g/c"}) & j["b"],
+        lambda j: j["b"] & (j["a"] & Normal("c", 0.0, 1.0)).rename({"a": "g/a", "c": "g/c"}),
+    ],
+    ids=[
+        "joint-and-renamed-marginal",
+        "renamed-marginal-and-joint",
+        "marginal-and-renamed-joint",
+        "renamed-marginal-and-renamed-joint",
+        "grouped-sub-joint-and-marginal",
+        "marginal-and-grouped-sub-joint",
+    ],
+)
+def test_a_part_coupled_at_any_depth_is_refused(merge):
+    with pytest.raises(ValueError, match="which a merge would treat as independent"):
+        merge(_joint())
+
+
+def test_coupling_is_checked_before_shared_outputs():
+    joint = _joint()
+    with pytest.raises(ValueError, match="which a merge would treat as independent"):
+        joint & joint["a"]
+
+
+def test_a_law_in_both_operands_is_named_once():
+    prior = _prior()
+    with pytest.raises(ValueError) as error:
+        prior & prior
+    assert str(error.value) == "cannot merge p & p: the law p is in both operands. Merge it once"
+
+
+def test_the_independent_laws_advice_needs_exact_marginals():
+    model = _likelihood() & _prior()
+    with pytest.raises(ValueError) as error:
+        model["y"] & model["mu"]
+    message = str(error.value)
+    assert message.endswith("For their joint law, write k·p['y', 'mu']")
+    assert "For independent laws" not in message
+    root = _root()
+    with pytest.raises(ValueError) as error:
+        root["a"] & root["b"]
+    assert "For independent laws, write marginal(d, 'a') & marginal(d, 'b')" in str(error.value)
+
+
+def test_a_nested_selection_is_named_once_in_the_joint_advice():
+    root = (
+        (Normal("a", 0.0, 1.0) & Normal("c", 0.0, 1.0))
+        .rename({"a": "g/a", "c": "g/c"})
+        .with_label("d")
+    )
+    with pytest.raises(ValueError) as error:
+        root["g"] & root["g/c"]
+    message = str(error.value)
+    assert "For their joint law, write d['g']" in message
+    assert "d['g', 'g/c']" not in message
 
 
 def test_standalone_marginals_and_unrelated_laws_merge():
