@@ -1899,6 +1899,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Record({"g": Record({"b": 1.0}).merge(Record({"c": 2.0}))})   # the old result
   ```
 
+- **A compiled JAX program that fails while it runs raises its error.** A
+  joint's mapping of a kernel, a family's sampler, and pyabc's compiled
+  simulator are traced before they first run. A body that does not trace
+  still runs eagerly, but an error raised while the traced JAX program runs
+  now propagates, where ProbPipe used to run the computation again eagerly
+  and could hide the error. The same code before and after:
+
+  ```python
+  @conditional_distribution(given_spec={"mu": NumericArraySpec(())})
+  def likelihood(mu):
+      y_mean = jax.pure_callback(solver, jax.ShapeDtypeStruct((), jnp.float32), mu)
+      return Normal("y", y_mean, 1.0)
+
+  sample(likelihood * Normal("mu", 0.0, 1.0), 3)  # solver raises when it runs
+  # before: the kernel's function ran again under an eager jax.vmap
+  # after: the solver's error propagates, and the kernel's function ran once
+  ```
+
 ### Added
 
 - **`summarize(d)` collects a law's standard summaries in one record that
@@ -4751,6 +4769,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `wheel` build requirement is dropped (`bdist_wheel` ships inside
   setuptools since 70.1). Build-time changes only; runtime dependencies
   are unchanged.
+
+- **A joint's compiled mapping of a kernel reads the settings of the call that
+  runs it.** The JAX program that maps a kernel over the draws of its inputs is
+  compiled for each value of the static settings, the call's `num_samples` and
+  `max_evaluations` and the values of `config.sampling`, so a kernel that reads
+  one while it is traced computes with the current call's value instead of the
+  first call's. What the kernel notes while it is traced, such as the draws of
+  a Monte Carlo estimate, is reported by every call, cold or warm. The same code
+  before and after:
+
+  ```python
+  @conditional_distribution(given_spec={"mu": NumericArraySpec(())})
+  def shifted(mu):
+      return Normal("y", mu + config.sampling.num_samples, 1e-3)
+
+  model = shifted * Normal("mu", 0.0, 1e-3)
+  with config.sampling.using(num_samples=500):
+      sample(model, 3)  # y near 500, before and after
+  with config.sampling.using(num_samples=2000):
+      sample(model, 3)  # before: y near 500, after: y near 2000
+  ```
+
+  Each `config` setting is now documented as static or inert: a static
+  setting is part of a compiled JAX program's cache key, and an inert one,
+  which changes no computed value, is not.
 
 ### Removed
 
