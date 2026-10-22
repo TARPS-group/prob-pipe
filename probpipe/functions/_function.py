@@ -954,25 +954,37 @@ def _run_call(
             route=route.metadata,
         )
 
-    # A plain call is one evaluation point, which varies only in being the
-    # call's own: its arguments are one row of a set of one. TrackedTerm
-    # values form lineage parents; every other resolved parameter remains
-    # separately fingerprinted in Provenance.inputs.
-    call_arguments = np.empty(1, dtype=object)
-    call_arguments[0] = argument_values
-    result = _execution.evaluate_plain_call(
-        _requested_evaluation_points(
-            lambda call_arguments: invoke_point(**call_arguments),
-            varying={"call_arguments": call_arguments},
-            origin=function._label,
-            traceable=False,
-            untraceable_reason=None,
-            point_noun="evaluation point",
-            point_segment=lambda point_index: _execution.plain_call_point_segment(),
-        ),
-        workflow_kind=workflow_kind,
-        function_label=function._label,
-    )
+    if selection is not None:
+        # A route coordinates the work requested by the operation. Preserve
+        # its logical context so embedded points inherit its executor without
+        # occupying a worker needed by those same points.
+        broker = _evaluation_keys._capture_active_broker()
+        if broker is None:
+            raise RuntimeError("an operation route has no active call broker")
+        if not _context._workflow_side_effects_forbidden():
+            _execution._record_execution_contract(None)
+        with _execution.in_place_evaluation_point_scope(broker):
+            result = invoke_point(**argument_values)
+    else:
+        # A plain call is one evaluation point, which varies only in being the
+        # call's own: its arguments are one row of a set of one. TrackedTerm
+        # values form lineage parents; every other resolved parameter remains
+        # separately fingerprinted in Provenance.inputs.
+        call_arguments = np.empty(1, dtype=object)
+        call_arguments[0] = argument_values
+        result = _execution.evaluate_plain_call(
+            _requested_evaluation_points(
+                lambda call_arguments: invoke_point(**call_arguments),
+                varying={"call_arguments": call_arguments},
+                origin=function._label,
+                traceable=False,
+                untraceable_reason=None,
+                point_noun="evaluation point",
+                point_segment=lambda point_index: _execution.plain_call_point_segment(),
+            ),
+            workflow_kind=workflow_kind,
+            function_label=function._label,
+        )
     if settled_exactness:
         exact = False if False in settled_exactness else (True if all(settled_exactness) else None)
         route = replace(route, exact=exact)

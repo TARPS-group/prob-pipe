@@ -228,6 +228,7 @@ def test_float64_output_declarations_require_enabled_64_bit_floats(method):
 @pytest.mark.parametrize("executor", ["sequential", "thread", RECORDER.name])
 def test_a_joint_with_an_opaque_kernel_samples_and_scores(executor):
     opaque = _opaque([])
+    RECORDER.sizes.clear()
 
     @conditional_distribution(given_spec={"mu": SCALAR})
     def kernel(mu):
@@ -237,6 +238,8 @@ def test_a_joint_with_an_opaque_kernel_samples_and_scores(executor):
     with workflow_run(seed=41):
         draws = sample.using(executor=executor)(model, 3)
     assert draws.batch_shape == (3,)
+    if executor == RECORDER.name:
+        assert RECORDER.sizes == [3]
     values = {"y": jnp.float32(2), "mu": jnp.float32(1)}
     score = float(log_prob.using(executor=executor)(model, values))
     expected = -np.log(2 * np.pi) - 0.5
@@ -529,3 +532,44 @@ def test_an_embedded_parameter_does_not_promote_a_host_only_law(monkeypatch):
         return Normal("y", opaque(mu), 1.0)
 
     assert kernel._traceability() is Traceability.HOST_ONLY
+
+
+def test_an_operation_route_keeps_the_calling_thread_and_its_single_worker_is_available():
+    import threading
+
+    from probpipe.core._specs import OutputSpec
+    from probpipe.operations._operation import operation
+
+    caller = threading.get_ident()
+    seen = []
+    opaque = Function(
+        lambda x: np.asarray(x, dtype="float32") + np.float32(1),
+        traceable=False,
+        output_spec=SCALAR,
+    )
+
+    @operation(result=lambda x: OutputSpec.default(SCALAR, output_name="coordinate"))
+    def coordinate(x):
+        seen.append(threading.get_ident())
+        return _stored_call(opaque, argument=x)
+
+    assert (
+        float(
+            coordinate.using(executor="thread", executor_options={"max_workers": 1})(np.float32(2))
+        )
+        == 3
+    )
+    assert seen == [caller]
+
+
+def test_a_refused_operation_executor_falls_back_for_an_embedded_function():
+    opaque = _opaque([])
+
+    @conditional_distribution(given_spec={"mu": SCALAR})
+    def kernel(mu):
+        return Normal("y", opaque(mu), 1.0)
+
+    model = kernel * Normal("mu", 0.0, 1.0)
+    with workflow_run(seed=41), pytest.warns(UserWarning, match="cannot run|refuses|fall"):
+        draws = sample.using(executor=_Refusing.name)(model, 3)
+    assert draws.batch_shape == (3,)

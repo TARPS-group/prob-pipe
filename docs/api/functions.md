@@ -37,6 +37,11 @@ assert float(compute(1.0)) == 8.0
 assert float(compute(1.0, scale=3.0)) == 12.0
 ```
 
+A plain operation runs its coordinating route in the calling thread. An
+executor named on that operation applies to the evaluation points its route
+requests, including opaque calls inside stored JAX programs. A plain Function
+body continues to run as an evaluation point on its selected executor.
+
 ## Opaque functions inside JAX
 
 Wrap code that uses NumPy or an external executable in a `Function` with

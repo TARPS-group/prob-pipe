@@ -4148,6 +4148,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its functions once, not at every application, unless its functions read
   the values they capture, as `jnp.zeros(int(n))` does.
 
+- **A plain operation coordinates its route in the calling thread.**
+  An executor named on the operation runs the evaluation points requested by
+  that route, including embedded opaque calls. The coordinator does not occupy
+  a worker needed by its callbacks; ordinary Function bodies retain their
+  selected-executor behavior.
+
 ### Removed (breaking)
 
 - **`NumericArray.value`, `Opaque.value`, and `NumericArrayBatch.values` are

@@ -1261,6 +1261,11 @@ class _GivenCandidate:
 class Operation(Function):
     """A Function realized by routes, with operand roles, applicability checks, and a result rule.
 
+    A plain call runs its coordinating route in the calling thread under the
+    logical call context. Its named executor runs the evaluation points the
+    route requests, including embedded opaque calls, rather than the route
+    itself. A plain Function body retains its own executor dispatch.
+
     Calling it runs the engine's stack, whose admission, planning, resolution,
     and return steps read the declarations below: each argument is admitted and
     lifted by its role, the applicability checks and the result rule derive

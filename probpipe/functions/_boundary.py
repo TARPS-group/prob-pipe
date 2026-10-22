@@ -226,7 +226,7 @@ def _host_side(
             context,
             execution_choice=replace(context.execution_choice, applies_only_to=point),
         )
-    elif context.execution_choice.applies_only_to is not None:
+    elif context.execution_choice.names_executor():
         context = replace(
             context, execution_choice=replace(context.execution_choice, source="inherited")
         )
