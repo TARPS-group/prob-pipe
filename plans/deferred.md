@@ -56,6 +56,18 @@ From `execution-layer.md` §13, "After the workshop":
 | Tests on a GPU or TPU | §8 |
 | The remaining design text, and a User Guide notebook on opaque code, executors, failures, and the memo | §11 |
 
+### The inference interface and vectors
+
+Two plans written during step E6 (#618) and deferred by the maintainer on 2026-10-21, so as to add no work before the workshop. Both are in `plans/deferred/`, not yet approved; each lists its open questions, which are reviewed before any of it is implemented.
+
+| Work | Source |
+|---|---|
+| One law-level vector interface for numeric laws, built on the fixed value-level `to_vector`/`from_vector` contract and V.12: `to_vector_map(spec)`, `vector_law(d)` (design III.7's flat-vector law, never built), `vector_bijector(spec)`, `unconstrained_law(d)`, and `log_prob_function(d)`, the raw density for compiled code beside #554's `sampler(d)`; `NumericArrayBatch.to_vector`/`from_vector`; then about twenty private helpers that each lay out laws on their own are deleted (steps V1 to V3, and V4 within P2) | `plans/deferred/vector-interface.md` |
+| Every built-in inference method's adapter onto that interface, with `make_posterior(..., coordinates=)`, `initial_vectors`, one key split per run, a start per chain, `factors()`'s order check, and checks that draw and compile nothing (step P2). It changes seeded draws once, a silent change. It rewrites the runners E4 makes module-level, so it reads E4's merged runners first | `plans/deferred/inference-interface.md` |
+| Whether `sampler(d)` (#554 § 7) ships with the vector interface or with #554 | `plans/deferred/vector-interface.md` § 4.5 |
+| No "array pytree" view of a law for BlackJAX: BlackJAX ravels a pytree position for its mass matrix and covariances anyway, a benchmark found no consistent speed difference (fixed-work parity within 10%), ProbPipe's own records fail as BlackJAX positions, and a `dict` position reorders the vector. A per-leaf "parts" view for TFP or BayesFlow, derived from the same order, waits until a backend needs it | `plans/deferred/vector-interface.md` § 6 |
+| A public reading of a target's traceability for inference methods written outside ProbPipe, with the public execution claims of E3a | #618; decided 2026-10-21 |
+
 ## Open issues the push changes
 
 Each row says what the push does for an open issue before the workshop, and what the issue keeps for after it.
@@ -77,6 +89,14 @@ When the push ends, each issue's text is updated to match, and none closes until
 
 | Date | Problem or idea | Found by | Notes |
 |---|---|---|---|
+| 2026-10-21 | `blackjax_rwmh` drops the data of a model conditioned on data it does not declare as fields: its `check` passes, but its density receives a bare vector, so it raises, or with an event of matching size would read the parameters as the data. | E6 research, #618 | Fixed by P2 (`plans/deferred/inference-interface.md`, appendix item 1). Deferred with the plans on 2026-10-21. |
+| 2026-10-21 | A law over a `(2, 2)` array crashes `blackjax_rwmh` and `tfp_nuts`, and a non-family law over a constrained array crashes every density method, while each method's `check` reports it feasible: five routes evaluate a density on a vector, and only some reshape. | E6 research, #618 | Fixed by the vector interface and P2. |
+| 2026-10-21 | The run's key is used twice, for the initial state and for the chains, in BlackJAX NUTS and HMC, random-walk Metropolis, elliptical slice, and SG-MCMC, and every chain of a run starts from one shared state. | E6 research, #618 | Fixed by P2; the fix changes seeded draws once. |
+| 2026-10-21 | `blackjax_rwmh` crashes on a scalar law that cannot sample: `get_init_state`'s fallback start is 0-d. | E6 research, #618 | Fixed by P2's `initial_vectors`. |
+| 2026-10-21 | SG-MCMC (`blackjax_sgld`, `blackjax_sghmc`) runs in constrained space, so its draws can leave the support. | E6 research, #618 (from reading the code) | Fixed by P2. |
+| 2026-10-21 | Elliptical slice assembles the prior's mean and covariance in factor order, and ESS, SG-MCMC, empirical reweighting, and pyabc lay chains out in the prior's order while `make_posterior` reads the target's; the orders agree in every model tried, but nothing enforces it. | E6 research, #618 | P2 enforces it in `factors()`. |
+| 2026-10-21 | `flat_vector` lays a mapping out in the mapping's key order, not its spec's, so a nested draw given in another key order is scrambled; a record event in the keyword form is refused by the layout helpers; `unconstrained_coordinates` raises `int('n')` on a symbolic shape. | E6 research, #618 | Replaced by the vector interface. |
+| 2026-10-21 | `NumericRecord.__jax_array__` and `__array__` present a record's only field and raise for more than one, where II.3 says they present `to_vector()`; a `NumericRecord` also fails as a JAX pytree that JAX rebuilds with abstract leaves, as a BlackJAX position. | E6 research, #618 | The value level, outside the vector plan's scope. |
 | 2026-10-20 | The fingerprint of a `DistributionSpec` includes the name of the output at the root (`core/_fingerprint.py`, its `component=` field), which the decision on equality of 2026-10-20 leaves out. | S0, #605 | With S4b's name-free spec, or after the workshop if S4b is cut. |
 | 2026-10-20 | `RecordBatch.stack(..., element_spec: RecordSpec)` names a parameter `element_spec` that holds a record spec, while `element_spec` is now an output spec. | S0, #605 | S4a decides whether to rename it. |
 | 2026-10-20 | `functions/_recipe.py` and `functions/_replay.py` both define `_RNG_RECIPE_ABI`, `_STOCHASTIC_PLAN_ABI`, and `_REPLAY_ANCHOR_ABI`, and `functions/_function.py` and `_descendants.py` hold literal sampling and provider versions; each should have one definition in `_evaluation_keys.py`. | E0, #598 | Predates the push. |
