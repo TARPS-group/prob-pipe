@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **Record conformance and unification require declaration order.** Before,
+  `RecordSpec(x=(), y=())` admitted an existing record or record spec ordered
+  `{y, x}`. Now it refuses that order, including inside nested records and at
+  function input, function return, and kernel-conditioning boundaries. Pass a
+  raw mapping to have its fields laid out in declaration order without changing
+  the caller's mapping, or build the record in that order.
+- **Removing an unknown input raises.** Before,
+  `InputSpec(x=()).without("missing")` silently retained `x`; now it raises
+  `KeyError`, naming the unknown input and the available inputs.
+- **Optional declarations require Python defaults.** A function or kernel input
+  marked optional without a matching parameter default now raises `ValueError`
+  at construction. A declared parameter that has a default is marked optional.
+
 - **`ConversionInfo.samples` is renamed `claims_random_events`.** It is `True`
   when executing the conversion claims a workflow-owned random event, such as a
   draw from the source, so the result depends on the workflow seed, and `False`
@@ -2013,6 +2026,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Input declarations read four sources.** `InputSpec`, a mapping, a
+  `RecordSpec`'s top-level fields, or an `OutputSpec`'s outputs can declare a
+  function's `input_spec` or a kernel's `given_spec`. Tuple shapes are shorthand
+  for `NumericArraySpec` in inputs and keyword outputs. Input specs support list
+  selection, membership, `get`, and compatible merges with `&`; a shared input
+  retains its first type, and is optional only when both sides mark it optional.
+
 - **`summarize(d)` collects a law's standard summaries in one record that
   displays as a table.** Each top-level field is the term an operation returns
   for the law, with its provenance: `mean`, `sd` from `standard_deviation`,
@@ -3191,6 +3211,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can run inside JAX programs, kernels, and joints through host callbacks.
   Stored programs carry the live call context through a dynamic token, and
   embedded evaluations use the executor machinery and host-side output checks.
+
+- **Density values accept raw mappings in any insertion order.**
+  `log_prob(d, {"b": 2.0, "a": 1.0})` is arranged in `d`'s event order
+  before inferring its spec, as are the other density operations and nested
+  record values. Constructed records still have to conform in order.
 
 ### Changed
 

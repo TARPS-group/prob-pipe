@@ -19,13 +19,15 @@ Provides:
 
 from __future__ import annotations
 
+import dataclasses
+import enum
 import logging
 import threading
 import warnings
 from collections.abc import Callable, Hashable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 import jax
 import numpy as np
@@ -90,12 +92,14 @@ def compiled_or_eager(
 ) -> Any:
     """*program* at *arguments*, or *eager* at them when *program* does not trace.
 
-    Before *program* first runs under a new *trace_cache_key*, it is traced.
-    When that fails, as for a body that converts a traced value to a Python
-    number, *eager* runs instead. If *eager* succeeds, *decision_record*
-    records *decision_key*, and later calls under it run *eager* without
-    tracing *program*. If *eager* raises too, its error propagates and nothing
-    is recorded, so a call that fails eagerly, such as one with an invalid
+    Before *program* first runs under a new *trace_cache_key* and
+    *static_keywords*, it is traced. When that fails, as for a body that
+    converts a traced value to a Python number, *eager* runs instead. If
+    *eager* succeeds, *decision_record* records the outcome, and later calls
+    under the same decision key, trace cache key, and static keywords run
+    *eager* without tracing *program*, while a call under others traces it
+    again. If *eager* raises too, its error propagates and nothing is
+    recorded, so a call that fails eagerly, such as one with an invalid
     argument, does not disable the program.
 
     An error raised while the traced JAX program compiles or runs
@@ -108,11 +112,10 @@ def compiled_or_eager(
     decision_record : MutableMapping
         Where the outcome of each trace is kept, such as the transient memo
         of the object that owns *program*. It gains one entry for each
-        decision key that runs eagerly, and one for each trace cache key and
-        set of *static_keywords* that traced.
+        decision key, trace cache key, and set of *static_keywords* that was
+        traced, holding whether the trace succeeded.
     decision_key : Hashable
-        What decides whether *program* runs: the method, and the structure of
-        the arguments when it can change the outcome.
+        Which program of the owner runs, such as the method.
     program : jax.jit object
         The compiled computation, a ``jax.jit`` object, which is traced with
         its ``trace`` method.
@@ -124,7 +127,7 @@ def compiled_or_eager(
         What JAX traces *program* again for: :func:`_trace_cache_key` of the
         arguments that can differ between calls under *decision_record*. An
         argument fixed for its owner, such as a law's backend, may be left
-        out. ``None`` traces *program* before every run.
+        out. ``None`` traces *program* before every run and records nothing.
     static_keywords : Mapping of str to Hashable, optional
         Keyword arguments of *program* alone, each named in its
         ``static_argnames``; none by default.
@@ -144,21 +147,25 @@ def compiled_or_eager(
         running call than an earlier trace of it, which propagates rather than
         selecting *eager*.
     """
-    if (_RUNS_EAGERLY, decision_key) in decision_record:
+    outcome_key = _TraceOutcomeKey(
+        decision_key, trace_cache_key, tuple(sorted(static_keywords.items()))
+    )
+    recorded_outcome = None if trace_cache_key is None else decision_record.get(outcome_key)
+    if recorded_outcome is _TraceOutcome.RUNS_EAGERLY:
         return eager(*arguments)
-    traced_key = (_TRACED, decision_key, trace_cache_key, tuple(sorted(static_keywords.items())))
-    if trace_cache_key is None or traced_key not in decision_record:
+    if recorded_outcome is None:
         try:
             program.trace(*arguments, **static_keywords)
         except (_VaryingTraceNotesError, _EmbeddedCallTracingError, _UnclassifiedSettingError):
             raise
         except Exception as tracing_error:
             eager_result = eager(*arguments)
-            decision_record[(_RUNS_EAGERLY, decision_key)] = True
+            if trace_cache_key is not None:
+                decision_record[outcome_key] = _TraceOutcome.RUNS_EAGERLY
             logger.debug("%r runs uncompiled: tracing it raised %r", decision_key, tracing_error)
             return eager_result
         if trace_cache_key is not None:
-            decision_record[traced_key] = True
+            decision_record[outcome_key] = _TraceOutcome.TRACED
     return program(*arguments, **static_keywords)
 
 
@@ -310,7 +317,7 @@ class _ProgramStore:
 
         body_result = compiled_or_eager(
             self._decision_record,
-            (body_name, static_options, jax.tree.structure(arguments)),
+            body_name,
             _ProgramForCall(self._jitted_body(body_name, body), store_entry),
             run_eagerly,
             *arguments,
@@ -324,11 +331,8 @@ class _ProgramStore:
         return body_result
 
     def runs_eagerly(self, body_name: Hashable) -> bool:
-        """Whether a trace of the body named *body_name* failed, so it runs uncompiled."""
-        return any(
-            decision_key[0] == body_name
-            for decision_key in _eager_decision_keys(self._decision_record)
-        )
+        """Whether a trace of the body named *body_name* failed at some arguments, which then run uncompiled."""
+        return body_name in _eager_decision_keys(self._decision_record)
 
     def _jitted_body(self, body_name: Hashable, body: Callable[..., Any]) -> Any:
         """The ``jax.jit`` object of the body named *body_name*, built from *body* the first time."""
@@ -427,12 +431,14 @@ def _trace_cache_key(arguments: Any, *, ints_by_value: bool = False) -> Hashable
     return treedef, tuple(leaf_keys)
 
 
-def _eager_decision_keys(decision_record: Iterable[Hashable]) -> tuple[Hashable, ...]:
-    """The decision keys that *decision_record*, kept by :func:`compiled_or_eager`, runs eagerly."""
+def _eager_decision_keys(decision_record: Mapping[Hashable, Any]) -> tuple[Hashable, ...]:
+    """The decision keys under which *decision_record*, kept by :func:`compiled_or_eager`, runs eagerly, each once."""
     return tuple(
-        recorded_key[1]
-        for recorded_key in decision_record
-        if isinstance(recorded_key, tuple) and recorded_key[0] == _RUNS_EAGERLY
+        dict.fromkeys(
+            recorded_key.decision_key
+            for recorded_key, recorded_outcome in decision_record.items()
+            if recorded_outcome is _TraceOutcome.RUNS_EAGERLY
+        )
     )
 
 
@@ -497,9 +503,26 @@ def _static_settings_in_effect() -> _StaticSettings:
 # Private helpers
 # ---------------------------------------------------------------------------
 
-#: The tags of the two kinds of entry that :func:`compiled_or_eager` records.
-_RUNS_EAGERLY = "runs eagerly"
-_TRACED = "traced"
+
+class _TraceOutcome(enum.Enum):
+    """Whether a trace that :func:`compiled_or_eager` made succeeded."""
+
+    TRACED = "traced"
+    RUNS_EAGERLY = "runs eagerly"
+
+
+class _TraceOutcomeKey(NamedTuple):
+    """What :func:`compiled_or_eager` records a trace's outcome under."""
+
+    decision_key: Hashable
+    trace_cache_key: Hashable | None
+    static_keywords: tuple[tuple[str, Hashable], ...]
+
+
+#: The fields of a set record, which :func:`_same_content` compares one by one.
+_SET_RECORD_FIELD_NAMES = tuple(
+    record_field.name for record_field in dataclasses.fields(_EvaluationSetRecord)
+)
 
 #: The key of an owner's program store in its transient memo.
 _PROGRAM_STORE = "program store"
@@ -562,12 +585,15 @@ class _StoreEntry:
                 )
             )
         if not _same_in_any_order(trace_notes.set_records, kept_notes.set_records):
+            origins = sorted(
+                {
+                    set_record.origin
+                    for set_record in (*kept_notes.set_records, *trace_notes.set_records)
+                }
+            )
             raise _VaryingTraceNotesError(
-                _varying_note_message(
-                    "the sets of evaluation points of",
-                    sorted(set_record.origin for set_record in kept_notes.set_records),
-                    sorted(set_record.origin for set_record in trace_notes.set_records),
-                )
+                "internal error: two traces of a compiled JAX program noted different sets of "
+                f"evaluation points of {', '.join(map(repr, origins))}. Please report this"
             )
         # Nested JAX caches can suppress a warning on a later trace. Keep the
         # union for replay rather than treating cache-dependent emissions as
@@ -594,13 +620,52 @@ class _StoreEntry:
 def _same_in_any_order(
     first_records: Iterable[_EvaluationSetRecord], second_records: Iterable[_EvaluationSetRecord]
 ) -> bool:
-    """Whether two sequences of set records hold equal records, in any order."""
+    """Whether two sequences of set records hold records of the same content, in any order."""
     unmatched_records = list(second_records)
     for set_record in first_records:
-        if set_record not in unmatched_records:
+        matching_position = next(
+            (
+                position
+                for position, unmatched_record in enumerate(unmatched_records)
+                if _same_content(set_record, unmatched_record)
+            ),
+            None,
+        )
+        if matching_position is None:
             return False
-        unmatched_records.remove(set_record)
+        del unmatched_records[matching_position]
     return not unmatched_records
+
+
+def _same_content(first_value: Any, second_value: Any) -> bool:
+    """Whether two values hold the same content: arrays element by element, and anything else by ``==``.
+
+    A set record compares field by field, and a mapping, such as an
+    executor's options, key by key, so an array anywhere inside compares in
+    full rather than raising as ``==`` on it does.
+    """
+    if isinstance(first_value, _EvaluationSetRecord) and isinstance(
+        second_value, _EvaluationSetRecord
+    ):
+        return all(
+            _same_content(getattr(first_value, field_name), getattr(second_value, field_name))
+            for field_name in _SET_RECORD_FIELD_NAMES
+        )
+    if isinstance(first_value, Mapping) and isinstance(second_value, Mapping):
+        return first_value.keys() == second_value.keys() and all(
+            _same_content(first_value[key], second_value[key]) for key in first_value
+        )
+    if isinstance(first_value, np.ndarray | jax.Array) or isinstance(
+        second_value, np.ndarray | jax.Array
+    ):
+        first_array, second_array = np.asarray(first_value), np.asarray(second_value)
+        return first_array.dtype == second_array.dtype and np.array_equal(first_array, second_array)
+    if isinstance(first_value, list | tuple) and isinstance(second_value, list | tuple):
+        return len(first_value) == len(second_value) and all(
+            _same_content(first_item, second_item)
+            for first_item, second_item in zip(first_value, second_value, strict=True)
+        )
+    return bool(first_value == second_value)
 
 
 def _varying_note_message(note_description: str, kept_value: Any, traced_value: Any) -> str:

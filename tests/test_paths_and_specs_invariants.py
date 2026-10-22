@@ -245,7 +245,6 @@ def test_i10_on_an_output_spec(paths):
     assert not kept & rest
 
 
-@pytest.mark.pending(reason="S2b-in: InputSpec[] takes a list of input names", raises=TypeError)
 def test_i10_on_an_input_spec():
     inputs = InputSpec(a=_REAL, b=_REAL)
     assert set(inputs[["a"]]) | set(inputs.without("a")) == {"a", "b"}

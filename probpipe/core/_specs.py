@@ -6,6 +6,7 @@ the label or identity of the value an output spec describes.
 
 from __future__ import annotations
 
+import inspect
 import keyword
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -13,7 +14,7 @@ from types import MappingProxyType
 from typing import Any, NoReturn, cast
 
 from .._messages import unknown_names
-from ._record_spec import NumericRecordSpec, RecordSpec
+from ._record_spec import NumericRecordSpec, RecordSpec, _to_spec
 from ._repr import call_repr, term_repr
 from ._shapes import _as_path_arguments, _as_paths, _missing_path
 from ._spec_base import (
@@ -94,19 +95,21 @@ class InputSpec(Mapping[str, TermSpec]):
 
     Parameters
     ----------
-    inputs : Mapping[str, TermSpec], optional
-        A positional mapping of inputs, in iteration order. A nested record is
-        one input carrying a RecordSpec.
-    **inputs_by_name : TermSpec
+    inputs : InputSpec, Mapping, RecordSpec, or OutputSpec, optional
+        Inputs in their source's order. A record spec supplies one input per
+        top-level field, an output spec one per output, and another InputSpec
+        preserves its optional flags. Other sources supply required inputs.
+    **inputs_by_name : TermSpec or tuple
         Alternatively, the inputs by keyword, including RecordSpec-valued inputs.
-        No constructor keyword is reserved.
+        A tuple of sizes is a NumericArraySpec of that shape. No constructor
+        keyword is reserved.
 
     Raises
     ------
     TypeError
-        If a non-None positional argument is not a Mapping, mapping and keyword
-        forms are combined, or an input's spec is not a hashable TermSpec; an
-        input's spec may not be None.
+        If the source is unsupported, positional and keyword forms are combined,
+        an output spec has an unspecified type, or an input's type is not a
+        hashable TermSpec or a tuple of sizes. An input's type cannot be None.
     ValueError
         If an input name is not a non-keyword Python identifier, including path keys.
     """
@@ -115,24 +118,146 @@ class InputSpec(Mapping[str, TermSpec]):
     _optional: frozenset[str]
 
     def __init__(
-        self, inputs: Mapping[str, TermSpec] | None = None, /, **inputs_by_name: TermSpec
+        self,
+        inputs: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec | None = None,
+        /,
+        **inputs_by_name: TermSpec | tuple,
     ) -> None:
+        optional = frozenset()
         if inputs is not None:
-            if not isinstance(inputs, Mapping):
-                raise TypeError(
-                    f"InputSpec expects a mapping of input names to specs, got {type(inputs).__name__}"
-                )
             if inputs_by_name:
                 raise TypeError("pass InputSpec inputs as a mapping or as keywords, not both")
+            if isinstance(inputs, InputSpec):
+                optional = inputs.optional
+                inputs = inputs._inputs
+            elif isinstance(inputs, RecordSpec):
+                inputs = inputs.children
+            elif isinstance(inputs, OutputSpec):
+                if inputs.term_spec is None:
+                    raise TypeError(
+                        "cannot read inputs from an OutputSpec whose type is unspecified. "
+                        "Declare its term_spec first"
+                    )
+                inputs = inputs.outputs
+            elif not isinstance(inputs, Mapping):
+                raise TypeError(
+                    f"cannot read inputs from {type(inputs).__name__}. "
+                    "Pass an InputSpec, a mapping, a RecordSpec, or an OutputSpec"
+                )
         else:
             inputs = inputs_by_name
-        for name, spec in inputs.items():
+        input_types = {
+            name: _to_spec(spec) if isinstance(spec, tuple) else spec
+            for name, spec in inputs.items()
+        }
+        for name, spec in input_types.items():
             _check_input(name, spec)
-        object.__setattr__(self, "_inputs", dict(inputs))
-        object.__setattr__(self, "_optional", frozenset())
+        object.__setattr__(self, "_inputs", input_types)
+        object.__setattr__(self, "_optional", optional)
 
-    def __getitem__(self, key: str) -> TermSpec:
-        return self._inputs[key]
+    def __getitem__(self, names: str | Sequence[str], /) -> TermSpec | InputSpec:
+        """An input's type, or the selected inputs in this spec's order.
+
+        Parameters
+        ----------
+        names : str or sequence of str
+            One input name, or a list or tuple of input names. A one-element
+            list still selects an InputSpec.
+
+        Returns
+        -------
+        TermSpec or InputSpec
+            The single input's type, or a spec retaining the selected inputs'
+            order and optional flags.
+
+        Raises
+        ------
+        KeyError
+            If a name is not an input.
+        TypeError
+            If the selection is not a string or a list or tuple of strings.
+        ValueError
+            If the list is empty, repeats a name, or contains overlapping paths.
+
+        Notes
+        -----
+        Interim implementation detail: paths into a record input are not read
+        yet. Select its input name to retain that entire record.
+        """
+        requested = _as_paths(names, action="index InputSpec by")
+        selected = (requested,) if isinstance(requested, str) else requested
+        for name in selected:
+            if name not in self._inputs:
+                raise KeyError(
+                    _missing_path(name, owner="the input spec", available=self, requested=selected)
+                )
+        if isinstance(requested, str):
+            return self._inputs[requested]
+        return self._with_inputs(
+            {name: spec for name, spec in self._inputs.items() if name in selected}, self._optional
+        )
+
+    def __contains__(self, name: object, /) -> bool:
+        """Whether *name* is a string naming an input; False for a list or tuple."""
+        return isinstance(name, str) and name in self._inputs
+
+    def get(self, name: str, default: TermSpec | None = None, /) -> TermSpec | None:
+        """The type of input *name*, or *default* when it is not an input name."""
+        return self._inputs[name] if name in self else default
+
+    def __and__(self, other: InputSpec, /) -> InputSpec:
+        """Merge inputs in order of first appearance, checking shared types.
+
+        Parameters
+        ----------
+        other : InputSpec
+            Inputs to append or match to this spec's inputs.
+
+        Returns
+        -------
+        InputSpec
+            This spec's inputs followed by new inputs from *other*. A shared
+            input is optional only when optional in both. Shared dimension
+            bindings are applied throughout the result and not retained.
+
+        Raises
+        ------
+        TypeError
+            If *other* is not an InputSpec. Convert an output spec with
+            InputSpec(output_spec) before merging it.
+        ValueError
+            If shared types cannot describe one value, or a shared dimension
+            would have two sizes.
+
+        Notes
+        -----
+        Interim implementation detail: a shared input keeps its first type,
+        with dimension bindings applied, rather than the unified type.
+        """
+        if isinstance(other, OutputSpec):
+            raise TypeError(
+                "cannot merge an InputSpec with an OutputSpec. "
+                "Convert the output spec first, as InputSpec(output_spec)"
+            )
+        if not isinstance(other, InputSpec):
+            raise TypeError(
+                f"cannot merge an InputSpec with {type(other).__name__}. Pass another InputSpec"
+            )
+        bindings: dict[str, int | str] = {}
+        merged = dict(self._inputs)
+        for name, spec in other.items():
+            if name in merged:
+                _unify_input_types(merged[name], spec, bindings, f"the input {name!r}")
+            else:
+                merged[name] = spec
+        optional = frozenset(
+            (self.optional - other.keys())
+            | (other.optional - self.keys())
+            | (self.optional & other.optional)
+        )
+        return self._with_inputs(
+            {name: spec._substitute_dims(bindings) for name, spec in merged.items()}, optional
+        )
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._inputs)
@@ -190,7 +315,31 @@ class InputSpec(Mapping[str, TermSpec]):
         return self._with_inputs(self._inputs, self._optional | frozenset(names))
 
     def without(self, *names: str) -> InputSpec:
-        """The inputs other than *names*, each optional input staying optional."""
+        """The inputs other than *names*, each optional input staying optional.
+
+        Parameters
+        ----------
+        *names : str
+            Existing input names to remove. With none, all inputs are retained.
+
+        Returns
+        -------
+        InputSpec
+            The retained inputs in declaration order, with their optional flags.
+
+        Raises
+        ------
+        KeyError
+            If a name is not an input.
+        TypeError
+            If a name is not a string.
+        ValueError
+            If a name is malformed, repeated, or overlaps another name.
+        """
+        names = _as_path_arguments(names, action="call InputSpec.without() with")
+        unknown = [name for name in names if name not in self._inputs]
+        if unknown:
+            raise KeyError(f"without(): {unknown_names('input', unknown, self._inputs)}")
         return self._with_inputs(
             {name: spec for name, spec in self._inputs.items() if name not in names}, self._optional
         )
@@ -345,10 +494,10 @@ class OutputSpec:
         record's top-level fields and groups, or the outputs of a batch's
         element, which is a record or a distribution; a distribution's or a
         conditional distribution's spec has none.
-    **term : TermSpec or None
+    **term : TermSpec, tuple, or None
         The keyword form: one keyword, the output's name, over the spec of the
         whole value. None means the type is not known yet; :meth:`with_term_spec`
-        gives it later.
+        gives it later. A tuple is a NumericArraySpec of that shape.
 
     Raises
     ------
@@ -376,7 +525,7 @@ class OutputSpec:
     _output_name: str | None
     _term_spec: TermSpec | None
 
-    def __init__(self, *args: TermSpec, **term: TermSpec | None) -> None:
+    def __init__(self, *args: TermSpec, **term: TermSpec | tuple | None) -> None:
         if args:
             if term:
                 raise TypeError("OutputSpec takes one positional spec or one keyword, not both")
@@ -396,6 +545,8 @@ class OutputSpec:
             name = None
         elif len(term) == 1:
             name, spec = next(iter(term.items()))
+            if isinstance(spec, tuple):
+                spec = _to_spec(spec)
             _check_output(name, spec, allow_hole=True)
         elif term:
             fields = ", ".join(f"{name}=..." for name in term)
@@ -1178,3 +1329,77 @@ def _unnamed_exposed(spec: TermSpec) -> tuple[object, ...]:
         spec.level_names,  # type: ignore[attr-defined]
         _unnamed_exposed(spec.element_spec.term_spec),  # type: ignore[attr-defined]
     )
+
+
+def _unify_input_types(
+    first: TermSpec, second: TermSpec, bindings: dict[str, int | str], path: str
+) -> None:
+    """Check shared input types in either direction, committing only successful bindings.
+
+    Parameters
+    ----------
+    first : TermSpec
+        The first input's type, which a merge retains.
+    second : TermSpec
+        The type of the same input in the other operand.
+    bindings : dict of str to int or str
+        Shared dimension bindings, extended in place only on success.
+    path : str
+        The input's location for error messages.
+
+    Raises
+    ------
+    ValueError
+        If neither direction admits the other type. The first error is raised.
+    """
+    trial = dict(bindings)
+    try:
+        _unify_specs(first, second, trial, path)
+    except ValueError as first_error:
+        trial = dict(bindings)
+        try:
+            _unify_specs(second, first, trial, path)
+        except ValueError:
+            raise first_error from None
+    bindings.update(trial)
+
+
+def _inputs_with_defaults(
+    inputs: InputSpec, parameters: Mapping[str, inspect.Parameter], *, function_name: str
+) -> InputSpec:
+    """Mark declared defaults optional and refuse an optional input without a default.
+
+    Parameters
+    ----------
+    inputs : InputSpec
+        The declared inputs, each already matched to a parameter.
+    parameters : Mapping of str to inspect.Parameter
+        The callable's parameters in signature order.
+    function_name : str
+        The callable's name in error messages.
+
+    Returns
+    -------
+    InputSpec
+        The same inputs with defaults marked optional.
+
+    Raises
+    ------
+    ValueError
+        If an input is marked optional but its parameter has no default.
+    """
+    for name in inputs.optional:
+        parameter = parameters.get(name)
+        if parameter is None or parameter.default is inspect.Parameter.empty:
+            raise ValueError(
+                f"optional input {name!r} of {function_name!r} has no default. "
+                "Give the parameter a default or declare the input required"
+            )
+    optional = [
+        name
+        for name, parameter in parameters.items()
+        if name in inputs and parameter.default is not inspect.Parameter.empty
+    ]
+    if frozenset(optional) <= inputs.optional:
+        return inputs
+    return inputs.with_optional(*optional)

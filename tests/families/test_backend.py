@@ -577,6 +577,28 @@ class TestCompiledCalls:
         with pytest.raises(ValueError, match="did not hold"):
             law._log_prob(jnp.full(law.event_shape, 1.5))
 
+    def test_a_program_that_fails_to_trace_at_one_sample_shape_compiles_at_another(
+        self, monkeypatch
+    ):
+        traces: list = []
+        runs: list = []
+
+        @functools.partial(jax.jit, static_argnums=2)
+        def masked_at_four(backend, key, sample_shape):
+            draws = backend.sample(seed=key, sample_shape=sample_shape)
+            return draws[draws > -jnp.inf] if sample_shape == (4,) else draws
+
+        monkeypatch.setattr(
+            _backend, "_sample_program", RecordingProgram(masked_at_four, runs=runs, traces=traces)
+        )
+        law = F.Normal("x", 0.0, 1.0)
+        key = jax.random.PRNGKey(3)
+        for sample_shape in ((4,), (5,), (4,), (5,)):
+            law._sample(key, sample_shape)
+        # Shape (4,) fails its one trace and runs eagerly; shape (5,) traces once and compiles.
+        assert [traced_args[2] for traced_args in traces] == [(4,), (5,)]
+        assert [run_args[2] for run_args in runs] == [(5,), (5,)]
+
     def test_a_program_that_does_not_trace_falls_back_once_to_the_eager_call(self, monkeypatch):
         attempts = []
 

@@ -51,10 +51,16 @@ from ..core._executors import _check_executor_reads_options, _requested_executor
 from ..core._expression import Collapse, Expression, Signature
 from ..core._kinds import term_class_for_spec
 from ..core._numeric_array import _inferred_spec
-from ..core._record_spec import RecordSpec
+from ..core._record_spec import RecordSpec, _layout_record_mapping
 from ..core._repr import format_default, format_names, public_class_name, term_repr, type_name
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
-from ..core._specs import InputSpec, OpaqueSpec, OutputSpec, _root_output_name
+from ..core._specs import (
+    InputSpec,
+    OpaqueSpec,
+    OutputSpec,
+    _inputs_with_defaults,
+    _root_output_name,
+)
 from ..core.config import WorkflowKind, _checked_count, config
 from ..core.named_tree import _PATH_SEP
 from ..core.tracked import Annotated, TrackedTerm, _callable_label, _callable_name
@@ -996,7 +1002,7 @@ class Function(TrackedTerm, Annotated):
     label : str, optional
         Optional non-empty display alias. Defaults to the callable name, or ``𝒻``
         for a lambda; a callable without a name requires an explicit label.
-    input_spec : InputSpec or Mapping[str, TermSpec] or None
+    input_spec : InputSpec, Mapping, RecordSpec, or OutputSpec or None
         Authoritative inputs matching fixed signature parameters by name.
         Declared inputs cannot accompany variadic parameters. Defaults and
         construction bindings must satisfy the input spec.
@@ -1200,7 +1206,11 @@ class Function(TrackedTerm, Annotated):
         /,
         *,
         label: str | None = None,
-        input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
+        input_spec: InputSpec
+        | Mapping[str, TermSpec | tuple]
+        | RecordSpec
+        | OutputSpec
+        | None = None,
         output_spec: OutputSpec | TermSpec | None = None,
         output_label: str | None = None,
         traceable: bool | None = None,
@@ -1239,7 +1249,11 @@ class Function(TrackedTerm, Annotated):
         signature_info: Any,
         label: str,
         *,
-        input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
+        input_spec: InputSpec
+        | Mapping[str, TermSpec | tuple]
+        | RecordSpec
+        | OutputSpec
+        | None = None,
         output_spec: OutputSpec | TermSpec | None = None,
         output_label: str | None = None,
         traceable: bool | None = None,
@@ -1269,12 +1283,10 @@ class Function(TrackedTerm, Annotated):
                 f"Function output_label must be a non-empty string; got {output_label!r}"
             )
         if input_spec is not None and not isinstance(input_spec, InputSpec):
-            if not isinstance(input_spec, Mapping):
-                raise TypeError(
-                    "input_spec must be an InputSpec, a mapping, or None; "
-                    f"got {type(input_spec).__name__}"
-                )
-            input_spec = InputSpec(input_spec)
+            try:
+                input_spec = InputSpec(input_spec)
+            except TypeError as error:
+                raise TypeError(f"input_spec: {error}") from None
         output_name = _callable_output_name(metadata_source)
         output_spec = _complete_output_spec(output_spec, output_name=output_name)
         construction_bindings = dict(bind or {})
@@ -1284,6 +1296,10 @@ class Function(TrackedTerm, Annotated):
             input_spec=input_spec,
             construction_bindings=construction_bindings,
         )
+        if input_spec is not None:
+            input_spec = _inputs_with_defaults(
+                input_spec, signature_info.signature.parameters, function_name=label
+            )
         given = {
             name: value
             for name, value in controls.items()
@@ -1583,7 +1599,11 @@ class Function(TrackedTerm, Annotated):
                 result=result,
                 bindings=bindings,
             )
-            return result
+            return (
+                _layout_record_mapping(self.output_spec.term_spec, result)
+                if self.output_spec is not None
+                else result
+            )
 
     def _invoke_resolved(
         self, values: Mapping[str, Any], *, context: _FunctionInvocationContext
@@ -1595,6 +1615,13 @@ class Function(TrackedTerm, Annotated):
         claims ``traceable=True`` and fails while JAX traces it raises the
         error for a false claim, wherever the trace was started.
         """
+        if self.input_spec is not None:
+            values = {
+                name: _layout_record_mapping(self.input_spec[name], value)
+                if name in self.input_spec
+                else value
+                for name, value in values.items()
+            }
         if self._execution_claims.traceable is not True:
             return _invoke_engine(self, values, context)
         try:

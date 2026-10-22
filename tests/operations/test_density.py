@@ -341,3 +341,19 @@ class TestRandomLogDensities:
     def test_a_law_without_a_random_density_raises_resolution_error(self):
         with pytest.raises(ResolutionError, match="SupportsRandomLogProb"):
             random_log_prob(Gaussian("g"))
+
+
+@pytest.mark.parametrize("operation", [log_prob, unnormalized_log_prob, prob, unnormalized_prob])
+def test_raw_density_mapping_order_is_not_a_record_order_commitment(operation):
+    from probpipe import Normal
+
+    law = Normal("a", 0.0, 1.0) & Normal("b", 1.0, 2.0)
+    ordered = {"a": 0.5, "b": 2.0}
+    reversed_value = {"b": 2.0, "a": 0.5}
+    expected = float(operation(law, ordered))
+    assert float(operation(law, reversed_value)) == expected
+    assert float(operation.apply(law, reversed_value)) == expected
+    operation.check(law, reversed_value)
+    assert tuple(reversed_value) == ("b", "a")
+    with pytest.raises((ValueError, ApplicabilityError), match="order"):
+        operation(law, Record(reversed_value, label="ordered-record"))

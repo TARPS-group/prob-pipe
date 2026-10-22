@@ -3,7 +3,9 @@
 ``log_prob(d, value)`` requires ``SupportsLogProb`` and returns the normalized
 log-density, and ``unnormalized_log_prob`` requires only
 ``SupportsUnnormalizedLogProb`` and returns it up to an additive constant. The
-value conforms to the law's event spec, its form included. A batch
+value conforms to the law's event spec, its form included. Raw mappings
+are arranged in event order before their specs are inferred; their insertion
+order is immaterial, while a constructed record must already conform in order. A batch
 of values is swept, and the scores keep the batch's levels: the law scores every
 element in one vectorized call when its density traces, and one element at a
 time otherwise. ``prob`` and ``unnormalized_prob`` are derived operations,
@@ -20,11 +22,13 @@ operation's name, as ``log_prob``. A density is labeled by ``d``'s notation, as
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import jax.numpy as jnp
 
 from ..core._expression import DENSITY, SCORE, Expression, Summary
+from ..core._record_spec import _layout_record_mapping
 from ..core._spec_base import NumericArraySpec, TermSpec, _unify_specs
 from ..core._specs import OutputSpec
 from ..core.constraints import non_negative
@@ -36,7 +40,7 @@ from ..distributions._capabilities import (
 )
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..functions._call import ApplicabilityError, CallReport
-from ._operation import _install_expression_rule, operation
+from ._operation import _install_expression_rule, _install_input_layout, operation
 
 __all__ = [
     "log_prob",
@@ -428,3 +432,15 @@ _install_expression_rule(prob, _density_expression)
 _install_expression_rule(unnormalized_prob, _density_expression)
 _install_expression_rule(random_log_prob, _random_score_expression)
 _install_expression_rule(random_unnormalized_log_prob, _random_score_expression)
+
+
+def _layout_density_inputs(values: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Arrange a raw density value in its law's event order, retaining built records."""
+    law = values["d"]
+    if not isinstance(law, Distribution):
+        return values
+    return {**values, "value": _layout_record_mapping(law.event_spec.term_spec, values["value"])}
+
+
+for _density_operation in (log_prob, unnormalized_log_prob, prob, unnormalized_prob):
+    _install_input_layout(_density_operation, _layout_density_inputs)
