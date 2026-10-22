@@ -103,7 +103,7 @@ def _record_law(location: float) -> EmpiricalDistribution:
         NumericRecordBatch(
             {"x": x, "y": -x},
             "atom",
-            element_spec=spec,
+            element=spec,
             label="atoms",
         ),
         label="xy",
@@ -123,7 +123,7 @@ class TestDistributionBatchConstruction:
         )
         assert isinstance(batch, Batch)
         assert isinstance(batch.spec, BatchSpec)
-        assert batch.spec.element_spec == laws[0].spec
+        assert batch.spec.element_spec.term_spec == laws[0].spec
         assert batch.spec.is_valid(batch)
 
     def test_element_spec_defaults_to_the_first_element_spec(self):
@@ -133,8 +133,8 @@ class TestDistributionBatchConstruction:
             "law",
             label="laws",
         )
-        assert batch.element_spec == laws[0].spec
-        assert isinstance(batch.element_spec, DistributionSpec)
+        assert batch.element_spec.term_spec == laws[0].spec
+        assert isinstance(batch.element_spec.term_spec, DistributionSpec)
 
     def test_laws_of_different_families_share_one_declaration(self):
         laws = [Normal("x", 0.0, 1.0), Laplace("x", 0.0, 1.0), StudentT("x", 3.0, 0.0, 1.0)]
@@ -167,10 +167,10 @@ class TestDistributionBatchConstruction:
         batch = DistributionBatch(
             laws,
             "law",
-            element_spec=declared,
+            element=declared,
             label="laws",
         )
-        assert batch.element_spec == declared
+        assert batch.element_spec.term_spec == declared
         assert batch.event_spec == declared.event_spec
 
     @pytest.mark.parametrize(
@@ -238,7 +238,7 @@ class TestDistributionBatchConstruction:
         batch = DistributionBatch(
             [],
             "law",
-            element_spec=declared,
+            element=declared,
             label="laws",
         )
         assert batch.batch_shape == (0,)
@@ -259,7 +259,7 @@ class TestDistributionBatchConstruction:
             DistributionBatch(
                 _laws(2),
                 "law",
-                element_spec=element_spec,
+                element=element_spec,
                 label="laws",
             )
 
@@ -283,8 +283,8 @@ class TestTheDefaultLabel:
             TypeError,
             match=r"^cannot derive a default label for an empty DistributionBatch; pass label=",
         ):
-            DistributionBatch([], "model", element_spec=spec)
-        assert DistributionBatch([], "model", element_spec=spec, label="none").batch_shape == (0,)
+            DistributionBatch([], "model", element=spec)
+        assert DistributionBatch([], "model", element=spec, label="none").batch_shape == (0,)
 
     def test_a_kernel_batch_lists_its_kernels(self):
         batch = ConditionalDistributionBatch(_kernels(2), "dataset")
@@ -299,7 +299,7 @@ class TestDistributionBatchDeclarations:
             "law",
             label="laws",
         )
-        assert batch.event_spec is batch.element_spec.event_spec
+        assert batch.event_spec is batch.element_spec.term_spec.event_spec
         assert batch.event_spec == laws[0].event_spec
 
     def test_a_batch_of_random_measures_declares_law_valued_draws(self):
@@ -501,8 +501,8 @@ class TestConditionalDistributionBatch:
             label="kernels",
         )
         assert isinstance(batch, Batch)
-        assert batch.element_spec == kernels[0].spec
-        assert isinstance(batch.element_spec, ConditionalDistributionSpec)
+        assert batch.element_spec.term_spec == kernels[0].spec
+        assert isinstance(batch.element_spec.term_spec, ConditionalDistributionSpec)
 
     def test_given_spec_and_event_spec_are_the_shared_declarations_read_from_spec(self):
         kernels = _kernels(2, given={"mu": SCALAR, "x": NumericArraySpec((3,))})
@@ -511,8 +511,8 @@ class TestConditionalDistributionBatch:
             "kernel",
             label="kernels",
         )
-        assert batch.given_spec is batch.element_spec.given_spec
-        assert batch.event_spec is batch.element_spec.event_spec
+        assert batch.given_spec is batch.element_spec.term_spec.given_spec
+        assert batch.event_spec is batch.element_spec.term_spec.event_spec
         assert batch.given_spec == kernels[0].given_spec
         assert batch.event_spec == kernels[0].event_spec
 
@@ -550,7 +550,7 @@ class TestConditionalDistributionBatch:
         batch = ConditionalDistributionBatch(
             kernels,
             "kernel",
-            element_spec=declared,
+            element=declared,
             label="kernels",
         )
         assert batch.given_spec == declared.given_spec
@@ -566,7 +566,7 @@ class TestConditionalDistributionBatch:
         batch = ConditionalDistributionBatch(
             [],
             "kernel",
-            element_spec=declared,
+            element=declared,
             label="kernels",
         )
         assert batch.batch_shape == (0,)
@@ -584,7 +584,7 @@ class TestConditionalDistributionBatch:
             ConditionalDistributionBatch(
                 _kernels(2),
                 "kernel",
-                element_spec=element_spec,
+                element=element_spec,
                 label="kernels",
             )
 
@@ -655,25 +655,25 @@ class TestKindRegistration:
         batch = RecordBatch(
             {"prior": _objects(laws), "x": jnp.zeros(3)},
             "row",
-            element_spec=RecordSpec({"prior": laws[0].spec, "x": ()}),
+            element=RecordSpec({"prior": laws[0].spec, "x": ()}),
             label="design",
         )
         assert batch.batch_shape == (3,)
-        assert batch.element_spec["prior"] == laws[0].spec
+        assert batch.element_spec.term_spec["prior"] == laws[0].spec
 
     def test_reading_a_law_field_gives_a_distribution_batch_on_the_record_levels(self):
         laws = _laws(4)
         batch = RecordBatch(
             {"prior": _objects(laws, shape=(2, 2)), "x": jnp.zeros((2, 2))},
             ("chain", "draw"),
-            element_spec=RecordSpec({"prior": laws[0].spec, "x": ()}),
+            element=RecordSpec({"prior": laws[0].spec, "x": ()}),
             label="design",
         )
         column = batch["prior"]
         assert isinstance(column, DistributionBatch)
         assert column.axis_groups == ((2,), (2,))
         assert column.level_names == ("chain", "draw")
-        assert column.element_spec == laws[0].spec
+        assert column.element_spec.term_spec == laws[0].spec
         assert column.event_spec == laws[0].event_spec
         assert _mean_of(column[1, 0]) == 2.0
 
@@ -682,7 +682,7 @@ class TestKindRegistration:
         batch = RecordBatch(
             {"likelihood": _objects(kernels)},
             "row",
-            element_spec=RecordSpec({"likelihood": kernels[0].spec}),
+            element=RecordSpec({"likelihood": kernels[0].spec}),
             label="design",
         )
         column = batch["likelihood"]
@@ -699,7 +699,7 @@ class TestKindRegistration:
             RecordBatch(
                 {"prior": _objects(laws), "x": jnp.zeros(3)},
                 "row",
-                element_spec=RecordSpec({"prior": declared, "x": ()}),
+                element=RecordSpec({"prior": declared, "x": ()}),
                 label="design",
             )
 
@@ -715,7 +715,7 @@ class TestKindRegistration:
         column = RecordBatch.stack(records, level_name="row")["prior"]
         assert isinstance(column, DistributionBatch)
         assert column.level_names == ("row",)
-        assert column.element_spec == laws[0].spec
+        assert column.element_spec.term_spec == laws[0].spec
         assert [_mean_of(element) for element in column] == [0.0, 1.0, 2.0]
 
 
@@ -743,7 +743,7 @@ class TestOperationsSweepTheLaws:
             drawn = sample(batch, sample_shape=(7,))
         assert isinstance(drawn, NumericArrayBatch)
         assert (drawn.batch_shape, drawn.level_names) == ((4, 7), ("law", "sample"))
-        assert tuple(drawn.element_spec.shape) == ()
+        assert tuple(drawn.element_spec.term_spec.shape) == ()
 
     def test_each_law_draws_its_own_values(self):
         laws = [Normal("x", 100.0 * i, 1e-3) for i in range(3)]

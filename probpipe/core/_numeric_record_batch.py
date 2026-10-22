@@ -135,7 +135,7 @@ class NumericRecordBatch(RecordBatch):
         super().__init__(
             fields,
             names,
-            element_spec=element_spec,
+            element=element_spec,
             axes_per_level=axes,
             provenance=provenance,
             label=label,
@@ -147,7 +147,7 @@ class NumericRecordBatch(RecordBatch):
     @property
     def event_template(self) -> NumericRecordSpec:
         """The numeric structure of one element — a view on :attr:`element_spec`."""
-        return cast(NumericRecordSpec, self.element_spec)
+        return cast(NumericRecordSpec, self.element_spec.term_spec)
 
     # ``_check_columns`` is not overridden: every field of a numeric template is
     # a ``NumericArraySpec``, so the base already checks each column for a numeric
@@ -395,7 +395,7 @@ class NumericRecordBatch(RecordBatch):
         return cls(
             columns,
             names,
-            element_spec=spec,
+            element=spec,
             axes_per_level=axes_per_level,
             label=label,
         )

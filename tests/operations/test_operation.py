@@ -1158,7 +1158,7 @@ class TestLiftedChecks:
         values = NumericArrayBatch(
             jnp.zeros(3),
             "values",
-            element_spec=REAL,
+            element=REAL,
             label="values",
         )
         with pytest.raises(ApplicabilityError, match="but got NumericArrayBatch"):
@@ -1170,7 +1170,7 @@ class TestLiftedChecks:
         empty = DistributionBatch(
             np.empty(0, object),
             "laws",
-            element_spec=Gaussian("g").spec,
+            element=Gaussian("g").spec,
             label="laws",
         )
         report = center.check(empty)

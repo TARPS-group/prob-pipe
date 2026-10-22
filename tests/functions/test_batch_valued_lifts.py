@@ -368,10 +368,10 @@ class TestBatchOutputDeclarations:
         with workflow_run(seed=0):
             law = wrapped(EmpiricalDistribution(jnp.array([2.0]), output_name="beta"))
         assert law.event_spec.term_spec.axis_groups == ((3,),)
-        assert law.event_spec.term_spec.element_spec.dtype == jnp.float32
+        assert law.event_spec.term_spec.element_spec.term_spec.dtype == jnp.float32
         assert wrapped.output_spec is declared
         assert wrapped.output_spec.term_spec.axis_groups == (("n",),)
-        assert wrapped.output_spec.term_spec.element_spec.dtype is None
+        assert wrapped.output_spec.term_spec.element_spec.term_spec.dtype is None
 
     @pytest.mark.parametrize("element", [NumericArraySpec((), jnp.float32), OpaqueSpec()])
     def test_an_empty_sweep_of_a_batch_output_has_no_batch_form(self, element):

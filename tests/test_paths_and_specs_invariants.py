@@ -87,7 +87,7 @@ def test_i1_one_set_of_paths_on_a_law_its_draws_its_batches_and_its_mean():
     grouped = _grouped()
     draw, draws, grouped_mean = _sample(grouped), _sample(grouped, sample_shape=4), mean(grouped)
     for paths in _PATHS:
-        assert draw[paths].spec == draws[paths].element_spec
+        assert draw[paths].spec == draws[paths].element_spec.term_spec
         assert draws[2][paths] == draws[paths][2]
         assert grouped_mean[paths].spec == draw[paths].spec
         assert _succeeds(grouped, paths)
@@ -202,7 +202,7 @@ def test_i9_one_path_gives_the_node_and_a_list_a_record_that_holds_it():
 @pytest.mark.pending(reason="S4: a batch stores its elements' output name", raises=TypeError)
 def test_i9_a_batchs_output_at_the_root():
     draws = _sample(Normal("x", 0.0, 1.0), sample_shape=4)
-    assert draws[["x"]].element_spec.keys() == ("x",)
+    assert draws[["x"]].element_spec.term_spec.keys() == ("x",)
 
 
 @pytest.mark.parametrize("paths", [("a",), ("g/c",), ("a", "g/e"), ("g",)], ids=repr)
@@ -213,7 +213,7 @@ def test_i10_a_list_of_paths_and_without_partition_the_fields(paths):
     for whole, fields in [
         (draw, lambda term: term.keys()),
         (draw.spec, lambda term: term.keys()),
-        (draws, lambda term: term.element_spec.keys()),
+        (draws, lambda term: term.element_spec.term_spec.keys()),
     ]:
         chosen, rest = fields(whole[paths]), fields(whole.without(*paths))
         assert set(chosen) | set(rest) == set(fields(whole))

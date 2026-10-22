@@ -176,7 +176,9 @@ def _hull(support: Any) -> Any:
 
 def _elementwise(spec: BatchSpec, term: Callable[[TermSpec], TermSpec]) -> BatchSpec:
     """The batch spec on *spec*'s levels whose element is *term* of *spec*'s element."""
-    return BatchSpec._from_groups(term(spec.element_spec), spec.axis_groups, spec.level_names)
+    return BatchSpec._from_groups(
+        term(spec.element_spec.term_spec), spec.axis_groups, spec.level_names
+    )
 
 
 def _mean_term(spec: TermSpec) -> TermSpec:
@@ -233,7 +235,7 @@ def _array_leaves(spec: TermSpec) -> list[NumericArraySpec]:
         batch_shape = tuple(spec.batch_shape)
         return [
             NumericArraySpec((*batch_shape, *leaf.shape), leaf.dtype)
-            for leaf in _array_leaves(spec.element_spec)
+            for leaf in _array_leaves(spec.element_spec.term_spec)
         ]
     if isinstance(spec, NumericArraySpec):
         return [spec]
@@ -352,7 +354,7 @@ def _expectation_result(f: TermSpec) -> OutputSpec | None:
 def _is_numeric(spec: TermSpec | None) -> bool:
     """Whether *spec* declares a numeric value: an array, a record of arrays, or a batch of either."""
     if isinstance(spec, BatchSpec):
-        spec = _flat_batch_spec(spec).element_spec
+        spec = _flat_batch_spec(spec).element_spec.term_spec
     return isinstance(spec, NumericSpec)
 
 
@@ -464,7 +466,7 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
         atoms = _batch_over(raw, _flat_batch_spec(BatchSpec(event, {level: count})), name)
         return EmpiricalDistribution(atoms, label=name, event_spec=OutputSpec(**{name: event}))
     if isinstance(draws, Batch):
-        records = isinstance(draws.element_spec, RecordSpec)
+        records = isinstance(draws.element_spec.term_spec, RecordSpec)
         return EmpiricalDistribution(draws, output_name=None if records else name, label=name)
     if not isinstance(event, RecordSpec):
         return EmpiricalDistribution(
@@ -473,7 +475,7 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
     atoms = _batch_class_for(event)(
         _raw_record(draws),
         SAMPLE_LEVEL,
-        element_spec=event,
+        element=event,
         label=name,
     )
     return EmpiricalDistribution(atoms, label=name)

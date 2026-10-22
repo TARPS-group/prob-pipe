@@ -219,7 +219,7 @@ class NumericArrayBatch(Batch[NumericArray]):
     @property
     def element_spec(self) -> NumericArraySpec:
         """What every element satisfies — a view on :attr:`spec`."""
-        return cast(NumericArraySpec, self.spec.element_spec)
+        return cast(NumericArraySpec, self.spec.element_spec.term_spec)
 
     @property
     def raw(self) -> Any:
@@ -301,7 +301,7 @@ class NumericArrayBatch(Batch[NumericArray]):
         return self._inherit_provenance(
             NumericArray(
                 _take_at(self._values, index),
-                spec=self.element_spec,
+                spec=self.element_spec.term_spec,
                 label=label,
             )
         )
@@ -359,7 +359,7 @@ def _numeric_array_batch_unflatten(aux, children):
     spec = aux
     label = _NO_DESCRIPTION
     (values,) = children
-    element_spec = spec.element_spec
+    element_spec = spec.element_spec.term_spec
     event_rank = len(element_spec.shape)
     shape = getattr(values, "shape", None)
     if shape is None:
@@ -479,7 +479,7 @@ class _MappedBatchStore:
             return cls(
                 value._label,
                 value._values,
-                element_spec=value.element_spec,
+                element=value.element_spec.term_spec,
                 level_names=tuple(value.level_names),
                 axis_groups=tuple(value.axis_groups),
             )
@@ -492,7 +492,7 @@ class _MappedBatchStore:
             return cls(
                 value.label,
                 value.as_jax(),
-                element_spec=element_spec,
+                element=element_spec,
                 level_names=(),
                 axis_groups=(),
             )
@@ -506,7 +506,7 @@ def _mapped_batch_store_flatten(carried: _MappedBatchStore):
     # The label does not cross a transform (II.4); the executor labels the
     # batch it rebuilds.
     return [carried.store], (
-        carried.element_spec,
+        carried.element_spec.term_spec,
         carried.level_names,
         carried.axis_groups,
     )
@@ -520,7 +520,7 @@ def _mapped_batch_store_unflatten(aux, children) -> _MappedBatchStore:
     return _MappedBatchStore(
         "NumericArrayBatch",
         store,
-        element_spec=element_spec,
+        element=element_spec,
         level_names=level_names,
         axis_groups=axis_groups,
     )

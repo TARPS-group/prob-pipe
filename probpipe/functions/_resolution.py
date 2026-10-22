@@ -344,7 +344,7 @@ def _stand_ins(values: Mapping[str, Any], plan: BroadcastPlan) -> dict[FunctionI
     for ref in plan.array_args:
         spec = getattr(input_ref_value(values, ref), "spec", None)
         if isinstance(spec, BatchSpec):
-            stand_ins[ref] = StandIn(spec.element_spec)
+            stand_ins[ref] = StandIn(spec.element_spec.term_spec)
     return stand_ins
 
 

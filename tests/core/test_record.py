@@ -2105,7 +2105,7 @@ class TestRecordSpecStorage:
             ],
             level_name="draw",
         )
-        assert ra.event_template is ra.element_spec
+        assert ra.event_template is ra.element_spec.term_spec
 
     def test_explicit_nested_template_validates_recursively(self):
         from probpipe.core._specs import RecordSpec

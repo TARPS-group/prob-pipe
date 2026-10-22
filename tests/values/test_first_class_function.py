@@ -226,7 +226,7 @@ class TestApplyContract:
             {"y": jnp.asarray([1.0, 2.0], dtype=jnp.float32)},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=intrinsic,
+            element=intrinsic,
             label="batch",
         )
         wrapped = Function(
@@ -256,7 +256,7 @@ class TestApplyContract:
             {"y": jnp.ones((*batch_shape, 2))},
             level_names="draw",
             axes_per_level=(len(batch_shape),),
-            element_spec=template,
+            element=template,
             label="batch",
         )
         wrapped = Function(
@@ -277,7 +277,7 @@ class TestApplyContract:
             {"y": jnp.ones((2, 3))},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(y=(3,)),
+            element=RecordSpec(y=(3,)),
             label="batch",
         )
         wrapped = Function(
@@ -295,7 +295,7 @@ class TestApplyContract:
             {"y": jnp.asarray([1.0, 2.0], dtype=jnp.float32)},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(y=()),
+            element=RecordSpec(y=()),
             label="batch",
         )
 
@@ -311,7 +311,7 @@ class TestApplyContract:
             {"y": jnp.asarray([1.0, -2.0])},
             level_names="draw",
             axes_per_level=(1,),
-            element_spec=RecordSpec(y=()),
+            element=RecordSpec(y=()),
             label="batch",
         )
 
@@ -672,7 +672,7 @@ class TestApplyContract:
                 NumericArrayBatch(
                     jnp.arange(3.0),
                     "row",
-                    element_spec=NumericArraySpec(()),
+                    element=NumericArraySpec(()),
                     label="rows",
                 ),
                 RecordSpec(v=()),
@@ -697,7 +697,7 @@ class TestApplyContract:
                 NumericRecordBatch(
                     {"x": jnp.arange(3.0)},
                     "row",
-                    element_spec=RecordSpec(x=()),
+                    element=RecordSpec(x=()),
                     label="rows",
                 ),
                 RecordSpec(v=RecordSpec(x=())),
@@ -721,7 +721,7 @@ class TestApplyContract:
         rows = NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             "row",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="rows",
         )
         wrapped = Function(
@@ -751,7 +751,7 @@ class TestApplyContract:
         rows = NumericRecordBatch(
             {"value": data},
             "row",
-            element_spec=RecordSpec(value=(3,)),
+            element=RecordSpec(value=(3,)),
             label="rows",
         )
 
@@ -760,7 +760,7 @@ class TestApplyContract:
         assert result.level_names == ("row",)
         assert result.batch_shape == (2,)
         assert isinstance(result, NumericArrayBatch)
-        assert result.element_spec == NumericArraySpec((3,), dtype="float32")
+        assert result.element_spec.term_spec == NumericArraySpec((3,), dtype="float32")
         np.testing.assert_allclose(result.raw, np.asarray(data) + 1, rtol=0, atol=0)
         assert wrapped.input_spec.free_dims == {"n"}
         with pytest.raises(ApplicabilityError, match="already bound"):
@@ -1106,7 +1106,7 @@ class TestSymbolicCalls:
         result = wrapped(rows)
 
         assert isinstance(result, NumericArrayBatch)
-        assert result.element_spec == NumericArraySpec((2,), dtype="float32")
+        assert result.element_spec.term_spec == NumericArraySpec((2,), dtype="float32")
         assert result.batch_shape == (3,)
         np.testing.assert_allclose(
             result.raw,
@@ -1248,7 +1248,9 @@ class TestSymbolicCalls:
         result = wrapped(rows)
 
         # The output spec leaves the dtype open, so completion takes the produced one (II.2).
-        assert result.element_spec == NumericArraySpec((), dtype="float32", support=positive)
+        assert result.element_spec.term_spec == NumericArraySpec(
+            (), dtype="float32", support=positive
+        )
         np.testing.assert_allclose(result.raw, np.arange(3.0) + 1)
 
     @pytest.mark.parametrize(("shift", "holds"), [(1.0, True), (-5.0, False)])
@@ -2011,7 +2013,7 @@ class TestDeclaredSupportOnABatchedOutput:
         valid = NumericRecordBatch(
             {"a": jnp.ones(3), "b": jnp.ones(3) * 2},
             "draw",
-            element_spec=RecordSpec(a=(), b=()),
+            element=RecordSpec(a=(), b=()),
             label="batch",
         )
 
@@ -2032,7 +2034,7 @@ class TestDeclaredSupportOnABatchedOutput:
         invalid = NumericRecordBatch(
             {"a": jnp.ones(3), "b": jnp.asarray([1.0, -2.0, 3.0])},
             "draw",
-            element_spec=RecordSpec(a=(), b=()),
+            element=RecordSpec(a=(), b=()),
             label="batch",
         )
 

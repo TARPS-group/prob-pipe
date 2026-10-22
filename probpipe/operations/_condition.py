@@ -1673,7 +1673,7 @@ def _conditioned_paths(given: Any) -> tuple[str, ...] | None:
     if keys is not None:
         return keys
     if isinstance(given, RecordBatch):
-        return tuple(given.element_spec.fields)
+        return tuple(given.element_spec.term_spec.fields)
     if isinstance(given, Distribution):
         return tuple(given.event_spec.outputs)
     return None

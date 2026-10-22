@@ -134,7 +134,7 @@ class DistributionBatch(_ObjectBatch[Distribution]):
             elements,
             level_names,
             label=label,
-            element_spec=element_spec,
+            element=element_spec,
             axes_per_level=axes_per_level,
             provenance=provenance,
         )
@@ -180,12 +180,12 @@ class DistributionBatch(_ObjectBatch[Distribution]):
     @property
     def element_spec(self) -> DistributionSpec:
         """The ``DistributionSpec`` every element satisfies, a view on ``spec``."""
-        return cast(DistributionSpec, self._spec.element_spec)
+        return cast(DistributionSpec, self._spec.element_spec.term_spec)
 
     @property
     def event_spec(self) -> OutputSpec:
         """The event spec the elements share, a view on ``spec``."""
-        return self.element_spec.event_spec
+        return self.element_spec.term_spec.event_spec
 
     def _own_signature(self) -> Signature:
         """The signature the elements share, which a value computed from the batch shows.
@@ -326,7 +326,7 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
             elements,
             level_names,
             label=label,
-            element_spec=element_spec,
+            element=element_spec,
             axes_per_level=axes_per_level,
             provenance=provenance,
         )
@@ -373,17 +373,17 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
     @property
     def element_spec(self) -> ConditionalDistributionSpec:
         """The ``ConditionalDistributionSpec`` every element satisfies, a view on ``spec``."""
-        return cast(ConditionalDistributionSpec, self._spec.element_spec)
+        return cast(ConditionalDistributionSpec, self._spec.element_spec.term_spec)
 
     @property
     def given_spec(self) -> InputSpec:
         """The input spec the elements share, a view on ``spec``."""
-        return self.element_spec.given_spec
+        return self.element_spec.term_spec.given_spec
 
     @property
     def event_spec(self) -> OutputSpec:
         """The event spec the elements share, a view on ``spec``."""
-        return self.element_spec.event_spec
+        return self.element_spec.term_spec.event_spec
 
     def _own_signature(self) -> Signature:
         """The signature the elements share: their event outputs, then their inputs."""

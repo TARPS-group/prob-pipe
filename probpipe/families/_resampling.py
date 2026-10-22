@@ -950,7 +950,7 @@ def _kde_atoms(atoms: Any) -> tuple[Array | NumericRecordBatch, TermSpec]:
     if isinstance(atoms, list | tuple):
         atoms = _listed_atoms(atoms)
     if isinstance(atoms, NumericRecordBatch):
-        spec = atoms.element_spec.map(
+        spec = atoms.element_spec.term_spec.map(
             lambda leaf: NumericArraySpec(leaf.shape, _floating(leaf.dtype), real)
         )
         return atoms, spec

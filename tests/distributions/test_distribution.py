@@ -509,7 +509,7 @@ class TestWithLabelTemplateRoundtrip:
         rows = RecordBatch(
             {"labels": np.array(["a", "b", "c"], dtype=object), "ids": np.array([0, 1, 2])},
             "row",
-            element_spec=RecordSpec(labels=OpaqueSpec(), ids=()),
+            element=RecordSpec(labels=OpaqueSpec(), ids=()),
             label="rows",
         )
         law = EmpiricalDistribution(rows, label="rows")
@@ -1224,7 +1224,7 @@ class TestJointDeclarations:
         rows = RecordBatch(
             {"labels": np.array(["a", "b"], dtype=object), "ids": np.array([0, 1], dtype=np.int32)},
             "row",
-            element_spec=RecordSpec(labels=OpaqueSpec(), ids=NumericArraySpec((), np.int32)),
+            element=RecordSpec(labels=OpaqueSpec(), ids=NumericArraySpec((), np.int32)),
             label="rows",
         )
         joint = EmpiricalDistribution(rows, label="rows")
@@ -1244,7 +1244,7 @@ class TestEmpiricalDeclarations:
         spec = replicate.event_spec.term_spec
         assert isinstance(spec, BatchSpec)
         assert spec.batch_shape == (3,)
-        assert tuple(spec.element_spec.fields) == ("a", "b")
+        assert tuple(spec.element_spec.term_spec.fields) == ("a", "b")
         assert spec.is_valid(sample(replicate))
 
     def test_a_replicate_of_a_nested_posterior_keeps_its_groups(self):
@@ -1257,8 +1257,8 @@ class TestEmpiricalDeclarations:
         replicate = BootstrapReplicateDistribution("rep", posterior, level="draw")
         spec = replicate.event_spec.term_spec
         assert spec.batch_shape == (10,)
-        assert spec.element_spec == posterior.event_spec.term_spec
-        assert set(spec.element_spec.children["a"].children) == {"b", "c"}
+        assert spec.element_spec.term_spec == posterior.event_spec.term_spec
+        assert set(spec.element_spec.term_spec.children["a"].children) == {"b", "c"}
 
     def test_opaque_atoms_are_a_whole_term(self):
         law = EmpiricalDistribution(
@@ -1283,7 +1283,7 @@ class TestEmpiricalDeclarations:
         atoms = NumericRecordBatch(
             {"a": jnp.zeros(4), "b/c": jnp.zeros((4, 3))},
             "atom",
-            element_spec=NumericRecordSpec(a=(), b=NumericRecordSpec(c=(3,))),
+            element=NumericRecordSpec(a=(), b=NumericRecordSpec(c=(3,))),
             label="r",
         )
         law = EmpiricalDistribution(atoms, label="r")
@@ -1296,7 +1296,7 @@ class TestEmpiricalDeclarations:
         )
         spec = law.event_spec.term_spec
         assert (spec.batch_shape, spec.level_names) == ((3,), ("x",))
-        assert spec.element_spec.shape == (2,)
+        assert spec.element_spec.term_spec.shape == (2,)
 
     def test_a_replicate_of_an_array_law_is_a_batch_of_its_term(self):
         law = BootstrapReplicateDistribution("reps", Normal("x", 0.0, 1.0), replicate_size=4)
@@ -1323,7 +1323,7 @@ class TestEmpiricalDeclarations:
         atoms = NumericRecordBatch(
             {"u": jnp.ones((4, 2)), "v": jnp.zeros(4)},
             "row",
-            element_spec=NumericRecordSpec(
+            element=NumericRecordSpec(
                 u=NumericArraySpec((2,), None, real), v=NumericArraySpec((), None, real)
             ),
             label="rows",

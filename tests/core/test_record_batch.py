@@ -70,7 +70,7 @@ def nested_batch(n: int = 3, label: str | None = None, **kwargs) -> NumericRecor
             "m": jnp.zeros((n, 2)),
         },
         "draw",
-        element_spec=NESTED,
+        element=NESTED,
         **kwargs,
         label=label,
     )
@@ -94,7 +94,7 @@ class TestConstruction:
         nested = NumericRecordBatch(
             {"outer": {"a": jnp.arange(3.0), "b": jnp.arange(3.0) * 2}, "m": jnp.zeros((3, 2))},
             "draw",
-            element_spec=NESTED,
+            element=NESTED,
             label="batch",
         )
         assert nested == by_path
@@ -109,7 +109,7 @@ class TestConstruction:
         batch = NumericRecordBatch(
             {"x": jnp.zeros((4, 100, 2))},
             ("chain", "draw"),
-            element_spec=RecordSpec(x=(2,)),
+            element=RecordSpec(x=(2,)),
             label="batch",
         )
         assert batch.batch_shape == (4, 100)
@@ -119,7 +119,7 @@ class TestConstruction:
         batch = NumericRecordBatch(
             {"x": jnp.zeros((2, 3, 5))},
             ("grid", "draw"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=(2, 1),
             label="batch",
         )
@@ -133,14 +133,14 @@ class TestConstruction:
             NumericRecordBatch(
                 {"outer/a": jnp.zeros(3), "outer/b": jnp.zeros(3)},
                 "draw",
-                element_spec=NESTED,
+                element=NESTED,
                 label="batch",
             )
         with pytest.raises(ValueError, match=r"unexpected \['z'\]"):
             NumericRecordBatch(
                 {"x": jnp.zeros(3), "z": jnp.zeros(3)},
                 "draw",
-                element_spec=RecordSpec(x=()),
+                element=RecordSpec(x=()),
                 label="batch",
             )
 
@@ -153,7 +153,7 @@ class TestConstruction:
             NumericRecordBatch(
                 {"outer/a": jnp.zeros(3), "outer/b": jnp.zeros(3), "m": jnp.zeros((3, 5))},
                 "draw",
-                element_spec=NESTED,
+                element=NESTED,
                 label="batch",
             )
 
@@ -162,7 +162,7 @@ class TestConstruction:
             NumericRecordBatch(
                 {"x": jnp.zeros(3), "y": jnp.zeros(4)},
                 "draw",
-                element_spec=RecordSpec(x=(), y=()),
+                element=RecordSpec(x=(), y=()),
                 label="batch",
             )
 
@@ -171,7 +171,7 @@ class TestConstruction:
             NumericRecordBatch(
                 {"x": jnp.zeros(2)},
                 "draw",
-                element_spec=RecordSpec(x=(2,)),
+                element=RecordSpec(x=(2,)),
                 label="batch",
             )
 
@@ -180,7 +180,7 @@ class TestConstruction:
             NumericRecordBatch(
                 {},
                 "draw",
-                element_spec=RecordSpec(x=()),
+                element=RecordSpec(x=()),
                 label="batch",
             )
 
@@ -189,7 +189,7 @@ class TestConstruction:
             NumericRecordBatch(
                 [jnp.zeros(3)],
                 "draw",
-                element_spec=RecordSpec(x=()),
+                element=RecordSpec(x=()),
                 label="batch",
             )
 
@@ -200,7 +200,7 @@ class TestConstruction:
             NumericRecordBatch(
                 {"x": jnp.zeros((3, 4))},
                 "draw",
-                element_spec=RecordSpec(x=()),
+                element=RecordSpec(x=()),
                 axes_per_level=(1,),
                 label="batch",
             )
@@ -210,7 +210,7 @@ class TestConstruction:
             NumericRecordBatch(
                 {"x": jnp.zeros((3, 4))},
                 "draw",
-                element_spec=RecordSpec(x=()),
+                element=RecordSpec(x=()),
                 label="batch",
             )
 
@@ -219,7 +219,7 @@ class TestConstruction:
             NumericRecordBatch(
                 {"x": jnp.zeros(3)},
                 "draw",
-                element_spec=NumericArraySpec(shape=()),
+                element=NumericArraySpec(shape=()),
                 label="batch",
             )
 
@@ -228,7 +228,7 @@ class TestConstruction:
             NumericRecordBatch(
                 {"x": jnp.zeros(3), "label": np.array(["a", "b", "c"], dtype=object)},
                 "draw",
-                element_spec=RecordSpec(x=(), label=OpaqueSpec()),
+                element=RecordSpec(x=(), label=OpaqueSpec()),
                 label="batch",
             )
 
@@ -237,7 +237,7 @@ class TestConstruction:
             NumericRecordBatch(
                 {"x": np.array(["a", "b", "c"])},
                 "draw",
-                element_spec=RecordSpec(x=()),
+                element=RecordSpec(x=()),
                 label="batch",
             )
 
@@ -248,10 +248,10 @@ class TestConstruction:
         batch = NumericRecordBatch(
             {"x": jnp.zeros((3, 2))},
             "draw",
-            element_spec=spec,
+            element=spec,
             label="batch",
         )
-        assert batch.element_spec is spec
+        assert batch.element_spec.term_spec is spec
         assert batch.event_template is spec
 
     def test_the_two_declaration_forms_agree(self):
@@ -260,21 +260,21 @@ class TestConstruction:
         assert NumericRecordBatch(
             dict(columns),
             "draw",
-            element_spec=template,
+            element=template,
             label="batch",
         ) == (
             NumericRecordBatch(
                 dict(columns),
                 "draw",
-                element_spec=RecordSpec(template),
+                element=RecordSpec(template),
                 label="batch",
             )
         )
 
     def test_spec_accessors_are_views_on_one_object(self):
         batch = nested_batch()
-        assert batch.element_spec is batch.spec.element_spec
-        assert batch.event_template is batch.element_spec
+        assert batch.element_spec.term_spec is batch.spec.element_spec.term_spec
+        assert batch.event_template is batch.element_spec.term_spec
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +353,7 @@ class TestLeafKeyedFieldColumns:
         batch = NumericRecordBatch(
             {"out": jnp.zeros(2), "outer/a": jnp.ones(2)},
             "draw",
-            element_spec=template,
+            element=template,
             label="batch",
         )
         assert tuple(batch.event_template.keys()) == ("out", "outer/a")
@@ -367,7 +367,7 @@ class TestLeafKeyedFieldColumns:
         batch = NumericRecordBatch(
             {"a/c": jnp.zeros(2), "b/c": jnp.ones(2)},
             "draw",
-            element_spec=template,
+            element=template,
             label="batch",
         )
         np.testing.assert_array_equal(np.asarray(batch["a"]["c"]), np.asarray([0.0, 0.0]))
@@ -397,7 +397,7 @@ class TestColumnBatchForms:
         batch = RecordBatch(
             {"f": functions, "x": jnp.zeros(2)},
             "variant",
-            element_spec=RecordSpec({"f": FunctionSpec(), "x": ()}),
+            element=RecordSpec({"f": FunctionSpec(), "x": ()}),
             label="fs",
         )
         column = batch["f"]
@@ -412,7 +412,7 @@ class TestColumnBatchForms:
         batch = RecordBatch(
             {"site": labels, "x": jnp.zeros(2)},
             "row",
-            element_spec=RecordSpec(site=OpaqueSpec(), x=()),
+            element=RecordSpec(site=OpaqueSpec(), x=()),
             label="design",
         )
         column = batch["site"]
@@ -443,7 +443,7 @@ class TestColumnBatchForms:
             RecordBatch(
                 {"d": _object_column(["a", "b"]), "x": jnp.zeros(2)},
                 "row",
-                element_spec=spec,
+                element=spec,
                 label="batch",
             )
 
@@ -453,7 +453,7 @@ class TestColumnBatchForms:
         batch = RecordBatch(
             {"site": labels},
             "row",
-            element_spec=RecordSpec(site=OpaqueSpec()),
+            element=RecordSpec(site=OpaqueSpec()),
             label="design",
         )
         assert batch["site"].label == "site"
@@ -470,7 +470,7 @@ class TestColumnBatchForms:
         batch = RecordBatch(
             {"f": _object_column([lambda x: x, lambda x: 2 * x])},
             "variant",
-            element_spec=RecordSpec(f=FunctionSpec()),
+            element=RecordSpec(f=FunctionSpec()),
             label="batch",
         )
         first, second = batch["f"], batch["f"]
@@ -487,7 +487,7 @@ class TestColumnBatchForms:
         batch = RecordBatch(
             {"f": np.array([], dtype=object)},
             "variant",
-            element_spec=RecordSpec(f=FunctionSpec()),
+            element=RecordSpec(f=FunctionSpec()),
             label="batch",
         )
         assert batch.batch_shape == (0,)
@@ -506,7 +506,7 @@ class TestColumnEntryValidation:
             RecordBatch(
                 {"o": _object_column(["fine", {"k": 1}, "fine"])},
                 "row",
-                element_spec=RecordSpec(o=OpaqueSpec()),
+                element=RecordSpec(o=OpaqueSpec()),
                 label="batch",
             )
 
@@ -515,7 +515,7 @@ class TestColumnEntryValidation:
             RecordBatch(
                 {"f": _object_column(["not callable", lambda x: x])},
                 "row",
-                element_spec=RecordSpec({"f": FunctionSpec()}),
+                element=RecordSpec({"f": FunctionSpec()}),
                 label="batch",
             )
 
@@ -535,7 +535,7 @@ class TestColumnSpecConformance:
             NumericRecordBatch(
                 {"x": jnp.zeros(3, dtype=jnp.float32)},
                 "draw",
-                element_spec=RecordSpec(x=NumericArraySpec(shape=(), dtype=jnp.int32)),
+                element=RecordSpec(x=NumericArraySpec(shape=(), dtype=jnp.int32)),
                 label="batch",
             )
 
@@ -565,7 +565,7 @@ class TestColumnSpecConformance:
         NumericRecordBatch(
             {"x": column},
             "draw",
-            element_spec=RecordSpec(x=NumericArraySpec(shape=(), dtype=declared)),
+            element=RecordSpec(x=NumericArraySpec(shape=(), dtype=declared)),
             label="batch",
         )
 
@@ -578,13 +578,13 @@ class TestColumnSpecConformance:
             RecordBatch(
                 {"f": jnp.zeros(3)},
                 "draw",
-                element_spec=RecordSpec({"f": spec}),
+                element=RecordSpec({"f": spec}),
                 label="batch",
             )
 
     def test_an_element_of_a_validated_batch_conforms_to_its_own_spec(self):
         batch = nested_batch()
-        assert batch.element_spec.is_valid(batch[0])
+        assert batch.element_spec.term_spec.is_valid(batch[0])
 
 
 class TestConstructionRefusals:
@@ -601,7 +601,7 @@ class TestConstructionRefusals:
                 RecordBatch(
                     columns,
                     "row",
-                    element_spec=RecordSpec(o=OpaqueSpec(), x=(2,)),
+                    element=RecordSpec(o=OpaqueSpec(), x=(2,)),
                     label="batch",
                 )
 
@@ -610,7 +610,7 @@ class TestConstructionRefusals:
             NumericRecordBatch(
                 {"x": jnp.zeros(3)},
                 "draw",
-                element_spec=RecordSpec(x=(2, 2)),
+                element=RecordSpec(x=(2, 2)),
                 label="batch",
             )
 
@@ -662,7 +662,7 @@ class TestTheElementSpecIsInferredWhenOmitted:
             label="draws",
         )
 
-        assert batch.element_spec == RecordSpec(
+        assert batch.element_spec.term_spec == RecordSpec(
             x=(2,), tag=OpaqueSpec(type=str), g=RecordSpec(y=())
         )
 
@@ -674,7 +674,7 @@ class TestTheElementSpecIsInferredWhenOmitted:
         )
 
         assert batch.batch_shape == (2, 4)
-        assert batch.element_spec == RecordSpec(x=(3,))
+        assert batch.element_spec.term_spec == RecordSpec(x=(3,))
 
     def test_a_numeric_batch_refuses_an_inferred_opaque_field(self):
         with pytest.raises(TypeError, match="requires every field to be a numeric array"):
@@ -728,7 +728,7 @@ class TestTheClassFollowsTheColumns:
             label="copy",
         )
         assert type(batch) is NumericRecordBatch
-        assert batch.element_spec == RecordSpec(m=(2,))
+        assert batch.element_spec.term_spec == RecordSpec(m=(2,))
 
     def test_one_opaque_column_keeps_a_plain_batch(self):
         batch = RecordBatch(
@@ -756,7 +756,7 @@ class TestTheClassFollowsTheColumns:
         batch = RecordBatch(
             {"x": jnp.zeros(3), "tag": _object_column([1, 2, 3])},
             "draw",
-            element_spec=spec,
+            element=spec,
             label="b",
         )
         assert type(batch) is RecordBatch
@@ -767,13 +767,13 @@ class TestTheClassFollowsTheColumns:
             )
             for i in range(3)
         ]
-        stacked = RecordBatch.stack(records, level_name="draw", element_spec=spec)
+        stacked = RecordBatch.stack(records, level_name="draw", element=spec)
         assert type(stacked) is RecordBatch
         with pytest.raises(TypeError, match=r"^RecordBatch: field 'tag' is declared OpaqueSpec"):
             RecordBatch(
                 {"x": jnp.zeros(3), "tag": jnp.arange(3)},
                 "draw",
-                element_spec=spec,
+                element=spec,
                 label="b",
             )
 
@@ -843,7 +843,7 @@ class TestProvenance:
         batch = RecordBatch(
             {"outer/a": jnp.zeros(3), "site": _object_column(list("abc"))},
             "row",
-            element_spec=RecordSpec(outer=RecordSpec(a=()), site=OpaqueSpec()),
+            element=RecordSpec(outer=RecordSpec(a=()), site=OpaqueSpec()),
             label="design",
         )
         batch.with_provenance(Provenance.create("sample", parents=[]))
@@ -861,7 +861,7 @@ class TestPlainRecordBatch:
         batch = RecordBatch(
             {"site": _object_column(["north", "south"])},
             "row",
-            element_spec=RecordSpec(site=OpaqueSpec()),
+            element=RecordSpec(site=OpaqueSpec()),
             label="design",
         )
         assert type(batch[0]) is Record
@@ -871,7 +871,7 @@ class TestPlainRecordBatch:
         batch = RecordBatch(
             {"site": _object_column(["north"])},
             "row",
-            element_spec=RecordSpec(site=OpaqueSpec()),
+            element=RecordSpec(site=OpaqueSpec()),
             label="batch",
         )
         assert not hasattr(batch, "to_vector")
@@ -880,7 +880,7 @@ class TestPlainRecordBatch:
         batch = RecordBatch(
             {"site": _object_column(["north", "south"])},
             "row",
-            element_spec=RecordSpec(site=OpaqueSpec()),
+            element=RecordSpec(site=OpaqueSpec()),
             label="batch",
         )
         assert pickle.loads(pickle.dumps(batch)) == batch
@@ -979,7 +979,7 @@ class TestStructuralTransforms:
         other = NumericRecordBatch(
             {"z": jnp.ones(3)},
             "draw",
-            element_spec=RecordSpec(z=()),
+            element=RecordSpec(z=()),
             label="batch",
         )
         merged = batch.merge(other)
@@ -992,7 +992,7 @@ class TestStructuralTransforms:
                 NumericRecordBatch(
                     {"z": jnp.ones(4)},
                     "draw",
-                    element_spec=RecordSpec(z=()),
+                    element=RecordSpec(z=()),
                     label="batch",
                 )
             )
@@ -1051,13 +1051,13 @@ class TestStructuralTransforms:
         numeric = NumericRecordBatch(
             {"x": jnp.zeros(3)},
             "draw",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="batch",
         )
         plain = RecordBatch(
             {"s": _object_column(list("abc"))},
             "draw",
-            element_spec=RecordSpec(s=OpaqueSpec()),
+            element=RecordSpec(s=OpaqueSpec()),
             label="batch",
         )
         assert type(numeric.replace({"x": _object_column(list("abc"))})) is RecordBatch
@@ -1068,7 +1068,7 @@ class TestStructuralTransforms:
         plain = RecordBatch(
             {"f": _object_column([lambda x: x] * 2)},
             "draw",
-            element_spec=RecordSpec({"f": FunctionSpec()}),
+            element=RecordSpec({"f": FunctionSpec()}),
             label="batch",
         )
         # A column of callables stays a function field rather than going opaque.
@@ -1081,7 +1081,7 @@ class TestStructuralTransforms:
         plain = RecordBatch(
             {"s": _object_column(list("ab"))},
             "draw",
-            element_spec=RecordSpec(s=OpaqueSpec()),
+            element=RecordSpec(s=OpaqueSpec()),
             label="batch",
         )
         with pytest.raises(TypeError, match="so its values must be an object array"):
@@ -1091,7 +1091,7 @@ class TestStructuralTransforms:
         plain = RecordBatch(
             {"f": _object_column([lambda x: x] * 2), "x": jnp.zeros(2)},
             "draw",
-            element_spec=RecordSpec({"f": FunctionSpec(), "x": ()}),
+            element=RecordSpec({"f": FunctionSpec(), "x": ()}),
             label="batch",
         )
         # ``batch["f"]`` is a FunctionBatch; putting one back must work.
@@ -1132,7 +1132,7 @@ class TestCollectionNotTree:
         batch = NumericRecordBatch(
             {"x": jnp.zeros((4, 100))},
             ("chain", "draw"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="batch",
         )
         assert len(batch) == 4
@@ -1163,14 +1163,14 @@ class TestElements:
         if that reuse were lost, and every row inside a trace would allocate.
         """
         batch = nested_batch()
-        assert batch[0].spec is batch.element_spec
+        assert batch[0].spec is batch.element_spec.term_spec
         assert batch[2].spec is batch[0].spec
 
     def test_an_element_of_a_multi_level_batch_names_both_levels(self):
         batch = NumericRecordBatch(
             {"x": jnp.zeros((2, 3))},
             ("chain", "draw"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="post",
         )
         assert batch[1, 2].label == "post[chain=1, draw=2]"
@@ -1193,7 +1193,7 @@ class TestLevels:
         batch = NumericRecordBatch(
             {"x": jnp.zeros((2, 3))},
             ("chain", "draw"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="post",
         )
         inner = batch[0]
@@ -1206,7 +1206,7 @@ class TestLevels:
         batch = NumericRecordBatch(
             {"x": jnp.arange(6.0).reshape(2, 3)},
             ("chain", "draw"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="post",
         )
         assert batch.at_levels(draw=2).level_names == ("chain",)
@@ -1251,7 +1251,7 @@ class TestLevels:
         batch = RecordBatch(
             {"site": _object_column(["a", "b", "c", "d"])},
             "row",
-            element_spec=RecordSpec(site=OpaqueSpec()),
+            element=RecordSpec(site=OpaqueSpec()),
             label="batch",
         )
         assert np.shares_memory(batch[1:3]._columns["site"], batch._columns["site"])
@@ -1261,7 +1261,7 @@ class TestLevels:
         batch = RecordBatch(
             {"site": column},
             "row",
-            element_spec=RecordSpec(site=OpaqueSpec()),
+            element=RecordSpec(site=OpaqueSpec()),
             label="batch",
         )
         with pytest.raises(ValueError, match="read-only"):
@@ -1355,7 +1355,7 @@ class TestSingleFieldCoercion:
         return NumericRecordBatch(
             {"x": jnp.arange(6.0).reshape(3, 2)},
             "draw",
-            element_spec=RecordSpec(x=(2,)),
+            element=RecordSpec(x=(2,)),
             label="batch",
         )
 
@@ -1441,7 +1441,7 @@ class TestFlatLayout:
         batch = NumericRecordBatch(
             {"x": jnp.arange(24.0).reshape(2, 3, 4)},
             ("chain", "draw"),
-            element_spec=RecordSpec(x=(4,)),
+            element=RecordSpec(x=(4,)),
             label="batch",
         )
         vec = batch.to_vector()
@@ -1455,7 +1455,7 @@ class TestFlatLayout:
         batch = NumericRecordBatch(
             {"x": jnp.arange(24.0).reshape(2, 3, 4)},
             ("chain", "draw"),
-            element_spec=RecordSpec(x=(4,)),
+            element=RecordSpec(x=(4,)),
             label="post",
         )
         rebuilt = NumericRecordBatch.from_vector(
@@ -1476,7 +1476,7 @@ class TestFlatLayout:
         batch = NumericRecordBatch(
             {"i": jnp.arange(3, dtype=jnp.int32), "f": jnp.ones(3, dtype=jnp.float32)},
             "draw",
-            element_spec=template,
+            element=template,
             label="batch",
         )
         assert batch.to_vector().dtype == jnp.float32  # the promotion
@@ -1543,7 +1543,7 @@ class TestStack:
             ],
             level_name="row",
         )
-        assert shared.element_spec["label"] == OpaqueSpec(type=str)
+        assert shared.element_spec.term_spec["label"] == OpaqueSpec(type=str)
         mixed = RecordBatch.stack(
             [
                 Record(
@@ -1557,7 +1557,7 @@ class TestStack:
             ],
             level_name="row",
         )
-        assert mixed.element_spec["label"] == OpaqueSpec()
+        assert mixed.element_spec.term_spec["label"] == OpaqueSpec()
 
     def test_stack_builds_one_named_level(self):
         records = [
@@ -1598,9 +1598,7 @@ class TestStack:
             for _ in range(2)
         ]
         with pytest.raises(ValueError, match=r"record 0 has fields \['x'\], expected \['x', 'z'\]"):
-            NumericRecordBatch.stack(
-                records, level_name="draw", element_spec=RecordSpec(x=(), z=())
-            )
+            NumericRecordBatch.stack(records, level_name="draw", element=RecordSpec(x=(), z=()))
 
     def test_stack_names_a_record_with_extra_fields(self):
         """Extra fields must not be dropped silently: the batch's spec would
@@ -1617,7 +1615,7 @@ class TestStack:
             ),
         ]
         with pytest.raises(ValueError, match=r"record 1 has fields \['x', 'extra'\], expected"):
-            NumericRecordBatch.stack(records, level_name="draw", element_spec=spec)
+            NumericRecordBatch.stack(records, level_name="draw", element=spec)
 
     def test_stack_lets_a_ragged_numeric_field_fail_as_a_stacking_error(self):
         records = [
@@ -1635,7 +1633,7 @@ class TestStack:
         # Declared a NumericArraySpec, so it stacks natively and the shapes must agree —
         # it is not quietly demoted to an object column.
         with pytest.raises((TypeError, ValueError)):
-            NumericRecordBatch.stack(records, level_name="draw", element_spec=RecordSpec(x=(2,)))
+            NumericRecordBatch.stack(records, level_name="draw", element=RecordSpec(x=(2,)))
 
     def test_stack_keeps_an_opaque_field_opaque_when_its_values_are_numeric(self):
         """The field's spec decides the column form, not the values.
@@ -1673,7 +1671,7 @@ class TestStack:
             )
             for _ in range(2)
         ]
-        assert NumericRecordBatch.stack(records, level_name="draw").element_spec == spec
+        assert NumericRecordBatch.stack(records, level_name="draw").element_spec.term_spec == spec
 
     def test_stack_stores_a_non_array_field_as_an_object_column(self):
         records = [
@@ -1750,13 +1748,13 @@ class TestEqualityAndCopying:
         zeros = NumericRecordBatch(
             {"x": jnp.zeros(3)},
             "draw",
-            element_spec=spec,
+            element=spec,
             label="batch",
         )
         ones = NumericRecordBatch(
             {"x": jnp.ones(3)},
             "draw",
-            element_spec=spec,
+            element=spec,
             label="batch",
         )
         assert zeros.spec == ones.spec
@@ -1767,13 +1765,13 @@ class TestEqualityAndCopying:
         left = NumericRecordBatch(
             {"x": jnp.asarray([1.0, 2.0, 3.0])},
             "draw",
-            element_spec=spec,
+            element=spec,
             label="batch",
         )
         right = NumericRecordBatch(
             {"x": jnp.asarray([1.0, 2.0, 4.0])},
             "draw",
-            element_spec=spec,
+            element=spec,
             label="batch",
         )
         assert left != right
@@ -1786,19 +1784,19 @@ class TestEqualityAndCopying:
         left = RecordBatch(
             {"site": _object_column(labels)},
             "row",
-            element_spec=spec,
+            element=spec,
             label="batch",
         )
         same = RecordBatch(
             {"site": _object_column(labels)},
             "row",
-            element_spec=spec,
+            element=spec,
             label="batch",
         )
         other = RecordBatch(
             {"site": _object_column(["north", "east"])},
             "row",
-            element_spec=spec,
+            element=spec,
             label="batch",
         )
         assert left == same
@@ -1811,19 +1809,19 @@ class TestEqualityAndCopying:
         left = RecordBatch(
             {"cov": _object_column([np.zeros(2), np.zeros(3)])},
             "row",
-            element_spec=spec,
+            element=spec,
             label="batch",
         )
         same = RecordBatch(
             {"cov": _object_column([np.zeros(2), np.zeros(3)])},
             "row",
-            element_spec=spec,
+            element=spec,
             label="batch",
         )
         other = RecordBatch(
             {"cov": _object_column([np.zeros(2), np.ones(3)])},
             "row",
-            element_spec=spec,
+            element=spec,
             label="batch",
         )
         assert left == same
@@ -1843,7 +1841,7 @@ class TestEqualityAndCopying:
         batch = NumericRecordBatch(
             {"x": jnp.asarray([jnp.nan, 1.0])},
             "draw",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="batch",
         )
         assert batch == batch
@@ -1856,7 +1854,7 @@ class TestEqualityAndCopying:
         batch = NumericRecordBatch(
             {"x": jnp.zeros((2, 3))},
             ("chain", "draw"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="post",
         )
         assert repr(batch) == (
@@ -1869,7 +1867,7 @@ class TestEqualityAndCopying:
         batch = NumericRecordBatch(
             {"x": jnp.zeros((4, 100))},
             ("chain", "draw"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="post",
         )
         assert batch._repr_summary() == (
@@ -1927,7 +1925,7 @@ class TestPyTree:
         other = NumericRecordBatch(
             {"x": jnp.zeros(3)},
             "draw",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="batch",
         )
         assert jax.tree_util.tree_structure(nested_batch()) != jax.tree_util.tree_structure(other)
@@ -1982,7 +1980,7 @@ class TestPyTree:
         batch = NumericRecordBatch(
             {"x": jnp.zeros((2, 3, 4))},
             ("chain", "draw"),
-            element_spec=RecordSpec(x=(4,)),
+            element=RecordSpec(x=(4,)),
             label="batch",
         )
         with pytest.raises(ValueError, match="must keep every batch axis or remove all of them"):
@@ -1995,7 +1993,7 @@ class TestPyTree:
         batch = NumericRecordBatch(
             {"x": jnp.zeros((2, 3, 5))},
             ("grid", "draw"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=(2, 1),
             label="batch",
         )
@@ -2044,7 +2042,7 @@ class TestPyTreeRebuildContract:
         return NumericRecordBatch(
             {"x": jnp.zeros(shape)},
             levels,
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             **kwargs,
             label=label,
         )
@@ -2136,7 +2134,7 @@ class TestPyTreeRebuildContract:
         batch = NumericRecordBatch(
             {"x": jnp.zeros(3, dtype=jnp.int32)},
             "draw",
-            element_spec=RecordSpec(x=NumericArraySpec(shape=(), dtype=jnp.int32)),
+            element=RecordSpec(x=NumericArraySpec(shape=(), dtype=jnp.int32)),
             label="batch",
         )
         with pytest.raises(TypeError, match="cannot be cast to the declared int32"):
@@ -2151,7 +2149,7 @@ class TestPyTreeRebuildContract:
         batch = RecordBatch(
             {"f": column},
             "row",
-            element_spec=RecordSpec(f=FunctionSpec()),
+            element=RecordSpec(f=FunctionSpec()),
             label="batch",
         )
         with pytest.raises(TypeError, match=r"entry 0 of field 'f' is int, which does not match"):
@@ -2165,7 +2163,7 @@ class TestPyTreeRebuildContract:
         batch = RecordBatch(
             {"site": column},
             "row",
-            element_spec=RecordSpec(site=OpaqueSpec(meta="units")),
+            element=RecordSpec(site=OpaqueSpec(meta="units")),
             label="batch",
         )
         replacement = np.empty(2, dtype=object)
@@ -2184,7 +2182,7 @@ class TestPyTreeRebuildContract:
         batch = RecordBatch(
             {"f": column},
             "row",
-            element_spec=RecordSpec(f=FunctionSpec()),
+            element=RecordSpec(f=FunctionSpec()),
             label="batch",
         )
         with pytest.raises(TypeError, match="object array"):
@@ -2196,7 +2194,7 @@ class TestPyTreeRebuildContract:
         batch = NumericRecordBatch(
             {"x": jnp.zeros((3, 4))},
             "draw",
-            element_spec=RecordSpec(x=(4,)),
+            element=RecordSpec(x=(4,)),
             label="batch",
         )
         with pytest.raises(ValueError, match="only batch axes may change"):
@@ -2206,7 +2204,7 @@ class TestPyTreeRebuildContract:
         batch = NumericRecordBatch(
             {"x": jnp.zeros(4), "y": jnp.zeros(4)},
             "draw",
-            element_spec=RecordSpec(x=(), y=()),
+            element=RecordSpec(x=(), y=()),
             label="batch",
         )
         leaves, treedef = jax.tree_util.tree_flatten(batch)
@@ -2250,7 +2248,7 @@ class TestRankZeroReconstruction:
         batch = RecordBatch(
             {"f": column},
             "row",
-            element_spec=RecordSpec(f=spec),
+            element=RecordSpec(f=spec),
             label="batch",
         )
         element = jax.tree.map(lambda c: c.reshape(()), batch)

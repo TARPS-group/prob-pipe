@@ -438,7 +438,7 @@ def _update_value_spec(
         _update(h, spec.input_spec, depth + 1, max_array_bytes, state)
         _update_output_declaration(h, spec.output_spec, depth + 1, max_array_bytes, state)
     elif isinstance(spec, BatchSpec):
-        _update(h, spec.element_spec, depth + 1, max_array_bytes, state)
+        _update(h, spec.element_spec.term_spec, depth + 1, max_array_bytes, state)
         h.update(b":axis_groups=")
         _update(h, spec.axis_groups, depth + 1, max_array_bytes, state)
         h.update(b":level_names=")
@@ -630,7 +630,7 @@ def _update_record_batch(
         h.update(repr(tuple(group)).encode())
         h.update(b",")
     h.update(b":spec=")
-    _update(h, batch.element_spec, depth + 1, max_array_bytes, state)
+    _update(h, batch.element_spec.term_spec, depth + 1, max_array_bytes, state)
     h.update(b":")
     for path in batch.event_template:
         h.update(path.encode())
@@ -792,7 +792,7 @@ def _update_distribution(
             h.update(repr(tuple(group)).encode())
             h.update(b",")
         h.update(b":spec=")
-        _update(h, atoms.element_spec, depth + 1, max_array_bytes, state)
+        _update(h, atoms.element_spec.term_spec, depth + 1, max_array_bytes, state)
         h.update(b":rows=")
         _update(h, dist._rows, depth + 1, max_array_bytes, state)
         h.update(b"weights=")

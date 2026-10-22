@@ -246,7 +246,7 @@ class TestTheFactoredRoutes:
         with workflow_run(seed=0):
             draws = sample(prior, sample_shape=(5,))
         assert draws.batch_shape == (5,)
-        assert draws.element_spec["groups/theta"].shape == (J,)
+        assert draws.element_spec.term_spec["groups/theta"].shape == (J,)
 
     def test_the_draws_follow_the_original_law(self):
         """The renamed prior's draws and the original's agree in their means."""

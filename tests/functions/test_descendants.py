@@ -318,7 +318,7 @@ def _posterior():
     atoms = NumericRecordBatch(
         columns,
         "draw",
-        element_spec=spec,
+        element=spec,
         label="draws",
     )
     return EmpiricalDistribution(atoms, jnp.arange(1.0, 13.0), label="posterior")
@@ -920,7 +920,7 @@ class TestLifts:
             NumericRecordBatch(
                 {"x": jnp.asarray([1.0, 4.0]), "y": jnp.asarray([10.0, 40.0])},
                 "draw",
-                element_spec=NumericRecordSpec(x=(), y=()),
+                element=NumericRecordSpec(x=(), y=()),
                 label="draws",
             ),
             weights=jnp.asarray([0.3, 0.7]),
@@ -1025,7 +1025,7 @@ class TestEmpiricalRootWeights:
             NumericRecordBatch(
                 {"x": jnp.asarray([1.0, 4.0]), "y": jnp.asarray([10.0, 40.0])},
                 "draw",
-                element_spec=NumericRecordSpec(x=(), y=()),
+                element=NumericRecordSpec(x=(), y=()),
                 label="draws",
             ),
             weights=jnp.asarray([0.3, 0.7]),

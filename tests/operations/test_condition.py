@@ -550,7 +550,7 @@ class TestTheFixedPaths:
         givens = NumericRecordBatch(
             {"beta": jnp.array([0.0, 1.0])},
             "row",
-            element_spec=RecordSpec(beta=REAL),
+            element=RecordSpec(beta=REAL),
             label="betas",
         )
         laws = condition_on(kernel, givens)
@@ -1101,7 +1101,7 @@ def _givens(field: str, values: list[float]) -> NumericRecordBatch:
     return NumericRecordBatch(
         {field: jnp.asarray(values, jnp.float32)},
         "dataset",
-        element_spec=RecordSpec(**{field: REAL}),
+        element=RecordSpec(**{field: REAL}),
         label="data",
     )
 
@@ -1234,7 +1234,7 @@ class TestEndToEnd:
         givens = NumericRecordBatch(
             {"y": jnp.array([[1, 0, 1, 0], [0, 0, 1, 1]])},
             "dataset",
-            element_spec=RecordSpec(y=NumericArraySpec((4,), jnp.int32)),
+            element=RecordSpec(y=NumericArraySpec((4,), jnp.int32)),
             label="data",
         )
         with workflow_run(seed=0):

@@ -169,7 +169,7 @@ class TestLabelAndProvenance:
             NumericArrayBatch(
                 jnp.arange(3.0),
                 "row",
-                element_spec=SCALAR,
+                element=SCALAR,
                 label="rows",
             )
         )
@@ -238,7 +238,7 @@ class TestLabelAndProvenance:
         rows = NumericArrayBatch(
             jnp.arange(2.0),
             "row",
-            element_spec=SCALAR,
+            element=SCALAR,
             label="rows",
         )
         result = Function(
@@ -336,7 +336,7 @@ class TestResultErrors:
             else NumericRecordBatch(
                 {"x": jnp.arange(3.0)},
                 "row",
-                element_spec=RecordSpec(x=()),
+                element=RecordSpec(x=()),
                 label="rows",
             )
         )
@@ -384,7 +384,7 @@ class TestResultErrors:
         returned = NumericArrayBatch(
             jnp.arange(3, dtype=jnp.int32),
             "row",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="rows",
         )
         declared = BatchSpec(NumericArraySpec((), jnp.float32), returned.spec.levels)
@@ -440,7 +440,7 @@ class TestResultErrors:
         rows = NumericArrayBatch(
             jnp.arange(2.0),
             "row",
-            element_spec=SCALAR,
+            element=SCALAR,
             label="rows",
         )
 
@@ -517,7 +517,7 @@ class TestResultErrors:
             else NumericArrayBatch(
                 jnp.arange(3.0),
                 "row",
-                element_spec=SCALAR,
+                element=SCALAR,
                 label="rows",
             )
         )
@@ -557,7 +557,7 @@ class TestResultErrors:
             "sweep": NumericArrayBatch(
                 jnp.arange(3.0),
                 "row",
-                element_spec=SCALAR,
+                element=SCALAR,
                 label="rows",
             ),
         }[regime]

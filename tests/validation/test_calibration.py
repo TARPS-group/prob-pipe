@@ -311,7 +311,7 @@ class TestFlattening:
         atoms = NumericRecordBatch(
             {"a": jnp.zeros((10, 2)), "b": jnp.zeros((10,))},
             "atom",
-            element_spec=NumericRecordSpec(a=(2,), b=()),
+            element=NumericRecordSpec(a=(2,), b=()),
             label="r",
         )
         emp = EmpiricalDistribution(atoms, label="m")

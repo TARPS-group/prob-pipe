@@ -19,7 +19,7 @@ def _lifted_element_spec(
     from ..distributions._distribution import Distribution
 
     if isinstance(value, Batch):
-        return value.element_spec
+        return value.element_spec.term_spec
     if isinstance(value, Distribution):
         return value.event_spec.term_spec
     raise ValueError(

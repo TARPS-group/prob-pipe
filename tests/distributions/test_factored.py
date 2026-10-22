@@ -846,7 +846,7 @@ class TestMomentCapabilities:
         atoms = NumericRecordBatch(
             {"b": jnp.array([[0.0, 1.0], [1.0, 0.0], [2.0, 2.0]]), "a": jnp.array([1.0, 2.0, 3.0])},
             "row",
-            element_spec=RecordSpec(b=(2,), a=()),
+            element=RecordSpec(b=(2,), a=()),
             label="rows",
         )
         record = EmpiricalDistribution(atoms, jnp.array([0.5, 0.25, 0.25]), label="post")
@@ -868,7 +868,7 @@ class TestMomentCapabilities:
         atoms = NumericRecordBatch(
             {"x": column},
             "row",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="rows",
         )
         field = _SoleField(EmpiricalDistribution(atoms, label="one"))

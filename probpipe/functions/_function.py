@@ -1323,7 +1323,7 @@ def _probe_lifted_point(
             lifted_cache_key = (
                 "rows",
                 tuple(
-                    (swept_ref, type(batch), batch.element_spec)
+                    (swept_ref, type(batch), batch.element_spec.term_spec)
                     for swept_ref, batch in swept_batches.items()
                 ),
             )
@@ -1525,7 +1525,7 @@ def _root_draw_stand_in(root: Any) -> Any:
         return NumericRecordBatch(
             stand_in_columns,
             "draw",
-            element_spec=output_record,
+            element=output_record,
             axes_per_level=(1,),
             label=root.label,
         )
@@ -1556,7 +1556,7 @@ def _batch_stand_in(root: Any, event: BatchSpec) -> Any:
         a leaf's dtype is neither declared nor stored.
     """
     flat = _flat_batch_spec(event)
-    element = flat.element_spec
+    element = flat.element_spec.term_spec
     if not isinstance(element, NumericSpec) or not flat.is_concrete:
         raise TypeError(
             f"{type(root).__name__} must declare a concrete numeric event to run under "

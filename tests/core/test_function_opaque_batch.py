@@ -188,7 +188,7 @@ class TestConstructionRefusals:
             OpaqueBatch(
                 [1, "a"],
                 "site",
-                element_spec=OpaqueSpec(type=int),
+                element=OpaqueSpec(type=int),
                 label="batch",
             )
 
@@ -258,7 +258,7 @@ class TestConstructionRefusals:
             cls(
                 [lambda: 1],
                 "variant",
-                element_spec=spec,
+                element=spec,
                 label="batch",
             )
 
@@ -325,10 +325,10 @@ class TestSpec:
         assert functions.spec == BatchSpec(FunctionSpec(), variant=3)
 
     def test_element_spec_is_a_view_of_the_declared_kind(self, functions, labels):
-        assert isinstance(functions.element_spec, FunctionSpec)
-        assert isinstance(labels.element_spec, OpaqueSpec)
-        assert functions.element_spec is functions.spec.element_spec
-        assert labels.element_spec is labels.spec.element_spec
+        assert isinstance(functions.element_spec.term_spec, FunctionSpec)
+        assert isinstance(labels.element_spec.term_spec, OpaqueSpec)
+        assert functions.element_spec.term_spec is functions.spec.element_spec.term_spec
+        assert labels.element_spec.term_spec is labels.spec.element_spec.term_spec
 
     def test_an_element_spec_may_be_given(self):
         declared = FunctionSpec(
@@ -337,16 +337,16 @@ class TestSpec:
         batch = FunctionBatch(
             [lambda x: x],
             "variant",
-            element_spec=declared,
+            element=declared,
             label="batch",
         )
 
-        assert batch.element_spec == declared
-        assert batch.spec.element_spec == declared
+        assert batch.element_spec.term_spec == declared
+        assert batch.spec.element_spec.term_spec == declared
 
     def test_opaque_elements_and_their_batch_both_have_kind_specs(self, labels):
         """The opaque base kind and its batch both use the common spec protocol."""
-        assert isinstance(labels.element_spec, TermSpec)
+        assert isinstance(labels.element_spec.term_spec, TermSpec)
         assert isinstance(labels.spec, TermSpec)
 
     def test_is_valid_reads_every_part_of_the_spec(self, functions):
@@ -372,7 +372,7 @@ class TestSpec:
             FunctionBatch(
                 three,
                 "variant",
-                element_spec=FunctionSpec(InputSpec(RecordSpec(x=()).children)),
+                element=FunctionSpec(InputSpec(RecordSpec(x=()).children)),
                 label="batch",
             )
         )
@@ -387,7 +387,7 @@ class TestElements:
         element = labels[1]
         assert isinstance(element, Opaque)
         assert element.label == "s[site=1]"
-        assert element.spec == labels.element_spec
+        assert element.spec == labels.element_spec.term_spec
 
     def test_a_callable_element_is_a_function_named_by_its_position(self, functions):
         element = functions[1]
@@ -586,7 +586,7 @@ class TestTheStorageContractIsSatisfiable:
         store[1] = {"a": 1}
 
         assert batch[1].raw == "south"
-        assert batch.element_spec.is_valid(batch[1].raw)
+        assert batch.element_spec.term_spec.is_valid(batch[1].raw)
 
     def test_an_empty_selection_is_a_batch_of_nothing(self, labels):
         """Reachable by selection though the constructor refuses it — see Notes."""

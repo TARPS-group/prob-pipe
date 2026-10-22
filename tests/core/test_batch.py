@@ -368,10 +368,10 @@ class TestShapeAndLevels:
 
     def test_a_level_may_spell_a_parameter_name(self):
         """The element spec and the mapping are positional-only, so any name is a level."""
-        spec = BatchSpec(_ELEMENT_SPEC, element_spec=2, levels=3)
+        spec = BatchSpec(_ELEMENT_SPEC, element=2, levels=3)
 
         assert spec.level_names == ("element_spec", "levels")
-        assert spec.element_spec == _ELEMENT_SPEC
+        assert spec.element_spec.term_spec == _ELEMENT_SPEC
 
     def test_the_levels_mapping_rebuilds_the_spec(self, nested):
         levels = nested.spec.levels
@@ -398,13 +398,13 @@ class TestSpec:
         )
 
     def test_the_spec_names_the_batch_not_the_element(self, nested):
-        assert nested.spec != nested.element_spec
-        assert nested.element_spec == _ELEMENT_SPEC
+        assert nested.spec != nested.element_spec.term_spec
+        assert nested.element_spec.term_spec == _ELEMENT_SPEC
 
     def test_an_element_spec_naming_no_kind_is_well_formed(self):
         """The case ``BatchSpec`` exists to cover: a batch of raw values."""
         bare = _BareBatch(range(3), _spec([(3,)], ["draw"], NumericArraySpec(shape=())))
-        assert bare.element_spec == NumericArraySpec(shape=())
+        assert bare.element_spec.term_spec == NumericArraySpec(shape=())
         assert isinstance(bare.spec, BatchSpec)
 
     def test_axis_groups_are_normalized_to_tuples(self):
@@ -436,7 +436,7 @@ class TestSpec:
 
     def test_a_sub_batch_view_keeps_the_element_spec_over_surviving_levels(self, nested):
         inner = nested[1]
-        assert inner.element_spec == nested.element_spec
+        assert inner.element_spec.term_spec == nested.element_spec.term_spec
         assert inner.spec == _spec([(3,)], ["draw"])
 
     def test_a_sliced_view_narrows_the_axis_in_its_spec(self, nested):
@@ -1396,7 +1396,7 @@ class TestABatchOfBatches:
         return _NestedBatch(laws, BatchSpec(inner_spec, law=2), label="outer")
 
     def test_the_element_spec_is_itself_a_batch_spec(self, outer):
-        assert isinstance(outer.element_spec, BatchSpec)
+        assert isinstance(outer.element_spec.term_spec, BatchSpec)
         assert outer.spec.is_valid(outer)
 
     def test_an_element_is_the_inner_batch(self, outer):
@@ -1647,7 +1647,7 @@ class TestRepr:
 
     def test_a_long_repr_shows_one_field_per_line(self):
         spec = RecordSpec({f"field_{index}": () for index in range(6)})
-        batch = _ListBatch([None] * 4, _spec([(4,)], ["draw"], element_spec=spec))
+        batch = _ListBatch([None] * 4, _spec([(4,)], ["draw"], element=spec))
         assert repr(batch) == (
             "Batch(\n"
             "    'b',\n"
@@ -1965,8 +1965,8 @@ def _args_for(kind: str, *, shape: tuple[int, ...], levels):
         store[...] = (lambda: 1) if kind == "FunctionBatch" else "x"
         return (store, levels), {}
     if kind == "NumericArrayBatch":
-        return (jnp.zeros(shape), levels), {"element_spec": NumericArraySpec(())}
-    return ({"x": jnp.zeros(shape)}, levels), {"element_spec": RecordSpec(x=())}
+        return (jnp.zeros(shape), levels), {"element": NumericArraySpec(())}
+    return ({"x": jnp.zeros(shape)}, levels), {"element": RecordSpec(x=())}
 
 
 class TestTheConstructorSignatureContract:

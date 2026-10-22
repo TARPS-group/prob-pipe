@@ -426,7 +426,7 @@ def _output_atoms(
         if tuple(element.shape) != point:
             element = NumericArraySpec(point, element.dtype, element.support)
         atoms: Batch = _record_stored_dtypes(
-            NumericArrayBatch(outputs.raw, atom_level, element_spec=element, label=output_label)
+            NumericArrayBatch(outputs.raw, atom_level, element=element, label=output_label)
         )
     else:
         rows = _rows_of(outputs, output_label)
@@ -452,9 +452,11 @@ def _output_atoms(
         except (TypeError, ValueError) as error:
             raise ResultSchemaError(str(error)) from error
     actual = (
-        BatchSpec._from_groups(atoms.element_spec, atoms.axis_groups[1:], atoms.level_names[1:])
+        BatchSpec._from_groups(
+            atoms.element_spec.term_spec, atoms.axis_groups[1:], atoms.level_names[1:]
+        )
         if len(atoms.level_names) > 1
-        else atoms.element_spec
+        else atoms.element_spec.term_spec
     )
     if output_spec is None:
         return atoms, OutputSpec.default(actual, output_name=output_name)
@@ -563,7 +565,7 @@ def _joint_atoms(
         )
         element = RecordSpec(fields)
         return _batch_class_for(element)(
-            columns, atoms.level_names[0], element_spec=element, label=output_label
+            columns, atoms.level_names[0], element=element, label=output_label
         )
     stored = _batch_columns(atoms)
     if _has_record_outputs(declaration):
@@ -575,7 +577,7 @@ def _joint_atoms(
         columns.update(_prefixed(output_name, stored))
     element = RecordSpec(fields)
     return _batch_class_for(element)(
-        columns, atoms.level_names[0], element_spec=element, label=output_label
+        columns, atoms.level_names[0], element=element, label=output_label
     )
 
 

@@ -1008,7 +1008,7 @@ class TestEmpiricalAtoms:
             atoms = NumericArrayBatch(
                 values,
                 ("chain", "draw"),
-                element_spec=spec,
+                element=spec,
                 label="x",
             )
             return EmpiricalDistribution(atoms, output_name="x")

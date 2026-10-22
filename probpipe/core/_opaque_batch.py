@@ -124,7 +124,7 @@ class OpaqueBatch(_ObjectBatch[Any]):
             elements,
             level_names,
             label=label,
-            element_spec=element_spec,
+            element=element_spec,
             axes_per_level=axes_per_level,
             provenance=provenance,
         )
@@ -162,13 +162,13 @@ class OpaqueBatch(_ObjectBatch[Any]):
     @property
     def element_spec(self) -> OpaqueSpec:
         """The :class:`OpaqueSpec` every element satisfies — a view on ``spec``."""
-        return cast(OpaqueSpec, self._spec.element_spec)
+        return cast(OpaqueSpec, self._spec.element_spec.term_spec)
 
     def _wrap_element(self, value: Any, label: str) -> Opaque:
         """The stored *value* as an :class:`~probpipe.Opaque` labeled *label*."""
         return Opaque(
             value,
-            spec=self.element_spec,
+            spec=self.element_spec.term_spec,
             label=label,
         )
 

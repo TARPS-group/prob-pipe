@@ -206,7 +206,7 @@ def _array_atoms(label: str, stacked: Array, term: NumericArraySpec) -> NumericA
     return NumericArrayBatch(
         values,
         _CHAIN_LEVELS,
-        element_spec=term,
+        element=term,
         axes_per_level=(1, 1),
         label=label,
     )
@@ -259,7 +259,7 @@ def _record_atoms(label: str, stacked: Array, record: RecordSpec) -> NumericReco
     return NumericRecordBatch(
         columns,
         _CHAIN_LEVELS,
-        element_spec=record,
+        element=record,
         axes_per_level=(1, 1),
         label=label,
     )
@@ -275,7 +275,7 @@ def _chain_atoms(label: str, stacked: Array, declaration: OutputSpec | None) -> 
         return NumericArrayBatch(
             stacked,
             _CHAIN_LEVELS,
-            element_spec=element,
+            element=element,
             axes_per_level=(1, 1),
             label=label,
         )
@@ -469,7 +469,7 @@ def _posterior_from_chains(
     outputs = (_UNDECLARED,) if output_spec is None else output_spec.outputs
     atoms = _chain_atoms(format_outputs(outputs), jnp.stack(flat_chains), output_spec)
     if output_spec is None:
-        output_spec = OutputSpec(**{_UNDECLARED: atoms.element_spec})
+        output_spec = OutputSpec(**{_UNDECLARED: atoms.element_spec.term_spec})
     result = EmpiricalDistribution(atoms, weights, label=label, event_spec=output_spec)
     if annotations is not None:
         annotations = _named_draw_groups(annotations, result)

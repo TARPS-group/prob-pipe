@@ -265,16 +265,16 @@ class RecordBatch(Batch[Record]):
     @property
     def element_spec(self) -> RecordSpec:
         """The :class:`RecordSpec` every element satisfies — a view on ``spec``."""
-        return cast(RecordSpec, self._spec.element_spec)
+        return cast(RecordSpec, self._spec.element_spec.term_spec)
 
     @property
     def event_template(self) -> RecordSpec:
         """The structure of one element — a view on :attr:`element_spec`."""
-        return self.element_spec
+        return self.element_spec.term_spec
 
     def _element_repr_arguments(self) -> list[tuple[str, str]]:
         """The elements' field paths, in canonical order."""
-        return [("fields", format_names(self.element_spec.keys()))]
+        return [("fields", format_names(self.element_spec.term_spec.keys()))]
 
     # -- validation ---------------------------------------------------------
 
@@ -353,7 +353,7 @@ class RecordBatch(Batch[Record]):
         return self._inherit_provenance(
             Record(
                 row,
-                event_template=self.element_spec,
+                event_template=self.element_spec.term_spec,
                 # The columns were checked against the element spec at
                 # construction, so re-checking each row's leaves repeats work that
                 # iteration pays per element.
@@ -390,7 +390,7 @@ class RecordBatch(Batch[Record]):
         # ``object.__new__`` for the reason ``TrackedTerm._shallow_copy`` gives: a
         # host's own ``__new__`` may select a class from constructor arguments and
         # must not run again where there are none.
-        view = object.__new__(self._view_class(spec.element_spec))
+        view = object.__new__(self._view_class(spec.element_spec.term_spec))
         object.__setattr__(
             view, "_columns", {path: column[index] for path, column in self._columns.items()}
         )
@@ -572,7 +572,7 @@ class RecordBatch(Batch[Record]):
         return self._inherit_provenance(
             column_cls._over_store(
                 column,
-                spec=self.spec._replace(element_spec=spec),
+                spec=self.spec._replace(element=spec),
                 label=key,
             )
         )
@@ -585,7 +585,7 @@ class RecordBatch(Batch[Record]):
         """
         view = object.__new__(self._view_class(template))
         object.__setattr__(view, "_columns", columns)
-        view._init_batch(self.spec._replace(element_spec=template), label=label)
+        view._init_batch(self.spec._replace(element=template), label=label)
         return self._inherit_provenance(view)
 
     def _field_view(self, path: str, template: RecordSpec) -> Self:
@@ -910,7 +910,7 @@ class RecordBatch(Batch[Record]):
         return _batch_class_for(template)(
             dict(columns),
             self.level_names,
-            element_spec=template,
+            element=template,
             axes_per_level=_ranks_of(self.axis_groups),
             label=self.label,
         )
@@ -989,7 +989,7 @@ class RecordBatch(Batch[Record]):
         return cls(
             columns,
             (level_name,),
-            element_spec=spec,
+            element=spec,
             label=label if label is not None else records[0].label,
         )
 
@@ -1093,14 +1093,14 @@ def _stack_batch_column(
     column: np.ndarray, outer: BatchSpec, event: BatchSpec, label: str
 ) -> Batch:
     """Batch-valued entries of an object column stacked on the outer and event levels."""
-    spec = _flat_batch_spec(outer._replace(element_spec=event))
-    element = spec.element_spec
+    spec = _flat_batch_spec(outer._replace(element=event))
+    element = spec.element_spec.term_spec
     values = _stacked_batches(column, event)
     if isinstance(element, RecordSpec):
         return _batch_class_for(element)(
             values,
             spec.level_names,
-            element_spec=element,
+            element=element,
             axes_per_level=_ranks_of(spec.axis_groups),
             label=label,
         )
@@ -1130,7 +1130,7 @@ def _stacked_batches(entries: np.ndarray, event: BatchSpec) -> Any:
     """
     event = _flat_batch_spec(event)
     shape = (*entries.shape, *event.batch_shape)
-    element = event.element_spec
+    element = event.element_spec.term_spec
     batches = list(entries.flat)
     if isinstance(element, RecordSpec):
         return {
@@ -1174,7 +1174,7 @@ def _batch_over(raw: Any, spec: BatchSpec, label: str) -> Batch:
         If no batch class is registered for the element's kind.
     """
     spec = _flat_batch_spec(spec)
-    element = spec.element_spec
+    element = spec.element_spec.term_spec
     batch_class = (
         _batch_class_for(element)
         if isinstance(element, RecordSpec)
@@ -1185,7 +1185,7 @@ def _batch_over(raw: Any, spec: BatchSpec, label: str) -> Batch:
     return batch_class(
         raw,
         spec.level_names,
-        element_spec=element,
+        element=element,
         axes_per_level=_ranks_of(spec.axis_groups),
         label=label,
     )
@@ -1398,7 +1398,7 @@ def _unwrapped_field(value: Any) -> tuple[Any, TermSpec | None]:
     Raw values carry no spec, so those still infer.
     """
     if isinstance(value, FunctionBatch | OpaqueBatch):
-        return value._store, value.element_spec
+        return value._store, value.element_spec.term_spec
     return value, None
 
 
@@ -1688,7 +1688,7 @@ def _unflatten_with(cls: type[RecordBatch]):
         # rebuilt from it, is labeled ``<no description>`` until a result
         # boundary labels it (II.4).
         label = _NO_DESCRIPTION
-        element_spec = cast(RecordSpec, spec.element_spec)
+        element_spec = cast(RecordSpec, spec.element_spec.term_spec)
         # ``strict``: a child count that disagrees with the spec's fields would
         # otherwise truncate the columns silently, leaving a value whose own spec
         # is a false statement about it.
@@ -1901,7 +1901,7 @@ class _MappedBatchColumns:
         return cls(
             batch._label,
             {path: batch._raw_column(path) for path in batch.event_template},
-            element_spec=batch.element_spec,
+            element=batch.element_spec.term_spec,
             level_names=tuple(batch.level_names),
             axis_groups=tuple(batch.axis_groups),
         )
@@ -1917,7 +1917,7 @@ class _MappedBatchColumns:
         return cls(
             record._label,
             {path: record._raw_at(path) for path in record.event_template},
-            element_spec=record.spec,
+            element=record.spec,
             level_names=(),
             axis_groups=(),
         )
@@ -1928,7 +1928,7 @@ def _mapped_batch_columns_flatten(carried: _MappedBatchColumns):
     # batch it rebuilds.
     return list(carried.columns.values()), (
         tuple(carried.columns),
-        carried.element_spec,
+        carried.element_spec.term_spec,
         carried.level_names,
         carried.axis_groups,
     )
@@ -1941,7 +1941,7 @@ def _mapped_batch_columns_unflatten(aux, children) -> _MappedBatchColumns:
     return _MappedBatchColumns(
         "RecordBatch",
         dict(zip(paths, children, strict=True)),
-        element_spec=element_spec,
+        element=element_spec,
         level_names=level_names,
         axis_groups=axis_groups,
     )

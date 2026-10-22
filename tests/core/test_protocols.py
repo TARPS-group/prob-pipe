@@ -396,7 +396,7 @@ class TestSampleReturnTypeConvention:
         rows = NumericRecordBatch(
             {"x": jnp.asarray([[1.0], [2.0], [3.0]]), "y": jnp.asarray([[0.5], [1.5], [2.5]])},
             "row",
-            element_spec=NumericRecordSpec(x=(1,), y=(1,)),
+            element=NumericRecordSpec(x=(1,), y=(1,)),
             label="rows",
         )
         law = EmpiricalDistribution(rows, label="joint")

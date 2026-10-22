@@ -155,13 +155,13 @@ class TestOpaqueSpecTypeAndMeta:
             ["north", "south"],
             "site",
             label="b",
-        ).element_spec == OpaqueSpec(type=str)
+        ).element_spec.term_spec == OpaqueSpec(type=str)
         assert (
             OpaqueBatch(
                 ["north", 3],
                 "site",
                 label="b",
-            ).element_spec
+            ).element_spec.term_spec
             == OpaqueSpec()
         )
         assert (
@@ -169,7 +169,7 @@ class TestOpaqueSpecTypeAndMeta:
                 [],
                 "site",
                 label="b",
-            ).element_spec
+            ).element_spec.term_spec
             == OpaqueSpec()
         )
 

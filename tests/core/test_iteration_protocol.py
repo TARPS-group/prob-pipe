@@ -186,7 +186,7 @@ def test_a_record_batch_iterates_leading_axis_views():
         {"a": jnp.zeros((5,)), "b": jnp.zeros((5,))},
         level_names="draw",
         axes_per_level=(1,),
-        element_spec=RecordSpec(a=(), b=()),
+        element=RecordSpec(a=(), b=()),
         label="batch",
     )
     rows = list(iter(batch))
@@ -201,7 +201,7 @@ def test_a_numeric_record_batch_iterates_leading_axis_views():
         {"a": jnp.zeros((4,)), "b": jnp.zeros((4,))},
         level_names="draw",
         axes_per_level=(1,),
-        element_spec=NumericRecordSpec(a=(), b=()),
+        element=NumericRecordSpec(a=(), b=()),
         label="batch",
     )
     rows = list(iter(batch))

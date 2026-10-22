@@ -88,7 +88,7 @@ class TestQuantileOp:
         atoms = NumericRecordBatch(
             {"a": a, "b": b},
             "row",
-            element_spec=RecordSpec(a=(), b=()),
+            element=RecordSpec(a=(), b=()),
             label="rows",
         )
         emp = EmpiricalDistribution(atoms, label="emp")
@@ -160,7 +160,7 @@ class TestRawQuantilesAtTheirLevels:
         atoms = NumericRecordBatch(
             {"b": jnp.array([[1.0, 2.0], [0.0, 1.0], [2.0, 3.0]]), "a": jnp.array([2.0, 1.0, 3.0])},
             "row",
-            element_spec=RecordSpec(b=(2,), a=()),
+            element=RecordSpec(b=(2,), a=()),
             label="rows",
         )
         return EmpiricalDistribution(atoms, label="post")

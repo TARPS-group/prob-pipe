@@ -118,7 +118,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
             elements,
             level_names,
             label=label,
-            element_spec=element_spec,
+            element=element_spec,
             axes_per_level=axes_per_level,
             provenance=provenance,
         )
@@ -157,7 +157,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
     @property
     def element_spec(self) -> FunctionSpec:
         """The :class:`FunctionSpec` every element satisfies — a view on ``spec``."""
-        return cast(FunctionSpec, self._spec.element_spec)
+        return cast(FunctionSpec, self._spec.element_spec.term_spec)
 
     def _wrap_element(self, value: Callable, label: str) -> Function:
         """The callable *value* as a ``Function`` labeled *label* under the batch's specs.
@@ -180,7 +180,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
             If the callable's signature cannot be inspected, or does not match the
             declared inputs.
         """
-        spec = self.element_spec
+        spec = self.element_spec.term_spec
         return Function(
             value,
             input_spec=spec.input_spec,
