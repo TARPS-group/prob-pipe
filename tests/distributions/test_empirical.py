@@ -89,7 +89,7 @@ def _record_atoms() -> NumericRecordBatch:
     return NumericRecordBatch(
         {"b": _B, "a": _A},
         "row",
-        element_spec=_RECORD_SPEC,
+        element=_RECORD_SPEC,
         label="rows",
     )
 
@@ -103,7 +103,7 @@ def _mixed_atoms() -> RecordBatch:
     return RecordBatch(
         columns,
         "site",
-        element_spec=_MIXED_SPEC,
+        element=_MIXED_SPEC,
         label="sites",
     )
 
@@ -152,7 +152,7 @@ class TestEventCompletion:
             label="laws",
         )
         law = EmpiricalDistribution(laws, output_name="measure")
-        assert law.event_spec == OutputSpec(measure=laws.element_spec)
+        assert law.event_spec == OutputSpec(measure=laws.element_spec.term_spec)
 
     def test_the_output_is_captured_once(self):
         renamed = EmpiricalDistribution(jnp.zeros((5, 2)), output_name="theta").with_label("other")
@@ -163,7 +163,7 @@ class TestEventCompletion:
         atoms = NumericArrayBatch(
             jnp.ones((4, 2)),
             "draw",
-            element_spec=declared,
+            element=declared,
             label="draws",
         )
         assert EmpiricalDistribution(atoms, output_name="x").event_spec == OutputSpec(x=declared)
@@ -211,7 +211,7 @@ class TestEventCompletion:
             axes_per_level=(1,),
             label="draws",
         )
-        assert atoms.element_spec.children["a"].dtype is None
+        assert atoms.element_spec.term_spec.children["a"].dtype is None
         law = EmpiricalDistribution(atoms, event_spec=prior.event_spec, label="post")
         assert law.event_spec == prior.event_spec
         assert law.dtypes == {"a": jnp.float32, "b": jnp.float32}
@@ -238,7 +238,7 @@ class TestEventCompletion:
         atoms = NumericArrayBatch(
             jnp.arange(12.0).reshape(2, 3, 2),
             ("chain", "draw"),
-            element_spec=NumericArraySpec((2,)),
+            element=NumericArraySpec((2,)),
             label="draws",
         )
         law = EmpiricalDistribution(atoms, output_name="x")
@@ -277,7 +277,7 @@ class TestEventCompletion:
         atoms = NumericArrayBatch(
             _VALUES,
             "draw",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="draws",
         )
         with pytest.raises(TypeError, match="with_level_names"):
@@ -402,7 +402,7 @@ class TestWeights:
         atoms = NumericArrayBatch(
             jnp.arange(6.0).reshape(2, 3),
             ("chain", "draw"),
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="draws",
         )
         # The weights of the atoms 0, ..., 5 in row-major order are 1, 2, 0, 0, 0, 3;
@@ -511,7 +511,7 @@ class TestSampling:
         draws = sample(law, sample_shape=(4,))
         assert type(draws) is RecordBatch
         assert (draws.batch_shape, draws.level_names) == ((4,), ("sample",))
-        assert draws.element_spec == law.event_spec.term_spec
+        assert draws.element_spec.term_spec == law.event_spec.term_spec
 
 
 # -- Moments --------------------------------------------------------------------
@@ -760,7 +760,7 @@ class TestMarginals:
         atoms = NumericRecordBatch(
             {"p/x": _A, "q/x": _U},
             "row",
-            element_spec=spec,
+            element=spec,
             label="rows",
         )
         law = EmpiricalDistribution(atoms, label="m")
@@ -795,7 +795,7 @@ class TestMarginals:
         atoms = NumericRecordBatch(
             {"b": jnp.zeros((2, 3, 2)), "a": jnp.zeros((2, 3))},
             ("chain", "draw"),
-            element_spec=_RECORD_SPEC,
+            element=_RECORD_SPEC,
             label="draws",
         )
         law = EmpiricalDistribution(atoms, label="post")
@@ -806,7 +806,7 @@ class TestMarginals:
         atoms = NumericRecordBatch(
             {"b": _B, "a": _A},
             "row",
-            element_spec=_RECORD_SPEC,
+            element=_RECORD_SPEC,
             label="x·y",
         )
         law = EmpiricalDistribution(atoms, label="post")
@@ -856,7 +856,7 @@ class TestRenaming:
 
     def test_the_atoms_carry_the_new_paths_on_the_same_levels(self):
         atoms = _posterior().with_path_names(_GROUPING).atoms
-        assert tuple(atoms.element_spec.keys()) == tuple(_GROUPING.values())
+        assert tuple(atoms.element_spec.term_spec.keys()) == tuple(_GROUPING.values())
         assert atoms.level_names == ("chain", "draw")
         for old, new in _GROUPING.items():
             np.testing.assert_array_equal(np.asarray(atoms[new]), _POSTERIOR_COLUMNS[old])
@@ -886,7 +886,7 @@ class TestRenaming:
         renamed = law.with_path_names({"params/a": "params/alpha"})
         assert isinstance(renamed, EmpiricalDistribution)
         assert renamed.event_spec == law.event_spec.with_path_names({"params/a": "params/alpha"})
-        assert tuple(renamed.atoms.element_spec.keys()) == ("b", "alpha")
+        assert tuple(renamed.atoms.element_spec.term_spec.keys()) == ("b", "alpha")
         np.testing.assert_array_equal(np.asarray(renamed.atoms["alpha"]), _A)
 
     def test_the_marginal_at_a_node_that_gathers_two_groups_is_exact(self):
@@ -895,7 +895,7 @@ class TestRenaming:
         atoms = NumericRecordBatch(
             {"p/x": xs, "q/y": ys},
             "row",
-            element_spec=spec,
+            element=spec,
             label="rows",
         )
         renamed = EmpiricalDistribution(atoms, label="m").with_path_names(

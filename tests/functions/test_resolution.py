@@ -47,7 +47,7 @@ def _rows() -> NumericArrayBatch:
     return NumericArrayBatch(
         jnp.arange(3.0),
         "row",
-        element_spec=SCALAR,
+        element=SCALAR,
         label="rows",
     )
 
@@ -152,7 +152,7 @@ class TestTheRegistry:
         rows = NumericArrayBatch(
             jnp.arange(3.0),
             "row",
-            element_spec=SCALAR,
+            element=SCALAR,
             label="rows",
         )
 

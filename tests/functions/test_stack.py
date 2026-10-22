@@ -100,13 +100,13 @@ class TestTheEngine:
                 NumericArrayBatch(
                     jnp.arange(2.0),
                     "row",
-                    element_spec=scalar,
+                    element=scalar,
                     label="x",
                 ),
                 NumericArrayBatch(
                     jnp.arange(3.0),
                     "row",
-                    element_spec=scalar,
+                    element=scalar,
                     label="y",
                 ),
             )

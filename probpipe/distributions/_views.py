@@ -1446,7 +1446,7 @@ def _moved_value(value: Any, moves: Mapping[str, str] | None) -> Any:
     if moves is None:
         return value
     if isinstance(value, RecordBatch):
-        columns, template = value._raw_columns(), value.element_spec
+        columns, template = value._raw_columns(), value.element_spec.term_spec
         return value._rebuilt(
             {new: columns[old] for new, old in moves.items()},
             RecordSpec({new: template[old] for new, old in moves.items()}),

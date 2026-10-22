@@ -151,7 +151,7 @@ class TestEmpiricalRecords:
         several = quantile(law, jnp.array([0.1, 0.9]))
         assert isinstance(several, NumericRecordBatch)
         assert (several.batch_shape, several.level_names) == ((2,), ("quantile",))
-        assert several.element_spec == schema
+        assert several.element_spec.term_spec == schema
 
     @pytest.mark.parametrize(("schema", "layout"), _CASES)
     def test_the_covariance_follows_the_canonical_leaf_order(self, schema, layout):
@@ -176,7 +176,7 @@ class TestEmpiricalRecords:
         with workflow_run(seed=2):
             draws = sample(law, sample_shape=(32,))
         assert (draws.batch_shape, draws.level_names) == ((32,), ("sample",))
-        assert draws.element_spec == SCHEMAS[schema]
+        assert draws.element_spec.term_spec == SCHEMAS[schema]
 
         def rows(batch):
             return np.concatenate(
@@ -234,7 +234,7 @@ def _population_atoms() -> EmpiricalDistribution:
     atoms = NumericRecordBatch(
         {"population": {"mu": mu, "tau": tau}},
         "atom",
-        element_spec=RecordSpec(population=_POPULATION),
+        element=RecordSpec(population=_POPULATION),
         label="atoms",
     )
     return EmpiricalDistribution(atoms, label="hyper")
@@ -440,7 +440,7 @@ class TestNestedViews:
         with workflow_run(seed=12):
             draws = sample(FieldView(law, "population"), sample_shape=(8,))
         assert isinstance(draws, NumericRecordBatch)
-        assert draws.element_spec == _records.node_of(SCHEMAS["two-groups"], "population")
+        assert draws.element_spec.term_spec == _records.node_of(SCHEMAS["two-groups"], "population")
         assert set(_raw_record(draws)) == {"mu", "tau"}
 
 

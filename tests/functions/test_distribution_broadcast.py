@@ -70,7 +70,7 @@ def _empirical_of_rows(label: str, rows: Record, weights=None) -> EmpiricalDistr
     """The empirical law of *rows*, a record whose leaves stack the atoms along their leading axis."""
     element = _reshaped_template(rows.event_template, lambda shape: shape[1:])
     columns = {path: rows[path] for path in rows.event_template}
-    atoms = _batch_class_for(element)(columns, "atom", element_spec=element, label=label)
+    atoms = _batch_class_for(element)(columns, "atom", element=element, label=label)
     return EmpiricalDistribution(atoms, weights, label=label)
 
 
@@ -436,7 +436,7 @@ class TestExecuteDistributionBroadcast:
         atoms = NumericArrayBatch(
             jnp.asarray([1.0, 2.0]),
             "x",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="x",
         )
         object.__setattr__(empirical, "_atoms", atoms)

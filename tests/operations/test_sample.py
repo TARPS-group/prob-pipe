@@ -66,7 +66,7 @@ class TestBatches:
         assert isinstance(draws, NumericArrayBatch)
         assert draws.batch_shape == (4, 3)
         assert draws.level_names == ("sample",)
-        assert draws.element_spec.shape == (2,)
+        assert draws.element_spec.term_spec.shape == (2,)
 
     def test_an_integer_sample_shape_is_one_axis(self):
         assert sample(Gaussian("g"), sample_shape=5).batch_shape == (5,)
@@ -86,7 +86,7 @@ class TestBatches:
         draws = sample(joint, sample_shape=(4,))
         assert isinstance(draws, NumericRecordBatch)
         assert (draws.batch_shape, draws.level_names) == ((4,), ("sample",))
-        assert draws.element_spec == joint.event_spec.term_spec
+        assert draws.element_spec.term_spec == joint.event_spec.term_spec
         assert jnp.shape(draws["b"]) == (4,)
 
     def test_a_batch_of_draws_is_declared_under_the_event_outputs(self):

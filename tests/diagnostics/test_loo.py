@@ -111,7 +111,7 @@ class TestAsNumpy:
 
     def test_a_numeric_array_and_an_array_batch_convert_through_raw(self):
         stored = jnp.arange(3.0)
-        batch = NumericArrayBatch(stored, "draw", element_spec=NumericArraySpec(()), label="x")
+        batch = NumericArrayBatch(stored, "draw", element=NumericArraySpec(()), label="x")
         np.testing.assert_array_equal(_as_numpy(NumericArray(stored, label="x")), [0.0, 1.0, 2.0])
         np.testing.assert_array_equal(_as_numpy(batch), [0.0, 1.0, 2.0])
 

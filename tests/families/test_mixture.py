@@ -207,7 +207,7 @@ def test_a_record_event_combines_leaf_by_leaf():
         NumericRecordBatch(
             {"a": jnp.zeros(3), "b": jnp.ones(3)},
             "atom",
-            element_spec=spec,
+            element=spec,
             label="p",
         ),
         label="p",
@@ -216,7 +216,7 @@ def test_a_record_event_combines_leaf_by_leaf():
         NumericRecordBatch(
             {"a": jnp.ones(3), "b": jnp.ones(3)},
             "atom",
-            element_spec=spec,
+            element=spec,
             label="q",
         ),
         label="q",

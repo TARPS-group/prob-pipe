@@ -86,7 +86,7 @@ def _numeric_atoms(atoms: Any) -> bool:
     is numeric too.
     """
     if isinstance(atoms, Batch):
-        return isinstance(atoms.element_spec, NumericSpec)
+        return isinstance(atoms.element_spec.term_spec, NumericSpec)
     return _is_numeric_array(atoms)
 
 
@@ -106,7 +106,7 @@ def _atom_spec(atoms: Any, event_spec: OutputSpec | None = None) -> TermSpec:
     TermSpec
         The spec of one complete event. A batch-valued event includes its
         trailing levels in a ``BatchSpec``; otherwise this is the stored batch's
-        ``element_spec`` or the array's trailing shape and dtype.
+        ``element_spec.term_spec`` or the array's trailing shape and dtype.
 
     Raises
     ------
@@ -132,11 +132,13 @@ def _atom_spec(atoms: Any, event_spec: OutputSpec | None = None) -> TermSpec:
             if tuple(atoms.level_names[-n_event:]) != tuple(event.level_names):
                 raise ValueError("The event levels must be the trailing levels of the stored atoms")
             actual = BatchSpec._from_groups(
-                atoms.element_spec, atoms.axis_groups[-n_event:], atoms.level_names[-n_event:]
+                atoms.element_spec.term_spec,
+                atoms.axis_groups[-n_event:],
+                atoms.level_names[-n_event:],
             )
             count = prod(atoms.batch_shape[: len(atoms.batch_shape) - len(actual.batch_shape)])
         else:
-            actual, count = atoms.element_spec, atoms.batch_size
+            actual, count = atoms.element_spec.term_spec, atoms.batch_size
         if count == 0:
             raise ValueError(
                 f"EmpiricalDistribution needs at least one atom, but {atoms.label!r} is empty"
@@ -249,7 +251,9 @@ def _flat_rows(atoms: Batch, event_spec: TermSpec | None = None) -> Any:
         return _flattened(atoms.as_jax(), count, rank)
     if isinstance(atoms, RecordBatch):
         columns = atoms._raw_columns()
-        return {path: _flattened(columns[path], count, rank) for path in atoms.element_spec}
+        return {
+            path: _flattened(columns[path], count, rank) for path in atoms.element_spec.term_spec
+        }
     return _flattened(atoms._store, count, rank)
 
 
@@ -306,19 +310,19 @@ def _batch_form(label: str, raw: Any, level: str, spec: TermSpec) -> Batch:
             )
         levels += tuple(spec.level_names)
         ranks += tuple(len(group) for group in spec.axis_groups)
-        spec = spec.element_spec
+        spec = spec.element_spec.term_spec
     if isinstance(spec, RecordSpec):
         return _batch_class_for(spec)(
             _raw_record(raw),
             levels,
-            element_spec=spec,
+            element=spec,
             axes_per_level=ranks,
             label=label,
         )
     batch_class = batch_class_for_spec(spec)
     if batch_class is None:
         raise TypeError(f"cannot store values declared as {type(spec).__name__} as atoms")
-    return batch_class(raw, levels, element_spec=spec, axes_per_level=ranks, label=label)
+    return batch_class(raw, levels, element=spec, axes_per_level=ranks, label=label)
 
 
 # ---------------------------------------------------------------------------
@@ -815,7 +819,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
             declaration = OutputSpec(**{requested.rsplit(_PATH_SEP, 1)[-1]: node})
         else:
             atoms = self._atoms_at_paths(requested_nodes)
-            declaration = OutputSpec(atoms.element_spec)
+            declaration = OutputSpec(atoms.element_spec.term_spec)
         return EmpiricalDistribution(atoms, self._w, label=self.label, event_spec=declaration)
 
     def _marginal_guard(self, paths: str | tuple[str, ...]) -> Feasibility | bool:
@@ -902,7 +906,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
                 atoms.level_names[
                     : len(atoms.level_names) - len(self.event_spec.term_spec.level_names)
                 ],
-                element_spec=RecordSpec(fields),
+                element=RecordSpec(fields),
                 axes_per_level=_ranks(atoms)[
                     : len(atoms.level_names) - len(self.event_spec.term_spec.level_names)
                 ],
@@ -932,7 +936,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         batch = batch_class(
             columns,
             atoms.level_names,
-            element_spec=element,
+            element=element,
             axes_per_level=_ranks(atoms),
             label=expression.render_label(),
         )

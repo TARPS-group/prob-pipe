@@ -35,8 +35,8 @@ class FunctionBatch(_ObjectBatch[Callable]):
         parameters, followed by ``…`` when more remain, as
         ``[predict(x), f(x)]``. A batch of several axes reads as one flat list,
         and its repr gives the levels.
-    element_spec : FunctionSpec, optional
-        What every element satisfies. Defaults to ``FunctionSpec()``, which
+    element : FunctionSpec, optional
+        The spec every element satisfies. Defaults to ``FunctionSpec()``, which
         specifies a callable and neither of its input/output specs.
     axes_per_level : int or sequence of int, optional
         How many axes each level holds, outermost first (a single int is one level's
@@ -51,7 +51,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
     Raises
     ------
     TypeError
-        If ``element_spec`` is not a :class:`FunctionSpec`; if an element is not
+        If *element* is not a :class:`FunctionSpec`; if an element is not
         callable, naming the position that failed; if ``elements`` is a string, a
         mapping, or an array that is not ``dtype=object`` — each iterates into
         something other than its elements — or is not iterable at all; or
@@ -110,7 +110,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
         level_names: NamesLike,
         *,
         label: str | None = None,
-        element_spec: FunctionSpec | None = None,
+        element: FunctionSpec | None = None,
         axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
@@ -118,46 +118,40 @@ class FunctionBatch(_ObjectBatch[Callable]):
             elements,
             level_names,
             label=label,
-            element_spec=element_spec,
+            element=element,
             axes_per_level=axes_per_level,
             provenance=provenance,
         )
 
-    def _resolved_element_spec(
-        self, store: np.ndarray, element_spec: TermSpec | None
+    def _resolved_element_term_spec(
+        self, store: np.ndarray, element: TermSpec | None
     ) -> FunctionSpec:
-        """*element_spec*, which must be a ``FunctionSpec``, or ``FunctionSpec()`` when omitted.
+        """*element*, which must be a ``FunctionSpec``, or ``FunctionSpec()`` when omitted.
 
         Parameters
         ----------
         store : numpy.ndarray
             The elements, which the default does not read.
-        element_spec : TermSpec or None
+        element : TermSpec or None
             The spec the caller supplied, or ``None``.
 
         Returns
         -------
         FunctionSpec
-            The element spec.
+            The spec every element satisfies.
 
         Raises
         ------
         TypeError
-            If *element_spec* is not a ``FunctionSpec``.
+            If *element* is not a ``FunctionSpec``.
         """
-        if element_spec is None:
+        if element is None:
             return FunctionSpec()
-        if not isinstance(element_spec, FunctionSpec):
+        if not isinstance(element, FunctionSpec):
             raise TypeError(
-                f"FunctionBatch.element_spec must be a FunctionSpec, "
-                f"got {type(element_spec).__name__}"
+                f"FunctionBatch's element must be a FunctionSpec, got {type(element).__name__}"
             )
-        return element_spec
-
-    @property
-    def element_spec(self) -> FunctionSpec:
-        """The :class:`FunctionSpec` every element satisfies — a view on ``spec``."""
-        return cast(FunctionSpec, self._spec.element_spec)
+        return element
 
     def _wrap_element(self, value: Callable, label: str) -> Function:
         """The callable *value* as a ``Function`` labeled *label* under the batch's specs.
@@ -180,7 +174,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
             If the callable's signature cannot be inspected, or does not match the
             declared inputs.
         """
-        spec = self.element_spec
+        spec = cast(FunctionSpec, self.element_spec.term_spec)
         return Function(
             value,
             input_spec=spec.input_spec,

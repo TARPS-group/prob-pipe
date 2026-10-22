@@ -173,7 +173,7 @@ class TestASampleShapeGetsADrawLevel:
 
         assert isinstance(drawn, NumericArrayBatch)
         assert drawn.batch_shape == (5,)
-        assert tuple(drawn.element_spec.shape) == (3,)
+        assert tuple(drawn.element_spec.term_spec.shape) == (3,)
         assert drawn.shape == (5, 3)
 
     def test_an_element_is_one_draw(self):
@@ -192,7 +192,7 @@ class TestASampleShapeGetsADrawLevel:
 
         assert isinstance(drawn, NumericRecordBatch)
         assert (drawn.batch_shape, drawn.level_names) == ((4,), ("sample",))
-        assert drawn.element_spec == law.event_spec.term_spec
+        assert drawn.element_spec.term_spec == law.event_spec.term_spec
 
     def test_one_draw_of_a_joint_is_a_record_under_its_declaration(self):
         law = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)
@@ -301,7 +301,7 @@ class TestAnEmptyRecordHasNoBatch:
             RecordBatch(
                 {},
                 "x",
-                element_spec=RecordSpec(),
+                element=RecordSpec(),
                 label="batch",
             )
 
@@ -328,7 +328,7 @@ class TestEachSweptRowTakesItsOwnKind:
         return NumericRecordBatch(
             {"x": jnp.arange(float(n))},
             "row",
-            element_spec=NumericRecordSpec(x=()),
+            element=NumericRecordSpec(x=()),
             label="rows",
         )
 
@@ -389,7 +389,7 @@ class TestEachSweptRowTakesItsOwnKind:
             return NumericRecordBatch(
                 {"y": jnp.stack([x, x * 2])},
                 "part",
-                element_spec=NumericRecordSpec(y=()),
+                element=NumericRecordSpec(y=()),
                 label="parts",
             )
 
@@ -415,7 +415,7 @@ class TestASweptEmptyMappingHitsTheSameWall:
         rows = NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             "row",
-            element_spec=NumericRecordSpec(x=()),
+            element=NumericRecordSpec(x=()),
             label="rows",
         )
 

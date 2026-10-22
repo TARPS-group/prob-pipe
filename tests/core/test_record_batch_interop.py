@@ -48,7 +48,7 @@ def _draws(n: int = 4, *, label: str = "draws") -> NumericRecordBatch:
     return NumericRecordBatch(
         {"a": jnp.arange(n, dtype=float), "b": jnp.ones((n, 2))},
         "draw",
-        element_spec=ELEMENT,
+        element=ELEMENT,
         axes_per_level=(1,),
         label=label,
     )
@@ -58,7 +58,7 @@ def _one_field(n: int = 4, *, label: str = "draws") -> NumericRecordBatch:
     return NumericRecordBatch(
         {"x": jnp.arange(n, dtype=float)},
         "draw",
-        element_spec=NumericRecordSpec(x=()),
+        element=NumericRecordSpec(x=()),
         axes_per_level=(1,),
         label=label,
     )
@@ -110,7 +110,7 @@ class TestFunctionBoundary:
         result = f()
 
         assert isinstance(result, NumericRecordBatch)
-        assert result.element_spec == batch.event_template
+        assert result.element_spec.term_spec == batch.event_template
 
     def test_a_declared_output_spec_checks_a_batch_column(self):
         from probpipe import BatchSpec
@@ -170,7 +170,7 @@ class TestFieldExtraction:
         batch = NumericRecordBatch(
             {"a": jnp.arange(4.0), "b": jnp.ones(4)},
             "draw",
-            element_spec=NumericRecordSpec(a=(), b=()),
+            element=NumericRecordSpec(a=(), b=()),
             axes_per_level=(1,),
             label="batch",
         )
@@ -217,7 +217,7 @@ class TestSiblingViewsZipThroughACall:
         batch = NumericRecordBatch(
             {"x": jnp.arange(3.0), "y": jnp.arange(3.0) * 10},
             "draw",
-            element_spec=RecordSpec(x=(), y=()),
+            element=RecordSpec(x=(), y=()),
             label="batch",
         )
         views = batch.select_all()
@@ -245,7 +245,7 @@ class TestOpaqueColumnsAreRearrangedRaw:
                 "x": jnp.arange(3.0),
             },
             "draw",
-            element_spec=RecordSpec(tag=OpaqueSpec(), x=()),
+            element=RecordSpec(tag=OpaqueSpec(), x=()),
             label="batch",
         )
 
@@ -267,7 +267,7 @@ class TestRetypingADeclaredOutputKeepsColumnsWithTheirKeys:
         batch = NumericRecordBatch(
             {"a": jnp.arange(3.0), "b": jnp.arange(3.0) * 10},
             "draw",
-            element_spec=RecordSpec(a=(), b=()),
+            element=RecordSpec(a=(), b=()),
             label="batch",
         )
 
@@ -293,7 +293,7 @@ class TestATransformCannotAddAnUnnamedLevel:
             return NumericRecordBatch(
                 {"s": x + jnp.zeros(2)},
                 "inner",
-                element_spec=RecordSpec(s=()),
+                element=RecordSpec(s=()),
                 axes_per_level=(1,),
                 label="batch",
             )
@@ -308,7 +308,7 @@ class TestATransformCannotAddAnUnnamedLevel:
         batch = NumericRecordBatch(
             {"s": jnp.zeros((3, 2))},
             ("outer", "inner"),
-            element_spec=RecordSpec(s=()),
+            element=RecordSpec(s=()),
             axes_per_level=(1, 1),
             label="batch",
         )
@@ -319,7 +319,7 @@ class TestATransformCannotAddAnUnnamedLevel:
         single = NumericRecordBatch(
             {"s": jnp.zeros(3)},
             "outer",
-            element_spec=RecordSpec(s=()),
+            element=RecordSpec(s=()),
             label="batch",
         )
         seen: list[Any] = []
@@ -335,7 +335,7 @@ class TestBatchFingerprinting:
         return NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             (level,),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=axes_per_level,
             label="batch",
         )
@@ -346,7 +346,7 @@ class TestBatchFingerprinting:
         batch = NumericRecordBatch(
             {"a": jnp.arange(3.0), "b": jnp.arange(3.0)},
             "draw",
-            element_spec=RecordSpec(a=(), b=()),
+            element=RecordSpec(a=(), b=()),
             label="batch",
         )
 
@@ -369,7 +369,7 @@ class TestBatchFingerprinting:
             return NumericRecordBatch(
                 {"a": jnp.arange(3.0), "b": jnp.arange(3.0) * 10},
                 "draw",
-                element_spec=RecordSpec(a=(), b=()),
+                element=RecordSpec(a=(), b=()),
                 label="batch",
             )
 
@@ -381,13 +381,13 @@ class TestBatchFingerprinting:
         ab = NumericRecordBatch(
             {"a": jnp.arange(3.0), "b": jnp.arange(3.0) * 10},
             "draw",
-            element_spec=RecordSpec(a=(), b=()),
+            element=RecordSpec(a=(), b=()),
             label="batch",
         )
         ba = NumericRecordBatch(
             {"a": jnp.arange(3.0) * 10, "b": jnp.arange(3.0)},
             "draw",
-            element_spec=RecordSpec(a=(), b=()),
+            element=RecordSpec(a=(), b=()),
             label="batch",
         )
 
@@ -399,14 +399,14 @@ class TestBatchFingerprinting:
         split = NumericRecordBatch(
             {"x": jnp.zeros((2, 3))},
             ("a", "b"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=(1, 1),
             label="batch",
         )
         joined = NumericRecordBatch(
             {"x": jnp.zeros((2, 3))},
             "a",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=(2,),
             label="batch",
         )
@@ -422,7 +422,7 @@ class TestMultiLevelSweeps:
         grid = NumericRecordBatch(
             {"x": jnp.arange(6.0).reshape(2, 3)},
             ("chain", "draw"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=(1, 1),
             label="batch",
         )
@@ -443,13 +443,13 @@ class TestMultiLevelSweeps:
         a = NumericRecordBatch(
             {"a": jnp.arange(2.0)},
             "outer",
-            element_spec=RecordSpec(a=()),
+            element=RecordSpec(a=()),
             label="batch",
         )
         b = NumericRecordBatch(
             {"b": jnp.arange(3.0)},
             "inner",
-            element_spec=RecordSpec(b=()),
+            element=RecordSpec(b=()),
             label="batch",
         )
 
@@ -458,7 +458,7 @@ class TestMultiLevelSweeps:
             return NumericRecordBatch(
                 {"s": jnp.asarray(a["a"]) + jnp.asarray(b["b"]) + jnp.zeros(2)},
                 "rows",
-                element_spec=RecordSpec(s=()),
+                element=RecordSpec(s=()),
                 axes_per_level=(1,),
                 label="batch",
             )
@@ -480,7 +480,7 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
         source = NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             "draw",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="batch",
         )
 
@@ -488,7 +488,7 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
             return NumericRecordBatch(
                 {"s": jnp.asarray(v["x"]) + jnp.zeros(2)},
                 "inner",
-                element_spec=RecordSpec(s=()),
+                element=RecordSpec(s=()),
                 axes_per_level=(1,),
                 label="batch",
             )
@@ -511,7 +511,7 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
         source = NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             "draw",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="batch",
         )
 
@@ -534,7 +534,7 @@ class TestSameRankTransformsCannotLieEither:
         batch = NumericRecordBatch(
             {"x": jnp.arange(2.0), "y": jnp.arange(2.0) * 10},
             "draw",
-            element_spec=RecordSpec(x=(), y=()),
+            element=RecordSpec(x=(), y=()),
             label="batch",
         )
 
@@ -552,7 +552,7 @@ class TestSameRankTransformsCannotLieEither:
         batch = NumericRecordBatch(
             {"x": jnp.arange(2.0), "y": jnp.arange(2.0)},
             "draw",
-            element_spec=RecordSpec(x=(), y=()),
+            element=RecordSpec(x=(), y=()),
             label="batch",
         )
         _, treedef = jtu.tree_flatten(batch)
@@ -575,7 +575,7 @@ class TestOpaqueBatchesStack:
                     "x": jnp.arange(2.0) + i,
                 },
                 "inner",
-                element_spec=RecordSpec(tag=OpaqueSpec(), x=()),
+                element=RecordSpec(tag=OpaqueSpec(), x=()),
                 label="batch",
             )
             for i in range(3)
@@ -594,7 +594,7 @@ class TestAnEmptySweepAnswersToItsTemplate:
         source = NumericRecordBatch(
             {"x": jnp.zeros((0,))},
             "design",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="batch",
         )
 
@@ -618,7 +618,7 @@ class TestATransformCannotResizeTheElement:
         return NumericRecordBatch(
             {"x": jnp.zeros((3, 2))},
             "draw",
-            element_spec=RecordSpec(x=(2,)),
+            element=RecordSpec(x=(2,)),
             label="batch",
         )
 
@@ -673,7 +673,7 @@ class TestZeroWidthEventsUnderExplicitJax:
         source = NumericRecordBatch(
             {"x": jnp.zeros((3, 0)), "row": jnp.arange(3.0)},
             "draw",
-            element_spec=RecordSpec(x=(0,), row=()),
+            element=RecordSpec(x=(0,), row=()),
             label="batch",
         )
 
@@ -701,7 +701,7 @@ class TestShapeCannotRecoverAxisProvenance:
         return NumericRecordBatch(
             {"x": jnp.arange(float(chain * draw)).reshape(chain, draw)},
             ("chain", "draw"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=(1, 1),
             label="batch",
         )
@@ -724,7 +724,7 @@ class TestATransformCannotRetypeTheElement:
         batch = NumericRecordBatch(
             {"x": jnp.zeros(3, dtype=jnp.float32)},
             "draw",
-            element_spec=RecordSpec(x=NumericArraySpec((), dtype=jnp.float32)),
+            element=RecordSpec(x=NumericArraySpec((), dtype=jnp.float32)),
             label="batch",
         )
 
@@ -737,7 +737,7 @@ class TestATransformCannotRetypeTheElement:
         batch = NumericRecordBatch(
             {"x": jnp.zeros(3, dtype=jnp.float16)},
             "draw",
-            element_spec=RecordSpec(x=NumericArraySpec((), dtype=jnp.float32)),
+            element=RecordSpec(x=NumericArraySpec((), dtype=jnp.float32)),
             label="batch",
         )
 
@@ -754,7 +754,7 @@ class TestZeroRowsAgreeAcrossDispatch:
         source = NumericRecordBatch(
             {"x": jnp.zeros((2, 0))},
             ("a", "b"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=(1, 1),
             label="batch",
         )
@@ -770,7 +770,7 @@ class TestZeroRowsAgreeAcrossDispatch:
         }
 
         types = {type(r).__name__ for r in results.values()}
-        specs = {repr(r.element_spec) for r in results.values()}
+        specs = {repr(r.element_spec.term_spec) for r in results.values()}
         assert len(types) == 1
         assert len(specs) == 1
 
@@ -787,7 +787,7 @@ class TestFunctionValuedColumnsStack:
             RecordBatch(
                 {"f": np.array([(lambda i=i, j=j: i * 10 + j) for j in range(2)], dtype=object)},
                 "inner",
-                element_spec=RecordSpec(f=FunctionSpec()),
+                element=RecordSpec(f=FunctionSpec()),
                 label="batch",
             )
             for i in range(3)
@@ -809,7 +809,7 @@ class TestAnEmpiricalTakesABatch:
         data = NumericRecordBatch(
             {"X": jnp.arange(4.0), "y": jnp.arange(4.0) * 10},
             "obs",
-            element_spec=RecordSpec(X=(), y=()),
+            element=RecordSpec(X=(), y=()),
             label="batch",
         )
 
@@ -836,7 +836,7 @@ class TestBatchValuedRowAggregation:
         return NumericRecordBatch(
             {"x": jnp.arange(float(n))},
             "row",
-            element_spec=RecordSpec(x=NumericArraySpec(shape=())),
+            element=RecordSpec(x=NumericArraySpec(shape=())),
             label="batch",
         )
 
@@ -845,7 +845,7 @@ class TestBatchValuedRowAggregation:
         return NumericRecordBatch(
             {"y": jnp.zeros(n)},
             level,
-            element_spec=RecordSpec(y=NumericArraySpec(shape=())),
+            element=RecordSpec(y=NumericArraySpec(shape=())),
             label="batch",
         )
 
@@ -855,13 +855,13 @@ class TestBatchValuedRowAggregation:
             return OpaqueBatch(
                 ["north", "south-east"],
                 "item",
-                element_spec=OpaqueSpec(meta="authoritative"),
+                element=OpaqueSpec(meta="authoritative"),
                 label="labels",
             )
         return FunctionBatch(
             [lambda x: x + 1, lambda x: x * 2],
             "item",
-            element_spec=FunctionSpec(
+            element=FunctionSpec(
                 input_spec=InputSpec(RecordSpec(x=()).children),
                 output_spec=OutputSpec(result=NumericArraySpec(())),
             ),
@@ -908,7 +908,7 @@ class TestBatchValuedRowAggregation:
         result = Function(lambda x: inner, label="collect", dispatch=dispatch)(x=self._rows())
 
         assert type(result) is type(inner)
-        assert result.element_spec == inner.element_spec
+        assert result.element_spec.term_spec == inner.element_spec.term_spec
         assert result.batch_shape == (3, 2)
         assert result.level_names == ("row", "item")
         assert result.axis_groups == ((3,), (2,))
@@ -937,7 +937,7 @@ class TestBatchValuedRowAggregation:
     def test_object_batch_rows_with_conflicting_declarations_are_refused(self, kind):
         first = self._inner_objects(kind)
         other_spec = OpaqueSpec(meta="different") if kind == "opaque" else FunctionSpec()
-        second = type(first)(list(first), "item", element_spec=other_spec, label="other")
+        second = type(first)(list(first), "item", element=other_spec, label="other")
 
         def body(x):
             return first if float(x["x"]) == 0 else second
@@ -966,7 +966,7 @@ class TestBatchValuedRowAggregation:
             return NumericRecordBatch(
                 {"z": jnp.zeros(2)},
                 "inner",
-                element_spec=RecordSpec(z=NumericArraySpec(shape=())),
+                element=RecordSpec(z=NumericArraySpec(shape=())),
                 label="batch",
             )
 
@@ -985,7 +985,7 @@ class TestBatchValuedRowAggregation:
         return NumericArrayBatch(
             jnp.zeros(n),
             level,
-            element_spec=NumericArraySpec(shape=()),
+            element=NumericArraySpec(shape=()),
             label="inner",
         )
 
@@ -1001,7 +1001,7 @@ class TestBatchValuedRowAggregation:
 
         assert isinstance(out, NumericArrayBatch)
         assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "inner"))
-        assert tuple(out.element_spec.shape) == ()
+        assert tuple(out.element_spec.term_spec.shape) == ()
 
     def test_array_batch_rows_stack_from_their_native_store(self):
         """A row's store is in native form, so stacking goes through its backend.
@@ -1017,7 +1017,7 @@ class TestBatchValuedRowAggregation:
             NumericArrayBatch(
                 pd.Series([1.0 * i, 2.0 * i]),
                 "inner",
-                element_spec=NumericArraySpec(shape=()),
+                element=NumericArraySpec(shape=()),
                 label="inner",
             )
             for i in range(1, 4)
@@ -1034,7 +1034,7 @@ class TestBatchValuedRowAggregation:
         inner = NumericArrayBatch(
             native,
             "inner",
-            element_spec=NumericArraySpec((), dtype=np.float64),
+            element=NumericArraySpec((), dtype=np.float64),
             label="held",
         )
         source = self._rows()
@@ -1048,7 +1048,7 @@ class TestBatchValuedRowAggregation:
         assert result.level_names == ("row", "inner")
         assert result.axis_groups == ((3,), (2,))
         # The rows are stored as one JAX array, whose dtype the declaration records.
-        assert result.element_spec == NumericArraySpec((), dtype=np.float32)
+        assert result.element_spec.term_spec == NumericArraySpec((), dtype=np.float32)
         np.testing.assert_array_equal(np.asarray(result), expected)
 
     def test_array_batch_rows_disagreeing_on_their_multiplicity_are_refused(self):
@@ -1134,7 +1134,7 @@ class TestEveryBatchIsAnOperand:
         return NumericArrayBatch(
             jnp.arange(float(n)),
             "row",
-            element_spec=NumericArraySpec(shape=()),
+            element=NumericArraySpec(shape=()),
             label="rows",
         )
 
@@ -1193,7 +1193,7 @@ class TestSweepingASingleStoreBatchAgreesAcrossDispatch:
         return NumericArrayBatch(
             jnp.arange(float(n)),
             "row",
-            element_spec=NumericArraySpec(shape=()),
+            element=NumericArraySpec(shape=()),
             label="rows",
         )
 
@@ -1202,7 +1202,7 @@ class TestSweepingASingleStoreBatchAgreesAcrossDispatch:
         return NumericArrayBatch(
             jnp.stack([jnp.asarray(v), jnp.asarray(v)]),
             "inner",
-            element_spec=NumericArraySpec(shape=()),
+            element=NumericArraySpec(shape=()),
             label="i",
         )
 

@@ -179,7 +179,7 @@ def test_record_batch_pickle_roundtrip():
         {"x": jnp.array([1.0, 2.0]), "y": jnp.ones((2, 3))},
         level_names="draw",
         axes_per_level=(1,),
-        element_spec=template,
+        element=template,
         label="batch",
     )
     ra2 = roundtrip(ra)
@@ -194,7 +194,7 @@ def test_record_batch_template_preserved():
         {"x": jnp.array([1.0]), "y": jnp.ones((1, 3))},
         level_names="draw",
         axes_per_level=(1,),
-        element_spec=template,
+        element=template,
         label="batch",
     )
     ra2 = roundtrip(ra)
@@ -212,7 +212,7 @@ def test_numeric_record_batch_pickle_roundtrip():
         {"x": jnp.array([1.0, 2.0, 3.0]), "y": jnp.ones((3, 2))},
         level_names="draw",
         axes_per_level=(1,),
-        element_spec=template,
+        element=template,
         label="batch",
     )
     nra2 = roundtrip(nrb)
@@ -227,7 +227,7 @@ def test_numeric_record_batch_cloudpickle_roundtrip():
         {"x": jnp.array([1.0, 2.0])},
         level_names="draw",
         axes_per_level=(1,),
-        element_spec=template,
+        element=template,
         label="batch",
     )
     nra2 = cloudpickle_roundtrip(nrb)

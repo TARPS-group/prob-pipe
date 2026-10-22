@@ -286,7 +286,7 @@ def _exposed_kind(spec: object) -> str | None:
     """The kind of term the positional form exposes for *spec*, or None when it exposes none.
 
     A record exposes its immediate fields, a law or a kernel its event's
-    outputs, and a batch its element's outputs.
+    outputs, and a batch its element spec's outputs.
     """
     from ._batch import BatchSpec
 
@@ -294,7 +294,7 @@ def _exposed_kind(spec: object) -> str | None:
         return "record"
     if isinstance(spec, TermSpec) and isinstance(getattr(spec, "event_spec", None), OutputSpec):
         return "law"
-    if isinstance(spec, BatchSpec) and _exposed_kind(spec.element_spec) is not None:
+    if isinstance(spec, BatchSpec) and _exposed_kind(spec.element_spec.term_spec) is not None:
         return "batch"
     return None
 
@@ -306,7 +306,7 @@ def _exposed_outputs(spec: TermSpec) -> Mapping[str, TermSpec | None]:
         return cast(RecordSpec, spec).children
     if kind == "law":
         return cast(OutputSpec, spec.event_spec).outputs  # type: ignore[attr-defined]
-    return _exposed_outputs(spec.element_spec)  # type: ignore[attr-defined]
+    return cast(OutputSpec, spec.element_spec).outputs  # type: ignore[attr-defined]
 
 
 @dataclass(frozen=True, init=False)
@@ -622,7 +622,7 @@ def _renamed_exposed(
 
     The renames are read as ``with_path_names`` reads them. A record renames
     its own paths, a law or a kernel its event spec's, and a batch its
-    element's, so the term keeps its kind.
+    element spec's, so the term keeps its kind.
     """
     from dataclasses import replace
 
@@ -635,7 +635,7 @@ def _renamed_exposed(
     from ._batch import BatchSpec
 
     batch = cast(BatchSpec, spec)
-    return batch._replace(element_spec=_renamed_exposed(batch.element_spec, mapping, kwargs))
+    return batch._replace(element=batch.element_spec.with_path_names(mapping, **kwargs))
 
 
 def _root_output_name(output_spec: OutputSpec) -> str | None:
@@ -757,5 +757,5 @@ def _unnamed_exposed(spec: TermSpec) -> tuple[object, ...]:
         "batch",
         spec.axis_groups,  # type: ignore[attr-defined]
         spec.level_names,  # type: ignore[attr-defined]
-        _unnamed_exposed(spec.element_spec),  # type: ignore[attr-defined]
+        _unnamed_exposed(spec.element_spec.term_spec),  # type: ignore[attr-defined]
     )

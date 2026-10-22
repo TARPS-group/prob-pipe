@@ -139,9 +139,9 @@ def _aggregate_output_spec(output_spec: OutputSpec, outputs: Any) -> OutputSpec:
     for row in rows:
         if isinstance(row, (_MappedBatchColumns, _MappedBatchStore)):
             actual = (
-                BatchSpec._from_groups(row.element_spec, row.axis_groups, row.level_names)
+                BatchSpec._from_groups(row.element_term_spec, row.axis_groups, row.level_names)
                 if row.axis_groups
-                else row.element_spec
+                else row.element_term_spec
             )
         else:
             actual = _produced_spec(row)
@@ -293,10 +293,12 @@ def _copy_result_term(value: TrackedTerm, *, output_spec: OutputSpec | None = No
             object.__setattr__(clone, "_spec", spec)
         elif isinstance(spec, BatchSpec) and isinstance(clone, Batch):
             object.__setattr__(clone, "_spec", spec)
-            if isinstance(clone, RecordBatch) and isinstance(spec.element_spec, RecordSpec):
+            if isinstance(clone, RecordBatch) and isinstance(
+                spec.element_spec.term_spec, RecordSpec
+            ):
                 columns = clone._raw_columns()
                 object.__setattr__(
-                    clone, "_columns", {path: columns[path] for path in spec.element_spec}
+                    clone, "_columns", {path: columns[path] for path in spec.element_spec.term_spec}
                 )
     object.__setattr__(clone, "_provenance", None)
     return clone
@@ -383,7 +385,7 @@ def _stack_declared_columns(
     return cls(
         columns,
         level_names,
-        element_spec=template,
+        element=template,
         axes_per_level=axes_per_level,
         label=label,
     )
@@ -417,7 +419,7 @@ def _empty_declared_stack(
     return cls(
         columns,
         level_names,
-        element_spec=template,
+        element=template,
         axes_per_level=axes_per_level,
         label=label,
     )
@@ -457,7 +459,7 @@ def _batch_over_swept_columns(
     batch_shape: tuple[int, ...],
     sweep_level_names: tuple[str, ...],
     sweep_groups: tuple[tuple[int, ...], ...],
-    element_spec: Any,
+    element_term_spec: RecordSpec,
     inner_level_names: tuple[str, ...],
     inner_axis_groups: tuple[tuple[int, ...], ...],
 ) -> RecordBatch:
@@ -470,10 +472,10 @@ def _batch_over_swept_columns(
     place — so the two agree by construction rather than by being maintained in
     parallel.
     """
-    return _batch_class_for(element_spec)(
+    return _batch_class_for(element_term_spec)(
         {path: column.reshape(batch_shape + column.shape[1:]) for path, column in columns.items()},
         (*sweep_level_names, *inner_level_names),
-        element_spec=element_spec,
+        element=element_term_spec,
         axes_per_level=_ranks_of((*sweep_groups, *inner_axis_groups)),
         label=label,
     )
@@ -511,14 +513,17 @@ def _agreeing_batch_rows(outs: list, *, label: str) -> Any:
         )
     for other in outs[1:]:
         if (
-            other.element_spec == first.element_spec
+            other.element_spec.term_spec == first.element_spec.term_spec
             and other.batch_shape == first.batch_shape
             and other.level_names == first.level_names
             and other.axis_groups == first.axis_groups
         ):
             continue
         if other.level_names == first.level_names and other.batch_shape == first.batch_shape:
-            difference = f"element spec {first.element_spec!r} vs {other.element_spec!r}"
+            difference = (
+                f"elements' spec {first.element_spec.term_spec!r} vs "
+                f"{other.element_spec.term_spec!r}"
+            )
         else:
             difference = (
                 f"levels {first.level_names} with shape {first.batch_shape} vs levels "
@@ -526,7 +531,7 @@ def _agreeing_batch_rows(outs: list, *, label: str) -> Any:
             )
         raise ValueError(
             f"{label}: the rows returned batches that disagree: {difference}. Every row "
-            f"must return a batch with the same levels, shape, and element spec."
+            f"must return a batch with the same levels, shape, and elements' spec."
         )
     return first
 
@@ -573,7 +578,7 @@ def _batch_from_declared_sequence(
         axis_groups = tuple(tuple(group) for group in spec.axis_groups)
     else:
         return result
-    element = spec.element_spec
+    element = spec.element_spec.term_spec
     is_record = isinstance(element, RecordSpec)
     return _make_stack(
         list(result),
@@ -582,7 +587,7 @@ def _batch_from_declared_sequence(
         axis_groups=axis_groups,
         label=function_name,
         output_template=element if is_record else None,
-        # The aggregator reads only the declared element spec, so the output
+        # The aggregator reads only the declared elements' spec, so the output
         # name of this output spec is never read.
         output_spec=None if is_record else OutputSpec.default(element, output_name="element"),
     )
@@ -639,7 +644,7 @@ def _make_stack(
         The declared record of a row, by which each row is wrapped and the
         columns are laid out.
     output_spec : OutputSpec, optional
-        The completed output spec, whose term spec is the element spec of
+        The completed output spec, whose term spec is the elements' spec of
         an empty sweep's batch and of a batch of objects.
 
     Returns
@@ -675,23 +680,25 @@ def _make_stack(
 
 
 def _record_stored_dtypes(aggregate: Any) -> Any:
-    """*aggregate* with its element spec recording the dtypes its store holds.
+    """*aggregate* with its elements' spec recording the dtypes its store holds.
 
     The rows of a sweep or a lift are stacked into one JAX array, which holds
     their canonical dtype, so 64-bit rows are stored as 32-bit ones while JAX's
     64-bit mode is off. A declared, inferred, or tracked row dtype may therefore
-    differ from the stored one, and the element spec takes the stored dtype:
+    differ from the stored one, and the elements' spec takes the stored dtype:
     an array element records it always, and a record's array field records it
     where its spec states a dtype. Any other aggregate is returned as it is.
     """
     if isinstance(aggregate, NumericArrayBatch):
-        element = _with_stored_dtypes(aggregate.element_spec, aggregate.raw, fill=True)
+        element = _with_stored_dtypes(aggregate.element_spec.term_spec, aggregate.raw, fill=True)
     elif isinstance(aggregate, RecordBatch):
-        element = _with_stored_dtypes(aggregate.element_spec, aggregate._raw_columns(), fill=False)
+        element = _with_stored_dtypes(
+            aggregate.element_spec.term_spec, aggregate._raw_columns(), fill=False
+        )
     else:
         return aggregate
-    if element != aggregate.element_spec:
-        object.__setattr__(aggregate, "_spec", aggregate.spec._replace(element_spec=element))
+    if element != aggregate.element_spec.term_spec:
+        object.__setattr__(aggregate, "_spec", aggregate.spec._replace(element=element))
     return aggregate
 
 
@@ -728,7 +735,7 @@ def _with_dtypes_of(spec: Any, reference: Any) -> Any:
     """
     if isinstance(spec, BatchSpec) and isinstance(reference, BatchSpec):
         return BatchSpec._from_groups(
-            _with_dtypes_of(spec.element_spec, reference.element_spec),
+            _with_dtypes_of(spec.element_spec.term_spec, reference.element_spec.term_spec),
             spec.axis_groups,
             spec.level_names,
         )
@@ -794,7 +801,7 @@ def _stack_rows(
         return NumericArrayBatch(
             store.reshape(batch_shape + store.shape[1:]),
             (*level_names, *inner_outputs.level_names),
-            element_spec=inner_outputs.element_spec,
+            element=inner_outputs.element_term_spec,
             axes_per_level=_ranks_of((*sweep_groups, *inner_outputs.axis_groups)),
             label=label,
         )
@@ -805,7 +812,7 @@ def _stack_rows(
             batch_shape=batch_shape,
             sweep_level_names=level_names,
             sweep_groups=sweep_groups,
-            element_spec=inner_outputs.element_spec,
+            element_term_spec=inner_outputs.element_term_spec,
             inner_level_names=inner_outputs.level_names,
             inner_axis_groups=inner_outputs.axis_groups,
         )
@@ -824,7 +831,7 @@ def _stack_rows(
             return NumericArrayBatch(
                 jnp.empty((*batch_shape, *spec.shape), dtype=dtype),
                 level_names,
-                element_spec=spec,
+                element=spec,
                 axes_per_level=_ranks_of(sweep_groups),
                 label=label,
             )
@@ -837,7 +844,7 @@ def _stack_rows(
             return batch_class(
                 np.empty(batch_shape, dtype=object),
                 level_names,
-                element_spec=spec,
+                element=spec,
                 axes_per_level=_ranks_of(sweep_groups),
                 label=label,
             )
@@ -898,7 +905,7 @@ def _stack_rows(
                 return type(first)(
                     store.reshape(batch_shape + store.shape[1:]),
                     (*level_names, *first.level_names),
-                    element_spec=first.element_spec,
+                    element=first.element_spec.term_spec,
                     axes_per_level=_ranks_of((*sweep_groups, *first.axis_groups)),
                     label=label,
                 )
@@ -911,7 +918,7 @@ def _stack_rows(
                 return NumericArrayBatch(
                     store.reshape(batch_shape + store.shape[1:]),
                     (*level_names, *first.level_names),
-                    element_spec=first.element_spec,
+                    element=first.element_spec.term_spec,
                     axes_per_level=_ranks_of((*sweep_groups, *first.axis_groups)),
                     label=label,
                 )
@@ -932,7 +939,7 @@ def _stack_rows(
                 batch_shape=batch_shape,
                 sweep_level_names=level_names,
                 sweep_groups=sweep_groups,
-                element_spec=first.element_spec,
+                element_term_spec=first.element_spec.term_spec,
                 inner_level_names=tuple(first.level_names),
                 inner_axis_groups=tuple(first.axis_groups),
             )
@@ -970,7 +977,7 @@ def _stack_rows(
                         for path in flat.event_template
                     },
                     level_names,
-                    element_spec=flat.element_spec,
+                    element=flat.element_spec.term_spec,
                     axes_per_level=_ranks_of(sweep_groups),
                     label=label,
                 )
@@ -989,10 +996,10 @@ def _stack_rows(
                 path: column.reshape(batch_shape + column.shape[1:])
                 for path, column in flat._raw_columns().items()
             }
-            return _batch_class_for(flat.element_spec)(
+            return _batch_class_for(flat.element_spec.term_spec)(
                 columns,
                 level_names,
-                element_spec=flat.element_spec,
+                element=flat.element_spec.term_spec,
                 axes_per_level=_ranks_of(sweep_groups),
                 label=label,
             )
@@ -1019,7 +1026,7 @@ def _stack_rows(
 
         if stacked is not None:
             event_shape = tuple(stacked.shape[1:])
-            element_spec = NumericArraySpec(event_shape, dtype=stacked.dtype)
+            element_term_spec = NumericArraySpec(event_shape, dtype=stacked.dtype)
             if all(isinstance(output, NumericArray) for output in outs):
                 specs = []
                 for output in outs:
@@ -1029,12 +1036,12 @@ def _stack_rows(
                         spec._bind_dims_from_value(output, bindings, label)
                         spec = spec._substitute_dims(bindings)
                     specs.append(spec)
-                element_spec = specs[0]
+                element_term_spec = specs[0]
                 for spec in specs[1:]:
-                    if replace(spec, dtype=element_spec.dtype) != element_spec:
+                    if replace(spec, dtype=element_term_spec.dtype) != element_term_spec:
                         raise ValueError(
                             f"{label}: the rows returned arrays with different specs "
-                            f"({element_spec!r} and {spec!r}); every row must return the same "
+                            f"({element_term_spec!r} and {spec!r}); every row must return the same "
                             "shape and support"
                         )
                 # Promote the complete set: pairwise NumPy promotion can depend
@@ -1047,11 +1054,11 @@ def _stack_rows(
                         dtype = np.result_type(*dtypes)
                     except np.exceptions.DTypePromotionError:
                         dtype = jnp.result_type(*dtypes)
-                element_spec = replace(element_spec, dtype=dtype)
+                element_term_spec = replace(element_term_spec, dtype=dtype)
             return NumericArrayBatch(
                 stacked.reshape(batch_shape + event_shape),
                 level_names,
-                element_spec=element_spec,
+                element=element_term_spec,
                 axes_per_level=_ranks_of(sweep_groups),
                 label=label,
             )
@@ -1076,7 +1083,7 @@ def _stack_rows(
                 "axes_per_level": _ranks_of(sweep_groups),
             }
             if output_spec is not None:
-                shared["element_spec"] = output_spec.term_spec
+                shared["element"] = output_spec.term_spec
             # ``outs`` first: every row of none is vacuously callable, and no row
             # is a reason to claim the function kind over the fallback.
             if outs and all(callable(o) for o in outs):
@@ -1125,7 +1132,7 @@ def _stack_rows(
         return NumericArrayBatch(
             inner_outputs.reshape(batch_shape + event_shape),
             level_names,
-            element_spec=NumericArraySpec(event_shape, dtype=inner_outputs.dtype),
+            element=NumericArraySpec(event_shape, dtype=inner_outputs.dtype),
             axes_per_level=_ranks_of(sweep_groups),
             label=label,
         )
@@ -1156,7 +1163,7 @@ def _stack_rows(
                 for path, v in zip(paths, resolved, strict=True)
             }
             shared = {
-                "element_spec": tpl,
+                "element": tpl,
                 "axes_per_level": _ranks_of(sweep_groups),
             }
             try:
@@ -1241,7 +1248,7 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
     """*value*, whose leading axes range over *spec*'s levels, as the batch *spec* declares.
 
     A batch is kept as it is. Record columns and stacked arrays become the
-    batch form of their element kind, whose element spec is read from
+    batch form of their element kind, whose elements' spec is read from
     the value and unified with the declared one, and an object array becomes
     the batch form the kind table records for the declared element.
 
@@ -1250,7 +1257,7 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
     value : Any
         The route's result, such as a batch or a ``Record`` of stacked columns.
     spec : BatchSpec
-        The batch spec, whose levels and element spec a batch
+        The batch spec, whose levels and elements' spec a batch
         built from *value* takes.
     label : str
         The label of a batch built from *value*, which the messages also name.
@@ -1293,20 +1300,24 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
         for column in columns.values():
             require_leading(tuple(_event_shape_of(column)))
         element = _reshaped_template(template, lambda shape: shape[n_axes:])
-        _unify_specs(spec.element_spec, element, {}, f"{label} element")
+        _unify_specs(spec.element_spec.term_spec, element, {}, f"{label} element")
         return _batch_class_for(element)(
             columns,
             levels,
-            element_spec=element,
+            element=element,
             axes_per_level=ranks,
             label=label,
         )
     if _is_object_array(value):
         require_leading(value.shape)
-        batch_class = batch_class_for_spec(spec.element_spec)
+        batch_class = batch_class_for_spec(spec.element_spec.term_spec)
         if batch_class is not None and batch_class is not NumericArrayBatch:
             return batch_class(
-                value, levels, element_spec=spec.element_spec, axes_per_level=ranks, label=label
+                value,
+                levels,
+                element=spec.element_spec.term_spec,
+                axes_per_level=ranks,
+                label=label,
             )
         return _make_stack(
             list(value.reshape((prod(batch_shape), *value.shape[n_axes:]))),
@@ -1318,14 +1329,14 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
     if _is_numeric_leaf(value):
         shape = tuple(_event_shape_of(value))
         require_leading(shape)
-        declared = spec.element_spec
+        declared = spec.element_spec.term_spec
         support = declared.support if isinstance(declared, NumericArraySpec) else None
         element = NumericArraySpec(shape[n_axes:], _numpy_dtype_of(value), support)
         _unify_specs(declared, element, {}, f"{label} element")
         return NumericArrayBatch(
             value,
             levels,
-            element_spec=element,
+            element=element,
             axes_per_level=ranks,
             label=label,
         )

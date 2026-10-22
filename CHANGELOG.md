@@ -1763,6 +1763,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   # before: every draw's noise was the same number
   # after:  each draw has its own noise, and a UserWarning names simulate
   ```
+- **A batch's `element_spec` is the output spec of one element.**
+  `Batch.element_spec` and `BatchSpec.element_spec` are now an `OutputSpec`,
+  like a distribution's `event_spec`: the spec they held before is
+  `element_spec.term_spec`, and `element_spec.outputs` lists an element's
+  outputs. A batch of single arrays or opaque values names its elements
+  `element`, as `OutputSpec(element=NumericArraySpec(()))`, and a batch of
+  records, distributions, or conditional distributions is in the positional
+  form, as `OutputSpec(RecordSpec(...))`. For now a batch of functions, and a
+  batch whose elements are batches of single values, also name their elements
+  `element`. Equality, hashing, fingerprints, and the printed spec of a batch
+  are unchanged.
+
+  ```python
+  draws = sample(Normal("mu", 0.0, 1.0), sample_shape=4)
+  draws.element_spec.shape          # before
+  draws.element_spec.term_spec.shape  # after
+  draws.element_spec                # after: OutputSpec(element=NumericArraySpec(...))
+  ```
+- **A batch constructor takes the elements' spec as `element`.** The keyword
+  `element_spec=` of `NumericArrayBatch`, `RecordBatch`, `NumericRecordBatch`,
+  `OpaqueBatch`, `FunctionBatch`, `DistributionBatch`,
+  `ConditionalDistributionBatch`, and `RecordBatch.stack` becomes `element=`,
+  and a batch's repr shows it under that name. `BatchSpec`'s first argument is
+  named `element` and takes an `OutputSpec` or a bare spec; a bare spec names
+  single arrays or opaque values `element`.
+
+  ```python
+  NumericArrayBatch(values, "site", label="heights", element_spec=NumericArraySpec(()))  # before
+  NumericArrayBatch(values, "site", label="heights", element=NumericArraySpec(()))       # after
+  BatchSpec(OutputSpec(x=NumericArraySpec(())), sample=4)  # new: elements named x
+  ```
 
 - **An inference method receives an `InferenceTarget` and its run's random key.**
   `InferenceMethod.execute(target, /, *, key, **options)` takes the key as a

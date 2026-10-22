@@ -108,7 +108,7 @@ class TestTheScoredValue:
         values = NumericArrayBatch(
             jnp.linspace(-1.0, 1.0, 6).reshape(2, 3),
             ("rows", "cols"),
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             axes_per_level=(1, 1),
             label="values",
         )
@@ -195,7 +195,7 @@ class TestABatchOfArraysIsScoredInOneMappedCall:
         points = NumericArrayBatch(
             jax.random.normal(jax.random.PRNGKey(1), (2, 4, 3)),
             ("rows", "cols"),
-            element_spec=NumericArraySpec((3,)),
+            element=NumericArraySpec((3,)),
             axes_per_level=(1, 1),
             label="grid",
         )

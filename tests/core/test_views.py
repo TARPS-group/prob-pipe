@@ -162,7 +162,7 @@ class TestABatchColumnIsTheBatchOfItsKind:
         return RecordBatch(
             {"x": jnp.arange(6.0).reshape(3, 2), "tag": np.array(["a", "b", "c"], dtype=object)},
             "draw",
-            element_spec=RecordSpec(x=NumericArraySpec((2,)), tag=OpaqueSpec(type=str)),
+            element=RecordSpec(x=NumericArraySpec((2,)), tag=OpaqueSpec(type=str)),
             label="draws",
         )
 
@@ -171,7 +171,7 @@ class TestABatchColumnIsTheBatchOfItsKind:
 
         assert isinstance(column, NumericArrayBatch)
         assert column.label == "x" and column.level_names == ("draw",)
-        assert column.element_spec == NumericArraySpec((2,))
+        assert column.element_spec.term_spec == NumericArraySpec((2,))
         assert column.raw is batch._raw_column("x")
 
     def test_an_opaque_column_is_an_opaque_batch(self, batch):
@@ -184,7 +184,7 @@ class TestABatchColumnIsTheBatchOfItsKind:
         batch = NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             "draw",
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             label="draws",
         )
 

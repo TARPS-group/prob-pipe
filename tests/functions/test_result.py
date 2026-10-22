@@ -47,7 +47,7 @@ class TestMakeStack:
         out = _make_stack([1.0, 2.0, 3.0, 4.0], n=4, label="demo", level_names=("sweep",))
         assert isinstance(out, NumericArrayBatch)
         assert (out.batch_shape, out.level_names) == ((4,), ("sweep",))
-        assert tuple(out.element_spec.shape) == ()
+        assert tuple(out.element_spec.term_spec.shape) == ()
         np.testing.assert_allclose(out.raw, [1.0, 2.0, 3.0, 4.0])
 
     def test_list_of_arrays_preserves_event_shape(self):
@@ -59,7 +59,7 @@ class TestMakeStack:
         out = _make_stack(values, n=4, label="demo", level_names=("sweep",))
         assert isinstance(out, NumericArrayBatch)
         assert out.batch_shape == (4,)
-        assert tuple(out.element_spec.shape) == (3,)
+        assert tuple(out.element_spec.term_spec.shape) == (3,)
         assert out.raw.shape == (4, 3)
 
     def test_list_of_numeric_records_promotes_to_numeric_array(self):
@@ -180,7 +180,7 @@ class TestMakeStack:
         out = _make_stack(arr, n=4, label="demo", level_names=("sweep",))
         assert isinstance(out, NumericArrayBatch)
         assert out.batch_shape == (4,)
-        assert tuple(out.element_spec.shape) == (3,)
+        assert tuple(out.element_spec.term_spec.shape) == (3,)
         assert out.raw.shape == (4, 3)
 
     def test_declared_vmap_array_requires_single_leaf_template(self):

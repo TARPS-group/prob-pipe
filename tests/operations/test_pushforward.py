@@ -262,7 +262,7 @@ class TestTheMapReceivesDraws:
             view, Function(lambda x: x, output_spec=OutputSpec(a=None))
         )
         assert law.num_atoms == 3
-        assert law.atoms.element_spec.shape == ()
+        assert law.atoms.element_spec.term_spec.shape == ()
 
 
 class _Keyed(Function):
@@ -309,9 +309,7 @@ class TestTheOperand:
             pushforward(2.0, lambda x: x * x)
 
     def test_a_batch_of_values_is_refused_at_admission(self):
-        rows = NumericArrayBatch(
-            jnp.arange(3.0), "row", element_spec=NumericArraySpec(()), label="rows"
-        )
+        rows = NumericArrayBatch(jnp.arange(3.0), "row", element=NumericArraySpec(()), label="rows")
         with pytest.raises(ApplicabilityError, match="parameter 'd' accepts DistributionSpec"):
             pushforward(rows, lambda x: x + 1.0)
 

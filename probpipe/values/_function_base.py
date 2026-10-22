@@ -497,9 +497,10 @@ def _complete_output_metadata(expected: TermSpec, actual: TermSpec) -> TermSpec:
             }
         )
     if isinstance(expected, BatchSpec) and isinstance(actual, BatchSpec):
-        return expected._replace(
-            element_spec=_complete_output_metadata(expected.element_spec, actual.element_spec)
+        completed = _complete_output_metadata(
+            expected.element_spec.term_spec, actual.element_spec.term_spec
         )
+        return expected._replace(element=expected.element_spec._with_term_spec(completed))
     return expected
 
 
@@ -536,7 +537,9 @@ def _validate_declared_support(expected: TermSpec, actual: TermSpec, path: str) 
         for key, child in expected.items():
             _validate_declared_support(child, actual[key], f"{path}{_PATH_SEP}{key}")
     elif isinstance(expected, BatchSpec) and isinstance(actual, BatchSpec):
-        _validate_declared_support(expected.element_spec, actual.element_spec, path)
+        _validate_declared_support(
+            expected.element_spec.term_spec, actual.element_spec.term_spec, path
+        )
     elif isinstance(expected_event, OutputSpec) and isinstance(actual_event, OutputSpec):
         outputs = actual_event.outputs
         for output_name, child in expected_event.outputs.items():
@@ -561,7 +564,7 @@ def _validate_output_values(spec: TermSpec, value: Any, path: str) -> None:
     if isinstance(spec, BatchSpec):
         from ..core._record_batch import RecordBatch
 
-        element = spec.element_spec
+        element = spec.element_spec.term_spec
         if isinstance(element, RecordSpec) and isinstance(value, RecordBatch):
             for field_name, child in element.items():
                 column = value._raw_column(field_name)

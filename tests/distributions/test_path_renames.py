@@ -103,7 +103,7 @@ class _NestedLaw(
             return RecordBatch(
                 fields,
                 "sample",
-                element_spec=self.event_spec.term_spec,
+                element=self.event_spec.term_spec,
                 axes_per_level=(len(sample_shape),),
                 label=self.label,
             )
@@ -351,7 +351,7 @@ def _grouped_law() -> EmpiricalDistribution:
     atoms = NumericRecordBatch(
         {"a/x": _XS, "b/y": _YS},
         "row",
-        element_spec=_GROUPED,
+        element=_GROUPED,
         label="rows",
     )
     return EmpiricalDistribution(atoms, label="grouped")
@@ -372,7 +372,7 @@ def _whole_record_view() -> Distribution:
     atoms = NumericRecordBatch(
         columns,
         "row",
-        element_spec=spec,
+        element=spec,
         label="rows",
     )
     return EmpiricalDistribution(atoms, label="p")["parameters"]
@@ -555,7 +555,11 @@ class TestRenamedLawMoves:
     def test_a_batch_of_draws_moves_its_columns(self, key):
         parent = _NestedLaw()
         draws = parent.with_path_names({"y": "model/y"})._sample(key, (4,))
-        assert tuple(draws.element_spec.keys()) == ("model/theta/mu", "model/theta/tau", "model/y")
+        assert tuple(draws.element_spec.term_spec.keys()) == (
+            "model/theta/mu",
+            "model/theta/tau",
+            "model/y",
+        )
         assert jnp.array_equal(draws["model/y"], parent._sample(key, (4,))["y"])
 
     def test_the_mean_moves_with_its_fields(self):

@@ -667,7 +667,7 @@ def _reconstruct_from_vector(
         return NumericRecordBatch(
             dict(zip(template.keys(), leaves, strict=True)),
             names,
-            element_spec=template,
+            element=template,
             axes_per_level=(len(batch_shape),) if len(names) == 1 else None,
             label=label,
         )
