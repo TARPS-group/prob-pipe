@@ -38,6 +38,11 @@ __all__ = ["NamedTree"]
 _PATH_SEP = "/"
 
 
+def _last_name(path: str) -> str:
+    """The last name of *path*, as ``c`` of ``g/c``; a path of one name is that name."""
+    return path.rsplit(_PATH_SEP, 1)[-1]
+
+
 def _paths_label(paths: Iterable[str]) -> str:
     """The label of a value indexed by several paths, such as ``"(a, g/c)"``."""
     return "(" + ", ".join(paths) + ")"
@@ -72,7 +77,7 @@ def _keyed_paths(paths: tuple[Any, ...], mapping: Mapping[str, Any]) -> dict[str
     entries = [(path, None) for path in paths] + [(path, key) for key, path in mapping.items()]
     for given, keyword in entries:
         path = _as_path(given, action="call select() with")
-        key = path.rsplit(_PATH_SEP, 1)[-1] if keyword is None else keyword
+        key = _last_name(path) if keyword is None else keyword
         if key in keyed:
             raise ValueError(
                 f"cannot select {keyed[key]!r} and {path!r} together, since both would be named "
@@ -1013,23 +1018,54 @@ class NamedTree[L]:
         return self._rebuild_node(self._leaves_without(paths), node_name=None)
 
     def _leaves_merged(self, other: Any) -> dict[str, Any]:
-        """Flat leaf-map unioning ``self``'s then *other*'s leaves, keyed by path."""
-        left = dict(self._walk_leaves())
-        right = dict(other._walk_leaves())
-        overlap = set(left) & set(right)
-        if overlap:
-            names = sorted(overlap)
-            shared = f"field {names[0]!r}" if len(names) == 1 else f"fields {names}"
-            raise ValueError(f"cannot merge: both have the {shared}")
-        return {**left, **right}
+        """Flat leaf-map of ``self``'s leaves then *other*'s, keyed by path, for two trees with no top-level name in common.
+
+        Parameters
+        ----------
+        other : NamedTree
+            The tree merged after this one.
+
+        Returns
+        -------
+        dict of str to Any
+            Each leaf of both trees, keyed by its path, this tree's first.
+
+        Raises
+        ------
+        ValueError
+            If the two trees share a top-level name, a field or a group.
+        """
+        _check_no_shared_top_level_names(self, other, operands=f"the two {type(self).__name__}s")
+        return {**dict(self._walk_leaves()), **dict(other._walk_leaves())}
 
     def merge(self, other: Any) -> Self:
-        """Return the union of two collections, merged by leaf key (deep).
+        """Merge two trees by top-level name: this tree's fields and groups, then *other*'s.
 
-        The merge is by field key: ``{"a/x": ...}`` and ``{"a/y": ...}`` combine
-        under a shared ``a``. A field key present in both, or a field-versus-prefix
-        clash between them, raises ``ValueError``. ``self``'s fields come first,
-        then ``other``'s.
+        The merge is shallow: a top-level name, a field or a group, present in
+        both trees raises, even when the two groups hold different fields. To
+        merge two groups of one name, merge the groups first and put the result
+        under the name.
+
+        Parameters
+        ----------
+        other : NamedTree
+            The tree whose fields and groups are added.
+
+        Returns
+        -------
+        Self
+            Both trees' fields and groups side by side.
+
+        Raises
+        ------
+        ValueError
+            If a top-level name is in both trees.
+
+        Examples
+        --------
+        >>> from probpipe import RecordSpec
+        >>> RecordSpec(a=(3,)).merge(RecordSpec(g=RecordSpec(b=())))
+        NumericRecordSpec(a=(3,), g=NumericRecordSpec(b=()))
         """
         return self._rebuild_node(self._leaves_merged(other), node_name=None)
 
@@ -1277,3 +1313,33 @@ class NamedTree[L]:
         """
         tree, _ = self._renamed_tree(self._resolve_path_renames(mapping, kwargs))
         return self._rebuild_node(tree, node_name=None)
+
+
+def _check_no_shared_top_level_names(left: NamedTree, right: NamedTree, *, operands: str) -> None:
+    """Refuse a merge by top-level name of *left* and *right* when they share a top-level name.
+
+    Parameters
+    ----------
+    left : NamedTree
+        The tree merged first, or the spec of the records the first batch holds.
+    right : NamedTree
+        The tree merged after *left*, or the spec of the second batch's records.
+    operands : str
+        What the message calls the two operands, such as ``"the two Records"``.
+
+    Raises
+    ------
+    ValueError
+        If a top-level name is in both trees. Where every shared name is a
+        group in both, the message says to merge the groups first.
+    """
+    shared = [name for name in left._tree if name in right._tree]
+    if not shared:
+        return
+    names = repr(shared[0]) if len(shared) == 1 else str(shared)
+    groups_in_both = all(
+        isinstance(left._tree[name], NamedTree) and isinstance(right._tree[name], NamedTree)
+        for name in shared
+    )
+    fix = "Rename one, or merge the groups first" if groups_in_both else "Rename one of them"
+    raise ValueError(f"cannot merge {operands}, since both have {names}. {fix}")

@@ -93,11 +93,12 @@ def test_i1_one_set_of_paths_on_a_law_its_draws_its_batches_and_its_mean():
         assert _succeeds(grouped, paths)
 
 
-@pytest.mark.pending(reason="S2b: OutputSpec[] takes paths", raises=TypeError)
 def test_i1_on_the_output_spec():
+    """I1 for output specs: a path of ``grouped`` selects from its event spec the spec of its draws' node."""
     grouped = _grouped()
+    draw = _sample(grouped)
     for paths in _PATHS:
-        grouped.event_spec[paths]
+        assert grouped.event_spec[paths].term_spec == draw[paths].spec
 
 
 def test_i2_indexing_commutes_with_sampling_for_lists_of_paths():
@@ -161,12 +162,26 @@ def test_i6_a_records_spec_agrees_with_its_specs_paths():
         assert draw[paths].spec == draw.spec[paths]
 
 
-@pytest.mark.pending(reason="S2b: OutputSpec[] takes paths", raises=TypeError)
-def test_i6_a_views_output_spec_agrees_with_its_parents():
-    grouped = _grouped()
-    for paths in ("g/c", ("a", "g/c")):
-        assert grouped[paths].event_spec == grouped.event_spec[paths]
-        assert marginal(grouped, paths).event_spec == grouped.event_spec[paths]
+#: Laws and the paths of each that a view's event spec reads through the parent's.
+#: One path to a group is left out: a view of a group still names the group
+#: whole, until it has the group's children as outputs.
+_VIEWED = [
+    (_prior, ["mu", "tau", ("tau", "mu"), ("mu",)]),
+    (_grouped, ["a", "g/c", ("a", "g/c"), ["g/e", "a"], ("g",)]),
+    (_hier, ["mu", "s1/theta", ("s1/theta", "s2/theta"), ("s2",), ("mu", "s1")]),
+]
+
+
+@pytest.mark.parametrize(
+    ("law", "paths"),
+    [(law, paths) for law, listed in _VIEWED for paths in listed],
+    ids=[f"{law.__name__.lstrip('_')}[{paths!r}]" for law, listed in _VIEWED for paths in listed],
+)
+def test_i6_a_views_output_spec_agrees_with_its_parents(law, paths):
+    """I6 for laws: the event spec of ``d[s]`` and of ``marginal(d, s)`` is ``d.event_spec[s]``."""
+    parent = law()
+    assert parent[paths].event_spec == parent.event_spec[paths]
+    assert marginal(parent, paths).event_spec == parent.event_spec[paths]
 
 
 def test_i7_a_view_and_a_marginal_at_a_list_of_paths_are_one_law():
@@ -220,13 +235,17 @@ def test_i10_a_list_of_paths_and_without_partition_the_fields(paths):
         assert not set(chosen) & set(rest)
 
 
-@pytest.mark.pending(reason="S2b: OutputSpec.without", raises=AttributeError)
-def test_i10_on_an_output_spec():
+@pytest.mark.parametrize("paths", [("g/e",), ("a",), ("g",), ("a", "g/c")], ids=repr)
+def test_i10_on_an_output_spec(paths):
+    """I10 for output specs: a list and removal partition the leaf paths."""
     spec = _grouped().event_spec
-    assert spec.without("g/e") == spec[["a", "g/c"]]
+    kept = set(spec[list(paths)].term_spec.keys())
+    rest = set(spec.without(*paths).term_spec.keys())
+    assert kept | rest == set(spec.term_spec.keys())
+    assert not kept & rest
 
 
-@pytest.mark.pending(reason="S2b: InputSpec[] takes a list of input names", raises=TypeError)
+@pytest.mark.pending(reason="S2b-in: InputSpec[] takes a list of input names", raises=TypeError)
 def test_i10_on_an_input_spec():
     inputs = InputSpec(a=_REAL, b=_REAL)
     assert set(inputs[["a"]]) | set(inputs.without("a")) == {"a", "b"}
@@ -239,7 +258,8 @@ def test_i10_on_a_law():
 
 
 @pytest.mark.pending(
-    reason="S2b, G4: OutputSpec.without, and the result of condition_on", raises=AttributeError
+    reason="G4: the result of condition_on is the event spec without what it fixes",
+    raises=AssertionError,
 )
 def test_i11_conditioning_removes_what_it_fixes():
     prior = _prior()
@@ -277,13 +297,23 @@ def test_i15_a_merges_sides_are_disjoint():
     assert not set(getattr(model, "given_spec", {})) & set(model.event_spec.outputs)
 
 
-@pytest.mark.pending(reason="S2b: & on output specs", raises=TypeError)
-def test_i16_the_spec_of_a_merge_is_the_merge_of_the_specs():
-    lik, prior = _lik(), _prior()
-    assert (lik * prior).event_spec == lik.event_spec & prior.event_spec
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        (_lik, _prior),
+        (_grouped, lambda: Normal("x", 0.0, 1.0)),
+        (_hier, lambda: Normal("z", 0.0, 1.0)),
+        (_lik, lambda: _grouped().with_path_names({"a": "mu"})),
+        (lambda: Normal("x", 0.0, 1.0), _hier),
+    ],
+    ids=["lik*prior", "grouped*x", "hier*z", "lik*grouped", "x*hier"],
+)
+def test_i16_the_spec_of_a_merge_is_the_merge_of_the_specs(left, right):
+    """I16 for outputs: the event spec of a merge is the merge of the operands' event specs."""
+    first, second = left(), right()
+    assert (first * second).event_spec == first.event_spec & second.event_spec
 
 
-@pytest.mark.pending(reason="S2b: OutputSpec[] takes paths", raises=TypeError)
 def test_i17_a_merge_keeps_paths():
     grouped = _grouped()
     joint = grouped * Normal("x", 0.0, 1.0)
@@ -298,9 +328,11 @@ def test_i18_membership_agrees_with_indexing_on_terms_and_record_specs(key):
         assert (key in term) == (isinstance(key, str) and _succeeds(term, key))
 
 
-@pytest.mark.pending(reason="S2b: in on an output spec tests paths", raises=TypeError)
-def test_i18_on_an_output_spec():
-    assert "g/c" in _grouped().event_spec
+@pytest.mark.parametrize("key", _PATHS + _NOT_PATHS + [0, None], ids=repr)
+def test_i18_on_an_output_spec(key):
+    """I18 for output specs: ``key in O`` iff ``key`` is a str and ``O[key]`` succeeds."""
+    for spec in (_grouped().event_spec, Normal("x", 0.0, 1.0).event_spec):
+        assert (key in spec) == (isinstance(key, str) and _succeeds(spec, key))
 
 
 @pytest.mark.pending(reason="S3: rename", raises=AttributeError)
@@ -339,7 +371,9 @@ def test_i22_a_merge_reads_no_label():
     np.testing.assert_allclose(variance(relabeled)["b"].raw, variance(plain)["b"].raw)
 
 
-@pytest.mark.pending(reason="G1a: a view of a group offers the group's parts", raises=TypeError)
+@pytest.mark.pending(
+    reason="G1a: a view of a group offers the group's parts", raises=AssertionError
+)
 def test_i6_a_view_of_a_group_agrees_with_its_parents_output_spec():
     grouped = _grouped()
     assert grouped["g"].event_spec == grouped.event_spec["g"]

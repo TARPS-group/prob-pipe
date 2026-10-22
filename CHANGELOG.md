@@ -1855,6 +1855,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       later = sample(Normal("z", 0.0, 1.0), 3)
   # before and after: posterior is the same law
   # before: later held one set of draws; after: it holds another
+
+- **An output spec over a distribution has no outputs, and a merge refuses a
+  distribution over distributions.** A distribution's draws are not
+  determined by the distributions of their fields, so an output spec in the
+  positional form over a `DistributionSpec` or a `ConditionalDistributionSpec`,
+  as for a function that returns a distribution, has no outputs, and a batch of
+  distributions has none either. A distribution whose event is such a spec has
+  no paths, so indexing it by the name of the inner distributions' output
+  raises `TypeError`, and merging it with `*` raises `TypeError`, where it built
+  a joint that failed when sampled. To pass the distributions on by name, wrap
+  them under a name, as `OutputSpec(RecordSpec(params=law_spec))`. The same
+  calls give other values:
+
+  ```python
+  OutputSpec(Normal("mu", 0.0, 1.0).spec).outputs
+  # before: {'mu': NumericArraySpec(())}
+  # after:  {}
+
+  laws_of_x["x"]                # laws_of_x: a distribution over laws of x
+  # before: laws_of_x itself
+  # after:  TypeError: cannot index ... by 'x', since its draws are distributions
+
+  sample(laws_of_x).label
+  # before: 'x ~ ℙ'
+  # after:  '() ~ ℙ', since the law has no outputs; its notation is 'ℙ()'
+  ```
+
+  A distribution whose event spec is positional over a `BatchSpec` of records
+  changes the same way: `[]` by the name of its element's one output, and `*`,
+  raise `TypeError`, since a batch's outputs are not yet read as one record.
+
+- **`merge` on records, record specs, and batches of records is shallow.** It
+  merges by top-level name, so two records that both have a group `g` raise
+  `ValueError`, where their groups' fields were combined. Merge the groups
+  first, then put the result under `g`:
+
+  ```python
+  Record({"g": {"b": 1.0}}).merge(Record({"g": {"c": 2.0}}))
+  # before: the record {g: {b, c}}
+  # after:  ValueError: cannot merge the two NumericRecords, since both have 'g'.
+  #         Rename one, or merge the groups first
+  Record({"g": Record({"b": 1.0}).merge(Record({"c": 2.0}))})   # the old result
   ```
 
 ### Added
@@ -3001,6 +3043,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   method's result from chains of the `to_vector` coordinates of draws.
   [A new inference method](docs/api/extending.md) shows a method written
   against them.
+
+- **An `OutputSpec` is indexed by path, and merges with `&`.** `O["g/b"]` is
+  the output spec of the value at a path, a single value named by the path's
+  last name, as `OutputSpec(b=...)`, and a record having its top-level names
+  as outputs; `O[["a", "g/b"]]` is the record of the values at a list of
+  paths, each at its own path. `"g/b" in O` tests paths. `O.without("g/c")`
+  removes values by path. `O & P` merges two output specs into one record of
+  the outputs of both, `O`'s first, where the output `y` of the keyword form
+  becomes the field `y`; it refuses an output in both, and an output spec over
+  distributions, whose draws have no outputs. An output spec is not iterable;
+  `list(O.outputs)` lists its outputs. So a conditional distribution's inputs
+  can be declared from another distribution's outputs:
+
+  ```python
+  x = Normal("a", 0.0, 1.0) * Normal("sigma", 1.0, 1.0)
+  x.event_spec["a"]                            # OutputSpec(a=NumericArraySpec(()))
+  x.event_spec.without("sigma") & ke.event_spec   # ke: a kernel ke(e | sigma)
+  # OutputSpec(RecordSpec(a=..., e=...))
+  ```
 
 ### Changed
 

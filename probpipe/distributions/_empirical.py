@@ -36,8 +36,8 @@ from ..core._record_batch import RecordBatch, _batch_class_for
 from ..core._record_spec import NumericRecordSpec, RecordSpec
 from ..core._repr import format_value
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
-from ..core._specs import OutputSpec, _single_output_name
-from ..core.named_tree import _PATH_SEP, _unflatten_paths
+from ..core._specs import OutputSpec, _root_output_name
+from ..core.named_tree import _PATH_SEP, _last_name, _unflatten_paths
 from ..linalg import DenseLinOp
 from ._capabilities import (
     SupportsCovariance,
@@ -674,7 +674,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         else:
             # An array's atoms form a whole-term event, whose output's name labels them
             # and names their level.
-            name = _single_output_name(self.event_spec)
+            name = _root_output_name(self.event_spec)
             on_level = name if level is None else level
             stored = _batch_form(name, atoms, on_level, atom_spec)
         atom_weights = _atom_weights(weights, stored, self.event_spec.term_spec)
@@ -816,7 +816,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         if isinstance(paths, str):
             ((requested, segments, node),) = requested_nodes
             atoms = self._projection(segments, node)
-            declaration = OutputSpec(**{requested.rsplit(_PATH_SEP, 1)[-1]: node})
+            declaration = OutputSpec(**{_last_name(requested): node})
         else:
             atoms = self._atoms_at_paths(requested_nodes)
             declaration = OutputSpec(atoms.element_spec.term_spec)
@@ -863,7 +863,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         read_paths = _read_event_paths(
             self.event_spec, self.label, paths, action=f"take the marginal of {self.label!r} at"
         )
-        output_name = _single_output_name(self.event_spec)
+        output_name = _root_output_name(self.event_spec)
         requested_nodes = []
         for requested in read_paths if isinstance(read_paths, tuple) else (read_paths,):
             segments = tuple(requested.split(_PATH_SEP))

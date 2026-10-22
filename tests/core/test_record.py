@@ -93,7 +93,7 @@ class TestConstruction:
             Record.from_fields(**{"a/b": 1.0})
 
     def test_merge_refuses_a_field_against_a_group(self):
-        with pytest.raises(ValueError, match="single field in one record but a group of fields"):
+        with pytest.raises(ValueError, match=r"since both have 'x'\. Rename one"):
             Record(
                 {"x": 1.0},
                 label="a",
@@ -448,7 +448,9 @@ class TestImmutability:
             {"a": 2.0},
             label="r",
         )
-        with pytest.raises(ValueError, match="cannot merge: both have the field 'a'"):
+        with pytest.raises(
+            ValueError, match="cannot merge the two NumericRecords, since both have 'a'"
+        ):
             v1.merge(v2)
 
     def test_without(self):

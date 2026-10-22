@@ -62,6 +62,7 @@ from .named_tree import (
     _PATH_SEP,
     NamedTree,
     _check_no_path_sep,
+    _check_no_shared_top_level_names,
     _keyed_paths,
     _paths_label,
     _unflatten_paths,
@@ -966,36 +967,41 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         return self._rebuild_root(new_children, RecordSpec(specs))
 
     def merge(self, other: Record) -> Record:
-        """Return the union of this Record and *other* (see :meth:`NamedTree.merge`).
+        """Merge two records by top-level name: this record's fields and groups, then *other*'s.
 
-        The merge is by field key, so subtrees sharing a top-level name merge
-        recursively; a child present on one side only is reused verbatim (class
-        and metadata preserved). Both records' authoritative specs are carried
-        into the merged ``event_template``.
+        The merge is shallow, as :meth:`NamedTree.merge` states: a top-level
+        name present in both records raises, even when the two groups hold
+        different fields. Each child is reused as it is, with its class and
+        metadata, and both records' specs are carried into the merged
+        ``event_template``.
+
+        Parameters
+        ----------
+        other : Record
+            The record whose fields and groups are added.
+
+        Returns
+        -------
+        Record
+            Both records' fields and groups side by side.
+
+        Raises
+        ------
+        ValueError
+            If a top-level name is in both records; merge the groups first.
+
+        Examples
+        --------
+        >>> Record({"a": 1.0}).merge(Record({"b": 2.0, "g": {"c": 3.0}})).keys()
+        ('a', 'b', 'g/c')
         """
-        self._leaves_merged(other)  # validates: overlapping field keys raise
+        _check_no_shared_top_level_names(self, other, operands=f"the two {type(self).__name__}s")
         new_children: dict[str, Any] = {}
         specs: dict[str, Any] = {}
-        for name, child in self._tree.items():
-            other_child = other._tree.get(name)
-            if other_child is None:
+        for record, children in ((self, self._tree), (other, other._tree)):
+            for name, child in children.items():
                 new_children[name] = child
-                specs[name] = self._child_spec(name, child)
-            elif isinstance(child, Record) and isinstance(other_child, Record):
-                merged = child.merge(other_child)
-                new_children[name] = merged
-                specs[name] = merged.event_template
-            else:
-                # One side holds a leaf where the other holds a subtree.
-                raise ValueError(
-                    f"merge() cannot combine {name!r}: it is a single field in one record but "
-                    f"a group of fields in the other"
-                )
-        for name, child in other._tree.items():
-            if name in self._tree:
-                continue
-            new_children[name] = child
-            specs[name] = other._child_spec(name, child)
+                specs[name] = record._child_spec(name, child)
         return self._rebuild_root(new_children, RecordSpec(specs))
 
     def replace(self, _updates: Mapping[str, Any] | None = None, /, **updates: Any) -> Record:

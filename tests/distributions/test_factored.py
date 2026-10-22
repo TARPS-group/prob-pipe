@@ -582,9 +582,8 @@ class TestConstruction:
         with pytest.raises(
             ValueError,
             match=re.escape(
-                "the output 'beta' is produced by both factor 0 ('prior') and factor 1 ('prior'); "
-                "rename it in one of them with with_path_names({'beta': ...}), or build one of "
-                "them with another output, as Normal('beta_2', ...)"
+                "cannot merge factor 0 ('prior') and factor 1 ('prior'), since both have the "
+                "output 'beta'. Rename it in one of them, as with_path_names({'beta': 'beta_2'})"
             ),
         ):
             FactoredDistribution([_prior(), _prior()], label="model")
