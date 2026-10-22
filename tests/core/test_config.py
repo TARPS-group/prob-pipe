@@ -543,3 +543,44 @@ class TestTheProvenanceModeIsFixedForARun:
         with workflow_run(seed=1):
             config.reset()
         assert config.notation.max_depth == 8
+
+
+class TestTheKindsOfSetting:
+    """Each setting is static, part of a compiled JAX program's cache key, or inert."""
+
+    def test_the_counts_are_static_and_every_other_setting_is_inert(self):
+        kinds = {
+            f"{section_name}.{setting_name}": setting.kind
+            for section_name, section in config._sections.items()
+            for setting_name, setting in section._settings.items()
+        }
+        assert kinds == {
+            "sampling.max_evaluations": "static",
+            "sampling.num_samples": "static",
+            "notation.max_depth": "inert",
+            "provenance.mode": "inert",
+            "prefect.workflow_kind": "inert",
+            "prefect.task_runner": "inert",
+        }
+
+    def test_each_settings_docstring_states_its_kind(self):
+        for section in config._sections.values():
+            for setting_name, setting in section._settings.items():
+                docstring = getattr(type(section), setting_name).__doc__
+                assert f"{'A static' if setting.kind == 'static' else 'An inert'} setting" in (
+                    docstring
+                ), setting_name
+
+    def test_a_setting_of_neither_kind_is_refused(self):
+        with pytest.raises(ValueError, match="'static' or 'inert', got 'traced'"):
+            config_module._Setting(lambda value, source: value, "traced")
+
+    def test_the_static_values_in_effect_read_blocks_then_the_session(self):
+        with config.sampling.using(num_samples=7):
+            static_values = config_module._static_config_values_in_effect()
+        assert static_values == (
+            (
+                "sampling",
+                (("max_evaluations", config.sampling.max_evaluations), ("num_samples", 7)),
+            ),
+        )

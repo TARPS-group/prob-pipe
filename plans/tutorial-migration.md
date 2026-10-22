@@ -109,6 +109,8 @@ In the examples, `x` is a law over `{a, b, c, sigma}`, `ke` a kernel `ke(e | sig
 | `except ValueError:` around a lifted call whose evaluation point fails | `except EvaluationError as error:`, reading `error.failures` | E3a, E4 | no, but an `except` of the user's own exception type stops catching |
 | an output that does not match its output spec failed later; a `float64` output under a `float32` spec lost precision silently | `EvaluationError` naming the evaluation point; the cast warns | E3a | no |
 | a replay recipe recorded `requested_dispatch` | it records `executor`; an old recipe is refused | E3a | no |
+| a compiled JAX program that failed while it ran, such as a joint's mapping of a kernel, ran again eagerly | the error propagates, with no eager rerun | E3a | no |
+| a kernel in a joint that read `num_samples` while it was traced kept the first call's value | it reads the value of the call that runs it | E3a | yes |
 | `f.using(dispatch="thread", max_workers=8)` | `f.using(executor="thread", executor_options={"max_workers": 8})` | E3b | no |
 | a `float64` output spec with 64-bit floats off silently gave `float32` | an error that says to set `jax_enable_x64` | E4 | no |
 | an inference method reads `run_seed` and imports `ModelFactors` privately | `InferenceMethod.execute(target, /, *, key, **options)` with an `InferenceTarget`; `ModelFactors` and `make_posterior` are public | E6 | no |

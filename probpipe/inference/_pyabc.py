@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -12,6 +12,7 @@ import numpy as np
 import pyabc
 from pyabc.sampler import SingleCoreSampler
 
+from ..core._compilation import compiled_or_eager
 from ..core._dispatch import Feasibility
 from ..custom_types import PRNGKey
 from ..distributions._capabilities import SupportsConditionalSampling
@@ -178,24 +179,17 @@ def _compiled(fn: Callable[..., Any]) -> Callable[..., Any]:
     samples with a JAX loop, as a Gamma or a Poisson draw does. The compiled
     form traces once and is reused at every particle. A function that does not
     trace, such as a simulator that calls NumPy or an external program, runs
-    eagerly instead: the first call decides, and the later calls keep its choice.
+    eagerly instead, by the rule of
+    :func:`~probpipe.core._compilation.compiled_or_eager`: the first trace
+    decides, and an error raised while the compiled form runs propagates.
     """
-    compiled = jax.jit(fn)
-    chosen: list[Callable[..., Any]] = []
+    compiled_fn = jax.jit(fn)
+    decision_record: dict[Hashable, Any] = {}
 
-    def run(*args: Any) -> Any:
-        if chosen:
-            return chosen[0](*args)
-        try:
-            value = compiled(*args)
-        except Exception:
-            # The function does not trace; an error of its own raises again eagerly.
-            chosen.append(fn)
-            return fn(*args)
-        chosen.append(compiled)
-        return value
+    def run_compiled_or_eager(*args: Any) -> Any:
+        return compiled_or_eager(decision_record, "pyabc", compiled_fn, fn, *args)
 
-    return run
+    return run_compiled_or_eager
 
 
 def _smc_diagnostics(history: Any) -> DataTree:

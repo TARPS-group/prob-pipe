@@ -692,6 +692,17 @@ def _probe_arguments(arguments: Any, *, ints_static: bool) -> _ProbeArguments:
     )
 
 
+def _input_structure(arguments: Any) -> Hashable | None:
+    """The input structure of *arguments*, each integer scalar by its value.
+
+    A compiled JAX program that takes integer scalars as data is traced again
+    by JAX only when their type changes, so this structure, which tells their
+    values apart, separates at least the arguments that JAX traces apart.
+    ``None`` when an argument is neither an array nor hashable.
+    """
+    return _probe_arguments(arguments, ints_static=True).structure
+
+
 def _global_random_states() -> tuple[Any, Any]:
     """The states of NumPy's and Python's global random generators."""
     return np.random.get_state(), random.getstate()

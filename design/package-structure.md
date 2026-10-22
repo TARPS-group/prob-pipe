@@ -36,7 +36,8 @@ probpipe/
 │   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.5)
 │   ├── _dispatch.py           #   dispatch methods and registries, Feasibility, MethodInfo, ResolutionError, MathematicalDomainError (II.7)
 │   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.7)
-│   ├── _compilation.py        #   compiled_or_eager: a compiled call that falls back to the eager call
+│   ├── _compilation.py        #   compiled_or_eager: a JAX program traced before it runs, or the eager call;
+│   │                          #   the program store and its static settings (V.9)
 │   ├── _call_context.py       #   the call context: the per-call state a call carries into its workers (V.2)
 │   ├── _execution_claims.py   #   execution claims, the probe, and its stored results; traceability (V.13)
 │   ├── _evaluation_points.py  #   EvaluationPoints, EvaluationChunk, SharedPayload, EvaluationOutcomes,

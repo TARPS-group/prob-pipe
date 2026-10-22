@@ -188,16 +188,18 @@ def _compiled(
     """*program* at the backend of *law* and *arguments*, or *eager* when the backend runs eagerly.
 
     A backend that :func:`_compilable` refuses runs *eager*. Otherwise
-    :func:`~probpipe.core._compilation.compiled_or_eager` runs *program* and
-    records in the law's memo, under *method*, a program that does not trace.
-    The record belongs to the law, since a law has one backend.
+    :func:`~probpipe.core._compilation.compiled_or_eager` traces *program*
+    before it first runs at a new input structure, and records in the law's
+    memo, under *method*, a program that does not trace. The record belongs
+    to the law, since a law has one backend. An error raised while the
+    compiled program runs propagates.
     """
     memo = transient_memo(law)
     if "compilable" not in memo:
         memo["compilable"] = _compilable(law._tfp_dist)
     if not memo["compilable"]:
         return eager(law._tfp_dist, *arguments)
-    return compiled_or_eager(memo, ("untraced", method), program, eager, law._tfp_dist, *arguments)
+    return compiled_or_eager(memo, method, program, eager, law._tfp_dist, *arguments)
 
 
 def _sample_shape(sample_shape: Any) -> tuple[int, ...]:

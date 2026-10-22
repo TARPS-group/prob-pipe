@@ -22,7 +22,7 @@ import numpy as np
 from jax.scipy.linalg import block_diag
 
 from ..core._array_backend import _is_numeric_leaf
-from ..core._compilation import compiled_or_eager
+from ..core._compilation import _program_store_of
 from ..core._dispatch import Feasibility, ResolutionError
 from ..core._execution_claims import Traceability
 from ..core._expression import (
@@ -31,7 +31,6 @@ from ..core._expression import (
     Selected,
     joined_labels,
 )
-from ..core._immutable import transient_memo
 from ..core._object_batch import _is_object_array
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
@@ -847,63 +846,87 @@ def _split_fixed(
 def _at_each_given(
     factor: ConditionalDistribution,
     method: str,
-    fixed: Mapping[str, Any],
+    unmet_givens: Mapping[str, Any],
     count: int,
-    values: Mapping[str, Any],
-    points: Any,
+    given_values: Mapping[str, Any],
+    keys_or_events: Any,
 ) -> Any:
-    """*factor*'s *method* at each of the *count* values along the leading axis of *values*, stacked.
+    """*factor*'s *method* at each of the *count* values along the leading axis of *given_values*, stacked.
 
-    The *i*-th call binds the factor's givens to the *i*-th entry of *values*
-    and to the unmet givens in *fixed*, and takes the *i*-th entry of *points*:
-    a key when *method* draws, and the factor's part of the joint's value when
-    *method* is a density.
+    The *i*-th call binds the factor's givens to the *i*-th entry of
+    *given_values* and to the unmet givens in *unmet_givens*, and takes the
+    *i*-th entry of *keys_or_events*: a key when *method* draws, and the
+    factor's part of the joint's value when *method* is a density.
 
-    A call whose givens are numeric runs one compiled program: the factor's
-    method vectorized with ``jax.vmap`` and compiled with ``jax.jit``. It takes
-    the draws, the keys or the events, and the unmet givens as
-    :func:`_split_fixed` sorts them. The factor's memo holds the program, with
-    one compiled form for each set of constants and input shapes. The program
-    calls the factor it was built for, so a copy of the factor, which may hold
-    other bound values, builds its own. ``ConditionalDistribution`` states
-    what the factor's method may read.
+    A call whose givens are numeric runs one compiled JAX program: the
+    factor's method vectorized with ``jax.vmap`` and compiled with
+    ``jax.jit``. It takes the draws, the keys or the events, and the unmet
+    givens as :func:`_split_fixed` sorts them. The factor's program store
+    keeps the JAX program, compiled once for each set of constants, input
+    shapes, and static settings, so a kernel that reads ``num_samples`` while
+    it is traced computes with the count of the call that runs it. The JAX
+    program calls the factor it was built for, so a copy of the factor, which
+    may hold other bound values, builds its own. ``ConditionalDistribution``
+    states what the factor's method may read.
 
     The call runs uncompiled, under ``jax.vmap``, when :func:`_split_fixed`
-    returns ``None`` or when the program does not trace, as for a method that
-    converts an unmet given to a Python number.
-    :func:`~probpipe.core._compilation.compiled_or_eager` records a program
-    that does not trace for the structure of the unmet givens, so later calls
-    with that structure skip the attempt. When a given is not numeric, the
-    method is called on one value at a time.
+    returns ``None`` or when the JAX program does not trace, as for a method
+    that converts an unmet given to a Python number. The store records a JAX
+    program that does not trace for the structure of the unmet givens, so
+    later calls with that structure skip the attempt. An error raised while
+    the compiled JAX program runs propagates. When a given is not numeric,
+    the method is called on one value at a time.
     """
-    fixed = {
-        input_name: fixed[input_name] for input_name in factor.given_spec if input_name in fixed
+    unmet_givens = {
+        input_name: unmet_givens[input_name]
+        for input_name in factor.given_spec
+        if input_name in unmet_givens
     }
-    tail = ((),) if method == _DRAW else ()
+    sample_shape_argument = ((),) if method == _DRAW else ()
 
-    def one(fixed: Mapping[str, Any], values: Mapping[str, Any], point: Any) -> Any:
-        return getattr(factor, method)(_factor_given(factor, values, fixed), point, *tail)
+    def method_at_given(
+        held_givens: Mapping[str, Any], given_value: Mapping[str, Any], key_or_event: Any
+    ) -> Any:
+        return getattr(factor, method)(
+            _factor_given(factor, given_value, held_givens), key_or_event, *sample_shape_argument
+        )
 
-    def uncompiled(*_: Any) -> Any:
-        return _each_value(partial(one, fixed), count, values, points, traceable=True)
+    def run_uncompiled(*_: Any, traceable: bool = True) -> Any:
+        return _each_value(
+            partial(method_at_given, unmet_givens),
+            count,
+            given_values,
+            keys_or_events,
+            traceable=traceable,
+        )
 
-    if not _numeric_givens(factor, values):
-        return _each_value(partial(one, fixed), count, values, points, traceable=False)
-    split = _split_fixed(factor, fixed)
-    if split is None:
-        return uncompiled()
-    memo = transient_memo(factor)
-    program = memo.get(("mapped", method))
-    if program is None:
+    if not _numeric_givens(factor, given_values):
+        return run_uncompiled(traceable=False)
+    split_givens = _split_fixed(factor, unmet_givens)
+    if split_givens is None:
+        return run_uncompiled()
+    given_arguments, given_constants = split_givens
 
-        def mapped(arguments: dict[str, Any], constants: tuple, values: Any, points: Any) -> Any:
-            held = {**arguments, **dict(constants)}
-            return jax.vmap(partial(one, held))(values, points)
+    def mapped_method(
+        static_givens: tuple,
+        traced_givens: dict[str, Any],
+        stacked_given_values: Any,
+        stacked_keys_or_events: Any,
+    ) -> Any:
+        held_givens = {**traced_givens, **dict(static_givens)}
+        return jax.vmap(partial(method_at_given, held_givens))(
+            stacked_given_values, stacked_keys_or_events
+        )
 
-        program = memo[("mapped", method)] = jax.jit(mapped, static_argnums=1)
-    arguments, constants = split
-    key = ("untraced", method, jax.tree.structure(arguments), constants)
-    return compiled_or_eager(memo, key, program, uncompiled, arguments, constants, values, points)
+    return _program_store_of(factor).run(
+        ("mapped", method),
+        mapped_method,
+        run_uncompiled,
+        given_arguments,
+        given_values,
+        keys_or_events,
+        static_options=given_constants,
+    )
 
 
 def _conditional_draw(

@@ -40,9 +40,10 @@ __all__ = [
 ]
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
+from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar, Literal, Self
 
 from .._messages import unknown_names
 from ._call_context import _under_call_context, _UnshippableSetting, current_call_context
@@ -52,9 +53,40 @@ from ._expression import _STORED_DEPTH
 # Sections and their blocks
 # ---------------------------------------------------------------------------
 
+#: The two kinds of ``config`` setting, which :class:`Config` defines.
+_SettingKind = Literal["static", "inert"]
+
+
+@dataclass(frozen=True)
+class _Setting:
+    """How a section checks one of its settings, and the setting's kind.
+
+    Attributes
+    ----------
+    check : Callable
+        Takes the value and the setting's name, and returns the value or
+        raises as an assignment raises.
+    kind : {"static", "inert"}
+        ``"static"`` for a setting that can change what a compiled JAX program
+        computes, whose value is then part of the program's cache key, and
+        ``"inert"`` for one that changes no computed value.
+
+    Raises
+    ------
+    ValueError
+        On construction, if *kind* is neither ``"static"`` nor ``"inert"``.
+    """
+
+    check: Callable[[Any, str], Any]
+    kind: _SettingKind
+
+    def __post_init__(self) -> None:
+        if self.kind not in ("static", "inert"):
+            raise ValueError(f"a config setting's kind is 'static' or 'inert', got {self.kind!r}")
+
 
 class _Section:
-    """A section of ``config``: named settings, each with a session value and a check.
+    """A section of ``config``: named settings, each with a session value, a check, and a kind.
 
     Reading a setting returns the value that the innermost active ``using``
     block sets for it, and otherwise the session's value: inside the work a
@@ -70,9 +102,8 @@ class _Section:
     #: as they were when the outermost call opened, rather than as they are.
     _is_in_session_snapshot: ClassVar[bool] = True
 
-    #: The check of each setting, by name: it takes the value and the setting's
-    #: name, and returns the value or raises as an assignment raises.
-    _checks: ClassVar[Mapping[str, Callable[[Any, str], Any]]]
+    #: The check and the kind of each setting, by name.
+    _settings: ClassVar[Mapping[str, _Setting]]
 
     def _value_in_effect(self, setting_name: str) -> Any:
         """The value of *setting_name* that the innermost block sets, or else the session's value.
@@ -92,7 +123,7 @@ class _Section:
 
     def _session_values(self) -> dict[str, Any]:
         """The session's value of each setting of the section, by setting name."""
-        return {setting_name: getattr(self, f"_{setting_name}") for setting_name in self._checks}
+        return {setting_name: getattr(self, f"_{setting_name}") for setting_name in self._settings}
 
     def _checked_block_values(
         self, block_settings: Mapping[str, Any], caller: str
@@ -120,14 +151,14 @@ class _Section:
             As the setting's assignment raises.
         """
         unknown_setting_names = [
-            setting_name for setting_name in block_settings if setting_name not in self._checks
+            setting_name for setting_name in block_settings if setting_name not in self._settings
         ]
         if unknown_setting_names:
             raise TypeError(
-                f"{caller}: {unknown_names('setting', unknown_setting_names, self._checks)}"
+                f"{caller}: {unknown_names('setting', unknown_setting_names, self._settings)}"
             )
         return {
-            setting_name: self._checks[setting_name](setting_value, setting_name)
+            setting_name: self._settings[setting_name].check(setting_value, setting_name)
             for setting_name, setting_value in block_settings.items()
         }
 
@@ -295,8 +326,11 @@ class PrefectConfig(_Section):
     # A task runner need not pickle, so the work a call dispatches reads the
     # section's current values rather than a snapshot that travels with it.
     _is_in_session_snapshot = False
-    _checks = MappingProxyType(
-        {"workflow_kind": _checked_workflow_kind, "task_runner": lambda value, source: value}
+    _settings = MappingProxyType(
+        {
+            "workflow_kind": _Setting(_checked_workflow_kind, "inert"),
+            "task_runner": _Setting(lambda value, source: value, "inert"),
+        }
     )
 
     def __init__(self) -> None:
@@ -314,7 +348,11 @@ class PrefectConfig(_Section):
 
     @property
     def workflow_kind(self) -> WorkflowKind:
-        """Current global orchestration mode."""
+        """Current global orchestration mode.
+
+        An inert setting: it changes no computed value, so no compiled JAX
+        program depends on it.
+        """
         return self._value_in_effect("workflow_kind")
 
     @workflow_kind.setter
@@ -323,7 +361,11 @@ class PrefectConfig(_Section):
 
     @property
     def task_runner(self) -> Any:
-        """Explicit task runner, or ``None`` for auto-detection."""
+        """Explicit task runner, or ``None`` for auto-detection.
+
+        An inert setting: it changes no computed value, so no compiled JAX
+        program depends on it.
+        """
         return self._value_in_effect("task_runner")
 
     @task_runner.setter
@@ -447,7 +489,7 @@ class ProvenanceConfig(_Section):
     """
 
     _name = "provenance"
-    _checks = MappingProxyType({"mode": _checked_provenance_mode})
+    _settings = MappingProxyType({"mode": _Setting(_checked_provenance_mode, "inert")})
 
     def __init__(self) -> None:
         self.reset()
@@ -469,6 +511,9 @@ class ProvenanceConfig(_Section):
     @property
     def mode(self) -> ProvenanceMode:
         """Current global provenance tracking mode.
+
+        An inert setting: it changes no computed value, so no compiled JAX
+        program depends on it.
 
         Raises
         ------
@@ -582,8 +627,8 @@ class NotationConfig(_Section):
     """
 
     _name = "notation"
-    _checks = MappingProxyType(
-        {"max_depth": lambda value, source: _checked_max_depth(value, source)}
+    _settings = MappingProxyType(
+        {"max_depth": _Setting(lambda value, source: _checked_max_depth(value, source), "inert")}
     )
 
     def __init__(self) -> None:
@@ -624,6 +669,9 @@ class NotationConfig(_Section):
         which shows so at any setting, with a ``UserWarning`` that says no
         setting shows it. A loop that adds to a value therefore gives, every 63
         steps, a label that shows the last step alone, as ``… + 1``.
+
+        An inert setting: it changes no computed value, so no compiled JAX
+        program depends on it.
 
         Raises
         ------
@@ -736,7 +784,12 @@ class SamplingConfig(_Section):
     """
 
     _name = "sampling"
-    _checks = MappingProxyType({"max_evaluations": _checked_count, "num_samples": _checked_count})
+    _settings = MappingProxyType(
+        {
+            "max_evaluations": _Setting(_checked_count, "static"),
+            "num_samples": _Setting(_checked_count, "static"),
+        }
+    )
 
     def __init__(self) -> None:
         self.reset()
@@ -764,6 +817,10 @@ class SamplingConfig(_Section):
 
         :class:`~probpipe.Function` states how a lift spends the count.
 
+        A static setting: a JAX program that ProbPipe compiles for a call is
+        compiled for the value in effect, and a call under another value
+        compiles its own.
+
         Raises
         ------
         TypeError
@@ -783,6 +840,10 @@ class SamplingConfig(_Section):
 
         A converter that draws, such as moment matching, takes the converting
         call's ``num_samples`` unless its own ``num_samples`` option is given.
+
+        A static setting: a JAX program that ProbPipe compiles for a call is
+        compiled for the value in effect, and a call under another value
+        compiles its own.
 
         Raises
         ------
@@ -850,6 +911,20 @@ class Config:
     when it opens. ProbPipe code
     inside a user's own ``jax.jit`` keeps the values in effect while JAX traced
     it.
+
+    Each setting is one of two kinds, which its docstring states:
+
+    1. A **static** setting can change what a compiled JAX program computes,
+       because ProbPipe code reads it while JAX traces the program, as the
+       size of a Monte Carlo estimate inside a kernel. A JAX program that
+       ProbPipe compiles for a call is compiled for the values of the static
+       settings in effect, so a call under other values compiles its own and
+       never reuses one compiled under the first. The static settings are
+       ``sampling.max_evaluations`` and ``sampling.num_samples``.
+    2. An **inert** setting changes no computed value, such as how a label
+       renders or whether provenance is recorded, so no compiled JAX program
+       depends on it. Every setting of ``notation``, ``provenance``, and
+       ``prefect`` is inert.
     """
 
     def __init__(self) -> None:
@@ -957,6 +1032,26 @@ class Config:
             for section_name, section in self._sections.items()
             if section._is_in_session_snapshot
         }
+
+
+def _static_config_values_in_effect() -> tuple[tuple[str, tuple[tuple[str, Any], ...]], ...]:
+    """The value in effect of each static setting, by section name and then setting name.
+
+    Pairs are sorted by name, so equal values give equal tuples, which a
+    compiled JAX program's cache key holds.
+    """
+    return tuple(
+        (
+            section_name,
+            tuple(
+                (setting_name, section._value_in_effect(setting_name))
+                for setting_name, setting in sorted(section._settings.items())
+                if setting.kind == "static"
+            ),
+        )
+        for section_name, section in sorted(config._sections.items())
+        if any(setting.kind == "static" for setting in section._settings.values())
+    )
 
 
 def _num_samples_in_effect() -> int:

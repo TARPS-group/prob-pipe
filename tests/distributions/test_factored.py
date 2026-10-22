@@ -43,6 +43,7 @@ from probpipe import (
     SupportsVariance,
     conditional_distribution,
 )
+from probpipe.core._compilation import _program_store_of
 from probpipe.core._dispatch import Feasibility
 from probpipe.core._specs import _has_record_outputs
 from probpipe.distributions import (
@@ -1866,9 +1867,10 @@ class _Holder:
 def _ran_uncompiled(joint: FactoredDistribution) -> bool:
     """Whether a conditional factor of *joint* records a program that does not trace."""
     return any(
-        isinstance(key, tuple) and key[0] == "untraced"
+        _program_store_of(factor).runs_eagerly(("mapped", method))
         for factor in joint.factors
-        for key in getattr(factor, "_memo", None) or {}
+        if isinstance(factor, ConditionalDistribution)
+        for method in ("_conditional_sample", "_conditional_log_prob")
     )
 
 

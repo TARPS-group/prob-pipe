@@ -16,6 +16,8 @@ Provides:
     sets of evaluation points it ran, with :func:`_collecting_call_accumulators`
     and :func:`_note_num_samples_used`;
   - :func:`_jax_settings_snapshot`, the JAX settings a root call holds fixed;
+  - :meth:`_CallContext.with_static_settings`, the context a compiled JAX
+    program's body is traced under;
   - :class:`_ContextBoundFunction` and :func:`_carrying_call_context`, which
     carry the call context into a worker.
 """
@@ -28,10 +30,13 @@ from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import cloudpickle
 import jax
+
+if TYPE_CHECKING:
+    from ._compilation import _StaticSettings
 
 #: The entry methods of a ``Function`` that open a call context.
 _EntryMethodName = Literal["__call__", "apply", "check"]
@@ -177,6 +182,13 @@ class _CallContext:
       ``config`` value that does not pickle travels as a placeholder that
       raises ``UnshippableSettingError`` only when the worker reads it.
 
+    Reading settings while JAX traces: the body of a compiled JAX program that
+    a program store opens is traced under :meth:`with_static_settings`, so it
+    reads the static settings that are part of the JAX program's cache key,
+    and an inert ``config`` setting, which changes no computed value, as it
+    reads it anywhere. What it notes goes into accumulators of the trace's
+    own, which the store applies to the running call after each run.
+
     Invariants:
 
     - The dataclass is frozen, and its mappings are read-only. Its mutable
@@ -312,6 +324,46 @@ class _CallContext:
             num_samples_used=_NumSamplesUsed(collects_calls=collects_calls),
             evaluation_log=_EvaluationLog(),
         )
+
+    def with_static_settings(self, static_settings: _StaticSettings) -> _CallContext:
+        """The context that the body of a compiled JAX program is traced under, with *static_settings*.
+
+        The static ``config`` values apply as the innermost block, so a block
+        that the traced code opens applies over them. The passed controls and
+        the running call's ``max_evaluations`` and ``num_samples`` are those of
+        *static_settings*. The executor choice is automatic selection, since the
+        call that runs the JAX program decides it when it runs. The accumulators
+        are new and empty, so what the trace notes stays out of the running
+        call's until the program store applies it, and they collect calls when
+        the running call does.
+
+        Parameters
+        ----------
+        static_settings : _StaticSettings
+            The settings the JAX program is compiled under.
+
+        Returns
+        -------
+        _CallContext
+            The context of the trace.
+        """
+        traced_context = self.with_config_block(
+            {
+                section_name: dict(section_values)
+                for section_name, section_values in static_settings.config_values
+            }
+        ).with_passed_controls(
+            None
+            if static_settings.passed_controls is None
+            else dict(static_settings.passed_controls)
+        )
+        return replace(
+            traced_context,
+            resolved_controls=MappingProxyType(
+                {**self.resolved_controls, **dict(static_settings.resolved_controls)}
+            ),
+            execution_choice=_AUTOMATIC_SELECTION,
+        ).with_fresh_call_accumulators(collects_calls=self.collects_calls())
 
     def collects_calls(self) -> bool:
         """Whether the calls made directly within this context merge into its accumulators."""
