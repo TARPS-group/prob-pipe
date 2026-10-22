@@ -320,6 +320,21 @@ def _call_function(
                 bindings=bindings,
             )
             return _result.raw_form(result)
+        if (
+            inline_plan.regime == "none"
+            and function._route_candidates(current_call_context().resolved_controls, values) is None
+        ):
+            # Under an eager transformation a plain call runs as it does
+            # outside one, and its result presents as its raw form (II.4), as
+            # the inline call above returns it inside a staging trace.
+            return _result.raw_form(_call_in_workflow(function, args, call_inputs))
+    return _call_in_workflow(function, args, call_inputs)
+
+
+def _call_in_workflow(
+    function: Function, args: tuple[Any, ...], call_inputs: dict[str, Any]
+) -> Any:
+    """The call of *function* inside its workflow scope, replay scope, and key broker."""
     _context._assert_workflow_admission()
     with _replay._function_replay_scope() as replay_call:
         occurrence_path = None if replay_call is None else replay_call.occurrence_path

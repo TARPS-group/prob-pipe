@@ -38,6 +38,7 @@ from probpipe import (
     ResultSchemaError,
     config,
     function,
+    mean,
     workflow_run,
 )
 from probpipe.core.constraints import positive
@@ -612,3 +613,61 @@ class TestResultErrors:
             wrapped(operand)
 
         assert raised.value.__cause__ is error
+
+
+@function
+def _scaled_sine(x):
+    return jnp.sin(x) * 3.0
+
+
+@function
+def _moments(x):
+    return {"value": x, "square": x * x}
+
+
+class TestTheReturnInsideATrace:
+    """Inside a JAX transformation a plain call returns its raw form (II.4), and outside one a term."""
+
+    @pytest.mark.parametrize(
+        "transform",
+        [jax.jit, jax.vmap, lambda body: jax.vmap(jax.jit(body))],
+        ids=["jit", "vmap", "vmap-of-jit"],
+    )
+    def test_a_plain_call_returns_its_raw_value(self, transform):
+        seen = []
+
+        def body(x):
+            result = _scaled_sine(x)
+            seen.append(result)
+            return result
+
+        x = jnp.arange(3.0)
+        values = transform(body)(x if transform is not jax.jit else x[1])
+        assert all(isinstance(result, jax.core.Tracer) for result in seen)
+        expected = 3.0 * jnp.sin(x if transform is not jax.jit else x[1])
+        np.testing.assert_allclose(values, expected, rtol=1e-6)
+
+    def test_a_gradient_differentiates_a_plain_call(self):
+        slope = jax.grad(lambda x: _scaled_sine(x))(1.0)
+        np.testing.assert_allclose(slope, 3.0 * np.cos(1.0), rtol=1e-6)
+
+    def test_a_record_result_returns_its_mapping(self):
+        mapped = jax.vmap(lambda x: _moments(x))(jnp.arange(3.0))
+        assert set(mapped) == {"value", "square"}
+        np.testing.assert_allclose(mapped["square"], jnp.arange(3.0) ** 2)
+
+    def test_a_call_outside_a_trace_returns_a_term(self):
+        assert isinstance(_scaled_sine(1.0), NumericArray)
+
+    def test_an_operation_inside_a_trace_keeps_its_term(self):
+        kinds = []
+
+        def body(loc):
+            result = mean(Normal("x", loc, 1.0))
+            kinds.append(type(result))
+            return result.raw
+
+        with workflow_run(seed=0):
+            means = jax.vmap(body)(jnp.arange(3.0))
+        assert kinds == [NumericArray]
+        np.testing.assert_allclose(means, jnp.arange(3.0))
