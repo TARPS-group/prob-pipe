@@ -254,7 +254,7 @@ class _ProgramStore:
         return body_result
 
     def runs_eagerly(self, body_name: Hashable) -> bool:
-        """Whether a trace of the body named *body_name* failed, so it runs uncompiled at those arguments."""
+        """Whether a trace of the body named *body_name* failed at some arguments, which then run uncompiled."""
         return body_name in _eager_decision_keys(self._decision_record)
 
     def _jitted_body(self, body_name: Hashable, body: Callable[..., Any]) -> Any:
