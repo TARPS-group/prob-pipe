@@ -1495,6 +1495,7 @@ class Operation(Function):
         set_attribute(self, "_route_table", _RouteTable())
         set_attribute(self, "_label_rule", label)
         set_attribute(self, "_expression_rule", None)
+        set_attribute(self, "_input_layout", None)
         if derived_route is not None:
             # A copy carries the derived route's rank, so the caller's route keeps its own.
             derived_route = copy.copy(derived_route)
@@ -1989,6 +1990,8 @@ class Operation(Function):
                 raise ApplicabilityError(
                     f"{self.name}: ConditionalDistributionSpec requires given values"
                 )
+        if self._input_layout is not None:
+            operand_values = dict(self._input_layout(operand_values))
         call = BoundCall(self, MappingProxyType(operand_values), controls)
         result_declaration, deferred = self._plan(call)
         if self._given_subject is not None and argument_values.get("given") is not None:
@@ -2636,3 +2639,14 @@ def _install_expression_rule(op: Operation, rule: Callable[..., Expression | Non
             f"does not declare as parameters"
         )
     object.__setattr__(op, "_expression_rule", rule)
+
+
+def _install_input_layout(
+    op: Operation, layout: Callable[[Mapping[str, Any]], Mapping[str, Any]]
+) -> None:
+    """Install a raw-input layout applied before this operation infers operand specs.
+
+    A layout may arrange raw mappings against a declaration determined by
+    another operand. It preserves constructed terms and their declared order.
+    """
+    object.__setattr__(op, "_input_layout", layout)

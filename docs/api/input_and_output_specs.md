@@ -32,6 +32,43 @@ The values themselves are on [Values and records](values.md).
 
 ## Input and output specs
 
+An `InputSpec` reads another input spec, a mapping, a `RecordSpec`'s top-level
+fields, or an `OutputSpec`'s outputs. Copying an input spec preserves its optional
+inputs. Tuple shapes are shorthand for `NumericArraySpec`, in input declarations
+and keyword output declarations alike:
+
+```python
+from probpipe import InputSpec, OutputSpec, RecordSpec
+
+inputs = InputSpec(mu=(), observations=(100,))
+event = OutputSpec(RecordSpec(mu=(), sigma=()))
+mu_input = InputSpec(event[["mu"]])
+```
+
+Pass a law's `event_spec` directly as `given_spec` when a kernel takes those
+outputs as inputs. Use `event_spec[["mu"]]` to retain one output, or
+`event_spec.without("sigma")` to remove an output. To pass a whole record as one
+input, retain its named group with list selection. These declarations name
+inputs; passing the law itself does not describe their types.
+
+Input list selection retains declaration order and optional flags. Merging
+input specs with `left & right` retains the first type of a shared input after
+checking compatibility. A shared input is optional only when both sides mark it
+optional. A Python parameter's default marks its declared input optional;
+declaring an optional input for a parameter with no default is an error.
+
+Record field order is part of a declaration. An existing record or record spec
+in another order does not conform, including inside a nested record. At function
+input and return boundaries, and when binding a kernel's conditioning values,
+a raw mapping may arrive in any order: the body and returned value receive its
+fields in declaration order. This leaves the caller's mapping unchanged.
+Raw mappings supplied as density values are arranged against the law's event
+spec before type inference, including nested records. Their insertion order
+does not constrain the event layout. A constructed `Record` already has an
+ordered declaration and must conform in that order.
+
+`InputSpec.without` raises `KeyError` for a name it does not declare.
+
 ::: probpipe.InputSpec
 
 ::: probpipe.OutputSpec
