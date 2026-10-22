@@ -92,6 +92,14 @@ def _require_not_called(*args, **kwargs):
     raise AssertionError("JAX traceability should not be required")
 
 
+def _executor_that_ran(evaluation_points):
+    """The executor the running call's evaluation log records for *evaluation_points*, or ``None``."""
+    recorded = _execution.recorded_evaluations(
+        origin=evaluation_points.origin, set_ordinal=evaluation_points._set_ordinal
+    )
+    return recorded[0]["executor"] if recorded else None
+
+
 @pytest.fixture
 def sweep_executors(monkeypatch):
     """The executor that ran each set of evaluation points a sweep asks for, recorded as each set runs."""
@@ -100,7 +108,7 @@ def sweep_executors(monkeypatch):
 
     def recording_evaluate_requested_points(evaluation_points, **options):
         outputs = evaluate_requested_points(evaluation_points, **options)
-        executors.append(_execution.executor_that_ran(evaluation_points))
+        executors.append(_executor_that_ran(evaluation_points))
         return outputs
 
     monkeypatch.setattr(_sweep, "evaluate_requested_points", recording_evaluate_requested_points)
@@ -220,7 +228,7 @@ class TestExecuteSweep:
                 function_name="double",
             )
             (evaluation_points,) = requested
-            executor = _execution.executor_that_ran(evaluation_points)
+            executor = _executor_that_ran(evaluation_points)
 
         assert executor == "thread"
         assert len(evaluation_points) == 3

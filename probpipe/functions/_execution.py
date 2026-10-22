@@ -29,7 +29,11 @@ try:
 except ImportError:
     task = flow = NO_CACHE = None
 
-from ..core._call_context import _AUTOMATIC_SELECTION, current_call_context
+from ..core._call_context import (
+    _AUTOMATIC_SELECTION,
+    _jax_tracing_active,
+    current_call_context,
+)
 from ..core._dispatch import Feasibility
 from ..core._evaluation_points import (
     EvaluationOutcomes,
@@ -321,10 +325,11 @@ def warn_if_named_executor_ran_nothing() -> None:
     """Warn that the executor the running call named ran no set of evaluation points, in it or in any call under it.
 
     Only a call that named its executor itself warns, when it succeeds. A
-    call made inside a route probe or inside a body that JAX maps warns
-    nothing, and neither does a call whose executor already gave a warning,
-    such as a fallback's. When ``jax`` compiled the call's evaluation points
-    in place of the executor, the warning says so.
+    call made inside a route probe, inside a body that JAX maps, or while JAX
+    stages a program warns nothing, since the call that runs that program
+    reports what its evaluations ran on. Neither does a call whose executor
+    already gave a warning, such as a fallback's. When ``jax`` compiled the
+    call's evaluation points in place of the executor, the warning says so.
     """
     call_context = current_call_context()
     execution_choice = call_context.execution_choice
@@ -335,6 +340,7 @@ def warn_if_named_executor_ran_nothing() -> None:
         or named_executor_use.ran_a_set
         or named_executor_use.warned
         or _context._workflow_side_effects_forbidden()
+        or _jax_tracing_active()
     ):
         return
     named_executor = execution_choice.executor_name

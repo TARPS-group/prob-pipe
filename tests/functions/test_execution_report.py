@@ -23,11 +23,16 @@ from probpipe import (
     NumericArrayBatch,
     NumericArraySpec,
     ResolutionError,
+    conditional_distribution,
     function,
     mean,
+    sample,
     workflow_run,
 )
-from probpipe.core._dispatch import MethodInfo
+from probpipe.core import _executors
+from probpipe.core._dispatch import Feasibility, MethodInfo
+from probpipe.core._evaluation_points import EvaluationOutcomes
+from probpipe.core._executors import EvaluationExecutor, executor_registry
 
 #: The number of draws each lifted call in these tests takes.
 _NUM_DRAWS = 64
@@ -51,6 +56,42 @@ def _prior():
 
 def _cells():
     return NumericArrayBatch(jnp.arange(3.0), level_names=("cell",), label="cells")
+
+
+class _RefusingExecutor(EvaluationExecutor):
+    """A user's executor that refuses every set of evaluation points."""
+
+    name = "refuses_everything"
+    description = "Refuse every set of evaluation points."
+
+    def check(self, evaluation_points, /):
+        return Feasibility(False, description="it refuses every set")
+
+    def execute(self, evaluation_points, /):
+        shared_payload = evaluation_points.shared_payload()
+        return EvaluationOutcomes.merge(
+            chunk.run(shared_payload) for chunk in evaluation_points.chunks()
+        )
+
+
+@pytest.fixture
+def _refusing_executor_registered(monkeypatch):
+    """The registry holds the built-in executors and one that refuses every set, for one test."""
+    registry = _executors._ExecutorRegistry()
+    for executor_name in ("jax", "sequential", "thread", "process"):
+        registry.register(executor_registry.get_method(executor_name))
+    registry.register(_RefusingExecutor())
+    monkeypatch.setattr(_executors, "executor_registry", registry)
+
+
+def _model_with_an_opaque_kernel():
+    """A joint whose kernel calls ``forward``, which runs through an embedded call."""
+
+    @conditional_distribution(given_spec={"theta": NumericArraySpec((), "float32")})
+    def likelihood(theta):
+        return Normal("y", forward(theta), 1.0)
+
+    return likelihood & _prior()
 
 
 def _ran_nothing_warnings(caught):
@@ -220,6 +261,48 @@ class TestAnExecutorThatRanNothingWarns:
         ):
             warnings.simplefilter("always")
             failing.using(executor="thread", max_evaluations=_NUM_DRAWS)(_prior())
+
+        assert _ran_nothing_warnings(caught) == []
+
+    def test_an_operation_that_evaluates_no_user_callable_warns(self):
+        with workflow_run(seed=0), warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            mean.using(executor="thread")(_prior())
+
+        assert _ran_nothing_warnings(caught) == [
+            "mean named executor='thread', but the call evaluated no user callable, "
+            "so 'thread' ran nothing"
+        ]
+
+    def test_an_operation_whose_embedded_call_ran_on_its_executor_does_not_warn(self):
+        model = _model_with_an_opaque_kernel()
+
+        with workflow_run(seed=0), warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            sample.using(executor="thread")(model, 3)
+
+        assert _ran_nothing_warnings(caught) == []
+
+    @pytest.mark.usefixtures("_refusing_executor_registered")
+    def test_a_fallback_warns_once_and_no_more(self):
+        model = _model_with_an_opaque_kernel()
+
+        with workflow_run(seed=0), warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            sample.using(executor="refuses_everything")(model, 3)
+
+        messages = [str(warning.message) for warning in caught]
+        assert any("they run on 'sequential' instead" in message for message in messages)
+        assert _ran_nothing_warnings(caught) == []
+
+    def test_a_call_opened_while_a_kernel_is_traced_does_not_warn(self):
+        @conditional_distribution(given_spec={"theta": NumericArraySpec((), "float32")})
+        def likelihood(theta):
+            return Normal("y", growth.using(executor="thread")(theta), 1.0)
+
+        with workflow_run(seed=0), warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            sample(likelihood & _prior(), 3)
 
         assert _ran_nothing_warnings(caught) == []
 
