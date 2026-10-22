@@ -18,19 +18,20 @@ import pytest
 
 import probpipe
 import probpipe.families as families
-
-_ROOT = Path(__file__).resolve().parents[2]
-_CATALOG = _ROOT / "design" / "07-distribution-catalog.md"
-_STRUCTURE = _ROOT / "design" / "package-structure.md"
-
 from tests._design_conformance import (
     DESIGN_IS_CHECKED_OUT,
+    PendingMembers,
     declared_name,
     design_blocks,
     findings_of_member,
     pending_member_cases,
     unexpected_findings,
 )
+
+_ROOT = Path(__file__).resolve().parents[2]
+_CATALOG = _ROOT / "design" / "07-distribution-catalog.md"
+_STRUCTURE = _ROOT / "design" / "package-structure.md"
+
 
 pytestmark = pytest.mark.skipif(
     not DESIGN_IS_CHECKED_OUT, reason="the design reference is not checked out"
@@ -58,11 +59,10 @@ _CURRENT_MODULES: dict[str, str] = {}
 #: Declarations of these sections that the distribution layer owns and checks.
 _OTHER_PACKAGES = frozenset({"EmpiricalDistribution"})
 
-#: The members the implementation does not match yet, by the name a finding
-#: gives them: the problem the check reports for each, and the behavior it
-#: awaits. Each has a pending case of its own, and any other difference fails,
-#: including another problem with a listed member.
-_PENDING: dict[str, tuple[str, str]] = {}
+#: The members that differ from the design today, by finding name, each with
+#: the problem the check reports and the behavior it awaits. The rule is stated
+#: in ``tests/_design_conformance.py``.
+_PENDING: PendingMembers = {}
 
 #: New declarations the catalog does not define yet; each has a pending case above.
 _UNBUILT: frozenset[str] = frozenset()
@@ -87,16 +87,27 @@ def _resolver(section: str):
     return resolve
 
 
-def _cases() -> list:
+def _declarations() -> list:
+    """The declarations of the catalog's sections that this package realizes."""
     if not DESIGN_IS_CHECKED_OUT:
         return []
-    cases = []
-    for declaration in design_blocks().declarations(_SECTIONS):
-        name = declared_name(declaration)
-        if name in _OTHER_PACKAGES:
-            continue
-        cases.append(pytest.param(declaration, id=f"{declaration.section}-{name}"))
-    return cases
+    return [
+        declaration
+        for declaration in design_blocks().declarations(_SECTIONS)
+        if declared_name(declaration) not in _OTHER_PACKAGES
+    ]
+
+
+def _findings(declaration) -> list:
+    """The tool's findings for *declaration*, read in its section's modules."""
+    return design_blocks().check([declaration], _resolver(declaration.section))
+
+
+def _cases() -> list:
+    return [
+        pytest.param(declaration, id=f"{declaration.section}-{declared_name(declaration)}")
+        for declaration in _declarations()
+    ]
 
 
 def _listed_families() -> list[str]:
@@ -111,9 +122,8 @@ def _new_declarations() -> dict[str, str]:
     """Each declared name that ``families/`` defines, with its section."""
     return {
         declared_name(declaration): declaration.section
-        for declaration in design_blocks().declarations(_SECTIONS)
+        for declaration in _declarations()
         if declared_name(declaration) not in _CURRENT_MODULES
-        and declared_name(declaration) not in _OTHER_PACKAGES
         and declared_name(declaration) not in _UNBUILT
     }
 
@@ -121,20 +131,12 @@ def _new_declarations() -> dict[str, str]:
 class TestDeclarationsAreImplemented:
     @pytest.mark.parametrize("declaration", _cases())
     def test_the_declaration_matches_the_implementation(self, declaration):
-        findings = design_blocks().check([declaration], _resolver(declaration.section))
-        unexpected = unexpected_findings(findings, _PENDING)
+        unexpected = unexpected_findings(_findings(declaration), _PENDING)
         assert not unexpected, "; ".join(unexpected)
 
     @pytest.mark.parametrize("member_name", pending_member_cases(_PENDING))
     def test_a_pending_member_matches_its_declaration(self, member_name):
-        declarations = [
-            d
-            for d in design_blocks().declarations(_SECTIONS)
-            if declared_name(d) not in _OTHER_PACKAGES
-        ]
-        findings = findings_of_member(
-            member_name, declarations, lambda declaration: _resolver(declaration.section)
-        )
+        findings = findings_of_member(member_name, _declarations(), _findings)
         assert not findings, "; ".join(findings)
 
     def test_each_unbuilt_declaration_is_defined(self):

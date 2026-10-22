@@ -19,6 +19,7 @@ implementation lacks or declares differently.
 
 from __future__ import annotations
 
+import abc
 import argparse
 import ast
 import importlib
@@ -371,10 +372,21 @@ def _compare_signature(
 
 
 def _default_sources(default: Any) -> set[str]:
-    """The ways a declaration may write *default* as source: its ``str`` and ``repr``, and a class's or function's name."""
-    sources = {str(default), repr(default)}
-    if inspect.isclass(default) or inspect.isfunction(default):
-        sources |= {default.__name__, default.__qualname__}
+    """The ways a declaration may write *default* as source.
+
+    A value is written as its ``repr``, or as its ``str`` unless it is a
+    string, so the string ``"GaussianKernel"`` is written quoted. A class or
+    another callable with a name is written by its name or its qualified name.
+    """
+    sources = {repr(default)}
+    if not isinstance(default, str):
+        sources.add(str(default))
+    if callable(default):
+        sources |= {
+            name
+            for name in (getattr(default, "__name__", None), getattr(default, "__qualname__", None))
+            if isinstance(name, str)
+        }
     return sources
 
 
@@ -417,6 +429,9 @@ def check(
             mro_names = {klass.__name__ for klass in implemented.__mro__}
             for base in decl.bases:
                 base_name = re.sub(r"\[.*\]$", "", base).split(".")[-1]
+                # A class whose metaclass is ABCMeta is abstract as a subclass of ABC is.
+                if base_name == "ABC" and isinstance(implemented, abc.ABCMeta):
+                    continue
                 if base_name not in mro_names:
                     findings.append(
                         Finding(decl.section, decl.name, f"does not derive from {base_name}")

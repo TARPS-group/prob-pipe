@@ -387,8 +387,9 @@ GitHub Actions (`.github/workflows/ci.yml`):
   notebooks that transitively import it. Edit that committed helper, not inline
   workflow scripts.
 - The `test` job also selects the tests that read files rather than import the
-  changed modules. A change to `design/` runs the four `test_design_conformance.py`
-  files and `tests/docs/`, and a change to `probpipe/`, a rule document, an agent
+  changed modules. A change to `design/`, to `scripts/design/`, or to the conformance helper
+  `tests/_design_conformance.py` runs the five `test_design_conformance.py`
+  files, `tests/docs/`, and `tests/ci/`, and a change to `probpipe/`, a rule document, an agent
   file, or the CHANGELOG runs `tests/docs/`.
 - The `test` job runs the full suite on a push, on the nightly run, and for a
   pull request that changes a dependency file (`pyproject.toml`, `uv.lock`, or

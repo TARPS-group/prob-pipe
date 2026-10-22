@@ -28,9 +28,11 @@ from probpipe.values import _function_base
 from tests._design_conformance import (
     DESIGN_IS_CHECKED_OUT,
     NOT_IMPLEMENTED,
+    PendingMembers,
     declared_name,
     design_blocks,
     findings_of_member,
+    module_resolver,
     pending_member_cases,
     unexpected_findings,
 )
@@ -91,11 +93,10 @@ _EXAMPLES = frozenset(
 
 _AWAITS_REPORTING = "check's report of how each callable's evaluation points will run (V.9)"
 
-#: The members the implementation does not match yet, by the name a finding
-#: gives them: the problem the check reports for each, and the behavior it
-#: awaits. Each has a pending case of its own, and any other difference fails,
-#: including another problem with a listed member.
-_PENDING: dict[str, tuple[str, str]] = {
+#: The members that differ from the design today, by finding name, each with
+#: the problem the check reports and the behavior it awaits. The rule is stated
+#: in ``tests/_design_conformance.py``.
+_PENDING: PendingMembers = {
     "Function.__getitem__": (
         NOT_IMPLEMENTED,
         "the function of the outputs at paths, f[paths], is not implemented",
@@ -122,51 +123,58 @@ _PENDING: dict[str, tuple[str, str]] = {
 _PROSE_DECLARED = frozenset({"function", "workflow_run", "replay_run", "evaluation_rule_registry"})
 
 
-def _resolve(name: str):
-    for module in _MODULES:
-        if hasattr(module, name):
-            return getattr(module, name)
-    return None
+_resolve = module_resolver(_MODULES)
+
+
+def _declarations() -> list:
+    """The declarations of the sections that this package realizes."""
+    if not DESIGN_IS_CHECKED_OUT:
+        return []
+    return [
+        declaration
+        for declaration in design_blocks().declarations(_SECTIONS)
+        if declared_name(declaration) not in _EXAMPLES
+    ]
+
+
+def _findings(declaration) -> list:
+    """The tool's findings for *declaration*."""
+    return design_blocks().check([declaration], _resolve)
 
 
 def _cases() -> list:
-    if not DESIGN_IS_CHECKED_OUT:
-        return []
-    tool = design_blocks()
-    cases = []
-    for declaration in tool.declarations(_SECTIONS):
-        name = declared_name(declaration)
-        if name in _EXAMPLES:
-            continue
-        cases.append(pytest.param(declaration, id=f"{declaration.section}-{name}"))
-    return cases
+    return [
+        pytest.param(declaration, id=f"{declaration.section}-{declared_name(declaration)}")
+        for declaration in _declarations()
+    ]
 
 
 class TestDeclarationsAreImplemented:
     @pytest.mark.parametrize("declaration", _cases())
     def test_the_declaration_matches_the_implementation(self, declaration):
-        unexpected = unexpected_findings(design_blocks().check([declaration], _resolve), _PENDING)
+        unexpected = unexpected_findings(_findings(declaration), _PENDING)
         assert not unexpected, "; ".join(unexpected)
 
     @pytest.mark.parametrize("member_name", pending_member_cases(_PENDING))
     def test_a_pending_member_matches_its_declaration(self, member_name):
-        declarations = [
-            d for d in design_blocks().declarations(_SECTIONS) if declared_name(d) not in _EXAMPLES
-        ]
-        findings = findings_of_member(member_name, declarations, lambda declaration: _resolve)
+        findings = findings_of_member(member_name, _declarations(), _findings)
         assert not findings, "; ".join(findings)
 
     def test_the_examples_are_the_only_declarations_skipped(self):
-        tool = design_blocks()
-        declared = {declared_name(d) for d in tool.declarations(_SECTIONS)}
+        design_blocks_tool = design_blocks()
+        declared = {
+            declared_name(declaration) for declaration in design_blocks_tool.declarations(_SECTIONS)
+        }
         assert declared >= _EXAMPLES
 
 
 class TestExportsAreDeclared:
     def test_every_exported_engine_name_is_declared(self):
         """A public name the reference does not declare is drift."""
-        tool = design_blocks()
-        declared = {declared_name(d) for d in tool.declarations(_SECTIONS)} - _EXAMPLES
+        design_blocks_tool = design_blocks()
+        declared = {
+            declared_name(declaration) for declaration in design_blocks_tool.declarations(_SECTIONS)
+        } - _EXAMPLES
         exported = set(functions.__all__) | set(values.__all__)
         undeclared = exported - declared - _PROSE_DECLARED
         assert not undeclared, sorted(undeclared)

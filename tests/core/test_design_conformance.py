@@ -35,9 +35,11 @@ from probpipe.linalg import linear_operator
 from tests._design_conformance import (
     DESIGN_IS_CHECKED_OUT,
     NOT_IMPLEMENTED,
+    PendingMembers,
     declared_name,
     design_blocks,
     findings_of_member,
+    module_resolver,
     pending_member_cases,
     unexpected_findings,
 )
@@ -85,11 +87,10 @@ _MODULES = (
     linear_operator,
 )
 
-#: The members the implementation does not match yet, by the name a finding
-#: gives them: the problem the check reports for each, and the behavior it
-#: awaits. Each has a pending case of its own, and any other difference fails,
-#: including another problem with a listed member.
-_PENDING: dict[str, tuple[str | tuple[str, ...], str]] = {
+#: The members that differ from the design today, by finding name, each with
+#: the problem the check reports and the behavior it awaits; the rule is in
+#: ``tests/_design_conformance.py``.
+_PENDING: PendingMembers = {
     "InputSpec.rename": (
         NOT_IMPLEMENTED,
         "renaming the inputs of an input spec, input_spec.rename(...), is not implemented",
@@ -109,11 +110,8 @@ _PENDING: dict[str, tuple[str | tuple[str, ...], str]] = {
     ),
     "Constraint": (
         "does not derive from ABC",
-        "a constraint class is not an abstract base class",
-    ),
-    "TrackedTerm": (
-        "does not derive from ABC",
-        "the tracked base is not an abstract base class",
+        "Constraint is a plain class whose check raises NotImplementedError, not an "
+        "abstract base class",
     ),
     "TrackedTerm.with_provenance": (
         "declares parameters ['p'], has ['provenance']",
@@ -121,15 +119,17 @@ _PENDING: dict[str, tuple[str | tuple[str, ...], str]] = {
     ),
     "TrackedTerm.spec": (
         "is not declared",
-        "the tracked base sets spec on each instance, with no annotation on the class",
+        "each kind defines spec as its own property, and the tracked base declares none",
     ),
     "TrackedTerm.annotations": (
         "is not declared",
-        "the tracked base sets annotations on each instance, with no annotation on the class",
+        "annotations is a property of the Annotated mixin that each kind adds, where the "
+        "design puts it on the tracked base",
     ),
     "ParentInfo.name": (
         "is not declared",
-        "a provenance parent's record calls the parent's name label, where the design calls it name",
+        "ParentInfo stores the parent's label in a field named label, where the design "
+        "names the field name",
     ),
     "provenance_ancestors": (
         "declares parameters ['term'], has ['node']",
@@ -145,23 +145,24 @@ _PENDING: dict[str, tuple[str | tuple[str, ...], str]] = {
     ),
     "Batch.output": (
         NOT_IMPLEMENTED,
-        "the batch at one output of a batch, b.output(name), is not implemented",
+        "the batch at one output of a batch, b.output(name), is not implemented on any batch",
     ),
     "Batch.without": (
         NOT_IMPLEMENTED,
-        "a batch without some paths, b.without(*paths), is not implemented",
+        "the base Batch declares no without, and only RecordBatch defines one",
     ),
     "Batch.rename": (
         NOT_IMPLEMENTED,
-        "renaming the paths of a batch of any kind, b.rename(...), is not implemented",
+        "the base Batch declares no rename, and only RecordBatch defines one",
     ),
     "Batch.__and__": (
         NOT_IMPLEMENTED,
-        "merging two batches of any kind with & is not implemented",
+        "the base Batch declares no &, and only RecordBatch defines one",
     ),
     "NamedTree.replace": (
         "declares parameters ['path', 'leaf'], has ['_updates', 'updates']",
-        "replace takes a mapping of updates, where the design declares one path and its leaf",
+        "replace takes its updates as a mapping or as keywords, (_updates=None, /, "
+        "**updates), where the design declares one path and its leaf",
     ),
     "NamedTree.__and__": (
         "declares other as POSITIONAL_ONLY, has POSITIONAL_OR_KEYWORD",
@@ -174,11 +175,13 @@ _PENDING: dict[str, tuple[str | tuple[str, ...], str]] = {
     ),
     "LinOp.solve": (
         "declares parameters ['b'], has ['b', 'kwargs']",
-        "solve takes keyword options the declaration leaves out",
+        "solve takes **kwargs, which the base ignores and TriangularLinOp reads as "
+        "unit_diagonal, where the design declares b alone",
     ),
     "LinOp.cholesky": (
         "declares parameters [], has ['lower', 'kwargs']",
-        "cholesky takes lower and keyword options the declaration leaves out",
+        "cholesky takes lower, which chooses the upper factor, and **kwargs, which it "
+        "ignores, where the design declares no parameter",
     ),
     "LinOp.with_flag": (
         NOT_IMPLEMENTED,
@@ -204,43 +207,35 @@ _PENDING: dict[str, tuple[str | tuple[str, ...], str]] = {
 }
 
 
-def _resolve(name: str):
-    for module in _MODULES:
-        if hasattr(module, name):
-            return getattr(module, name)
-    return None
+_resolve = module_resolver(_MODULES)
+
+
+def _declarations() -> list:
+    """The declarations of the sections."""
+    if not DESIGN_IS_CHECKED_OUT:
+        return []
+    return list(design_blocks().declarations(_SECTIONS))
+
+
+def _findings(declaration) -> list:
+    """The tool's findings for *declaration*."""
+    return design_blocks().check([declaration], _resolve)
 
 
 def _cases() -> list:
-    if not DESIGN_IS_CHECKED_OUT:
-        return []
     return [
         pytest.param(declaration, id=f"{declaration.section}-{declared_name(declaration)}")
-        for declaration in design_blocks().declarations(_SECTIONS)
+        for declaration in _declarations()
     ]
 
 
 class TestDeclarationsAreImplemented:
     @pytest.mark.parametrize("declaration", _cases())
     def test_the_declaration_matches_the_implementation(self, declaration):
-        unexpected = unexpected_findings(design_blocks().check([declaration], _resolve), _PENDING)
+        unexpected = unexpected_findings(_findings(declaration), _PENDING)
         assert not unexpected, "; ".join(unexpected)
 
     @pytest.mark.parametrize("member_name", pending_member_cases(_PENDING))
     def test_a_pending_member_matches_its_declaration(self, member_name):
-        findings = findings_of_member(
-            member_name,
-            design_blocks().declarations(_SECTIONS),
-            lambda declaration: _resolve,
-        )
+        findings = findings_of_member(member_name, _declarations(), _findings)
         assert not findings, "; ".join(findings)
-
-    def test_every_declared_name_is_defined(self):
-        """A declared class or function no module defines is drift, not a pending member."""
-        undefined = [
-            declared_name(declaration)
-            for declaration in design_blocks().declarations(_SECTIONS)
-            if getattr(declaration, "member", None) is None
-            and _resolve(declared_name(declaration)) is None
-        ]
-        assert not undefined, undefined
