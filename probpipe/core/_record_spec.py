@@ -138,21 +138,20 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
     **Terminology.** Used precisely throughout this class:
 
     - **field** — one named object in the collection (here, a value spec),
-      addressed by its full ``/``-delimited **key** (path from the root, e.g.
-      ``"physics/mass"``; a single name for a flat template). The mapping
-      protocol (:meth:`keys` / :meth:`values` / :meth:`items` / iteration /
-      ``len`` / ``in`` / ``[]``) ranges over the fields, keyed by path.
+      addressed by its ``/``-delimited **path** from the root, such as
+      ``"physics/mass"``, or a single name for a flat template.
+      :meth:`keys`, :meth:`values`, :meth:`items`, iteration, and ``len``
+      range over the fields, keyed by path.
     - **leaf** — a *terminal* node: a :class:`TermSpec`. A nested
-      ``RecordSpec`` is an *internal node*, not a leaf; the fields are the
-      leaves.
-    - **key vs. path** — a **key** addresses a field (a leaf); a **path** may
-      also address an interior node. The mapping operators (``[]`` / ``in`` /
-      iteration) are leaf-keyed, so a partial path is *not* a member and
-      ``template["physics"]`` (a subtree) raises ``KeyError`` — reach a subtree
-      with :meth:`at_path`, and use :attr:`children` for the one-level view. The
-      same path strings index a template or the value it describes
-      (``template["physics/mass"]`` / ``record["physics/mass"]``); this
-      collection protocol is shared with :class:`~probpipe.Record`.
+      ``RecordSpec`` is a **group**, not a leaf; the fields are the leaves.
+    - **indexing** — ``[]`` takes a path or a list of paths, as
+      :class:`~probpipe.core.named_tree.NamedTree` states: one path gives the
+      spec at that node, a value spec or a group's ``RecordSpec``, and a list
+      of paths gives the template cut down to those nodes, each at its own
+      path. ``p in template`` holds for the path of a field or a group. The
+      same paths index a template or the value it describes
+      (``template["physics"]`` / ``record["physics"]``); this collection
+      protocol is shared with :class:`~probpipe.Record`.
     - **canonical leaf order** — the order in which leaves are traversed:
       depth-first, following each level's insertion order. This is the single
       ordering every leaf-wise operation uses. :meth:`keys` is its canonical
@@ -208,10 +207,10 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
     leaves and describes the expected structure for type-checking and
     vectorization. Leaves are stored as frozen, hashable spec objects, so a
     template is itself hashable (usable as a jit / treedef cache key).
-    ``__getitem__`` returns the stored value spec (and raises on an interior
-    node — see *Terminology*); the enumeration of leaves is :meth:`keys`, and
-    per-leaf array shapes (on a numeric template) live on
-    :attr:`~NumericRecordSpec.leaf_shapes`.
+    ``__getitem__`` at a field's path returns the stored value spec, and at a
+    group's path the group's ``RecordSpec`` (see *Terminology*); the
+    enumeration of leaves is :meth:`keys`, and per-leaf array shapes (on a
+    numeric template) live on :attr:`~NumericRecordSpec.leaf_shapes`.
 
     Symbolic array dimensions make a template polymorphic. :attr:`free_dims`
     returns their names and :attr:`is_concrete` is true only when all dimensions

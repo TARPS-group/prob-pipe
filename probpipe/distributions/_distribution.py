@@ -31,9 +31,11 @@ from ..core._expression import _GENERIC_LAW_SYMBOL, Named, Signature
 from ..core._immutable import transient_memo
 from ..core._record_spec import RecordSpec
 from ..core._repr import call_repr, format_names, public_class_name, term_repr, type_name
+from ..core._shapes import PathsLike, _as_paths, _missing_path
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
-from ..core._specs import OutputSpec
+from ..core._specs import _VALUES_WITHOUT_RECORD, OutputSpec, _output_record
 from ..core.constraints import _known_equal
+from ..core.named_tree import _PATH_SEP
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import Annotated, TrackedTerm, _as_raw_form, _is_raw_form, _TrackedTermMeta
@@ -244,23 +246,114 @@ def _record_default_expression(term: Any) -> None:
         object.__setattr__(term, "_default_expression", term._expression)
 
 
-#: The message for a selection of field paths that names none.
-_EMPTY_SELECTION = "select at least one field path; got an empty tuple"
+def _is_event_path(declaration: OutputSpec, path: Any) -> bool:
+    """Whether *path* is a ``str`` and an event path of a law declared by *declaration*.
 
-
-def _shared_final_names(paths: tuple[str, ...] | list[str]) -> str:
-    """The message that two of the selected *paths* end in the same name.
-
-    The selected fields are named by the last part of each path, so two such
-    paths would give the result two fields of one name.
+    The event paths are the paths of the record of the declaration's
+    outputs, so a whole term's output is one of them. As an interim
+    implementation detail, the one output of an event spec positional over a
+    law also selects the law itself, until such a spec has no outputs.
     """
-    finals = [path.rsplit("/", 1)[-1] for path in paths]
-    shared = sorted({final for final in finals if finals.count(final) > 1})
-    names = repr(shared[0]) if len(shared) == 1 else str(shared)
-    return (
-        f"cannot select {list(paths)} together: more than one path ends in {names}, which "
-        f"would give the result two fields of the same name"
+    if not isinstance(path, str):
+        return False
+    try:
+        record = _output_record(declaration)
+    except TypeError:
+        outputs = declaration.outputs
+        return len(outputs) == 1 and path in outputs
+    return path in record
+
+
+def _has_event_paths(declaration: OutputSpec) -> bool:
+    """Whether a law declared by *declaration* has paths: its draws are records."""
+    return isinstance(declaration.term_spec, RecordSpec)
+
+
+def _not_an_event_path(
+    declaration: OutputSpec,
+    label: str,
+    path: str,
+    requested: tuple[str, ...] = (),
+    *,
+    action: str | None = None,
+) -> KeyError | TypeError:
+    """The error for *path*, which is not an event path of the law *label* declared by *declaration*.
+
+    A law over a record lacks that path, which is a ``KeyError`` listing the
+    paths it has, as :func:`~probpipe.core._shapes._missing_path` words it for
+    every term; *requested* is the tuple of paths that held *path*, or ``()``.
+    A law over any other value has no paths to look up, which is a
+    ``TypeError`` whose message completes *action*, by default indexing the
+    law.
+    """
+    if _has_event_paths(declaration):
+        paths = _output_record(declaration)._node_paths()
+        return KeyError(
+            _missing_path(path, owner=repr(label), available=paths, requested=requested)
+        )
+    failed = f"cannot {action or f'index {label!r} by'} {path!r}"
+    values = _VALUES_WITHOUT_RECORD.get(type(declaration.term_spec).__name__)
+    if values is None:
+        return TypeError(f"{failed}, since its draws are single values with no paths")
+    return TypeError(
+        f"{failed}, since its draws are {values}, and indexing into them by path is not "
+        f"supported yet"
     )
+
+
+def _read_event_paths(
+    declaration: OutputSpec,
+    label: str,
+    paths: Any,
+    *,
+    action: str,
+    tuple_given: bool | None = None,
+) -> str | tuple[str, ...]:
+    """*paths*, read as event paths of the law *label* declared by *declaration*.
+
+    One path is returned as it is, and a list of paths in the event's
+    canonical order, whatever order it was given in.
+
+    Parameters
+    ----------
+    declaration : OutputSpec
+        The law's event spec.
+    label : str
+        The law's label, which the messages name.
+    paths : Any
+        One path, or a list or tuple of paths, as the caller gave them.
+    action : str
+        What the caller was asked to do, which the reader's messages complete.
+    tuple_given : bool or None
+        Whether the caller was given its list of paths as a tuple, which a
+        missing path's message reads; ``None`` reads it from *paths*.
+
+    Returns
+    -------
+    str or tuple of str
+        The one path, or the list of paths in canonical order.
+
+    Raises
+    ------
+    KeyError
+        If the law is over a record and a path is not one of its paths.
+    TypeError
+        If *paths* is neither a string nor a list or tuple of strings, or the
+        law is over a value with no paths, such as an array.
+    ValueError
+        If a path is empty or has an empty name, or a list of paths is empty,
+        names a path twice, or holds a path inside another.
+    """
+    read_paths = _as_paths(paths, action=action)
+    listed = read_paths if isinstance(read_paths, tuple) else (read_paths,)
+    hinted = isinstance(paths, tuple) if tuple_given is None else tuple_given
+    for path in listed:
+        if not _is_event_path(declaration, path):
+            requested = listed if hinted and isinstance(read_paths, tuple) else ()
+            raise _not_an_event_path(declaration, label, path, requested, action=action)
+    if isinstance(read_paths, str):
+        return read_paths
+    return _output_record(declaration)._ordered_paths(read_paths)
 
 
 def _no_free_dims(term: Any, unbound: set[str], free: set[str] | frozenset[str]) -> str:
@@ -398,7 +491,7 @@ def _array_leaves(declaration: OutputSpec) -> dict[str, NumericArraySpec]:
             leaves[path] = spec
         elif isinstance(spec, RecordSpec):
             for child, child_spec in spec.children.items():
-                visit(f"{path}/{child}", child_spec)
+                visit(f"{path}{_PATH_SEP}{child}", child_spec)
 
     for output_name, spec in declaration.outputs.items():
         visit(output_name, spec)
@@ -1020,20 +1113,24 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     # a law iterable through it.
     __iter__ = None
 
-    def __getitem__(self, key: str | tuple[str, ...]) -> Distribution:
-        """The law itself at a whole term's output, or the field view at another event path.
+    def __getitem__(self, key: PathsLike) -> Distribution:
+        """The law itself at a whole term's output, or the field view at a path or a list of paths.
 
         A whole-term law is itself under its output, so ``d[name]`` returns
         ``d``; the output is fixed at construction, so after ``with_label`` the
         law is still addressed by it. Any other event path, an output that is a
         record's field or a path below a whole record's output, gives the
-        ``FieldView`` of the node there, which holds a reference to this law, and
-        a tuple of paths gives the view of their selection.
+        ``FieldView`` of the node there, which holds a reference to this law and
+        gives the node whole under the path's last name. A list or a tuple of
+        paths gives the view over the record that keeps each node at its own
+        path, in this law's order, so ``grouped["a", "g/c"]`` draws records
+        ``{a, g: {c}}``. A tuple is a list of paths; a nested path is written
+        with ``/``.
 
         Parameters
         ----------
-        key : str or tuple of str
-            An event path, which starts with an output's name, or a tuple of event
+        key : str, or list or tuple of str
+            An event path, which starts with an output's name, or a list of event
             paths to view jointly.
 
         Returns
@@ -1044,27 +1141,26 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Raises
         ------
         KeyError
-            If *key* is not an event path of this law, or names one that is not.
+            If this law is over a record and a path is not one of its paths.
         TypeError
-            If *key* is neither a string nor a tuple of strings.
+            If *key* is neither a string nor a list or tuple of strings, or
+            this law is over a value with no paths, such as an array.
         ValueError
-            If *key* is an empty tuple, or two selected paths share their final
-            segment.
+            If a path is empty or has an empty name, or a list of paths is
+            empty, names a path twice, or holds a path inside another.
         """
-        if isinstance(key, str) and key == _single_output_name(self.event_spec):
+        read_paths = _read_event_paths(
+            self.event_spec, self.label, key, action=f"index {self.label!r} by"
+        )
+        if read_paths == _single_output_name(self.event_spec):
             return self
         if _field_view_factory is None:
             raise RuntimeError("the field view is not installed; import probpipe")
-        try:
-            return _field_view_factory(self, key)
-        except KeyError as error:
-            requested = key if isinstance(key, tuple) else (key,)
-            if len(error.args) == 1 and error.args[0] in requested:
-                raise KeyError(
-                    f"{error.args[0]!r} is not an event path of {self.label!r}; its fields: "
-                    f"{list(self.event_spec.outputs)}"
-                ) from None
-            raise
+        return _field_view_factory(self, read_paths)
+
+    def __contains__(self, path: object) -> bool:
+        """Whether *path* is a ``str`` and ``self[path]`` gives a law: an event path, or a whole term's output."""
+        return _is_event_path(self.event_spec, path)
 
     # -- composition ------------------------------------------------------------
 
@@ -1472,7 +1568,7 @@ def _unify_declarations(
         expected.term_spec,
         actual.term_spec,
         bindings,
-        path if wanted is None else f"{path}/{wanted}",
+        path if wanted is None else f"{path}{_PATH_SEP}{wanted}",
     )
 
 

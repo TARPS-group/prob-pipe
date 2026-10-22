@@ -260,7 +260,7 @@ class TestFieldAccess:
     def test_item(self, v):
         np.testing.assert_allclose(float(v["K"]), 70.0, rtol=1e-5)
 
-    def test_key_path_tuple(self):
+    def test_a_tuple_of_paths_cuts_the_record_down(self):
         v = Record(
             {
                 "params": Record(
@@ -274,7 +274,11 @@ class TestFieldAccess:
             },
             label="r",
         )
-        np.testing.assert_allclose(float(v["params", "r"]), 1.8, rtol=1e-5)
+        # A tuple is a list of paths: the record cut down to those nodes.
+        cut = v["params/r", "obs"]
+        assert cut.keys() == ("params/r", "obs/y")
+        assert cut.label == "(params/r, obs)"
+        np.testing.assert_allclose(float(cut["params/r"]), 1.8, rtol=1e-5)
 
     def test_key_path_string(self):
         v = Record(
@@ -330,7 +334,7 @@ class TestFieldAccess:
             {"a": np.array([1.0, 2.0])},
             label="r",
         )
-        with pytest.raises(KeyError, match="is a field, not a group"):
+        with pytest.raises(KeyError, match="unknown path 'a/b' in 'r'"):
             v["a/b"]
         # __contains__ swallows the same case to False.
         assert "a/b" not in v
@@ -365,7 +369,7 @@ class TestFieldAccess:
             v["nonexistent"]
 
     def test_bad_key_type_raises(self, v):
-        with pytest.raises(TypeError, match="key must be str"):
+        with pytest.raises(TypeError, match="it must be a path or a list of paths, got int"):
             v[42]
 
 
@@ -1101,7 +1105,7 @@ class TestConversion:
         nr = outer.to_numeric()
         assert isinstance(nr, NumericRecord)
         assert isinstance(nr.at_path("inner"), NumericRecord)
-        assert nr["inner", "a"] == 1.0
+        assert nr["inner"]["a"] == nr["inner/a"] == 1.0
         # Deterministic: a second conversion yields the same structure.
         nr2 = outer.to_numeric()
         assert nr.fields == nr2.fields

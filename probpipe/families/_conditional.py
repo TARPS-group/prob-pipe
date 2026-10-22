@@ -33,6 +33,7 @@ from ..core._repr import format_value
 from ..core._spec_base import _unify_specs
 from ..core._specs import InputSpec, NumericArraySpec, OutputSpec, _has_record_outputs
 from ..core.constraints import Constraint, boolean, non_negative_integer, positive, real
+from ..core.named_tree import _PATH_SEP
 
 # The links wrap callables whose annotations a Function resolves at construction.
 from ..custom_types import Array, ArrayLike, PRNGKey
@@ -632,7 +633,7 @@ class _GLMLikelihood(
         bindings: dict[str, int] = {}
         for input_name, value in values.items():
             self.given_spec[input_name]._bind_dims_from_value(
-                value, bindings, f"{self.label}/{input_name}"
+                value, bindings, f"{self.label}{_PATH_SEP}{input_name}"
             )
         remaining = InputSpec(
             {

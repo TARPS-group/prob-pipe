@@ -15,9 +15,10 @@ anonymous ``(N, S)``, while anything stated over ``batch_shape`` — flat
 vectorization above all — applies to a multi-level batch unchanged.
 
 **Indexing.** ``[]`` dispatches on the key. A *position* — an integer, a slice,
-or a tuple of those — addresses the batch axes; a *name*, or a tuple of names,
-addresses a field within every element, which only a batch whose elements have
-fields answers. :meth:`Batch.at_levels` is the by-name counterpart over levels,
+or a tuple of those — addresses the batch axes; a *path*, or a list or a tuple
+of paths, addresses every element by path, which only a batch whose elements
+have paths answers. ``in`` tests the elements' paths, never the elements
+themselves. :meth:`Batch.at_levels` is the by-name counterpart over levels,
 taking one indexer per named level and keeping the levels not named. Either way
 an integer drops its axis and a slice keeps it, a level whose axes are all
 dropped is removed, and the result is an element once the selection reaches one
@@ -49,9 +50,9 @@ normalization for :meth:`Batch.at_levels`, and the identity a view derives. A
 concrete batch supplies two hooks, :meth:`Batch._element_at` and
 :meth:`Batch._sub_batch_at`, which present an element or a sub-batch — a view
 over the same storage, not a copy of it — at a normalized positional index. A
-third, :meth:`Batch._at_fields`, addresses the *fields* of an element and is
-supplied only by a batch whose elements have any: ``[]`` dispatches on the key
-type, so a name reaches the elements and a position reaches the axes. Renaming a
+third, :meth:`Batch._at_paths`, addresses the elements by path and is
+supplied only by a batch whose elements have paths: ``[]`` dispatches on the key
+type, so a path reaches the elements and a position reaches the axes. Renaming a
 level needs no hook at all: it touches no axes and no elements, so
 :meth:`Batch._with_level_names` defaults to a shallow copy.
 
@@ -88,9 +89,9 @@ from ._repr import (
     term_repr,
     type_name,
 )
-from ._shapes import LevelsLike, ShapeLike, _as_dim, _as_levels
+from ._shapes import LevelsLike, ShapeLike, _as_dim, _as_levels, _as_paths, _as_positions
 from ._spec_base import OpaqueSpec, _agree, _unify_array_shape, _unify_specs
-from ._specs import TermSpec, _check_output_name
+from ._specs import NumericArraySpec, TermSpec, _check_output_name
 from .provenance import Provenance
 from .tracked import TrackedTerm
 
@@ -782,75 +783,76 @@ class Batch[E](TrackedTerm, ABC):
         """Iterate the leading batch axis, yielding views."""
         return (self[index] for index in range(len(self)))
 
-    def __getitem__(self, key: Any) -> Any:
-        """Index the batch axes by position, or an element's fields by name.
+    def __getitem__(self, paths_or_positions: Any) -> Any:
+        """Index the batch axes by position, or every element by path.
 
         By **position**, a single indexer addresses the leading axis and a tuple
         the leading axes in order, as ``batch[i, j]`` does for an array. Each
-        indexer is an integer or a slice; an integer drops its axis and a slice
-        keeps it, a whole axis being written ``:``. The result is an element once
+        indexer is an integer, anything with ``__index__`` such as a NumPy or JAX
+        integer scalar, or a slice; an integer drops its axis and a slice keeps
+        it, a whole axis being written ``:``. The result is an element once
         every axis is dropped and a sub-batch view otherwise, exactly as for
         :meth:`at_levels`, which is the by-name counterpart over *levels*.
 
-        By **name**, ``batch["x"]`` addresses a field within every element and
-        ``batch["outer", "a"]`` a path of fields, which a batch whose elements have
-        fields answers and others refuse.
+        By **path**, ``batch["x"]`` addresses the node at the path ``x`` of every
+        element, and a list or a tuple of paths, as ``batch["a", "g/c"]``, the
+        elements cut down to those nodes. A tuple is a list of paths; a nested
+        path is written with ``/``. A batch whose elements are records
+        answers; a batch whose elements are arrays or opaque values has no
+        paths.
 
         Parameters
         ----------
-        key : int, slice, str, or tuple
-            An integer, a slice, or a tuple of them addresses the batch axes, and a
-            string or a tuple of strings addresses a field path.
+        paths_or_positions : int, slice, str, list, or tuple
+            An integer, a slice, or a tuple of them addresses the batch axes; a
+            string is one path, and a list or a tuple of strings a list of paths.
 
         Returns
         -------
         E or Self or Any
-            An element or a sub-batch view for a position; whatever the elements'
-            fields yield for a name.
+            An element or a sub-batch view for a position; the batch of the
+            elements' nodes for paths.
 
         Raises
         ------
         IndexError
             If more indexers are given than there are batch axes, or an integer
             is out of range for its axis.
+        KeyError
+            If the elements are records and a path is not one of their paths.
         TypeError
-            If an indexer is not an integer or a slice, if a tuple mixes field
-            names with axis indexers, or if a name is given to a batch whose
-            elements have no fields.
+            If *paths_or_positions* is neither a position nor paths, such as ``None``, a
+            ``bool``, ``...``, a set, or an array; if it mixes paths with
+            positions; if it is a list of positions; or if it is paths and the
+            elements have no paths, as arrays and opaque values have none.
         ValueError
-            If a slice has a step of zero.
+            If a slice has a step of zero, a path is empty or has an empty name,
+            or a list of paths is empty, as ``batch[()]`` is, names a path
+            twice, or holds a path inside another.
 
         Notes
         -----
-        The two readings never collide, an axis having no name and a field no
+        The two readings never collide, an axis having no name and a path no
         position, which is what lets one operator serve both. The axis side is
-        stated once here for every batch; the field side is left to
-        :meth:`_at_fields`. ``None`` is not a position: it spells a whole axis in
+        stated once here for every batch; the path side is left to
+        :meth:`_at_paths`. ``None`` is not a position: it spells a whole axis in
         :meth:`at_levels` alone, where a keyword cannot take a ``:`` literal.
         """
-        # A lone key is decided by its type: a string is a one-element field path,
-        # and anything else is an indexer for the leading axis. A non-position is
-        # not rejected here — _at_axes reports it against the axis it was given
-        # for, which is more than this method knows.
-        if isinstance(key, str):
-            return self._at_fields((key,))
-        if not isinstance(key, tuple):
-            return self._at_axes((key,))
-        # A tuple is the one key legal on both sides — a path of field names, or
-        # one indexer per leading axis — so what is inside it decides rather than
-        # its type. All names is a path; no names is an index, which is also what
-        # gives ``batch[()]`` the whole batch instead of an empty path; and a
-        # mixture is neither, so it is refused as the mixture it is rather than
-        # left for the axis side to complain about the count.
-        named = [entry for entry in key if isinstance(entry, str)]
-        if not named:
-            return self._at_axes(key)
-        if len(named) == len(key):
-            return self._at_fields(key)
-        raise TypeError(
-            f"cannot mix field names and axis indices in one key, got {key!r}; index the "
-            f"axes and the fields in separate steps"
+        positions = _as_positions(paths_or_positions)
+        if positions is not None:
+            return self._at_axes(positions)
+        return self._at_paths(
+            _as_paths(
+                paths_or_positions,
+                action=f"index {public_class_name(type(self))} by",
+                positions=True,
+            ),
+            tuple_given=isinstance(paths_or_positions, tuple),
         )
+
+    def __contains__(self, path: object) -> bool:
+        """Whether *path* is a ``str`` and a path of the elements; an element is never tested."""
+        return isinstance(path, str) and self._has_path(path)
 
     def at_levels(self, /, **levels: LevelIndexer) -> E | Self:
         """Index by named level, returning an element or a sub-batch view.
@@ -1022,20 +1024,50 @@ class Batch[E](TrackedTerm, ABC):
             return produced
         return produced.with_provenance(self._provenance)
 
-    def _at_fields(self, path: tuple[str, ...]) -> Any:
-        """The batched field at *path* within every element, for a named ``[]`` key.
+    def _at_paths(self, paths: str | tuple[str, ...], *, tuple_given: bool = False) -> Any:
+        """The batch of every element's node at a path, or cut down to a list of paths.
 
-        A batch whose elements have named fields answers this; the default
-        reports that these elements have none. Only the *field* side of ``[]``
-        lands here — the axis side is this class's own, so a subclass gains
-        indexing by name without restating what indexing by position means.
+        A batch whose elements have paths answers this. By default, elements
+        that are arrays or opaque values have no paths, and the paths of laws,
+        kernels, functions, and batches are not read through a batch of them.
+        Only the path side of ``[]`` lands here, so a subclass gains indexing by
+        path without restating what indexing by position means.
+
+        Parameters
+        ----------
+        paths : str or tuple of str
+            One path, or a list of paths, as ``[]`` read them.
+        tuple_given : bool
+            Whether ``[]`` was given the list of paths as a tuple, which a
+            missing path's message reads.
+
+        Returns
+        -------
+        Any
+            The batch of the elements' nodes, from a subclass whose elements
+            have paths.
+
+        Raises
+        ------
+        TypeError
+            By default: the elements are arrays or opaque values, which have no
+            paths, or their paths are not read through a batch yet.
         """
-        addressed = path[0] if len(path) == 1 else path
+        class_name = public_class_name(type(self))
+        if isinstance(self.element_spec, NumericArraySpec | OpaqueSpec):
+            raise TypeError(
+                f"cannot index {class_name} {self.label!r} by {paths!r}, since its elements are "
+                f"single values with no paths. Read the values with .raw"
+            )
         raise TypeError(
-            f"cannot index {public_class_name(type(self))} by {addressed!r}: its elements have "
-            f"no named fields. Use integers or slices for the batch axes, or at_levels() to "
-            f"index by level name"
+            f"cannot index {class_name} by {paths!r}, since indexing its elements by path is not "
+            f"supported yet. Index an element by position first, or use at_levels() to index by "
+            f"level name"
         )
+
+    def _has_path(self, path: str) -> bool:
+        """Whether *path* is a path of the elements; by default, elements have none."""
+        return False
 
     # -- internals ----------------------------------------------------------
 

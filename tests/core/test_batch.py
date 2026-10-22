@@ -113,18 +113,18 @@ class _BareBatch(_ListBatch):
 
 
 class _FieldBatch(_ListBatch):
-    """A batch that answers a named key, as a batch of records will.
+    """A batch that answers a path, as a batch of records will.
 
-    The elements here have one field, ``value``, and a name reaches it across the
-    whole batch. Supplying the field side of ``[]`` is all a concrete batch does;
-    what a *position* means stays the ABC's.
+    The elements here have one field, ``value``, and its path reaches it across
+    the whole batch. Supplying the path side of ``[]`` is all a concrete batch
+    does; what a *position* means stays the ABC's.
     """
 
     __slots__ = ()
 
-    def _at_fields(self, path):
-        if path != ("value",):
-            raise KeyError(f"{path!r} is not a field of these elements")
+    def _at_paths(self, paths, *, tuple_given=False):
+        if paths != "value":
+            raise KeyError(f"{paths!r} is not a field of these elements")
         return tuple(self._store)
 
 
@@ -1415,51 +1415,85 @@ class TestABatchOfBatches:
 
 
 class TestIndexingDispatchesOnTheKeyType:
-    """A name addresses a field within the elements, a position addresses the axes.
+    """A path addresses the elements, a position addresses the axes.
 
-    The two namespaces never collide, an axis having no name and a field no
+    The two namespaces never collide, an axis having no name and a path no
     position, which is what lets one ``[]`` serve both.
     """
 
-    def test_a_name_reaches_the_elements_rather_than_an_axis(self, flat):
-        with pytest.raises(TypeError, match="its elements have no named fields"):
+    def test_a_path_reaches_the_elements_rather_than_an_axis(self, flat):
+        with pytest.raises(TypeError, match="since its elements are single values with no paths"):
             flat["x"]
 
-    def test_a_path_of_names_reaches_the_elements_too(self, flat):
+    def test_a_list_of_paths_reaches_the_elements_too(self, flat):
         with pytest.raises(
-            TypeError, match=r"by \('outer', 'a'\): its elements have no named fields"
+            TypeError,
+            match=r"by \('outer', 'a'\), since its elements are single values with no paths",
         ):
             flat["outer", "a"]
 
-    def test_the_refusal_says_where_the_axes_are_addressed(self, flat):
-        with pytest.raises(TypeError, match=r"or at_levels\(\) to index by level name"):
+    def test_the_refusal_says_the_batch_holds_the_values(self, flat):
+        with pytest.raises(TypeError, match=r"Read the values with \.raw"):
             flat["x"]
 
-    def test_a_batch_whose_elements_have_fields_answers_a_name(self):
+    def test_a_batch_whose_elements_have_fields_answers_a_path(self):
         fields = _FieldBatch(range(6), _spec([(2,), (3,)], ["chain", "draw"]))
         assert fields["value"] == (0, 1, 2, 3, 4, 5)
         with pytest.raises(KeyError, match="not a field of these elements"):
             fields["nope"]
 
-    def test_supplying_the_field_side_leaves_the_axis_side_alone(self):
+    def test_supplying_the_path_side_leaves_the_axis_side_alone(self):
         fields = _FieldBatch(range(6), _spec([(2,), (3,)], ["chain", "draw"]))
         assert fields[1, 2].value == 5
         assert fields[1].level_names == ("draw",)
         assert fields[:, 1].label == "b[draw=1]"
 
-    def test_a_tuple_mixing_names_and_positions_addresses_neither(self, nested):
-        with pytest.raises(TypeError, match="cannot mix field names and axis indices"):
+    def test_a_tuple_mixing_paths_and_positions_addresses_neither(self, nested):
+        with pytest.raises(TypeError, match=r"cannot mix a path and a position in one \[\]"):
             nested[0, "x"]
 
     def test_a_mixed_tuple_is_blamed_on_the_mix_and_not_on_the_count(self, flat):
         # One axis and two entries, so a complaint about arity would fire first
-        # and blame the count rather than the name that indexes no axis.
-        with pytest.raises(TypeError, match="cannot mix field names"):
+        # and blame the count rather than the path that indexes no axis.
+        with pytest.raises(TypeError, match=r"cannot mix a path and a position in one \[\]"):
             flat[0, "x"]
 
-    def test_an_empty_tuple_selects_the_whole_batch(self, nested):
-        assert nested[()].batch_shape == (2, 3)
-        assert nested[()].label == "b"
+    def test_an_empty_tuple_names_no_paths(self, nested):
+        # ``batch[tuple(paths)]`` with no paths must not return everything.
+        with pytest.raises(ValueError, match="since it names no paths"):
+            nested[()]
+
+    def test_a_list_of_positions_is_refused(self, flat):
+        with pytest.raises(TypeError, match="cannot index a batch by a list of positions"):
+            flat[[0, 2]]
+
+    @pytest.mark.parametrize(
+        "positions", [np.array([0, 2]), jnp.array([0, 2])], ids=["numpy", "jax"]
+    )
+    def test_an_integer_array_is_refused(self, flat, positions):
+        with pytest.raises(TypeError, match="must be indexed by integers or slices"):
+            flat[positions]
+
+    @pytest.mark.parametrize("position", [np.int64(1), jnp.int32(1)], ids=["numpy", "jax"])
+    def test_an_integer_scalar_is_a_position(self, flat, position):
+        assert flat[position].label == flat[1].label
+
+    @pytest.mark.parametrize("key", [{"x"}, iter(["x"])], ids=["set", "iterator"])
+    def test_a_set_or_an_iterator_is_refused(self, flat, key):
+        with pytest.raises(TypeError, match="it must be a path, a list of paths, or a position"):
+            flat[key]
+
+    def test_an_ellipsis_is_refused(self, flat):
+        with pytest.raises(TypeError):
+            flat[...]
+
+    def test_a_path_is_never_a_member_of_a_batch_without_paths(self, flat):
+        assert "x" not in flat
+        assert 0 not in flat
+
+    def test_membership_tests_paths_and_never_elements(self):
+        fields = _FieldBatch(range(6), _spec([(2,), (3,)], ["chain", "draw"]))
+        assert 3 not in fields
 
 
 class TestNoneSpellsAWholeAxisByKeywordAlone:
@@ -1555,7 +1589,7 @@ class TestASubBatchCanBeAView:
             (slice(None), 1),
             (slice(None, None, -1), 0),
             (slice(1, 2), slice(None, None, -1)),
-            (),
+            slice(None),
         ],
     )
     def test_a_view_and_a_copy_agree_on_labels_and_elements(self, viewed, nested, index):
@@ -1631,19 +1665,19 @@ class TestRepr:
 
 
 class TestTheTwoWaysOfIndexingCompose:
-    """A name and a position address orthogonal things, so either can follow the other."""
+    """A path and a position address orthogonal things, so either can follow the other."""
 
     @pytest.fixture
     def fields(self):
         return _FieldBatch(range(6), _spec([(2,), (3,)], ["chain", "draw"]))
 
-    def test_a_name_addresses_the_fields_of_a_view(self, fields):
-        # The view is a _FieldBatch too, so it answers a name over just the
+    def test_a_path_addresses_the_fields_of_a_view(self, fields):
+        # The view is a _FieldBatch too, so it answers a path over just the
         # elements it selected.
         assert fields[1]["value"] == (3, 4, 5)
         assert fields[:, 1:]["value"] == (1, 2, 4, 5)
 
-    def test_a_name_addresses_the_fields_of_a_descending_view(self, fields):
+    def test_a_path_addresses_the_fields_of_a_descending_view(self, fields):
         assert fields.at_levels(draw=slice(None, None, -1))[0]["value"] == (2, 1, 0)
 
     def test_a_renamed_level_does_not_disturb_the_fields(self, fields):
@@ -1651,7 +1685,7 @@ class TestTheTwoWaysOfIndexingCompose:
 
     def test_a_mixed_tuple_is_refused_whichever_comes_first(self, fields):
         for key in [(0, "value"), ("value", 0)]:
-            with pytest.raises(TypeError, match="cannot mix field names and axis indices"):
+            with pytest.raises(TypeError, match=r"cannot mix a path and a position in one \[\]"):
                 fields[key]
 
 

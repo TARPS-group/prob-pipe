@@ -442,15 +442,14 @@ class TestFamiliesWithRecordParameters:
         )
 
     def test_a_density_over_a_nested_record_reads_an_interior_path(self):
-        """A user's density reads a nested field by its key or through the interior node's view."""
+        """A user's density reads a nested field by its path or through its group's record."""
         value = Record(
             {"theta": {"a": jnp.ones(2), "b": jnp.array(2.0)}},
             label="value",
         )
         np.testing.assert_allclose(np.asarray(value["theta/a"]), np.ones(2))
+        np.testing.assert_allclose(np.asarray(value["theta"]["a"]), np.ones(2))
         np.testing.assert_allclose(np.asarray(value.at_path("theta")["a"]), np.ones(2))
-        with pytest.raises(KeyError):
-            value["theta"]
 
 
 def _schools(params, key):

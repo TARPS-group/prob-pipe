@@ -211,30 +211,38 @@ or a whole resampled replicate (use `replicate_size`).
 
 ### 1.10 Record field iteration and path access
 
-The mapping protocol on `Record` and `RecordSpec` (`keys` / `values`
-/ `items` / `__iter__` / `__len__` / `__contains__` / `__getitem__`) is
-**leaf-keyed**: it enumerates every leaf by its full `/`-path, never
-interior nodes. The
-order is **canonical first-appearance order** — the order each field
-was first introduced (keyword-argument or input-dict order at
-construction). Code must not rely on an alphabetical or sorted order;
-the constructor preserves what the caller wrote.
+The enumeration on `Record` and `RecordSpec` (`keys` / `values` /
+`items` / `__iter__` / `__len__`) is **leaf-keyed**: it lists every
+field by its full `/`-path, never a group. The order is **canonical
+first-appearance order** — the order each field was first introduced
+(keyword-argument or input-dict order at construction). Code must not
+rely on an alphabetical or sorted order; the constructor preserves what
+the caller wrote.
 
-The `/` character is reserved as a nested-path separator. Field
-names may not contain `/` (raises `ValueError` at construction).
-Slash-delimited strings are accepted everywhere a field name is
-accepted, as a short form of the tuple form:
+The `/` character is reserved as the path separator, and
+`named_tree._PATH_SEP` is the one definition of it: code that splits or
+joins a path imports it. Field names may not contain `/` (raises
+`ValueError` at construction). A path is always a `str`, and a tuple is
+a list of paths; a nested path is written with `/`. `[]` takes a path or
+a list or tuple of paths, and one reader,
+`_as_paths` in `probpipe/core/_shapes.py`, parses it and owns every
+error message:
 
 ```python
-record["params/intercept"]   # same as record["params", "intercept"]
-"params/intercept" in record # same as record["params", "intercept"] not raising
+record["params"]                 # the group: a Record
+record["params"]["intercept"]    # the same node as record["params/intercept"]
+record["obs", "params/slope"]    # a Record cut down to those nodes, in the record's order
+record[["params"]]               # a Record that holds the group under its name
+"params" in record               # True: in agrees with [], groups included
 ```
 
-Because `[]` reaches only leaves, navigate to a leaf **or** an interior
-subtree with `at_path` instead — `record.at_path("params")` returns the
-sub-Record, whereas `record["params"]` raises when `params` is not a
-leaf. `keys()` lists every leaf's path using the same `/` separator, so
-those paths round-trip with `__getitem__`.
+`keys()` lists fields only, so `"params" in record` holds while
+`"params"` is not in `record.keys()`. `at_path(*segments)` joins
+separate segments with `/`, and an argument that takes one path per
+argument, such as `without(*paths)` or `select(*paths)`, reads each
+through the same reader, so a tuple there raises `TypeError`.
+`select` keys each positional path by its last name, so its result
+splats into a call.
 
 **Mappings are never leaves.** A `Mapping` value denotes tree
 structure: a dict field value is always materialised into a nested
@@ -252,8 +260,9 @@ renames fields *within* the tree; relabeling the object itself is
 
 When adding new Record-based containers, follow these conventions:
 preserve first-appearance order, reject `/` in field names, materialize
-a mapping value into a nested subtree (never a leaf), key the mapping by
-leaf path, and accept the slash-delimited form in any string-keyed lookup.
+a mapping value into a nested subtree (never a leaf), key the enumeration
+by leaf path, and read every path argument through `_as_paths` or its
+one-path counterparts in `probpipe/core/_shapes.py`.
 
 ### 1.11 Distribution iteration
 

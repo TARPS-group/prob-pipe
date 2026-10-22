@@ -777,11 +777,17 @@ class Selected(_Signed):
     signature : Signature or None
         The outputs of the result, recorded where the node is a child of
         another node. It is ``None`` for a term's own expression.
+    listed : bool
+        Whether the selection is a list of paths, whose result keeps each node
+        at its path. Such a selection reads by its paths, as
+        ``model(a, g/c)``, and a draw from it is labeled by them, as
+        ``(a, g/c) ~ model``.
     """
 
     base: Expression
     paths: tuple[str, ...]
     signature: Signature | None = None
+    listed: bool = False
     depth: int = _derived_field()
     holds_loss: bool = _derived_field()
     truncation: Truncated | None = field(default=None, init=False, compare=False, repr=False)
@@ -807,6 +813,10 @@ class Selected(_Signed):
 
     def _label(self, rendering: _Rendering, level: int) -> str:
         return self.base._label(rendering, level)
+
+    def _notation(self, rendering: _Rendering, level: int, own: Signature | None) -> str:
+        signature = Signature(self.paths) if self.listed else own
+        return _Signed._notation(self, rendering, level, signature)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1141,8 +1151,17 @@ def _merged(held: tuple[str, ...], added: Iterable[str]) -> tuple[str, ...]:
 
 
 def draw_of(term: Any, outputs: Iterable[str] | None = None) -> Draw:
-    """A draw of *outputs* from the law *term*, by default every output of its event."""
-    names = tuple(term.event_spec.outputs) if outputs is None else tuple(outputs)
+    """A draw of *outputs* from the law *term*, by default every output of its event.
+
+    A law selected at a list of paths draws its paths by default, as
+    ``(a, g/c) ~ model``.
+    """
+    if outputs is not None:
+        names = tuple(outputs)
+    elif isinstance(term._expression, Selected) and term._expression.listed:
+        names = term._expression.paths
+    else:
+        names = tuple(term.event_spec.outputs)
     return Draw(names, term._embedded_expression())
 
 

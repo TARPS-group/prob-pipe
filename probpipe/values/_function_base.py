@@ -55,6 +55,7 @@ from ..core._repr import format_default, format_names, public_class_name, term_r
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OpaqueSpec, OutputSpec, _root_output_name
 from ..core.config import WorkflowKind, _checked_count, config
+from ..core.named_tree import _PATH_SEP
 from ..core.tracked import Annotated, TrackedTerm, _callable_label, _callable_name
 from ._binding import (
     FunctionSignatureInfo,
@@ -176,7 +177,12 @@ class FunctionSpec(TermSpec):
                     f"names match"
                 )
             for name, spec in self.input_spec.items():
-                _unify_specs(spec, actual.input_spec[name], bindings, f"{path}/input/{name}")
+                _unify_specs(
+                    spec,
+                    actual.input_spec[name],
+                    bindings,
+                    f"{path}{_PATH_SEP}input{_PATH_SEP}{name}",
+                )
         if self.output_spec is not None and actual.output_spec is not None:
             expected, observed = self.output_spec, actual.output_spec
             if expected.outputs.keys() != observed.outputs.keys():
@@ -191,7 +197,9 @@ class FunctionSpec(TermSpec):
                     f"match the declared {expected!r}"
                 )
             if expected.term_spec is not None and observed.term_spec is not None:
-                _unify_specs(expected.term_spec, observed.term_spec, bindings, f"{path}/output")
+                _unify_specs(
+                    expected.term_spec, observed.term_spec, bindings, f"{path}{_PATH_SEP}output"
+                )
         return True
 
     def is_valid(self, value: Any) -> bool:
@@ -303,7 +311,7 @@ def _bind_function_inputs(
         )
     for name, spec in input_spec.items():
         spec._bind_dims_from_value(
-            values[name], resolved, f"Function {function_name!r} input/{name}"
+            values[name], resolved, f"Function {function_name!r} input{_PATH_SEP}{name}"
         )
     return input_spec.with_dim_sizes(**resolved), resolved
 
@@ -420,7 +428,7 @@ def _validate_function_output(
     resolved = dict(bindings)
     path = f"Function {function_name!r} output"
     if _root_output_name(output_spec) is not None:
-        path += f"/{_root_output_name(output_spec)}"
+        path += f"{_PATH_SEP}{_root_output_name(output_spec)}"
     _validate_return_kind(spec, result, path)
     actual_spec = getattr(result, "spec", None)
     if isinstance(actual_spec, TermSpec):
@@ -526,13 +534,15 @@ def _validate_declared_support(expected: TermSpec, actual: TermSpec, path: str) 
     actual_event = getattr(actual, "event_spec", None)
     if isinstance(expected, RecordSpec) and isinstance(actual, RecordSpec):
         for key, child in expected.items():
-            _validate_declared_support(child, actual[key], f"{path}/{key}")
+            _validate_declared_support(child, actual[key], f"{path}{_PATH_SEP}{key}")
     elif isinstance(expected, BatchSpec) and isinstance(actual, BatchSpec):
         _validate_declared_support(expected.element_spec, actual.element_spec, path)
     elif isinstance(expected_event, OutputSpec) and isinstance(actual_event, OutputSpec):
         outputs = actual_event.outputs
         for output_name, child in expected_event.outputs.items():
-            _validate_declared_support(child, outputs[output_name], f"{path}/{output_name}")
+            _validate_declared_support(
+                child, outputs[output_name], f"{path}{_PATH_SEP}{output_name}"
+            )
     elif isinstance(expected, NumericArraySpec) and isinstance(actual, NumericArraySpec):
         if (
             expected.support is not None
@@ -555,13 +565,15 @@ def _validate_output_values(spec: TermSpec, value: Any, path: str) -> None:
         if isinstance(element, RecordSpec) and isinstance(value, RecordBatch):
             for field_name, child in element.items():
                 column = value._raw_column(field_name)
-                _validate_output_column(child, column, value.batch_shape, f"{path}/{field_name}")
+                _validate_output_column(
+                    child, column, value.batch_shape, f"{path}{_PATH_SEP}{field_name}"
+                )
         elif isinstance(element, NumericArraySpec):
             _validate_output_column(element, value.raw, value.batch_shape, path)
     elif isinstance(spec, RecordSpec):
         children = getattr(value, "children", value)
         for name, child in spec.children.items():
-            _validate_output_values(child, children[name], f"{path}/{name}")
+            _validate_output_values(child, children[name], f"{path}{_PATH_SEP}{name}")
     elif isinstance(spec, NumericArraySpec):
         _validate_output_dtype(spec, value, path)
         # A traced value has no truth to test, so a mapped call checks its
@@ -602,7 +614,7 @@ def _validate_stacked_output(
         return
     path = f"Function {function_name!r} output"
     if _root_output_name(output_spec) is not None:
-        path += f"/{_root_output_name(output_spec)}"
+        path += f"{_PATH_SEP}{_root_output_name(output_spec)}"
     _validate_output_values(spec, batch, path)
 
 
@@ -688,7 +700,7 @@ def _validate_function_declarations(
         spec = input_spec[name]
         if parameter.default is not inspect.Parameter.empty:
             spec._bind_dims_from_value(
-                parameter.default, {}, f"Function {function_name!r} default/{name}"
+                parameter.default, {}, f"Function {function_name!r} default{_PATH_SEP}{name}"
             )
         if name in construction_bindings:
             value = construction_bindings[name]
@@ -698,7 +710,9 @@ def _validate_function_declarations(
             source = "default"
         else:
             continue
-        spec._bind_dims_from_value(value, effective, f"Function {function_name!r} {source}/{name}")
+        spec._bind_dims_from_value(
+            value, effective, f"Function {function_name!r} {source}{_PATH_SEP}{name}"
+        )
 
 
 #: The check that an output spec whose type is unspecified defers to the return.

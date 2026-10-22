@@ -14,7 +14,7 @@ import math
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, cast, runtime_checkable
 
 import jax
 import jax.numpy as jnp
@@ -44,8 +44,8 @@ from ..core._spec_base import (
     _known_type,
     _unify_specs,
 )
-from ..core._specs import InputSpec, OutputSpec, _has_record_outputs
-from ..core.named_tree import _unflatten_paths
+from ..core._specs import InputSpec, OutputSpec, _has_record_outputs, _single_output_name
+from ..core.named_tree import _PATH_SEP, _unflatten_paths
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..linalg import DenseLinOp, to_dense
@@ -78,7 +78,6 @@ from ._conditional import (
 )
 from ._distribution import (
     _DECLARATION_MARKERS,
-    _EMPTY_SELECTION,
     Distribution,
     DistributionSpec,
     _declares_numeric_event,
@@ -87,8 +86,6 @@ from ._distribution import (
     _law_repr,
     _no_free_dims,
     _recorded_copy,
-    _shared_final_names,
-    _single_output_name,
 )
 
 if TYPE_CHECKING:
@@ -103,8 +100,6 @@ __all__ = [
     "FactoredNumericDistribution",
     "SupportsFactors",
 ]
-
-_PATH_SEP = "/"
 
 
 def _joined_label(labels: Iterable[str]) -> str:
@@ -518,6 +513,53 @@ def _raw_record(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {key: _raw_record(entry) for key, entry in value.items()}
     return value
+
+
+def _extract(value: Any, segments: tuple[str, ...]) -> Any:
+    """The node at *segments* below the top of *value*, a raw value shaped like a draw.
+
+    *value* is in raw form, so a value with paths is a nested mapping of raw
+    leaves, which each segment indexes. With no segments *value* is returned
+    whole.
+
+    Parameters
+    ----------
+    value : Any
+        A raw value shaped like a draw, such as a draw or a mean.
+    segments : tuple of str
+        The segments of the node's path below the top of *value*.
+
+    Returns
+    -------
+    Any
+        The raw node, with any leading batch axes of *value* kept on its leaves.
+
+    Raises
+    ------
+    TypeError
+        If *segments* is not empty and *value* is not a mapping.
+    """
+    for segment in segments:
+        if not isinstance(value, Mapping):
+            raise TypeError(
+                f"cannot read the node at {_PATH_SEP.join(segments)!r} from a "
+                f"{type(value).__name__}, since a value with paths must be a mapping"
+            )
+        value = value[segment]
+    return value
+
+
+def _raw_leaves(value: Any, spec: TermSpec) -> list[Array]:
+    """The array leaves of *value*, a raw value of the event *spec*, in the declaration's order.
+
+    A record value, a ``Record`` or the nested mapping of its leaves, gives one
+    array per field of *spec*, in canonical order, and any other value is its
+    own one leaf. Leading batch axes stay on every leaf.
+    """
+    if not isinstance(spec, RecordSpec):
+        return [jnp.asarray(value)]
+    raw = _raw_record(value)
+    return [jnp.asarray(_extract(raw, tuple(path.split(_PATH_SEP)))) for path in spec]
 
 
 def _children(value: Any) -> Mapping[str, Any]:
@@ -991,9 +1033,9 @@ def _kept_whole(factor: Factor, requested: tuple[str, ...]) -> bool:
     return set(requested) == set(factor.event_spec.outputs)
 
 
-def _factor_request(requested: tuple[str, ...]) -> str | tuple[str, ...]:
-    """The path argument of a factor's marginal: one path, or the selection of several."""
-    return requested[0] if len(requested) == 1 else requested
+def _factor_request(requested: tuple[str, ...], *, list_of_paths: bool) -> str | tuple[str, ...]:
+    """The path argument of a factor's marginal: the one path of a projection, or a list of paths."""
+    return tuple(requested) if list_of_paths else requested[0]
 
 
 def _sole_field_projection(method: str) -> Callable[..., Any]:
@@ -1044,32 +1086,32 @@ def _sole_field_expectation(self: _SoleField, f: Callable[[Any], Array]) -> Arra
     )
 
 
-def _sole_field_marginal(self: _SoleField, path: str | tuple[str, ...]) -> Distribution:
+def _sole_field_marginal(self: _SoleField, paths: str | tuple[str, ...]) -> Distribution:
     """This law at its output, and the record law's marginal at any other path.
 
     The field and the record have the same event paths, and the marginal keeps
     this law's label.
     """
-    if path == self._output_name:
+    if paths == self._output_name:
         return self
-    marginal = self._law._marginal(path)
+    marginal = self._law._marginal(paths)
     return marginal if marginal.label == self.label else marginal.with_label(self.label)
 
 
-def _sole_field_marginal_guard(self: _SoleField, path: str | tuple[str, ...]) -> Feasibility:
+def _sole_field_marginal_guard(self: _SoleField, paths: str | tuple[str, ...]) -> Feasibility:
     """Exact at the output, and the record law's guard at any other path."""
-    if path == self._output_name:
+    if paths == self._output_name:
         return Feasibility(True)
-    return _capability_guard(self._law, "_marginal", path)
+    return _capability_guard(self._law, "_marginal", paths)
 
 
 def _sole_field_marginal_capabilities(
-    self: _SoleField, path: str | tuple[str, ...]
+    self: _SoleField, paths: str | tuple[str, ...]
 ) -> frozenset[type]:
     """This law's claims at its output, and the record law's report at any other path."""
-    if path == self._output_name:
+    if paths == self._output_name:
         return _claims(self)
-    return _marginal_claims(self._law, path)
+    return _marginal_claims(self._law, paths)
 
 
 #: Each capability a :class:`_SoleField` takes from its record law, with its methods.
@@ -1154,8 +1196,8 @@ class _SoleField(Distribution):
         return None, repr(self.event_spec)
 
 
-def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]:
-    """The paths of *joint*'s factor record that *path* requests: one path, or several.
+def _requested_paths(joint: Any, paths: str | tuple[str, ...]) -> tuple[str, ...]:
+    """The paths of *joint*'s factor record that *paths* requests: one path, or several.
 
     The event paths of a joint in the positional form are its record's paths. A
     packaged joint's paths start with its output's name, below which they are
@@ -1165,8 +1207,9 @@ def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]
     ----------
     joint : FactoredDistribution
         The joint whose factor record the paths address.
-    path : str or tuple of str
-        An event path of the joint, or a tuple of event paths to select jointly.
+    paths : str or tuple of str
+        An event path of the joint, or a list of event paths to select jointly,
+        as :func:`~probpipe.core._shapes._as_paths` reads them.
 
     Returns
     -------
@@ -1181,17 +1224,12 @@ def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]
         path names no node below its output.
     TypeError
         If a path is not a string.
-    ValueError
-        If a selection names no path, or two of its paths share a final
-        segment.
     """
-    paths = (path,) if isinstance(path, str) else tuple(path)
-    if not paths:
-        raise ValueError(_EMPTY_SELECTION)
+    listed_paths = (paths,) if isinstance(paths, str) else tuple(paths)
     output_name = _single_output_name(joint.event_spec)
     record = joint._graph.event_spec.term_spec
     inner: list[str] = []
-    for requested in paths:
+    for requested in listed_paths:
         if not isinstance(requested, str):
             raise TypeError(f"a field path must be a string; got {type(requested).__name__}")
         within = requested
@@ -1202,19 +1240,23 @@ def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]
                     f"{requested!r} is not an event path of {joint.label!r}; its paths start "
                     f"with {output_name + _PATH_SEP!r}"
                 )
-        try:
-            record.at_path(*within.split(_PATH_SEP))
-        except KeyError:
+        if within not in record:
             raise KeyError(
                 f"{requested!r} is not an event path of {joint.label!r}; its fields: "
                 f"{list(joint.event_spec.outputs)}"
-            ) from None
+            )
         inner.append(within)
-    paths = tuple(inner)
-    finals = [requested.rsplit(_PATH_SEP, 1)[-1] for requested in paths]
-    if len(set(finals)) < len(finals):
-        raise ValueError(_shared_final_names(paths))
-    return paths
+    return tuple(inner)
+
+
+def _is_list_of_the_output(joint: Any, paths: str | tuple[str, ...]) -> bool:
+    """Whether *paths* is the list of one path that names a packaged joint's output.
+
+    The marginal there is the joint itself, exposed as the record that holds
+    its event under the output.
+    """
+    output_name = _single_output_name(joint.event_spec)
+    return output_name is not None and paths == (output_name,)
 
 
 def _fields_of(graph: _FactorGraph, indices: Sequence[int]) -> list[str]:
@@ -1224,12 +1266,12 @@ def _fields_of(graph: _FactorGraph, indices: Sequence[int]) -> list[str]:
     ]
 
 
-def _marginal_guard(self: Any, path: str | tuple[str, ...]) -> Feasibility:
-    """Whether the marginal at *path* is exact, by the factor graph.
+def _marginal_guard(self: Any, paths: str | tuple[str, ...]) -> Feasibility:
+    """Whether the marginal at *paths* is exact, by the factor graph.
 
-    A path must be an event path of the joint, and the paths of a selection
-    must end in distinct segments. A packaged joint is exact at its output,
-    whose marginal is the joint itself. The target's ancestor closure must add no
+    A path must be an event path of the joint. A packaged joint is exact at its
+    output, whose marginal is the joint itself, and at the list of that one
+    path. The target's ancestor closure must add no
     factor, since integrating out a field that a kept factor conditions on has
     no closed form here. Within the target, a factor requested whole is kept
     whole, and a factor requested in part delegates to its own marginal guard,
@@ -1237,31 +1279,31 @@ def _marginal_guard(self: Any, path: str | tuple[str, ...]) -> Feasibility:
     integrates out.
     """
     graph: _FactorGraph = self._graph
-    if path == _single_output_name(self.event_spec):
+    if paths == _single_output_name(self.event_spec) or _is_list_of_the_output(self, paths):
         return Feasibility(True)
     try:
-        paths = _requested_paths(self, path)
-    except (KeyError, TypeError, ValueError) as error:
+        listed_paths = _requested_paths(self, paths)
+    except (KeyError, TypeError) as error:
         return Feasibility(False, str(error.args[0]) if error.args else repr(error))
-    heads = {p.split(_PATH_SEP, 1)[0] for p in paths}
+    heads = {p.split(_PATH_SEP, 1)[0] for p in listed_paths}
     targets = {graph.producers[head] for head in heads}
     ancestors = graph.ancestors(targets) - targets
     if ancestors:
         integrated = _fields_of(graph, sorted(ancestors))
         return Feasibility(
             False,
-            f"the marginal at {list(paths)} integrates out the fields {integrated}, which the "
+            f"the marginal at {list(listed_paths)} integrates out the fields {integrated}, which the "
             f"requested fields condition on",
         )
-    whole = {p for p in paths if _PATH_SEP not in p}
+    whole = {p for p in listed_paths if _PATH_SEP not in p}
     for consumer, producer, name in graph.edges:
         if consumer in targets and producer in targets and name not in whole:
             return Feasibility(
                 False,
-                f"the marginal at {list(paths)} reduces the field {name!r}, which the fields "
+                f"the marginal at {list(listed_paths)} reduces the field {name!r}, which the fields "
                 f"{_fields_of(graph, [consumer])} condition on",
             )
-    for index, requested in _requests(graph, paths).items():
+    for index, requested in _requests(graph, listed_paths).items():
         factor = graph.factors[index]
         if _kept_whole(factor, requested):
             continue
@@ -1271,7 +1313,11 @@ def _marginal_guard(self: Any, path: str | tuple[str, ...]) -> Feasibility:
                 f"the factor that produces the fields {_fields_of(graph, [index])} has no "
                 f"marginals",
             )
-        report = _capability_guard(factor, "_marginal", _factor_request(requested))
+        report = _capability_guard(
+            factor,
+            "_marginal",
+            _factor_request(requested, list_of_paths=not isinstance(paths, str)),
+        )
         if report.feasible is not True:
             return report
     return Feasibility(True)
@@ -1638,35 +1684,35 @@ def _joint_conditional_quantile(
     return _assemble_by_output(self._graph, _given_values(self, given), "_quantile", q)
 
 
-def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
-    """The exact marginal of the joint at *path*, detached from the joint.
+def _joint_marginal(self: Any, paths: str | tuple[str, ...]) -> Distribution:
+    """The exact marginal of the joint at *paths*, detached from the joint.
 
     A factor whose every output is requested is kept as it is, and a factor
     requested in part is reduced to its own marginal at its requested paths. A
     projection onto one path returns the one factor it keeps or reduces, as a
     whole term: a kept factor in the positional form over a record of that one
-    field is returned as the law of its field. A selection of several paths
-    returns a law whose outputs are a record's fields: the one factor itself
-    when its outputs are, and otherwise the joint of the kept factors in factor
-    order, repackaged when the paths name the fields in another order, so its
-    fields follow the order of the paths (III.8).
+    output is returned as the law of its field. A list of paths returns a law
+    over the record that keeps each node at its own path, in the joint's order:
+    the one kept factor itself when it is positional over a record, and
+    otherwise the joint of the kept factors in factor order (III.8). A packaged
+    joint's record holds the kept nodes under its output.
 
     The marginal carries the expression the ``marginal`` operation gives it
     (VI.8). A marginal over the whole events of some factors, none of which
     conditions on an output outside them, is those factors: one factor
-    keeps its own label, and several form a product without a label, in the
-    order the paths name them where a product in that order declares the
-    fields in the order of the paths. Any other marginal is the joint
-    selected at *path*, which keeps the joint's label. The marginal holds the
-    paths the joint holds fixed.
+    keeps its own label, and several form a product without a label, in
+    factor order. Any other marginal is the joint selected at *paths*, which
+    keeps the joint's label. The marginal holds the paths the joint holds
+    fixed.
 
     Parameters
     ----------
     self : FactoredDistribution
         The joint whose capability subclass installs this function as
         ``_marginal``.
-    path : str or tuple of str
-        An event path of the joint, or a selection of several.
+    paths : str or tuple of str
+        An event path of the joint, or a list of them, as
+        :func:`~probpipe.core._shapes._as_paths` reads them.
 
     Returns
     -------
@@ -1679,31 +1725,34 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
         If a path is not an event path of the joint.
     TypeError
         If a path is not a string.
-    ValueError
-        If a selection names no path, or two of its paths share a final
-        segment.
     ResolutionError
-        If the marginal guard does not accept *path*, so no exact marginal is
+        If the marginal guard does not accept *paths*, so no exact marginal is
         available there.
     """
-    if path == _single_output_name(self.event_spec):
+    from ._views import _carrying, _exposed_under, _marginal_expression_at
+
+    output_name = _single_output_name(self.event_spec)
+    if paths == output_name:
         return self
-    paths = _requested_paths(self, path)
-    report = _marginal_guard(self, path)
+    if _is_list_of_the_output(self, paths):
+        return _carrying(
+            _exposed_under(self, cast(str, output_name)), _marginal_expression_at(self, paths)
+        )
+    listed_paths = _requested_paths(self, paths)
+    report = _marginal_guard(self, paths)
     if report.feasible is not True:
         reason = report.description or "; ".join(report.pending)
-        raise ResolutionError(f"{self.label!r} has no exact marginal at {path!r}: {reason}")
-    from ._views import _carrying, _marginal_expression_at
+        raise ResolutionError(f"{self.label!r} has no exact marginal at {paths!r}: {reason}")
 
     graph: _FactorGraph = self._graph
-    projection = isinstance(path, str)
-    closed = _closed_factors(self, (path,) if projection else tuple(path))
+    projection = isinstance(paths, str)
+    closed = _closed_factors(self, (paths,) if projection else tuple(paths))
     label = self.label if closed is None else _joined_label(part.label for part in closed)
     kept: list[Distribution] = []
-    for index, requested in _requests(graph, paths).items():
+    for index, requested in _requests(graph, listed_paths).items():
         factor = graph.factors[index]
         if not _kept_whole(factor, requested):
-            kept.append(factor._marginal(_factor_request(requested)))
+            kept.append(factor._marginal(_factor_request(requested, list_of_paths=not projection)))
         elif projection and _has_record_outputs(factor.event_spec):
             kept.append(_SoleField(factor))
         else:
@@ -1720,33 +1769,31 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
             closed,
             label=label,
         )
-    if not projection:
-        marginal = _in_requested_order(marginal, paths)
-    return _carrying(marginal, _marginal_expression_at(self, path))
+    if not projection and output_name is not None:
+        marginal = _exposed_under(marginal, output_name)
+    return _carrying(marginal, _marginal_expression_at(self, paths))
 
 
 def _closed_factors(d: Any, paths: tuple[Any, ...]) -> list[Factor] | None:
     """The factors of *d* producing the outputs *paths* name, if none conditions outside them.
 
-    A marginal over these outputs is the product of the factors (VI.8).
-    The factors are listed in the order the paths name their outputs when
-    a product in that order declares the outputs in the order of the
-    paths, and in factor order otherwise. An optional input that no factor of
-    *d* produces takes its default, so it conditions on nothing.
+    A marginal over these outputs is the product of the factors (VI.8),
+    which lists them in factor order. An optional input that no factor of *d*
+    produces takes its default, so it conditions on nothing.
 
     Parameters
     ----------
     d : Any
         A law; only one with ``factors`` has closed factors.
     paths : tuple
-        The requested paths, in the order requested.
+        The requested paths.
 
     Returns
     -------
     list of Factor or None
-        The closed factors, or None when *d* has no factors, a path is not a
-        whole output, the outputs split a factor's event, or a factor
-        conditions on an output outside them.
+        The closed factors in factor order, or None when *d* has no factors, a
+        path is not a whole output, the outputs split a factor's event,
+        or a factor conditions on an output outside them.
     """
     parts = getattr(d, "factors", None)
     wanted = set(paths)
@@ -1768,62 +1815,28 @@ def _closed_factors(d: Any, paths: tuple[Any, ...]) -> list[Factor] | None:
         ]
         if any(input_name not in wanted for input_name in conditioned):
             return None
-    return _in_selection_order(selected, paths) or selected
+    return selected
 
 
-def _in_selection_order(parts: list[Factor], paths: tuple[str, ...]) -> list[Factor] | None:
-    """*parts* in the order *paths* names their outputs, or None if no product has that order.
-
-    A product declares each factor's outputs in turn, and it places a
-    factor before every factor that produces an output it conditions on.
-    """
-    ordered = sorted(
-        parts, key=lambda part: min(paths.index(name) for name in part.event_spec.outputs)
-    )
-    declared = [name for part in ordered for name in part.event_spec.outputs]
-    if declared != list(paths):
-        return None
-    produced: set[str] = set()
-    for part in ordered:
-        if isinstance(part, ConditionalDistribution) and produced & set(part.given_spec):
-            return None
-        produced |= set(part.event_spec.outputs)
-    return ordered
-
-
-def _in_requested_order(marginal: Distribution, paths: tuple[str, ...]) -> Distribution:
-    """*marginal*, the marginal at the selection *paths*, with its fields in the order of the paths.
-
-    The kept factors declare their fields in factor order, so a selection that
-    names them in another order is repackaged, each field keeping its path.
-    """
-    from ._views import _leaf_paths, _renamed_by_leaves
-
-    order = [requested.rsplit(_PATH_SEP, 1)[-1] for requested in paths]
-    outputs = marginal.event_spec.outputs
-    if list(outputs) == order:
-        return marginal
-    target = OutputSpec(RecordSpec({name: outputs[name] for name in order}))
-    leaves = {leaf: leaf for leaf in _leaf_paths(marginal.event_spec)}
-    return _renamed_by_leaves(marginal, target, leaves)
-
-
-def _kept_claims(factor: Factor, requested: tuple[str, ...]) -> frozenset[type]:
+def _kept_claims(
+    factor: Factor, requested: tuple[str, ...], *, list_of_paths: bool
+) -> frozenset[type]:
     """The claims of *factor* as a marginal keeps it: whole, or reduced to *requested*.
 
     A conditional factor's claims are those of the law it yields at a given
     value, and a factor reduced to part of its event reports its own marginal
-    there.
+    there, at the one path of a projection or at the list of paths when
+    *list_of_paths*.
     """
     if isinstance(factor, ConditionalDistribution):
         return _kernel_claims(factor)
     if _kept_whole(factor, requested):
         return _claims(factor)
-    return _marginal_claims(factor, _factor_request(requested))
+    return _marginal_claims(factor, _factor_request(requested, list_of_paths=list_of_paths))
 
 
-def _joint_marginal_capabilities(self: Any, path: str | tuple[str, ...]) -> frozenset[type]:
-    """The claims of the factors that the marginal at *path* keeps, read from their declarations.
+def _joint_marginal_capabilities(self: Any, paths: str | tuple[str, ...]) -> frozenset[type]:
+    """The claims of the factors that the marginal at *paths* keeps, read from their declarations.
 
     One kept factor reports its own claims, since the marginal is that factor
     or its reduction, and a packaged joint's marginal at its output is the
@@ -1836,13 +1849,13 @@ def _joint_marginal_capabilities(self: Any, path: str | tuple[str, ...]) -> froz
     self : FactoredDistribution
         The joint whose capability subclass installs this function as
         ``_marginal_capabilities``.
-    path : str or tuple of str
-        An event path of the joint, or a selection of several.
+    paths : str or tuple of str
+        An event path of the joint, or a list of them.
 
     Returns
     -------
     frozenset of type
-        The capability protocols the marginal at *path* claims.
+        The capability protocols the marginal at *paths* claims.
 
     Raises
     ------
@@ -1850,15 +1863,15 @@ def _joint_marginal_capabilities(self: Any, path: str | tuple[str, ...]) -> froz
         If a path is not an event path of the joint.
     TypeError
         If a path is not a string.
-    ValueError
-        If a selection names no path, or two of its paths share a final segment.
     """
-    if path == _single_output_name(self.event_spec):
+    if paths == _single_output_name(self.event_spec) or _is_list_of_the_output(self, paths):
         return _claims(self)
     graph: _FactorGraph = self._graph
-    requests = _requests(graph, _requested_paths(self, path))
+    requests = _requests(graph, _requested_paths(self, paths))
+    list_of_paths = not isinstance(paths, str)
     reports = [
-        _kept_claims(graph.factors[index], requested) for index, requested in requests.items()
+        _kept_claims(graph.factors[index], requested, list_of_paths=list_of_paths)
+        for index, requested in requests.items()
     ]
     if len(reports) == 1:
         return reports[0]
