@@ -546,7 +546,7 @@ def _record_scales(
     scales : NumericRecord
         One scale per field of the centers, each broadcastable over that field's shape.
     fields : NumericRecordSpec or None
-        The element spec of record centers, or None for array centers.
+        The elements' spec of record centers, or None for array centers.
     names : _BankNames
         The names the caller passed the bank by, which the error messages use.
 
@@ -609,7 +609,7 @@ def _flat_scales(
     centers : Array
         The centers as :func:`_flat_centers` returns them.
     fields : NumericRecordSpec or None
-        The element spec of record centers, or None for array centers.
+        The elements' spec of record centers, or None for array centers.
     names : _BankNames
         The names the caller passed the bank by, which the error messages use.
 

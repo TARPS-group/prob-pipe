@@ -106,7 +106,7 @@ def _atom_spec(atoms: Any, event_spec: OutputSpec | None = None) -> TermSpec:
     TermSpec
         The spec of one complete event. A batch-valued event includes its
         trailing levels in a ``BatchSpec``; otherwise this is the stored batch's
-        ``element_spec`` or the array's trailing shape and dtype.
+        ``element_spec.term_spec`` or the array's trailing shape and dtype.
 
     Raises
     ------

@@ -17,7 +17,7 @@ Supported types
 - ``set`` / ``frozenset`` — order-independent (element sub-digests, sorted)
 - ``Record`` — leaf paths + leaf values (leaf-keyed collection)
 - ``Distribution`` — class + parameters, without the label; ``EmpiricalDistribution``
-  hashes its atoms' levels + element spec + stored rows + weights,
+  hashes its atoms' levels + elements' spec + stored rows + weights,
   ``KDEDistribution`` hashes atoms + weights + kernel class + scales;
   ``Weights`` are hashed by content
 - ``Function`` — frozen signature, input spec, and output spec
@@ -615,7 +615,7 @@ def _update_record_batch(
     single-field batch converts to its sole column, so an array-shaped read would
     hash that column alone and call two batches equal that differ in schema or in
     how their axes are grouped. The multiplicity is part of a batch's type, so the
-    levels and the element spec are hashed rather than left implicit.
+    levels and the elements' spec are hashed rather than left implicit.
 
     Columns are read raw. A field that is not an array *presents* as the batch of
     its element kind, and hashing that would fingerprint a wrapper minted for the
@@ -777,7 +777,7 @@ def _update_distribution(
             _update(h, v, depth + 1, max_array_bytes, state)
             h.update(b";")
     elif _is_empirical(dist):
-        # An empirical law: hash the levels its atoms lie on, their element spec,
+        # An empirical law: hash the levels its atoms lie on, their spec,
         # the stored rows, and the normalized weights. The rows are hashed by
         # content whatever the atoms' kind, an object array element by element, so
         # equal laws over opaque atoms agree, and a reweighted posterior (IS/SMC) is

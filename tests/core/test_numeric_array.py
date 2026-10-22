@@ -644,7 +644,7 @@ class TestNumericArrayBatchHoldsTheMultiplicity:
     def test_the_repr_states_the_levels_and_the_element_spec_then_the_values(self):
         assert repr(_batch(label="x")) == (
             "NumericArrayBatch('x', levels={'draw': 4}, "
-            "element_spec=NumericArraySpec(shape=(3,), dtype=float32))\n"
+            "element=NumericArraySpec(shape=(3,), dtype=float32))\n"
             "  [[ 0.  1.  2.]\n"
             "   [ 3.  4.  5.]\n"
             "   [ 6.  7.  8.]\n"
@@ -829,7 +829,7 @@ class TestNumericArrayBatchRefusals:
             )
 
     def test_trailing_axes_that_are_not_the_event_shape_are_refused(self):
-        with pytest.raises(ValueError, match="but element_spec declares event shape"):
+        with pytest.raises(ValueError, match="but element declares event shape"):
             NumericArrayBatch(
                 jnp.zeros((4, 5)),
                 "draw",

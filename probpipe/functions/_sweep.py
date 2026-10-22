@@ -405,7 +405,7 @@ def _mapped_row(batch: Batch, label: str, row: Any) -> NumericArray | Record:
     """One element of the swept *batch*, rebuilt from the raw *row* the map reads.
 
     The element is labeled *label*. A batch of arrays yields an array under the
-    batch's element spec, and a batch of records a record of the row's fields.
+    spec of the batch's elements, and a batch of records a record of the row's fields.
     """
     if isinstance(batch, NumericArrayBatch):
         return NumericArray(row, spec=batch.element_spec.term_spec, label=label)

@@ -420,7 +420,7 @@ def _output_atoms(
     if isinstance(outputs, NumericArray):
         # The mapped dispatch returns one array term led by the draw axis. A map
         # that returns its operand returns the stacked draws' own term, whose spec
-        # covers every draw, so the element spec is read from one point.
+        # covers every draw, so the elements' spec is read from one point.
         element = outputs.spec
         point = tuple(jnp.shape(outputs.raw)[1:])
         if tuple(element.shape) != point:

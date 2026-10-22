@@ -103,6 +103,7 @@ The canonical name of a recurring concept is the name that its parameters, attri
 | one name per level of a batch | `level_names` |
 | a batch's level names mapped to their axis sizes | `levels`, which `BatchSpec` reports and its construction takes |
 | the output spec of one element of a batch, whose `term_spec` is the element's spec | `element_spec` |
+| what a batch is declared over, given to `BatchSpec` or a batch constructor: the elements' spec, or for `BatchSpec` also an output spec | `element` |
 | the objects a batch is built from | `elements` |
 | the independent-draw shape prefix of `sample` | `sample_shape` |
 | the maximum number of evaluations of a function lifted over laws | `max_evaluations` |

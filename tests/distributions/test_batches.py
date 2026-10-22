@@ -226,7 +226,7 @@ class TestDistributionBatchConstruction:
             )
 
     def test_an_empty_batch_needs_an_element_spec(self):
-        with pytest.raises(ValueError, match="element_spec"):
+        with pytest.raises(ValueError, match="Pass it as element="):
             DistributionBatch(
                 [],
                 "law",
@@ -556,7 +556,7 @@ class TestConditionalDistributionBatch:
         assert batch.given_spec == declared.given_spec
 
     def test_an_empty_batch_needs_an_element_spec(self):
-        with pytest.raises(ValueError, match="element_spec"):
+        with pytest.raises(ValueError, match="Pass it as element="):
             ConditionalDistributionBatch(
                 [],
                 "kernel",

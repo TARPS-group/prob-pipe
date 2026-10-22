@@ -215,7 +215,7 @@ class TestConstruction:
             )
 
     def test_element_spec_must_be_a_record_declaration(self):
-        with pytest.raises(TypeError, match="element_spec must be a RecordSpec"):
+        with pytest.raises(TypeError, match="element must be a RecordSpec"):
             NumericRecordBatch(
                 {"x": jnp.zeros(3)},
                 "draw",

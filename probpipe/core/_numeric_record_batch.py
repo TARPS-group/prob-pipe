@@ -35,9 +35,9 @@ from ..custom_types import Array
 from ._batch import _batch_axis_count
 from ._record_batch import (
     RecordBatch,
-    _inferred_element_spec,
+    _inferred_element_term_spec,
     _record_batch_flatten,
-    _record_element_spec,
+    _record_element_term_spec,
     _unflatten_with,
 )
 from ._repr import VALUE_INDENT, format_rows, rows_html, summary_with_values
@@ -60,7 +60,7 @@ class NumericRecordBatch(RecordBatch):
     them; see the module docstring. It adds the batched flat layout,
     :meth:`to_vector` and :meth:`from_vector`.
 
-    Construction is that of :class:`RecordBatch`, narrowed: *element_spec*, given
+    Construction is that of :class:`RecordBatch`, narrowed: *element*, given
     or inferred from the columns, must describe an all-numeric element, and every
     column must carry a numeric dtype.
 
@@ -73,8 +73,8 @@ class NumericRecordBatch(RecordBatch):
         One name per level, outermost first; a single string names a single level.
     label : str, optional
         The batch's label. Defaults to ``record(field,...)``, which names the
-        top-level fields of the element spec, as for :class:`RecordBatch`.
-    element_spec : RecordSpec, optional
+        top-level fields of the elements' spec, as for :class:`RecordBatch`.
+    element : RecordSpec, optional
         The all-numeric schema every element satisfies. Defaults to the spec the
         columns imply.
     axes_per_level : int or sequence of int, optional
@@ -86,7 +86,7 @@ class NumericRecordBatch(RecordBatch):
     Raises
     ------
     TypeError
-        If *element_spec* does not describe an all-numeric element, or a column
+        If *element* does not describe an all-numeric element, or a column
         is not a numeric array.
     TypeError
         If *level_names* is not a str or a sequence of str, or *axes_per_level* is
@@ -106,7 +106,7 @@ class NumericRecordBatch(RecordBatch):
         level_names: NamesLike,
         *,
         label: str | None = None,
-        element_spec: RecordSpec | None = None,
+        element: RecordSpec | None = None,
         axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
@@ -117,16 +117,15 @@ class NumericRecordBatch(RecordBatch):
             if axes_per_level is None
             else _as_axis_counts(axes_per_level, what=f"{kind} axes_per_level")
         )
-        if element_spec is None:
+        if element is None:
             n_batch = _batch_axis_count(names, axes)
-            element_spec = _inferred_element_spec(fields, n_batch, kind=kind)
-        template = _record_element_spec(element_spec, kind=type(self).__name__)
+            element = _inferred_element_term_spec(fields, n_batch, kind=kind)
+        template = _record_element_term_spec(element, kind=type(self).__name__)
         if not isinstance(template, NumericRecordSpec):
             others = [k for k in template if not isinstance(template[k], NumericArraySpec)]
             if not others:
                 raise TypeError(
-                    f"{kind}: element_spec must be a NumericRecordSpec, "
-                    f"got {type(template).__name__}"
+                    f"{kind}: element must be a NumericRecordSpec, got {type(template).__name__}"
                 )
             raise TypeError(
                 f"{kind} requires every field to be a numeric array, but {others} are not; "
@@ -135,18 +134,15 @@ class NumericRecordBatch(RecordBatch):
         super().__init__(
             fields,
             names,
-            element=element_spec,
+            element=element,
             axes_per_level=axes,
             provenance=provenance,
             label=label,
         )
 
-    # ``element_spec`` is not overridden: it already reports the stored
-    # ``RecordSpec``, and only ``event_template`` has anything narrower to say.
-
     @property
     def event_template(self) -> NumericRecordSpec:
-        """The numeric structure of one element — a view on :attr:`element_spec`."""
+        """The numeric structure of one element, ``element_spec.term_spec``."""
         return cast(NumericRecordSpec, self.element_spec.term_spec)
 
     # ``_check_columns`` is not overridden: every field of a numeric template is
@@ -350,7 +346,7 @@ class NumericRecordBatch(RecordBatch):
         >>> batch = NumericRecordBatch(
         ...     {"x": jnp.zeros((4, 5, 2))},
         ...     ("chain", "draw"),
-        ...     element_spec=spec,
+        ...     element=spec,
         ...     label="post",
         ... )
         >>> rebuilt = NumericRecordBatch.from_vector(

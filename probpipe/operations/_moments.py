@@ -175,10 +175,9 @@ def _hull(support: Any) -> Any:
 
 
 def _elementwise(spec: BatchSpec, term: Callable[[TermSpec], TermSpec]) -> BatchSpec:
-    """The batch spec on *spec*'s levels whose element is *term* of *spec*'s element."""
-    return BatchSpec._from_groups(
-        term(spec.element_spec.term_spec), spec.axis_groups, spec.level_names
-    )
+    """The batch spec on *spec*'s levels whose elements' spec is *term* of *spec*'s, under the same name."""
+    element_spec = spec.element_spec._with_term_spec(term(spec.element_spec.term_spec))
+    return BatchSpec._from_groups(element_spec, spec.axis_groups, spec.level_names)
 
 
 def _mean_term(spec: TermSpec) -> TermSpec:

@@ -497,11 +497,10 @@ def _complete_output_metadata(expected: TermSpec, actual: TermSpec) -> TermSpec:
             }
         )
     if isinstance(expected, BatchSpec) and isinstance(actual, BatchSpec):
-        return expected._replace(
-            element=_complete_output_metadata(
-                expected.element_spec.term_spec, actual.element_spec.term_spec
-            )
+        completed = _complete_output_metadata(
+            expected.element_spec.term_spec, actual.element_spec.term_spec
         )
+        return expected._replace(element=expected.element_spec._with_term_spec(completed))
     return expected
 
 

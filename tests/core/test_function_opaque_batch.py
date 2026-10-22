@@ -183,7 +183,7 @@ class TestConstructionRefusals:
     def test_an_element_of_the_wrong_type_names_the_spec(self):
         """A typed spec refuses on type, which the message says rather than blaming a mapping."""
         with pytest.raises(
-            TypeError, match=r"element 1 is str, but elements must match element_spec OpaqueSpec"
+            TypeError, match=r"element 1 is str, but elements must match OpaqueSpec"
         ):
             OpaqueBatch(
                 [1, "a"],
@@ -880,4 +880,4 @@ class TestTheseAreBatches:
 
         text = repr(batch)
         assert text.startswith("OpaqueBatch(") and "levels={'site': 2}" in text
-        assert "element_spec=OpaqueSpec(" in text and "<locals>._Unreadable" in text
+        assert "element=OpaqueSpec(" in text and "<locals>._Unreadable" in text

@@ -65,8 +65,8 @@ class NumericArrayBatch(Batch[NumericArray]):
         :class:`~probpipe.Opaque`'s are. A batch is what an operation returns,
         and the label is what says which one it is; a class-name default would label
         every batch in a pipeline alike.
-    element_spec : NumericArraySpec, optional
-        What every element satisfies. Its ``shape`` is the event shape, so it is
+    element : NumericArraySpec, optional
+        The spec every element satisfies. Its ``shape`` is the event shape, so it is
         what splits the stored array's axes into batch and event. Defaults to
         the spec the array implies, as a :class:`NumericArray` infers its spec
         from its value: the axes past those the levels hold are the event shape,
@@ -84,7 +84,7 @@ class NumericArrayBatch(Batch[NumericArray]):
     Raises
     ------
     TypeError
-        If *element_spec* is not a :class:`NumericArraySpec`, or *values* does
+        If *element* is not a :class:`NumericArraySpec`, or *values* does
         not convert to an array.
     TypeError
         Also if the stored array's dtype is one the declared element does not
@@ -96,7 +96,7 @@ class NumericArrayBatch(Batch[NumericArray]):
         would leave no batch axis; if its trailing axes are not that event
         shape; if a declared dimension is symbolic, which gives the event shape
         no size to split by; if *values* has fewer axes than the levels hold,
-        when the element spec is inferred; or if *axes_per_level* does not
+        when the elements' spec is inferred; or if *axes_per_level* does not
         account for every batch axis, or gives a count that is not one per level.
     TypeError
         If *level_names* is not a str or a sequence of str, or *axes_per_level* is
@@ -134,7 +134,7 @@ class NumericArrayBatch(Batch[NumericArray]):
         level_names: NamesLike,
         *,
         label: str,
-        element_spec: NumericArraySpec | None = None,
+        element: NumericArraySpec | None = None,
         axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
@@ -144,20 +144,20 @@ class NumericArrayBatch(Batch[NumericArray]):
             if axes_per_level is None
             else _as_axis_counts(axes_per_level, what="NumericArrayBatch axes_per_level")
         )
-        if element_spec is None:
-            element_spec = _inferred_element_spec(values, _batch_axis_count(names, axes))
-        if not isinstance(element_spec, NumericArraySpec):
+        if element is None:
+            element = _inferred_element_term_spec(values, _batch_axis_count(names, axes))
+        if not isinstance(element, NumericArraySpec):
             raise TypeError(
-                f"NumericArrayBatch: element_spec must be a NumericArraySpec, "
-                f"got {type(element_spec).__name__}"
+                f"NumericArrayBatch: element must be a NumericArraySpec, "
+                f"got {type(element).__name__}"
             )
-        event_shape = tuple(element_spec.shape)
+        event_shape = tuple(element.shape)
         symbolic = [axis for axis in event_shape if not isinstance(axis, int)]
         if symbolic:
             sizes = ", ".join(f"{name}=..." for name in symbolic)
             raise ValueError(
-                f"NumericArrayBatch: element_spec shape {element_spec.shape} has unbound "
-                f"symbolic dimensions; bind them first with element_spec.with_dim_sizes({sizes})"
+                f"NumericArrayBatch: element shape {element.shape} has unbound "
+                f"symbolic dimensions; bind them first with element.with_dim_sizes({sizes})"
             )
         if not _is_numeric_leaf(values):
             raise TypeError(_not_numeric("NumericArrayBatch", "values", values))
@@ -165,26 +165,24 @@ class NumericArrayBatch(Batch[NumericArray]):
         n_event = len(event_shape)
         if n_event and stored[len(stored) - n_event :] != event_shape:
             raise ValueError(
-                f"NumericArrayBatch: values have shape {stored}, but element_spec declares "
+                f"NumericArrayBatch: values have shape {stored}, but element declares "
                 f"event shape {event_shape}, which the trailing axes must match"
             )
-        # The batch asserts *element_spec* of every element, so the store's own
+        # The batch asserts *element* of every element, so the store's own
         # dtype has to satisfy it.
         dtype = _numpy_dtype_of(values)
-        if element_spec.dtype is not None:
+        if element.dtype is not None:
             if dtype is None:
                 # A heterogeneous store has no single dtype to check a pinned
                 # one against, so the claim is unsupportable either way.
                 raise TypeError(
                     f"NumericArrayBatch: values have no single dtype to check against the "
-                    f"declared {np.dtype(element_spec.dtype)}; omit the dtype from "
-                    f"element_spec, or pass values with one dtype"
+                    f"declared {np.dtype(element.dtype)}; omit the dtype from "
+                    f"element, or pass values with one dtype"
                 )
-            if not np.can_cast(dtype, element_spec.dtype, casting="same_kind"):
+            if not np.can_cast(dtype, element.dtype, casting="same_kind"):
                 raise TypeError(
-                    _uncastable_dtype(
-                        "NumericArrayBatch: values", dtype, np.dtype(element_spec.dtype)
-                    )
+                    _uncastable_dtype("NumericArrayBatch: values", dtype, np.dtype(element.dtype))
                 )
         batch_shape = stored[: len(stored) - n_event] if n_event else stored
         if not batch_shape:
@@ -196,7 +194,7 @@ class NumericArrayBatch(Batch[NumericArray]):
         groups = _axis_groups_for(batch_shape, names, axes, kind="NumericArrayBatch")
         object.__setattr__(self, "_values", _read_only(values))
         self._init_batch(
-            BatchSpec._from_groups(element_spec, groups, names),
+            BatchSpec._from_groups(element, groups, names),
             label=label,
             provenance=provenance,
         )
@@ -217,11 +215,6 @@ class NumericArrayBatch(Batch[NumericArray]):
     # -- what it holds ------------------------------------------------------
 
     @property
-    def element_spec(self) -> NumericArraySpec:
-        """What every element satisfies — a view on :attr:`spec`."""
-        return cast(NumericArraySpec, self.spec.element_spec.term_spec)
-
-    @property
     def raw(self) -> Any:
         """The storage view: the stored array with the batch axes leading, in native form. Untracked."""
         return self._values
@@ -229,7 +222,7 @@ class NumericArrayBatch(Batch[NumericArray]):
     # -- display --------------------------------------------------------------
 
     def __repr__(self) -> str:
-        """The summary of the label, the levels, and the element spec, then the stored entries.
+        """The summary of the label, the levels, and the elements' spec, then the stored entries.
 
         Each line of the entries is indented by two spaces, as a record's lines
         are. NumPy's printing formats the stored array, batch axes leading, so
@@ -359,8 +352,8 @@ def _numeric_array_batch_unflatten(aux, children):
     spec = aux
     label = _NO_DESCRIPTION
     (values,) = children
-    element_spec = spec.element_spec.term_spec
-    event_rank = len(element_spec.shape)
+    element_term_spec = cast(NumericArraySpec, spec.element_spec.term_spec)
+    event_rank = len(element_term_spec.shape)
     shape = getattr(values, "shape", None)
     if shape is None:
         # A skeleton or sentinel has no shape to measure; rebuilt verbatim.
@@ -372,7 +365,7 @@ def _numeric_array_batch_unflatten(aux, children):
     # alone would admit a store whose trailing axes no longer match what the
     # element declares, and the batch would build with a spec that is a false
     # statement about its own store — surfacing only at the first selection.
-    event_shape = tuple(element_spec.shape)
+    event_shape = tuple(element_term_spec.shape)
     if event_rank and tuple(shape)[len(shape) - event_rank :] != event_shape:
         raise ValueError(
             f"{_cannot_rebuild('NumericArrayBatch')}: the values now have shape "
@@ -388,7 +381,7 @@ def _numeric_array_batch_unflatten(aux, children):
     if not surviving:
         return NumericArray(
             values,
-            spec=element_spec,
+            spec=element_term_spec,
             label=_NO_DESCRIPTION,
         )
     raise ValueError(
@@ -403,7 +396,7 @@ jax.tree_util.register_pytree_node(
 )
 
 
-def _inferred_element_spec(values: Any, n_batch: int) -> NumericArraySpec:
+def _inferred_element_term_spec(values: Any, n_batch: int) -> NumericArraySpec:
     """The spec *values* implies for its elements when its first *n_batch* axes are batch axes.
 
     The remaining axes are the event shape, and the array's dtype is the
@@ -419,7 +412,7 @@ def _inferred_element_spec(values: Any, n_batch: int) -> NumericArraySpec:
     Returns
     -------
     NumericArraySpec
-        The element spec, with the shape ``values.shape[n_batch:]``.
+        The elements' spec, with the shape ``values.shape[n_batch:]``.
 
     Raises
     ------
@@ -444,7 +437,7 @@ register_kind(NumericArraySpec, term_class=NumericArray, batch_class=NumericArra
 
 
 class _MappedBatchStore:
-    """A numeric row's array and element spec carried through a mapping transform.
+    """A numeric row's array and its elements' spec carried through a mapping transform.
 
     The row is one ``NumericArray`` or a ``NumericArrayBatch`` with its own
     levels. The executor adds the sweep's levels after mapping, when it rebuilds
@@ -454,7 +447,7 @@ class _MappedBatchStore:
     Private and short-lived: wrapped and unwrapped within one call.
     """
 
-    __slots__ = ("axis_groups", "element_spec", "label", "level_names", "store")
+    __slots__ = ("axis_groups", "element_term_spec", "label", "level_names", "store")
 
     def __init__(
         self,
@@ -462,37 +455,37 @@ class _MappedBatchStore:
         store: Any,
         /,
         *,
-        element_spec: NumericArraySpec,
+        element_term_spec: NumericArraySpec,
         level_names: tuple[str, ...],
         axis_groups: tuple[tuple[int, ...], ...],
     ):
         self.store = store
-        self.element_spec = element_spec
+        self.element_term_spec = element_term_spec
         self.level_names = level_names
         self.axis_groups = axis_groups
         self.label = label
 
     @classmethod
     def of(cls, value: NumericArrayBatch | NumericArray) -> _MappedBatchStore:
-        """Carry *value*'s array, its element spec with dimensions bound, and any batch levels."""
+        """Carry *value*'s array, its elements' spec with dimensions bound, and any batch levels."""
         if isinstance(value, NumericArrayBatch):
             return cls(
                 value._label,
                 value._values,
-                element=value.element_spec.term_spec,
+                element_term_spec=value.element_spec.term_spec,
                 level_names=tuple(value.level_names),
                 axis_groups=tuple(value.axis_groups),
             )
         if isinstance(value, NumericArray):
-            element_spec = value.spec
-            if element_spec.free_dims:
+            element_term_spec = value.spec
+            if element_term_spec.free_dims:
                 bindings: dict[str, int] = {}
-                element_spec._bind_dims_from_value(value, bindings, value.label)
-                element_spec = element_spec._substitute_dims(bindings)
+                element_term_spec._bind_dims_from_value(value, bindings, value.label)
+                element_term_spec = element_term_spec._substitute_dims(bindings)
             return cls(
                 value.label,
                 value.as_jax(),
-                element=element_spec,
+                element_term_spec=element_term_spec,
                 level_names=(),
                 axis_groups=(),
             )
@@ -506,21 +499,21 @@ def _mapped_batch_store_flatten(carried: _MappedBatchStore):
     # The label does not cross a transform (II.4); the executor labels the
     # batch it rebuilds.
     return [carried.store], (
-        carried.element_spec.term_spec,
+        carried.element_term_spec,
         carried.level_names,
         carried.axis_groups,
     )
 
 
 def _mapped_batch_store_unflatten(aux, children) -> _MappedBatchStore:
-    element_spec, level_names, axis_groups = aux
+    element_term_spec, level_names, axis_groups = aux
     (store,) = children
     # No rank check, deliberately: the added axis is the point, and the caller
     # that added it is the one that can name it.
     return _MappedBatchStore(
         "NumericArrayBatch",
         store,
-        element=element_spec,
+        element_term_spec=element_term_spec,
         level_names=level_names,
         axis_groups=axis_groups,
     )

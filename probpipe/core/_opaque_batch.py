@@ -6,7 +6,7 @@ See design III.1.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 
@@ -34,8 +34,8 @@ class OpaqueBatch(_ObjectBatch[Any]):
         The batch's label. Required, as it is for every batch: a batch is a value a
         caller holds, and a label derived from its class says nothing about what it
         holds.
-    element_spec : OpaqueSpec, optional
-        What every element satisfies. Defaults to the :class:`OpaqueSpec` of
+    element : OpaqueSpec, optional
+        The spec every element satisfies. Defaults to the :class:`OpaqueSpec` of
         the type the elements share exactly, which admits any value when they
         differ.
     axes_per_level : int or sequence of int, optional
@@ -51,7 +51,7 @@ class OpaqueBatch(_ObjectBatch[Any]):
     Raises
     ------
     TypeError
-        If ``element_spec`` is not an :class:`OpaqueSpec`; if an element is a
+        If *element* is not an :class:`OpaqueSpec`; if an element is a
         mapping, naming the position that failed; if ``elements`` is a string, a
         mapping, or an array that is not ``dtype=object`` — each iterates into
         something other than its elements — or is not iterable at all.
@@ -103,11 +103,11 @@ class OpaqueBatch(_ObjectBatch[Any]):
 
     __slots__ = ()
 
-    def _element_refusal(self, element: Any, element_spec: TermSpec) -> str:
-        """Why *element_spec* refuses *element*: it is a mapping, or not of the spec's type."""
+    def _element_refusal(self, element: Any, element_term_spec: TermSpec) -> str:
+        """Why *element_term_spec* refuses *element*: it is a mapping, or not of the spec's type."""
         if isinstance(element, Mapping):
             return "elements cannot be mappings; use RecordBatch for structured values"
-        return f"elements must match element_spec {element_spec!r}"
+        return f"elements must match {element_term_spec!r}"
 
     def __init__(
         self,
@@ -116,7 +116,7 @@ class OpaqueBatch(_ObjectBatch[Any]):
         level_names: NamesLike,
         *,
         label: str,
-        element_spec: OpaqueSpec | None = None,
+        element: OpaqueSpec | None = None,
         axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
@@ -124,45 +124,40 @@ class OpaqueBatch(_ObjectBatch[Any]):
             elements,
             level_names,
             label=label,
-            element=element_spec,
+            element=element,
             axes_per_level=axes_per_level,
             provenance=provenance,
         )
 
-    def _resolved_element_spec(
-        self, store: np.ndarray, element_spec: TermSpec | None
+    def _resolved_element_term_spec(
+        self, store: np.ndarray, element: TermSpec | None
     ) -> OpaqueSpec:
-        """*element_spec*, which must be an ``OpaqueSpec``, or the spec the elements share.
+        """*element*, which must be an ``OpaqueSpec``, or the spec the elements share.
 
         Parameters
         ----------
         store : numpy.ndarray
             The elements, whose shared type the default spec names.
-        element_spec : TermSpec or None
+        element : TermSpec or None
             The spec the caller supplied, or ``None``.
 
         Returns
         -------
         OpaqueSpec
-            The element spec.
+            The spec every element satisfies.
 
         Raises
         ------
         TypeError
-            If *element_spec* is not an ``OpaqueSpec``.
+            If *element* is not an ``OpaqueSpec``.
         """
-        if element_spec is None:
+        if element is None:
             return _opaque_spec_of(store.flat)
-        if not isinstance(element_spec, OpaqueSpec):
+        if not isinstance(element, OpaqueSpec):
             raise TypeError(
-                f"OpaqueBatch.element_spec must be an OpaqueSpec, got {type(element_spec).__name__}"
+                f"OpaqueBatch's element must be an OpaqueSpec, got {type(element).__name__}"
             )
-        return element_spec
-
-    @property
-    def element_spec(self) -> OpaqueSpec:
-        """The :class:`OpaqueSpec` every element satisfies — a view on ``spec``."""
-        return cast(OpaqueSpec, self._spec.element_spec.term_spec)
+        return element
 
     def _wrap_element(self, value: Any, label: str) -> Opaque:
         """The stored *value* as an :class:`~probpipe.Opaque` labeled *label*."""

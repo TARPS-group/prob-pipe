@@ -65,7 +65,7 @@ class StandIn:
 
     A check draws nothing, so where a call passes a law's draw the check passes
     this stand-in, whose spec is the law's event spec, and an empty
-    sweep's point holds one whose spec is the batch's element spec.
+    sweep's point holds one whose spec is the spec of the batch's elements.
     """
 
     spec: TermSpec
