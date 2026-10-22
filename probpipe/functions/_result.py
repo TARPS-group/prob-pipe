@@ -467,9 +467,9 @@ def _batch_over_swept_columns(
 
     *columns* arrive stacked on a single leading axis of ``prod(batch_shape)``,
     which the sweep's own axes replace; the levels are the sweep's followed by
-    the rows'. Both dispatches land here — the row-wise one after stacking the
-    rows itself, the mapped one with the transform's output axis already in
-    place — so the two agree by construction rather than by being maintained in
+    the rows'. Rows evaluated one at a time land here after stacking, and rows
+    that ``jax`` mapped land here with the map's output axis already in place,
+    so the two agree by construction rather than by being maintained in
     parallel.
     """
     return _batch_class_for(element_term_spec)(

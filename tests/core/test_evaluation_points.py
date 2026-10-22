@@ -17,8 +17,18 @@ from probpipe import (
     OutputSpec,
     Record,
     RecordSpec,
+    workflow_run,
 )
 from probpipe.core._execution_claims import ExecutionClaims
+
+from ._requester_calls import requester, requester_call
+
+
+@pytest.fixture(autouse=True)
+def _inside_a_requester_call():
+    """Each test builds its sets where a lifted call builds one: inside a call, with a key broker."""
+    with workflow_run(seed=0), requester_call(requester()):
+        yield
 
 
 def _points(fn, num_points=5, **options):
@@ -33,11 +43,14 @@ def _points(fn, num_points=5, **options):
 
 
 def _run(evaluation_points, **chunk_options):
-    """The outcomes of every chunk of *evaluation_points*, merged."""
+    """The outcomes of every chunk of *evaluation_points*, merged, the set then closed as an executor's run closes it."""
     shared_payload = evaluation_points.shared_payload()
-    return EvaluationOutcomes.merge(
-        chunk.run(shared_payload) for chunk in evaluation_points.chunks(**chunk_options)
-    )
+    try:
+        return EvaluationOutcomes.merge(
+            chunk.run(shared_payload) for chunk in evaluation_points.chunks(**chunk_options)
+        )
+    finally:
+        evaluation_points._point_scopes.close()
 
 
 def _scaled_sum(x, scale):
@@ -123,6 +136,7 @@ class TestChunks:
         assert unpickled_chunk._arguments_source["x"].shape == (4, 2)
         shared_payload = pickle.loads(pickle.dumps(evaluation_points.shared_payload()))
         assert unpickled_chunk.run(shared_payload).outputs == chunk.run(shared_payload).outputs
+        evaluation_points._point_scopes.close()
 
 
 class TestFailuresInAChunk:
@@ -179,10 +193,12 @@ class TestMergingOutcomes:
         np.testing.assert_array_equal(merged.outputs, [3.0, 15.0, 27.0, 39.0, 51.0])
 
     def test_outcomes_that_leave_a_gap_are_refused(self):
-        chunks = _points(_scaled_sum).chunks(chunk_size=2)
-        shared_payload = _points(_scaled_sum).shared_payload()
+        evaluation_points = _points(_scaled_sum)
+        chunks = evaluation_points.chunks(chunk_size=2)
+        shared_payload = evaluation_points.shared_payload()
         with pytest.raises(ValueError, match="cannot merge outcomes that start at 4"):
             EvaluationOutcomes.merge([chunks[0].run(shared_payload), chunks[2].run(shared_payload)])
+        evaluation_points._point_scopes.close()
 
 
 class TestTheOutputCheck:

@@ -204,7 +204,7 @@ class TestOptionalInputs:
 def _difference(fn):
     return Function(
         fn,
-        dispatch="sequential",
+        executor="sequential",
         max_evaluations=8,
         label="difference",
         output_spec=OutputSpec(difference=None),

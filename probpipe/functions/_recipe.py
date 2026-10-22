@@ -56,14 +56,7 @@ def provenance_recipe_fields(
         list(_iter_named_abi(compatibility_material, "descendant_adapter_abi"))
     )
     execution_diagnostics = [
-        {
-            "requested_dispatch": snapshot.requested_dispatch,
-            "requested_workflow_kind": snapshot.requested_workflow_kind,
-            "resolved_evaluator": contract.evaluator,
-            "resolved_transport": contract.transport,
-            "contract_abi": contract.abi,
-        }
-        for contract in snapshot.execution_contracts
+        _execution.execution_diagnostics(contract) for contract in snapshot.execution_contracts
     ]
     anchor = snapshot.callable_anchor
     if anchor is None:

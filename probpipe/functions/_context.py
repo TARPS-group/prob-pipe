@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from os import urandom as _os_urandom
 from threading import Lock
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 import jax
 import jax.extend.core
@@ -30,9 +30,6 @@ from ._rng import (
     jax_key_from_words,
     seed_to_root_words,
 )
-
-if TYPE_CHECKING:
-    from ._evaluation_keys import _RemoteCoordinationObservation
 
 _WorkflowContextKind = Literal[
     "seeded",
@@ -88,7 +85,6 @@ class _WorkflowFrameState:
     path_prefix: _RandomEventPath | None = None
     point_segment: _RandomEventPath | None = None
     root_words: tuple[int, int] | None = None
-    remote_coordination_observation: _RemoteCoordinationObservation | None = None
     closed: bool = False
     lock: Any = field(default_factory=Lock, repr=False)
 
@@ -159,7 +155,6 @@ class _StochasticProbeState:
     """Observable stochastic effects reached during one route probe."""
 
     effect_observed: bool = False
-    submission_observed: bool = False
 
 
 _STOCHASTIC_PROBE_STATE: ContextVar[_StochasticProbeState | None] = ContextVar(
@@ -174,27 +169,13 @@ _JAX_RUNTIME_GUARD: ContextVar[bool] = ContextVar(
 
 
 class _StochasticProbeSignal(RuntimeError):
-    """Signal that JAX probing reached workflow-owned randomness or evaluation point submission.
-
-    ``submission`` is True when the probe reached evaluation point submission, so the
-    refusal can name thread or Prefect work rather than a draw.
-    """
-
-    def __init__(self, message: str, *, submission: bool = False) -> None:
-        super().__init__(message)
-        self.submission = submission
+    """Signal that JAX probing reached workflow-owned randomness."""
 
 
-#: The refusal of thread or Prefect work started inside a body run under dispatch='jax'.
-JAX_SUBMISSION_MESSAGE = (
-    "dispatch='jax' cannot run a function that starts thread or Prefect work in its body. "
-    "Use dispatch='auto' or 'sequential' instead."
-)
-
-#: The refusal of a keyless draw inside a body run under dispatch='jax'.
+#: The refusal of a keyless draw inside a body that JAX maps.
 JAX_KEYLESS_DRAW_MESSAGE = (
-    "dispatch='jax' cannot run a function that draws random numbers without an explicit "
-    "key. Pass key=... to each draw, or use dispatch='auto', 'sequential', or 'thread'."
+    "a function that JAX maps cannot draw random numbers without an explicit key. Pass "
+    "key=... to each draw, or claim traceable=False so the function runs in Python"
 )
 
 
@@ -325,8 +306,7 @@ def _workflow_probe() -> Generator[None, None, None]:
     else:
         if state.effect_observed:
             raise _StochasticProbeSignal(
-                "JAX route probing reached a workflow-owned stochastic operation",
-                submission=state.submission_observed,
+                "JAX route probing reached a workflow-owned stochastic operation"
             )
     finally:
         _STOCHASTIC_PROBE_STATE.reset(token)
@@ -334,7 +314,7 @@ def _workflow_probe() -> Generator[None, None, None]:
 
 @contextmanager
 def _workflow_jax_runtime_guard() -> Generator[None, None, None]:
-    """Forbid omitted-key effects and evaluation point submission inside actual JAX execution."""
+    """Forbid omitted-key effects inside actual JAX execution."""
     token = _JAX_RUNTIME_GUARD.set(True)
     try:
         yield
@@ -345,19 +325,6 @@ def _workflow_jax_runtime_guard() -> Generator[None, None, None]:
 def _workflow_side_effects_forbidden() -> bool:
     """Return whether execution is a side-effect-free probe or JAX body."""
     return _STOCHASTIC_PROBE_STATE.get() is not None or _JAX_RUNTIME_GUARD.get()
-
-
-def _guard_evaluation_point_submission() -> None:
-    """Reject evaluation point transport from a probe or an actual JAX body."""
-    probe_state = _STOCHASTIC_PROBE_STATE.get()
-    if probe_state is not None:
-        probe_state.effect_observed = True
-        probe_state.submission_observed = True
-        raise _StochasticProbeSignal(
-            "JAX route probing reached evaluation point submission", submission=True
-        )
-    if _JAX_RUNTIME_GUARD.get():
-        raise TypeError(JAX_SUBMISSION_MESSAGE)
 
 
 def _guard_automatic_key_request() -> None:
@@ -527,7 +494,7 @@ def _assert_workflow_admission(frame: _WorkflowFrame | None = None) -> None:
     if not same_owner:
         raise UnmanagedConcurrentWorkflowEntryError(
             "this workflow_run belongs to another thread, process, or asyncio task. Run "
-            "concurrent work through a Function (e.g. dispatch='thread'), or start a separate "
+            "concurrent work through a Function (e.g. executor='thread'), or start a separate "
             "workflow_run inside the worker."
         )
     _assert_workflow_frame_open(active)
@@ -554,20 +521,6 @@ def _capture_active_workflow_frame() -> _WorkflowFrame | None:
     frame = _ACTIVE_WORKFLOW_FRAME.get()
     _assert_workflow_admission(frame)
     return frame
-
-
-def _find_remote_coordination_observation(
-    frame: _WorkflowFrame | None,
-) -> _RemoteCoordinationObservation | None:
-    """Find an attempt observation carried by this evaluation point frame chain."""
-    cursor = frame
-    while cursor is not None:
-        with cursor.state.lock:
-            observation = cursor.state.remote_coordination_observation
-        if observation is not None:
-            return observation
-        cursor = cursor.parent
-    return None
 
 
 def _assert_transported_frame_consistency(
@@ -685,9 +638,6 @@ def _resolve_root_words(frame: _WorkflowFrame) -> tuple[int, int]:
                 frame.state.root_words = _resolve_root_words(frame.parent)
             else:
                 if frame.kind == "evaluation_point":
-                    observation = frame.state.remote_coordination_observation
-                    if observation is not None:
-                        observation.observe_effect()
                     raise RuntimeError(
                         "rootless evaluation point workflow frame requires transported parent RNG authority"
                     )

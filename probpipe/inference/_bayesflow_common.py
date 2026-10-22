@@ -40,8 +40,8 @@ from ._inference_utils import refuse_seed_keywords
 if TYPE_CHECKING:
     from ..values import Function
 
-# Offline-simulation execution backend; values mirror ``Function``'s
-# dispatch names ("jax" = vmap the simulator, "sequential" = eager per-draw loop).
+# Offline-simulation execution backend; values match the names of ProbPipe's
+# executors ("jax" = vmap the simulator, "sequential" = eager per-draw loop).
 SimBackend = Literal["jax", "sequential"]
 
 # Internal adapter key for the simulated observation. User field names never

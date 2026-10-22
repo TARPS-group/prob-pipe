@@ -16,8 +16,8 @@ The engine runs the call stack of design Part V on every call of a Function:
 6. resolve: a lifted call resolves through the evaluation-rule registry
    (:mod:`._rules`), and each point runs the body or the route selected among
    the Function's routes (:mod:`._resolution`);
-7. execute: the points run under the dispatch mode with structural keys
-   (:mod:`._broadcast`, :mod:`._sweep`, :mod:`._execution`);
+7. execute: the evaluation points run on the executor the call chooses, with
+   structural keys (:mod:`._broadcast`, :mod:`._sweep`, :mod:`._execution`);
 8. return: the result is validated, wrapped, labeled, and given provenance
    recording the selected route, or detached under ``raw=True``
    (:mod:`._result`).
@@ -36,6 +36,7 @@ from types import MappingProxyType
 from typing import Any, cast, overload
 
 import jax
+import numpy as np
 
 from ..core._specs import _has_record_outputs, _output_record
 from ..values import _binding
@@ -48,6 +49,7 @@ except ImportError:
 from ..core._batch import Batch, BatchSpec, _flat_batch_spec
 from ..core._call_context import _NumSamplesUsed, current_call_context
 from ..core._dispatch import MethodInfo, ResolutionError
+from ..core._evaluation_points import _requested_evaluation_points
 from ..core._execution_claims import ProbeResult, probe
 from ..core._expression import (
     Applied,
@@ -138,7 +140,7 @@ def function(
 
     Pass keyword arguments to configure ProbPipe controls at definition time::
 
-        @function(max_evaluations=100, dispatch="sequential")
+        @function(max_evaluations=100, executor="thread")
         def my_func(x, y):
             return x + y
 
@@ -260,66 +262,6 @@ def _orchestration_mode(workflow_kind_control: WorkflowKind) -> WorkflowKind:
         return WorkflowKind.OFF
 
     return kind
-
-
-def _make_execution_config(
-    function_label: str,
-    resolved_controls: Mapping[str, Any],
-    *,
-    mode: _execution.WorkflowExecutionMode | None = None,
-) -> _execution.WorkflowExecutionConfig:
-    """Build resolved execution metadata for row-wise dispatch of a call under *resolved_controls*.
-
-    Parameters
-    ----------
-    function_label : str
-        The label of the called ``Function``, which names the execution.
-    resolved_controls : Mapping of str to Any
-        The call's resolved controls, whose ``workflow_kind``, ``dispatch``,
-        and ``max_workers`` select the mode.
-    mode : str or None, optional
-        The mode to use, or ``None`` to select it from *resolved_controls*.
-
-    Returns
-    -------
-    WorkflowExecutionConfig
-        The execution metadata.
-
-    Warns
-    -----
-    UserWarning
-        If the mode is a Prefect mode while ``dispatch="thread"`` or
-        ``max_workers`` is set, which configure only local thread dispatch.
-    """
-    if mode is None:
-        match _orchestration_mode(resolved_controls["workflow_kind"]):
-            case WorkflowKind.TASK:
-                mode = "prefect_task"
-            case WorkflowKind.FLOW:
-                mode = "prefect_flow"
-            case _ if resolved_controls["dispatch"] == "thread":
-                mode = "thread"
-            case _:
-                mode = "sequential"
-
-    is_prefect = mode in ("prefect_task", "prefect_flow")
-
-    if is_prefect and (
-        resolved_controls["dispatch"] == "thread" or resolved_controls["max_workers"] is not None
-    ):
-        warnings.warn(
-            "dispatch='thread' and max_workers configure only local "
-            "ThreadPoolExecutor dispatch; they do not control Prefect "
-            "scheduling",
-            stacklevel=2,
-        )
-
-    return _execution.WorkflowExecutionConfig(
-        mode=mode,
-        max_workers=resolved_controls["max_workers"] if mode == "thread" else None,
-        name=function_label,
-        prefect_task_runner=(config.prefect.resolve_task_runner() if is_prefect else None),
-    )
 
 
 def _call_function(
@@ -750,10 +692,6 @@ def _run_call(
         )
 
     workflow_kind = _orchestration_mode(resolved_controls["workflow_kind"])
-    _evaluation_keys._record_active_requested_execution(
-        resolved_controls["dispatch"],
-        workflow_kind.value,
-    )
     _replay._validate_active_plan(_recipe.serialize_stochastic_plan(stochastic_plan))
     invocation_bindings = _lifted_call_bindings(function, argument_values, broadcast_plan)
     concrete_output_spec = (
@@ -822,12 +760,12 @@ def _run_call(
     route_cache_key = _route_cache_key(function, resolved_controls, candidates)
 
     def probe_point(
-        dispatch_values: dict[str, Any], broadcast_args: list[_binding.FunctionInputRef]
+        point_values: dict[str, Any], lifted_refs: list[_binding.FunctionInputRef]
     ) -> ProbeResult:
         return _probe_lifted_point(
             function,
-            dispatch_values,
-            broadcast_args,
+            point_values,
+            lifted_refs,
             point_body=invoke_point,
             stochastic_plan=stochastic_plan,
             route_cache_key=route_cache_key,
@@ -837,38 +775,24 @@ def _run_call(
     # logs once, however many cells of a sweep read the stored probe result.
     untraceable_logged = False
 
-    def resolve_dispatch(
-        dispatch_values: dict[str, Any],
-        broadcast_args: list[_binding.FunctionInputRef],
-        *,
-        jax_supported: bool = True,
-    ) -> str:
+    def lifted_point_traceability(
+        point_values: dict[str, Any], lifted_refs: list[_binding.FunctionInputRef]
+    ) -> tuple[bool, str | None]:
         nonlocal untraceable_logged
-        dispatch = _resolve_dispatch(
-            function,
-            resolved_controls["dispatch"],
-            jax_supported=jax_supported,
-            probe_point=partial(probe_point, dispatch_values, broadcast_args),
+        traceable, untraceable_reason = _lifted_point_traceability(
+            function, partial(probe_point, point_values, lifted_refs)
         )
         if (
-            dispatch == "sequential"
-            and jax_supported
-            and resolved_controls["dispatch"] == "auto"
+            not traceable
             and function._execution_claims.traceable is None
             and not untraceable_logged
         ):
             untraceable_logged = True
             logger.info(
-                "Function '%s' is not JAX-traceable; using sequential dispatch.",
+                "Function '%s' is not JAX-traceable; its evaluation points run one at a time.",
                 function._label,
             )
-        return dispatch
-
-    def require_jax_traceable(
-        dispatch_values: dict[str, Any],
-        broadcast_args: list[_binding.FunctionInputRef],
-    ) -> None:
-        _require_jax_traceable(function, partial(probe_point, dispatch_values, broadcast_args))
+        return traceable, untraceable_reason
 
     def execute_distribution_broadcast(
         *,
@@ -894,12 +818,7 @@ def _run_call(
             logical_unit=logical_unit,
             include_inputs=include_inputs,
             get_key=get_key,
-            make_execution_config=partial(
-                _make_execution_config, function._label, resolved_controls
-            ),
-            requested_dispatch=resolved_controls["dispatch"],
-            resolve_dispatch=resolve_dispatch,
-            require_jax_traceable=require_jax_traceable,
+            lifted_point_traceability=lifted_point_traceability,
             function_name=function._label,
             output_label=function.output_label,
             output_name=function._output_name,
@@ -968,12 +887,7 @@ def _run_call(
             values=argument_values,
             plan=broadcast_plan,
             stochastic_plan=stochastic_plan,
-            make_execution_config=partial(
-                _make_execution_config, function._label, resolved_controls
-            ),
-            requested_dispatch=resolved_controls["dispatch"],
-            resolve_dispatch=resolve_dispatch,
-            require_jax_traceable=require_jax_traceable,
+            swept_point_traceability=lifted_point_traceability,
             distribution_broadcast=distribution_broadcast,
             function_name=function._label,
             output_label=label,
@@ -989,27 +903,25 @@ def _run_call(
             route=route.metadata,
         )
 
-    # Non-broadcast call — one function invocation, then wrap. TrackedTerm
+    # A plain call is one evaluation point, which varies only in being the
+    # call's own: its arguments are one row of a set of one. TrackedTerm
     # values form lineage parents; every other resolved parameter remains
     # separately fingerprinted in Provenance.inputs.
-    # Known harmless duplication: the distribution-broadcast module builds
-    # the same request shape. A later execution cleanup can centralize this
-    # without reintroducing private facade wrappers.
-    execution = _make_execution_config(function._label, resolved_controls)
-    request = _execution.WorkflowExecutionRequest(
-        func=invoke_point,
-        evaluation_points=_execution.issue_evaluation_points(
-            [argument_values],
-            point_segments=(_execution.plain_call_point_segment(),),
+    call_arguments = np.empty(1, dtype=object)
+    call_arguments[0] = argument_values
+    result = _execution.evaluate_plain_call(
+        _requested_evaluation_points(
+            lambda call_arguments: invoke_point(**call_arguments),
+            varying={"call_arguments": call_arguments},
+            origin=function._label,
+            traceable=False,
+            untraceable_reason=None,
+            point_noun="evaluation point",
+            point_segment=lambda point_index: _execution.plain_call_point_segment(),
         ),
-        execution=execution,
-        contract=_execution.make_execution_contract(
-            evaluator="rowwise",
-            transport=_execution.transport_for_execution_mode(execution.mode),
-            stochastic_plan=None,
-        ),
+        workflow_kind=workflow_kind,
+        function_label=function._label,
     )
-    result = _execution.execute_many(request)[0]
     if settled_exactness:
         exact = False if False in settled_exactness else (True if all(settled_exactness) else None)
         route = replace(route, exact=exact)
@@ -1106,16 +1018,16 @@ def _probe_checked_call(
 ) -> None:
     """Probe one evaluation point of the lifted call ``check`` reports, as the call would.
 
-    The call probes a function that states nothing when its dispatch is
-    automatic and its route maps the body, so ``check`` probes under the same
-    conditions, with the same stand-ins, and stores the outcome where the call
-    reads it. A probe of a nested sweep reads its first cell. A probe that
-    fails stores its outcome and raises nothing, as the call's would.
+    The call probes a function that states nothing when its route maps the
+    body, whatever executor it names, since a function JAX can trace is
+    always mapped by ``jax``. So ``check`` probes under the same conditions,
+    with the same stand-ins, and stores the outcome where the call reads it.
+    A probe of a nested sweep reads its first cell. A probe that fails stores
+    its outcome and raises nothing, as the call's would.
     """
     if (
         broadcast_plan.regime == "none"
         or function._execution_claims.traceable is not None
-        or resolved_controls["dispatch"] != "auto"
         or route_name not in _rules._ENGINE_RULES
     ):
         return
@@ -1241,7 +1153,7 @@ def _probe_lifted_point(
 ) -> ProbeResult:
     """Whether one evaluation point of a lifted call traces, read from the function's probe results.
 
-    The probe traces the operation the dispatch maps, not merely the body: a
+    The probe traces the operation ``jax`` maps, not merely the body: a
     body can trace on its own yet fail under the map, as one that returns a
     record holding a batch does. So the probe maps the body over stand-ins of
     its lifted arguments, each fed the way the map will feed it: a swept batch
@@ -1254,8 +1166,9 @@ def _probe_lifted_point(
     The result is stored in the function's probe results under the input
     structure of one evaluation point and *route_cache_key*, so every call and
     ``check`` with inputs of that structure, and every ``using`` copy of the
-    function, reads it. A probe that fails means sequential dispatch, which
-    always runs the call, so falling back costs speed, never correctness.
+    function, reads it. A probe that fails means the evaluation points run one
+    at a time, which always runs the call, so falling back costs speed, never
+    correctness.
 
     Parameters
     ----------
@@ -1361,6 +1274,8 @@ def _probe_lifted_point(
                 ),
             )
 
+            record_draws = _broadcast.record_events(stochastic_plan)
+
             def map_point_body(probe_inputs: tuple[Any, tuple[Any, ...]]) -> Any:
                 root_draws, probed_shared_values = probe_inputs
                 evaluate_draw = _broadcast.mapped_draw_body(
@@ -1368,6 +1283,7 @@ def _probe_lifted_point(
                     values=with_shared_values(probed_shared_values),
                     broadcast_args=drawn_refs,
                     batch_events=_broadcast.batch_events(stochastic_plan),
+                    record_events=record_draws,
                 )
 
                 def evaluate_at_root_draws(root_values: tuple[Any, ...]) -> Any:
@@ -1379,7 +1295,9 @@ def _probe_lifted_point(
                         for consumer, evaluate_consumer in zip(
                             group.consumers, binding.consumer_evaluators, strict=True
                         ):
-                            consumed_values[consumer.arg_ref] = evaluate_consumer(root_value)
+                            consumed_values[consumer.arg_ref] = _broadcast.lifted_row_form(
+                                evaluate_consumer(root_value), consumer.arg_ref, record_draws
+                            )
                     return evaluate_draw(
                         tuple(consumed_values[drawn_ref] for drawn_ref in drawn_refs)
                     )
@@ -1408,7 +1326,7 @@ def _probe_lifted_point(
     def map_point_body_without_workflow_effects(
         probe_inputs: tuple[Any, tuple[Any, ...]],
     ) -> Any:
-        # A workflow draw or submission reached while tracing fails the probe,
+        # A workflow draw reached while tracing fails the probe,
         # even when the body catches the refusal.
         with _context._workflow_probe():
             return map_point_body(probe_inputs)
@@ -1494,22 +1412,20 @@ def _root_draw_stand_in(root: Any) -> Any:
     if batch_valued_field is not None:
         path, levels = batch_valued_field
         raise _broadcast.UnmappedBatchError(
-            f"dispatch='jax' cannot map over the draws of {root.label!r}, whose "
-            f"field {path!r} stores a batch on the levels {list(levels)} for "
-            f"each draw. Lift over the marginal law at that field, as "
-            f"marginal(law, {path!r}) gives it, or use dispatch='auto', "
-            f"'sequential', or 'thread'."
+            f"jax.vmap cannot map over the draws of {root.label!r}, whose field {path!r} "
+            f"stores a batch on the levels {list(levels)} for each draw. Lift over the "
+            f"marginal law at that field, as marginal(law, {path!r}) gives it"
         )
     output_record = _output_record(root.event_spec)
     if not isinstance(output_record, NumericRecordSpec) or not output_record.is_concrete:
         raise TypeError(
-            f"{type(root).__name__} must declare a concrete numeric event to run under dispatch='jax'"
+            f"{type(root).__name__} must declare a concrete numeric event to be mapped by JAX"
         )
     try:
         field_dtypes = root.dtypes
     except (AttributeError, NotImplementedError) as error:
         raise TypeError(
-            f"{type(root).__name__} must declare its field dtypes to run under dispatch='jax'"
+            f"{type(root).__name__} must declare its field dtypes to be mapped by JAX"
         ) from error
     stand_in_columns = {}
     for path in output_record:
@@ -1559,8 +1475,7 @@ def _batch_stand_in(root: Any, event: BatchSpec) -> Any:
     element = flat.element_spec.term_spec
     if not isinstance(element, NumericSpec) or not flat.is_concrete:
         raise TypeError(
-            f"{type(root).__name__} must declare a concrete numeric event to run under "
-            f"dispatch='jax'"
+            f"{type(root).__name__} must declare a concrete numeric event to be mapped by JAX"
         )
     lead = (1, *flat.batch_shape)
     if isinstance(element, NumericArraySpec):
@@ -1572,7 +1487,7 @@ def _batch_stand_in(root: Any, event: BatchSpec) -> Any:
         dtype = leaf.dtype if leaf.dtype is not None else _stored_dtype(root, path)
         if dtype is None:
             raise TypeError(
-                f"{type(root).__name__} must declare its field dtypes to run under dispatch='jax'"
+                f"{type(root).__name__} must declare its field dtypes to be mapped by JAX"
             )
         columns[path] = jax.ShapeDtypeStruct((*lead, *leaf.shape), dtype)
     if isinstance(element, NumericArraySpec):
@@ -1595,104 +1510,53 @@ def _stored_dtype(root: Any, path: str) -> Any:
     return None if dtype is None or dtype.kind == "O" else dtype
 
 
-def _require_jax_traceable(function: Function, probe_point: Callable[[], ProbeResult]) -> None:
-    """Raise a clear error if explicit JAX dispatch cannot trace one evaluation point.
+def _lifted_point_traceability(
+    function: Function, probe_point: Callable[[], ProbeResult]
+) -> tuple[bool, str | None]:
+    """Whether JAX can trace one evaluation point of a lifted call of *function*, with the reason when it cannot.
 
-    A function that claims ``traceable=True`` is not probed: a false claim
-    raises where the body is traced. The probe's errors that the other
-    dispatch modes raise too are raised unchanged: the
-    :class:`~._call.ApplicabilityError` of a point whose declarations violate
-    the call contract, which planning raises, and the
-    :class:`~._result.ResultSchemaError` or :class:`~._result.ResultKindError` of
-    a result that violates its declaration, which the return raises. A batch
-    the map cannot carry, such as a joint law's batch-valued field, raises a
-    ``ValueError`` that names it.
+    A function's ``traceable`` claim decides with no probe. A function that
+    states nothing is traceable when one evaluation point traces, which
+    *probe_point* reads from the function's stored probe results or probes
+    once. A point that traced but failed ProbPipe's check of its inputs or of
+    its output counts as traced, since every executor refuses it the same way.
+
+    Parameters
+    ----------
+    function : Function
+        The function whose call is lifted.
+    probe_point : Callable
+        Reads or runs the probe of one evaluation point.
+
+    Returns
+    -------
+    tuple of (bool, str or None)
+        Whether JAX can trace an evaluation point, and why not when it cannot.
     """
-    if function._execution_claims.traceable is True:
-        return
+    traceable_claim = function._execution_claims.traceable
+    if traceable_claim is not None:
+        return traceable_claim, None if traceable_claim else "it claims traceable=False"
     probe_result = probe_point()
     if probe_result.traces:
-        return
+        return True, None
     if probe_result.draws_global_random:
-        raise ValueError(
-            f"dispatch='jax' cannot trace {function.label!r}: it draws from NumPy's global random "
-            f"generator, whose noise would be fixed into the compiled JAX program. Draw from a "
-            f"key, or use dispatch='sequential' or 'thread'"
+        return False, (
+            "it draws from NumPy's global random generator, whose noise would be fixed into "
+            "the compiled JAX program"
         )
     trace_error = probe_result.error
     if isinstance(
         trace_error,
         (_call.ApplicabilityError, _result.ResultSchemaError, _result.ResultKindError),
     ):
-        raise trace_error
-    if isinstance(trace_error, _broadcast.UnmappedBatchError):
-        raise ValueError(str(trace_error)) from None
+        # The callable traced, and ProbPipe's check of its inputs or output
+        # refused the point, which it refuses under every executor.
+        return True, None
     if isinstance(trace_error, _context._StochasticProbeSignal):
-        message = (
-            _context.JAX_SUBMISSION_MESSAGE
-            if trace_error.submission
-            else _context.JAX_KEYLESS_DRAW_MESSAGE
-        )
-        raise TypeError(message) from trace_error
-    raise ValueError(
-        "dispatch='jax' failed while tracing the wrapped function with JAX; "
-        "ensure the function is JAX-traceable, or use dispatch='auto', "
-        "'sequential', or 'thread'."
-    ) from trace_error
-
-
-def _resolve_dispatch(
-    function: Function,
-    requested_dispatch: str,
-    *,
-    jax_supported: bool,
-    probe_point: Callable[[], ProbeResult],
-) -> str:
-    """The dispatch of a lifted call of *function*: ``"jax"``, ``"sequential"``, or ``"thread"``.
-
-    An explicit dispatch is kept. Automatic dispatch reads the function's
-    ``traceable`` claim: ``True`` maps the call with JAX and ``False`` runs it
-    one point at a time, with no probe. A function that states nothing is
-    mapped with JAX when one evaluation point traces, which *probe_point* reads
-    from the function's stored probe results or probes once. This is
-    independent of orchestration (``workflow_kind``), which wraps whichever
-    strategy is chosen.
-
-    Parameters
-    ----------
-    function : Function
-        The function whose call is lifted.
-    requested_dispatch : str
-        The call's ``dispatch`` control.
-    jax_supported : bool
-        Whether the call's arguments can be mapped with JAX at all.
-    probe_point : Callable
-        Reads or runs the probe of one evaluation point.
-
-    Returns
-    -------
-    str
-        ``"jax"``, ``"sequential"``, or ``"thread"``.
-
-    Raises
-    ------
-    ValueError
-        If ``dispatch="jax"`` is requested for a function that claims
-        ``traceable=False``.
-    """
-    traceable_claim = function._execution_claims.traceable
-    if requested_dispatch == "jax" and traceable_claim is False:
-        raise ValueError(
-            f"dispatch='jax' cannot run {function.label!r}, which claims traceable=False. "
-            f"Use dispatch='auto', 'sequential', or 'thread'"
-        )
-    if requested_dispatch != "auto":
-        return requested_dispatch
-    if not jax_supported or traceable_claim is False:
-        return "sequential"
-    if traceable_claim is True or probe_point().traces:
-        return "jax"
-    return "sequential"
+        return False, "it draws random numbers without an explicit key"
+    if trace_error is None:
+        return False, "tracing it failed"
+    return False, f"tracing it raised {type(trace_error).__name__}: {trace_error}"
 
 
 @dataclass(frozen=True)

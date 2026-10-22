@@ -88,7 +88,6 @@ _EXAMPLES = frozenset(
     }
 )
 
-_AWAITS_EVALUATION_POINTS = "evaluate_at_points, which lifting and sweeps call (V.9)"
 _AWAITS_REPORTING = "check's report of how each callable's evaluation points will run (V.9)"
 
 #: Declarations the implementation does not match yet, with the change each awaits.
@@ -98,7 +97,6 @@ _PENDING: dict[str, str] = {
     "CallReport": _AWAITS_REPORTING,
     "EvaluationReport": _AWAITS_REPORTING,
     "ExecutionReport": _AWAITS_REPORTING,
-    "evaluate_at_points": _AWAITS_EVALUATION_POINTS,
 }
 
 #: Public names of the engine that the prose declares rather than a code block.

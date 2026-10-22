@@ -1,4 +1,4 @@
-"""Executors, the registry that chooses among them, and the dispatcher that runs a set of evaluation points (V.9).
+"""Executors, the registry that chooses among them, and the function that runs evaluations on them (V.9).
 
 An *executor* decides how a set of evaluation points runs: one at a time, on
 threads, in worker processes, compiled by JAX, or on a user's cluster. It
@@ -12,8 +12,8 @@ opt-in ones, and runs the first that can run the set.
 Provides:
   - :class:`EvaluationExecutor` – the base class of an executor.
   - :data:`executor_registry` – the registry of executors.
-  - :func:`_run_on_chosen_executor` – the one function that runs a set of
-    evaluation points on the executor its call chose.
+  - :func:`evaluate_at_points` – the one function through which code asks for
+    the evaluations of a callable at many arguments.
 """
 
 from __future__ import annotations
@@ -25,15 +25,18 @@ import os
 import threading
 import warnings
 from abc import abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from types import MappingProxyType
 from typing import Any, cast
 
 import cloudpickle
 import jax
+import jax.numpy as jnp
+import numpy as np
 
 from .._messages import unknown_names
+from ._array_backend import _is_numeric_leaf
 from ._call_context import (
     _EvaluationLog,
     _EvaluationSetRecord,
@@ -56,14 +59,21 @@ from ._evaluation_points import (
     EvaluationPoints,
     SharedPayload,
     _assembled_outcomes,
-    _checked_row_results,
+    _checked_stacked_output,
     _holds_only_values,
+    _InvalidPointOutput,
+    _num_rows,
+    _output_path,
     _point_failure,
+    _requester_scope,
+    _stacked_rows,
     _warn_lossy_casts,
 )
+from ._execution_claims import NO_CLAIMS, ExecutionClaims, FalseTraceableClaimError
+from ._specs import OutputSpec
 from .config import _checked_count
 
-__all__ = ["EvaluationExecutor", "executor_registry"]
+__all__ = ["EvaluationExecutor", "evaluate_at_points", "executor_registry"]
 
 
 class EvaluationExecutor(UnaryDispatchMethod):
@@ -180,8 +190,105 @@ executor of your own with ``executor_registry.register``.
 """
 
 
-def _run_on_chosen_executor(evaluation_points: EvaluationPoints) -> tuple[Any, ...]:
-    """Each evaluation point's output, in point order, run on the executor the running call chose.
+def evaluate_at_points(
+    fn: Callable[..., Any],
+    /,
+    *,
+    varying: Mapping[str, Any],
+    shared: Mapping[str, Any],
+    origin: str,
+    output_spec: OutputSpec | None,
+    stacked: bool = False,
+) -> Any:
+    """Evaluate *fn* at many arguments, on the executor the running call chooses.
+
+    Each evaluation point calls ``fn(**shared, **arguments)``, where
+    ``arguments`` holds each varying argument's values at that evaluation
+    point. With concrete arguments the evaluation points form one
+    :class:`EvaluationPoints`, which runs under the running call's settings,
+    and a draw made inside one takes its random key from its place in the
+    workflow, so changing the executor changes no result. A ``Function`` that
+    claims ``traceable=True`` is mapped by ``jax`` whatever executor the call
+    names. The call takes a place of its own in the workflow, as a nested
+    call does, so it can be made from a route, an inference method, or a
+    function's body. With traced arguments, as inside a function that JAX
+    traces, *fn* is mapped inline with ``jax.vmap``.
+
+    Parameters
+    ----------
+    fn : callable
+        The callable. A ``Function``'s execution claims say how it may run.
+    varying : Mapping of str to Any
+        Each argument that differs between evaluation points, its values
+        stacked on a leading axis with one row per evaluation point.
+    shared : Mapping of str to Any
+        Each argument that every evaluation point receives unchanged.
+    origin : str
+        The name of the callable or of the site that asks for the
+        evaluations, which messages use.
+    output_spec : OutputSpec or None
+        The callable's output spec, which each output is checked against;
+        ``None`` checks nothing.
+    stacked : bool, optional
+        Whether to return the outputs as one tree stacked on a leading axis of
+        evaluation points, in place of one output per evaluation point.
+        ``jax`` returns its mapped output whole. The outputs of any other
+        executor are stacked leaf by leaf when every leaf of every output is
+        numeric and the outputs share one tree structure, and are otherwise
+        returned as a one-dimensional object array that holds each output, as
+        are outputs that are tuples or lists.
+        ``False`` by default.
+
+    Returns
+    -------
+    tuple or Any
+        Each evaluation point's output, in point order, or under *stacked* the
+        outputs stacked as one tree.
+
+    Raises
+    ------
+    EvaluationError
+        If an evaluation point failed, naming every failed one.
+    ResolutionError
+        If the executor named for the callable cannot run its evaluation
+        points, or no registered executor can.
+    ValueError
+        If the varying arguments do not have one row per evaluation point, or
+        the chosen executor does not take one of its options.
+    Examples
+    --------
+    A route of a ProbPipe call evaluates a simulator at 200 parameter values,
+    stacked in ``thetas``, against the observed data ``y``::
+
+        simulations = evaluate_at_points(
+            simulate,
+            varying={"theta": thetas},
+            shared={"data": y},
+            origin="simulate",
+            output_spec=simulate.output_spec,
+        )
+    """
+    if _holds_tracer((varying, shared)):
+        return _mapped_inline(fn, varying, shared, origin=origin, stacked=stacked)
+    with _requester_scope():
+        evaluation_points = EvaluationPoints(
+            fn,
+            varying=varying,
+            shared=shared,
+            origin=origin,
+            output_spec=output_spec,
+            claims=_execution_claims_of(fn),
+        )
+        return _evaluated_outputs(evaluation_points, stacked=stacked)
+
+
+def _evaluated_outputs(
+    evaluation_points: EvaluationPoints,
+    *,
+    stacked: bool = False,
+    execution_choice: _ExecutionChoice | None = None,
+) -> Any:
+    """Each evaluation point's output, or under *stacked* the outputs stacked, run on the chosen executor.
 
     The choice follows V.9's rules. A traceable callable is compiled by
     ``jax`` whatever executor the call names, and receives none of the named
@@ -198,11 +305,19 @@ def _run_on_chosen_executor(evaluation_points: EvaluationPoints) -> tuple[Any, .
     ----------
     evaluation_points : EvaluationPoints
         The set of evaluation points, built under the running call.
+    stacked : bool, optional
+        Whether to return the outputs stacked, as :func:`evaluate_at_points`
+        states. ``jax`` then returns its mapped output whole, never cut into
+        rows.
+    execution_choice : _ExecutionChoice or None, optional
+        The choice to follow in place of the running call's; ``None`` follows
+        the call's.
 
     Returns
     -------
-    tuple
-        Each evaluation point's output, in point order.
+    tuple or Any
+        Each evaluation point's output, in point order, or the stacked
+        outputs.
 
     Raises
     ------
@@ -214,15 +329,66 @@ def _run_on_chosen_executor(evaluation_points: EvaluationPoints) -> tuple[Any, .
     EvaluationError
         If an evaluation point failed, naming every failed one.
     """
+    executor, executor_options = _chosen_executor_closing_on_error(
+        evaluation_points, execution_choice
+    )
+    if stacked and isinstance(executor, _JaxExecutor):
+        return _mapped_outputs_or_error(evaluation_points)
+    evaluation_outcomes = _run_on_executor(evaluation_points, executor, executor_options)
+    return _outputs_of(evaluation_points, evaluation_outcomes, stacked=stacked)
+
+
+def _evaluated_outcomes(
+    evaluation_points: EvaluationPoints, *, execution_choice: _ExecutionChoice | None = None
+) -> EvaluationOutcomes:
+    """The outcomes of *evaluation_points*, run on the executor :func:`_evaluated_outputs` chooses.
+
+    A requester that decides itself what a failure means reads the outcomes,
+    failures included, in place of the outputs.
+
+    Parameters
+    ----------
+    evaluation_points : EvaluationPoints
+        The set of evaluation points, built under the running call.
+    execution_choice : _ExecutionChoice or None, optional
+        The choice to follow in place of the running call's; ``None`` follows
+        the call's.
+
+    Returns
+    -------
+    EvaluationOutcomes
+        One outcome per evaluation point, failures included.
+    """
+    executor, executor_options = _chosen_executor_closing_on_error(
+        evaluation_points, execution_choice
+    )
+    return _run_on_executor(evaluation_points, executor, executor_options)
+
+
+def _chosen_executor_closing_on_error(
+    evaluation_points: EvaluationPoints, execution_choice: _ExecutionChoice | None
+) -> tuple[EvaluationExecutor, dict[str, Any]]:
+    """The executor that runs *evaluation_points*, which release what they hold when none is chosen."""
     call_context = current_call_context()
     try:
-        executor, executor_options = _chosen_executor(
-            evaluation_points, call_context.execution_choice, call_context.evaluation_log
+        return _chosen_executor(
+            evaluation_points,
+            call_context.execution_choice if execution_choice is None else execution_choice,
+            call_context.evaluation_log,
         )
     except BaseException:
         evaluation_points._point_scopes.close()
         raise
-    evaluation_outcomes = _run_on_executor(evaluation_points, executor, executor_options)
+
+
+def _outputs_of(
+    evaluation_points: EvaluationPoints, evaluation_outcomes: EvaluationOutcomes, *, stacked: bool
+) -> Any:
+    """The outputs in *evaluation_outcomes*, stacked under *stacked*, or the error naming its failures.
+
+    A failed evaluation point raises :class:`EvaluationError`, chained to the
+    first failure's error.
+    """
     if evaluation_outcomes.failures:
         failures = tuple(evaluation_outcomes.failures.values())
         first_error = min(failures, key=lambda failure: failure.point_index).error
@@ -232,6 +398,8 @@ def _run_on_chosen_executor(evaluation_points: EvaluationPoints) -> tuple[Any, .
             origin=evaluation_points.origin,
             point_noun=evaluation_points.point_noun,
         ) from first_error
+    if stacked:
+        return _stacked_outputs(evaluation_outcomes.outputs)
     return evaluation_outcomes.outputs
 
 
@@ -277,16 +445,73 @@ def _run_on_executor(
     _merge_noted_into(
         call_context, evaluation_outcomes._noted_num_samples, evaluation_outcomes._noted_set_records
     )
-    if call_context.evaluation_log is not None:
-        call_context.evaluation_log.record(
-            _set_record(evaluation_points, executor.name, executor_options, evaluation_outcomes)
-        )
-    _warn_lossy_casts(
-        evaluation_outcomes._lossy_casts,
-        origin=evaluation_points.origin,
-        evaluation_log=call_context.evaluation_log,
+    _record_set_run(
+        evaluation_points,
+        executor.name,
+        executor_options,
+        failed_point_indices=tuple(sorted(evaluation_outcomes.failures)),
+        lossy_casts=evaluation_outcomes._lossy_casts,
     )
     return evaluation_outcomes
+
+
+def _mapped_outputs_or_error(evaluation_points: EvaluationPoints) -> Any:
+    """The outputs of a set that ``jax`` maps, kept whole, recorded as :func:`_run_on_executor` records a run.
+
+    A map that raised, or whose output does not conform to the output spec,
+    fails every evaluation point, and the call raises :class:`EvaluationError`.
+    """
+    try:
+        stacked_output, lossy_casts = _mapped_outputs(evaluation_points)
+    except _MappingFailure as raised_failure:
+        mapping_failure = raised_failure
+    else:
+        mapping_failure = None
+    finally:
+        evaluation_points._point_scopes.close()
+    if mapping_failure is not None:
+        failures = mapping_failure.point_failures(evaluation_points)
+        _record_set_run(
+            evaluation_points,
+            "jax",
+            {},
+            failed_point_indices=tuple(range(len(evaluation_points))),
+            lossy_casts=frozenset(),
+        )
+        raise EvaluationError(
+            failures,
+            (None,) * len(evaluation_points),
+            origin=evaluation_points.origin,
+            point_noun=evaluation_points.point_noun,
+        ) from mapping_failure.error
+    _record_set_run(evaluation_points, "jax", {}, failed_point_indices=(), lossy_casts=lossy_casts)
+    return stacked_output
+
+
+def _record_set_run(
+    evaluation_points: EvaluationPoints,
+    executor_name: str,
+    executor_options: Mapping[str, Any],
+    *,
+    failed_point_indices: tuple[int, ...],
+    lossy_casts: frozenset[tuple[str, str]],
+) -> None:
+    """Record a run of *evaluation_points* in the call's evaluation log, and warn about lossy casts."""
+    call_context = current_call_context()
+    if call_context.evaluation_log is not None:
+        call_context.evaluation_log.record(
+            _EvaluationSetRecord(
+                origin=evaluation_points.origin,
+                set_ordinal=evaluation_points._set_ordinal,
+                executor_name=executor_name,
+                executor_options=dict(executor_options),
+                num_evaluation_points=len(evaluation_points),
+                failed_point_indices=failed_point_indices,
+            )
+        )
+    _warn_lossy_casts(
+        lossy_casts, origin=evaluation_points.origin, evaluation_log=call_context.evaluation_log
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -311,9 +536,14 @@ class _JaxExecutor(EvaluationExecutor):
 
     def check(self, evaluation_points: EvaluationPoints, /) -> Feasibility:
         if not evaluation_points.traceable:
+            untraceable_reason = evaluation_points._untraceable_reason
             return Feasibility(
                 feasible=False,
-                description=f"{evaluation_points.origin!r} is not known to be traceable by JAX",
+                description=(
+                    f"{evaluation_points.origin!r} is not known to be traceable by JAX"
+                    if untraceable_reason is None
+                    else f"JAX cannot trace {evaluation_points.origin!r}: {untraceable_reason}"
+                ),
             )
         output_spec = evaluation_points.output_spec
         if output_spec is not None and not _holds_only_values(output_spec.term_spec):
@@ -327,38 +557,16 @@ class _JaxExecutor(EvaluationExecutor):
         return Feasibility(feasible=True)
 
     def execute(self, evaluation_points: EvaluationPoints, /) -> EvaluationOutcomes:
-        shared_payload = evaluation_points.shared_payload()
-        num_points = len(evaluation_points)
-
-        def evaluate_one_point(varying_arguments: Mapping[str, Any]) -> Any:
-            return shared_payload.fn(**shared_payload.shared_arguments, **varying_arguments)
-
-        origin = evaluation_points.origin
-        set_ordinal = evaluation_points._set_ordinal
         try:
-            with evaluation_points._point_scopes.mapped_scope():
-                stacked_outputs = jax.vmap(evaluate_one_point)(dict(evaluation_points._varying))
-        except Exception as error:
-            return _assembled_outcomes(
-                0,
-                [
-                    _point_failure(origin, set_ordinal, point_index, "error", error)
-                    for point_index in range(num_points)
-                ],
-            )
-        output_rows = [
-            jax.tree.map(lambda leaf, row_index=point_index: leaf[row_index], stacked_outputs)
-            for point_index in range(num_points)
-        ]
+            stacked_output, lossy_casts = _mapped_outputs(evaluation_points)
+        except _MappingFailure as mapping_failure:
+            return _assembled_outcomes(0, mapping_failure.point_failures(evaluation_points))
         return _assembled_outcomes(
             0,
-            _checked_row_results(
-                output_rows,
-                range(num_points),
-                evaluation_points.output_spec,
-                origin=origin,
-                set_ordinal=set_ordinal,
-            ),
+            [
+                (point_output, lossy_casts)
+                for point_output in _stacked_rows(stacked_output, len(evaluation_points))
+            ],
         )
 
 
@@ -605,23 +813,6 @@ def _check_outcomes_cover(
         )
 
 
-def _set_record(
-    evaluation_points: EvaluationPoints,
-    executor_name: str,
-    executor_options: Mapping[str, Any],
-    evaluation_outcomes: EvaluationOutcomes,
-) -> _EvaluationSetRecord:
-    """The record of one set of evaluation points that the call's evaluation log keeps."""
-    return _EvaluationSetRecord(
-        origin=evaluation_points.origin,
-        set_ordinal=evaluation_points._set_ordinal,
-        executor_name=executor_name,
-        executor_options=dict(executor_options),
-        num_evaluation_points=len(evaluation_points),
-        failed_point_indices=tuple(sorted(evaluation_outcomes.failures)),
-    )
-
-
 def _checked_worker_count(max_workers: Any) -> int:
     """*max_workers*, or the number of processors when it is ``None``.
 
@@ -642,7 +833,7 @@ def _checked_worker_count(max_workers: Any) -> int:
     """
     if max_workers is None:
         return os.cpu_count() or 1
-    return _checked_count(max_workers, "max_workers")
+    return _checked_count(max_workers, "executor_options['max_workers']")
 
 
 def _parallel_chunks(
@@ -762,3 +953,144 @@ def _received_outcomes(
             "its outcomes could not be received from the worker process "
             f"({type(receiving_error).__name__}: {receiving_error})",
         )
+
+
+class _MappingFailure(Exception):
+    """A ``jax.vmap`` over a set of evaluation points raised, or returned an output that does not conform.
+
+    Either fails every evaluation point of the set, since the map computes
+    them together.
+
+    Parameters
+    ----------
+    kind : {"error", "invalid"}
+        ``"error"`` when the map raised; ``"invalid"`` when its output did not
+        conform to the output spec.
+    error : Exception
+        The error.
+    """
+
+    def __init__(self, kind: str, error: Exception) -> None:
+        super().__init__(str(error))
+        self.kind = kind
+        self.error = error
+
+    def point_failures(self, evaluation_points: EvaluationPoints) -> list[Any]:
+        """The failure of each evaluation point of *evaluation_points*, all caused by this one."""
+        return [
+            _point_failure(
+                evaluation_points.origin,
+                evaluation_points._set_ordinal,
+                point_index,
+                cast(Any, self.kind),
+                self.error,
+            )
+            for point_index in range(len(evaluation_points))
+        ]
+
+
+def _mapped_outputs(
+    evaluation_points: EvaluationPoints,
+) -> tuple[Any, frozenset[tuple[str, str]]]:
+    """The callable mapped over every evaluation point with ``jax.vmap``, checked once against the output spec.
+
+    It returns the outputs stacked on a leading axis, with the pairs of dtype
+    names of each cast to a declared dtype that lost precision. A map that
+    raised, or whose output does not conform, raises :class:`_MappingFailure`,
+    except a false ``traceable=True`` claim, whose error reaches the caller as
+    itself.
+    """
+    shared_payload = evaluation_points.shared_payload()
+
+    def evaluate_one_point(varying_arguments: Mapping[str, Any]) -> Any:
+        return shared_payload.fn(**shared_payload.shared_arguments, **varying_arguments)
+
+    try:
+        with evaluation_points._point_scopes.mapped_scope():
+            stacked_output = jax.vmap(evaluate_one_point)(dict(evaluation_points._varying))
+    except FalseTraceableClaimError:
+        # A false claim is an error of the callable's declaration, not of any
+        # evaluation point, so it reaches the caller as itself.
+        raise
+    except Exception as error:
+        raise _MappingFailure("error", error) from error
+    try:
+        return _checked_stacked_output(
+            stacked_output,
+            evaluation_points.output_spec,
+            len(evaluation_points),
+            _output_path(evaluation_points.origin),
+        )
+    except _InvalidPointOutput as invalid_output:
+        raise _MappingFailure("invalid", invalid_output.check_error) from invalid_output
+
+
+def _mapped_inline(
+    fn: Callable[..., Any],
+    varying: Mapping[str, Any],
+    shared: Mapping[str, Any],
+    *,
+    origin: str,
+    stacked: bool,
+) -> Any:
+    """*fn* mapped over traced varying arguments with ``jax.vmap``, in the trace that holds them."""
+    num_points = _num_rows(varying, origin)
+    stacked_output = jax.vmap(lambda varying_arguments: fn(**shared, **varying_arguments))(
+        dict(varying)
+    )
+    if stacked:
+        return stacked_output
+    return tuple(_stacked_rows(stacked_output, num_points))
+
+
+def _stacked_outputs(outputs: Sequence[Any]) -> Any:
+    """*outputs*, one per evaluation point, as one tree stacked on a leading axis.
+
+    When every leaf of every output is numeric and the outputs share one tree
+    structure, each leaf is stacked with ``jnp.stack``, as ``jax.vmap`` stacks
+    a mapped output. Otherwise, as for outputs that are laws, tuples or lists,
+    arrays of different shapes, or batches, the result is a one-dimensional
+    object array that holds each output.
+    """
+    if any(isinstance(output, (list, tuple)) for output in outputs):
+        # A sequence a callable returns is one value, which the requester
+        # reads whole, never a structure to stack position by position.
+        return _held_outputs(outputs)
+    flattened_outputs = [jax.tree.flatten(output) for output in outputs]
+    tree_definitions = {tree_definition for _, tree_definition in flattened_outputs}
+    output_leaves = [leaves for leaves, _ in flattened_outputs]
+    if (
+        len(tree_definitions) == 1
+        and output_leaves
+        and output_leaves[0]
+        and all(_is_numeric_leaf(leaf) for leaves in output_leaves for leaf in leaves)
+    ):
+        try:
+            return jax.tree.unflatten(
+                next(iter(tree_definitions)),
+                [jnp.stack(leaf_rows) for leaf_rows in zip(*output_leaves)],
+            )
+        except (TypeError, ValueError):
+            # Leaves of different shapes, or a container that cannot hold an
+            # added axis, such as a batch, whose shape is fixed.
+            pass
+    return _held_outputs(outputs)
+
+
+def _held_outputs(outputs: Sequence[Any]) -> np.ndarray:
+    """A one-dimensional object array that holds each of *outputs*, as it is."""
+    held_outputs = np.empty(len(outputs), dtype=object)
+    for point_index, output in enumerate(outputs):
+        held_outputs[point_index] = output
+    return held_outputs
+
+
+def _holds_tracer(tree: Any) -> bool:
+    """Whether any leaf of *tree* is a value JAX is tracing."""
+    return any(isinstance(leaf, jax.core.Tracer) for leaf in jax.tree.leaves(tree))
+
+
+def _execution_claims_of(fn: Callable[..., Any]) -> ExecutionClaims:
+    """The execution claims a ``Function`` states, or none for any other callable."""
+    claims = getattr(fn, "_execution_claims", None)
+    return claims if isinstance(claims, ExecutionClaims) else NO_CLAIMS

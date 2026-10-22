@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -122,7 +123,9 @@ class TestTheScoredValue:
             rtol=1e-6,
         )
 
-    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
+    @pytest.mark.parametrize(
+        "executor", [None, "sequential", "jax"], ids=["automatic", "sequential", "jax"]
+    )
     @pytest.mark.parametrize(
         ("law", "values"),
         [
@@ -146,10 +149,17 @@ class TestTheScoredValue:
         ids=["arrays", "records"],
     )
     def test_a_batch_of_values_that_do_not_conform_raises_applicability_error(
-        self, law, values, dispatch
+        self, law, values, executor
     ):
         with pytest.raises(ApplicabilityError, match="does not conform"):
-            log_prob.using(dispatch=dispatch)(law, values)
+            log_prob.using(executor=executor)(law, values)
+
+
+class _CountedVectorInPython(CountedVector):
+    """A ``CountedVector`` whose density reads its value as a NumPy array, so JAX cannot trace it."""
+
+    def _log_prob(self, value: Any) -> Any:
+        return super()._log_prob(np.asarray(value))
 
 
 class TestABatchOfArraysIsScoredInOneMappedCall:
@@ -191,7 +201,7 @@ class TestABatchOfArraysIsScoredInOneMappedCall:
         assert bool(jnp.all(jnp.asarray(scores.raw) >= 0))
 
     @pytest.mark.parametrize("score", [log_prob, unnormalized_log_prob])
-    def test_the_mapped_scores_equal_the_sequential_ones_at_every_level(self, score):
+    def test_the_mapped_scores_equal_the_ones_scored_one_at_a_time_at_every_level(self, score):
         points = NumericArrayBatch(
             jax.random.normal(jax.random.PRNGKey(1), (2, 4, 3)),
             ("rows", "cols"),
@@ -199,9 +209,9 @@ class TestABatchOfArraysIsScoredInOneMappedCall:
             axes_per_level=(1, 1),
             label="grid",
         )
-        mapped_law, sequential_law = CountedVector("v"), CountedVector("v")
+        mapped_law, sequential_law = CountedVector("v"), _CountedVectorInPython("v")
         mapped = score(mapped_law, points)
-        sequential = score.using(dispatch="sequential")(sequential_law, points)
+        sequential = score.using(executor="sequential")(sequential_law, points)
         assert len(sequential_law.calls) == 8 > len(mapped_law.calls)
         assert mapped.level_names == sequential.level_names == ("rows", "cols")
         assert mapped.batch_shape == sequential.batch_shape == (2, 4)

@@ -56,7 +56,7 @@ from probpipe.core._evaluation_points import (
     EvaluationPoints,
     SharedPayload,
 )
-from probpipe.core._executors import EvaluationExecutor, executor_registry
+from probpipe.core._executors import EvaluationExecutor, evaluate_at_points, executor_registry
 from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric import Numeric
 from probpipe.core._numeric_array import NumericArray
@@ -363,6 +363,7 @@ __all__ = [
     "cov",
     "distribution",
     "elliptical_slice",
+    "evaluate_at_points",
     "evaluation_rule_registry",
     "executor_registry",
     "expectation",

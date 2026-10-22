@@ -191,7 +191,7 @@ class TestHintedDistributionConversion:
         normal_external,
     ):
         mean_of_normal, seen = mean_recorder
-        wf = Function(mean_of_normal, label="mean_of_normal", dispatch="sequential")
+        wf = Function(mean_of_normal, label="mean_of_normal", executor="sequential")
 
         result = wf(dist=normal_external)
 
@@ -205,7 +205,7 @@ class TestHintedDistributionConversion:
             seen.append(dist)
             return log_prob(dist, jnp.asarray([0.0]))
 
-        wf = Function(log_prob_at_zero, label="log_prob_at_zero", dispatch="sequential")
+        wf = Function(log_prob_at_zero, label="log_prob_at_zero", executor="sequential")
 
         result = wf(dist=empirical_dist)
 
@@ -223,7 +223,7 @@ class TestDistributionBatchHandling:
             "cell",
             label="one_cell",
         )
-        wf = Function(mean_of_normal, label="mean_of_normal", dispatch="sequential")
+        wf = Function(mean_of_normal, label="mean_of_normal", executor="sequential")
 
         result = wf(dist=batch)
 
@@ -247,7 +247,8 @@ class TestUnhintedExternalDistribution:
             double,
             label="double",
             max_evaluations=8,
-            dispatch="sequential",
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(double=None),
         )
         external = tfd.Normal(loc=1.0, scale=0.1)
@@ -286,7 +287,8 @@ def test_non_distribution_capability_protocol_does_not_disable_lifting():
         consume,
         label="consume",
         max_evaluations=8,
-        dispatch="sequential",
+        traceable=False,
+        executor="sequential",
         output_spec=OutputSpec(consume=None),
     )
 
@@ -324,7 +326,7 @@ def test_capability_annotation_passes_the_law_through(capability):
 
     consume.__annotations__ = {"law": capability}
     law = _law_claiming(capability)
-    wrapped = Function(consume, label="consume", max_evaluations=8, dispatch="sequential")
+    wrapped = Function(consume, label="consume", max_evaluations=8, executor="sequential")
 
     wrapped(law)
 

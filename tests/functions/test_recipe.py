@@ -89,7 +89,7 @@ def _draw_value(value):
     return sample(Normal("draw", loc=value, scale=1.0))
 
 
-_INNER_DRAW = Function(_draw_value, label="_draw_value", dispatch="sequential")
+_INNER_DRAW = Function(_draw_value, label="_draw_value", executor="sequential")
 
 
 def _nested_automatic(value):
@@ -170,7 +170,7 @@ class TestWorkflowRecipeRecording:
         workflow = Function(
             _identity,
             label="_identity",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=11,
             output_spec=OutputSpec(_identity=None),
         )
@@ -188,7 +188,7 @@ class TestWorkflowRecipeRecording:
         assert replay["plan"]["canonical_fields"]["n_evaluations"] == 11
         assert replay["plan"]["expected_effects"][0]["sample_shape"] == [11]
         assert replay["compatibility"] == {
-            "execution_contract": "probpipe.workflow_rng_execution/v1",
+            "execution_contract": "probpipe.workflow_rng_execution/v2",
             "sampling_abi": ["probpipe.distribution_sampling/v1"],
             "provider_abi": ["probpipe.distribution/v1"],
             "descendant_adapter_abi": [],
@@ -196,11 +196,9 @@ class TestWorkflowRecipeRecording:
         }
         assert result.provenance.diagnostics["execution"] == [
             {
-                "requested_dispatch": "sequential",
-                "requested_workflow_kind": "off",
-                "resolved_evaluator": "rowwise",
-                "resolved_transport": "local_inline",
-                "contract_abi": "probpipe.workflow_rng_execution/v1",
+                "executor": "sequential",
+                "executor_options": {},
+                "contract_abi": "probpipe.workflow_rng_execution/v2",
             }
         ]
 
@@ -280,7 +278,7 @@ class TestWorkflowRecipeRecording:
             _add,
             label="_add",
             max_evaluations=5,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(_add=None),
         )
         with workflow_run(seed=12):
@@ -326,8 +324,6 @@ class TestWorkflowRecipeRecording:
             },
             effects=(effect(1), effect(0)),
             execution_contracts=(),
-            requested_dispatch="thread",
-            requested_workflow_kind="off",
             callable_anchor=_callable.capture_function_anchor(
                 Function(
                     _identity,
@@ -371,8 +367,6 @@ class TestWorkflowRecipeRecording:
             },
             effects=(effect,),
             execution_contracts=(),
-            requested_dispatch="sequential",
-            requested_workflow_kind="off",
             callable_anchor=None,
         )
 
@@ -387,7 +381,7 @@ class TestWorkflowRecipeRecording:
             _recipe.provenance_recipe_fields(None)
 
     def test_nested_automatic_function_is_marked_non_standalone(self):
-        workflow = Function(_nested_automatic, label="_nested_automatic", dispatch="thread")
+        workflow = Function(_nested_automatic, label="_nested_automatic", executor="thread")
         with workflow_run(seed=21):
             result = workflow(value=1.0)
 
@@ -402,7 +396,7 @@ class TestWorkflowRecipeRecording:
         workflow = Function(
             _nested_automatic,
             label="_nested_automatic",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=5,
             output_spec=OutputSpec(_nested_automatic=None),
         )
@@ -421,7 +415,8 @@ class TestWorkflowRecipeRecording:
         workflow = Function(
             _identity,
             label="_identity",
-            dispatch="thread",
+            traceable=False,
+            executor="thread",
             max_evaluations=5,
             output_spec=OutputSpec(_identity=None),
         )
@@ -469,7 +464,7 @@ class TestWorkflowRecipeRecording:
         workflow = Function(
             implementation,
             label="implementation",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=5,
             output_spec=OutputSpec(implementation=None),
         )
@@ -506,7 +501,7 @@ class TestWorkflowRecipeRecording:
         workflow = Function(
             _identity,
             label="_identity",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=8,
             output_spec=OutputSpec(_identity=None),
         )
@@ -652,7 +647,7 @@ class TestWorkflowCallableAnchor:
 
     def test_replay_refuses_a_changed_postponed_alias(self, monkeypatch):
         fixtures = _postponed_alias_replay_fixtures
-        workflow = Function(fixtures.shift, dispatch="sequential", max_evaluations=5)
+        workflow = Function(fixtures.shift, executor="sequential", max_evaluations=5)
         value = NumericArray(jnp.asarray(1.0), label="x")
         noise = Normal("noise", loc=0.0, scale=1.0)
         with workflow_run(seed=0):
@@ -662,7 +657,7 @@ class TestWorkflowCallableAnchor:
         np.testing.assert_array_equal(np.asarray(first.atoms), np.asarray(same.atoms))
 
         monkeypatch.setattr(fixtures, "Values", fixtures.values_alias("Values", NumericArray))
-        changed = Function(fixtures.shift, dispatch="sequential", max_evaluations=5)
+        changed = Function(fixtures.shift, executor="sequential", max_evaluations=5)
         with (
             pytest.raises(
                 ReplayCompatibilityError, match="has changed since the call was recorded"

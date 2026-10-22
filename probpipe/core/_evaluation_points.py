@@ -132,18 +132,22 @@ class EvaluationPoints:
     ValueError
         If there are no varying arguments, or they do not all have the same
         number of rows.
+    RuntimeError
+        If it is built where no ProbPipe call gives its evaluation points a
+        place in the workflow, which gives them their random keys, such as
+        directly in a function's body; ``evaluate_at_points`` takes a place
+        of its own there.
 
     Examples
     --------
-    >>> import numpy as np
-    >>> points = EvaluationPoints(
-    ...     lambda theta, scale: scale * np.sum(theta),
-    ...     varying={"theta": np.arange(6.0).reshape(3, 2)},
-    ...     shared={"scale": 2.0},
-    ...     origin="total",
-    ... )
-    >>> len(points), [(chunk.start, chunk.stop) for chunk in points.chunks(chunk_size=2)]
-    (3, [(0, 2), (2, 3)])
+    An executor receives a set of evaluation points and runs it by its
+    chunks, here two evaluation points at a time::
+
+        def execute(self, evaluation_points, /):
+            shared_payload = evaluation_points.shared_payload()
+            return EvaluationOutcomes.merge(
+                chunk.run(shared_payload) for chunk in evaluation_points.chunks(chunk_size=2)
+            )
     """
 
     origin: str
@@ -164,11 +168,45 @@ class EvaluationPoints:
         traceable: bool | None = None,
         point_noun: str = "evaluation point",
     ) -> None:
+        self._set_up(
+            fn,
+            varying=varying,
+            shared=shared,
+            origin=origin,
+            output_spec=output_spec,
+            claims=claims,
+            traceable=traceable,
+            point_noun=point_noun,
+        )
+
+    def _set_up(
+        self,
+        fn: Callable[..., Any],
+        /,
+        *,
+        varying: Mapping[str, Any],
+        shared: Mapping[str, Any] | None,
+        origin: str,
+        output_spec: OutputSpec | None,
+        claims: ExecutionClaims,
+        traceable: bool | None,
+        point_noun: str,
+        untraceable_reason: str | None = None,
+        point_segment: Callable[[int], Any] | None = None,
+    ) -> None:
+        """Set up the set, as :meth:`__init__` and :func:`_requested_evaluation_points` build it.
+
+        *untraceable_reason* says why JAX cannot trace the callable, for the
+        message of an executor that refuses the set; *point_segment* gives the
+        place in the workflow of the evaluation point at a point index,
+        ``None`` giving each the default place of its set.
+        """
         self.origin = origin
         self.claims = claims
         self.output_spec = output_spec
         self.point_noun = point_noun
         self._traceable = claims.traceable if claims.traceable is not None else traceable
+        self._untraceable_reason = untraceable_reason
         self._varying = MappingProxyType(dict(varying))
         self._num_evaluation_points = _num_rows(self._varying, origin)
         self._shared_payload = SharedPayload(fn, MappingProxyType(dict(shared or {})))
@@ -178,7 +216,7 @@ class EvaluationPoints:
             (0, 0) if evaluation_log is None else evaluation_log.next_set_numbers(origin)
         )
         self._point_scopes = _EVALUATION_POINT_SCOPES_FACTORY(
-            self._num_evaluation_points, set_position
+            origin, self._num_evaluation_points, set_position, point_segment
         )
         self._shipping_feasibility: Feasibility | None = None
 
@@ -828,29 +866,112 @@ class _UnscopedEvaluationPoints:
 
 
 def _unscoped_evaluation_points(
-    num_evaluation_points: int, set_position: int
+    origin: str,
+    num_evaluation_points: int,
+    set_position: int,
+    point_segment: Callable[[int], Any] | None,
 ) -> _EvaluationPointScopes:
     """The scopes of a set of evaluation points when no function engine installed its own."""
     return _UnscopedEvaluationPoints()
 
 
-#: Builds the workflow scopes of a new set of evaluation points from its size
-#: and its position among the sets its call asks for.
-_EVALUATION_POINT_SCOPES_FACTORY: Callable[[int, int], _EvaluationPointScopes] = (
-    _unscoped_evaluation_points
-)
+#: Builds the workflow scopes of a new set of evaluation points from its
+#: origin, its size, its position among the sets its call asks for, and the
+#: place in the workflow of the evaluation point at a point index, ``None``
+#: for the default place of each.
+_EvaluationPointScopesFactory = Callable[
+    [str, int, int, Callable[[int], Any] | None], _EvaluationPointScopes
+]
+
+_EVALUATION_POINT_SCOPES_FACTORY: _EvaluationPointScopesFactory = _unscoped_evaluation_points
+
+#: Opens a place in the workflow from which code asks for a set of evaluation
+#: points, as a nested call does, so a set built there has a key broker.
+_REQUESTER_SCOPE_FACTORY: Callable[[], AbstractContextManager[None]] = nullcontext
 
 
 def _install_evaluation_point_scopes(
-    factory: Callable[[int, int], _EvaluationPointScopes],
+    factory: _EvaluationPointScopesFactory,
+    requester_scope_factory: Callable[[], AbstractContextManager[None]],
 ) -> None:
     """Make *factory* build the workflow scopes of every new set of evaluation points.
 
-    The function engine calls this when it is imported, as it installs its
-    call engine, so ``core`` never imports the workflow scope.
+    *requester_scope_factory* opens the place in the workflow from which
+    ``evaluate_at_points`` asks for its set. The function engine calls this
+    when it is imported, as it installs its call engine, so ``core`` never
+    imports the workflow scope.
     """
-    global _EVALUATION_POINT_SCOPES_FACTORY
+    global _EVALUATION_POINT_SCOPES_FACTORY, _REQUESTER_SCOPE_FACTORY
     _EVALUATION_POINT_SCOPES_FACTORY = factory
+    _REQUESTER_SCOPE_FACTORY = requester_scope_factory
+
+
+def _requester_scope() -> AbstractContextManager[None]:
+    """The place in the workflow from which ``evaluate_at_points`` asks for its set of evaluation points."""
+    return _REQUESTER_SCOPE_FACTORY()
+
+
+def _requested_evaluation_points(
+    fn: Callable[..., Any],
+    /,
+    *,
+    varying: Mapping[str, Any],
+    shared: Mapping[str, Any] | None = None,
+    origin: str,
+    traceable: bool,
+    untraceable_reason: str | None,
+    point_noun: str,
+    point_segment: Callable[[int], Any],
+) -> EvaluationPoints:
+    """The set of evaluation points a requester of the function engine asks for.
+
+    A lifted call, a sweep, and a plain call each place their evaluation
+    points in the workflow themselves, so a draw made inside one takes the key
+    it took before they ran on executors. Such a set carries no claims and no
+    output spec: the requester's callable checks each output itself, and the
+    requester states whether JAX can trace it, with the reason when it cannot.
+
+    Parameters
+    ----------
+    fn : callable
+        The callable of each evaluation point.
+    varying : Mapping of str to Any
+        Each argument that differs between evaluation points, stacked on a
+        leading axis.
+    shared : Mapping of str to Any, optional
+        Each argument that every evaluation point receives unchanged.
+    origin : str
+        The name of the callable, for messages and reports.
+    traceable : bool
+        Whether JAX can trace *fn* over the evaluation points.
+    untraceable_reason : str or None
+        Why JAX cannot trace *fn*, when it cannot.
+    point_noun : str
+        The word for one evaluation point in messages.
+    point_segment : callable
+        The place in the workflow of the evaluation point at a point index,
+        which is read only when an evaluation point runs in a scope of its
+        own, so a set that ``jax`` maps whole reads none.
+
+    Returns
+    -------
+    EvaluationPoints
+        The set, built under the running call.
+    """
+    evaluation_points = EvaluationPoints.__new__(EvaluationPoints)
+    evaluation_points._set_up(
+        fn,
+        varying=varying,
+        shared=shared,
+        origin=origin,
+        output_spec=None,
+        claims=NO_CLAIMS,
+        traceable=traceable,
+        point_noun=point_noun,
+        untraceable_reason=untraceable_reason,
+        point_segment=point_segment,
+    )
+    return evaluation_points
 
 
 # ---------------------------------------------------------------------------
@@ -997,6 +1118,40 @@ def _checked_point_output(
     return _cast_to_declared(output, term_spec, lossy_casts), frozenset(lossy_casts)
 
 
+def _checked_stacked_output(
+    stacked_output: Any, output_spec: OutputSpec | None, num_points: int, output_path: str
+) -> tuple[Any, frozenset[tuple[str, str]]]:
+    """The outputs of *num_points* evaluation points stacked on a leading axis, checked as one.
+
+    The check is :func:`_checked_point_output`'s, against the output spec's
+    type with a leading axis of *num_points* added to each array, so a mapped
+    output is checked once rather than row by row. It returns the checked
+    output with the pairs of dtype names of each cast that lost precision, and
+    raises :class:`_InvalidPointOutput` if *stacked_output* does not conform.
+    """
+    if output_spec is None or output_spec.term_spec is None:
+        return stacked_output, frozenset()
+    return _checked_point_output(
+        stacked_output,
+        output_spec._with_term_spec(_with_leading_axis(output_spec.term_spec, num_points)),
+        output_path,
+    )
+
+
+def _with_leading_axis(term_spec: TermSpec, num_points: int) -> TermSpec:
+    """*term_spec* with a leading axis of *num_points* added to each of its arrays."""
+    if isinstance(term_spec, NumericArraySpec):
+        return NumericArraySpec((num_points, *term_spec.shape), term_spec.dtype, term_spec.support)
+    if isinstance(term_spec, RecordSpec):
+        return RecordSpec(
+            {
+                child_name: _with_leading_axis(child_spec, num_points)
+                for child_name, child_spec in term_spec.children.items()
+            }
+        )
+    return term_spec
+
+
 def _cast_to_declared(output: Any, term_spec: TermSpec, lossy_casts: set[tuple[str, str]]) -> Any:
     """*output*, which conforms to *term_spec*, laid out and cast as *term_spec* declares.
 
@@ -1111,6 +1266,11 @@ def _output_rows(stacked_output: Any, num_rows: int, origin: str) -> list[Any]:
             f"{_described_row_counts(leaf_row_counts)} for {num_rows} evaluation points. "
             "Return the outputs stacked with one row per evaluation point"
         )
+    return _stacked_rows(stacked_output, num_rows)
+
+
+def _stacked_rows(stacked_output: Any, num_rows: int) -> list[Any]:
+    """The first *num_rows* rows of an output stacked on a leading axis, each with the output's tree."""
     return [
         jax.tree.map(lambda leaf, row_index=row: leaf[row_index], stacked_output)
         for row in range(num_rows)
