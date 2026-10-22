@@ -828,7 +828,9 @@ class OutputSpec:
             term_spec = _unification(self._term_spec, term_spec, bindings)
         return self._with_term_spec(term_spec)
 
-    def rename(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> OutputSpec:
+    def rename(
+        self, renames: Mapping[str, str] | None = None, /, **keyword_renames: str
+    ) -> OutputSpec:
         """Rename or move nodes of this OutputSpec by their paths, ``old -> new``.
 
         A path starts with an output. In the positional form over a record, the
@@ -843,9 +845,9 @@ class OutputSpec:
 
         Parameters
         ----------
-        mapping : Mapping of str to str, optional
+        renames : Mapping of str to str, optional
             The new path of each node, keyed by the node's path.
-        **kwargs : str
+        **keyword_renames : str
             The new path of each output, keyed by the output's name.
 
         Returns
@@ -865,11 +867,11 @@ class OutputSpec:
         spec = self._term_spec
         output_name = self._output_name
         if output_name is None:
-            return OutputSpec(_renamed_exposed(cast(TermSpec, spec), mapping, kwargs))
+            return OutputSpec(_renamed_exposed(cast(TermSpec, spec), renames, keyword_renames))
         # A whole term's paths are those of the record of its one output.
         outputs = RecordSpec({output_name: OpaqueSpec() if spec is None else spec})
-        renames = outputs._resolve_path_renames(mapping, kwargs)
-        renamed_output_name = renames.get(output_name, output_name)
+        resolved_renames = outputs._resolve_path_renames(renames, keyword_renames)
+        renamed_output_name = resolved_renames.get(output_name, output_name)
         if _PATH_SEP in renamed_output_name:
             raise ValueError(
                 f"cannot rename {output_name!r} to {renamed_output_name!r}: rename() can "
@@ -877,7 +879,7 @@ class OutputSpec:
                 f"Choose a name without {_PATH_SEP!r}."
             )
         prefix = renamed_output_name + _PATH_SEP
-        for source, target in renames.items():
+        for source, target in resolved_renames.items():
             if source != output_name and not target.startswith(prefix):
                 owner = (
                     repr(output_name)
@@ -888,7 +890,7 @@ class OutputSpec:
                     f"cannot move {source!r} to {target!r}: fields of {owner} must stay "
                     f"under {prefix!r}"
                 )
-        ((name, term),) = outputs.rename(renames).children.items()
+        ((name, term),) = outputs.rename(resolved_renames).children.items()
         return OutputSpec(**{name: None if spec is None else term})
 
     def _with_term_spec(self, term_spec: TermSpec | None) -> OutputSpec:
@@ -963,7 +965,7 @@ def _unification(declared: TermSpec, produced: TermSpec, bindings: Mapping[str, 
 
 
 def _renamed_exposed(
-    spec: TermSpec, mapping: Mapping[str, str] | None, kwargs: Mapping[str, str]
+    spec: TermSpec, renames: Mapping[str, str] | None, keyword_renames: Mapping[str, str]
 ) -> TermSpec:
     """*spec* in the positional form, with the nodes its outputs start renamed.
 
@@ -975,14 +977,14 @@ def _renamed_exposed(
 
     kind = _exposed_kind(spec)
     if kind == "record":
-        return cast(RecordSpec, spec).rename(mapping, **kwargs)
+        return cast(RecordSpec, spec).rename(renames, **keyword_renames)
     if kind == "law":
         event = cast(OutputSpec, spec.event_spec)  # type: ignore[attr-defined]
-        return replace(spec, event_spec=event.rename(mapping, **kwargs))  # type: ignore[type-var]
+        return replace(spec, event_spec=event.rename(renames, **keyword_renames))  # type: ignore[type-var]
     from ._batch import BatchSpec
 
     batch = cast(BatchSpec, spec)
-    return batch._replace(element=batch.element_spec.rename(mapping, **kwargs))
+    return batch._replace(element=batch.element_spec.rename(renames, **keyword_renames))
 
 
 def _root_output_name(output_spec: OutputSpec) -> str | None:

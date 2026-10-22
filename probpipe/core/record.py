@@ -1054,7 +1054,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     # -- Field renaming -------------------------------------------------------
 
-    def rename(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Record:
+    def rename(self, renames: Mapping[str, str] | None = None, /, **keyword_renames: str) -> Record:
         """Return a Record with the given nodes renamed or moved, ``old -> new``.
 
         The structural contract is :meth:`NamedTree.rename`: each key
@@ -1066,9 +1066,9 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
         Parameters
         ----------
-        mapping : Mapping of str to str, optional
+        renames : Mapping of str to str, optional
             The new path of each node, keyed by the node's path.
-        **kwargs : str
+        **keyword_renames : str
             The new path of each top-level node, keyed by the node's name.
 
         Returns
@@ -1083,9 +1083,9 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         ValueError
             As :meth:`NamedTree.rename` raises it.
         """
-        renames = self._resolve_path_renames(mapping, kwargs)
-        tree, _ = self._renamed_tree(renames)
-        return self._rebuild_root(tree, self.event_template.rename(renames))
+        resolved_renames = self._resolve_path_renames(renames, keyword_renames)
+        tree, _ = self._renamed_tree(resolved_renames)
+        return self._rebuild_root(tree, self.event_template.rename(resolved_renames))
 
     # -- Backend conversion -------------------------------------------------
 

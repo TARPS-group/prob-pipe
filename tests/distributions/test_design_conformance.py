@@ -63,12 +63,18 @@ _OTHER_PACKAGES = frozenset(
     }
 )
 
-#: Declarations the implementation does not match yet, with the change each awaits.
+#: The members the implementation does not match yet, by the name a finding
+#: gives them, each with the behavior it awaits. Any other difference fails.
 _PENDING: dict[str, str] = {
-    "Distribution": "III.7 declares [] by paths, in, output, without, and rename; the code has [] by key, "
-    "rename, and none of in, output, or without",
-    "ConditionalDistribution": "III.9 declares [] by paths, output, without, and rename on a kernel; "
-    "the code has none of them",
+    "Distribution.output": "the term at one output of a law, d.output(name), is not implemented",
+    "Distribution.without": "a law over its event without some paths, d.without(*paths), "
+    "is not implemented",
+    "ConditionalDistribution.__getitem__": "the marginal kernel at paths, k[paths], "
+    "is not implemented",
+    "ConditionalDistribution.output": "the term at one output of a kernel, k.output(name), "
+    "is not implemented",
+    "ConditionalDistribution.without": "a kernel over its event without some paths, "
+    "k.without(*paths), is not implemented",
 }
 
 
@@ -106,10 +112,7 @@ def _cases() -> list:
         name = _declared_name(declaration)
         if name in _OTHER_PACKAGES:
             continue
-        marks = ()
-        if name in _PENDING:
-            marks = pytest.mark.pending(reason=_PENDING[name], raises=AssertionError)
-        cases.append(pytest.param(declaration, id=f"{declaration.section}-{name}", marks=marks))
+        cases.append(pytest.param(declaration, id=f"{declaration.section}-{name}"))
     return cases
 
 
@@ -117,7 +120,16 @@ class TestDeclarationsAreImplemented:
     @pytest.mark.parametrize("declaration", _cases())
     def test_the_declaration_matches_the_implementation(self, declaration):
         findings = _tool().check([declaration], _resolve)
-        assert not findings, "; ".join(f"{f.name} {f.problem}" for f in findings)
+        unexpected = [f"{f.name} {f.problem}" for f in findings if f.name not in _PENDING]
+        assert not unexpected, "; ".join(unexpected)
+
+    def test_each_pending_member_still_differs_from_its_declaration(self):
+        tool = _tool()
+        declarations = [
+            d for d in tool.declarations(_SECTIONS) if _declared_name(d) not in _OTHER_PACKAGES
+        ]
+        differing = {finding.name for finding in tool.check(declarations, _resolve)}
+        assert set(_PENDING) <= differing, sorted(set(_PENDING) - differing)
 
     def test_a_kernel_merges_by_the_declared_signature(self):
         tool = _tool()

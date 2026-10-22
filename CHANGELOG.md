@@ -2024,6 +2024,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returned `False`; `bool(Record({}, label="empty"))` returns `False`, where it raised.
   Test `bool(record["x"])` when the field's value should decide truth.
 
+- **`rename`, `[]`, and `in` take the parameters the design declares.** On a
+  law, a kernel, a record, a record batch, and an output spec, `rename` takes
+  `(renames, /, **keyword_renames)`, and `[]` and `in` on a law and a record
+  take their path positionally only. A call by position or by a keyword
+  rename is unchanged. Calling the special methods with the path as a keyword
+  now raises `TypeError`: replace `d.__getitem__(key="x")` with `d["x"]` and
+  `d.__contains__(path="x")` with `"x" in d`.
+  A new path in a `rename` of a record, a record batch, an output spec, or a
+  kernel is read as every path is, so a target that is not a string now
+  raises `TypeError`, where it raised `ValueError`, and an empty name in a
+  target reads as one in an index:
+
+  ```python
+  record.rename(x=("g", "x"))
+  # before: ValueError: new path for 'x' must be a non-empty string
+  # after:  TypeError: cannot call rename() to move 'x' to ('g', 'x'), since a path must be a str, got tuple
+  record.rename(x="a//b")
+  # before: ValueError: new path 'a//b' for 'x' has an empty segment ...
+  # after:  ValueError: cannot call rename() to move 'x' to 'a//b', since the path 'a//b' has an empty name. ...
+  ```
+
 ### Added
 
 - **Input declarations read four sources.** `InputSpec`, a mapping, a

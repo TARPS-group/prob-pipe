@@ -245,12 +245,16 @@ class TestRename:
             record.rename({"g/mu": "g/sigma"})
 
     def test_malformed_new_name_raises(self, record):
-        with pytest.raises(ValueError, match="non-empty"):
+        with pytest.raises(ValueError, match="to move 'x' to '', since the path is empty"):
             record.rename(x="")
-        # A target is a path, so only an empty segment malforms it.
+        # A target is a path, so only an empty name malforms it.
         for target in ("a//b", "/a", "a/"):
-            with pytest.raises(ValueError, match="empty segment"):
+            with pytest.raises(ValueError, match="has an empty name"):
                 record.rename(x=target)
+
+    def test_a_target_that_is_not_a_string_raises_type_error(self, record):
+        with pytest.raises(TypeError, match="a path must be a str, got tuple"):
+            record.rename({"x": ("g", "x")})
 
     def test_no_renames_raises(self, record):
         with pytest.raises(ValueError):
@@ -434,7 +438,7 @@ class TestPathMoves:
             pytest.param({"g": "g/h"}, "which is inside it", id="into-its-own-subtree"),
             pytest.param({"x": "h", "g/mu": "h"}, "both move to 'h'", id="two-onto-one-path"),
             pytest.param({"x": "h", "g/mu": "h/mu"}, "overlap", id="one-target-inside-another"),
-            pytest.param({"x": "a//b"}, "empty segment", id="empty-segment"),
+            pytest.param({"x": "a//b"}, "has an empty name", id="empty-name"),
         ],
     )
     def test_a_move_the_tree_cannot_take_raises(self, record, renames, match):

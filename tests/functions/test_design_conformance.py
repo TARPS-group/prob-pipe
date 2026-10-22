@@ -90,11 +90,16 @@ _EXAMPLES = frozenset(
 
 _AWAITS_REPORTING = "check's report of how each callable's evaluation points will run (V.9)"
 
-#: Declarations the implementation does not match yet, with the change each awaits.
+#: The members the implementation does not match yet, by the name a finding
+#: gives them, each with the behavior it awaits. Any other difference fails.
 _PENDING: dict[str, str] = {
-    "Function": "III.3 declares [] by paths, output, without, rename, and & on a Function; "
-    "the code has none of them",
-    "CallReport": _AWAITS_REPORTING,
+    "Function.__getitem__": "the function of the outputs at paths, f[paths], is not implemented",
+    "Function.output": "the function of one output, f.output(name), is not implemented",
+    "Function.without": "a function without some outputs, f.without(*paths), is not implemented",
+    "Function.rename": "renaming a function's inputs and outputs, f.rename(...), "
+    "is not implemented",
+    "Function.__and__": "merging two functions with & is not implemented",
+    "CallReport.execution": _AWAITS_REPORTING,
     "EvaluationReport": _AWAITS_REPORTING,
     "ExecutionReport": _AWAITS_REPORTING,
 }
@@ -135,10 +140,7 @@ def _cases() -> list:
         name = _declared_name(declaration)
         if name in _EXAMPLES:
             continue
-        marks = ()
-        if name in _PENDING:
-            marks = pytest.mark.pending(reason=_PENDING[name], raises=AssertionError)
-        cases.append(pytest.param(declaration, id=f"{declaration.section}-{name}", marks=marks))
+        cases.append(pytest.param(declaration, id=f"{declaration.section}-{name}"))
     return cases
 
 
@@ -146,7 +148,16 @@ class TestDeclarationsAreImplemented:
     @pytest.mark.parametrize("declaration", _cases())
     def test_the_declaration_matches_the_implementation(self, declaration):
         findings = _tool().check([declaration], _resolve)
-        assert not findings, "; ".join(f"{f.name} {f.problem}" for f in findings)
+        unexpected = [f"{f.name} {f.problem}" for f in findings if f.name not in _PENDING]
+        assert not unexpected, "; ".join(unexpected)
+
+    def test_each_pending_member_still_differs_from_its_declaration(self):
+        tool = _tool()
+        declarations = [
+            d for d in tool.declarations(_SECTIONS) if _declared_name(d) not in _EXAMPLES
+        ]
+        differing = {finding.name for finding in tool.check(declarations, _resolve)}
+        assert set(_PENDING) <= differing, sorted(set(_PENDING) - differing)
 
     def test_the_examples_are_the_only_declarations_skipped(self):
         tool = _tool()

@@ -356,6 +356,79 @@ def _moved_tree(
     return _stripped(root, (), origins), origins
 
 
+def _resolved_path_renames(
+    renames: Mapping[str, str] | None,
+    keyword_renames: Mapping[str, str],
+    *,
+    check_source: Callable[[str], object],
+) -> dict[str, str]:
+    """The renames a ``rename`` call gives, as ``{source path: target path}``, checked.
+
+    Each source is the exact path of a node, which *check_source* confirms, and
+    each target is the node's new exact path. Both are read as paths are
+    everywhere, so a path that is not a string, is empty, or has an empty
+    name raises as indexing by it does.
+
+    Parameters
+    ----------
+    renames : Mapping of str to str or None
+        The renames given positionally.
+    keyword_renames : Mapping of str to str
+        The renames given as keywords.
+    check_source : Callable
+        Called with each source path, and raises ``KeyError`` when no node is
+        at it.
+
+    Returns
+    -------
+    dict of str to str
+        The target of each node, keyed by its ``/``-joined path, in the order
+        given.
+
+    Raises
+    ------
+    KeyError
+        As *check_source* raises for a source that is not the path of a node.
+    TypeError
+        If a source or a target is not a string, such as a tuple of names.
+    ValueError
+        If a source or a target is empty or has an empty name, two sources
+        resolve to the same node, no renames are given, a target lies inside
+        its own node, or two targets are equal or one lies inside the other.
+    """
+    pairs: dict[str, str] = {}
+    for given_renames in (renames or {}), keyword_renames:
+        for old, new in given_renames.items():
+            source = _as_path(old, action="call rename() with")
+            check_source(source)
+            if source in pairs:
+                raise ValueError(f"rename(): {source!r} is renamed more than once")
+            pairs[source] = _as_path(new, action=f"call rename() to move {source!r} to")
+    if not pairs:
+        raise ValueError("rename() requires at least one rename")
+    for source, target in pairs.items():
+        if target.startswith(source + _PATH_SEP):
+            raise ValueError(f"cannot move {source!r} to {target!r}, which is inside it")
+    moves = list(pairs.items())
+    for position, (source, target) in enumerate(moves):
+        for other_source, other_target in moves[position + 1 :]:
+            if target == other_target:
+                raise ValueError(f"{source!r} and {other_source!r} both move to {target!r}")
+            if other_target.startswith(target + _PATH_SEP) or target.startswith(
+                other_target + _PATH_SEP
+            ):
+                outer, inner = (
+                    (target, other_target)
+                    if len(target) < len(other_target)
+                    else (other_target, target)
+                )
+                raise ValueError(
+                    f"the targets {target!r} and {other_target!r} overlap: {inner!r} would be "
+                    f"inside {outer!r}"
+                )
+    return pairs
+
+
 class NamedTree[L]:
     """The named, ordered tree addressed by path — the shared collection substrate.
 
@@ -539,7 +612,7 @@ class NamedTree[L]:
         """``(key, field_object)`` pairs, in canonical order (materialised)."""
         return tuple((key, self._present(key, leaf)) for key, leaf in self._walk_leaves())
 
-    def __getitem__(self, paths: PathsLike) -> L | Self:
+    def __getitem__(self, paths: PathsLike, /) -> L | Self:
         """The node at a path, or this tree cut down to the nodes at a list of paths.
 
         A tuple is a list of paths; a nested path is written with ``/``, so
@@ -582,7 +655,7 @@ class NamedTree[L]:
             self._existing_node_at(path, requested=tuple_given)
         return self._cut_to(read_paths)
 
-    def __contains__(self, path: object) -> bool:
+    def __contains__(self, path: object, /) -> bool:
         """Whether *path* is a ``str`` and a path of this tree, of a field or of a group."""
         if not isinstance(path, str):
             return False
@@ -1154,69 +1227,13 @@ class NamedTree[L]:
     # -- Field renaming -------------------------------------------------------
 
     def _resolve_path_renames(
-        self, mapping: Mapping[str, str] | None, kwargs: Mapping[str, str]
+        self, renames: Mapping[str, str] | None, keyword_renames: Mapping[str, str]
     ) -> dict[str, str]:
-        """Resolve :meth:`rename` inputs to ``{source path: target path}``.
+        """Resolve :meth:`rename` inputs to ``{source path: target path}``, each source a node of this tree.
 
-        Each key is the exact path of a node, and each target is the node's new
-        exact path.
-
-        Parameters
-        ----------
-        mapping : Mapping of str to str or None
-            The renames :meth:`rename` takes positionally.
-        kwargs : Mapping of str to str
-            The renames :meth:`rename` takes as keywords.
-
-        Returns
-        -------
-        dict of str to str
-            The target of each node, keyed by its ``/``-joined path, in the order
-            given.
-
-        Raises
-        ------
-        KeyError
-            If a key is not the path of a node, naming the paths the tree has.
-        TypeError
-            If a key is not a string, such as a tuple of names.
-        ValueError
-            If a key or a target is empty or has an empty name, two keys resolve
-            to the same node, no renames are given, a target lies inside its own
-            node, or two targets are equal or one lies inside the other.
+        :func:`_resolved_path_renames` states the rules and the errors.
         """
-        pairs: dict[str, str] = {}
-        for source in (mapping or {}), kwargs:
-            for old, new in source.items():
-                if not isinstance(new, str) or not new:
-                    raise ValueError(f"new path for {old!r} must be a non-empty string")
-                if "" in new.split(_PATH_SEP):
-                    raise ValueError(
-                        f"new path {new!r} for {old!r} has an empty segment "
-                        f"(no leading, trailing, or doubled {_PATH_SEP!r})"
-                    )
-                resolved = _as_path(old, action="call rename() with")
-                self._existing_node_at(resolved)
-                if resolved in pairs:
-                    raise ValueError(f"rename(): {resolved!r} is renamed more than once")
-                pairs[resolved] = new
-        if not pairs:
-            raise ValueError("rename() requires at least one rename")
-        for resolved, new in pairs.items():
-            if new.startswith(resolved + _PATH_SEP):
-                raise ValueError(f"cannot move {resolved!r} to {new!r}, which is inside it")
-        moves = list(pairs.items())
-        for index, (source, target) in enumerate(moves):
-            for other_source, other in moves[index + 1 :]:
-                if target == other:
-                    raise ValueError(f"{source!r} and {other_source!r} both move to {target!r}")
-                if other.startswith(target + _PATH_SEP) or target.startswith(other + _PATH_SEP):
-                    outer, inner = (target, other) if len(target) < len(other) else (other, target)
-                    raise ValueError(
-                        f"the targets {target!r} and {other!r} overlap: {inner!r} would be "
-                        f"inside {outer!r}"
-                    )
-        return pairs
+        return _resolved_path_renames(renames, keyword_renames, check_source=self._existing_node_at)
 
     def _renamed_tree(self, renames: Mapping[str, str]) -> tuple[dict[str, Any], dict[str, str]]:
         """This tree as a nested dict with *renames* applied, and each node's original path.
@@ -1263,13 +1280,13 @@ class NamedTree[L]:
         moved = {origin: path for path, origin in origins.items()}
         return {key: moved[key] for key in self.keys()}
 
-    def rename(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self:
+    def rename(self, renames: Mapping[str, str] | None = None, /, **keyword_renames: str) -> Self:
         """Return a same-family tree with the given nodes renamed or moved, ``old -> new``.
 
         Acts on the nodes *within* the tree, leaves or whole subtrees; the object
         itself is relabeled by ``with_label`` on the tracked value types. Each key is
         the exact path of a node, so a keyword addresses a top-level node and the
-        positional mapping any node. Each target is the node's new exact path,
+        positional *renames* any node. Each target is the node's new exact path,
         so a bare name is a top-level path::
 
             t.rename(mu="loc")                  # rename a top-level node
@@ -1289,9 +1306,9 @@ class NamedTree[L]:
 
         Parameters
         ----------
-        mapping : Mapping of str to str, optional
+        renames : Mapping of str to str, optional
             The new path of each node, keyed by the node's path.
-        **kwargs : str
+        **keyword_renames : str
             The new path of each top-level node, keyed by the node's name.
 
         Returns
@@ -1309,7 +1326,7 @@ class NamedTree[L]:
             two targets are equal or one lies inside the other, or a target
             collides with a node that remains.
         """
-        tree, _ = self._renamed_tree(self._resolve_path_renames(mapping, kwargs))
+        tree, _ = self._renamed_tree(self._resolve_path_renames(renames, keyword_renames))
         return self._rebuild_node(tree, node_name=None)
 
 

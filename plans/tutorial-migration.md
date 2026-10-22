@@ -92,6 +92,7 @@ In the examples, `x` is a law over `{a, b, c, sigma}`, `ke` a kernel `ke(e | sig
 | `lik and prior` returned `prior` | `bool()` on a law or kernel raises | S3 | no |
 | `record_a.merge(record_b)` on `NamedTree`, `Record`, `RecordSpec`, `RecordBatch` | `record_a & record_b` | S3 | no |
 | `with_path_names` | `rename` | S3 | no |
+| a `rename` target that is not a string, as `rename(x=("g", "x"))`, raised `ValueError` | `TypeError`, worded as an index by a bad path; `d.__getitem__(key=...)` and `d.__contains__(path=...)` by keyword raise `TypeError` | S3 | no |
 | `FieldView` | `CoupledMarginal` | S3 | no |
 | the `joint` route `"compose"` in `provenance.metadata["route"]` | `"merge"`; a recipe recorded before cannot be replayed | S3 | yes |
 
