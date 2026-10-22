@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -108,7 +109,7 @@ class TestTheScoredValue:
         values = NumericArrayBatch(
             jnp.linspace(-1.0, 1.0, 6).reshape(2, 3),
             ("rows", "cols"),
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             axes_per_level=(1, 1),
             label="values",
         )
@@ -122,7 +123,9 @@ class TestTheScoredValue:
             rtol=1e-6,
         )
 
-    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
+    @pytest.mark.parametrize(
+        "executor", [None, "sequential", "jax"], ids=["automatic", "sequential", "jax"]
+    )
     @pytest.mark.parametrize(
         ("law", "values"),
         [
@@ -146,10 +149,17 @@ class TestTheScoredValue:
         ids=["arrays", "records"],
     )
     def test_a_batch_of_values_that_do_not_conform_raises_applicability_error(
-        self, law, values, dispatch
+        self, law, values, executor
     ):
         with pytest.raises(ApplicabilityError, match="does not conform"):
-            log_prob.using(dispatch=dispatch)(law, values)
+            log_prob.using(executor=executor)(law, values)
+
+
+class _CountedVectorInPython(CountedVector):
+    """A ``CountedVector`` whose density reads its value as a NumPy array, so JAX cannot trace it."""
+
+    def _log_prob(self, value: Any) -> Any:
+        return super()._log_prob(np.asarray(value))
 
 
 class TestABatchOfArraysIsScoredInOneMappedCall:
@@ -167,10 +177,11 @@ class TestABatchOfArraysIsScoredInOneMappedCall:
         points = self._points(1000)
         scores = score(law, points)
         thousand = len(law.calls)
-        law.calls.clear()
-        score(law, self._points(5))
-        assert len(law.calls) == thousand < 5
-        assert all(jnp.shape(jnp.asarray(value)) == (3,) for value in law.calls)
+        # A law of its own, so the five values are traced as the thousand were.
+        law_of_five = CountedVector("v")
+        score(law_of_five, self._points(5))
+        assert len(law_of_five.calls) == thousand < 5
+        assert all(jnp.shape(jnp.asarray(value)) == (3,) for value in law_of_five.calls)
         assert (scores.level_names, scores.batch_shape) == (("point",), (1000,))
         np.testing.assert_allclose(
             np.asarray(scores.raw),
@@ -184,23 +195,23 @@ class TestABatchOfArraysIsScoredInOneMappedCall:
         law = CountedVector("v")
         score(law, self._points(1000))
         thousand = len(law.calls)
-        law.calls.clear()
-        scores = score(law, self._points(5))
-        assert len(law.calls) == thousand < 5
+        law_of_five = CountedVector("v")
+        scores = score(law_of_five, self._points(5))
+        assert len(law_of_five.calls) == thousand < 5
         assert bool(jnp.all(jnp.asarray(scores.raw) >= 0))
 
     @pytest.mark.parametrize("score", [log_prob, unnormalized_log_prob])
-    def test_the_mapped_scores_equal_the_sequential_ones_at_every_level(self, score):
+    def test_the_mapped_scores_equal_the_ones_scored_one_at_a_time_at_every_level(self, score):
         points = NumericArrayBatch(
             jax.random.normal(jax.random.PRNGKey(1), (2, 4, 3)),
             ("rows", "cols"),
-            element_spec=NumericArraySpec((3,)),
+            element=NumericArraySpec((3,)),
             axes_per_level=(1, 1),
             label="grid",
         )
-        mapped_law, sequential_law = CountedVector("v"), CountedVector("v")
+        mapped_law, sequential_law = CountedVector("v"), _CountedVectorInPython("v")
         mapped = score(mapped_law, points)
-        sequential = score.using(dispatch="sequential")(sequential_law, points)
+        sequential = score.using(executor="sequential")(sequential_law, points)
         assert len(sequential_law.calls) == 8 > len(mapped_law.calls)
         assert mapped.level_names == sequential.level_names == ("rows", "cols")
         assert mapped.batch_shape == sequential.batch_shape == (2, 4)
@@ -330,3 +341,19 @@ class TestRandomLogDensities:
     def test_a_law_without_a_random_density_raises_resolution_error(self):
         with pytest.raises(ResolutionError, match="SupportsRandomLogProb"):
             random_log_prob(Gaussian("g"))
+
+
+@pytest.mark.parametrize("operation", [log_prob, unnormalized_log_prob, prob, unnormalized_prob])
+def test_raw_density_mapping_order_is_not_a_record_order_commitment(operation):
+    from probpipe import Normal
+
+    law = Normal("a", 0.0, 1.0) & Normal("b", 1.0, 2.0)
+    ordered = {"a": 0.5, "b": 2.0}
+    reversed_value = {"b": 2.0, "a": 0.5}
+    expected = float(operation(law, ordered))
+    assert float(operation(law, reversed_value)) == expected
+    assert float(operation.apply(law, reversed_value)) == expected
+    operation.check(law, reversed_value)
+    assert tuple(reversed_value) == ("b", "a")
+    with pytest.raises((ValueError, ApplicabilityError), match="order"):
+        operation(law, Record(reversed_value, label="ordered-record"))

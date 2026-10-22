@@ -283,7 +283,7 @@ class TestBijectorTransformedDistributionProvenance:
 
 class TestConditioningProvenance:
     def test_product_condition_on(self):
-        joint = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=1.0, scale=2.0, label="y")
+        joint = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=1.0, scale=2.0, label="y")
         cond = condition_on(joint, {"x": jnp.array(0.0)})
         assert cond.provenance is not None
         assert cond.provenance.operation == "workflow.condition_on"
@@ -296,7 +296,7 @@ class TestConditioningProvenance:
         ]
 
     def test_condition_on_records_plain_observation_by_parameter(self):
-        joint = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=1.0, scale=2.0)
+        joint = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=1.0, scale=2.0)
 
         at_zero = condition_on(joint, {"x": jnp.array(0.0)})
         at_five = condition_on(joint, {"x": jnp.array(5.0)})
@@ -311,7 +311,7 @@ class TestConditioningProvenance:
         )
 
     def test_dependent_joint_condition_on(self):
-        joint = _ShiftKernel() * Normal("z", loc=0.0, scale=1.0)
+        joint = _ShiftKernel() & Normal("z", loc=0.0, scale=1.0)
         cond = condition_on_operation(joint, {"z": jnp.array(1.0)})
         assert cond.provenance.operation == "workflow.condition_on"
         # The operation, the joint, and the slice's law, whose own record names its stage.
@@ -323,7 +323,7 @@ class TestConditioningProvenance:
         assert isinstance(cond.provenance.parents[0], ParentInfo)
 
     def test_gaussian_condition_on(self):
-        jg = MultivariateNormal("x", jnp.zeros(1), cov=jnp.eye(1)) * MultivariateNormal(
+        jg = MultivariateNormal("x", jnp.zeros(1), cov=jnp.eye(1)) & MultivariateNormal(
             "y", jnp.zeros(1), cov=jnp.eye(1), label="y"
         )
         cond = condition_on(jg, {"x": jnp.array([0.0])})
@@ -350,7 +350,8 @@ class TestBroadcastingProvenance:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
+            traceable=False,
+            executor="sequential",
             max_evaluations=20,
             output_spec=OutputSpec(identity=None),
         )
@@ -377,7 +378,7 @@ class TestBroadcastingProvenance:
         wf = Function(
             double,
             label="double",
-            dispatch="jax",
+            executor="jax",
             max_evaluations=20,
             output_spec=OutputSpec(double=None),
         )
@@ -388,8 +389,10 @@ class TestBroadcastingProvenance:
         assert result.provenance.operation == "broadcast"
         assert result.provenance.metadata["dispatch"] == "jax"
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
-    def test_broadcast_records_static_plain_inputs(self, dispatch):
+    @pytest.mark.parametrize(
+        ("executor", "traceable"), [("sequential", False), ("jax", None)], ids=["sequential", "jax"]
+    )
+    def test_broadcast_records_static_plain_inputs(self, executor, traceable):
         n = Normal("input_normal", loc=0.0, scale=1.0)
 
         def shift(x: float, offset: float = 2.0) -> float:
@@ -398,7 +401,8 @@ class TestBroadcastingProvenance:
         wf = Function(
             shift,
             label="shift",
-            dispatch=dispatch,
+            traceable=traceable,
+            executor=executor,
             max_evaluations=5,
             output_spec=OutputSpec(shift=None),
         )
@@ -420,7 +424,7 @@ class TestBroadcastingProvenance:
         wf = Function(
             add,
             label="add",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=20,
             output_spec=OutputSpec(add=None),
         )
@@ -441,7 +445,7 @@ class TestBroadcastingProvenance:
         wf = Function(
             add,
             label="add",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=20,
             output_spec=OutputSpec(add=None),
         )
@@ -494,7 +498,7 @@ class TestBroadcastingProvenance:
         wf = Function(
             add_noise,
             label="add_noise",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=5,
             output_spec=OutputSpec(add_noise=None),
         )
@@ -522,7 +526,7 @@ class TestProvenanceChains:
         """
         src = StudentT("prior", df=5.0, loc=0.0, scale=1.0, label="prior")
         converted = convert(src, Normal)
-        joint = converted * Normal("y", loc=0.0, scale=1.0)
+        joint = converted & Normal("y", loc=0.0, scale=1.0)
         cond = condition_on(joint, {"prior": jnp.array(0.0)})
 
         # cond's provenance points to joint
@@ -545,7 +549,7 @@ class TestProvenanceChains:
         wf = Function(
             log_val,
             label="log_val",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=20,
             output_spec=OutputSpec(log_val=None),
         )
@@ -765,7 +769,7 @@ class TestProvenanceAncestors:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
@@ -791,7 +795,7 @@ class TestProvenanceAncestors:
         wf = Function(
             add,
             label="add",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=10,
             output_spec=OutputSpec(add=None),
         )
@@ -883,7 +887,7 @@ class TestProvenanceDag:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
@@ -959,7 +963,7 @@ class TestProvenanceModes:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
@@ -984,7 +988,7 @@ class TestProvenanceModes:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
@@ -1018,7 +1022,7 @@ class TestProvenanceModes:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
@@ -1043,7 +1047,7 @@ class TestProvenanceModes:
         wf = Function(
             add,
             label="add",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=10,
             output_spec=OutputSpec(add=None),
         )
@@ -1068,7 +1072,7 @@ class TestProvenanceModes:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
@@ -1090,7 +1094,7 @@ class TestProvenanceModes:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
@@ -1156,7 +1160,7 @@ class TestProvenanceModes:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )
@@ -1176,7 +1180,7 @@ class TestProvenanceModes:
         wf = Function(
             identity,
             label="identity",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=10,
             output_spec=OutputSpec(identity=None),
         )

@@ -28,10 +28,12 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._messages import unknown_names
 from ..core._dispatch import ResolutionError
+from ..core._execution_claims import Traceability
 from ..core._repr import format_value
 from ..core._spec_base import _unify_specs
 from ..core._specs import InputSpec, NumericArraySpec, OutputSpec, _has_record_outputs
 from ..core.constraints import Constraint, boolean, non_negative_integer, positive, real
+from ..core.named_tree import _PATH_SEP
 
 # The links wrap callables whose annotations a Function resolves at construction.
 from ..custom_types import Array, ArrayLike, PRNGKey
@@ -73,7 +75,7 @@ __all__ = [
 class LinearGaussianConditional(ConditionalDistribution):
     """The linear-Gaussian kernel ``s ↦ N(A @ s + b, cov)``.
 
-    It is the conditional member of the Gaussian algebra: composed with a
+    It is the conditional member of the Gaussian algebra: merged with a
     Gaussian prior it yields a ``FactoredMultivariateGaussian``, and
     conditioning through it is exact. The kernel's one input is ``A``'s input,
     and its event type is ``A``'s output type, under the kernel's own output.
@@ -96,6 +98,10 @@ class LinearGaussianConditional(ConditionalDistribution):
     NotImplementedError
         Always, until ``LinOp`` declares its input and output type.
     """
+
+    def _derived_traceability(self) -> Traceability:
+        """Traceable: a family's methods are JAX code."""
+        return Traceability.TRACEABLE
 
     def __init__(
         self, output_name: str, A: LinOp, b: Array, cov: LinOp, *, label: str | None = None
@@ -627,7 +633,7 @@ class _GLMLikelihood(
         bindings: dict[str, int] = {}
         for input_name, value in values.items():
             self.given_spec[input_name]._bind_dims_from_value(
-                value, bindings, f"{self.label}/{input_name}"
+                value, bindings, f"{self.label}{_PATH_SEP}{input_name}"
             )
         remaining = InputSpec(
             {

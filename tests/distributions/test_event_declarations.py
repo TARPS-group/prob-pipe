@@ -66,9 +66,9 @@ from probpipe import (
     sample,
 )
 from probpipe.distributions import (
+    CoupledMarginal,
     FactoredDistribution,
     FactoredNumericDistribution,
-    FieldView,
 )
 from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.distributions._factored import _SoleField
@@ -112,8 +112,9 @@ from probpipe.inference._minibatch import (
     _RandomMinibatchLogProb,
 )
 from probpipe.linalg import DenseLinOp
-from probpipe.operations._condition import _unnormalized_conditional, _UnnormalizedConditional
+from probpipe.operations._condition import _unnormalized_conditional
 from probpipe.operations._given import _GivenLaw
+from probpipe.operations._inference_target import _UnnormalizedConditional
 from tests._stanc import require_stanc
 
 # -- Constructions ------------------------------------------------------------
@@ -275,10 +276,10 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         event_spec=OutputSpec(x=probpipe.NumericArraySpec((2,))),
         label="u",
     ),
-    FieldView: lambda: FieldView(Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), "a"),
-    FactoredDistribution: lambda: Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0),
+    CoupledMarginal: lambda: CoupledMarginal((Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)), "a"),
+    FactoredDistribution: lambda: Normal("a", 0.0, 1.0) & Gamma("b", 2.0, 1.0),
     _UnnormalizedConditional: lambda: _unnormalized_conditional(
-        Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
+        (Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)),
         Record(
             {"a": 0.0},
             label="given",
@@ -299,7 +300,7 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     BijectorTransformedDistribution: lambda: BijectorTransformedDistribution(
         "y", Normal("x", 0.0, 1.0), tfb.Exp()
     ),
-    FactoredMultivariateGaussian: lambda: Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
+    FactoredMultivariateGaussian: lambda: Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0),
     GaussianProcess: lambda: GaussianProcess("f", _zero_mean, _squared_exponential),
     _SoleField: lambda: _SoleField(
         FactoredDistribution(
@@ -312,11 +313,11 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         NumericRecordBatch(
             {"a": jnp.array([0.0, 1.0]), "b": jnp.array([1.0, 3.0])},
             "row",
-            element_spec=NumericRecordSpec(a=(), b=()),
+            element=NumericRecordSpec(a=(), b=()),
             label="rows",
         ),
         label="kde",
-    ).with_path_names({"a": "g/a"}),
+    ).rename({"a": "g/a"}),
 }
 
 # The catalog's families whose implementation has not merged construct by raising.

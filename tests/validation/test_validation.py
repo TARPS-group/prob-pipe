@@ -364,7 +364,7 @@ class TestCalibration:
         whatever ``mu``.
         """
         kernel = conditional_distribution(
-            lambda mu: Normal("a", mu, 1.0) * Normal("b", mu * jnp.ones(3), 2.0),
+            lambda mu: Normal("a", mu, 1.0) & Normal("b", mu * jnp.ones(3), 2.0),
             given_spec=prior.event_spec.outputs,
             label="ab",
         )
@@ -555,7 +555,7 @@ class TestOptionalInputs:
         np.testing.assert_allclose(replicated.mean(), 4.0, rtol=0.05)
 
     def test_the_replications_take_the_input_the_law_produces(self):
-        law = Normal("mu", 0.0, 1e-3) * Normal("scale", 3.0, 1e-3)
+        law = Normal("mu", 0.0, 1e-3) & Normal("scale", 3.0, 1e-3)
         with workflow_run(seed=0):
             check = predictive_check(self._scaled(), law, sample_variance)
         replicated = np.asarray(check["replicated_statistics"].atoms)
@@ -590,8 +590,8 @@ class TestErrors:
             predictive_check(_Simulator(), prior, sample_mean, observed_data)
 
     def test_a_law_that_produces_the_observations_raises(self, prior, likelihood):
-        with pytest.raises(ValueError, match="'y' is produced by both"):
-            predictive_check(likelihood, likelihood * prior, sample_mean)
+        with pytest.raises(ValueError, match="both have the output 'y'"):
+            predictive_check(likelihood, (likelihood & prior), sample_mean)
 
     @pytest.mark.parametrize(
         ("test_fns", "error", "match"),

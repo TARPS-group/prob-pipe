@@ -93,19 +93,22 @@ class TestConstruction:
             Record.from_fields(**{"a/b": 1.0})
 
     def test_merge_refuses_a_field_against_a_group(self):
-        with pytest.raises(ValueError, match="single field in one record but a group of fields"):
-            Record(
-                {"x": 1.0},
-                label="a",
-            ).merge(
+        with pytest.raises(ValueError, match=r"since both have 'x'\. Rename one"):
+            (
                 Record(
-                    {
-                        "x": Record(
-                            {"z": 1.0},
-                            label="c",
-                        )
-                    },
-                    label="b",
+                    {"x": 1.0},
+                    label="a",
+                )
+                & (
+                    Record(
+                        {
+                            "x": Record(
+                                {"z": 1.0},
+                                label="c",
+                            )
+                        },
+                        label="b",
+                    )
                 )
             )
 
@@ -260,7 +263,7 @@ class TestFieldAccess:
     def test_item(self, v):
         np.testing.assert_allclose(float(v["K"]), 70.0, rtol=1e-5)
 
-    def test_key_path_tuple(self):
+    def test_a_tuple_of_paths_cuts_the_record_down(self):
         v = Record(
             {
                 "params": Record(
@@ -274,7 +277,11 @@ class TestFieldAccess:
             },
             label="r",
         )
-        np.testing.assert_allclose(float(v["params", "r"]), 1.8, rtol=1e-5)
+        # A tuple is a list of paths: the record cut down to those nodes.
+        cut = v["params/r", "obs"]
+        assert cut.keys() == ("params/r", "obs/y")
+        assert cut.label == "(params/r, obs)"
+        np.testing.assert_allclose(float(cut["params/r"]), 1.8, rtol=1e-5)
 
     def test_key_path_string(self):
         v = Record(
@@ -330,7 +337,7 @@ class TestFieldAccess:
             {"a": np.array([1.0, 2.0])},
             label="r",
         )
-        with pytest.raises(KeyError, match="is a field, not a group"):
+        with pytest.raises(KeyError, match="unknown path 'a/b' in 'r'"):
             v["a/b"]
         # __contains__ swallows the same case to False.
         assert "a/b" not in v
@@ -365,7 +372,7 @@ class TestFieldAccess:
             v["nonexistent"]
 
     def test_bad_key_type_raises(self, v):
-        with pytest.raises(TypeError, match="key must be str"):
+        with pytest.raises(TypeError, match="it must be a path or a list of paths, got int"):
             v[42]
 
 
@@ -432,7 +439,7 @@ class TestImmutability:
             {"b": 2.0},
             label="r",
         )
-        merged = v1.merge(v2)
+        merged = v1 & (v2)
         assert merged.fields == ("a", "b")
 
     def test_merge_overlap_raises(self):
@@ -444,8 +451,10 @@ class TestImmutability:
             {"a": 2.0},
             label="r",
         )
-        with pytest.raises(ValueError, match="cannot merge: both have the field 'a'"):
-            v1.merge(v2)
+        with pytest.raises(
+            ValueError, match="cannot merge the two NumericRecords, since both have 'a'"
+        ):
+            (v1 & (v2))
 
     def test_without(self):
         v = Record(
@@ -507,7 +516,8 @@ class TestImmutability:
         )
         assert (
             type(
-                nr.merge(
+                nr
+                & (
                     NumericRecord(
                         {"b": 2.0},
                         label="nr",
@@ -1101,7 +1111,7 @@ class TestConversion:
         nr = outer.to_numeric()
         assert isinstance(nr, NumericRecord)
         assert isinstance(nr.at_path("inner"), NumericRecord)
-        assert nr["inner", "a"] == 1.0
+        assert nr["inner"]["a"] == nr["inner/a"] == 1.0
         # Deterministic: a second conversion yields the same structure.
         nr2 = outer.to_numeric()
         assert nr.fields == nr2.fields
@@ -1635,7 +1645,7 @@ class TestProvenance:
             {"x": 1.0},
             label="r",
         ).with_provenance(Provenance("orig", parents=()))
-        merged = r.merge(
+        merged = r & (
             Record(
                 {"y": 2.0},
                 label="r",
@@ -2101,7 +2111,7 @@ class TestRecordSpecStorage:
             ],
             level_name="draw",
         )
-        assert ra.event_template is ra.element_spec
+        assert ra.event_template is ra.element_spec.term_spec
 
     def test_explicit_nested_template_validates_recursively(self):
         from probpipe.core._specs import RecordSpec

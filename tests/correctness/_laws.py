@@ -210,7 +210,7 @@ class RecordObservationKernel(ObservationKernel):
 
 def nested_schools() -> Distribution:
     """The eight-schools joint ``p(y | population, groups) p(groups) p(population)``."""
-    return schools_likelihood() * Groups() * Population()
+    return (schools_likelihood() & Groups()) & Population()
 
 
 def nested_schools_reference() -> PosteriorReference:

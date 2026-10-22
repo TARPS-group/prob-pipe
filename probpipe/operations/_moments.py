@@ -56,14 +56,18 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from math import prod
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from ..core._batch import Batch, BatchSpec, _flat_batch_spec
-from ..core._call_context import _collecting_num_samples_used, _note_num_samples_used
+from ..core._call_context import (
+    _collecting_call_accumulators,
+    _note_num_samples_used,
+    _NumSamplesUsed,
+)
 from ..core._dispatch import (
     Feasibility,
     MathematicalDomainError,
@@ -171,8 +175,9 @@ def _hull(support: Any) -> Any:
 
 
 def _elementwise(spec: BatchSpec, term: Callable[[TermSpec], TermSpec]) -> BatchSpec:
-    """The batch spec on *spec*'s levels whose element is *term* of *spec*'s element."""
-    return BatchSpec._from_groups(term(spec.element_spec), spec.axis_groups, spec.level_names)
+    """The batch spec on *spec*'s levels whose elements' spec is *term* of *spec*'s, under the same name."""
+    element_spec = spec.element_spec._with_term_spec(term(spec.element_spec.term_spec))
+    return BatchSpec._from_groups(element_spec, spec.axis_groups, spec.level_names)
 
 
 def _mean_term(spec: TermSpec) -> TermSpec:
@@ -229,7 +234,7 @@ def _array_leaves(spec: TermSpec) -> list[NumericArraySpec]:
         batch_shape = tuple(spec.batch_shape)
         return [
             NumericArraySpec((*batch_shape, *leaf.shape), leaf.dtype)
-            for leaf in _array_leaves(spec.element_spec)
+            for leaf in _array_leaves(spec.element_spec.term_spec)
         ]
     if isinstance(spec, NumericArraySpec):
         return [spec]
@@ -348,7 +353,7 @@ def _expectation_result(f: TermSpec) -> OutputSpec | None:
 def _is_numeric(spec: TermSpec | None) -> bool:
     """Whether *spec* declares a numeric value: an array, a record of arrays, or a batch of either."""
     if isinstance(spec, BatchSpec):
-        spec = _flat_batch_spec(spec).element_spec
+        spec = _flat_batch_spec(spec).element_spec.term_spec
     return isinstance(spec, NumericSpec)
 
 
@@ -460,7 +465,7 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
         atoms = _batch_over(raw, _flat_batch_spec(BatchSpec(event, {level: count})), name)
         return EmpiricalDistribution(atoms, label=name, event_spec=OutputSpec(**{name: event}))
     if isinstance(draws, Batch):
-        records = isinstance(draws.element_spec, RecordSpec)
+        records = isinstance(draws.element_spec.term_spec, RecordSpec)
         return EmpiricalDistribution(draws, output_name=None if records else name, label=name)
     if not isinstance(event, RecordSpec):
         return EmpiricalDistribution(
@@ -469,7 +474,7 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
     atoms = _batch_class_for(event)(
         _raw_record(draws),
         SAMPLE_LEVEL,
-        element_spec=event,
+        element=event,
         label=name,
     )
     return EmpiricalDistribution(atoms, label=name)
@@ -832,7 +837,7 @@ class _ByOutput(_DelegatingRoute):
         candidate, report = selected(
             operation.label, controls, candidates, route_inputs, result_declaration
         )
-        with _collecting_num_samples_used("always") as block_num_samples_used:
+        with _collecting_call_accumulators("always") as block_context:
             block_value, settled_exactness = settled(
                 candidate.run(route_inputs, result_declaration, report)
             )
@@ -844,6 +849,7 @@ class _ByOutput(_DelegatingRoute):
             "route": candidate.route_name,
             "exact": exactness,
         }
+        block_num_samples_used = cast(_NumSamplesUsed, block_context.num_samples_used)
         if block_num_samples_used.provenance_num_samples is not None:
             block_metadata["num_samples"] = block_num_samples_used.provenance_num_samples
         return block_value, block_metadata

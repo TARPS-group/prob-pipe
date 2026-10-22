@@ -46,25 +46,46 @@ class TestMarginal:
     def test_the_declaration_is_the_node_under_the_path_s_final_segment(self):
         result = marginal.check(Marginalizing("law"), "a").result
         assert result == OutputSpec(DistributionSpec(OutputSpec(a=REAL)))
-        assert dict(result.outputs) == {"a": REAL}
+        assert dict(result.term_spec.event_spec.outputs) == {"a": REAL}
+        # A law as a value has no outputs of its own.
+        assert dict(result.outputs) == {}
 
     def test_several_paths_declare_an_exposed_record_of_the_nodes(self):
         result = marginal.check(Marginalizing("law"), ("a", "b")).result
         assert result == OutputSpec(DistributionSpec(OutputSpec(RecordSpec(a=REAL, b=REAL))))
 
-    def test_two_paths_ending_in_the_same_segment_raise(self):
-        with pytest.raises(ApplicabilityError, match="more than one path ends in 'a'"):
-            marginal.check(_Nested("n"), ("x/a", "y/a"))
+    def test_two_paths_ending_in_the_same_name_keep_their_paths(self):
+        result = marginal.check(_Nested("n"), ["y/a", "x/a"]).result
+        assert result == OutputSpec(
+            DistributionSpec(OutputSpec(RecordSpec(x=RecordSpec(a=REAL), y=RecordSpec(a=REAL))))
+        )
+
+    def test_a_list_and_a_tuple_of_paths_declare_alike(self):
+        law = Marginalizing("law")
+        assert marginal.check(law, ["b", "a"]).result == marginal.check(law, ("a", "b")).result
 
     def test_a_path_the_law_lacks_raises_applicability_error(self):
         with pytest.raises(
-            ApplicabilityError, match="'c' is not an event path of the law; its fields"
+            ApplicabilityError, match="unknown path 'c' in 'law'; available paths: \\['a', 'b'\\]"
         ):
             marginal(Marginalizing("law"), "c")
 
-    def test_a_path_that_is_not_a_string_raises_applicability_error(self):
-        with pytest.raises(ApplicabilityError, match="field must be a path string"):
+    def test_a_path_that_is_not_a_string_raises_type_error(self):
+        with pytest.raises(TypeError, match="it must be a path or a list of paths, got int"):
             marginal(Marginalizing("law"), 3)
+
+    @pytest.mark.parametrize(
+        ("paths", "match"),
+        [
+            pytest.param([], "since it names no paths", id="empty"),
+            pytest.param(("a", "a"), "cannot select 'a' twice", id="repeated"),
+            pytest.param(("x", "x/a"), "'x/a' is inside 'x'. Keep one of them", id="nested"),
+            pytest.param("x//a", "has an empty name", id="empty-name"),
+        ],
+    )
+    def test_malformed_paths_raise_value_error(self, paths, match):
+        with pytest.raises(ValueError, match=match):
+            marginal.check(_Nested("n"), paths)
 
     def test_a_rejecting_guard_and_no_sampling_raise_resolution_error(self):
         with pytest.raises(ResolutionError, match="the marginal is exact at the field a"):
@@ -84,26 +105,26 @@ class TestMarginal:
         assert marginal(Pair("p"), "a").event_spec == OutputSpec(a=REAL)
 
     def test_a_factored_joint_marginalizes_onto_its_prior(self):
-        joint = Kernel("y", ("beta",)) * Gaussian("beta")
+        joint = Kernel("y", ("beta",)) & Gaussian("beta")
         assert marginal(joint, "beta").event_spec == Gaussian("beta").event_spec
 
     def test_a_marginal_that_is_one_factor_takes_its_label(self):
-        joint = (Kernel("y", ("beta",)) * Gaussian("beta").with_label("prior")).with_label("model")
+        joint = (Kernel("y", ("beta",)) & Gaussian("beta").with_label("prior")).with_label("model")
         assert marginal(joint, "beta").label == "prior"
 
     def test_a_marginal_that_is_several_factors_joins_their_labels(self):
-        joint = Gaussian("a").with_label("first") * Gaussian("b").with_label("second")
-        joint = (joint * Gaussian("c")).with_label("model")
-        assert marginal._derived_label({"d": joint, "field": ("a", "b")}) == "first·second"
+        joint = Gaussian("a").with_label("first") & Gaussian("b").with_label("second")
+        joint = (joint & Gaussian("c")).with_label("model")
+        assert marginal._derived_label({"d": joint, "paths": ("a", "b")}) == "first·second"
 
     @pytest.mark.parametrize(
-        "field",
+        "paths",
         [pytest.param("y", id="a-consumer"), pytest.param(("y",), id="a-tuple-of-one")],
     )
-    def test_a_marginal_that_integrates_a_factor_out_keeps_the_joint_label(self, field):
+    def test_a_marginal_that_integrates_a_factor_out_keeps_the_joint_label(self, paths):
         """The prior predictive integrates the prior out, so it describes the whole model."""
-        joint = (Kernel("y", ("beta",)) * Gaussian("beta")).with_label("model")
-        assert marginal._derived_label({"d": joint, "field": field}) == "model"
+        joint = (Kernel("y", ("beta",)) & Gaussian("beta")).with_label("model")
+        assert marginal._derived_label({"d": joint, "paths": paths}) == "model"
 
     def test_the_marginal_of_a_law_without_factors_keeps_its_label(self):
         assert marginal(Marginalizing("law"), "a").label == "law"
@@ -123,30 +144,29 @@ class TestTheMarginalsNotation:
         assert _fixed_paths(marginal(Marginalizing("law"), "a")) == ()
 
     def test_a_marginal_over_several_factors_of_an_unlabeled_joint_reads_factor_by_factor(self):
-        joint = Gaussian("a").with_label("first") * Gaussian("b").with_label("second")
-        result = marginal(joint * Gaussian("c"), ("a", "b"))
+        joint = Gaussian("a").with_label("first") & Gaussian("b").with_label("second")
+        result = marginal((joint & Gaussian("c")), ("a", "b"))
         assert result.label == "first·second"
         assert result.notation == "first(a)·second(b)"
 
     def test_a_marginal_over_several_factors_of_a_labeled_joint_reads_factor_by_factor(self):
-        joint = (Gaussian("a") * Gaussian("b") * Gaussian("c")).with_label("model")
+        joint = ((Gaussian("a") & Gaussian("b")) & Gaussian("c")).with_label("model")
         assert marginal(joint, ("a", "b")).notation == "a(a)·b(b)"
 
-    def test_factors_selected_out_of_factor_order_read_in_the_selection_order(self):
-        joint = (Gaussian("a") * Gaussian("b") * Gaussian("c")).with_label("model")
-        result = marginal(joint, ("b", "a"))
-        assert (result.label, result.notation) == ("b·a", "b(b)·a(a)")
-        assert list(result.event_spec.outputs) == ["b", "a"]
+    def test_factors_named_out_of_factor_order_read_in_the_joint_order(self):
+        joint = ((Gaussian("a") & Gaussian("b")) & Gaussian("c")).with_label("model")
+        result = marginal(joint, ["b", "a"])
+        assert (result.label, result.notation) == ("a·b", "a(a)·b(b)")
+        assert list(result.event_spec.outputs) == ["a", "b"]
 
-    def test_a_dependent_pair_selected_producer_first_reads_by_the_joined_label(self):
-        """No product lists ``beta`` before the kernel that conditions on it."""
-        joint = (Kernel("y", ("beta",)) * Gaussian("beta")).with_label("model")
+    def test_a_dependent_pair_named_producer_first_reads_in_the_joint_order(self):
+        joint = (Kernel("y", ("beta",)) & Gaussian("beta")).with_label("model")
         result = marginal(joint, ("beta", "y"))
-        assert list(result.event_spec.outputs) == ["beta", "y"]
-        assert result.notation == "(y·beta)(beta, y)"
+        assert list(result.event_spec.outputs) == ["y", "beta"]
+        assert result.notation == "y(y | beta)·beta(beta)"
 
     def test_a_marginal_of_a_conditioned_joint_keeps_its_fixed_paths(self):
-        joint = (Gaussian("a") * Gaussian("b") * Gaussian("c")).with_label("model")
+        joint = ((Gaussian("a") & Gaussian("b")) & Gaussian("c")).with_label("model")
         conditioned = condition_on(joint, {"c": 0.5})
         assert marginal(conditioned, "a").notation == "a(a; c)"
         assert marginal(conditioned, ("a", "b")).notation == "(a·b)(a, b; c)"
@@ -159,7 +179,7 @@ class TestOptionalInputs:
         from probpipe import Normal, conditional_distribution
 
         kernel = conditional_distribution(lambda scale=2.0: Normal("y", 0.0, scale), label="lik")
-        law = marginal(kernel * Normal("mu", 0.0, 1.0), "y")
+        law = marginal((kernel & Normal("mu", 0.0, 1.0)), "y")
         assert isinstance(law, Distribution)
         assert law.label == "lik"
         assert float(law._variance()) == pytest.approx(4.0)
@@ -168,7 +188,7 @@ class TestOptionalInputs:
         from probpipe import Normal, conditional_distribution
 
         kernel = conditional_distribution(lambda scale=2.0: Normal("y", 0.0, scale), label="lik")
-        joint = (kernel * Normal("mu", 0.0, 1.0)).with_path_names({"y": "obs"})
+        joint = (kernel & Normal("mu", 0.0, 1.0)).rename({"y": "obs"})
         law = marginal(joint, "obs")
         assert isinstance(law, Distribution)
         assert list(law.event_spec.outputs) == ["obs"]
@@ -178,13 +198,13 @@ class TestOptionalInputs:
 
         kernel = conditional_distribution(lambda scale=2.0: Normal("y", 0.0, scale), label="lik")
         with pytest.raises(ResolutionError, match="integrates out the fields \\['scale'\\]"):
-            marginal(kernel * HalfNormal("scale", 1.0), "y")
+            marginal((kernel & HalfNormal("scale", 1.0)), "y")
 
 
 def _difference(fn):
     return Function(
         fn,
-        dispatch="sequential",
+        executor="sequential",
         max_evaluations=8,
         label="difference",
         output_spec=OutputSpec(difference=None),
@@ -197,7 +217,7 @@ class TestDetachment:
     def test_the_marginal_of_a_renamed_joint_draws_independently_of_its_factor(self):
         """The marginal is the factor renamed, and the factor is the law the user composed."""
         prior = Normal("a", 0.0, 1.0)
-        detached = marginal((prior * Normal("b", 2.0, 1.0)).with_path_names(a="c"), "c")
+        detached = marginal((prior & Normal("b", 2.0, 1.0)).rename(a="c"), "c")
 
         assert _descendants.capture_stochastic_consumer(detached).root is detached
         with workflow_run(seed=41):
@@ -210,12 +230,12 @@ class TestDetachment:
             "law",
             label="laws",
         )
-        detached = marginal(batch[0] * Normal("b", 2.0, 1.0), "a")
+        detached = marginal((batch[0] & Normal("b", 2.0, 1.0)), "a")
 
         assert _descendants.capture_stochastic_consumer(detached).root is detached
 
     def test_a_view_of_a_renamed_joint_draws_with_the_joint(self):
-        renamed = (Normal("a", 0.0, 1.0) * Normal("b", 2.0, 1.0)).with_path_names(a="c")
+        renamed = (Normal("a", 0.0, 1.0) & Normal("b", 2.0, 1.0)).rename(a="c")
 
         with workflow_run(seed=43):
             result = _difference(lambda x, y: x["c"] - y)(renamed, renamed["c"])
@@ -225,7 +245,7 @@ class TestDetachment:
     def test_the_factor_of_a_renamed_joint_draws_independently_of_the_original(self):
         """The factor is the original renamed, and the original is the law the user composed."""
         prior = Normal("a", 0.0, 1.0)
-        detached = factor((prior * Normal("b", 2.0, 1.0)).with_path_names(a="c"), "c")
+        detached = factor((prior & Normal("b", 2.0, 1.0)).rename(a="c"), "c")
 
         assert _descendants.capture_stochastic_consumer(detached).root is detached
         with workflow_run(seed=45):
@@ -233,7 +253,7 @@ class TestDetachment:
         assert np.any(np.asarray(result.atoms) != 0.0)
 
     def test_the_factor_of_a_joint_is_its_own_root(self):
-        detached = factor(Normal("a", 0.0, 1.0) * Normal("b", 2.0, 1.0), "a")
+        detached = factor((Normal("a", 0.0, 1.0) & Normal("b", 2.0, 1.0)), "a")
 
         assert _descendants.capture_stochastic_consumer(detached).root is detached
 
@@ -243,36 +263,36 @@ class TestDetachment:
             "law",
             label="laws",
         )
-        detached = factor(batch[0] * Normal("b", 2.0, 1.0), "a")
+        detached = factor((batch[0] & Normal("b", 2.0, 1.0)), "a")
 
         assert _descendants.capture_stochastic_consumer(detached).root is detached
 
 
 class TestFactor:
     def test_the_factor_carries_its_own_declaration(self):
-        joint = Kernel("y", ("beta",)) * Gaussian("beta", 2.0)
+        joint = Kernel("y", ("beta",)) & Gaussian("beta", 2.0)
         assert factor.check(joint, "beta").result is None
         assert factor(joint, "beta").event_spec == Gaussian("beta").event_spec
 
     def test_factor_returns_the_factor_producing_the_output(self):
-        joint = Kernel("y", ("beta",)) * Gaussian("beta", 2.0)
+        joint = Kernel("y", ("beta",)) & Gaussian("beta", 2.0)
         prior = factor(joint, "beta")
         assert isinstance(prior, Gaussian) and prior.loc == 2.0
         assert isinstance(factor(joint, "y"), ConditionalDistribution)
 
     def test_the_factor_keeps_its_own_label(self):
-        joint = (Kernel("likelihood", ("beta",), output_name="y") * Gaussian("beta")).with_label(
+        joint = (Kernel("likelihood", ("beta",), output_name="y") & Gaussian("beta")).with_label(
             "m"
         )
         assert factor(joint, "y").label == "likelihood"
         assert factor(joint, "beta").label == "beta"
 
     def test_a_conditional_joint_exposes_its_factors_too(self):
-        joint = Kernel("y", ("beta",)) * Kernel("beta", ("alpha",))
+        joint = Kernel("y", ("beta",)) & Kernel("beta", ("alpha",))
         assert isinstance(factor(joint, "beta"), ConditionalDistribution)
 
     def test_a_name_that_is_not_an_output_raises_applicability_error(self):
-        joint = Kernel("y", ("beta",)) * Gaussian("beta")
+        joint = Kernel("y", ("beta",)) & Gaussian("beta")
         with pytest.raises(ApplicabilityError, match="output"):
             factor(joint, "gamma")
 

@@ -368,7 +368,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
 
     The label is set at construction, either supplied by the caller or derived
     from the inputs. Every transform preserves it; only :meth:`with_label`
-    replaces it, returning a copy. ``with_path_names`` on the named-tree types
+    replaces it, returning a copy. ``rename`` on the named-tree types
     renames the fields within an object and preserves the object's label.
 
     The label is read from the term's **expression**, a private immutable tree
@@ -561,7 +561,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         ``_decoupled_state`` declaration.
 
         This relabels the object *itself*. To rename the named fields inside a
-        structured object, use ``with_path_names`` on the named-tree types.
+        structured object, use ``rename`` on the named-tree types.
 
         Parameters
         ----------
@@ -658,7 +658,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     def provenance(self) -> Provenance | None:
         """Provenance describing how this object was produced, or ``None``.
 
-        A raw form, such as the detached law a law's :attr:`raw` returns, has none.
+        A raw form, such as the standalone law a law's :attr:`raw` returns, has none.
         """
         provenance = getattr(self, "_provenance", None)
         return None if provenance is _RAW_FORM else provenance

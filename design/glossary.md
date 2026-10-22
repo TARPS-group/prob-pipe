@@ -26,6 +26,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **element**: one object of a batch, at one position of its batch axes (II.5). The scalar values of an array are its entries.
 - **embeddable and host-only**: an opaque `Function` is embeddable when its output spec describes a value a host callback can return, a numeric array or a record of them, with dtypes, and shapes bound by the declared inputs, so it can run inside a JAX program as an embedded call; it is host-only otherwise (V.13).
 - **embedded call**: a call of an opaque `Function` with at least one traced argument, inside a JAX program or under an eager JAX transformation, which ProbPipe makes a host callback whose host side runs the batch it receives as one set of evaluation points (V.13).
+- **evaluation context**: the call context that a call's evaluation points run under, wherever they run: the call's context with automatic selection in place of its executor choice, so a call made inside an evaluation point chooses its executor afresh, and with the session's values as they were when the outermost call opened (V.9).
 - **evaluation point**: one evaluation of one callable at one set of arguments, with its random key when the callable draws (V.9). An atom of an empirical law is a point of its support, which is not an evaluation point.
 - **evaluation point identity**: an evaluation point's unique name within its call, made of the callable, the ordinal of its set of evaluation points among the sets the call requested, and its point index, which reports and errors use (V.9).
 - **evaluation rule**: a method of the evaluation-rule registry, which realizes a map applied to a distribution or a batch, such as a closed-form rule, an integration rule, or the sampling lift (V.7).
@@ -42,6 +43,8 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **formula**: the equation over other operations that defines a derived operation, such as `prob = exp ∘ log_prob`, which the operation's declaration states as its body (VI.0).
 - **group**: an entry of a named tree that is itself a tree, addressed by its path as a field is; `[]` at a group's path returns it (II.6).
 - **guard**: a predicate on a capability's instance and a call's arguments that decides whether the capability supports the call, as a `LinOp`'s inverse guard rejects a non-square operator (III.8).
+- **inert setting**: a `config` setting that changes no computed value, such as how a label renders or whether provenance is recorded, so no compiled JAX program depends on it; every setting of `notation`, `provenance`, and `prefect` (V.2).
+- **inference target**: the law an inference method normalizes, an `InferenceTarget`: a model's unobserved quantities at its observed values, whose unnormalized log-density is the model's there; a method reads the model, the observed values, and the model's prior and likelihood through it, and the target's density as any law's (VI.6).
 - **input**: a named place where a function or a conditional distribution receives one value: a function's parameter or what a conditional distribution is conditioned on. An input has a spec, to which every value supplied there conforms, and is required or optional; an optional input that a binding omits takes its default (II.2, III.9).
 - **input spec**: an `InputSpec`, which lists a term's inputs in order, each with its spec and whether it is optional, and holds no defaults: a function's `input_spec` and a conditional distribution's `given_spec` (II.2).
 - **input structure**: the tree structure that ProbPipe's canonical flatten gives for a call's arguments, with their shapes and dtypes and the values of its non-numeric hashable arguments, by which a probe result is stored (V.13).
@@ -67,6 +70,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **point index**: an evaluation point's position within its set of evaluation points (V.9).
 - **probe**: a trace made only to learn whether a callable traces, run at most once per `Function` and input structure (V.13).
 - **probe result**: the stored outcome of a probe, kept per `Function` and input structure and shared by the copies that `using` makes (V.13).
+- **program store**: the compiled JAX programs that an owner, such as a kernel a joint maps, keeps for the bodies it runs, each compiled once for each set of argument shapes and dtypes and each value of the call's static settings, with what their traces noted on the running call (V.9).
 - **provenance**: the record of how a tracked term was produced, which holds its operation, its tracked parents, its resolved controls, and its plain inputs (II.4).
 - **pushforward**: the law `f♯d` of `f(X)` for `X ~ d`, which the operation `pushforward(d, f)` computes by passing the map draws of `d` whatever its annotation; the direct call `f(d)` is a pushforward when the map's parameter takes draws (V.5, VI.1).
 - **raw form**: the representation layer's presentation of a value, detached from the workflow, such as a backing array or a wrapped callable; it is a term's `raw` (Part I, II.4).
@@ -79,6 +83,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **set of evaluation points**: the evaluation points of one callable that one request asks for, held in one `EvaluationPoints`, which an executor runs (V.9).
 - **signature**: what a law, a kernel, or a function is over, read from its input and output specs: a law's outputs, a kernel's outputs with `|` and its inputs, or a function's parameters, and a law or a kernel lists after `;` the paths it holds fixed at given values (II.4). A function's Python call signature keeps its Python name, `Function.signature`, which binding reads (III.3, V.3).
 - **standalone marginal**: the marginal `marginal(d, paths)` returns: a new law, drawn independently of `d` and of its coupled marginals, computed once, and exact when `d` knows its marginal at `paths`, an empirical approximation from draws of `d` otherwise (VI.8).
+- **static setting**: a `config` setting that can change what a compiled JAX program computes, because ProbPipe code reads it while JAX traces the program, so a JAX program ProbPipe opens is compiled for its value; `sampling.max_evaluations` and `sampling.num_samples` (V.2, V.9).
 - **sweep**: the lift of a function over a batch argument, which maps the function over the batch's elements; the elementwise sweep is its generic evaluation rule (V.5, V.7).
 - **term spec**: the typing information of a term, held in a `TermSpec`; it validates whether an object satisfies it and carries the symbolic-dimension protocol (II.1).
 - **traceable and opaque**: a callable is traceable for its input shapes when `jax.jit` and `jax.vmap` both succeed on it, and opaque otherwise, such as one that runs a subprocess; traceable says nothing about gradients (V.13).
@@ -101,6 +106,7 @@ The canonical name of a recurring concept is the name that its parameters, attri
 | one name per level of a batch | `level_names` |
 | a batch's level names mapped to their axis sizes | `levels`, which `BatchSpec` reports and its construction takes |
 | the output spec of one element of a batch, whose `term_spec` is the element's spec | `element_spec` |
+| what a batch is declared over, given to `BatchSpec` or a batch constructor: the elements' spec, or for `BatchSpec` also an output spec | `element` |
 | the objects a batch is built from | `elements` |
 | the independent-draw shape prefix of `sample` | `sample_shape` |
 | the maximum number of evaluations of a function lifted over laws | `max_evaluations` |

@@ -452,7 +452,7 @@ def _admitted_kind(value: Any, declared: type[TermSpec]) -> type[TermSpec]:
     if isinstance(value, Distribution) and not issubclass(declared, lifted):
         return type(value.event_spec.term_spec)
     if isinstance(value, Batch) and not issubclass(declared, BatchSpec):
-        return type(value.element_spec)
+        return type(value.element_spec.term_spec)
     return arrived_kind(value)
 
 
@@ -476,7 +476,7 @@ def role_lift(value: Any, role: tuple[type[TermSpec], ...]) -> Literal["sweep", 
     draws are is broadcast (V.4, V.5); any other value has no lift.
     """
     if isinstance(value, Batch) and len(value.batch_shape) > 0:
-        return "sweep" if role_admits(role, type(value.element_spec)) else None
+        return "sweep" if role_admits(role, type(value.element_spec.term_spec)) else None
     if isinstance(value, Distribution):
         event = value.event_spec.term_spec
         return "broadcast" if event is not None and role_admits(role, type(event)) else None
@@ -490,7 +490,7 @@ def _role_refusal(
     kinds = ", ".join(kind.__name__ for kind in role)
     detail = arrived_kind(value).__name__
     if isinstance(value, Batch) and len(value.batch_shape) > 0:
-        detail += f" with {type(value.element_spec).__name__} elements"
+        detail += f" with {type(value.element_spec.term_spec).__name__} elements"
     elif isinstance(value, Distribution) and value.event_spec.term_spec is not None:
         detail += f" with {type(value.event_spec.term_spec).__name__} draws"
     return _kind_refusal(function_name, label, kinds, value, detail)

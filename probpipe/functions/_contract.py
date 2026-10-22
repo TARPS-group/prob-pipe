@@ -5,12 +5,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from ..core._record_spec import _RecordOrderMismatch
 from ..core._spec_base import _unify_specs
 from ..core._specs import InputSpec, TermSpec
+from ..core.named_tree import _PATH_SEP
 from ._call import ApplicabilityError
 
 
-def _lifted_element_spec(
+def _lifted_element_term_spec(
     value: Any, *, expected: TermSpec, function_name: str, name: str
 ) -> TermSpec:
     """Return the declared kind of one swept element or sampled event."""
@@ -18,7 +20,7 @@ def _lifted_element_spec(
     from ..distributions._distribution import Distribution
 
     if isinstance(value, Batch):
-        return value.element_spec
+        return value.element_spec.term_spec
     if isinstance(value, Distribution):
         return value.event_spec.term_spec
     raise ValueError(
@@ -75,14 +77,16 @@ def _bind_planned_function_inputs(
     bindings: dict[str, int] = {}
     try:
         for name, expected in input_spec.items():
-            path = f"{context}/{name}"
+            path = f"{context}{_PATH_SEP}{name}"
             if name in lifted_names:
-                actual = _lifted_element_spec(
+                actual = _lifted_element_term_spec(
                     values[name], expected=expected, function_name=function_name, name=name
                 )
                 _unify_specs(expected, actual, bindings, path)
             else:
                 expected._bind_dims_from_value(values[name], bindings, path)
+    except _RecordOrderMismatch:
+        raise
     except ValueError as error:
         raise ApplicabilityError(str(error)) from error
     return input_spec.with_dim_sizes(**bindings), bindings

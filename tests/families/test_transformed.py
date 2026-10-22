@@ -123,7 +123,7 @@ class TestTheBijectorTransform:
             )
 
     def test_a_base_drawing_records_raises(self, standard):
-        joint = standard * Normal("z", 0.0, 1.0)
+        joint = standard & Normal("z", 0.0, 1.0)
         with pytest.raises(TypeError, match="needs a base that draws numeric arrays, but"):
             BijectorTransformedDistribution("y", joint, tfb.Exp())
 
@@ -298,7 +298,7 @@ class TestReplay:
             replayable_difference,
             label="replayable_difference",
             max_evaluations=8,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(replayable_difference=None),
         )
 

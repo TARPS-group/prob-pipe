@@ -39,12 +39,12 @@ class TestTheFunction:
         assert wrapped.raw is predict
 
     def test_the_decorator_takes_construction_time_controls(self):
-        @function(max_evaluations=500, dispatch="jax")
+        @function(max_evaluations=500, executor="jax")
         def predict(theta, x):
             return x * theta
 
         assert predict.options["max_evaluations"] == 500
-        assert predict.options["dispatch"] == "jax"
+        assert predict.options["executor"] == "jax"
 
     def test_a_call_agrees_with_plain_evaluation_adding_the_wrap_and_the_provenance(self):
         @function
@@ -90,7 +90,7 @@ class TestTheEngine:
         "controls", [{"exact_only": True}, {"method": "elementwise_sweep"}], ids=lambda c: str(c)
     )
     def test_a_lift_failure_ends_the_call_before_the_route_is_selected(self, controls):
-        @function(dispatch="sequential")
+        @function(executor="sequential", traceable=False)
         def add(x, y):
             return x + y
 
@@ -100,13 +100,13 @@ class TestTheEngine:
                 NumericArrayBatch(
                     jnp.arange(2.0),
                     "row",
-                    element_spec=scalar,
+                    element=scalar,
                     label="x",
                 ),
                 NumericArrayBatch(
                     jnp.arange(3.0),
                     "row",
-                    element_spec=scalar,
+                    element=scalar,
                     label="y",
                 ),
             )
@@ -137,7 +137,8 @@ class TestCheck:
     def test_check_causes_no_random_event(self):
         @function(
             max_evaluations=8,
-            dispatch="sequential",
+            executor="sequential",
+            traceable=False,
             output_spec=OutputSpec(identity=None),
         )
         def identity(x):

@@ -413,8 +413,7 @@ class TestAutomaticKeyOwnership:
 
     def test_operation_scope_rejects_unjoined_nested_items(self):
         items = evaluation_keys_mod.issue_evaluation_points(
-            [{}],
-            point_segments=(evaluation_keys_mod.plain_call_point_segment(),),
+            (evaluation_keys_mod.plain_call_point_segment(),)
         )
 
         with (
@@ -560,7 +559,7 @@ class TestFunctionBrokerScope:
             lambda value: value,
             label="function",
             max_evaluations=8,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(function=None),
         )
 
@@ -590,7 +589,6 @@ def _sample_sum(loc):
 
 
 class TestCallerJaxTraceDetection:
-    @pytest.mark.parametrize("use_core_fallback", [False, True])
     @pytest.mark.parametrize(
         ("transform", "argument"),
         [
@@ -600,13 +598,11 @@ class TestCallerJaxTraceDetection:
             pytest.param(jax.grad, 0.0, id="grad"),
         ],
     )
-    def test_trace_detection(self, monkeypatch, use_core_fallback, transform, argument):
-        if use_core_fallback:
-            monkeypatch.delattr(jax.extend.core, "find_top_trace", raising=False)
+    def test_trace_detection(self, transform, argument):
         observed = []
 
         def body(value):
-            observed.append(context_mod._caller_jax_trace_active())
+            observed.append(context_mod._jax_transformation_active())
             return value * value
 
         if transform is None:
@@ -651,7 +647,6 @@ class TestCallerJaxTrace:
         lifted = Function(
             lambda z: 2.0 * z,
             max_evaluations=8,
-            dispatch="auto",
             label="affine",
         )
 
@@ -661,11 +656,11 @@ class TestCallerJaxTrace:
         with pytest.raises(RuntimeError, match="'function_lifting' operation"):
             jax.jit(body)(0.0)
 
-    def test_a_jax_dispatched_function_over_a_law_draws(self):
+    def test_a_function_the_jax_executor_maps_over_a_law_draws(self):
         lifted = Function(
             lambda z: 2.0 * z,
             max_evaluations=8,
-            dispatch="jax",
+            executor="jax",
             label="affine",
             output_spec=OutputSpec(affine=None),
         )
@@ -706,4 +701,4 @@ def _normal_model(prior):
         label="y_given_mu",
         given_spec=prior.event_spec.outputs,
     )
-    return likelihood * prior
+    return likelihood & prior

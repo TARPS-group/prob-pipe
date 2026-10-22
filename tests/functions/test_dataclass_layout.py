@@ -41,9 +41,7 @@ _WORKFLOW_MODULES = (
     params=[
         _binding.FunctionInputRef("x"),
         _callable.CallableAnchor(False, "local_function", None, None),
-        _execution.make_execution_contract(
-            evaluator="rowwise", transport="local_inline", stochastic_plan=None
-        ),
+        _execution.make_execution_contract(stochastic_plan=None),
         _rng.RandomEventIdentity(("invocation", 0), ("source", 0), ("singleton",)),
         _evaluation_keys.EvaluationPointToken(bytes(range(16))),
     ],

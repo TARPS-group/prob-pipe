@@ -71,8 +71,6 @@ FLOOR_PRIORITY = 0
 _FORWARDED_CONTROLS = (
     "max_evaluations",
     "num_samples",
-    "dispatch",
-    "max_workers",
     "include_inputs",
     "workflow_kind",
     "exact_only",

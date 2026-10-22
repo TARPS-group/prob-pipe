@@ -39,7 +39,7 @@ def _lift() -> Function:
     return Function(
         _shift,
         max_evaluations=8,
-        dispatch="sequential",
+        executor="sequential",
         label="shift",
         output_spec=OutputSpec(shift=None),
     )

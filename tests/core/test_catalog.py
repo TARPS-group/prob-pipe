@@ -457,6 +457,7 @@ _BUILTINS = {
     "bijectors": "factory",
     "converters": "dispatch",
     "evaluation_rules": "dispatch",
+    "executors": "dispatch",
     "inference": "dispatch",
     "operations": "operation",
 }

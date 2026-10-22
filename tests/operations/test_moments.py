@@ -109,7 +109,7 @@ class _Shift(ConditionalDistribution, SupportsConditionalSampling):
 
 def _dependent_joint() -> Any:
     """``y = mu + 1`` with ``mu ~ Normal(2, 1)``: a joint that samples and has no moment."""
-    return _Shift() * Gaussian("mu", 2.0)
+    return _Shift() & Gaussian("mu", 2.0)
 
 
 class _Coupled(Distribution, SupportsSampling, SupportsMarginals):
@@ -171,7 +171,7 @@ def _record_empirical() -> EmpiricalDistribution:
     atoms = NumericRecordBatch(
         {"b": jnp.array([[1.0, 2.0], [0.0, 1.0], [2.0, 3.0]]), "a": jnp.array([2.0, 1.0, 3.0])},
         "row",
-        element_spec=RecordSpec(b=(2,), a=()),
+        element=RecordSpec(b=(2,), a=()),
         label="rows",
     )
     return EmpiricalDistribution(atoms, label="post")
@@ -384,7 +384,7 @@ class TestStandardDeviation:
         assert (report.route, report.exact) == ("derived", False)
 
     def test_a_record_law_has_a_record_with_a_field_per_output(self):
-        result = standard_deviation(Gaussian("mu", 0.0, 2.0) * Gaussian("tau", 1.0, 3.0))
+        result = standard_deviation(Gaussian("mu", 0.0, 2.0) & Gaussian("tau", 1.0, 3.0))
         assert isinstance(result, Record)
         assert result.label == "√𝕍[(mu, tau) ~ mu·tau]"
         assert result.fields == ("mu", "tau")
@@ -444,11 +444,11 @@ class TestStandardDeviation:
     @staticmethod
     def _grouped() -> Any:
         """``g`` groups ``mu ~ Normal(0, 2)`` and ``tau ~ Normal(1, 3)``."""
-        joint = Gaussian("mu", 0.0, 2.0) * Gaussian("tau", 1.0, 3.0)
-        return joint.with_path_names({"mu": "g/mu", "tau": "g/tau"})
+        joint = Gaussian("mu", 0.0, 2.0) & Gaussian("tau", 1.0, 3.0)
+        return joint.rename({"mu": "g/mu", "tau": "g/tau"})
 
     def test_a_record_valued_output_keeps_its_fields(self):
-        result = standard_deviation(self._grouped() * Gaussian("c", 5.0, 4.0))
+        result = standard_deviation(self._grouped() & Gaussian("c", 5.0, 4.0))
         assert result.label == "√𝕍[(g, c) ~ mu·tau·c]"
         group = result.at_path("g")
         assert group.fields == ("mu", "tau")
@@ -753,7 +753,7 @@ class TestByOutput:
 
     def test_the_outputs_without_an_exact_route_are_one_block(self):
         """``z = mu - 1`` and ``y = mu + 1`` are computed from one set of draws."""
-        joint = _Shift("z", -1.0) * _Shift("y", 1.0) * Gaussian("mu", 2.0)
+        joint = (_Shift("z", -1.0) & _Shift("y", 1.0)) & Gaussian("mu", 2.0)
         with workflow_run(seed=7):
             result = mean(joint)
         assert self._blocks(result) == [
@@ -767,8 +767,8 @@ class TestByOutput:
     @staticmethod
     def _nested() -> Any:
         """``g`` groups ``mu ~ Normal(2, 1)`` and ``y = mu + 1``, beside ``c ~ Normal(5, 1)``."""
-        joint = _Shift("y", 1.0) * Gaussian("mu", 2.0) * Gaussian("c", 5.0)
-        return joint.with_path_names({"mu": "g/mu", "y": "g/y"})
+        joint = (_Shift("y", 1.0) & Gaussian("mu", 2.0)) & Gaussian("c", 5.0)
+        return joint.rename({"mu": "g/mu", "y": "g/y"})
 
     def test_a_record_valued_output_is_one_block(self):
         """A group of fields is summarized whole, by the route its view selects."""
@@ -845,19 +845,19 @@ class TestByOutput:
         assert view.check(_dependent_joint()).feasible is False
 
     def test_an_unresolved_output_leaves_the_route_unresolved(self):
-        report = mean.check(_Shift() * GuardedMean("mu", None))
+        report = mean.check(_Shift() & GuardedMean("mu", None))
         assert report.feasible is None
         assert report.route is None
 
     def test_outputs_with_no_route_together_decline_the_route(self):
-        routes = {info.method_name: info for info in mean.check(Gaussian("mu") * Bare("b")).routes}
+        routes = {info.method_name: info for info in mean.check(Gaussian("mu") & Bare("b")).routes}
         assert routes["by_output (approximate)"].description == (
             "the outputs ('b',) have no mean route"
         )
 
     def test_an_output_the_operation_does_not_apply_to_declines_the_route(self):
         """A measure-valued output has no event-typed variance, so the fallback reports."""
-        report = variance.check(Measure("m") * Gaussian("g", 1.0))
+        report = variance.check(Measure("m") & Gaussian("g", 1.0))
         routes = {info.method_name: info for info in report.routes}
         assert report.feasible is False
         assert routes["by_output (approximate)"].description == (
@@ -865,11 +865,11 @@ class TestByOutput:
         )
 
     def test_an_edge_free_joint_keeps_its_closed_form(self):
-        report = mean.check(Gaussian("a", 1.0) * Gaussian("b", 2.0))
+        report = mean.check(Gaussian("a", 1.0) & Gaussian("b", 2.0))
         assert (report.route, report.exact) == ("closed_form", True)
 
     def test_a_joint_with_no_exact_output_keeps_the_fallback(self):
-        report = mean.check(_Shift() * Sampler("mu", 2.0))
+        report = mean.check(_Shift() & Sampler("mu", 2.0))
         routes = {info.method_name: info for info in report.routes}
         assert report.route == "monte_carlo"
         assert routes["by_output (approximate)"].description == "no output has an exact mean"
@@ -900,7 +900,7 @@ class TestByOutput:
             "s0": Sampler("s0"),
             "s1": Sampler("s1"),
         }
-        law = functools.reduce(operator.mul, [factors[c] for c in outputs])
+        law = functools.reduce(operator.and_, [factors[c] for c in outputs])
         with workflow_run(seed=7):
             result = mean.using(method="by_output", num_samples=8)(law)
 
@@ -932,7 +932,7 @@ class TestByOutput:
 
 def _samplers(n: int) -> Any:
     """The product of *n* sampling-only laws, which claims no summary and has no exact output."""
-    return functools.reduce(operator.mul, [Sampler(f"s{i}") for i in range(n)])
+    return functools.reduce(operator.and_, [Sampler(f"s{i}") for i in range(n)])
 
 
 class TestByOutputPlanning:
@@ -962,7 +962,7 @@ class TestByOutputPlanning:
             # it too, which resolves those two outputs once and declines; the
             # run selects the rest's route again before running it.
             pytest.param(
-                lambda: _Shift("z", -1.0) * _Shift("y", 1.0) * Gaussian("mu", 2.0),
+                lambda: (_Shift("z", -1.0) & _Shift("y", 1.0)) & Gaussian("mu", 2.0),
                 [True, True, True, True, True, True, False, True, True],
                 [True, True],
                 id="mixed",
@@ -1492,7 +1492,7 @@ class TestTheDrawCount:
             shapes.extend(law.shapes)
             return estimate.raw
 
-        lifted = Function(centered, label="centered", dispatch="sequential")
+        lifted = Function(centered, label="centered", traceable=False, executor="sequential")
         with workflow_run(seed=0):
             law = lifted.using(max_evaluations=7, num_samples=99)(Gaussian("theta", 0.0))
         assert law.num_atoms == 7
@@ -1509,7 +1509,7 @@ class TestTheDrawCount:
             shapes.extend(law.shapes)
             return estimate.raw
 
-        lifted = Function(centered, label="centered", dispatch="sequential")
+        lifted = Function(centered, label="centered", traceable=False, executor="sequential")
         with workflow_run(seed=0):
             law = lifted.using(max_evaluations=6, num_samples=99)(Gaussian("theta", 0.0))
         assert law.num_atoms == 6
@@ -1527,7 +1527,7 @@ def _nested_empirical() -> EmpiricalDistribution:
             "c": jnp.array([2.0, 1.0, 3.0]),
         },
         "row",
-        element_spec=RecordSpec(g=RecordSpec(mu=(), y=(2,)), c=()),
+        element=RecordSpec(g=RecordSpec(mu=(), y=(2,)), c=()),
         label="rows",
     )
     return EmpiricalDistribution(atoms, label="post")
@@ -1549,7 +1549,9 @@ class TestASummaryTakesTheEventsNames:
     def test_the_summary_declares_the_events_fields(self, summary):
         law = _nested_empirical()
         result = summary(law)
-        element = result.element_spec if isinstance(result, NumericRecordBatch) else result.spec
+        element = (
+            result.element_spec.term_spec if isinstance(result, NumericRecordBatch) else result.spec
+        )
         assert tuple(element.children) == ("g", "c")
         assert tuple(element.children["g"].children) == ("mu", "y")
 
@@ -1593,7 +1595,7 @@ class TestASummaryBindsWhereADrawBinds:
     """A summary of a law plugs into the operations a draw of the law plugs into."""
 
     def test_a_law_scores_its_mean(self):
-        law = Normal("mu", 0.5, 1.0) * Normal("tau", 1.0, 2.0)
+        law = Normal("mu", 0.5, 1.0) & Normal("tau", 1.0, 2.0)
         at_mean = log_prob(law, mean(law))
         at_values = log_prob(law, {"mu": 0.5, "tau": 1.0})
         # The closed-form means are the locations, so both calls score the same values.
@@ -1617,6 +1619,6 @@ class TestASummaryBindsWhereADrawBinds:
             NumericRecordBatch({"mu": jnp.array([1.0, 2.0, 3.0])}, "row", label="mu"),
             label="posterior",
         )
-        predictive = condition_on(likelihood * prior, mean(posterior))
+        predictive = condition_on((likelihood & prior), mean(posterior))
         # The posterior mean of mu is 2, and the kernel's mean is mu in each coordinate.
         np.testing.assert_allclose(np.asarray(mean(predictive)), [2.0, 2.0, 2.0], rtol=1e-6)

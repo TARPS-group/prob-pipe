@@ -36,8 +36,14 @@ probpipe/
 │   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.5)
 │   ├── _dispatch.py           #   dispatch methods and registries, Feasibility, MethodInfo, ResolutionError, MathematicalDomainError (II.7)
 │   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.7)
-│   ├── _compilation.py        #   compiled_or_eager: a compiled call that falls back to the eager call
+│   ├── _compilation.py        #   compiled_or_eager: a JAX program traced before it runs, or the eager call;
+│   │                          #   the program store, its static settings, and dynamic call tokens (V.9)
 │   ├── _call_context.py       #   the call context: the per-call state a call carries into its workers (V.2)
+│   ├── _execution_claims.py   #   execution claims, the probe, and its stored results; traceability (V.13)
+│   ├── _evaluation_points.py  #   EvaluationPoints, EvaluationChunk, SharedPayload, EvaluationOutcomes,
+│   │                          #     EvaluationFailure, EvaluationError (V.9)
+│   ├── _executors.py          #   EvaluationExecutor, executor_registry and its built-in executors,
+│   │                          #     and the dispatcher that runs a set on its call's executor (V.9)
 │   └── _config.py             #   library configuration
 ├── values/                    # the value layer (III.1–III.6; LinOp, III.4, is in linalg/)
 │   ├── _numeric_array.py      #   NumericArray (III.1)
@@ -61,18 +67,19 @@ probpipe/
 │   └── _batch.py              #   LinOpBatch
 ├── distributions/             # the distribution layer (III.7–IV.4)
 │   ├── _distribution.py       #   Distribution, NumericDistribution, DistributionSpec (III.7)
-│   ├── _views.py              #   FieldView (III.7–III.8)
+│   ├── _views.py              #   CoupledMarginal (III.7–III.8)
 │   ├── _capabilities.py       #   the Supports* protocols (III.8)
 │   ├── _conditional.py        #   ConditionalDistribution, its markers and spec (III.9), conditional_distribution (IV.4)
 │   ├── _from_functions.py     #   distribution: a law from a sampler, a density, or both (IV.4)
 │   ├── _batches.py            #   DistributionBatch, ConditionalDistributionBatch (III.10)
 │   ├── _factored.py           #   SupportsFactors and the factored classes (IV.1)
-│   ├── _composition.py        #   the merge engine behind & (IV.2)
+│   ├── _merge.py        #   the merge engine behind & (IV.2)
 │   ├── _empirical.py          #   EmpiricalDistribution (VII.2) — the closure family the
 │   │                          #     lift and the Monte Carlo fallbacks construct
 │   └── _conversion.py         #   Converter, ConverterRegistry (IV.3)
 ├── functions/                 # Part V — Function and its engine
 │   ├── _function.py           #   the engine installed on Function at import; the decorator; the using method (V.1, V.2)
+│   ├── _boundary.py           #   embedded opaque calls: staging, host callbacks, and token inspection (V.9)
 │   ├── _call.py               #   binding, wrap, conversion planning, admission; ApplicabilityError (V.3, V.4)
 │   ├── _plan.py               #   lift classification, root-ancestor grouping, and the result declaration (V.5, V.6)
 │   ├── _rules.py              #   the evaluation-rule registry: consulted by the engine,
@@ -99,6 +106,7 @@ probpipe/
 │   │                          #     random_log_prob, random_unnormalized_log_prob (VI.4)
 │   ├── _moments.py            #   mean, variance, standard_deviation, cov, quantile, expectation (VI.5)
 │   ├── _condition.py          #   condition_on, the inference registry (VI.6)
+│   ├── _inference_target.py   #   InferenceTarget, ModelFactors, the unnormalized conditional (VI.6)
 │   ├── _joint.py              #   joint (VI.7)
 │   ├── _marginal.py           #   marginal, factor (VI.8)
 │   ├── _mixture.py            #   mixture (VI.9)
@@ -119,6 +127,7 @@ probpipe/
 ├── designs/                   # designs: batches materialized from per-field candidate sets, over any element spec
 ├── inference/                 # the registered inference methods (VI.6)
 ├── diagnostics/               # diagnostics over inference results
+├── testing/                   # check_executor, the conformance check of an executor (V.9)
 └── validation/                # predictive checks and model comparison
 ```
 

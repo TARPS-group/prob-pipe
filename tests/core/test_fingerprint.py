@@ -418,7 +418,7 @@ class TestDistributionHashing:
         assert fingerprint(_Located("x", 2.0)) != fingerprint(law)
 
     def test_whether_a_joint_was_labeled_leaves_its_fingerprint_unchanged(self):
-        joint = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        joint = Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)
         labeled = copy.copy(joint)
         _with_named(labeled, True)
         assert fingerprint(labeled) == fingerprint(joint)
@@ -508,7 +508,7 @@ class TestBootstrapSourceFingerprint:
 
 class TestFunctionHashing:
     def _make_wf(self, func):
-        return Function(func, label="func", dispatch="sequential", max_evaluations=10)
+        return Function(func, label="func", executor="sequential", max_evaluations=10)
 
     def test_legacy_content_marker_is_preserved(self):
         """A pure API rename must not invalidate existing cache identities."""
@@ -737,7 +737,7 @@ class TestFunctionHashing:
                 transform = lambda v: v * 2.0  # noqa: E731
                 return transform(x)
 
-            wf = Function(f, label="f", dispatch="sequential", max_evaluations=10)
+            wf = Function(f, label="f", executor="sequential", max_evaluations=10)
             print(fingerprint(wf))
         """)
         site = str(next(p for p in sys.path if "site-packages" in p))
@@ -833,7 +833,7 @@ class TestFunctionCapture:
     """Bytecode alone is not enough: referenced names, closures, and defaults."""
 
     def _wf(self, func):
-        return Function(func, label="func", dispatch="sequential", max_evaluations=10)
+        return Function(func, label="func", executor="sequential", max_evaluations=10)
 
     def test_called_name_differs(self):
         # ``jnp.sin`` vs ``jnp.cos``: identical co_code + co_consts, differing
@@ -1008,7 +1008,7 @@ class TestEmpiricalAtoms:
             atoms = NumericArrayBatch(
                 values,
                 ("chain", "draw"),
-                element_spec=spec,
+                element=spec,
                 label="x",
             )
             return EmpiricalDistribution(atoms, output_name="x")

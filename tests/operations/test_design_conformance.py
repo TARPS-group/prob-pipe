@@ -89,9 +89,7 @@ _PROSE = {
 }
 
 #: Declarations the implementation does not match yet, with the change each awaits.
-_PENDING: dict[str, str] = {
-    "marginal": "VI.8 names the parameter paths; the code names it field",
-}
+_PENDING: dict[str, str] = {}
 
 #: Routes VI.0's code blocks construct that the implementation names otherwise, with the change each awaits.
 _PENDING_ROUTES: dict[str, str] = {}

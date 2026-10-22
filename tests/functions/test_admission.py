@@ -146,7 +146,7 @@ class TestConversionPlanning:
     def test_a_backend_distribution_at_a_value_parameter_is_converted_and_lifted(self):
         @function(
             max_evaluations=6,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         def identity(x):
@@ -354,7 +354,7 @@ class TestAdmission:
             lambda x: 2.0 * x,
             input_spec={"x": SCALAR},
             max_evaluations=6,
-            dispatch="sequential",
+            executor="sequential",
             label="double",
             output_spec=OutputSpec(double=None),
         )

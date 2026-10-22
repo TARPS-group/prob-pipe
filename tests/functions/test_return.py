@@ -9,6 +9,7 @@ ResultSchemaError, which are return-contract defects.
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -19,6 +20,7 @@ from probpipe import (
     BatchSpec,
     Distribution,
     DistributionSpec,
+    EvaluationError,
     Function,
     FunctionSpec,
     Gamma,
@@ -44,6 +46,16 @@ from probpipe.distributions import ConditionalDistribution
 from ._design_helpers import error_of, standard_normal
 
 SCALAR = NumericArraySpec(())
+
+#: Each executor of a lifted call, with the claim that makes it the one that
+#: runs: JAX maps a traceable function whatever executor is named, so the
+#: one-at-a-time executors take ``traceable=False``, and None selects automatically.
+_EXECUTORS = [
+    pytest.param("jax", None, id="jax"),
+    pytest.param("sequential", False, id="sequential"),
+    pytest.param("thread", False, id="thread"),
+    pytest.param(None, None, id="automatic"),
+]
 
 
 class _Kernel(ConditionalDistribution):
@@ -158,7 +170,7 @@ class TestLabelAndProvenance:
             lambda x: 2.0 * x,
             output_label="prediction",
             max_evaluations=6,
-            dispatch="sequential",
+            executor="sequential",
             label="predict",
             output_spec=OutputSpec(prediction=None),
         )
@@ -169,7 +181,7 @@ class TestLabelAndProvenance:
             NumericArrayBatch(
                 jnp.arange(3.0),
                 "row",
-                element_spec=SCALAR,
+                element=SCALAR,
                 label="rows",
             )
         )
@@ -179,7 +191,7 @@ class TestLabelAndProvenance:
 
     def test_a_returned_product_takes_the_output_label_as_its_label(self):
         """The product displays by the label, and the returned object is left unlabeled."""
-        product = Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0)
+        product = Normal("a", 0.0, 1.0) & Gamma("b", 2.0, 1.0)
         result = Function(
             lambda: product,
             label="predict",
@@ -192,7 +204,7 @@ class TestLabelAndProvenance:
     def test_a_law_returned_by_a_value_call_displays_by_the_function_label(self):
         @function
         def predict(x):
-            return Normal("y", x, 1.0) * Normal("mu", 0.0, 1.0)
+            return Normal("y", x, 1.0) & Normal("mu", 0.0, 1.0)
 
         @function
         def single(x):
@@ -213,7 +225,7 @@ class TestLabelAndProvenance:
 
     def test_a_returned_law_takes_the_output_label_alias(self):
         def predict(x):
-            return Normal("y", x, 1.0) * Normal("mu", 0.0, 1.0)
+            return Normal("y", x, 1.0) & Normal("mu", 0.0, 1.0)
 
         product = Function(predict, label="predict", output_label="model")(1.0)
         law = Function(lambda x: Normal("y", x, 1.0), label="single", output_label="lik")(1.0)
@@ -233,12 +245,12 @@ class TestLabelAndProvenance:
 
     def test_each_product_of_a_sweep_displays_by_its_element_label(self):
         def predict(loc):
-            return Normal("a", loc, 1.0) * Gamma("b", 2.0, 1.0)
+            return Normal("a", loc, 1.0) & Gamma("b", 2.0, 1.0)
 
         rows = NumericArrayBatch(
             jnp.arange(2.0),
             "row",
-            element_spec=SCALAR,
+            element=SCALAR,
             label="rows",
         )
         result = Function(
@@ -269,13 +281,13 @@ class TestLabelAndProvenance:
     def test_provenance_records_the_resolved_controls(self):
         wrapped = Function(
             lambda x, y: x + y,
-            dispatch="sequential",
+            exact_only=True,
             label="add",
         )
 
         controls = wrapped(1.0, 2.0).provenance.controls
 
-        assert controls.get("dispatch") == "sequential"
+        assert controls.get("exact_only") is True
         assert controls.get("max_evaluations") == config.sampling.max_evaluations
 
 
@@ -318,15 +330,16 @@ class TestResultErrors:
         with pytest.raises(ResultSchemaError, match="output"):
             wrapped()
 
-    @pytest.mark.parametrize("dispatch", ["jax", "sequential", "thread", "auto"])
+    @pytest.mark.parametrize("executor, traceable", _EXECUTORS)
     @pytest.mark.parametrize("regime", ["broadcast", "sweep"])
-    def test_a_lifted_output_violation_raises_result_schema_error_under_every_dispatch(
-        self, regime, dispatch
+    def test_a_lifted_output_violation_raises_result_schema_error_under_every_executor(
+        self, regime, executor, traceable
     ):
         wrapped = Function(
             lambda x: jnp.ones(3),
             output_spec=OutputSpec(f=NumericArraySpec((2,))),
-            dispatch=dispatch,
+            executor=executor,
+            traceable=traceable,
             max_evaluations=6,
             label="f",
         )
@@ -336,13 +349,15 @@ class TestResultErrors:
             else NumericRecordBatch(
                 {"x": jnp.arange(3.0)},
                 "row",
-                element_spec=RecordSpec(x=()),
+                element=RecordSpec(x=()),
                 label="rows",
             )
         )
 
-        with workflow_run(seed=0), pytest.raises(ResultSchemaError, match="output"):
+        with workflow_run(seed=0), pytest.raises(EvaluationError, match="output") as raised:
             wrapped(operand)
+
+        assert isinstance(raised.value.__cause__, ResultSchemaError)
 
     @pytest.mark.parametrize(
         ("returned", "declared"),
@@ -368,7 +383,8 @@ class TestResultErrors:
             label="f",
         )
 
-        assert wrapped().spec == NumericArraySpec((), jnp.float64)
+        with jax.enable_x64(True):
+            assert wrapped().spec == NumericArraySpec((), jnp.float64)
 
     def test_a_record_field_of_another_dtype_kind_raises_result_schema_error(self):
         wrapped = Function(
@@ -384,7 +400,7 @@ class TestResultErrors:
         returned = NumericArrayBatch(
             jnp.arange(3, dtype=jnp.int32),
             "row",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="rows",
         )
         declared = BatchSpec(NumericArraySpec((), jnp.float32), returned.spec.levels)
@@ -396,18 +412,24 @@ class TestResultErrors:
                 label="f",
             )()
 
-    @pytest.mark.parametrize("dispatch", ["jax", "sequential"])
-    def test_a_lifted_dtype_of_another_kind_raises_result_schema_error(self, dispatch):
+    @pytest.mark.parametrize(
+        "executor, traceable",
+        [pytest.param("jax", None, id="jax"), pytest.param("sequential", False, id="sequential")],
+    )
+    def test_a_lifted_dtype_of_another_kind_raises_result_schema_error(self, executor, traceable):
         wrapped = Function(
             lambda x: jnp.ones((), dtype=jnp.int32),
             output_spec=OutputSpec(f=NumericArraySpec((), jnp.float32)),
-            dispatch=dispatch,
+            executor=executor,
+            traceable=traceable,
             max_evaluations=6,
             label="f",
         )
 
-        with workflow_run(seed=0), pytest.raises(ResultSchemaError, match="dtype"):
+        with workflow_run(seed=0), pytest.raises(EvaluationError, match="dtype") as raised:
             wrapped(standard_normal())
+
+        assert isinstance(raised.value.__cause__, ResultSchemaError)
 
     def test_a_violated_support_raises_result_schema_error(self):
         wrapped = Function(
@@ -434,13 +456,14 @@ class TestResultErrors:
         wrapped = Function(
             lambda x: jnp.ones(int(x) + 1),
             output_spec=OutputSpec(y=NumericArraySpec(("k",))),
-            dispatch="sequential",
+            executor="sequential",
+            traceable=False,
             label="f",
         )
         rows = NumericArrayBatch(
             jnp.arange(2.0),
             "row",
-            element_spec=SCALAR,
+            element=SCALAR,
             label="rows",
         )
 
@@ -499,14 +522,17 @@ class TestResultErrors:
         with pytest.raises(ValueError if mode == "apply" else ResultKindError, match="output"):
             invoke()
 
-    @pytest.mark.parametrize("dispatch", ["jax", "sequential", "thread", "auto"])
+    @pytest.mark.parametrize("executor, traceable", _EXECUTORS)
     @pytest.mark.parametrize("regime", ["broadcast", "sweep"])
     @pytest.mark.parametrize("raw", [False, True])
-    def test_a_lifted_kind_mismatch_raises_result_kind_error(self, dispatch, regime, raw):
+    def test_a_lifted_kind_mismatch_raises_result_kind_error(
+        self, executor, traceable, regime, raw
+    ):
         wrapped = Function(
             lambda x: {"y": x},
             output_spec=OutputSpec.default(SCALAR, output_name="produce"),
-            dispatch=dispatch,
+            executor=executor,
+            traceable=traceable,
             max_evaluations=6,
             raw=raw,
             label="produce",
@@ -517,16 +543,18 @@ class TestResultErrors:
             else NumericArrayBatch(
                 jnp.arange(3.0),
                 "row",
-                element_spec=SCALAR,
+                element=SCALAR,
                 label="rows",
             )
         )
 
         with (
             workflow_run(seed=0),
-            pytest.raises(ResultKindError, match=r"output.*NumericArraySpec"),
+            pytest.raises(EvaluationError, match=r"output.*NumericArraySpec") as raised,
         ):
             wrapped(operand)
+
+        assert isinstance(raised.value.__cause__, ResultKindError)
 
     @pytest.mark.parametrize("value", [{"y": "text"}, {"other": 1.0}])
     def test_a_field_kind_or_structure_mismatch_remains_a_schema_error(self, value):
@@ -540,29 +568,47 @@ class TestResultErrors:
             wrapped()
 
     @pytest.mark.parametrize("error", [TypeError("body failed"), ValueError("body failed")])
-    @pytest.mark.parametrize("regime", ["plain", "broadcast", "sweep"])
-    def test_an_exception_from_the_body_is_propagated_unchanged(self, error, regime):
+    def test_an_exception_from_the_body_of_a_plain_call_is_propagated_unchanged(self, error):
         def body(x):
             raise error
 
         wrapped = Function(
             body,
             output_spec=OutputSpec.default(SCALAR, output_name="produce"),
-            dispatch="sequential",
+            label="produce",
+        )
+
+        with workflow_run(seed=0), pytest.raises(type(error)) as raised:
+            wrapped(1.0)
+
+        assert raised.value is error
+
+    @pytest.mark.parametrize("error", [TypeError("body failed"), ValueError("body failed")])
+    @pytest.mark.parametrize("regime", ["broadcast", "sweep"])
+    def test_an_exception_from_a_lifted_body_is_the_cause_of_an_evaluation_error(
+        self, error, regime
+    ):
+        def body(x):
+            raise error
+
+        wrapped = Function(
+            body,
+            output_spec=OutputSpec.default(SCALAR, output_name="produce"),
+            executor="sequential",
+            traceable=False,
             label="produce",
         )
         operand = {
-            "plain": 1.0,
             "broadcast": standard_normal(),
             "sweep": NumericArrayBatch(
                 jnp.arange(3.0),
                 "row",
-                element_spec=SCALAR,
+                element=SCALAR,
                 label="rows",
             ),
         }[regime]
 
-        with workflow_run(seed=0), pytest.raises(type(error)) as raised:
+        with workflow_run(seed=0), pytest.raises(EvaluationError, match="body failed") as raised:
             wrapped(operand)
 
-        assert raised.value is error
+        assert raised.value.__cause__ is error

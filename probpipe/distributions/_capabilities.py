@@ -239,12 +239,15 @@ class SupportsApproximateConditioning(ABC):
 
 @runtime_checkable
 class SupportsMarginals(Protocol):
-    """A distribution that returns the detached marginal of a field or field group.
+    """A distribution that returns the standalone marginal of a field or field group.
 
     ``_marginal(path)`` returns a standalone ``Distribution`` over the node at
-    ``path``, an event path of this law, with no reference back to it. A path
-    that names an interior node selects the group of fields under it, and a
-    tuple of paths selects several nodes, returned as a record of them. The
+    ``path``, an event path of this law, with no reference back to it. One path,
+    a ``str``, gives the node whole under an output named by the path's last
+    name, and a path that names a group gives the group of fields under it. A
+    tuple of paths, which names at least one path, no path twice, and no path
+    inside another, gives a law over the record that keeps each node at its own
+    path, in this law's canonical order whatever the order of the tuple. The
     marginal is labeled as the ``marginal`` operation labels it, so a law
     without factors gives its marginals its own label. Support may
     depend on the path, so a class whose marginal is exact only at some paths
@@ -364,7 +367,11 @@ class SupportsConditionalExpectation(Protocol):
 
 @runtime_checkable
 class SupportsConditionalMarginals(Protocol):
-    """A kernel with the detached marginal of ``K(given, ·)`` at an event path."""
+    """A kernel with the standalone marginal of ``K(given, ·)`` at an event path.
+
+    The path argument follows :class:`SupportsMarginals`: one path, or a tuple
+    of paths that keeps each node at its own path.
+    """
 
     def _conditional_marginal(
         self, given: Record | Mapping[str, Any], path: str | tuple[str, ...]
@@ -410,8 +417,8 @@ def _kernel_claims(kernel: Any) -> frozenset[type]:
     )
 
 
-def _marginal_claims(law: Any, path: str | tuple[str, ...]) -> frozenset[type]:
-    """The capabilities *law*'s exact marginal at *path* claims, as *law* reports them.
+def _marginal_claims(law: Any, paths: str | tuple[str, ...]) -> frozenset[type]:
+    """The capabilities *law*'s exact marginal at *paths* claims, as *law* reports them.
 
     A law that defines ``_marginal_capabilities(path)`` reports them from its
     declarations, and the marginals of any other law claim what the law claims
@@ -420,7 +427,7 @@ def _marginal_claims(law: Any, path: str | tuple[str, ...]) -> frozenset[type]:
     report = getattr(law, "_marginal_capabilities", None)
     if report is None:
         return _claims(law)
-    return frozenset(report(path))
+    return frozenset(report(paths))
 
 
 # ---------------------------------------------------------------------------

@@ -111,7 +111,7 @@ class TestAsNumpy:
 
     def test_a_numeric_array_and_an_array_batch_convert_through_raw(self):
         stored = jnp.arange(3.0)
-        batch = NumericArrayBatch(stored, "draw", element_spec=NumericArraySpec(()), label="x")
+        batch = NumericArrayBatch(stored, "draw", element=NumericArraySpec(()), label="x")
         np.testing.assert_array_equal(_as_numpy(NumericArray(stored, label="x")), [0.0, 1.0, 2.0])
         np.testing.assert_array_equal(_as_numpy(batch), [0.0, 1.0, 2.0])
 
@@ -669,7 +669,7 @@ def _gaussian_regression(n_obs: int = 20, n_features: int = 1):
     x = rng.standard_normal((n_obs, n_features))
     design = jnp.asarray(np.concatenate([np.ones((n_obs, 1)), x], axis=1), dtype=jnp.float32)
     prior = MultivariateNormal("beta", loc=jnp.zeros(n_features + 1), cov=jnp.eye(n_features + 1))
-    return glm_likelihood("y", GaussianFamily(), X=design, dispersion=1.0) * prior, design
+    return (glm_likelihood("y", GaussianFamily(), X=design, dispersion=1.0) & prior), design
 
 
 def _post_for_ll(n_chains: int = 2, n_draws: int = 50, n_features: int = 1):

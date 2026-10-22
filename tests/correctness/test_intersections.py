@@ -40,8 +40,8 @@ from probpipe import (
 from probpipe.distributions._factored import _raw_record
 from probpipe.families import GaussianFamily, PyMCModel, glm_likelihood
 from tests._ops import (
+    CoupledMarginal,
     EmpiricalDistribution,
-    FieldView,
     condition_on,
     convert,
     inference_method_registry,
@@ -84,7 +84,7 @@ def _from_draws(posterior, target) -> EmpiricalDistribution:
     batch = NumericRecordBatch(
         jax.tree.map(split, raw),
         ("chain", "draw"),
-        element_spec=target.event_spec.term_spec,
+        element=target.event_spec.term_spec,
         axes_per_level=(1, 1),
         label="draws",
     )
@@ -146,7 +146,7 @@ class TestNestedHierarchicalModel:
 
     def test_a_view_at_a_nested_path_reads_the_posterior(self, schools):
         _, _, posterior = schools
-        view = FieldView(posterior, "population/tau")
+        view = CoupledMarginal(posterior, "population/tau")
         draws = _raw_record(flat_draws(posterior))
         assert float(mean.using(raw=True)(view)) == pytest.approx(
             float(np.mean(draws["population"]["tau"])), rel=1e-5
@@ -183,9 +183,8 @@ def _glm_with_dispersion():
     X = jnp.asarray(case.stan_data["X"], jnp.float32)
     joint = (
         glm_likelihood("y", GaussianFamily(), X=X)
-        * MultivariateNormal("beta", jnp.zeros(X.shape[1]), cov=4.0 * jnp.eye(X.shape[1]))
-        * HalfNormal("dispersion", 2.0)
-    )
+        & MultivariateNormal("beta", jnp.zeros(X.shape[1]), cov=4.0 * jnp.eye(X.shape[1]))
+    ) & HalfNormal("dispersion", 2.0)
     return joint, case.data
 
 
@@ -429,7 +428,7 @@ class TestFamiliesWithRecordParameters:
                 law, EmpiricalDistribution
             )
         parent_mean = mean.using(raw=True)(normalized)
-        view = FieldView(normalized, "theta/b")
+        view = CoupledMarginal(normalized, "theta/b")
         group = marginal(normalized, "theta")
         np.testing.assert_allclose(
             np.asarray(mean.using(raw=True)(view)),
@@ -442,15 +441,14 @@ class TestFamiliesWithRecordParameters:
         )
 
     def test_a_density_over_a_nested_record_reads_an_interior_path(self):
-        """A user's density reads a nested field by its key or through the interior node's view."""
+        """A user's density reads a nested field by its path or through its group's record."""
         value = Record(
             {"theta": {"a": jnp.ones(2), "b": jnp.array(2.0)}},
             label="value",
         )
         np.testing.assert_allclose(np.asarray(value["theta/a"]), np.ones(2))
+        np.testing.assert_allclose(np.asarray(value["theta"]["a"]), np.ones(2))
         np.testing.assert_allclose(np.asarray(value.at_path("theta")["a"]), np.ones(2))
-        with pytest.raises(KeyError):
-            value["theta"]
 
 
 def _schools(params, key):
@@ -476,7 +474,7 @@ class TestLearnedKernelOverANestedRecord:
         from probpipe.inference import learn_amortized_posterior
         from tests.correctness._laws import Groups, Population
 
-        prior = Groups() * Population()
+        prior = Groups() & Population()
         with workflow_run(seed=0):
             kernel = learn_amortized_posterior(
                 prior,

@@ -25,6 +25,31 @@ with probpipe.config.sampling.using(num_samples=4096):
 probpipe.config.reset()
 ```
 
+## Static and inert settings
+
+Each setting is one of two kinds, which its docstring states.
+
+1. A **static** setting can change what a compiled JAX program computes, because ProbPipe code reads it while JAX traces the program, as a kernel inside a joint may read `num_samples`. A JAX program that ProbPipe compiles for a call is compiled for the values of the static settings in effect, so a call under other values compiles its own and computes with its own values. The static settings are `sampling.max_evaluations` and `sampling.num_samples`.
+2. An **inert** setting changes no computed value, such as how a label renders or whether provenance is recorded, so no compiled JAX program depends on it, and changing it never compiles anything again. Every setting of `config.notation`, `config.provenance`, and `config.prefect` is inert.
+
+```python
+from probpipe import Normal, NumericArraySpec, conditional_distribution, sample, workflow_run
+
+
+@conditional_distribution(given_spec={"mu": NumericArraySpec(())})
+def likelihood(mu):
+    return Normal("y", mu, 1.0)
+
+
+model = (likelihood & Normal("mu", 0.0, 1.0))
+with workflow_run(seed=0):
+    sample(model, 100)  # compiles the joint's JAX program for the session's num_samples, 1024
+    with probpipe.config.sampling.using(num_samples=2000):
+        sample(model, 100)  # compiles another, for 2000
+    with probpipe.config.notation.using(max_depth=12):
+        sample(model, 100)  # an inert setting: reuses the JAX program compiled for 1024
+```
+
 ## The container
 
 ::: probpipe.config
@@ -52,3 +77,11 @@ probpipe.config.reset()
       show_root_full_path: true
       docstring_options:
         warn_unknown_params: false
+
+## Settings in worker processes
+
+Work that a call runs in another process, as the `process` executor does, carries the call's settings.
+The `prefect` section stays behind, so a call in a worker process runs without Prefect orchestration.
+A setting whose value cannot be pickled travels as a placeholder, and reading it in the worker raises `UnshippableSettingError`.
+
+::: probpipe.UnshippableSettingError

@@ -116,7 +116,7 @@ def atoms(
     return NumericRecordBatch(
         _nest(flat),
         names,
-        element_spec=spec,
+        element=spec,
         axes_per_level=(1,) * len(names),
         label="atoms",
     )

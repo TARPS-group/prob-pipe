@@ -23,6 +23,7 @@ from probpipe import (
     OutputSpec,
     real,
 )
+from probpipe.core._compilation import _eager_decision_keys
 from probpipe.distributions._capabilities import (
     SupportsCovariance,
     SupportsExpectation,
@@ -33,7 +34,7 @@ from probpipe.distributions._capabilities import (
 from probpipe.families import TFPDistribution, _backend
 from probpipe.families._backend import _allow_batched_tfp_init, _eager_sample
 from probpipe.linalg import DiagonalLinOp, LinOp
-from tests._compilation import count_compilations
+from tests._compilation import RecordingProgram, count_compilations
 
 
 def _families() -> dict[str, Distribution]:
@@ -446,9 +447,7 @@ class _NumpyNormal(tfd.Normal):
 def _ran_compiled(law: Distribution) -> bool:
     """Whether every call of *law* so far ran a compiled program."""
     memo = law._memo
-    return memo["compilable"] and not any(
-        key[0] == "untraced" for key in memo if isinstance(key, tuple)
-    )
+    return memo["compilable"] and not _eager_decision_keys(memo)
 
 
 #: The families whose quantiles their backend computes, one coordinate per draw.
@@ -530,15 +529,15 @@ class TestCompiledCalls:
     )
     def test_a_call_runs_the_compiled_program(self, monkeypatch, program, eager, call):
         compiled, uncompiled = [], []
-        for name, record in ((program, compiled), (eager, uncompiled)):
-            original = getattr(_backend, name)
-            monkeypatch.setattr(
-                _backend,
-                name,
-                lambda *args, original=original, record=record: (
-                    record.append(args) or original(*args)
-                ),
-            )
+        monkeypatch.setattr(
+            _backend, program, RecordingProgram(getattr(_backend, program), runs=compiled)
+        )
+        original_eager = getattr(_backend, eager)
+        monkeypatch.setattr(
+            _backend,
+            eager,
+            lambda *args: uncompiled.append(args) or original_eager(*args),
+        )
         law = F.Gamma("a", 2.0, 3.0)
         call(law)
         call(law)
@@ -578,6 +577,28 @@ class TestCompiledCalls:
         with pytest.raises(ValueError, match="did not hold"):
             law._log_prob(jnp.full(law.event_shape, 1.5))
 
+    def test_a_program_that_fails_to_trace_at_one_sample_shape_compiles_at_another(
+        self, monkeypatch
+    ):
+        traces: list = []
+        runs: list = []
+
+        @functools.partial(jax.jit, static_argnums=2)
+        def masked_at_four(backend, key, sample_shape):
+            draws = backend.sample(seed=key, sample_shape=sample_shape)
+            return draws[draws > -jnp.inf] if sample_shape == (4,) else draws
+
+        monkeypatch.setattr(
+            _backend, "_sample_program", RecordingProgram(masked_at_four, runs=runs, traces=traces)
+        )
+        law = F.Normal("x", 0.0, 1.0)
+        key = jax.random.PRNGKey(3)
+        for sample_shape in ((4,), (5,), (4,), (5,)):
+            law._sample(key, sample_shape)
+        # Shape (4,) fails its one trace and runs eagerly; shape (5,) traces once and compiles.
+        assert [traced_args[2] for traced_args in traces] == [(4,), (5,)]
+        assert [run_args[2] for run_args in runs] == [(5,), (5,)]
+
     def test_a_program_that_does_not_trace_falls_back_once_to_the_eager_call(self, monkeypatch):
         attempts = []
 
@@ -586,18 +607,18 @@ class TestCompiledCalls:
             draws = backend.sample(seed=key, sample_shape=sample_shape)
             return draws[draws > -jnp.inf]
 
-        def program(*args):
-            attempts.append(args)
-            return masked(*args)
-
-        monkeypatch.setattr(_backend, "_sample_program", program)
+        runs: list = []
+        monkeypatch.setattr(
+            _backend, "_sample_program", RecordingProgram(masked, runs=runs, traces=attempts)
+        )
         law = F.Normal("x", 0.0, 1.0)
         key = jax.random.PRNGKey(2)
         draws = law._sample(key, (4,))
         law._sample(key, (4,))
-        # The boolean mask needs concrete values, so the first call's attempt raises
+        # The boolean mask needs concrete values, so the first call's trace raises
         # NonConcreteBooleanIndexError, an IndexError, and the second call skips it.
         assert len(attempts) == 1
+        assert runs == []
         np.testing.assert_array_equal(draws, law.raw.sample(seed=key, sample_shape=(4,)))
 
     def test_an_error_the_eager_call_raises_too_propagates_and_keeps_the_program(self, monkeypatch):

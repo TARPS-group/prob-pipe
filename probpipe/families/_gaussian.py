@@ -115,7 +115,7 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
     TypeError
         If a factor is not a Gaussian law.
     ValueError
-        If the factors break a composition rule, as for
+        If the factors break a merge rule, as for
         :class:`~probpipe.distributions.FactoredDistribution`.
     """
 

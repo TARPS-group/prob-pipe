@@ -1093,19 +1093,23 @@ A requester asks for evaluations through one helper in `core/_evaluation_points.
 
 ```python
 def evaluate_at_points(fn, /, *, varying: Mapping[str, Any], shared: Mapping[str, Any],
-                       origin: str, output_spec: OutputSpec | None) -> tuple[Any, ...]:
-    """Each evaluation point's output, in point order.
+                       origin: str, output_spec: OutputSpec | None, stacked: bool = False) -> Any:
+    """Each evaluation point's output, in point order, or under stacked the outputs stacked.
 
     varying maps each argument that differs between evaluation points to its values stacked
     on a leading axis; shared maps each argument every evaluation point receives unchanged.
     With traced arguments, calls fn inline, so an opaque Function becomes an embedded call.
     Otherwise builds one EvaluationPoints, whose keys come from each evaluation point's workflow scope
     (step 3), and runs it through the executor registry under the current call context.
+    With stacked=True, returns one tree stacked on a leading axis of evaluation points: the jax
+    executor's mapped output whole, checked once, leading axis included; any other executor's
+    outputs stacked leaf by leaf when every leaf is numeric and they share one tree structure,
+    and otherwise, tuples and lists included, a one-dimensional object array holding each output.
     Raises EvaluationError naming every failed evaluation point (6.4, rule 1)."""
 ```
 
-`origin` names the requester's callable or site for messages and reports, and `output_spec` is the callable's output spec, which the chunk checks each output against (6.4, rule 7). A second form, `evaluate_at_points_outcomes(...) -> EvaluationOutcomes`, with the same parameters, serves a requester that may drop failed evaluation points; it comes after the workshop with dropping (6.4, rule 3). After #554, a `random_keys` parameter carries one key per evaluation point.
-*Which step defines the helper and moves lifting and sweeps onto it, E3b or E5, is pending the maintainer's decision N8 in `decisions.md`.*
+`origin` names the requester's callable or site for messages and reports, and `output_spec` is the callable's output spec, which the chunk checks each output against (6.4, rule 7). `stacked=True` lets a lift and a sweep take the `jax` executor's mapped output whole, since cutting 1024 rows out of a mapped output and stacking them again costs about a hundred times a warm lifted call (decided 2026-10-21, #621 Q1); the default stays one output per evaluation point. A second form, `evaluate_at_points_outcomes(...) -> EvaluationOutcomes`, with the same parameters, serves a requester that may drop failed evaluation points; it comes after the workshop with dropping (6.4, rule 3). After #554, a `random_keys` parameter carries one key per evaluation point.
+Step E3b defines the helper and moves lifting, sweeps, and plain calls onto its dispatcher (decided 2026-10-21, N8 option (1)); E5 moves joint factors, laws built from functions, and expectations.
 
 > **Today → Proposed.** Lifts and sweeps build a list of evaluation points, one per row, before the first call, and each mode ships them its own way. Proposed, they build one lazy set of evaluation points, and the workflow scope registers its evaluation points as an index range (#510).
 

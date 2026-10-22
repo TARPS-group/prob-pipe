@@ -235,7 +235,7 @@ class TestConstructionErrors:
         with pytest.raises(ValueError, match="identifiers"):
             _kernel(given={input_name: SCALAR})
 
-    @pytest.mark.parametrize("input_term_spec", [None, (3,), 3.0])
+    @pytest.mark.parametrize("input_term_spec", [None, 3.0])
     def test_an_input_that_is_not_a_term_spec_raises(self, input_term_spec):
         with pytest.raises(TypeError, match="TermSpec"):
             _kernel(given={"mu": input_term_spec})
@@ -614,22 +614,22 @@ class TestPrimitive:
 
 # Renames a kernel over the input ``mu`` and the whole-term event ``y`` cannot take.
 _REFUSED_RENAMES = [
-    pytest.param(lambda k: k.with_path_names(sigma="s"), KeyError, id="not-a-path"),
-    pytest.param(lambda k: k.with_path_names(mu="y"), ValueError, id="input-onto-an-output"),
-    pytest.param(lambda k: k.with_path_names(y="mu"), ValueError, id="output-onto-an-input"),
-    pytest.param(lambda k: k.with_path_names(mu="y/mu"), ValueError, id="input-into-an-output"),
-    pytest.param(lambda k: k.with_path_names(mu=""), ValueError, id="empty-name"),
-    pytest.param(lambda k: k.with_path_names({"mu": "a"}, mu="b"), ValueError, id="twice"),
-    pytest.param(lambda k: k.with_path_names(), ValueError, id="no-renames"),
+    pytest.param(lambda k: k.rename(sigma="s"), KeyError, id="not-a-path"),
+    pytest.param(lambda k: k.rename(mu="y"), ValueError, id="input-onto-an-output"),
+    pytest.param(lambda k: k.rename(y="mu"), ValueError, id="output-onto-an-input"),
+    pytest.param(lambda k: k.rename(mu="y/mu"), ValueError, id="input-into-an-output"),
+    pytest.param(lambda k: k.rename(mu=""), ValueError, id="empty-name"),
+    pytest.param(lambda k: k.rename({"mu": "a"}, mu="b"), ValueError, id="twice"),
+    pytest.param(lambda k: k.rename(), ValueError, id="no-renames"),
 ]
 
 
-class TestWithPathNames:
-    """``with_path_names`` renames or moves names on either side and keeps the kernel."""
+class TestRename:
+    """``rename`` renames or moves names on either side and keeps the kernel."""
 
     def test_a_renamed_input_keeps_its_position(self):
         kernel = _kernel(given={"a": SCALAR, "b": _array(2), "c": SCALAR})
-        renamed = kernel.with_path_names(b="beta")
+        renamed = kernel.rename(b="beta")
         assert list(renamed.given_spec) == ["a", "beta", "c"]
         assert renamed.given_spec["beta"] == _array(2)
         assert renamed.event_spec == kernel.event_spec
@@ -637,31 +637,31 @@ class TestWithPathNames:
 
     def test_a_renamed_event_output_renames_the_draws(self):
         kernel = _kernel(event=OutputSpec(y=_array(2)))
-        renamed = kernel.with_path_names(y="obs")
+        renamed = kernel.rename(y="obs")
         assert renamed.event_spec == OutputSpec(obs=_array(2))
         assert renamed.given_spec == kernel.given_spec
 
     def test_renames_on_both_sides_apply_together(self):
-        renamed = _kernel().with_path_names(mu="loc", y="obs")
+        renamed = _kernel().rename(mu="loc", y="obs")
         assert list(renamed.given_spec) == ["loc"]
         assert list(renamed.event_spec.outputs) == ["obs"]
 
     def test_the_renamed_kernel_conditions_on_the_renamed_input(self):
-        renamed = LocationKernel().with_path_names(mu="loc", y="obs")
+        renamed = LocationKernel().rename(mu="loc", y="obs")
         law = renamed._condition_on({"loc": 2.0})
         assert list(law.event_spec.outputs) == ["obs"]
         np.testing.assert_allclose(_mean_of(law), 2.0)
 
     def test_path_targets_group_inputs_into_a_structured_input(self):
         kernel = _kernel(given={"a": SCALAR, "b": _array(2)})
-        grouped = kernel.with_path_names({"a": "theta/a", "b": "theta/b"})
+        grouped = kernel.rename({"a": "theta/a", "b": "theta/b"})
         assert list(grouped.given_spec) == ["theta"]
         assert grouped.given_spec["theta"] == RecordSpec(a=SCALAR, b=_array(2))
         assert grouped.event_spec == kernel.event_spec
 
     def test_a_path_key_splits_a_field_out_of_a_structured_input(self):
         kernel = _kernel(given={"theta": RecordSpec(a=SCALAR, b=_array(2))})
-        split = kernel.with_path_names({"theta/a": "a"})
+        split = kernel.rename({"theta/a": "a"})
         assert list(split.given_spec) == ["theta", "a"]
         assert split.given_spec["theta"] == RecordSpec(b=_array(2))
         assert split.given_spec["a"] == SCALAR
@@ -707,8 +707,8 @@ class TestNotation:
             pytest.param(lambda k: k.with_label("glm2"), id="with_label"),
             pytest.param(lambda k: k.with_dim_sizes(n=3), id="with_dim_sizes"),
             pytest.param(lambda k: k.with_dim_names(n="m"), id="with_dim_names"),
-            pytest.param(lambda k: k.with_path_names(sigma="s"), id="rename-an-input"),
-            pytest.param(lambda k: k.with_path_names(y="obs"), id="rename-an-output"),
+            pytest.param(lambda k: k.rename(sigma="s"), id="rename-an-input"),
+            pytest.param(lambda k: k.rename(y="obs"), id="rename-an-output"),
         ],
     )
     def test_a_copy_keeps_the_fixed_paths(self, copy):

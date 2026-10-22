@@ -9,6 +9,7 @@ import pytest
 
 import probpipe
 from probpipe import (
+    EvaluationError,
     Function,
     Normal,
     NumericArrayBatch,
@@ -20,8 +21,8 @@ from probpipe import (
 )
 from probpipe.core import config as config_module
 from probpipe.core._call_context import (
-    _carrying_call_context,
     _note_num_samples_used,
+    _under_call_context,
     current_call_context,
 )
 from probpipe.core._expression import _STORED_DEPTH, Named, Operator, constant
@@ -202,7 +203,7 @@ class TestSamplingConfig:
 
     def test_a_function_reads_the_settings_when_it_runs(self):
         """A setting governs the functions constructed before it."""
-        identity = Function(lambda x: x, label="identity", dispatch="sequential")
+        identity = Function(lambda x: x, label="identity", executor="sequential")
         config.sampling.max_evaluations = 9
         config.sampling.num_samples = 13
         assert identity.options["max_evaluations"] == 9
@@ -340,7 +341,7 @@ class TestTemporarySettings:
             open_block()
 
     def test_a_views_own_control_wins_over_a_block_which_wins_over_the_session(self):
-        identity = Function(lambda x: x, label="identity", dispatch="sequential")
+        identity = Function(lambda x: x, label="identity", executor="sequential")
         config.sampling.max_evaluations = 11
         with config.sampling.using(max_evaluations=9, num_samples=77):
             assert identity.options["max_evaluations"] == 9
@@ -384,10 +385,10 @@ class TestTemporarySettings:
             assert identity.effective_workflow_kind is WorkflowKind.FLOW
         assert identity.effective_workflow_kind is WorkflowKind.OFF
 
-    def test_a_thread_dispatched_body_sees_the_block(self):
+    def test_a_body_on_the_thread_executor_sees_the_block(self):
         seen = []
 
-        @function(dispatch="thread", max_workers=2)
+        @function(traceable=False, executor="thread", executor_options={"max_workers": 2})
         def body(x):
             seen.append((config.sampling.num_samples, config.notation.max_depth))
             return x
@@ -414,23 +415,24 @@ class TestTemporarySettings:
         worker.join(5)
         assert seen == [1024]
 
-    def test_a_carried_work_function_pickles_and_applies_the_block(self):
-        """A Prefect worker in another process takes the call context with the work function."""
+    def test_a_carried_evaluation_context_pickles_and_applies_the_block(self):
+        """A worker in another process takes its call's evaluation context with the work."""
         carried = []
 
         @function
-        def dispatching(x):
+        def requesting(x):
             _note_num_samples_used(5)
-            carried.append(_carrying_call_context(_read_num_samples))
+            carried.append(current_call_context().evaluation_context())
             return x
 
         with config.sampling.using(num_samples=77):
-            dispatching.using(method_options={"budget": {"steps": 3}})(1.0)
-        assert carried[0].call_context.num_samples_used.num_samples_values == {5}
-        restored = pickle.loads(pickle.dumps(carried[0]))
-        assert restored() == 77
+            requesting.using(method_options={"budget": {"steps": 3}})(1.0)
+        assert carried[0].num_samples_used.num_samples_values == {5}
+        restored_context = pickle.loads(pickle.dumps(carried[0]))
+        with _under_call_context(restored_context):
+            assert _read_num_samples() == 77
         assert config.sampling.num_samples == 1024
-        restored_context = restored.call_context
+        assert restored_context.in_evaluation_point
         assert restored_context.resolved_controls["method_options"] == {"budget": {"steps": 3}}
         assert isinstance(restored_context.resolved_controls["method_options"], MappingProxyType)
         assert restored_context.num_samples_used.num_samples_values == frozenset()
@@ -504,13 +506,14 @@ class TestTheProvenanceModeIsFixedForARun:
             body(1.0)
 
     def test_a_block_in_a_thread_point_of_a_run_raises(self):
-        @function(dispatch="thread", max_workers=2)
+        @function(traceable=False, executor="thread", executor_options={"max_workers": 2})
         def body(x):
             with config.provenance.using(mode=ProvenanceMode.OFF):
                 return x
 
-        with workflow_run(seed=1), pytest.raises(RuntimeError, match="cannot set"):
+        with workflow_run(seed=1), pytest.raises(EvaluationError, match="cannot set") as raised:
             body(NumericArrayBatch(jnp.arange(2.0), "x", label="xs"))
+        assert type(raised.value.__cause__) is RuntimeError
 
     def test_assigning_another_mode_inside_a_run_raises_and_keeps_the_session_value(self):
         with workflow_run(seed=1):
@@ -543,3 +546,44 @@ class TestTheProvenanceModeIsFixedForARun:
         with workflow_run(seed=1):
             config.reset()
         assert config.notation.max_depth == 8
+
+
+class TestTheKindsOfSetting:
+    """Each setting is static, part of a compiled JAX program's cache key, or inert."""
+
+    def test_the_counts_are_static_and_every_other_setting_is_inert(self):
+        kinds = {
+            f"{section_name}.{setting_name}": setting.kind
+            for section_name, section in config._sections.items()
+            for setting_name, setting in section._settings.items()
+        }
+        assert kinds == {
+            "sampling.max_evaluations": "static",
+            "sampling.num_samples": "static",
+            "notation.max_depth": "inert",
+            "provenance.mode": "inert",
+            "prefect.workflow_kind": "inert",
+            "prefect.task_runner": "inert",
+        }
+
+    def test_each_settings_docstring_states_its_kind(self):
+        for section in config._sections.values():
+            for setting_name, setting in section._settings.items():
+                docstring = getattr(type(section), setting_name).__doc__
+                assert f"{'A static' if setting.kind == 'static' else 'An inert'} setting" in (
+                    docstring
+                ), setting_name
+
+    def test_a_setting_of_neither_kind_is_refused(self):
+        with pytest.raises(ValueError, match="must be 'static' or 'inert', got 'traced'"):
+            config_module._Setting(lambda value, source: value, "traced")
+
+    def test_the_static_values_in_effect_read_blocks_then_the_session(self):
+        with config.sampling.using(num_samples=7):
+            static_values = config_module._static_config_values_in_effect()
+        assert static_values == (
+            (
+                "sampling",
+                (("max_evaluations", config.sampling.max_evaluations), ("num_samples", 7)),
+            ),
+        )

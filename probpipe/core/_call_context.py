@@ -10,38 +10,264 @@ Provides:
     which returns the one in effect;
   - :func:`_under_call_context`, the one function that installs a call context,
     and :func:`_open_call_context`, which runs one call in its own context;
-  - :class:`_NumSamplesUsed`, the numbers of Monte Carlo draws a call's
-    estimates took, with :func:`_collecting_num_samples_used` and
-    :func:`_note_num_samples_used`;
-  - :class:`_ContextBoundFunction` and :func:`_carrying_call_context`, which
-    carry the call context into a worker.
+  - :class:`_ExecutionChoice`, the executor a call chose and its options;
+  - :class:`_NumSamplesUsed` and :class:`_EvaluationLog`, the call's two
+    accumulators: the numbers of Monte Carlo draws its estimates took, and the
+    sets of evaluation points it ran, with :func:`_collecting_call_accumulators`
+    and :func:`_note_num_samples_used`;
+  - :func:`_jax_settings_snapshot`, the JAX settings a root call holds fixed;
+  - :meth:`_CallContext.with_static_settings`, the context a compiled JAX
+    program's body is traced under.
+
+An evaluation point carries the call context into the worker that runs it,
+as its chunk, an ``EvaluationChunk``, holds its call's evaluation context.
 """
 
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+import cloudpickle
+import jax
+import numpy as np
+from jax._src import core as jax_core
+from jax._src.interpreters.partial_eval import DynamicJaxprTrace
+
+if TYPE_CHECKING:
+    from ._compilation import _StaticSettings
 
 #: The entry methods of a ``Function`` that open a call context.
 _EntryMethodName = Literal["__call__", "apply", "check"]
 
-#: How a scope's numbers of Monte Carlo draws pass to the enclosing context's.
+#: How a scope's accumulators pass to the enclosing context's.
 _MergeRule = Literal["when_parent_collects", "always"]
+
+#: Where a call's executor choice came from: named for the callable, passed down
+#: by an enclosing call, or chosen by automatic selection.
+_ExecutionChoiceSource = Literal["own", "inherited", "automatic"]
 
 _NO_CONFIG_BLOCKS: Mapping[str, Mapping[str, Any]] = MappingProxyType({})
 _NO_CONTROLS: Mapping[str, Any] = MappingProxyType({})
 _NO_SESSION_CONFIG_VALUES: Mapping[str, Mapping[str, Any]] = MappingProxyType({})
+_NO_JAX_SETTINGS: Mapping[str, Any] = MappingProxyType({})
+
+#: The JAX settings that change what a computation returns, which a root call
+#: holds fixed and a worker process applies before it unpickles any work.
+_SHIPPED_JAX_SETTING_NAMES = (
+    "jax_enable_x64",
+    "jax_default_prng_impl",
+    "jax_threefry_partitionable",
+    "jax_default_matmul_precision",
+)
+
+#: The ``config`` section that is never sent to a worker process, since a call
+#: there runs without Prefect orchestration and a started task runner does not
+#: pickle.
+_UNSHIPPED_CONFIG_SECTION = "prefect"
 
 #: The passed controls below a call made under a passed ``exact_only``, which
 #: keep the ``exact_only`` alone.
 _EXACT_ONLY_BELOW: Mapping[str, Any] = MappingProxyType(
     {"exact_only": True, "max_evaluations": None, "num_samples": None}
 )
+
+
+@dataclass(frozen=True)
+class _ExecutionChoice:
+    """The executor a call chose for the sets of evaluation points it runs, and its options.
+
+    A call resolves it once, when it opens, by the rules of V.9: the
+    ``executor`` and ``executor_options`` the called ``Function`` sets itself,
+    taken as one unit; otherwise the choice of the enclosing call, marked
+    inherited, when that names an executor; otherwise automatic selection.
+    An evaluation point runs under automatic selection, so a call made inside
+    one chooses afresh.
+
+    Attributes
+    ----------
+    executor_name : str or None
+        The registered name of the chosen executor; ``None`` for automatic
+        selection, which then receives *executor_options*.
+    executor_options : Mapping[str, Any]
+        The options that belong to the chosen executor, or to the one
+        automatic selection picks when *executor_name* is ``None``.
+    source : {"own", "inherited", "automatic"}
+        ``"own"`` when the choice was named for the callable, on its own
+        ``Function`` or on the call whose own callable it is; ``"inherited"``
+        when an enclosing call passed it down; ``"automatic"`` when nobody
+        named one.
+    applies_only_to : object or None
+        The ``Function`` the choice was named for, on its decorator or its
+        ``using``, or ``None`` when the choice was named on an operation and
+        covers every opaque callable of its call. A set of evaluation points
+        that a ``Function``'s call builds is of that ``Function``'s callable,
+        so an executor that cannot run it raises rather than falling back; a
+        callback that finds the choice through a call token compares the
+        ``Function`` it runs with this one.
+    named_on : str or None
+        The label of the call that named the executor, which a warning about
+        an inherited executor names; ``None`` for automatic selection.
+    """
+
+    executor_name: str | None = None
+    executor_options: Mapping[str, Any] = _NO_CONTROLS
+    source: _ExecutionChoiceSource = "automatic"
+    applies_only_to: Any = None
+    named_on: str | None = None
+
+    def names_executor(self) -> bool:
+        """Whether the choice names an executor rather than leaving it to automatic selection."""
+        return self.executor_name is not None
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle the choice with its options as a plain dict, read-only again when unpickled."""
+        return (
+            _unpickled_execution_choice,
+            (
+                self.executor_name,
+                _picklable(self.executor_options),
+                self.source,
+                self.applies_only_to,
+                self.named_on,
+            ),
+        )
+
+
+#: The choice of a call that names no executor and no options.
+_AUTOMATIC_SELECTION = _ExecutionChoice()
+
+
+_TRACED_CALL_TOKEN: ContextVar[Any | None] = ContextVar("probpipe_traced_call_token", default=None)
+
+
+class _UnclassifiedSettingError(RuntimeError):
+    """A setting with no declared static or inert kind was read while staging."""
+
+
+def _jax_transformation_active() -> bool:
+    """Whether JAX is transforming the current evaluation, staging or eagerly."""
+    return not isinstance(jax_core.trace_ctx.trace, jax_core.EvalTrace)
+
+
+def _jax_tracing_active() -> bool:
+    """Whether a staging trace is active, including below eager transformations.
+
+    Eager vmap and differentiation alone do not stage a program. Control-flow
+    bodies and jit do. These private JAX trace APIs are pinned by the staging
+    conformance tests.
+    """
+    trace = jax_core.trace_ctx.trace
+    while True:
+        if isinstance(trace, DynamicJaxprTrace):
+            return True
+        parent = getattr(trace, "parent_trace", None)
+        if parent is None:
+            return False
+        trace = parent
+
+
+class _ActiveCalls:
+    """Thread-safe lookup of live calls by uint32 token; zero denotes no call."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._contexts: dict[int, _CallContext] = {}
+        self._next_token = 1
+
+    def register(self, context: _CallContext) -> np.uint32:
+        """Register *context*, refusing exhaustion rather than recycling a token."""
+        with self._lock:
+            if self._next_token > np.iinfo(np.uint32).max:
+                raise RuntimeError("the call token space is exhausted")
+            token = self._next_token
+            self._next_token += 1
+            self._contexts[token] = context
+        return np.uint32(token)
+
+    def lookup(self, token: int) -> _CallContext:
+        """The live context of *token*, or the default context for zero."""
+        if token == 0:
+            return _CallContext()
+        with self._lock:
+            context = self._contexts.get(token)
+        if context is None:
+            raise RuntimeError(f"call token {token} is no longer active")
+        return context
+
+    def release(self, token: int) -> None:
+        """Release a token after every dispatched result has completed."""
+        with self._lock:
+            self._contexts.pop(token, None)
+
+
+_ACTIVE_CALLS = _ActiveCalls()
+
+
+class _EmbeddedCallState:
+    """One call's lazy registration, outstanding results, and host-side errors.
+
+    Registration always stores the call's base context. Derived scopes share
+    this state, so they cannot capture their temporary controls in its token.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.base_context: _CallContext | None = None
+        self._token: np.uint32 | None = None
+        self._results: list[Any] = []
+        self._errors: list[Exception] = []
+        self.warned_about_user_trace = False
+
+    def token(self) -> np.uint32:
+        """Register the base context once, and return its token."""
+        with self._lock:
+            if self._token is None:
+                if self.base_context is None:
+                    raise RuntimeError("the embedded call has no base context")
+                self._token = _ACTIVE_CALLS.register(self.base_context)
+            return self._token
+
+    def note_result(self, result: Any) -> None:
+        """Keep a dispatched result alive until the call closes."""
+        with self._lock:
+            self._results.append(result)
+
+    def note_error(self, error: Exception) -> None:
+        """Keep a host exception to raise with its own type on the calling thread."""
+        with self._lock:
+            self._errors.append(error)
+
+    def raise_if_failed(self) -> None:
+        """Raise the first host exception, retaining its traceback and cause."""
+        with self._lock:
+            error = self._errors[0] if self._errors else None
+        if error is not None:
+            raise error
+
+    def close(self) -> None:
+        """Wait for every dispatched program, raise its host error, and release the token."""
+        with self._lock:
+            results = tuple(self._results)
+        runtime_error = None
+        try:
+            for result in results:
+                try:
+                    jax.block_until_ready(result)
+                except Exception as error:
+                    if runtime_error is None:
+                        runtime_error = error
+            self.raise_if_failed()
+            if runtime_error is not None:
+                raise runtime_error
+        finally:
+            if self._token is not None:
+                _ACTIVE_CALLS.release(int(self._token))
 
 
 @dataclass(frozen=True)
@@ -66,30 +292,40 @@ class _CallContext:
     - A ``config`` block derives a changed copy with :meth:`with_config_block`,
       and the scope of a derived route one with
       :meth:`with_passed_controls`; neither opens a call.
-    - A worker runs each piece of work it is given under the
-      :meth:`evaluation_context` of the call that dispatched it, with a
-      ``num_samples_used`` of the work's own, merged into the call's when the
-      work succeeds. There a setting that no block sets reads
+    - An evaluation point, a piece of work a call runs, runs under the
+      :meth:`evaluation_context` of its call, with accumulators of its own,
+      merged into the call's when the evaluation point succeeds. There the
+      executor choice is automatic selection, so a call made inside the
+      evaluation point chooses afresh, and a setting that no block sets reads
       ``session_config_values``, the session's values when the root call
       opened, so a session assignment made while the call runs reaches none
-      of its work.
+      of its evaluation points.
 
     Transport:
 
     - Within a thread, the context variable carries it.
-    - Into worker threads and Prefect tasks, the work function carries
-      :meth:`evaluation_context` as data, in a :class:`_ContextBoundFunction`,
-      which installs it before the work runs.
-    - Into a worker process, the same carrier is pickled. Its read-only
+    - Into worker threads and Prefect tasks, the work carries
+      :meth:`evaluation_context` as data and installs it before it runs.
+    - Into a worker process, the work is pickled with it. Its read-only
       mappings travel as plain dicts, nested ones included, and are read-only
-      again when unpickled, so ``session_config_values`` travels with it, and
-      its ``num_samples_used`` arrives new and empty.
+      again when unpickled; its accumulators arrive new and empty; the
+      ``prefect`` section of its ``config`` blocks stays behind; and a
+      ``config`` value that does not pickle travels as a placeholder that
+      raises ``UnshippableSettingError`` only when the worker reads it.
+
+    Reading settings while JAX traces: the body of a compiled JAX program that
+    a program store opens is traced under :meth:`with_static_settings`, so it
+    reads the static settings that are part of the JAX program's cache key,
+    and an inert ``config`` setting, which changes no computed value, as it
+    reads it anywhere. What it notes goes into accumulators of the trace's
+    own, which the store applies to the running call after each run.
 
     Invariants:
 
-    - The dataclass is frozen, and its mappings are read-only. Its one mutable
-      part, ``num_samples_used``, is a separate object that guards its contents
-      with its own lock, so deriving or copying a context never copies it.
+    - The dataclass is frozen, and its mappings are read-only. Its mutable
+      parts, ``num_samples_used`` and ``evaluation_log``, are separate objects
+      that guard their contents with their own locks, so deriving or copying a
+      context never copies them.
     - Exiting a scope always restores the context of the innermost scope still
       open below it, an error included, so no closed scope's state stays
       behind; a scope that exits while a scope opened inside it is still open
@@ -115,7 +351,8 @@ class _CallContext:
         The running call's controls, resolved when it opened from its own
         controls, the passed controls, the ``config`` blocks, and the session.
         Code inside a call reads its controls here, never from the
-        ``Function``. Empty outside every call.
+        ``Function``. It holds neither ``executor`` nor ``executor_options``,
+        whose home is ``execution_choice``. Empty outside every call.
     num_samples_used : _NumSamplesUsed or None
         The numbers of Monte Carlo draws the running call's estimates took,
         which its provenance reports as ``num_samples``. A ``__call__`` has its
@@ -128,8 +365,28 @@ class _CallContext:
         setting that no block sets reads its value here, in place of the
         session's current value. Empty outside every call.
     in_evaluation_point : bool
-        Whether this is the context that a call's dispatched work runs under,
+        Whether this is the context that a call's evaluation points run under,
         :meth:`evaluation_context`, or a context derived from one.
+    execution_choice : _ExecutionChoice
+        The executor the running call chose and its options, the only place
+        code reads them. Automatic selection outside every call and inside an
+        evaluation point.
+    evaluation_log : _EvaluationLog or None
+        The sets of evaluation points the running call ran, for its
+        provenance. Shared with ``num_samples_used`` by the rules of
+        :func:`_collecting_call_accumulators`; ``None`` outside every call and
+        for a ``check``.
+    jax_settings : Mapping[str, Any]
+        The JAX settings that change what a computation returns, by name, as
+        they were when the root call opened; a child call keeps its parent's,
+        and a worker process applies them before it unpickles any work. Empty
+        outside every call.
+    embedded_calls : _EmbeddedCallState or None
+        This call's lazy token and host error state, absent while staging and
+        in evaluation contexts. It is never shipped to a worker process.
+    forbids_workflow_randomness : bool
+        Whether a workflow-owned draw is forbidden in this evaluation, carried
+        into every executor worker of an embedded call.
     """
 
     config_blocks: Mapping[str, Mapping[str, Any]] = _NO_CONFIG_BLOCKS
@@ -140,6 +397,11 @@ class _CallContext:
     num_samples_used: _NumSamplesUsed | None = None
     session_config_values: Mapping[str, Mapping[str, Any]] = _NO_SESSION_CONFIG_VALUES
     in_evaluation_point: bool = False
+    execution_choice: _ExecutionChoice = _AUTOMATIC_SELECTION
+    evaluation_log: _EvaluationLog | None = None
+    jax_settings: Mapping[str, Any] = _NO_JAX_SETTINGS
+    embedded_calls: _EmbeddedCallState | None = None
+    forbids_workflow_randomness: bool = False
 
     def with_config_block(self, config_values: Mapping[str, Mapping[str, Any]]) -> _CallContext:
         """This context under one more ``config`` block, which sets *config_values*.
@@ -181,15 +443,72 @@ class _CallContext:
             passed_controls = MappingProxyType(dict(passed_controls))
         return replace(self, passed_controls=passed_controls)
 
-    def with_fresh_num_samples_used(self) -> _CallContext:
-        """This context with a new, empty ``num_samples_used``.
+    def with_fresh_call_accumulators(self, *, collects_calls: bool = False) -> _CallContext:
+        """This context with a new, empty ``num_samples_used`` and ``evaluation_log``.
+
+        Parameters
+        ----------
+        collects_calls : bool, optional
+            Whether the calls made directly within the new scope merge into
+            its accumulators; ``False`` by default.
 
         Returns
         -------
         _CallContext
-            A copy whose ``num_samples_used`` is a new :class:`_NumSamplesUsed`.
+            A copy whose accumulators are a new :class:`_NumSamplesUsed` and a
+            new :class:`_EvaluationLog`.
         """
-        return replace(self, num_samples_used=_NumSamplesUsed())
+        return replace(
+            self,
+            num_samples_used=_NumSamplesUsed(collects_calls=collects_calls),
+            evaluation_log=_EvaluationLog(),
+        )
+
+    def with_static_settings(self, static_settings: _StaticSettings) -> _CallContext:
+        """The context that the body of a compiled JAX program is traced under, with *static_settings*.
+
+        The static ``config`` values apply as the innermost block, so a block
+        that the traced code opens applies over them. The passed controls and
+        the running call's ``max_evaluations`` and ``num_samples`` are those of
+        *static_settings*. The executor choice is automatic selection, since the
+        call that runs the JAX program decides it when it runs. The accumulators
+        are new and empty, so what the trace notes stays out of the running
+        call's until the program store applies it. They collect no calls, so
+        a call that the traced code opens keeps its own notes, whichever call
+        runs the JAX program.
+
+        Parameters
+        ----------
+        static_settings : _StaticSettings
+            The settings the JAX program is compiled under.
+
+        Returns
+        -------
+        _CallContext
+            The context of the trace.
+        """
+        traced_context = self.with_config_block(
+            {
+                section_name: dict(section_values)
+                for section_name, section_values in static_settings.config_values
+            }
+        ).with_passed_controls(
+            None
+            if static_settings.passed_controls is None
+            else dict(static_settings.passed_controls)
+        )
+        return replace(
+            traced_context,
+            resolved_controls=MappingProxyType(
+                {**self.resolved_controls, **dict(static_settings.resolved_controls)}
+            ),
+            execution_choice=_AUTOMATIC_SELECTION,
+            embedded_calls=None,
+        ).with_fresh_call_accumulators()
+
+    def collects_calls(self) -> bool:
+        """Whether the calls made directly within this context merge into its accumulators."""
+        return self.num_samples_used is not None and self.num_samples_used.collects_calls
 
     def child_for_call(
         self,
@@ -197,18 +516,20 @@ class _CallContext:
         entry_method_name: _EntryMethodName,
         function_label: str,
         resolved_controls: Mapping[str, Any],
+        execution_choice: _ExecutionChoice = _AUTOMATIC_SELECTION,
         session_config_values: Mapping[str, Mapping[str, Any]] | None = None,
+        jax_settings: Mapping[str, Any] | None = None,
     ) -> _CallContext:
         """The context of a call opened in this context, which it derives and does not install.
 
         The child keeps this context's ``config`` blocks, keeps a passed
         ``exact_only`` and drops the passed counts, so the counts apply only to
         the calls a formula makes directly, and is one call deeper. A
-        ``__call__`` and an ``apply`` keep this context's ``num_samples_used``,
-        which :func:`_open_call_context` replaces with a new one for a
-        ``__call__``, and a ``check`` has none, since it draws nothing. A root
-        call takes *session_config_values*, and every other call keeps this
-        context's.
+        ``__call__`` and an ``apply`` keep this context's accumulators, which
+        :func:`_open_call_context` replaces with new ones for a ``__call__``,
+        and a ``check`` has none, since it draws and runs nothing. A root call
+        takes *session_config_values* and *jax_settings*, and every other call
+        keeps this context's.
 
         Parameters
         ----------
@@ -218,10 +539,17 @@ class _CallContext:
             The label of the called ``Function``.
         resolved_controls : Mapping of str to Any
             The call's controls, resolved from its own controls, the passed
-            controls, the ``config`` blocks, and the session.
+            controls, the ``config`` blocks, and the session, without
+            ``executor`` and ``executor_options``.
+        execution_choice : _ExecutionChoice, optional
+            The executor the call chose and its options; automatic selection by
+            default.
         session_config_values : Mapping of str to Mapping of str to Any, optional
             The session's values of every section but ``prefect``, by section
             name and then setting name, given only for a root call.
+        jax_settings : Mapping of str to Any, optional
+            The JAX settings :func:`_jax_settings_snapshot` took, given only for
+            a root call.
 
         Returns
         -------
@@ -236,33 +564,46 @@ class _CallContext:
                     for section_name, section_values in session_config_values.items()
                 }
             )
+        runs_nothing = entry_method_name == "check"
         return replace(
             self,
             passed_controls=_EXACT_ONLY_BELOW if keeps_exact_only else None,
             call_depth=self.call_depth + 1,
             function_label=function_label,
             resolved_controls=MappingProxyType(dict(resolved_controls)),
-            num_samples_used=None if entry_method_name == "check" else self.num_samples_used,
+            num_samples_used=None if runs_nothing else self.num_samples_used,
+            evaluation_log=None if runs_nothing else self.evaluation_log,
+            execution_choice=execution_choice,
             session_config_values=(
                 self.session_config_values
                 if session_config_values is None
                 else session_config_values
             ),
+            jax_settings=(
+                self.jax_settings if jax_settings is None else MappingProxyType(dict(jax_settings))
+            ),
         )
 
     def evaluation_context(self) -> _CallContext:
-        """The context that the work a call dispatches to a worker runs under.
+        """The context that the call's evaluation points run under.
 
-        It is the call's context marked ``in_evaluation_point``, so a setting
-        that no block sets reads ``session_config_values`` there, whatever
-        worker runs the work and whenever it runs.
+        It is the call's context marked ``in_evaluation_point``, with automatic
+        selection in place of the call's executor choice, so a call made inside
+        an evaluation point chooses its executor afresh, and a setting that no
+        block sets reads ``session_config_values`` there, whatever worker runs
+        the evaluation point and whenever it runs.
 
         Returns
         -------
         _CallContext
             The evaluation context.
         """
-        return replace(self, in_evaluation_point=True)
+        return replace(
+            self,
+            in_evaluation_point=True,
+            execution_choice=_AUTOMATIC_SELECTION,
+            embedded_calls=None,
+        )
 
     def is_root_call(self) -> bool:
         """Whether this is the context of a call opened outside every other call."""
@@ -273,14 +614,23 @@ class _CallContext:
         return self == _DEFAULT_CALL_CONTEXT
 
     def __reduce__(self) -> tuple[Any, ...]:
-        """Pickle the context with its read-only mappings as plain dicts.
+        """Pickle the context for a worker process, with its read-only mappings as plain dicts.
 
         The mappings are read-only again when the context is unpickled, and its
-        ``num_samples_used`` arrives new and empty, as that class pickles.
+        accumulators arrive new and empty, as their classes pickle. The
+        ``prefect`` section of its ``config`` blocks stays behind, and a
+        ``config`` value that does not pickle travels as an
+        :class:`_UnshippableSetting`, which raises only when it is read.
         """
+        shipped_context = replace(
+            self,
+            embedded_calls=None,
+            config_blocks=_shippable_config_values(self.config_blocks),
+            session_config_values=_shippable_config_values(self.session_config_values),
+        )
         field_values = {
-            context_field.name: _picklable(getattr(self, context_field.name))
-            for context_field in fields(self)
+            context_field.name: _picklable(getattr(shipped_context, context_field.name))
+            for context_field in fields(shipped_context)
         }
         return (_unpickled_call_context, (field_values,))
 
@@ -350,11 +700,11 @@ def _open_call_context(
 ) -> Iterator[None]:
     """A scope that runs one call under *child_context*, which :meth:`_CallContext.child_for_call` derived.
 
-    A ``__call__`` notes its Monte Carlo draws in a ``num_samples_used`` of its
-    own, which passes to the enclosing call's when the call succeeds and the
-    enclosing call collects calls, as a derived route's call does. An
-    ``apply`` notes its draws in the enclosing call's, and a ``check`` notes
-    none.
+    A ``__call__`` notes its Monte Carlo draws and the sets of evaluation
+    points it runs in accumulators of its own, which pass to the enclosing
+    call's when the call succeeds and the enclosing call collects calls, as a
+    derived route's call does. An ``apply`` notes into the enclosing call's,
+    and a ``check`` notes nothing.
 
     Parameters
     ----------
@@ -364,12 +714,22 @@ def _open_call_context(
         The ``Function`` method that opens the call.
     """
     collecting = (
-        _collecting_num_samples_used("when_parent_collects")
+        _collecting_call_accumulators("when_parent_collects")
         if entry_method_name == "__call__"
         else nullcontext()
     )
     with _under_call_context(child_context), collecting:
-        yield
+        if entry_method_name != "check" and not _jax_tracing_active():
+            state = _EmbeddedCallState()
+            base_context = replace(current_call_context(), embedded_calls=state)
+            state.base_context = base_context
+            with _under_call_context(base_context):
+                try:
+                    yield
+                finally:
+                    state.close()
+        else:
+            yield
 
 
 class _NumSamplesUsed:
@@ -381,11 +741,18 @@ class _NumSamplesUsed:
     no Monte Carlo estimate notes none, and the calls a formula makes may use
     their own counts.
 
-    Only :meth:`_CallContext.with_fresh_num_samples_used` creates one, and only
-    :func:`_collecting_num_samples_used` merges one into another, when its
-    scope ends without an error. The numbers are guarded by a lock, so worker
-    threads may note into one at once. A pickled one arrives new and empty, so
-    what a worker process notes does not reach the call.
+    Only :meth:`_CallContext.with_fresh_call_accumulators` creates one, and
+    only :func:`_merge_noted_into` adds what one scope noted to another's,
+    when the scope ends without an error. The
+    numbers are guarded by a lock, so worker threads may note into one at once.
+    A pickled one arrives empty, with a lock of its own and the same
+    ``collects_calls``, and what a worker process notes into it comes back
+    with the outcomes of its evaluation points.
+
+    Parameters
+    ----------
+    collects_calls : bool, optional
+        Its initial ``collects_calls``; ``False`` by default.
 
     Attributes
     ----------
@@ -397,10 +764,10 @@ class _NumSamplesUsed:
         call takes the call's value when it opens.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, collects_calls: bool = False) -> None:
         self._lock = threading.Lock()
         self._num_samples_values: set[int] = set()
-        self.collects_calls = False
+        self.collects_calls = collects_calls
 
     @property
     def num_samples_values(self) -> frozenset[int]:
@@ -427,53 +794,166 @@ class _NumSamplesUsed:
         with self._lock:
             self._num_samples_values.add(num_samples)
 
-    def merge_from(self, scope_num_samples_used: _NumSamplesUsed) -> None:
-        """Add the numbers that *scope_num_samples_used* noted to this one's."""
-        noted_in_scope = scope_num_samples_used.num_samples_values
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle as a new, empty value with the same ``collects_calls`` and a lock of its own."""
+        return (_empty_num_samples_used, (self.collects_calls,))
+
+
+@dataclass(frozen=True)
+class _EvaluationSetRecord:
+    """One set of evaluation points that a call ran, as its provenance reports it.
+
+    Attributes
+    ----------
+    origin : str
+        The callable or the site the evaluation points belong to.
+    set_ordinal : int
+        Which of the call's sets of evaluation points of *origin* it is,
+        counting from 0.
+    executor_name : str
+        The executor that ran it.
+    executor_options : Mapping[str, Any]
+        The options that executor received.
+    num_evaluation_points : int
+        The number of its evaluation points.
+    failed_point_indices : tuple of int
+        The point indices of the evaluation points that failed, in order.
+    """
+
+    origin: str
+    set_ordinal: int
+    executor_name: str
+    executor_options: Mapping[str, Any]
+    num_evaluation_points: int
+    failed_point_indices: tuple[int, ...]
+
+
+class _EvaluationLog:
+    """The sets of evaluation points that one call ran, which its provenance reports.
+
+    The executor dispatcher records each set it runs here, and numbers the
+    sets of each callable in the order the call asks for them, so an
+    evaluation point's identity can name its set. It also remembers which of
+    the call's warnings were given, so each is given once per call.
+
+    Only :meth:`_CallContext.with_fresh_call_accumulators` creates one, and it
+    merges as ``num_samples_used`` does (:func:`_merge_noted_into`).
+    Its contents are guarded by a lock. A pickled one arrives new and empty,
+    and what a worker process records into it comes back with the outcomes of
+    its evaluation points.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._set_records: list[_EvaluationSetRecord] = []
+        self._set_counts_by_origin: dict[str, int] = {}
+        self._set_count = 0
+        self._warnings_given: set[Any] = set()
+
+    @property
+    def set_records(self) -> tuple[_EvaluationSetRecord, ...]:
+        """The sets recorded so far, in the order they were recorded."""
         with self._lock:
-            self._num_samples_values |= noted_in_scope
+            return tuple(self._set_records)
+
+    def next_set_numbers(self, origin: str) -> tuple[int, int]:
+        """The numbers of the next set of evaluation points of *origin* that the call asks for.
+
+        Parameters
+        ----------
+        origin : str
+            The callable or the site the set belongs to.
+
+        Returns
+        -------
+        tuple of (int, int)
+            The set's ordinal among the call's sets of *origin*, which its
+            evaluation points' identities name, and its position among all the
+            call's sets, which keeps its evaluation points' workflow scopes
+            apart from those of the call's other sets; both count from 0.
+        """
+        with self._lock:
+            set_ordinal = self._set_counts_by_origin.get(origin, 0)
+            self._set_counts_by_origin[origin] = set_ordinal + 1
+            set_position = self._set_count
+            self._set_count += 1
+            return set_ordinal, set_position
+
+    def record(self, set_record: _EvaluationSetRecord) -> None:
+        """Record that the call ran the set *set_record* describes."""
+        with self._lock:
+            self._set_records.append(set_record)
+
+    def is_first_warning(self, warning_key: Any) -> bool:
+        """Whether the call has not given the warning *warning_key* yet, which this then records."""
+        with self._lock:
+            if warning_key in self._warnings_given:
+                return False
+            self._warnings_given.add(warning_key)
+            return True
 
     def __reduce__(self) -> tuple[Any, ...]:
-        """Pickle as a new, empty value, with a lock of its own."""
-        return (_NumSamplesUsed, ())
+        """Pickle as a new, empty log, with a lock of its own."""
+        return (_EvaluationLog, ())
 
 
 @contextmanager
-def _collecting_num_samples_used(merge_rule: _MergeRule) -> Iterator[_NumSamplesUsed]:
-    """A scope whose Monte Carlo estimates note their draws in a new ``num_samples_used`` of its own.
+def _collecting_call_accumulators(merge_rule: _MergeRule) -> Iterator[_CallContext]:
+    """A scope that notes its Monte Carlo draws and its sets of evaluation points in accumulators of its own.
 
-    When the scope ends without an error, its numbers merge into the
-    ``num_samples_used`` of the context it was opened in, by *merge_rule*:
+    When the scope ends without an error, its accumulators merge into those of
+    the context it was opened in, by *merge_rule*:
 
     - ``"when_parent_collects"``, for a call: only when the enclosing call
       collects calls;
-    - ``"always"``, for a scope inside a call, such as the work one worker runs
-      or one block of a summary computed output by output. Such a scope
-      collects the calls made directly within it when its call does, so their
-      numbers reach the call through the scope.
+    - ``"always"``, for a scope inside a call, such as one block of a summary
+      computed output by output. Such a scope collects the calls made directly
+      within it when its call does, so their accumulators reach the call
+      through the scope.
 
     Parameters
     ----------
     merge_rule : {"when_parent_collects", "always"}
-        When the scope's numbers merge into the enclosing ones.
+        When the scope's accumulators merge into the enclosing ones.
 
     Yields
     ------
-    _NumSamplesUsed
-        The scope's ``num_samples_used``, empty at the start.
+    _CallContext
+        The scope's context, whose ``num_samples_used`` and ``evaluation_log``
+        are empty at the start.
     """
     enclosing_context = current_call_context()
-    collecting_context = enclosing_context.with_fresh_num_samples_used()
-    scope_num_samples_used = cast(_NumSamplesUsed, collecting_context.num_samples_used)
     enclosing_num_samples_used = enclosing_context.num_samples_used
-    if merge_rule == "always" and enclosing_num_samples_used is not None:
-        scope_num_samples_used.collects_calls = enclosing_num_samples_used.collects_calls
+    collecting_context = enclosing_context.with_fresh_call_accumulators(
+        collects_calls=merge_rule == "always" and enclosing_context.collects_calls()
+    )
     with _under_call_context(collecting_context):
-        yield scope_num_samples_used
+        yield collecting_context
     if enclosing_num_samples_used is not None and (
         merge_rule == "always" or enclosing_num_samples_used.collects_calls
     ):
-        enclosing_num_samples_used.merge_from(scope_num_samples_used)
+        _merge_noted_into(
+            enclosing_context,
+            cast(_NumSamplesUsed, collecting_context.num_samples_used).num_samples_values,
+            cast(_EvaluationLog, collecting_context.evaluation_log).set_records,
+        )
+
+
+def _merge_noted_into(
+    call_context: _CallContext,
+    num_samples_values: Iterable[int],
+    set_records: Iterable[_EvaluationSetRecord],
+) -> None:
+    """Add the numbers of draws and the sets of evaluation points a scope noted to *call_context*'s accumulators.
+
+    A context without accumulators, as a ``check``'s, takes none.
+    """
+    if call_context.num_samples_used is not None:
+        for num_samples in num_samples_values:
+            call_context.num_samples_used.note(num_samples)
+    if call_context.evaluation_log is not None:
+        for set_record in set_records:
+            call_context.evaluation_log.record(set_record)
 
 
 def _note_num_samples_used(num_samples: int) -> None:
@@ -486,50 +966,19 @@ def _note_num_samples_used(num_samples: int) -> None:
         num_samples_used.note(num_samples)
 
 
-class _ContextBoundFunction:
-    """A work function bound to the call context it runs under, in whatever worker runs it.
+def _jax_settings_snapshot() -> Mapping[str, Any]:
+    """The JAX settings that change what a computation returns, as they read now, by name.
 
-    Each call of the wrapper runs one piece of work: it installs the bound
-    context with a new ``num_samples_used`` for that work alone, and merges
-    the work's numbers into the context's ``num_samples_used`` when the work
-    succeeds, so a failed piece of work leaves no numbers behind. The wrapper
-    pickles wherever the work function does, for a worker process.
-
-    Parameters
-    ----------
-    work_function : callable
-        The work function.
-    call_context : _CallContext
-        The evaluation context of the call that dispatches *work_function*.
+    A root call takes this snapshot when it opens, and a worker process applies
+    it before it unpickles any work, since a spawned interpreter starts with
+    JAX's defaults.
     """
-
-    def __init__(self, work_function: Callable[..., Any], call_context: _CallContext) -> None:
-        self.work_function = work_function
-        self.call_context = call_context
-
-    def __call__(self, /, *args: Any, **kwargs: Any) -> Any:
-        """*work_function*'s result, computed under the bound call context.
-
-        ``self`` is positional-only, so a work function's own parameter named
-        ``self`` binds as a keyword argument.
-        """
-        with _under_call_context(self.call_context), _collecting_num_samples_used("always"):
-            return self.work_function(*args, **kwargs)
-
-
-def _carrying_call_context(work_function: Callable[..., Any]) -> Callable[..., Any]:
-    """*work_function*, run under the call context in effect, in whatever worker runs it.
-
-    A worker thread starts without the calling thread's context, and a worker
-    process without the calling process's, so without the carrier a body run in
-    a worker would read the session's settings in place of an active ``config``
-    block, lose an ``exact_only`` a derived route passes, and note its Monte Carlo
-    draws nowhere. In the default context *work_function* is returned as it is.
-    """
-    current_context = current_call_context()
-    if current_context.is_default():
-        return work_function
-    return _ContextBoundFunction(work_function, current_context.evaluation_context())
+    return MappingProxyType(
+        {
+            setting_name: getattr(jax.config, setting_name)
+            for setting_name in _SHIPPED_JAX_SETTING_NAMES
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -585,6 +1034,88 @@ def _unpickled_call_context(field_values: Mapping[str, Any]) -> _CallContext:
             for field_name, context_field_value in field_values.items()
         }
     )
+
+
+def _unpickled_execution_choice(
+    executor_name: str | None,
+    executor_options: Any,
+    source: _ExecutionChoiceSource,
+    applies_only_to: Any,
+    named_on: str | None,
+) -> _ExecutionChoice:
+    """The executor choice that :meth:`_ExecutionChoice.__reduce__` pickled."""
+    return _ExecutionChoice(
+        executor_name,
+        _restored_from_picklable(executor_options),
+        source,
+        applies_only_to,
+        named_on,
+    )
+
+
+def _empty_num_samples_used(collects_calls: bool) -> _NumSamplesUsed:
+    """A new, empty :class:`_NumSamplesUsed` that collects calls when *collects_calls* holds."""
+    return _NumSamplesUsed(collects_calls=collects_calls)
+
+
+@dataclass(frozen=True)
+class _UnshippableSetting:
+    """What a worker process receives in place of a ``config`` value that does not pickle.
+
+    ``config`` raises ``UnshippableSettingError`` when code in the worker reads
+    it, and only then, so a value the worker never reads costs nothing.
+
+    Attributes
+    ----------
+    section_name : str
+        The ``config`` section of the setting.
+    setting_name : str
+        The setting's name.
+    value_type_name : str
+        The class name of the value that did not pickle.
+    pickling_error : str
+        The error pickling raised, as its class name and message.
+    """
+
+    section_name: str
+    setting_name: str
+    value_type_name: str
+    pickling_error: str
+
+
+def _shippable_config_values(
+    config_values: Mapping[str, Mapping[str, Any]],
+) -> Mapping[str, Mapping[str, Any]]:
+    """*config_values*, by section and setting, as a worker process receives them.
+
+    The ``prefect`` section is left out, and a value that does not pickle is
+    replaced by an :class:`_UnshippableSetting`.
+    """
+    shipped_values: dict[str, Mapping[str, Any]] = {}
+    for section_name, section_values in config_values.items():
+        if section_name == _UNSHIPPED_CONFIG_SECTION:
+            continue
+        shipped_values[section_name] = MappingProxyType(
+            {
+                setting_name: _shippable_setting(section_name, setting_name, setting_value)
+                for setting_name, setting_value in section_values.items()
+            }
+        )
+    return MappingProxyType(shipped_values)
+
+
+def _shippable_setting(section_name: str, setting_name: str, setting_value: Any) -> Any:
+    """*setting_value*, or an :class:`_UnshippableSetting` in its place when it does not pickle."""
+    try:
+        cloudpickle.dumps(setting_value)
+    except Exception as pickling_error:
+        return _UnshippableSetting(
+            section_name,
+            setting_name,
+            type(setting_value).__name__,
+            f"{type(pickling_error).__name__}: {pickling_error}",
+        )
+    return setting_value
 
 
 class _InstalledScope:

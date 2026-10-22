@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import FrozenInstanceError, replace
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import jax.numpy as jnp
 import numpy as np
@@ -16,10 +16,10 @@ from probpipe import (
     Normal,
     NumericRecord,
     NumericRecordBatch,
+    ResolutionError,
     sample,
     workflow_run,
 )
-from probpipe.core.config import WorkflowKind
 from probpipe.functions import (
     _context,
     _evaluation_keys,
@@ -57,62 +57,33 @@ def _add_automatic_noise(row):
 
 
 class TestExecutionContract:
-    def test_workflow_kind_transport_requires_a_resolved_kind(self):
-        assert _execution.transport_for_workflow_kind(WorkflowKind.OFF) == "local_inline"
-        assert _execution.transport_for_workflow_kind(WorkflowKind.TASK) == "prefect_task"
-        assert _execution.transport_for_workflow_kind(WorkflowKind.FLOW) == "prefect_flow"
-        with pytest.raises(ValueError, match="resolved workflow kind"):
-            _execution.transport_for_workflow_kind(WorkflowKind.DEFAULT)
-
-    def test_contract_is_frozen_and_uses_the_fixed_abi(self):
+    def test_contract_is_frozen_and_versions_only_what_decides_the_keys(self):
         plan = _plan({"x": Normal("x", loc=0.0, scale=1.0)})
-        contract = _execution.make_execution_contract(
-            evaluator="jax_vmap",
-            transport="local_inline",
-            stochastic_plan=plan,
-        )
+        contract = _execution.make_execution_contract(stochastic_plan=plan)
 
-        assert contract.abi == "probpipe.workflow_rng_execution/v1"
-        assert _execution.supports_execution_contract(
-            contract,
-            plan,
-        )
+        assert contract.abi == "probpipe.workflow_rng_execution/v2"
+        assert not hasattr(contract, "evaluator")
+        assert not hasattr(contract, "transport")
+        assert _execution.supports_execution_contract(contract, plan)
         with pytest.raises(FrozenInstanceError):
-            contract.transport = "local_thread"
+            contract.abi = "probpipe.workflow_rng_execution/v1"
 
-    def test_an_exact_plan_is_jax_capable_and_rowwise_capable(self):
-        plan = _plan(
+    def test_an_exact_plan_and_a_sampled_plan_each_have_their_own_contract(self):
+        sampled_plan = _plan({"x": Normal("x", loc=0.0, scale=1.0)})
+        exact_plan = _plan(
             {"x": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), output_name="x")},
             max_evaluations=8,
         )
-        assert plan.evaluation_mode == "exact"
-        jax_contract = _execution.make_execution_contract(
-            evaluator="jax_vmap",
-            transport="local_inline",
-            stochastic_plan=plan,
-        )
-        rowwise_contract = _execution.make_execution_contract(
-            evaluator="rowwise",
-            transport="local_thread",
-            stochastic_plan=plan,
-        )
+        assert exact_plan.evaluation_mode == "exact"
+        exact_contract = _execution.make_execution_contract(stochastic_plan=exact_plan)
+        sampled_contract = _execution.make_execution_contract(stochastic_plan=sampled_plan)
 
-        assert _execution.supports_execution_contract(
-            jax_contract,
-            plan,
-        )
-        assert _execution.supports_execution_contract(
-            rowwise_contract,
-            plan,
-        )
+        assert _execution.supports_execution_contract(exact_contract, exact_plan)
+        assert not _execution.supports_execution_contract(sampled_contract, exact_plan)
 
     def test_unknown_provider_or_key_abi_fails_the_single_predicate(self):
         plan = _plan({"x": Normal("x", loc=0.0, scale=1.0)})
-        contract = _execution.make_execution_contract(
-            evaluator="rowwise",
-            transport="prefect_task",
-            stochastic_plan=plan,
-        )
+        contract = _execution.make_execution_contract(stochastic_plan=plan)
 
         assert not _execution.supports_execution_contract(
             replace(contract, provider_abis=("unknown",)),
@@ -123,83 +94,54 @@ class TestExecutionContract:
             plan,
         )
 
-    @pytest.mark.parametrize(
-        ("evaluator", "transport", "expected"),
-        [
-            pytest.param("rowwise", "local_inline", True),
-            pytest.param("rowwise", "local_thread", True),
-            pytest.param("rowwise", "prefect_task", True),
-            pytest.param("rowwise", "prefect_flow", True),
-            pytest.param("jax_vmap", "local_inline", True),
-            pytest.param("jax_vmap", "local_thread", False),
-            pytest.param("jax_vmap", "prefect_task", True),
-            pytest.param("jax_vmap", "prefect_flow", True),
-        ],
-    )
-    def test_evaluator_transport_support_matrix(self, evaluator, transport, expected):
-        plan = _plan({"x": Normal("x", loc=0.0, scale=1.0)})
-        contract = _execution.make_execution_contract(
-            evaluator=evaluator,
-            transport=transport,
-            stochastic_plan=plan,
-        )
+    def test_every_executor_records_the_same_contract_and_names_itself_beside_it(self):
+        shifted = Function(lambda x: np.asarray(x) + 1.0, label="shifted", traceable=False)
+        diagnostics_by_executor = {}
+        for executor in ("sequential", "thread"):
+            with workflow_run(seed=3):
+                lifted = shifted.using(executor=executor)(Normal("x", loc=0.0, scale=1.0))
+            diagnostics_by_executor[executor] = lifted.provenance.diagnostics["execution"]
 
-        assert _execution.supports_execution_contract(contract, plan) is expected
-
-    def test_execution_request_rejects_plan_drift_before_broker_or_user_code(self):
-        sampled_plan = _plan({"x": Normal("x", loc=0.0, scale=1.0)})
-        exact_plan = _plan(
-            {"x": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), output_name="x")},
-            max_evaluations=8,
-        )
-        contract = _execution.make_execution_contract(
-            evaluator="rowwise",
-            transport="local_inline",
-            stochastic_plan=sampled_plan,
-        )
-        func = Mock(return_value=1)
-        request = _execution.WorkflowExecutionRequest(
-            func=func,
-            evaluation_points=_execution.issue_evaluation_points(
-                [{"x": 1}],
-                point_segments=(_execution.plain_call_point_segment(),),
-            ),
-            execution=_execution.WorkflowExecutionConfig(mode="sequential"),
-            contract=contract,
-            stochastic_plan=exact_plan,
-        )
-
-        with (
-            patch.object(_evaluation_keys, "_record_active_execution_contract") as record,
-            pytest.raises(RuntimeError, match="RNG contract"),
-        ):
-            _execution.execute_many(request)
-
-        func.assert_not_called()
-        record.assert_not_called()
+        assert diagnostics_by_executor == {
+            executor: [
+                {
+                    "executor": executor,
+                    "executor_options": {},
+                    "contract_abi": "probpipe.workflow_rng_execution/v2",
+                }
+            ]
+            for executor in ("sequential", "thread")
+        }
 
 
 class TestJaxWorkflowGuards:
-    def test_auto_falls_back_for_omitted_key_effect_without_shifting_results(self):
-        auto = Function(_add_automatic_noise, label="_add_automatic_noise", dispatch="auto")
-        rowwise = Function(
-            _add_automatic_noise, label="_add_automatic_noise", dispatch="sequential"
+    def test_a_traceable_body_that_draws_without_a_key_runs_one_point_at_a_time(self):
+        probed = Function(_add_automatic_noise, label="_add_automatic_noise")
+        one_at_a_time = Function(
+            _add_automatic_noise, label="_add_automatic_noise", traceable=False
         )
 
         with workflow_run(seed=19):
-            auto_result = auto(row=_record_batch())
+            probed_result = probed(row=_record_batch())
         with workflow_run(seed=19):
-            rowwise_result = rowwise(row=_record_batch())
+            one_at_a_time_result = one_at_a_time(row=_record_batch())
 
-        np.testing.assert_array_equal(auto_result, rowwise_result)
+        np.testing.assert_array_equal(probed_result, one_at_a_time_result)
 
-    def test_explicit_jax_rejects_omitted_key_before_entropy(self):
-        workflow = Function(_add_automatic_noise, label="_add_automatic_noise", dispatch="jax")
+    def test_naming_jax_for_a_body_that_draws_without_a_key_raises_before_entropy(self):
+        workflow = Function(_add_automatic_noise, label="_add_automatic_noise", executor="jax")
 
         with (
             patch("probpipe.functions._context._os_urandom") as urandom,
             workflow_run(),
-            pytest.raises(TypeError, match="draws random numbers without an explicit key"),
+            pytest.raises(
+                ResolutionError,
+                match=(
+                    "executor 'jax' cannot run the evaluation points of '_add_automatic_noise': "
+                    "JAX cannot trace '_add_automatic_noise': it draws random numbers without an "
+                    "explicit key"
+                ),
+            ),
         ):
             workflow(row=_record_batch())
 
@@ -216,7 +158,7 @@ class TestJaxWorkflowGuards:
             workflow_run(),
             _evaluation_keys._function_stochastic_scope() as broker,
             _context._workflow_jax_runtime_guard(),
-            pytest.raises(TypeError, match="draws random numbers without an explicit key"),
+            pytest.raises(TypeError, match="cannot draw random numbers without an explicit key"),
         ):
             _evaluation_keys._resolve_automatic_key(None, plan)
 

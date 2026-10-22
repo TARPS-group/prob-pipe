@@ -39,7 +39,7 @@ def simple_model():
     x = np.asarray(np.linspace(-1, 1, 20)).astype(np.float32)
     X = jnp.asarray(np.stack([np.ones_like(x), x], axis=1))
     prior = MultivariateNormal("beta", loc=jnp.zeros(2), cov=5.0 * jnp.eye(2))
-    return glm_likelihood("y", PoissonFamily(), X=X) * prior
+    return glm_likelihood("y", PoissonFamily(), X=X) & prior
 
 
 @pytest.fixture
@@ -404,7 +404,7 @@ def gaussian_model():
         NumericArraySpec((3,)),
         lambda mu: tfd.Independent(tfd.Normal(jnp.broadcast_to(mu, (3,)), 1.0), 1),
     )
-    return likelihood * prior
+    return likelihood & prior
 
 
 @pytest.fixture
@@ -469,7 +469,7 @@ def _logistic_target():
     from probpipe.operations._condition import _unnormalized_conditional
 
     X = jnp.array([[1.0, 0.5], [1.0, -0.3], [1.0, 1.2], [1.0, -1.1]])
-    joint = glm_likelihood("y", BernoulliFamily(), X=X) * MultivariateNormal(
+    joint = glm_likelihood("y", BernoulliFamily(), X=X) & MultivariateNormal(
         "beta", jnp.zeros(2), jnp.eye(2)
     )
     return _unnormalized_conditional(
@@ -495,7 +495,8 @@ class TestTargets:
         joint, given = joint_and_given(target)
         assert joint is simple_model
         assert set(given.fields) == {"y"}
-        assert observed_target(simple_model, None) is simple_model
+        assert observed_target(simple_model, None).joint is simple_model
+        assert observed_target(simple_model, None).conditions_on_nothing
 
     def test_a_keyed_target_is_its_own_model(self):
         from probpipe.inference._inference_utils import joint_and_given, observed_parts
@@ -532,7 +533,7 @@ class TestTargets:
     def test_a_target_without_a_density_is_refused_by_the_gradient_method(self):
         from probpipe.operations._condition import condition_on as condition_on_operation
 
-        simulator = Normal("theta", 0.0, 1.0) * Normal("y", 0.0, 1.0)
+        simulator = Normal("theta", 0.0, 1.0) & Normal("y", 0.0, 1.0)
         target = condition_on_operation.using(method="unnormalized")(
             _WithoutDensity(simulator), {"y": 0.3}
         )

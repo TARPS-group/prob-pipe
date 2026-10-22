@@ -3,8 +3,8 @@
 This private module executes a call whose lifted arguments are laws, after
 call resolution, normalization, planning, and route selection have identified
 the distribution regime. It draws or enumerates the lifted arguments, runs the
-function once per evaluation under the dispatch mode, and returns the
-pushforward as an :class:`~probpipe.EmpiricalDistribution` over the outputs,
+function at one evaluation point per draw on the executor the call chooses,
+and returns the pushforward as an :class:`~probpipe.EmpiricalDistribution` over the outputs,
 whose event spec is the function's completed output spec (V.6, V.10). With
 ``include_inputs`` the law is the joint empirical law of the lifted
 inputs and the outputs.
@@ -15,21 +15,16 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._specs import _has_record_outputs, _root_output_name
-
-try:
-    from prefect import flow, task
-except ImportError:
-    task = flow = None
-
-from ..core._array_backend import _is_numeric_leaf
 from ..core._batch import Batch, BatchSpec, _flat_batch_spec
+from ..core._evaluation_points import _requested_evaluation_points
+from ..core._executors import _holds_tracer
 from ..core._expression import Expression
 from ..core._numeric_array import NumericArray
 from ..core._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
@@ -42,9 +37,9 @@ from ..core._record_batch import (
 )
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec
-from ..core._specs import OutputSpec
-from ..core.config import WorkflowKind, _checked_count, config
-from ..core.named_tree import _unflatten_paths
+from ..core._specs import OutputSpec, _has_record_outputs, _root_output_name
+from ..core.config import WorkflowKind, _checked_count
+from ..core.named_tree import _PATH_SEP, _unflatten_paths
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
@@ -53,18 +48,15 @@ from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _raw_record
 from ..values._binding import FunctionInputRef, input_ref_value, replace_input_refs
 from ..values._function_base import _NAMELESS_OUTPUT, _validate_stacked_output
-from . import _execution, _plan, _recipe
+from . import _plan, _recipe
 from ._call import ApplicabilityError
-from ._context import _workflow_jax_runtime_guard
-from ._evaluation_keys import _record_active_execution_contract
 from ._execution import (
-    make_execution_contract,
-    supports_execution_contract,
-    transport_for_execution_mode,
-    transport_for_workflow_kind,
+    evaluate_requested_points,
+    executor_that_ran,
+    lifted_evaluation_point_segment,
+    preflight_prefect_route,
 )
 from ._result import (
-    DRAW_LEVEL,
     ResultSchemaError,
     _aggregate_output_spec,
     _batch_at,
@@ -90,8 +82,8 @@ class _LiftDraws:
         evaluations, in their raw form: an array, a ``Record`` of columns, a
         batch of records, or a sequence of objects.
     outputs : Any
-        The function's results, as a list of ``count`` results or as the one
-        stacked pytree the mapped dispatch returns.
+        The function's results, as a list of ``count`` results or as one
+        pytree stacked on a leading axis of ``count``.
     weights : Array or None
         One weight per evaluation, or ``None`` for uniform weights.
     count : int
@@ -112,13 +104,9 @@ def execute_distribution_broadcast(
     logical_unit: _plan.LogicalUnit,
     include_inputs: bool,
     get_key: Callable[[_plan.PlannedRandomEvent], PRNGKey],
-    make_execution_config: Callable[
-        [],
-        _execution.WorkflowExecutionConfig,
+    lifted_point_traceability: Callable[
+        [dict[str, Any], list[FunctionInputRef]], tuple[bool, str | None]
     ],
-    requested_dispatch: str,
-    resolve_dispatch: Callable[..., str],
-    require_jax_traceable: Callable[[dict[str, Any], list[FunctionInputRef]], None],
     function_name: str,
     output_label: str | None = None,
     output_name: str = _NAMELESS_OUTPUT,
@@ -138,9 +126,10 @@ def execute_distribution_broadcast(
     whose every lifted group enumerates evaluates each combination of atoms once
     with the product of their weights, which is the exact pushforward; any other
     plan enumerates the groups the plan enumerates and samples the others, at
-    most ``max_evaluations`` evaluations in all, and is a stand-in for it. Under
-    the ``"jax"`` dispatch every evaluation runs in one ``jax.vmap``, with the
-    evaluations and weights of the row-wise dispatch modes.
+    most ``max_evaluations`` evaluations in all, and is a stand-in for it. The
+    evaluations form one set of evaluation points, one per draw or
+    combination, which runs on the executor the call chooses, so a function
+    JAX can trace is mapped with one ``jax.vmap``.
 
     Parameters
     ----------
@@ -159,18 +148,10 @@ def execute_distribution_broadcast(
         outputs. If ``False``, return the law of the outputs.
     get_key : callable
         Callback that claims the raw key for one planned source/unit event.
-    make_execution_config : callable
-        Zero-argument callback returning row-wise execution settings for
-        sequential, threaded, or Prefect dispatch.
-    requested_dispatch : str
-        User-requested dispatch strategy, used to preserve explicit
-        ``dispatch="jax"`` error behavior.
-    resolve_dispatch : callable
-        Callback that maps the current values and broadcast arguments to the
-        effective dispatch strategy.
-    require_jax_traceable : callable
-        Callback used only for explicit JAX dispatch to raise a clear tracing
-        error before executing.
+    lifted_point_traceability : callable
+        Whether JAX can trace one evaluation point of the lift, given the
+        values and the lifted arguments, with the reason when it cannot, as
+        the function's claim or its stored probe result says.
     function_name : str
         The function's label, which provenance metadata records.
     output_label : str or None
@@ -185,9 +166,8 @@ def execute_distribution_broadcast(
         The function's output spec with the call's shared dimensions
         bound, which the outputs complete.
     workflow_kind : WorkflowKind
-        Effective orchestration mode for this call. The value is recorded in
-        provenance and passed to the JAX path so Prefect task/flow requests can
-        fail clearly when Prefect is unavailable.
+        Effective orchestration mode for this call, which provenance records
+        and which selects Prefect to run the evaluation points.
     output_template : RecordSpec or None
         Concrete authoritative template for declared record outputs, when present.
     provenance_parents : sequence of TrackedTerm
@@ -224,57 +204,51 @@ def execute_distribution_broadcast(
     broadcast_args = list(stochastic_plan.arg_refs)
     max_evaluations = stochastic_plan.max_evaluations
     _validate_max_evaluations(max_evaluations)
-
-    jax_contract = make_execution_contract(
-        evaluator="jax_vmap",
-        transport=transport_for_workflow_kind(workflow_kind),
+    traceable, untraceable_reason = lifted_point_traceability(values, broadcast_args)
+    preflight_prefect_route(workflow_kind, function_name, maps_with_jax=traceable)
+    weights: Array | None
+    if stochastic_plan.evaluation_mode != "sampled":
+        inputs, weights = _enumerated_draws(stochastic_plan, logical_unit, get_key)
+        count = len(weights)
+    else:
+        sampled = _sample_planned_source_groups(
+            stochastic_plan,
+            stochastic_plan.source_groups,
+            _required_sample_shape(stochastic_plan),
+            logical_unit,
+            get_key,
+        )
+        inputs = {ref: sampled[ref] for ref in broadcast_args}
+        weights = None
+        count = stochastic_plan.n_evaluations
+    record_draws = record_events(stochastic_plan)
+    evaluation_points = _requested_evaluation_points(
+        mapped_draw_body(
+            func=func,
+            values=values,
+            broadcast_args=broadcast_args,
+            batch_events=batch_events(stochastic_plan),
+            record_events=record_draws,
+        ),
+        varying={
+            "lifted_rows": tuple(
+                lifted_row_form(inputs[ref], ref, record_draws) for ref in broadcast_args
+            )
+        },
+        origin=function_name,
+        traceable=traceable,
+        untraceable_reason=untraceable_reason,
+        point_noun="draw" if stochastic_plan.evaluation_mode == "sampled" else "combination",
+        point_segment=partial(lifted_evaluation_point_segment, logical_unit.logical_unit_id),
+    )
+    outputs = evaluate_requested_points(
+        evaluation_points,
+        stacked=True,
+        workflow_kind=workflow_kind,
+        function_label=function_name,
         stochastic_plan=stochastic_plan,
     )
-    jax_supported = supports_execution_contract(
-        jax_contract,
-        stochastic_plan,
-    )
-    dispatch = resolve_dispatch(
-        values,
-        broadcast_args,
-        jax_supported=jax_supported,
-    )
-    if dispatch == "jax":
-        _record_active_execution_contract(jax_contract)
-        if requested_dispatch == "jax":
-            require_jax_traceable(values, broadcast_args)
-
-    if stochastic_plan.evaluation_mode != "sampled":
-        draws = _broadcast_enumerate(
-            func=func,
-            values=values,
-            stochastic_plan=stochastic_plan,
-            logical_unit=logical_unit,
-            get_key=get_key,
-            make_execution_config=make_execution_config,
-            dispatch=dispatch,
-            function_name=function_name,
-            workflow_kind=workflow_kind,
-        )
-    elif dispatch == "jax":
-        draws = _broadcast_jax(
-            func=func,
-            values=values,
-            stochastic_plan=stochastic_plan,
-            logical_unit=logical_unit,
-            get_key=get_key,
-            function_name=function_name,
-            workflow_kind=workflow_kind,
-        )
-    else:
-        draws = _broadcast_sample(
-            func=func,
-            values=values,
-            stochastic_plan=stochastic_plan,
-            logical_unit=logical_unit,
-            get_key=get_key,
-            make_execution_config=make_execution_config,
-        )
+    draws = _LiftDraws(inputs=inputs, outputs=outputs, weights=weights, count=count)
 
     result = _lift_result(
         draws,
@@ -290,7 +264,7 @@ def execute_distribution_broadcast(
     provenance = _make_broadcast_provenance(
         values=values,
         broadcast_args=broadcast_args,
-        dispatch=dispatch,
+        executor_name=executor_that_ran(evaluation_points),
         workflow_kind=workflow_kind,
         max_evaluations=max_evaluations,
         function_name=function_name,
@@ -388,8 +362,8 @@ def _output_atoms(
     Parameters
     ----------
     outputs : Any
-        The function's results, as a list of *count* results or as the one
-        stacked pytree the mapped dispatch returns.
+        The function's results, as a list of *count* results or as one
+        pytree stacked on a leading axis of *count*.
     count : int
         The number of evaluations.
     output_label : str
@@ -418,15 +392,15 @@ def _output_atoms(
         _root_output_name(output_spec) if output_spec is not None else None
     ) or output_name
     if isinstance(outputs, NumericArray):
-        # The mapped dispatch returns one array term led by the draw axis. A map
+        # Stacked outputs can be one array term led by the draw axis. A map
         # that returns its operand returns the stacked draws' own term, whose spec
-        # covers every draw, so the element spec is read from one point.
+        # covers every draw, so the elements' spec is read from one point.
         element = outputs.spec
         point = tuple(jnp.shape(outputs.raw)[1:])
         if tuple(element.shape) != point:
             element = NumericArraySpec(point, element.dtype, element.support)
         atoms: Batch = _record_stored_dtypes(
-            NumericArrayBatch(outputs.raw, atom_level, element_spec=element, label=output_label)
+            NumericArrayBatch(outputs.raw, atom_level, element=element, label=output_label)
         )
     else:
         rows = _rows_of(outputs, output_label)
@@ -452,9 +426,11 @@ def _output_atoms(
         except (TypeError, ValueError) as error:
             raise ResultSchemaError(str(error)) from error
     actual = (
-        BatchSpec._from_groups(atoms.element_spec, atoms.axis_groups[1:], atoms.level_names[1:])
+        BatchSpec._from_groups(
+            atoms.element_spec.term_spec, atoms.axis_groups[1:], atoms.level_names[1:]
+        )
         if len(atoms.level_names) > 1
-        else atoms.element_spec
+        else atoms.element_spec.term_spec
     )
     if output_spec is None:
         return atoms, OutputSpec.default(actual, output_name=output_name)
@@ -479,10 +455,14 @@ def _returned_levels(rows: Any) -> tuple[str, ...]:
 def _rows_of(outputs: Any, output_label: str) -> Any:
     """The outputs in a form the row aggregator reads.
 
-    Row-wise dispatch returns a list of results, and the mapped dispatch one
-    stacked array, record, or mapping, which is read as a record of columns,
-    or a returned batch's stacked store, which the aggregator reads as it is.
+    Outputs that do not stack arrive as an object array of one result per
+    evaluation, which the aggregator reads as the list of the results.
+    Stacked outputs arrive as one array, record, or mapping, which is read as
+    a record of columns, or as a returned batch's stacked store, which the
+    aggregator reads as it is.
     """
+    if _is_object_array(outputs):
+        return list(outputs)
     if isinstance(outputs, Mapping) and not isinstance(outputs, TrackedTerm):
         return Record(dict(outputs), label=output_label)
     return outputs
@@ -563,7 +543,7 @@ def _joint_atoms(
         )
         element = RecordSpec(fields)
         return _batch_class_for(element)(
-            columns, atoms.level_names[0], element_spec=element, label=output_label
+            columns, atoms.level_names[0], element=element, label=output_label
         )
     stored = _batch_columns(atoms)
     if _has_record_outputs(declaration):
@@ -575,7 +555,7 @@ def _joint_atoms(
         columns.update(_prefixed(output_name, stored))
     element = RecordSpec(fields)
     return _batch_class_for(element)(
-        columns, atoms.level_names[0], element_spec=element, label=output_label
+        columns, atoms.level_names[0], element=element, label=output_label
     )
 
 
@@ -611,7 +591,9 @@ def _batch_columns(atoms: Batch) -> dict[str, Any]:
 
 def _prefixed(prefix: str, columns: Mapping[str, Any]) -> dict[str, Any]:
     """*columns* keyed under *prefix*, an unnamed column taking *prefix* itself."""
-    return {f"{prefix}/{path}" if path else prefix: column for path, column in columns.items()}
+    return {
+        f"{prefix}{_PATH_SEP}{path}" if path else prefix: column for path, column in columns.items()
+    }
 
 
 def _validate_max_evaluations(max_evaluations: int) -> None:
@@ -630,7 +612,7 @@ def _make_broadcast_provenance(
     *,
     values: dict[str, Any],
     broadcast_args: Sequence[FunctionInputRef],
-    dispatch: str,
+    executor_name: str | None,
     workflow_kind: WorkflowKind,
     max_evaluations: int,
     function_name: str,
@@ -648,7 +630,7 @@ def _make_broadcast_provenance(
         "broadcast",
         parents=list(provenance_parents),
         metadata={
-            "dispatch": dispatch,
+            "dispatch": executor_name,
             "orchestrate": workflow_kind.value,
             "max_evaluations": max_evaluations,
             "func": function_name or func.__name__,
@@ -667,16 +649,13 @@ def _sample_planned_source_groups(
     sample_shape: tuple[int, ...],
     logical_unit: _plan.LogicalUnit,
     get_key: Callable[[_plan.PlannedRandomEvent], PRNGKey],
-    *,
-    mapped: bool = False,
 ) -> dict[FunctionInputRef, Array]:
     """Claim and sample each planned source once in one logical unit.
 
     Every group uses the root and consumer evaluators captured during
     preflight, so aliases and record projections share one root draw. The
-    draws of a batch-valued consumer are its raw values when *mapped*, for the
-    mapped body to rebuild row by row, and otherwise take the form its
-    parameter receives (see :func:`_record_columns`).
+    draws of a batch-valued consumer are its raw values, which the body of one
+    draw rebuilds as a batch (see :func:`mapped_draw_body`).
     """
     sampled: dict[FunctionInputRef, Array] = {}
     for group in source_groups:
@@ -693,18 +672,11 @@ def _sample_planned_source_groups(
             binding.root.label,
             binding.root.event_spec.term_spec,
         )
-        for consumer, evaluate, event, as_batch in zip(
-            group.consumers,
-            binding.consumer_evaluators,
-            binding.consumer_events,
-            binding.consumer_batches,
-            strict=True,
+        for consumer, evaluate, event in zip(
+            group.consumers, binding.consumer_evaluators, binding.consumer_events, strict=True
         ):
             sampled[consumer.arg_ref] = _record_columns(
-                evaluate(root_sample),
-                consumer.arg_ref.label,
-                event,
-                as_batch=as_batch and not mapped,
+                evaluate(root_sample), consumer.arg_ref.label, event
             )
     return sampled
 
@@ -773,155 +745,26 @@ def _row_at(raw: Any, index: int) -> Any:
     return jax.tree.map(lambda column: column[index], raw)
 
 
-def _broadcast_jax(
-    *,
-    func: Callable[..., Any],
-    values: dict[str, Any],
-    stochastic_plan: _plan.StochasticPlan,
-    logical_unit: _plan.LogicalUnit,
-    get_key: Callable[[_plan.PlannedRandomEvent], PRNGKey],
-    function_name: str,
-    workflow_kind: WorkflowKind,
-) -> _LiftDraws:
-    """Draw the lifted arguments and evaluate the function on every draw with one ``jax.vmap``."""
+def _required_sample_shape(stochastic_plan: _plan.StochasticPlan) -> tuple[int, ...]:
+    """The sample shape of a plan that samples a group."""
     sample_shape = stochastic_plan.sample_shape
-    if sample_shape is None:  # pragma: no cover - planner/dispatch contract guard
+    if sample_shape is None:  # pragma: no cover - planner contract guard
         raise RuntimeError("sampled stochastic plan is missing sample_shape")
-    broadcast_args = list(stochastic_plan.arg_refs)
-    evaluate = _mapped_evaluator(
-        func=func,
-        values=values,
-        broadcast_args=broadcast_args,
-        batch_events=batch_events(stochastic_plan),
-        function_name=function_name,
-        workflow_kind=workflow_kind,
-    )
-    sampled = _sample_planned_source_groups(
-        stochastic_plan,
-        stochastic_plan.source_groups,
-        sample_shape,
-        logical_unit,
-        get_key,
-        mapped=True,
-    )
-    inputs = {ref: sampled[ref] for ref in broadcast_args}
-    return _LiftDraws(
-        inputs=inputs,
-        outputs=evaluate(inputs),
-        weights=None,
-        count=stochastic_plan.n_evaluations,
-    )
+    return sample_shape
 
 
-def _mapped_evaluator(
-    *,
-    func: Callable[..., Any],
-    values: dict[str, Any],
-    broadcast_args: Sequence[FunctionInputRef],
-    batch_events: Mapping[FunctionInputRef, BatchSpec],
-    function_name: str,
-    workflow_kind: WorkflowKind,
-) -> Callable[[Mapping[FunctionInputRef, Any]], Any]:
-    """The callable that evaluates *func* on every row of its inputs with one ``jax.vmap``.
-
-    The callable takes each argument of *broadcast_args* along one leading axis,
-    keyed by its reference, and returns the stacked results; *values* holds the
-    other arguments. A Prefect *workflow_kind* runs the map as one task or flow,
-    which is built here, so a caller builds the evaluator before it draws the
-    lifted arguments and a route that cannot be built fails before any draw.
-
-    Parameters
-    ----------
-    func : callable
-        The function the map evaluates at each row.
-    values : dict of str to Any
-        The call's resolved arguments, whose lifted entries each row replaces.
-    broadcast_args : sequence of FunctionInputRef
-        The references to the lifted arguments.
-    batch_events : mapping of FunctionInputRef to BatchSpec
-        The event of each lifted argument whose parameter receives a
-        batch-valued draw as a batch, as :func:`batch_events` gives them.
-    function_name : str
-        The function's label, from which a Prefect task or flow takes its name.
-    workflow_kind : WorkflowKind
-        The call's orchestration mode.
-
-    Returns
-    -------
-    callable
-        The evaluator, which runs one map per call.
-
-    Raises
-    ------
-    RuntimeError
-        If *workflow_kind* asks for a Prefect task or flow and Prefect is not
-        installed.
-    """
-    if workflow_kind in (WorkflowKind.TASK, WorkflowKind.FLOW) and (task is None or flow is None):
-        raise RuntimeError(
-            "Prefect task or flow execution was requested, but Prefect is not installed. "
-            "Install with: pip install probpipe[prefect]"
-        )
-    single_call = mapped_draw_body(
-        func=func, values=values, broadcast_args=broadcast_args, batch_events=batch_events
-    )
-    batch: list[tuple[Any, ...]] = []
-
-    def run_vmap():
-        with _workflow_jax_runtime_guard():
-            return jax.vmap(single_call)(batch[-1])
-
-    if workflow_kind == WorkflowKind.TASK:
-        run_vmap = task(name=f"{function_name}_vmap")(run_vmap)
-    elif workflow_kind == WorkflowKind.FLOW:
-        runner = config.prefect.resolve_task_runner()
-        run_vmap = flow(
-            name=f"{function_name}_vmap",
-            **({"task_runner": runner} if runner is not None else {}),
-        )(run_vmap)
-
-    def evaluate(inputs: Mapping[FunctionInputRef, Any]) -> Any:
-        batch.append(tuple(inputs[ref] for ref in broadcast_args))
-        return run_vmap()
-
-    return evaluate
-
-
-def _broadcast_enumerate(
-    *,
-    func: Callable[..., Any],
-    values: dict[str, Any],
+def _enumerated_draws(
     stochastic_plan: _plan.StochasticPlan,
     logical_unit: _plan.LogicalUnit,
     get_key: Callable[[_plan.PlannedRandomEvent], PRNGKey],
-    make_execution_config: Callable[
-        [],
-        _execution.WorkflowExecutionConfig,
-    ],
-    dispatch: str,
-    function_name: str,
-    workflow_kind: WorkflowKind,
-) -> _LiftDraws:
-    """Evaluate the plan's exact combinations of atoms and its sampled repetitions.
+) -> tuple[dict[FunctionInputRef, Any], Array]:
+    """Each lifted argument's value at the plan's exact combinations of atoms and sampled repetitions.
 
-    Each combination of the enumerated groups' atoms carries the product of
-    their weights, shared equally among its repetitions. Under the ``"jax"``
-    dispatch every evaluation runs in one ``jax.vmap``; under any other the
-    evaluations run row by row under the execution settings.
+    It returns each lifted argument's value at every evaluation, along one
+    leading axis, and the weight of each evaluation. Each combination of the
+    enumerated groups' atoms carries the product of their weights, shared
+    equally among its repetitions.
     """
-    if dispatch == "jax":
-        mapped = _mapped_evaluator(
-            func=func,
-            values=values,
-            broadcast_args=stochastic_plan.arg_refs,
-            batch_events=batch_events(stochastic_plan),
-            function_name=function_name,
-            workflow_kind=workflow_kind,
-        )
-    else:
-        mapped = None
-        execution = make_execution_config()
-        _execution._preflight_execution_config(execution)
     roots = tuple(
         _enumerated_root(stochastic_plan, group_index)
         for group_index in stochastic_plan.exact_group_order
@@ -941,97 +784,18 @@ def _broadcast_enumerate(
     sampled_groups = tuple(
         group for group in stochastic_plan.source_groups if group.execution_mode == "sampled"
     )
-    if sampled_groups:
-        sample_shape = stochastic_plan.sample_shape
-        if sample_shape is None:  # pragma: no cover - planner contract guard
-            raise RuntimeError("mixed stochastic plan is missing sample_shape")
-        sampled = _sample_planned_source_groups(
+    sampled = (
+        _sample_planned_source_groups(
             stochastic_plan,
             sampled_groups,
-            sample_shape,
+            _required_sample_shape(stochastic_plan),
             logical_unit,
             get_key,
-            mapped=mapped is not None,
         )
-    else:
-        sampled = {}
-
-    if mapped is not None:
-        inputs = _enumerated_inputs(stochastic_plan, roots, atom_indices, sampled)
-        return _LiftDraws(
-            inputs=inputs, outputs=mapped(inputs), weights=weights, count=len(atom_indices)
-        )
-
-    exact_entries: list[tuple[_plan.StochasticSourceGroup, tuple[Any, ...]]] = []
-    for group_index, root in zip(stochastic_plan.exact_group_order, roots, strict=True):
-        binding = stochastic_plan.runtime_bindings[group_index]
-        # Every atom along one leading axis, in its raw form.
-        atoms = _record_columns(
-            root._atoms_at(jnp.arange(root.num_atoms)), root.label, root.event_spec.term_spec
-        )
-        group = stochastic_plan.source_groups[group_index]
-        exact_entries.append(
-            (
-                group,
-                tuple(
-                    _record_columns(
-                        evaluate(atoms), consumer.arg_ref.label, event, as_batch=as_batch
-                    )
-                    for consumer, evaluate, event, as_batch in zip(
-                        group.consumers,
-                        binding.consumer_evaluators,
-                        binding.consumer_events,
-                        binding.consumer_batches,
-                        strict=True,
-                    )
-                ),
-            )
-        )
-    sample_arg_refs = [ref for group in sampled_groups for ref in group.arg_refs]
-
-    call_value_list = []
-    for sample_idx, combo in enumerate(atom_indices.tolist()):
-        replacements: dict[FunctionInputRef, Any] = {}
-        for (group, consumer_batches), i in zip(exact_entries, combo):
-            for consumer, consumer_batch in zip(group.consumers, consumer_batches):
-                replacements[consumer.arg_ref] = _index_sample(consumer_batch, i)
-        for ref in sample_arg_refs:
-            replacements[ref] = _index_sample(sampled[ref], sample_idx)
-        call_value_list.append(replace_input_refs(values, replacements))
-
-    request = _execution.WorkflowExecutionRequest(
-        func=func,
-        evaluation_points=_execution.issue_evaluation_points(
-            call_value_list,
-            point_segments=tuple(
-                _execution.lifted_evaluation_point_segment(
-                    logical_unit.logical_unit_id,
-                    index,
-                )
-                for index in range(len(call_value_list))
-            ),
-        ),
-        execution=execution,
-        contract=make_execution_contract(
-            evaluator="rowwise",
-            transport=transport_for_execution_mode(execution.mode),
-            stochastic_plan=stochastic_plan,
-        ),
-        stochastic_plan=stochastic_plan,
+        if sampled_groups
+        else {}
     )
-    results = _execution.execute_many(request)
-
-    all_input_samples = {
-        ref: _stack_rows([input_ref_value(call_values, ref) for call_values in call_value_list])
-        for ref in stochastic_plan.arg_refs
-    }
-
-    return _LiftDraws(
-        inputs=all_input_samples,
-        outputs=results,
-        weights=weights,
-        count=len(call_value_list),
-    )
+    return _enumerated_inputs(stochastic_plan, roots, atom_indices, sampled), weights
 
 
 def _enumerated_root(
@@ -1102,109 +866,6 @@ def _enumerated_inputs(
     return {ref: inputs[ref] for ref in stochastic_plan.arg_refs}
 
 
-def _broadcast_sample(
-    *,
-    func: Callable[..., Any],
-    values: dict[str, Any],
-    stochastic_plan: _plan.StochasticPlan,
-    logical_unit: _plan.LogicalUnit,
-    get_key: Callable[[_plan.PlannedRandomEvent], PRNGKey],
-    make_execution_config: Callable[
-        [],
-        _execution.WorkflowExecutionConfig,
-    ],
-) -> _LiftDraws:
-    """Draw the lifted arguments and evaluate the function once per draw, row by row."""
-    execution = make_execution_config()
-    _execution._preflight_execution_config(execution)
-    sample_shape = stochastic_plan.sample_shape
-    if sample_shape is None:  # pragma: no cover - planner contract guard
-        raise RuntimeError("sampled stochastic plan is missing sample_shape")
-    broadcast_args = list(stochastic_plan.arg_refs)
-    samples_per_arg = _sample_planned_source_groups(
-        stochastic_plan,
-        stochastic_plan.source_groups,
-        sample_shape,
-        logical_unit,
-        get_key,
-    )
-
-    call_value_list = []
-    for i in range(stochastic_plan.n_evaluations):
-        replacements = {ref: _index_sample(samples_per_arg[ref], i) for ref in broadcast_args}
-        call_value_list.append(replace_input_refs(values, replacements))
-
-    request = _execution.WorkflowExecutionRequest(
-        func=func,
-        evaluation_points=_execution.issue_evaluation_points(
-            call_value_list,
-            point_segments=tuple(
-                _execution.lifted_evaluation_point_segment(
-                    logical_unit.logical_unit_id,
-                    index,
-                )
-                for index in range(len(call_value_list))
-            ),
-        ),
-        execution=execution,
-        contract=make_execution_contract(
-            evaluator="rowwise",
-            transport=transport_for_execution_mode(execution.mode),
-            stochastic_plan=stochastic_plan,
-        ),
-        stochastic_plan=stochastic_plan,
-    )
-    results = _execution.execute_many(request)
-
-    return _LiftDraws(
-        inputs={ref: samples_per_arg[ref] for ref in broadcast_args},
-        outputs=results,
-        weights=None,
-        count=len(call_value_list),
-    )
-
-
-def _stack_rows(rows: list[Any]) -> Any:
-    """Stack one argument's per-evaluation values along one leading axis.
-
-    Record values stack through ``RecordBatch.stack``, on one level ``draw``
-    over the rows, since a ``Record`` has fields rather than a shape. Nested
-    mappings of columns stack column by column. Array values stack with
-    ``jnp.stack``, and any other values form an object array.
-    """
-    if rows and isinstance(rows[0], Batch):
-        return _from_iterable(rows, kind="batch-valued input atoms")
-    if rows and isinstance(rows[0], Record):
-        return RecordBatch.stack(rows, level_name=DRAW_LEVEL)
-    if rows and isinstance(rows[0], Mapping) and not isinstance(rows[0], TrackedTerm):
-        # The raw form of a batch of records: the nested mapping of its columns.
-        return jax.tree.map(lambda *columns: _stack_rows(list(columns)), *rows)
-    if all(_is_numeric_leaf(row) for row in rows):
-        return jnp.stack([jnp.asarray(row) for row in rows])
-    return _from_iterable(rows, kind="the draws of a lifted argument")
-
-
-def _index_sample(s: Any, i: int) -> Any:
-    """Row ``i`` of a per-argument sample batch, at the kind one draw is.
-
-    A record draw stays a record whatever its number of fields, an array draw
-    is an array, and the raw draw of a batch of records is the nested mapping
-    of its columns.
-    """
-    if isinstance(s, RecordBatch):
-        # The raw columns, so a field that is not an array reaches the body as
-        # the value it holds rather than as a view of its column.
-        return Record({p: s._raw_column(p)[i] for p in s.event_template}, label=s.label)
-    if isinstance(s, Record):
-        # Index each leaf field's batch row; rebuild by path key so a nested
-        # sample is reconstructed with its structure intact.
-        return Record({p: s._raw_at(p)[i] for p in s.event_template}, label=s.label)
-    if isinstance(s, Mapping) and not isinstance(s, TrackedTerm):
-        # The raw draws of a batch of records: the nested mapping of their columns.
-        return _row_at(s, i)
-    return s[i]
-
-
 def batch_events(stochastic_plan: _plan.StochasticPlan) -> dict[FunctionInputRef, BatchSpec]:
     """The event of each lifted argument whose parameter receives a batch-valued draw as a batch."""
     events: dict[FunctionInputRef, BatchSpec] = {}
@@ -1218,70 +879,115 @@ def batch_events(stochastic_plan: _plan.StochasticPlan) -> dict[FunctionInputRef
     return events
 
 
+def record_events(stochastic_plan: _plan.StochasticPlan) -> dict[FunctionInputRef, RecordSpec]:
+    """The event of each lifted argument whose draws are records."""
+    events: dict[FunctionInputRef, RecordSpec] = {}
+    for group in stochastic_plan.source_groups:
+        binding = stochastic_plan.runtime_bindings[group.index]
+        for consumer, event in zip(group.consumers, binding.consumer_events, strict=True):
+            if isinstance(event, RecordSpec):
+                events[consumer.arg_ref] = event
+    return events
+
+
+def lifted_row_form(
+    draws: Any, ref: FunctionInputRef, record_draws: Mapping[FunctionInputRef, RecordSpec]
+) -> Any:
+    """A lifted argument's draws, or one row of them, in the form the body of one draw receives.
+
+    The draws of a record argument are given as the nested mapping of their
+    raw columns, which ``jax.vmap`` and the row of every other executor cut
+    into the raw fields of one draw; the body rebuilds the record (see
+    :func:`mapped_draw_body`). A record held whole across the map would keep
+    the spec of every draw at once. Any other draws are returned as they are.
+    """
+    if ref not in record_draws:
+        return draws
+    if isinstance(draws, Record):
+        return _unflatten_paths({path: draws._raw_at(path) for path in draws.event_template})
+    return _raw_record(draws)
+
+
 def mapped_draw_body(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
     broadcast_args: Sequence[FunctionInputRef],
     batch_events: Mapping[FunctionInputRef, BatchSpec] | None = None,
-) -> Callable[[Any], Any]:
-    """The body ``jax.vmap`` runs for one draw, and the probe traces.
+    record_events: Mapping[FunctionInputRef, RecordSpec] | None = None,
+) -> Callable[..., Any]:
+    """The body of one evaluation point of a lift, which every executor runs and the probe traces.
 
-    Shared so the probe traces exactly what the executor runs, which two
-    separately maintained functions cannot promise. Mapping a batch of records
-    yields a record per draw, which the body receives as the row-wise paths
-    present it.
-
-    Each argument in *batch_events* arrives as the raw row of a batch-valued
-    draw, and the body rebuilds it as the batch its event declares, labeled by
-    the argument, as the row-wise paths build it. A function that returns a
-    numeric batch returns it as a :class:`_MappedBatchStore` or a
-    :class:`_MappedBatchColumns`, whose leaves the map stacks with the draw
-    axis first, and the lift's result keeps the batch's levels after the atom
-    level.
+    One body serves the lift under every executor, and the probe maps it, so
+    the probe traces exactly what ``jax`` maps. The body receives one row of
+    each lifted argument's draws, in the form :func:`lifted_row_form` gives:
+    the raw fields of one draw of a law over records, which the body rebuilds
+    as a record labeled by the argument, and the raw row of a batch-valued
+    draw, which the body rebuilds as the batch its event declares, labeled by
+    the argument. Under ``jax.vmap``, a function that returns a numeric batch
+    returns it as a :class:`_MappedBatchStore` or a
+    :class:`_MappedBatchColumns`, whose leaves stack with the draw axis first,
+    and the lift's result keeps the batch's levels after the atom level; a
+    draw evaluated alone returns its result as it is.
 
     Parameters
     ----------
     func : callable
-        The function the map evaluates at each draw.
+        The function the lift evaluates at each draw.
     values : dict of str to Any
         The call's resolved arguments, whose lifted entries each draw replaces.
     broadcast_args : sequence of FunctionInputRef
-        The references to the lifted arguments, in the order of the slice the
+        The references to the lifted arguments, in the order of the rows the
         body receives.
     batch_events : mapping of FunctionInputRef to BatchSpec, optional
         The event of each lifted argument whose parameter receives a
         batch-valued draw as a batch, as :func:`batch_events` gives them.
+    record_events : mapping of FunctionInputRef to RecordSpec, optional
+        The event of each lifted argument whose draws are records, as
+        :func:`record_events` gives them.
 
     Returns
     -------
     callable
-        The body of one draw, which takes the tuple of the lifted arguments'
-        rows and raises :class:`UnmappedBatchError` if the function returns a
-        record that holds a batch, whose rows the map cannot stack.
+        ``one_draw(lifted_rows)``, the result at the draw whose rows of the
+        lifted arguments are *lifted_rows*. Under ``jax.vmap`` it raises
+        :class:`UnmappedBatchError` if the function returns a record that
+        holds a batch, whose rows the map cannot stack.
     """
     events = dict(batch_events or {})
+    record_draws = dict(record_events or {})
 
-    def one_draw(broadcast_slice):
+    def argument_at_draw(ref: FunctionInputRef, row: Any) -> Any:
+        if ref in events:
+            return _batch_at(row, events[ref], ref.label)
+        if ref in record_draws:
+            return Record(row, label=ref.label)
+        return row
+
+    def one_draw(lifted_rows: tuple[Any, ...]) -> Any:
         replacements = {
-            ref: row if ref not in events else _batch_at(row, events[ref], ref.label)
-            for ref, row in zip(broadcast_args, broadcast_slice, strict=True)
+            ref: argument_at_draw(ref, row)
+            for ref, row in zip(broadcast_args, lifted_rows, strict=True)
         }
-        out = func(**replace_input_refs(values, replacements))
-        if isinstance(out, RecordBatch):
-            return _MappedBatchColumns.of(out)
-        if isinstance(out, NumericArrayBatch):
-            return _MappedBatchStore.of(out)
-        if isinstance(out, Record):
-            held = batch_field(out.spec)
+        draw_output = func(**replace_input_refs(values, replacements))
+        if not _holds_tracer(lifted_rows):
+            # One draw evaluated alone returns its result as it is, which the
+            # aggregate stacks with the other draws' results.
+            return draw_output
+        if isinstance(draw_output, RecordBatch):
+            return _MappedBatchColumns.of(draw_output)
+        if isinstance(draw_output, NumericArrayBatch):
+            return _MappedBatchStore.of(draw_output)
+        if isinstance(draw_output, Record):
+            held = batch_field(draw_output.spec)
             if held is not None:
                 path, levels = held
                 raise UnmappedBatchError(
-                    f"dispatch='jax' cannot stack a returned record whose field {path!r} is a "
-                    f"batch on the levels {list(levels)}. Return the batch alone, or use "
-                    f"dispatch='auto', 'sequential', or 'thread'."
+                    f"jax.vmap cannot stack a returned record whose field {path!r} is a batch on "
+                    f"the levels {list(levels)}. Return the batch alone, or claim "
+                    "traceable=False so the function runs one draw at a time"
                 )
-        return out
+        return draw_output
 
     return one_draw
 
@@ -1294,15 +1000,16 @@ def batch_field(spec: Any, prefix: str = "") -> tuple[str, tuple[str, ...]] | No
         path = f"{prefix}{name}"
         if isinstance(child, BatchSpec):
             return path, tuple(child.level_names)
-        held = batch_field(child, f"{path}/")
+        held = batch_field(child, f"{path}{_PATH_SEP}")
         if held is not None:
             return held
     return None
 
 
 class UnmappedBatchError(ValueError):
-    """A batch that the mapped dispatch cannot carry through ``jax.vmap``.
+    """A batch that a lift cannot carry through ``jax.vmap``.
 
-    ``dispatch='jax'`` raises its message as it stands, in place of the generic
-    tracing failure, and ``dispatch='auto'`` falls back to the row-wise dispatch.
+    The probe records it as the reason JAX cannot trace the lift, so the lift
+    runs one draw at a time, and an executor ``jax`` named for the function
+    gives its message.
     """

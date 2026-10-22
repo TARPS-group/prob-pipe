@@ -1193,7 +1193,7 @@ def test_composition_derives_the_factored_gaussian_of_a_linear_gaussian_observat
     observation = LinearGaussianConditional(
         "y", DenseLinOp(jnp.array([[1.0, 0.0], [1.0, 1.0]])), jnp.zeros(2), DenseLinOp(jnp.eye(2))
     )
-    assert isinstance(observation * prior, FactoredMultivariateGaussian)
+    assert isinstance((observation & prior), FactoredMultivariateGaussian)
 
 
 @pytest.mark.pending(
@@ -1205,13 +1205,13 @@ def test_conditioning_a_linear_gaussian_joint_on_its_observation_is_exact():
     observation = LinearGaussianConditional(
         "y", DenseLinOp(jnp.eye(2)), jnp.zeros(2), DenseLinOp(jnp.eye(2))
     )
-    posterior = (observation * prior)._condition_on({"y": jnp.array([1.0, -1.0])})
+    posterior = (observation & prior)._condition_on({"y": jnp.array([1.0, -1.0])})
     np.testing.assert_allclose(np.asarray(posterior._mean()["beta"]), [0.5, -0.5], rtol=1e-6)
 
 
 def _gaussian_joint() -> FactoredMultivariateGaussian:
     """``a ~ N(1, 2²)`` and ``b ~ N((0, 3), diag(1, 4))``, independent."""
-    return Normal("a", 1.0, 2.0) * MultivariateNormal(
+    return Normal("a", 1.0, 2.0) & MultivariateNormal(
         "b", jnp.array([0.0, 3.0]), cov=jnp.diag(jnp.array([1.0, 4.0]))
     )
 
@@ -1237,7 +1237,7 @@ class TestTheFactoredGaussian:
         from probpipe import Gamma
         from probpipe.distributions import FactoredDistribution
 
-        joint = Normal("a", 0.0, 1.0) * Gamma("g", 2.0, 1.0)
+        joint = Normal("a", 0.0, 1.0) & Gamma("g", 2.0, 1.0)
         assert isinstance(joint, FactoredDistribution)
         assert not isinstance(joint, FactoredMultivariateGaussian)
 
@@ -1321,19 +1321,17 @@ class TestTheFactoredGaussian:
         )
 
     def test_a_rebuilt_joint_stays_the_factored_gaussian(self):
-        symbolic = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        symbolic = Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)
         assert isinstance(symbolic.with_dim_names(n="m"), FactoredMultivariateGaussian)
-        assert isinstance(symbolic.with_path_names(a="c"), FactoredMultivariateGaussian)
+        assert isinstance(symbolic.rename(a="c"), FactoredMultivariateGaussian)
 
     def test_a_regrouped_joint_stays_the_factored_gaussian(self):
         """A rename that gathers outputs packages their factors as one Gaussian
         factor, so the joint keeps its class, its covariance, and its density."""
-        joint = (
-            Normal("a", 0.0, 1.0)
-            * Normal("b", 0.0, 2.0)
-            * MultivariateNormal("c", jnp.zeros(2), cov=jnp.eye(2))
+        joint = (Normal("a", 0.0, 1.0) & Normal("b", 0.0, 2.0)) & MultivariateNormal(
+            "c", jnp.zeros(2), cov=jnp.eye(2)
         )
-        regrouped = joint.with_path_names({"a": "g/a", "b": "g/b"})
+        regrouped = joint.rename({"a": "g/a", "b": "g/b"})
         assert isinstance(regrouped, FactoredMultivariateGaussian)
         assert isinstance(regrouped.factors[0], FactoredMultivariateGaussian)
         assert tuple(regrouped.event_spec.outputs) == ("g", "c")
@@ -1343,12 +1341,10 @@ class TestTheFactoredGaussian:
         np.testing.assert_allclose(regrouped._log_prob(value), joint._log_prob(flat), rtol=1e-6)
 
     def test_conditioning_a_regrouped_joint_on_an_output_is_exact(self):
-        joint = (
-            Normal("a", 0.0, 1.0)
-            * Normal("b", 0.0, 2.0)
-            * MultivariateNormal("c", jnp.zeros(2), cov=jnp.eye(2))
+        joint = (Normal("a", 0.0, 1.0) & Normal("b", 0.0, 2.0)) & MultivariateNormal(
+            "c", jnp.zeros(2), cov=jnp.eye(2)
         )
-        regrouped = joint.with_path_names({"a": "g/a", "b": "g/b"})
+        regrouped = joint.rename({"a": "g/a", "b": "g/b"})
         report = condition_on.check(regrouped, {"c": jnp.ones(2)})
         assert report.exact is True
         law = condition_on(regrouped, {"c": jnp.ones(2)})
@@ -1356,7 +1352,7 @@ class TestTheFactoredGaussian:
         assert tuple(law.event_spec.outputs) == ("g",)
 
     def test_a_group_with_a_factor_of_another_family_is_a_plain_joint(self):
-        joint = Normal("a", 0.0, 1.0) * Gamma("s", 2.0, 1.0) * Normal("c", 0.0, 1.0)
-        regrouped = joint.with_path_names({"a": "g/a", "s": "g/s"})
+        joint = (Normal("a", 0.0, 1.0) & Gamma("s", 2.0, 1.0)) & Normal("c", 0.0, 1.0)
+        regrouped = joint.rename({"a": "g/a", "s": "g/s"})
         assert not isinstance(regrouped, FactoredMultivariateGaussian)
         assert not isinstance(regrouped.factors[0], FactoredMultivariateGaussian)

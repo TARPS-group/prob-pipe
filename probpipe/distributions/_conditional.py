@@ -17,18 +17,22 @@ import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, NoReturn, Self
 
 import jax
 import jax.numpy as jnp
 
 from .._messages import label_given_first, unknown_names
+from ..core._compilation import _contains_embedded_calls
 from ..core._dispatch import Feasibility
+from ..core._execution_claims import Traceability, probe, spec_stand_in
 from ..core._expression import ELLIPSIS, Signature
+from ..core._immutable import transient_memo
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_default, format_names, public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
-from ..core._specs import InputSpec, OutputSpec, _has_record_outputs
+from ..core._specs import InputSpec, OutputSpec, _has_record_outputs, _inputs_with_defaults
+from ..core.named_tree import _PATH_SEP
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import Annotated, TrackedTerm, _TrackedTermMeta
@@ -51,15 +55,18 @@ from ._distribution import (
     _cached_raw,
     _check_marker_claims,
     _complete_event_spec,
-    _compose_operands,
     _constructor_label,
     _detached_term,
     _event_repr_parts,
     _given_label,
     _law_repr,
+    _merge_operands,
     _no_free_dims,
     _record_default_expression,
+    _refuse_distribution_multiplication,
+    _refuse_distribution_truth_value,
     _unify_declarations,
+    _value_at_declared_kind,
 )
 
 if TYPE_CHECKING:
@@ -85,36 +92,45 @@ def _complete_given_spec(given_spec: Any) -> InputSpec:
 
     Parameters
     ----------
-    given_spec : InputSpec or Mapping[str, TermSpec]
+    given_spec : InputSpec, Mapping, RecordSpec, or OutputSpec
         The term spec of each input's value, keyed by input name.
 
     Returns
     -------
     InputSpec
         *given_spec* itself when it is an ``InputSpec``, and an ``InputSpec`` built
-        from the mapping otherwise.
+        from the source's top-level fields or outputs otherwise.
 
     Raises
     ------
     TypeError
-        If *given_spec* is not a mapping of term specs.
+        If *given_spec* is unsupported, has an unspecified output type, or
+        contains an input type other than a term spec or a tuple shape.
     ValueError
         If it has no inputs, since binding the last input returns a
         ``Distribution``, or an input name is not an identifier.
     """
-    if not isinstance(given_spec, InputSpec):
-        if not isinstance(given_spec, Mapping):
-            raise TypeError(
-                f"given_spec must be an InputSpec or a mapping of term specs, got "
-                f"{type(given_spec).__name__}"
-            )
-        given_spec = InputSpec(given_spec)
+    given_spec = _read_given_inputs(given_spec)
     if not len(given_spec):
         raise ValueError(
             "given_spec is empty, but a ConditionalDistribution needs at least one input; "
             "use a Distribution for a law with no inputs"
         )
     return given_spec
+
+
+def _read_given_inputs(given_spec: Any) -> InputSpec:
+    """Read the supported input sources with the kernel's source diagnostics."""
+    if isinstance(given_spec, (Distribution, DistributionSpec)):
+        kind = "Distribution" if isinstance(given_spec, Distribution) else "DistributionSpec"
+        raise TypeError(
+            f"given_spec cannot be a {kind}. "
+            "Pass its event_spec to declare the inputs its outputs supply"
+        )
+    try:
+        return given_spec if isinstance(given_spec, InputSpec) else InputSpec(given_spec)
+    except TypeError as error:
+        raise TypeError(f"given_spec: {error}") from None
 
 
 def _unknown_inputs(label: str, unknown: list[str], inputs: Iterable[str]) -> str:
@@ -146,8 +162,6 @@ def _given_is_numeric(given_spec: InputSpec) -> bool:
 # ---------------------------------------------------------------------------
 # Renaming the given side
 # ---------------------------------------------------------------------------
-
-_PATH_SEP = "/"
 
 
 def _given_leaf_specs(given_spec: InputSpec) -> dict[str, TermSpec]:
@@ -207,21 +221,18 @@ def _moved_inputs(
     }
     for old, new in moves.items():
         if old not in nodes:
-            raise KeyError(
-                f"with_path_names(): {unknown_names('input path', [old], sorted(nodes))}"
-            )
+            raise KeyError(f"rename(): {unknown_names('input path', [old], sorted(nodes))}")
         if not isinstance(new, str):
             raise ValueError(
-                f"with_path_names(): the new path of {old!r} must be a string; got "
-                f"{type(new).__name__}"
+                f"rename(): the new path of {old!r} must be a string; got {type(new).__name__}"
             )
         if not new or not all(new.split(_PATH_SEP)):
             raise ValueError(
-                f"with_path_names(): invalid new path {new!r} for {old!r}; each part between "
-                f"'/' must be non-empty"
+                f"rename(): invalid new path {new!r} for {old!r}; each part between "
+                f"{_PATH_SEP!r} must be non-empty"
             )
         if new.startswith(old + _PATH_SEP):
-            raise ValueError(f"with_path_names(): cannot move {old!r} inside itself, to {new!r}")
+            raise ValueError(f"rename(): cannot move {old!r} inside itself, to {new!r}")
     targets = list(moves.values())
     for first, target in enumerate(targets):
         for other in targets[first + 1 :]:
@@ -230,9 +241,7 @@ def _moved_inputs(
                 or other.startswith(target + _PATH_SEP)
                 or target.startswith(other + _PATH_SEP)
             ):
-                raise ValueError(
-                    f"with_path_names(): the new paths {target!r} and {other!r} overlap"
-                )
+                raise ValueError(f"rename(): the new paths {target!r} and {other!r} overlap")
 
     def parent(path: str) -> str:
         return path.rpartition(_PATH_SEP)[0]
@@ -259,11 +268,10 @@ def _moved_inputs(
             node = node.setdefault(group, {})
             if not isinstance(node, dict):
                 raise ValueError(
-                    f"with_path_names(): cannot move to {target!r} because {group!r} is a "
-                    f"field, not a group"
+                    f"rename(): cannot move to {target!r} because {group!r} is a field, not a group"
                 )
         if name in node:
-            raise ValueError(f"with_path_names(): two input paths would be at {target!r}")
+            raise ValueError(f"rename(): two input paths would be at {target!r}")
         node[name] = leaves[path]
         origins[target] = path
 
@@ -285,12 +293,12 @@ def _moved_inputs(
     return moved_spec.with_optional(*optional), origins
 
 
-#: The kernel that ``with_path_names`` returns, installed by the views module at import.
+#: The kernel that ``rename`` returns, installed by the views module at import.
 _renamed_kernel_factory: Callable[..., Any] | None = None
 
 
 def _install_renamed_kernel(factory: Callable[..., Any]) -> None:
-    """Install the factory of the kernel that renames at its boundary for ``with_path_names``.
+    """Install the factory of the kernel that renames at its boundary for ``rename``.
 
     Called once, by the views module at import, so this module never imports the
     module that imports it.
@@ -310,7 +318,7 @@ class ConditionalDistributionSpec(TermSpec):
 
     Parameters
     ----------
-    given_spec : InputSpec or Mapping[str, TermSpec]
+    given_spec : InputSpec, Mapping, RecordSpec, or OutputSpec
         The named inputs a kernel conditions on, at least one.
     event_spec : OutputSpec or RecordSpec
         The output spec of one produced draw, as for ``DistributionSpec``. A
@@ -336,7 +344,9 @@ class ConditionalDistributionSpec(TermSpec):
     event_spec: OutputSpec
 
     def __init__(
-        self, given_spec: InputSpec | Mapping[str, TermSpec], event_spec: OutputSpec | RecordSpec
+        self,
+        given_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec,
+        event_spec: OutputSpec | RecordSpec,
     ) -> None:
         if isinstance(event_spec, RecordSpec):
             event_spec = OutputSpec(event_spec)
@@ -395,7 +405,9 @@ class ConditionalDistributionSpec(TermSpec):
                 f"conditions on {sorted(given_spec)}"
             )
         for name, spec in self.given_spec.items():
-            _unify_specs(spec, given_spec[name], bindings, f"{path}/given/{name}")
+            _unify_specs(
+                spec, given_spec[name], bindings, f"{path}{_PATH_SEP}given{_PATH_SEP}{name}"
+            )
         _unify_declarations(self.event_spec, event_spec, bindings, path)
 
     def _bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
@@ -513,7 +525,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
 
     Parameters
     ----------
-    given_spec : InputSpec or Mapping[str, TermSpec]
+    given_spec : InputSpec, Mapping, RecordSpec, or OutputSpec
         The named inputs the kernel conditions on, at least one; the keys are
         Python identifiers.
     event_spec : OutputSpec or RecordSpec
@@ -555,7 +567,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
 
     def __init__(
         self,
-        given_spec: InputSpec | Mapping[str, TermSpec],
+        given_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec,
         event_spec: OutputSpec | TermSpec,
         *,
         label: str | None = None,
@@ -570,7 +582,9 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         self._init_declaration(given_spec, event_spec)
 
     def _init_declaration(
-        self, given_spec: InputSpec | Mapping[str, TermSpec], event_spec: OutputSpec | TermSpec
+        self,
+        given_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec,
+        event_spec: OutputSpec | TermSpec,
     ) -> None:
         """Complete the input spec and the event spec and store them as this kernel's spec.
 
@@ -607,6 +621,46 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     def spec(self) -> ConditionalDistributionSpec:
         """The kernel's term spec, the one stored source of its input and event specs."""
         return self._spec
+
+    def _traceability(self) -> Traceability:
+        """Whether JAX can trace this kernel's density, or its sampler when it has none (V.13).
+
+        It is traceable, embeddable, or host-only, and inference methods read it
+        instead of tracing the kernel.
+
+        The value is derived from the kernel's parts the first time it is read
+        and kept for the kernel's life: a family is traceable, the kernel of a
+        function takes the traceability of the law its function returned when
+        the kernel was built, a kernel built from other kernels or laws takes
+        the least permissive of theirs, and any other kernel is probed once, as
+        :meth:`_derived_traceability` states.
+
+        Returns
+        -------
+        Traceability
+            The kernel's traceability.
+        """
+        memo = transient_memo(self)
+        if "traceability" not in memo:
+            memo["traceability"] = self._derived_traceability()
+        return memo["traceability"]
+
+    def _derived_traceability(self) -> Traceability:
+        """The traceability of a kernel that states none: its density probed at one given value.
+
+        The density is traced at a stand-in of each required input and of
+        one value of the event, each dimension not yet bound of size one. A
+        kernel without a density probes its sampler at one key instead, and one
+        whose inputs or event have no stand-in is
+        host-only. A subclass whose methods are JAX code, or are built from
+        parts that state their traceability, overrides this.
+
+        Returns
+        -------
+        Traceability
+            ``TRACEABLE`` when the probe traced, and ``HOST_ONLY`` otherwise.
+        """
+        return _probed_kernel_traceability(self)
 
     @property
     def given_spec(self) -> InputSpec:
@@ -673,14 +727,14 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
             names,
         )
 
-    def with_path_names(
+    def rename(
         self, mapping: Mapping[str, str] | None = None, /, **kwargs: str
     ) -> ConditionalDistribution:
         """Rename or move inputs and event paths, ``old -> new``.
 
         A key that starts with an input's name addresses the given side, and
         one that starts with an output's name the event side, which behaves as
-        :meth:`Distribution.with_path_names`. On the given side a target is the
+        :meth:`Distribution.rename`. On the given side a target is the
         node's new exact path, so it may split or group inputs, since a kernel has
         no signature that fixes its top level: ``{"a": "theta/a"}`` moves the
         input ``a`` into a structured input ``theta``, and ``{"theta/a": "a"}``
@@ -718,10 +772,10 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         for source in (mapping or {}), kwargs:
             for old, new in source.items():
                 if old in pairs:
-                    raise ValueError(f"with_path_names(): {old!r} is renamed more than once")
+                    raise ValueError(f"rename(): {old!r} is renamed more than once")
                 pairs[old] = new
         if not pairs:
-            raise ValueError("with_path_names() requires at least one rename")
+            raise ValueError("rename() requires at least one rename")
         moves: dict[str, str] = {}
         renames: dict[str, str] = {}
         for old, new in pairs.items():
@@ -732,12 +786,12 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
                 renames[old] = new
             else:
                 raise KeyError(
-                    f"with_path_names(): {old!r} is neither an input nor a field of "
+                    f"rename(): {old!r} is neither an input nor a field of "
                     f"{self.label!r}; inputs: {list(self.given_spec)}, fields: "
                     f"{list(self.event_spec.outputs)}"
                 )
         given_spec, origins = _moved_inputs(self.given_spec, moves)
-        event_spec = self.event_spec.with_path_names(renames) if renames else self.event_spec
+        event_spec = self.event_spec.rename(renames) if renames else self.event_spec
         _check_disjoint_sides(given_spec, event_spec, repr(self.label))
         if _renamed_kernel_factory is None:
             raise RuntimeError("the renamed kernel is not installed; import probpipe")
@@ -786,19 +840,49 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
             kernel over the remaining inputs.
         """
 
-    # -- composition ------------------------------------------------------------
+    def __mul__(self, other: object) -> Any:
+        """Refuse ``*`` between distributions. Use ``&`` to merge them.
 
-    def __mul__(
+        Parameters
+        ----------
+        other : object
+            The right operand.
+
+        Returns
+        -------
+        Any
+            ``NotImplemented`` for an operand of another kind.
+
+        Raises
+        ------
+        TypeError
+            If *other* is a distribution or a conditional distribution.
+        """
+        return _refuse_distribution_multiplication(other)
+
+    def __bool__(self) -> NoReturn:
+        """Refuse a truth value, so ``a and b`` raises. Use ``a & b`` to merge.
+
+        Raises
+        ------
+        TypeError
+            Always: a distribution has no truth value.
+        """
+        _refuse_distribution_truth_value()
+
+    # -- merge ------------------------------------------------------------
+
+    def __and__(
         self, other: Distribution | ConditionalDistribution
     ) -> FactoredConditionalDistribution | Distribution:
-        """The joint of this kernel and *other*, composed conditional-first.
+        """The joint of this kernel and *other*, merged conditional-first.
 
         This kernel may condition on what *other* produces. The result is a
         ``FactoredDistribution`` when *other* meets every input, and a
         ``FactoredConditionalDistribution`` over the unmet inputs otherwise;
-        see :meth:`Distribution.__mul__`.
+        see :meth:`Distribution.__and__`.
         """
-        return _compose_operands(self, other)
+        return _merge_operands(self, other)
 
     # -- notation ---------------------------------------------------------------
 
@@ -941,7 +1025,7 @@ _DERIVED_TWINS: tuple[tuple[type, type, str], ...] = (
 )
 
 
-def _probed_guard(method: str, condition: str) -> Callable[..., Feasibility]:
+def _returned_law_guard(method: str, condition: str) -> Callable[..., Feasibility]:
     """The guard of a derived twin: the report of the law's guard of *method*.
 
     The report is the one the law the function returned at construction gave,
@@ -973,44 +1057,24 @@ def _kernel_unnormalized_log_prob(self: Any, given: Any, value: Any) -> Any:
 _FUNCTION_KERNEL_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
     SupportsConditionalSampling: {
         "_conditional_sample": _kernel_sample,
-        "_conditional_sample_guard": _probed_guard(
+        "_conditional_sample_guard": _returned_law_guard(
             "_sample", "The law the function returns admits the draw, as its guard reports."
         ),
     },
     SupportsConditionalLogProb: {
         "_conditional_log_prob": _kernel_log_prob,
-        "_conditional_log_prob_guard": _probed_guard(
+        "_conditional_log_prob_guard": _returned_law_guard(
             "_log_prob", "The law the function returns admits the density, as its guard reports."
         ),
     },
     SupportsConditionalUnnormalizedLogProb: {
         "_conditional_unnormalized_log_prob": _kernel_unnormalized_log_prob,
-        "_conditional_unnormalized_log_prob_guard": _probed_guard(
+        "_conditional_unnormalized_log_prob_guard": _returned_law_guard(
             "_unnormalized_log_prob",
             "The law the function returns admits the unnormalized density, as its guard reports.",
         ),
     },
 }
-
-
-def _argument(spec: TermSpec, input_name: str, value: Any) -> Any:
-    """*value* at the kind its input *spec* declares, as the function receives it.
-
-    A record input's value is a ``Record`` and an array input's an array, as a
-    function's body receives a draw; a value of another kind is passed as it is.
-    """
-    if isinstance(spec, RecordSpec):
-        return (
-            value
-            if isinstance(value, Record)
-            else Record(
-                value,
-                label=input_name,
-            )
-        )
-    if isinstance(spec, NumericArraySpec):
-        return jnp.asarray(value)
-    return value
 
 
 def _declared_law(law: Any, event_spec: OutputSpec, label: str) -> Distribution:
@@ -1075,6 +1139,9 @@ class _FunctionKernel(ConditionalDistribution):
     guards : Mapping[str, Feasibility]
         The report of the law's guard of each capability it claims, keyed by
         the capability's method.
+    traceability : Traceability
+        The traceability of the law *fn* returned at construction, which the
+        kernel takes as its own.
     """
 
     _capability_table: ClassVar = _FUNCTION_KERNEL_CAPABILITIES
@@ -1087,6 +1154,7 @@ class _FunctionKernel(ConditionalDistribution):
         given_spec: InputSpec,
         event_spec: OutputSpec,
         guards: Mapping[str, Feasibility],
+        traceability: Traceability,
     ) -> _FunctionKernel:
         claimed = [twin for _, twin, method in _DERIVED_TWINS if method in guards]
         return object.__new__(_capability_subclass(_FunctionKernel, claimed))
@@ -1098,6 +1166,7 @@ class _FunctionKernel(ConditionalDistribution):
         given_spec: InputSpec,
         event_spec: OutputSpec,
         guards: Mapping[str, Feasibility],
+        traceability: Traceability,
     ) -> None:
         super().__init__(
             given_spec,
@@ -1105,9 +1174,14 @@ class _FunctionKernel(ConditionalDistribution):
             label=label,
         )
         object.__setattr__(self, "_fn", fn)
+        object.__setattr__(self, "_traceability_at_construction", traceability)
         object.__setattr__(self, "_inputs", given_spec)
         object.__setattr__(self, "_bound", {})
         object.__setattr__(self, "_guards", dict(guards))
+
+    def _derived_traceability(self) -> Traceability:
+        """The traceability of the law the function returned when the kernel was built."""
+        return self._traceability_at_construction
 
     def _given_defaults(self) -> Mapping[str, Any]:
         """The defaults of the function's parameters, which its optional inputs take."""
@@ -1162,7 +1236,7 @@ class _FunctionKernel(ConditionalDistribution):
         rest = self._shallow_copy()
         object.__setattr__(rest, "_provenance", None)
         object.__setattr__(rest, "_bound", {**self._bound, **self._arguments(values)})
-        left = self.given_spec.without(*values)
+        left = self.given_spec.without(*(name for name in values if name in self.given_spec))
         object.__setattr__(rest, "_spec", ConditionalDistributionSpec(left, self.event_spec))
         return rest
 
@@ -1200,7 +1274,7 @@ class _FunctionKernel(ConditionalDistribution):
     def _arguments(self, values: Mapping[str, Any]) -> dict[str, Any]:
         """*values* at the kinds their inputs declare, as the function receives them."""
         return {
-            input_name: _argument(self._inputs[input_name], input_name, value)
+            input_name: _value_at_declared_kind(self._inputs[input_name], input_name, value)
             for input_name, value in values.items()
         }
 
@@ -1240,7 +1314,7 @@ class _FunctionKernel(ConditionalDistribution):
 
 
 @dataclass(frozen=True)
-class _Probe:
+class _AbstractEvaluation:
     """What the law a function returns at stand-ins of its inputs declares and claims.
 
     Attributes
@@ -1251,10 +1325,14 @@ class _Probe:
     guards : Mapping[str, Feasibility]
         The report of the law's guard of each derived capability it claims,
         keyed by the capability's method.
+    traceability : Traceability
+        The law's traceability, which the kernel takes as its own, since the
+        function traced to return it.
     """
 
     event_spec: OutputSpec
     guards: Mapping[str, Feasibility]
+    traceability: Traceability
 
 
 def _stand_in(spec: TermSpec, path: str, label: str) -> Any:
@@ -1294,7 +1372,8 @@ def _stand_in(spec: TermSpec, path: str, label: str) -> Any:
         return jax.ShapeDtypeStruct(tuple(spec.shape), dtype)
     if isinstance(spec, RecordSpec):
         return {
-            key: _stand_in(child, f"{path}/{key}", label) for key, child in spec.children.items()
+            key: _stand_in(child, f"{path}{_PATH_SEP}{key}", label)
+            for key, child in spec.children.items()
         }
     raise TypeError(
         f"input {path!r} of {label!r} must be declared as an array or a record of arrays; "
@@ -1317,7 +1396,9 @@ def _value_free(spec: TermSpec) -> TermSpec:
     return spec
 
 
-def _probe(label: str, fn: Callable[..., Distribution], inputs: InputSpec) -> _Probe:
+def _evaluate_abstractly(
+    label: str, fn: Callable[..., Distribution], inputs: InputSpec
+) -> _AbstractEvaluation:
     """The event spec and the guards of the law *fn* returns, evaluated abstractly.
 
     *fn* runs once under ``jax.eval_shape``, with a traced stand-in of each
@@ -1336,7 +1417,7 @@ def _probe(label: str, fn: Callable[..., Distribution], inputs: InputSpec) -> _P
 
     Returns
     -------
-    _Probe
+    _AbstractEvaluation
         The event spec of the returned law, and the report of the guard of
         each derived capability it claims.
 
@@ -1355,7 +1436,7 @@ def _probe(label: str, fn: Callable[..., Distribution], inputs: InputSpec) -> _P
     def evaluate(values: Mapping[str, Any]) -> Any:
         law = fn(
             **{
-                input_name: _argument(inputs[input_name], input_name, value)
+                input_name: _value_at_declared_kind(inputs[input_name], input_name, value)
                 for input_name, value in values.items()
             }
         )
@@ -1364,6 +1445,7 @@ def _probe(label: str, fn: Callable[..., Distribution], inputs: InputSpec) -> _P
                 f"the function of {label!r} must return a Distribution; got {type(law).__name__}"
             )
         found["event_spec"] = law.event_spec
+        found["traceability"] = law._traceability()
         found["guards"] = {
             method: _capability_guard(law, method)
             for capability, _, method in _DERIVED_TWINS
@@ -1371,13 +1453,27 @@ def _probe(label: str, fn: Callable[..., Distribution], inputs: InputSpec) -> _P
         }
         return jnp.zeros(())
 
-    jax.eval_shape(evaluate, stand_ins)
+    try:
+        traced = jax.make_jaxpr(evaluate)(stand_ins)
+    except jax.errors.TracerArrayConversionError as error:
+        raise TypeError(
+            f"the function of {label!r} converts a traced given to NumPy, so it cannot be traced. "
+            "Wrap the code that is not JAX in @function(traceable=False, output_spec=...)"
+        ) from error
     declaration = found["event_spec"]
-    return _Probe(declaration._with_term_spec(_value_free(declaration.term_spec)), found["guards"])
+    return _AbstractEvaluation(
+        declaration._with_term_spec(_value_free(declaration.term_spec)),
+        found["guards"],
+        Traceability.least_permissive(found["traceability"], Traceability.EMBEDDABLE)
+        if _contains_embedded_calls(traced, validate_tokens=False)
+        else found["traceability"],
+    )
 
 
 def _inputs_of(
-    label: str, fn: Callable[..., Any], given_spec: InputSpec | Mapping[str, TermSpec] | None
+    label: str,
+    fn: Callable[..., Any],
+    given_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec | None,
 ) -> InputSpec:
     """The inputs of the kernel of *fn*, one per parameter.
 
@@ -1392,7 +1488,7 @@ def _inputs_of(
         The kernel's label, which error messages name.
     fn : callable
         The function whose parameters are the inputs.
-    given_spec : InputSpec or Mapping[str, TermSpec] or None
+    given_spec : InputSpec, Mapping, RecordSpec, or OutputSpec or None
         The specs of some or all parameters, keyed by parameter name. ``None``
         declares every input by its annotation or its default.
 
@@ -1409,17 +1505,33 @@ def _inputs_of(
         variadic or positional-only, or a parameter without a default is
         declared by neither.
     """
-    declared = dict((given_spec or {}).items())
+    declared_spec = _read_given_inputs(given_spec)
+    declared = dict(declared_spec.items())
     try:
         signature = inspect.signature(fn, eval_str=True)
     except NameError:
         signature = inspect.signature(fn)
     unknown = sorted(set(declared) - set(signature.parameters))
     if unknown:
+        parameter_names = list(signature.parameters)
+        declared_names = list(declared)
+        if (
+            isinstance(given_spec, OutputSpec)
+            and isinstance(given_spec.term_spec, RecordSpec)
+            and len(parameter_names) == 1
+            and parameter_names[0] not in declared
+        ):
+            group = parameter_names[0]
+            raise TypeError(
+                f"given_spec declares the fields {' and '.join(declared_names)} of the group {group}, "
+                f"but {label} takes {group} itself. Pass event_spec[[{group!r}]]"
+            )
         raise TypeError(
-            f"given_spec of {label!r}: "
-            f"{unknown_names('parameter', unknown, list(signature.parameters))}"
+            f"given_spec declares {' and '.join(unknown)}, but {label} takes only "
+            f"{' and '.join(parameter_names)}. Pass event_spec.without({', '.join(map(repr, unknown))}) "
+            f"or event_spec[{parameter_names!r}]"
         )
+    _inputs_with_defaults(declared_spec, signature.parameters, function_name=label)
     inputs: dict[str, TermSpec] = {}
     optional: list[str] = []
     for parameter in signature.parameters.values():
@@ -1499,7 +1611,7 @@ def _agreed_event_spec(label: str, declared: OutputSpec | TermSpec, law: OutputS
 def _function_kernel(
     label: str | None,
     fn: Any,
-    given_spec: InputSpec | Mapping[str, TermSpec] | None,
+    given_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec | None,
     event_spec: OutputSpec | TermSpec | None,
 ) -> ConditionalDistribution:
     """The kernel of *fn*, labeled *label* or after the function.
@@ -1511,7 +1623,7 @@ def _function_kernel(
         ``ℙ`` for a lambda or a callable without a name.
     fn : callable
         The function of the given values that returns a law.
-    given_spec : InputSpec or Mapping[str, TermSpec] or None
+    given_spec : InputSpec, Mapping, RecordSpec, or OutputSpec or None
         The specs of some or all inputs, keyed by parameter name, which
         :func:`_inputs_of` completes.
     event_spec : OutputSpec or TermSpec or None
@@ -1527,7 +1639,7 @@ def _function_kernel(
     Raises
     ------
     TypeError
-        If *fn* is not callable, or as :func:`_inputs_of` and :func:`_probe` raise.
+        If *fn* is not callable, or as :func:`_inputs_of` and :func:`_evaluate_abstractly` raise.
     ValueError
         As :func:`_agreed_event_spec` raises.
     """
@@ -1537,13 +1649,20 @@ def _function_kernel(
         name = getattr(fn, "__name__", None)
         label = name if isinstance(name, str) and name.isidentifier() else DEFAULT_LABEL
     inputs = _inputs_of(label, fn, given_spec)
-    probe = _probe(label, fn, inputs)
+    abstract_evaluation = _evaluate_abstractly(label, fn, inputs)
     declaration = (
-        probe.event_spec
+        abstract_evaluation.event_spec
         if event_spec is None
-        else _agreed_event_spec(label, event_spec, probe.event_spec)
+        else _agreed_event_spec(label, event_spec, abstract_evaluation.event_spec)
     )
-    return _FunctionKernel(label, fn, inputs, declaration, probe.guards)
+    return _FunctionKernel(
+        label,
+        fn,
+        inputs,
+        declaration,
+        abstract_evaluation.guards,
+        abstract_evaluation.traceability,
+    )
 
 
 def conditional_distribution(
@@ -1551,7 +1670,7 @@ def conditional_distribution(
     /,
     *,
     label: str | None = None,
-    given_spec: InputSpec | Mapping[str, TermSpec] | None = None,
+    given_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec | None = None,
     event_spec: OutputSpec | TermSpec | None = None,
 ) -> Any:
     """Build a ``ConditionalDistribution`` from a function of its given values that returns a law.
@@ -1586,8 +1705,8 @@ def conditional_distribution(
             label="counts",
             given_spec={"r": real},
         )
-        fixed = counts * Normal("r", 0.0, 1.0)                           # n0 is 50
-        uncertain = counts * (Normal("r", 0.0, 1.0) * LogNormal("n0", 4.0, 0.3))
+        fixed = counts & Normal("r", 0.0, 1.0)                           # n0 is 50
+        uncertain = counts & (Normal("r", 0.0, 1.0) & LogNormal("n0", 4.0, 0.3))
 
     and the decorator form labels the kernel after the function, or as given::
 
@@ -1603,7 +1722,7 @@ def conditional_distribution(
     label : str, optional
         The kernel's label. Defaults to the function's ``__name__``, and to
         ``ℙ`` for a lambda or a callable without a name.
-    given_spec : InputSpec or Mapping[str, TermSpec], optional
+    given_spec : InputSpec, Mapping, RecordSpec, or OutputSpec, optional
         The specs of some or all inputs, keyed by parameter.
     event_spec : OutputSpec or TermSpec, optional
         The event spec, which must name the outputs of the returned
@@ -1650,3 +1769,47 @@ def conditional_distribution(
         return _function_kernel(label, function, given_spec, event_spec)
 
     return decorate
+
+
+def _probed_kernel_traceability(kernel: ConditionalDistribution) -> Traceability:
+    """*kernel*'s density traced at stand-ins of its required inputs and one event value.
+
+    A kernel without a density traces its sampler at one key instead.
+    """
+    given_spec = kernel.given_spec
+    given_stand_ins = {
+        input_name: spec_stand_in(spec, unbound_size=1)
+        for input_name, spec in given_spec.items()
+        if input_name not in given_spec.optional
+    }
+    if any(stand_in is None for stand_in in given_stand_ins.values()):
+        return Traceability.HOST_ONLY
+
+    def given_values(stand_ins: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            input_name: _value_at_declared_kind(given_spec[input_name], input_name, value)
+            for input_name, value in stand_ins.items()
+        }
+
+    event = kernel.event_spec.term_spec
+    event_stand_in = spec_stand_in(event, unbound_size=1)
+    if isinstance(kernel, SupportsConditionalUnnormalizedLogProb) and event_stand_in is not None:
+        probe_result = probe(
+            None,
+            lambda stand_ins: kernel._conditional_unnormalized_log_prob(
+                given_values(stand_ins[0]),
+                _value_at_declared_kind(event, kernel.label, stand_ins[1]),
+            ),
+            (given_stand_ins, event_stand_in),
+            label=kernel.label,
+        )
+    elif isinstance(kernel, SupportsConditionalSampling):
+        probe_result = probe(
+            None,
+            lambda stand_ins: kernel._conditional_sample(given_values(stand_ins[0]), stand_ins[1]),
+            (given_stand_ins, jax.random.key(0)),
+            label=kernel.label,
+        )
+    else:
+        return Traceability.HOST_ONLY
+    return probe_result.traceability

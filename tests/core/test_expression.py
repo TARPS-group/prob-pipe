@@ -565,7 +565,7 @@ class TestTheLabelIsTheExpressionsLabel:
             label="r",
         )
         batch = RecordBatch.stack([record, record], level_name="row", label="rows")
-        joint = kernel * prior.with_path_names(mu="beta")
+        joint = kernel & prior.rename(mu="beta")
         return [
             prior,
             prior.with_label("p"),
@@ -596,7 +596,7 @@ class TestTheLabelIsTheExpressionsLabel:
 
     def test_with_label_replaces_the_expression_with_the_label(self):
         """A user's label hides the derivation, and the paths the law holds fixed stay."""
-        model = _prior() * Normal("y", 0.0, 1.0)
+        model = _prior() & Normal("y", 0.0, 1.0)
         derived = model._with_expression(Conditioned(model._expression, ("y",)))
         relabeled = derived.with_label("posterior")
         assert relabeled._expression == Conditioned(

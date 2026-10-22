@@ -153,7 +153,7 @@ class TestTheEventDeclaration:
             r"\['y', 'z'\]",
         ):
             conditional_distribution(
-                lambda mu: Normal("y", mu, 1.0) * Normal("z", mu, 1.0),
+                lambda mu: Normal("y", mu, 1.0) & Normal("z", mu, 1.0),
                 given_spec={"mu": REAL},
                 event_spec=NumericArraySpec(()),
                 label="yz",
@@ -397,14 +397,14 @@ class TestOptionalInputs:
         def law(mu: Any, shift: Any = None) -> Distribution:
             return Normal("y", mu + (0.0 if shift is None else shift), 1.0)
 
-        prior = Normal("mu", 0.0, 1.0) * Normal("shift", 0.0, 1.0)
+        prior = Normal("mu", 0.0, 1.0) & Normal("shift", 0.0, 1.0)
         undeclared = conditional_distribution(law, given_spec={"mu": REAL}, label="y")
         assert undeclared.given_spec["shift"] == OpaqueSpec(type(None))
         with pytest.raises(ValueError, match="'shift'"):
-            undeclared * prior
+            (undeclared & prior)
         declared = conditional_distribution(law, given_spec={"mu": REAL, "shift": REAL}, label="y")
         assert declared.given_spec.optional == {"shift"}
-        assert list((declared * prior).event_spec.outputs) == ["y", "mu", "shift"]
+        assert list((declared & prior).event_spec.outputs) == ["y", "mu", "shift"]
 
     def test_a_kernel_whose_inputs_are_all_optional_binds_at_its_defaults(self):
         kernel = conditional_distribution(lambda mu=1.0: Normal("y", mu, 1.0), label="y")
@@ -439,17 +439,17 @@ class TestOptionalInputs:
 
     def test_a_renamed_optional_input_stays_optional(self):
         kernel = conditional_distribution(_scaled, given_spec={"mu": REAL}, label="y")
-        renamed = kernel.with_path_names({"scale": "sigma"})
+        renamed = kernel.rename({"scale": "sigma"})
         assert renamed.given_spec.optional == {"sigma"}
         np.testing.assert_allclose(condition_on(renamed, {"mu": 0.0})._variance(), 4.0)
         np.testing.assert_allclose(
             condition_on(renamed, {"mu": 0.0, "sigma": 3.0})._variance(), 9.0
         )
-        assert kernel.with_path_names({"mu": "m"}).given_spec.optional == {"scale"}
+        assert kernel.rename({"mu": "m"}).given_spec.optional == {"scale"}
 
     def test_grouping_an_optional_input_makes_it_required(self):
         kernel = conditional_distribution(_scaled, given_spec={"mu": REAL}, label="y")
-        grouped = kernel.with_path_names({"mu": "pars/mu", "scale": "pars/scale"})
+        grouped = kernel.rename({"mu": "pars/mu", "scale": "pars/scale"})
         assert grouped.given_spec.required == ("pars",)
         assert grouped.given_spec.optional == frozenset()
 
@@ -464,7 +464,7 @@ class TestOptionalInputs:
         budget = {"num_results": 500, "num_warmup": 500, "num_chains": 2}
         with workflow_run(seed=0):
             posterior = condition_on.using(method="blackjax_nuts", method_options=budget)(
-                kernel * Normal("mu", 0.0, 1.0), {"y": y}
+                (kernel & Normal("mu", 0.0, 1.0)), {"y": y}
             )
         assert list(posterior.event_spec.outputs) == ["mu"]
         # Precision 1 + 5 / 4, so the mean is (sum(y) / 4) / 2.25.
@@ -516,7 +516,7 @@ class TestEightSchools:
         }
         joint = conditional_distribution(_school_effects, given_spec=inputs, label="y")
         for prior in priors:
-            joint = joint * prior
+            joint = joint & prior
         J = canonical.SCHOOL_EFFECTS.shape[0]
         value = {
             "y": jnp.asarray(canonical.SCHOOL_EFFECTS, jnp.float32),
@@ -530,17 +530,15 @@ class TestEightSchools:
         with workflow_run(seed=0):
             draws = sample(joint, sample_shape=(4,))
         assert draws.batch_shape == (4,)
-        assert draws.element_spec["y"].shape == (J,)
+        assert draws.element_spec.term_spec["y"].shape == (J,)
 
     def test_a_nested_prior_gives_record_inputs(self):
         J = canonical.SCHOOL_EFFECTS.shape[0]
         sigma = jnp.asarray(canonical.SCHOOL_ERRORS, jnp.float32)
-        flat = (
-            Normal("mu", 0.0, 5.0)
-            * HalfCauchy("tau", 0.0, 5.0)
-            * Normal("theta_tilde", jnp.zeros(J), 1.0)
+        flat = (Normal("mu", 0.0, 5.0) & HalfCauchy("tau", 0.0, 5.0)) & Normal(
+            "theta_tilde", jnp.zeros(J), 1.0
         )
-        prior = flat.with_path_names(
+        prior = flat.rename(
             {"mu": "population/mu", "tau": "population/tau", "theta_tilde": "groups/theta_tilde"}
         )
 
@@ -549,10 +547,10 @@ class TestEightSchools:
             return Normal("y", population["mu"] + population["tau"] * groups["theta_tilde"], sigma)
 
         assert list(y.given_spec) == ["population", "groups"]
-        schools = y * prior
+        schools = y & prior
         given = {"population": {"mu": 1.0, "tau": 2.0}, "groups": {"theta_tilde": jnp.ones(J)}}
         np.testing.assert_allclose(condition_on(y, given)._mean(), jnp.full(J, 3.0))
         with workflow_run(seed=0):
             draws = sample(schools, sample_shape=(3,))
         assert draws.batch_shape == (3,)
-        assert draws.element_spec["y"].shape == (J,)
+        assert draws.element_spec.term_spec["y"].shape == (J,)

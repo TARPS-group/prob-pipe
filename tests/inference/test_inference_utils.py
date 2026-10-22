@@ -28,21 +28,20 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.distributions import FactoredDistribution
-from probpipe.distributions._capabilities import SupportsSampling
+from probpipe.distributions._capabilities import SupportsSampling, SupportsUnnormalizedLogProb
 from probpipe.distributions._distribution import Distribution
 from probpipe.inference._inference_utils import (
     as_prng_key,
     build_target_log_prob,
     build_target_log_prob_flat,
-    extract_event_spec,
     get_init_state,
-    is_jax_traceable,
     likelihood_flat,
     model_factors,
     observed_target,
     parameter_given,
-    posterior_var_order,
+    require_trace_variables,
     run_chain_scan,
+    traces_in_jax,
     unconstrained_chain,
 )
 from tests._posterior import flat_chains, flat_draws
@@ -57,20 +56,20 @@ def _gaussian_mean(prior, n, scale=1.0):
         NumericArraySpec((n,)),
         lambda mu: tfd.Independent(tfd.Normal(jnp.broadcast_to(mu, (n,)), scale), 1),
     )
-    return likelihood * prior
+    return likelihood & prior
 
 
 @pytest.fixture
 def small_model():
     """The unnormalized conditional of a joint with a 2-field factored prior."""
-    prior = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=2.0, scale=0.5)
+    prior = Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=2.0, scale=0.5)
     likelihood = ObservationKernel(
         "y",
         dict(prior.event_spec.outputs),
         NumericArraySpec((4,)),
         lambda a, b: tfd.Independent(tfd.Normal(jnp.zeros(4), 1.0), 1),
     )
-    return observed_target(likelihood * prior, {"y": jnp.zeros((4,))})
+    return observed_target((likelihood & prior), {"y": jnp.zeros((4,))})
 
 
 class TestBuildTargetLogProbFlat:
@@ -78,10 +77,12 @@ class TestBuildTargetLogProbFlat:
 
     def test_flat_target_matches_record_target(self, small_model):
         target_record = build_target_log_prob(small_model, None)
-        target_flat, flat_init, event_spec = build_target_log_prob_flat(small_model, None)
+        target_flat, flat_init = build_target_log_prob_flat(small_model, None)
         # Round-trip: unflatten the flat init back to a Record and confirm
         # the two callables agree.
-        record_init = NumericRecord.from_vector(event_spec.term_spec, flat_init, label="nr")
+        record_init = NumericRecord.from_vector(
+            small_model.event_spec.term_spec, flat_init, label="nr"
+        )
         np.testing.assert_allclose(
             float(target_flat(flat_init)),
             float(target_record(record_init)),
@@ -90,24 +91,19 @@ class TestBuildTargetLogProbFlat:
         )
 
     def test_flat_init_dim_matches_the_declared_vector_size(self, small_model):
-        _, flat_init, event_spec = build_target_log_prob_flat(
+        _, flat_init = build_target_log_prob_flat(
             small_model,
             observed=None,
         )
         # Both fields are scalar Normals: vector_size == 2.
-        assert flat_init.shape == (event_spec.term_spec.vector_size,) == (2,)
-
-    def test_the_declared_output_order_is_preserved(self, small_model):
-        _, _, event_spec = build_target_log_prob_flat(small_model, observed=None)
-        # The order of the joint's factors.
-        assert tuple(event_spec.outputs) == ("a", "b")
+        assert flat_init.shape == (small_model.event_spec.term_spec.vector_size,) == (2,)
 
     def test_bare_distribution_falls_through_unwrapped(self):
         """A target with no Record-shaped prior round-trips its log-prob unchanged.
 
         For a bare ``SupportsLogProb`` whose ``_unnormalized_log_prob``
         already takes a flat array, ``build_target_log_prob_flat``
-        passes the callable through verbatim and returns no event spec.
+        passes the callable through verbatim.
         This is the path BlackJAX MCMC uses
         for hand-rolled distributions that don't carry a Record-shaped
         prior.
@@ -119,11 +115,10 @@ class TestBuildTargetLogProbFlat:
             def _unnormalized_log_prob(self, x):
                 return -0.5 * jnp.sum(jnp.asarray(x) ** 2)
 
-        target_flat, flat_init, event_spec = build_target_log_prob_flat(
+        target_flat, flat_init = build_target_log_prob_flat(
             _FlatGaussian(),
             observed=None,
         )
-        assert event_spec is None
         assert flat_init.shape == (2,)
         np.testing.assert_allclose(
             float(target_flat(jnp.asarray([1.0, -1.0]))),
@@ -147,22 +142,17 @@ class _FlatTarget(Distribution):
         return self._log_prob(value)
 
 
-class TestExtractEventSpec:
-    def test_a_target_over_a_record_gives_its_declaration(self, small_model):
-        assert extract_event_spec(small_model) == small_model.event_spec
-
-    def test_a_target_with_no_flat_view_gives_none(self):
-        assert extract_event_spec(_FlatTarget()) is None
-
+class TestThePosteriorOfALawOverOneArray:
     @pytest.mark.parametrize("method", ["blackjax_nuts", "blackjax_rwmh", "tfp_nuts"])
-    def test_the_methods_agree_on_a_bare_target(self, method):
-        """Each names the posterior and draws it as build_target_log_prob_flat does."""
+    def test_the_methods_name_the_posterior_by_the_laws_output(self, method):
+        """Each declares the law's event, as every posterior declares its target's."""
+        law = _FlatTarget()
         with workflow_run(seed=0):
             posterior = inference_method_registry.execute(
-                _FlatTarget(), method=method, num_results=20, num_warmup=20, num_chains=1
+                law, method=method, num_results=20, num_warmup=20, num_chains=1
             )
-        assert list(posterior.event_spec.outputs) == ["posterior"]
-        assert isinstance(flat_draws(posterior), jax.Array)
+        assert posterior.event_spec == law.event_spec
+        assert flat_chains(posterior).shape == (1, 20, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -259,21 +249,20 @@ class TestRunChainScan:
         np.testing.assert_allclose(np.asarray(positions), expected)
 
 
-class TestIsJaxTraceable:
-    """``is_jax_traceable`` probes whether a fn traces at an init state."""
+class TestTracesInJax:
+    """``traces_in_jax`` reads a target's traceability, which a law without one probes once."""
 
-    def test_traceable_fn(self):
-        init = jnp.array([1.0, 2.0])
-        assert is_jax_traceable(lambda x: jnp.sum(x**2), init) is True
+    def test_a_family_traces(self):
+        assert traces_in_jax(Normal("mu", loc=0.0, scale=1.0)) is True
 
-    def test_non_traceable_fn(self):
-        # ``float(np.asarray(x))`` forces concretisation of a traced value,
-        # which raises during ``make_jaxpr``.
-        def host_side(x):
-            return jnp.asarray(float(np.asarray(x).sum()))
+    def test_a_law_whose_density_converts_to_numpy_does_not_trace(self):
+        class HostDensity(Distribution, SupportsUnnormalizedLogProb):
+            def _unnormalized_log_prob(self, value):
+                # Concretizes a traced value, which fails while JAX traces.
+                return jnp.asarray(-0.5 * float(np.asarray(value) ** 2))
 
-        init = jnp.array([1.0, 2.0])
-        assert is_jax_traceable(host_side, init) is False
+        law = HostDensity(OutputSpec(x=NumericArraySpec(())), label="host")
+        assert traces_in_jax(law) is False
 
 
 class TestModelFactors:
@@ -328,15 +317,15 @@ class TestModelFactorsWithOptionalInputs:
     """An optional input of the likelihood takes its default unless the prior produces it."""
 
     def test_an_unmet_optional_input_is_left_to_its_default(self):
-        factors = model_factors(observed_target(_shifted() * Normal("mu", 0.0, 1.0), {"y": Y}))
+        factors = model_factors(observed_target((_shifted() & Normal("mu", 0.0, 1.0)), {"y": Y}))
         # The prior is the whole-term law of mu, so its draw is the value itself.
         given = parameter_given(factors, jnp.asarray(1.0))
         assert list(given) == ["mu"]
         np.testing.assert_allclose(given["mu"], 1.0)
 
     def test_the_prior_meets_an_optional_input(self):
-        prior = Normal("mu", 0.0, 1.0) * Normal("shift", 0.0, 1.0)
-        factors = model_factors(observed_target(_shifted() * prior, {"y": Y}))
+        prior = Normal("mu", 0.0, 1.0) & Normal("shift", 0.0, 1.0)
+        factors = model_factors(observed_target((_shifted() & prior), {"y": Y}))
         given = parameter_given(factors, {"mu": jnp.asarray(1.0), "shift": jnp.asarray(0.5)})
         assert set(given) == {"mu", "shift"}
 
@@ -344,7 +333,7 @@ class TestModelFactorsWithOptionalInputs:
     def test_a_prior_of_several_factors_is_labeled_as_the_model_is(self, labeled):
         from probpipe.distributions._factored import _is_named
 
-        model = _shifted() * Normal("mu", 0.0, 1.0) * Normal("shift", 0.0, 1.0)
+        model = (_shifted() & Normal("mu", 0.0, 1.0)) & Normal("shift", 0.0, 1.0)
         model = model.with_label("model") if labeled else model
         factors = model_factors(observed_target(model, {"y": Y}))
         assert isinstance(factors.prior, FactoredDistribution)
@@ -352,7 +341,7 @@ class TestModelFactorsWithOptionalInputs:
 
     def test_a_prior_kernel_at_its_defaults_is_the_prior(self):
         hyper = conditional_distribution(lambda loc=0.0: Normal("mu", loc, 1.0), label="mu")
-        factors = model_factors(observed_target(_shifted() * hyper, {"y": Y}))
+        factors = model_factors(observed_target((_shifted() & hyper), {"y": Y}))
         assert isinstance(factors.prior, Normal)
 
     @pytest.mark.parametrize("met", [False, True], ids=["default", "prior"])
@@ -365,13 +354,13 @@ class TestModelFactorsWithOptionalInputs:
         ``(sum(y) / 4) / (1 / v + 5 / 4)`` for prior variance ``v``.
         """
         prior = (
-            Normal("mu", 0.0, 1.0) * Normal("shift", 0.0, 1.0) if met else Normal("mu", 0.0, 1.0)
+            (Normal("mu", 0.0, 1.0) & Normal("shift", 0.0, 1.0)) if met else Normal("mu", 0.0, 1.0)
         )
         budget = {"num_results": 2000, "num_warmup": 200, "num_chains": 2}
         with workflow_run(seed=0):
             posterior = condition_on.using(
                 method="blackjax_elliptical_slice", method_options=budget
-            )(_shifted() * prior, {"y": Y})
+            )((_shifted() & prior), {"y": Y})
         draws = flat_draws(posterior)
         location = np.asarray(draws["mu"]) + (np.asarray(draws["shift"]) if met else 0.0)
         variance = 2.0 if met else 1.0
@@ -460,7 +449,7 @@ class TestGetInitState:
     def test_a_factored_prior_starts_at_its_own_draw(self):
         # A factored prior draws a nested mapping, which is flattened rather
         # than replaced by the Uniform(-2, 2) box.
-        prior = Normal("a", 0.0, 1.0) * MultivariateNormal(
+        prior = Normal("a", 0.0, 1.0) & MultivariateNormal(
             "b", jnp.array([10.0, -10.0]), cov=jnp.eye(2)
         )
         out = get_init_state(prior, init=None, random_seed=0)
@@ -470,7 +459,7 @@ class TestGetInitState:
 
     @pytest.mark.parametrize("seed", range(12))
     def test_a_factored_prior_starts_inside_its_support(self, seed):
-        prior = Normal("a", 0.0, 1.0) * HalfNormal("scale", 1.0)
+        prior = Normal("a", 0.0, 1.0) & HalfNormal("scale", 1.0)
         out = get_init_state(prior, init=None, random_seed=seed)
         assert float(out[1]) > 0.0
 
@@ -657,49 +646,25 @@ class TestParallelChainMap:
 
 class _StubPosterior:
     def __init__(self, var_names):
-        # dict preserves insertion order, mimicking a trace's data_vars.
         self.data_vars = dict.fromkeys(var_names)
 
 
 class _StubTrace:
-    """Minimal stand-in: ``posterior_var_order`` reads only
-    ``trace.posterior.data_vars`` (ordered)."""
+    """Minimal stand-in: ``require_trace_variables`` reads only ``trace.posterior.data_vars``."""
 
     def __init__(self, var_names):
         self.posterior = _StubPosterior(var_names)
 
 
-class TestPosteriorVarOrder:
-    """``posterior_var_order`` returns a trace's posterior variables in the
-    backend's natural order filtered to *keep*, and fails loudly when a
-    kept name is missing."""
+class TestRequireTraceVariables:
+    """A backend's trace must hold the draws of every parameter a method extracts."""
 
-    def test_preserves_trace_order_not_keep_order(self):
-        trace = _StubTrace(["slope", "intercept", "lp__"])
-        # The trace's data_vars order wins; the keep argument's order does not.
-        assert posterior_var_order(trace, ["intercept", "slope"]) == ["slope", "intercept"]
+    def test_a_trace_with_every_parameter_passes(self):
+        require_trace_variables(_StubTrace(["slope", "intercept", "lp__"]), ["intercept", "slope"])
 
-    def test_alphabetical_backend_order_returned_for_realignment(self):
-        # nutpie, e.g., sorts data_vars alphabetically; the helper returns
-        # that order so field_order can realign columns by name.
-        trace = _StubTrace(["a", "b", "c"])
-        assert posterior_var_order(trace, ["c", "a", "b"]) == ["a", "b", "c"]
-
-    def test_ignores_unkept_trace_vars(self):
-        trace = _StubTrace(["mu", "sigma", "lp__", "diverging"])
-        assert posterior_var_order(trace, ["mu", "sigma"]) == ["mu", "sigma"]
-
-    def test_missing_expected_var_raises_valueerror(self):
-        """A kept name absent from the trace raises a clear ValueError here,
-        not a cryptic 'not a permutation' error later in make_posterior."""
-        trace = _StubTrace(["mu"])
-        with pytest.raises(ValueError, match="trace is missing the parameters"):
-            posterior_var_order(trace, ["mu", "sigma"])
-
-    def test_error_message_names_the_missing_vars(self):
-        trace = _StubTrace(["mu"])
-        with pytest.raises(ValueError, match="sigma"):
-            posterior_var_order(trace, ["mu", "sigma"])
+    def test_a_missing_parameter_raises_naming_it(self):
+        with pytest.raises(ValueError, match=r"trace is missing the parameters \['sigma'\]"):
+            require_trace_variables(_StubTrace(["mu"]), ["mu", "sigma"])
 
 
 # ---------------------------------------------------------------------------

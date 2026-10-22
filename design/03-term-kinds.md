@@ -100,7 +100,7 @@ prediction = predict_impl(theta, x)
 
 A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_spec`, it returns one conforming to `output_spec`, with no tracking or lifting — the raw map that operations such as change of variables build on. `__call__` runs the **call handler**, which is the base's one extension point: on the base it is plain evaluation, and the engine layer (Part V) replaces it once, at import. The base also carries its **controls** (V.2), set at construction and revised functionally by `using`; the engine alone interprets them, at call time.
 
-A `Function` is constructed directly or using the `@function` decorator. `FunctionSpec`, which is the function kind's term spec, admits any callable.
+A `Function` is constructed directly or using the `@function` decorator. `FunctionSpec`, which is the function kind's term spec, admits any callable. Construction also takes the `Function`'s **execution claims** (V.13): `traceable` states whether JAX can trace the callable, `True`, `False`, or `None` for no statement, and `vectorized` states whether it takes a stack of evaluation points in one call. Unlike controls, claims are fixed for the `Function`'s life, and every copy `using` makes keeps them.
 
 ```python
 class FunctionSpec(TermSpec):      # the function kind's spec; is_valid accepts any callable
@@ -114,9 +114,12 @@ class Function(TrackedTerm):
                  input_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec | None = None,
                  output_spec: OutputSpec | TermSpec | None = None,
                  output_label: str | None = None,
+                 traceable: bool | None = None,
+                 vectorized: bool = False,
                  differentiable: NumericSpec | None = None,
                  bind: Mapping[str, Any] | None = None,
                  **controls) -> None: ...
+                 # traceable, vectorized: execution claims, fixed for the Function's life (V.13)
                  # differentiable: an optional differentiability claim (V.11)
                  # bind: arguments of the wrapped callable fixed at construction (V.3)
                  # controls: the controls' construction values (V.2)
@@ -391,7 +394,7 @@ class NumericRecordBatch(RecordBatch):
     # vec has shape (*batch_shape, vector_size): the last axis is the flat dimension
 ```
 
-Its elements implement `Numeric` (II.3), and the batch's `to_vector` stacks their vectors. A `RecordBatch` is promoted as a `Record` is (III.5): `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when every column is numeric and no explicit non-numeric `element_spec.term_spec` vetoes it, and a view over numeric fields, such as a field selected from a batch that also holds opaque fields, is a `NumericRecordBatch` too.
+Its elements implement `Numeric` (II.3), and the batch's `to_vector` stacks their vectors. A `RecordBatch` is promoted as a `Record` is (III.5): `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when every column is numeric and no explicit non-numeric `element` vetoes it, and a view over numeric fields, such as a field selected from a batch that also holds opaque fields, is a `NumericRecordBatch` too.
 
 A constructor that mints a level takes the name to give it (II.5), so both constructions here require one: `from_vector` names the levels it reconstructs, which is what lets a multi-level batch round-trip, and `stack` names the single level it introduces.
 
@@ -399,9 +402,9 @@ A constructor that mints a level takes the name to give it (II.5), so both const
 class RecordBatch(Batch[Record]):
     @classmethod
     def stack(cls, records: list[Record], *, level_name: str,
-              element_spec: RecordSpec | None = None,
+              element: RecordSpec | None = None,
               label: str | None = None) -> RecordBatch: ...
-    # one level of (len(records),); the element spec is taken from the first record
+    # one level of (len(records),); the elements' spec is taken from the first record
     # when omitted, and every record's fields must be exactly its fields.
     # An omitted label is derived
     # from the first record's -- a batch of `draw` records is
@@ -426,7 +429,7 @@ It declares the operations it supports as **capabilities** (III.8), so operation
 3. at a list of paths, a law over the record of the chosen nodes, each at its own path, in the law's order, so `d["a", "g/b"]` is a law over `{a, g: {b}}`;
 4. at or through a field that holds a law, a kernel, a function, or a batch, a law over that field's selection, in the positional form, so the coupled marginal at a law-valued field is a law over laws, which has no outputs.
 
-The name of an output at the root alone is not a path, so `Normal("x", 0.0, 1.0)["x"]` raises `KeyError`, and `output("x")` returns the law itself; a list may name it, so `Normal("x", 0.0, 1.0)[["x"]]` is the law over `{x}`. `d.output(c)` is `d[c]` for an output `c` of a record event. `p in d` holds exactly when `d[p]` succeeds. `d.without(*paths)` is the marginal law of every node except those at `paths`, so `d.without("g/c")` is the same law as `d["a", "g/b"]`. A merge refuses two coupled marginals of one law (IV.2, condition 9), so the joint law of two groups is `d["g1", "g2"]`.
+A law over a single value has no paths, and the name of its output at the root is not one, so `Normal("x", 0.0, 1.0)["x"]` raises `TypeError` (II.6), and `output("x")` returns the law itself; a list may name it, so `Normal("x", 0.0, 1.0)[["x"]]` is the law over `{x}`. `d.output(c)` is `d[c]` for an output `c` of a record event. `p in d` holds exactly when `d[p]` succeeds. `d.without(*paths)` is the marginal law of every node except those at `paths`, so `d.without("g/c")` is the same law as `d["a", "g/b"]`. A merge refuses two coupled marginals of one law (IV.2, condition 9), so the joint law of two groups is `d["g1", "g2"]`.
 
 `rename` returns the same law with its event spec renamed by `OutputSpec.rename` (II.2): nodes renamed or moved by path, or the output at the root renamed. A factored joint renames through its factors, and a rename that gathers outputs of several factors under one group makes them one factor, a grouped sub-joint (IV.1). `with_label` changes only the object label. A polymorphic law binds its dimensions as II.1 specifies. Dimension transforms commute with renames: `d.rename(m).with_dim_sizes(n=3)` is `d.with_dim_sizes(n=3).rename(m)`, and likewise for `with_dim_names` and for a kernel (III.9). A renamed law conditions as the original does on the given translated to the original paths, with each value's fields in the original node's declared order whatever order the caller wrote (VI.6). Its marginal at a node that gathers fields of several of the original's nodes is the original's marginal at the selection of those fields, placed under the node, since a transform that preserves the event exposes what the law it wraps supports (III.8).
 

@@ -41,7 +41,7 @@ from probpipe import (
 from probpipe.core._dispatch import Feasibility
 from probpipe.core._specs import _has_record_outputs
 from probpipe.core.constraints import positive
-from probpipe.distributions import DistributionBatch, FieldView, NumericDistribution
+from probpipe.distributions import CoupledMarginal, DistributionBatch, NumericDistribution
 from probpipe.distributions._capabilities import (
     SupportsCovariance,
     SupportsExpectation,
@@ -89,7 +89,7 @@ def _record_atoms() -> NumericRecordBatch:
     return NumericRecordBatch(
         {"b": _B, "a": _A},
         "row",
-        element_spec=_RECORD_SPEC,
+        element=_RECORD_SPEC,
         label="rows",
     )
 
@@ -103,7 +103,7 @@ def _mixed_atoms() -> RecordBatch:
     return RecordBatch(
         columns,
         "site",
-        element_spec=_MIXED_SPEC,
+        element=_MIXED_SPEC,
         label="sites",
     )
 
@@ -152,7 +152,7 @@ class TestEventCompletion:
             label="laws",
         )
         law = EmpiricalDistribution(laws, output_name="measure")
-        assert law.event_spec == OutputSpec(measure=laws.element_spec)
+        assert law.event_spec == OutputSpec(measure=laws.element_spec.term_spec)
 
     def test_the_output_is_captured_once(self):
         renamed = EmpiricalDistribution(jnp.zeros((5, 2)), output_name="theta").with_label("other")
@@ -163,7 +163,7 @@ class TestEventCompletion:
         atoms = NumericArrayBatch(
             jnp.ones((4, 2)),
             "draw",
-            element_spec=declared,
+            element=declared,
             label="draws",
         )
         assert EmpiricalDistribution(atoms, output_name="x").event_spec == OutputSpec(x=declared)
@@ -204,14 +204,14 @@ class TestEventCompletion:
         assert law.event_spec == OutputSpec(_RECORD_SPEC)
 
     def test_a_declaration_keeps_the_dtypes_the_atoms_leave_open(self):
-        prior = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        prior = Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)
         atoms = NumericRecordBatch(
             {"a": jnp.zeros(5), "b": jnp.ones(5)},
             ("draw",),
             axes_per_level=(1,),
             label="draws",
         )
-        assert atoms.element_spec.children["a"].dtype is None
+        assert atoms.element_spec.term_spec.children["a"].dtype is None
         law = EmpiricalDistribution(atoms, event_spec=prior.event_spec, label="post")
         assert law.event_spec == prior.event_spec
         assert law.dtypes == {"a": jnp.float32, "b": jnp.float32}
@@ -238,7 +238,7 @@ class TestEventCompletion:
         atoms = NumericArrayBatch(
             jnp.arange(12.0).reshape(2, 3, 2),
             ("chain", "draw"),
-            element_spec=NumericArraySpec((2,)),
+            element=NumericArraySpec((2,)),
             label="draws",
         )
         law = EmpiricalDistribution(atoms, output_name="x")
@@ -277,7 +277,7 @@ class TestEventCompletion:
         atoms = NumericArrayBatch(
             _VALUES,
             "draw",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="draws",
         )
         with pytest.raises(TypeError, match="with_level_names"):
@@ -402,7 +402,7 @@ class TestWeights:
         atoms = NumericArrayBatch(
             jnp.arange(6.0).reshape(2, 3),
             ("chain", "draw"),
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="draws",
         )
         # The weights of the atoms 0, ..., 5 in row-major order are 1, 2, 0, 0, 0, 3;
@@ -511,7 +511,7 @@ class TestSampling:
         draws = sample(law, sample_shape=(4,))
         assert type(draws) is RecordBatch
         assert (draws.batch_shape, draws.level_names) == ((4,), ("sample",))
-        assert draws.element_spec == law.event_spec.term_spec
+        assert draws.element_spec.term_spec == law.event_spec.term_spec
 
 
 # -- Moments --------------------------------------------------------------------
@@ -707,7 +707,7 @@ class TestMarginals:
         law = _record_law()
         marginal = law._marginal("b")
         assert isinstance(marginal, EmpiricalDistribution)
-        assert not isinstance(marginal, FieldView)
+        assert not isinstance(marginal, CoupledMarginal)
         assert marginal.label == law.label
         assert marginal.event_spec == OutputSpec(b=_RECORD_SPEC["b"])
         assert jnp.array_equal(marginal.atoms.raw, _B)
@@ -743,36 +743,39 @@ class TestMarginals:
         assert marginal.event_spec == OutputSpec(label=OpaqueSpec())
         assert marginal._sample(jax.random.PRNGKey(0)) in set(_LABELS)
 
-    def test_a_selection_of_paths_is_an_exposed_record_that_keeps_the_rows(self):
+    def test_a_list_of_paths_keeps_each_node_at_its_path_and_keeps_the_rows(self):
         law = EmpiricalDistribution(_mixed_atoms(), label="m")
-        marginal = law._marginal(("label", "g/v"))
+        marginal = law._marginal(("g/v", "label"))
         assert marginal.label == "m"
-        assert marginal.event_spec == OutputSpec(RecordSpec(label=OpaqueSpec(), v=(2,)))
+        assert marginal.event_spec == OutputSpec(
+            RecordSpec(label=OpaqueSpec(), g=RecordSpec(v=(2,)))
+        )
         rows = {(label, *np.asarray(v)) for label, v in zip(_LABELS, _V)}
         for key in jax.random.split(jax.random.PRNGKey(0), 10):
             draw = marginal._sample(key)
-            assert (draw["label"], *np.asarray(draw["v"])) in rows
+            assert (draw["label"], *np.asarray(draw["g"]["v"])) in rows
 
-    def test_a_selection_whose_paths_share_a_final_segment_raises(self):
+    def test_paths_that_share_a_last_name_keep_their_groups(self):
         spec = RecordSpec(p=RecordSpec(x=()), q=RecordSpec(x=()))
         atoms = NumericRecordBatch(
             {"p/x": _A, "q/x": _U},
             "row",
-            element_spec=spec,
+            element=spec,
             label="rows",
         )
         law = EmpiricalDistribution(atoms, label="m")
-        with pytest.raises(ValueError, match="more than one path ends in 'x'"):
-            law._marginal(("p/x", "q/x"))
-        assert _capability_guard(law, "_marginal", ("p/x", "q/x")).feasible is False
+        marginal = law._marginal(("q/x", "p/x"))
+        assert marginal.event_spec.term_spec == spec
+        assert jnp.allclose(marginal._mean()["q"]["x"], jnp.mean(_U))
+        assert _capability_guard(law, "_marginal", ("p/x", "q/x")).feasible is True
 
     def test_a_path_that_is_not_an_event_path_raises_and_is_rejected(self):
         law = _record_law()
-        with pytest.raises(KeyError, match="not an event path"):
+        with pytest.raises(KeyError, match="unknown path 'c' in 'post'"):
             law._marginal("c")
         report = _capability_guard(law, "_marginal", "c")
         assert report.feasible is False
-        assert "not an event path" in report.description
+        assert "unknown path" in report.description
 
     def test_the_marginal_is_exact_at_every_event_path(self):
         law = EmpiricalDistribution(_mixed_atoms(), label="m")
@@ -792,7 +795,7 @@ class TestMarginals:
         atoms = NumericRecordBatch(
             {"b": jnp.zeros((2, 3, 2)), "a": jnp.zeros((2, 3))},
             ("chain", "draw"),
-            element_spec=_RECORD_SPEC,
+            element=_RECORD_SPEC,
             label="draws",
         )
         law = EmpiricalDistribution(atoms, label="post")
@@ -803,12 +806,13 @@ class TestMarginals:
         atoms = NumericRecordBatch(
             {"b": _B, "a": _A},
             "row",
-            element_spec=_RECORD_SPEC,
+            element=_RECORD_SPEC,
             label="x·y",
         )
         law = EmpiricalDistribution(atoms, label="post")
-        assert law._marginal(("a", "b")).atoms.label == "(x·y)[('a', 'b')]"
-        assert _record_law()._marginal(("a", "b")).atoms.label == "rows[('a', 'b')]"
+        # The atoms keep the law's order, b before a.
+        assert law._marginal(("a", "b")).atoms.label == "(x·y)[('b', 'a')]"
+        assert _record_law()._marginal(("a", "b")).atoms.label == "rows[('b', 'a')]"
 
     def test_the_marginal_of_a_posterior_keeps_its_fixed_paths(self):
         law = _record_law()
@@ -842,27 +846,27 @@ def _posterior() -> EmpiricalDistribution:
 class TestRenaming:
     def test_renaming_the_fields_keeps_the_empirical_family(self):
         law = _posterior()
-        renamed = law.with_path_names(_GROUPING)
+        renamed = law.rename(_GROUPING)
         assert isinstance(renamed, EmpiricalDistribution)
         assert type(renamed) is type(law)
         assert renamed.label == "posterior"
-        assert renamed.event_spec == law.event_spec.with_path_names(_GROUPING)
+        assert renamed.event_spec == law.event_spec.rename(_GROUPING)
         assert renamed.num_atoms == 6
-        assert renamed.provenance.operation == "with_path_names"
+        assert renamed.provenance.operation == "rename"
 
     def test_the_atoms_carry_the_new_paths_on_the_same_levels(self):
-        atoms = _posterior().with_path_names(_GROUPING).atoms
-        assert tuple(atoms.element_spec.keys()) == tuple(_GROUPING.values())
+        atoms = _posterior().rename(_GROUPING).atoms
+        assert tuple(atoms.element_spec.term_spec.keys()) == tuple(_GROUPING.values())
         assert atoms.level_names == ("chain", "draw")
         for old, new in _GROUPING.items():
             np.testing.assert_array_equal(np.asarray(atoms[new]), _POSTERIOR_COLUMNS[old])
 
     def test_uniform_weights_stay_uniform(self):
-        renamed = _posterior().with_path_names(_GROUPING)
+        renamed = _posterior().rename(_GROUPING)
         np.testing.assert_allclose(renamed.weights, np.full(6, 1 / 6))
 
     def test_a_weighted_law_keeps_its_weights_and_its_weighted_moments(self):
-        renamed = _record_law().with_path_names({"a": "g/a"})
+        renamed = _record_law().rename({"a": "g/a"})
         np.testing.assert_allclose(renamed.weights, _RECORD_WEIGHTS)
         np.testing.assert_allclose(
             renamed._mean()["g"]["a"], _weighted_sum(_RECORD_WEIGHTS, _A), rtol=1e-6
@@ -870,7 +874,7 @@ class TestRenaming:
 
     def test_a_draw_at_a_key_is_the_draw_of_the_law_under_the_new_paths(self, key):
         law = _record_law()
-        draws = law.with_path_names({"a": "g/a"})._sample(key, (7,))
+        draws = law.rename({"a": "g/a"})._sample(key, (7,))
         original = law._sample(key, (7,))
         np.testing.assert_array_equal(draws["g"]["a"], original["a"])
         np.testing.assert_array_equal(draws["b"], original["b"])
@@ -879,10 +883,10 @@ class TestRenaming:
         law = EmpiricalDistribution(
             _record_atoms(), event_spec=OutputSpec(params=None), label="post"
         )
-        renamed = law.with_path_names({"params/a": "params/alpha"})
+        renamed = law.rename({"params/a": "params/alpha"})
         assert isinstance(renamed, EmpiricalDistribution)
-        assert renamed.event_spec == law.event_spec.with_path_names({"params/a": "params/alpha"})
-        assert tuple(renamed.atoms.element_spec.keys()) == ("b", "alpha")
+        assert renamed.event_spec == law.event_spec.rename({"params/a": "params/alpha"})
+        assert tuple(renamed.atoms.element_spec.term_spec.keys()) == ("b", "alpha")
         np.testing.assert_array_equal(np.asarray(renamed.atoms["alpha"]), _A)
 
     def test_the_marginal_at_a_node_that_gathers_two_groups_is_exact(self):
@@ -891,12 +895,10 @@ class TestRenaming:
         atoms = NumericRecordBatch(
             {"p/x": xs, "q/y": ys},
             "row",
-            element_spec=spec,
+            element=spec,
             label="rows",
         )
-        renamed = EmpiricalDistribution(atoms, label="m").with_path_names(
-            {"p/x": "g/x", "q/y": "g/y"}
-        )
+        renamed = EmpiricalDistribution(atoms, label="m").rename({"p/x": "g/x", "q/y": "g/y"})
         assert _capability_guard(renamed, "_marginal", "g") == Feasibility(True)
         marginal = renamed._marginal("g")
         assert marginal.event_spec == OutputSpec(g=RecordSpec(x=(), y=()))
@@ -909,7 +911,7 @@ class TestRenaming:
         assert law._renamed_in_family(event) is None
 
     def test_a_renamed_law_round_trips_through_pickle(self):
-        renamed = _record_law().with_path_names({"a": "g/a"})
+        renamed = _record_law().rename({"a": "g/a"})
         restored = pickle.loads(pickle.dumps(renamed))
         assert type(restored) is type(renamed)
         assert restored.event_spec == renamed.event_spec

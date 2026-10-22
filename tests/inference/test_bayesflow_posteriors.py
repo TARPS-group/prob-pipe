@@ -79,7 +79,7 @@ class _UniformBelowKernel(ConditionalDistribution, SupportsConditionalSampling):
 
 
 def _prior():
-    return Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)
+    return Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=0.0, scale=1.0)
 
 
 def _observe(a, b, seed):
@@ -94,7 +94,7 @@ def _vec(params, key):
 
 
 def _vec_prior():
-    return pp.MultivariateNormal("m", loc=jnp.zeros(2), cov=jnp.eye(2)) * Normal(
+    return pp.MultivariateNormal("m", loc=jnp.zeros(2), cov=jnp.eye(2)) & Normal(
         "s", loc=0.0, scale=1.0
     )
 
@@ -133,9 +133,8 @@ def _multi_field(params, key):
 def _multi_field_prior():
     return (
         Normal("a", loc=0.0, scale=1.0)
-        * pp.MultivariateNormal("b", loc=jnp.zeros(2), cov=jnp.eye(2))
-        * Normal("c", loc=0.0, scale=1.0)
-    )
+        & pp.MultivariateNormal("b", loc=jnp.zeros(2), cov=jnp.eye(2))
+    ) & Normal("c", loc=0.0, scale=1.0)
 
 
 # Conjugate Gaussian with an analytic posterior, used to check calibration.
@@ -177,10 +176,10 @@ def _nested_prior():
     positive leaf ``r`` and a real leaf ``m``) plus a top-level real ``c`` --
     leaves ``outer/r``, ``outer/m``, ``c``. The ``Gamma`` leaf exercises a
     per-leaf bijector *under* nesting; ``flatten`` order is ``[r, m, c]``."""
-    outer = (pp.Gamma("r", 3.0, 1.0) * Normal("m", loc=0.0, scale=1.0)).with_path_names(
+    outer = (pp.Gamma("r", 3.0, 1.0) & Normal("m", loc=0.0, scale=1.0)).rename(
         {"r": "outer/r", "m": "outer/m"}
     )
-    return (outer * Normal("c", loc=0.0, scale=1.0)).with_label("joint")
+    return (outer & Normal("c", loc=0.0, scale=1.0)).with_label("joint")
 
 
 def _nested(params, key):
@@ -640,7 +639,7 @@ class TestBayesFlowMethods:
         the analytic mean and its std matches the analytic std (averaged over
         several observations). Trains a bit longer than the smoke tests so the
         estimator is near-converged."""
-        prior = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)
+        prior = Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=0.0, scale=1.0)
         with workflow_run(seed=0):
             model = learn_amortized_posterior(
                 prior,
@@ -725,10 +724,10 @@ class TestBayesFlowMethods:
         in flatten order (``outer/a``, ``outer/b``, ``m``); a mis-ordered column or
         a mis-keyed per-leaf bijector would land a leaf's mass on the wrong
         coordinate and fail here."""
-        outer = (Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)).with_path_names(
+        outer = (Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=0.0, scale=1.0)).rename(
             {"a": "outer/a", "b": "outer/b"}
         )
-        prior = (outer * Normal("m", loc=0.0, scale=1.0)).with_label("joint")
+        prior = (outer & Normal("m", loc=0.0, scale=1.0)).with_label("joint")
         with workflow_run(seed=0):
             model = learn_amortized_posterior(
                 prior,
@@ -766,9 +765,9 @@ class TestBayesFlowMethods:
         SPD draws under the nested leaf name ``outer/cov`` -- the nested analogue
         of test_wishart_matrix_prior_round_trip."""
         outer = (
-            pp.Wishart("cov", df=4.0, scale=jnp.eye(2)) * Normal("m", loc=0.0, scale=1.0)
-        ).with_path_names({"cov": "outer/cov", "m": "outer/m"})
-        prior = (outer * Normal("c", loc=0.0, scale=1.0)).with_label("joint")
+            pp.Wishart("cov", df=4.0, scale=jnp.eye(2)) & Normal("m", loc=0.0, scale=1.0)
+        ).rename({"cov": "outer/cov", "m": "outer/m"})
+        prior = (outer & Normal("c", loc=0.0, scale=1.0)).with_label("joint")
         with workflow_run(seed=0):
             model = learn_amortized_posterior(
                 prior,
@@ -810,7 +809,7 @@ class TestBayesFlowMethods:
         """A constrained (positive) prior field is trained in unconstrained space and
         its draws are mapped back through the forward bijector, so they land in the
         support -- here all positive. The accompanying real-valued field is unaffected."""
-        prior = pp.Gamma("r", 3.0, 1.0) * Normal("m", loc=0.0, scale=1.0)
+        prior = pp.Gamma("r", 3.0, 1.0) & Normal("m", loc=0.0, scale=1.0)
         with workflow_run(seed=0):
             model = learn_amortized_posterior(
                 prior,
@@ -830,7 +829,7 @@ class TestBayesFlowMethods:
     def test_a_positive_leaf_density_changes_variables(self):
         """A positive leaf trains on its log, so its density is the flow's density at
         the log less the log-Jacobian of ``exp``, which is the log itself."""
-        prior = pp.Gamma("r", 3.0, 1.0) * Normal("m", loc=0.0, scale=1.0)
+        prior = pp.Gamma("r", 3.0, 1.0) & Normal("m", loc=0.0, scale=1.0)
         with workflow_run(seed=0):
             model = learn_amortized_posterior(
                 prior,
@@ -890,7 +889,7 @@ class TestBayesFlowMethods:
         ``"inference_variables"``) train and condition, with draws returned
         under the user's names.
         """
-        prior = Normal("observation", loc=0.0, scale=1.0) * Normal(
+        prior = Normal("observation", loc=0.0, scale=1.0) & Normal(
             "inference_variables", loc=0.0, scale=1.0
         )
         with workflow_run(seed=0):
@@ -915,7 +914,7 @@ class TestBayesFlowMethods:
         """A bounded-interval prior field (Beta, unit-interval support) rounds
         through the Sigmoid bijector: trained unconstrained, every posterior
         draw lands strictly inside (0, 1)."""
-        prior = pp.Beta("q", 2.0, 2.0) * Normal("m", loc=0.0, scale=1.0)
+        prior = pp.Beta("q", 2.0, 2.0) & Normal("m", loc=0.0, scale=1.0)
         with workflow_run(seed=0):
             model = learn_amortized_posterior(
                 prior,
@@ -938,7 +937,7 @@ class TestBayesFlowMethods:
         shape at train time -- a flattened input would crash the
         CholeskyOuterProduct chain -- and the forward map at sample time returns
         draws that are symmetric positive definite."""
-        prior = pp.Wishart("cov", df=4.0, scale=jnp.eye(2)) * Normal("m", loc=0.0, scale=1.0)
+        prior = pp.Wishart("cov", df=4.0, scale=jnp.eye(2)) & Normal("m", loc=0.0, scale=1.0)
         with workflow_run(seed=0):
             model = learn_amortized_posterior(
                 prior,
@@ -1110,13 +1109,13 @@ class TestBayesFlowValidation:
     def test_rejects_discrete_prior(self):
         """A discrete prior field has no smooth bijector to R^d and is rejected up
         front with a clear error (here a Poisson count parameter)."""
-        bad_prior = pp.Poisson("k", 3.0) * Normal("m", loc=0.0, scale=1.0)
+        bad_prior = pp.Poisson("k", 3.0) & Normal("m", loc=0.0, scale=1.0)
         with pytest.raises(ValueError, match="discrete"):
             learn_amortized_posterior(bad_prior, _toy_simulator(), num_simulations=8, epochs=1)
 
     def test_rejects_a_prior_parameter_whose_support_is_not_declared(self):
         """A support that depends on another parameter is not declared, so no
         bijector to R^d can be chosen for it."""
-        prior = _UniformBelowKernel() * pp.Exponential("z", 1.0)
+        prior = _UniformBelowKernel() & pp.Exponential("z", 1.0)
         with pytest.raises(ValueError, match="'x': its support is not declared"):
             learn_amortized_posterior(prior, _toy_simulator(), num_simulations=8, epochs=1)

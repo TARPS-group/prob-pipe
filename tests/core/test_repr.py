@@ -130,7 +130,7 @@ class TestValuesAndBatches:
             "DistributionBatch(\n"
             "    'laws',\n"
             "    levels={'law': 2},\n"
-            "    element_spec=DistributionSpec(\n"
+            "    element=DistributionSpec(\n"
             "        event_spec=OutputSpec(a=NumericArraySpec(shape=(), dtype=float32, "
             "support=real)),\n"
             "    ),\n"
@@ -229,7 +229,7 @@ class TestANumericTermShowsItsValues:
             "NumericArrayBatch(\n"
             "    'theta',\n"
             "    levels={'chain': 2, 'draw': 3},\n"
-            "    element_spec=NumericArraySpec(shape=(), dtype=float32),\n"
+            "    element=NumericArraySpec(shape=(), dtype=float32),\n"
             ")\n"
             "  [[0. 1. 2.]\n"
             "   [3. 4. 5.]]"
@@ -320,7 +320,7 @@ class TestANumericTermShowsItsValues:
             "    atoms=NumericArrayBatch(\n"
             "        'draws',\n"
             "        levels={'draw': 3},\n"
-            "        element_spec=NumericArraySpec(shape=(), dtype=float32),\n"
+            "        element=NumericArraySpec(shape=(), dtype=float32),\n"
             "    ),\n"
             "    output_name='theta',\n"
             ")"
@@ -457,7 +457,7 @@ class TestDistributions:
             lambda mu: Normal("y", mu, 1.0), label="lik", given_spec={"mu": NumericArraySpec(())}
         )
         prior = EmpiricalDistribution(jnp.linspace(-1.0, 1.0, 5), output_name="mu", label="prior")
-        model = (likelihood * prior).with_label("model")
+        model = (likelihood & prior).with_label("model")
         with workflow_run(seed=0):
             posterior = condition_on(model, {"y": 0.5})
         text = repr(posterior)
@@ -480,15 +480,15 @@ class TestDistributions:
         assert repr(law).startswith("Normal('beta', ")
         assert "event_spec=" not in repr(law)
 
-    def test_a_field_view_reads_as_a_call_of_its_constructor(self):
-        joint = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+    def test_a_coupled_marginal_reads_as_a_call_of_its_constructor(self):
+        joint = Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)
         nested = repr(joint).replace("\n", "\n    ")
-        assert repr(joint["a"]) == f"FieldView(\n    {nested},\n    path='a',\n)"
+        assert repr(joint["a"]) == f"CoupledMarginal(\n    {nested},\n    path='a',\n)"
         assert repr(joint["a"].with_label("x")) == repr(joint["a"]) + ".with_label('x')"
 
     def test_a_regrouped_rename_reads_as_a_factored_joint(self):
-        joint = Normal("a", 0.0, 1.0, label="a") * Normal("b", 0.0, 1.0, label="b")
-        renamed = repr(joint.with_path_names({"a": "g/a"}))
+        joint = Normal("a", 0.0, 1.0, label="a") & Normal("b", 0.0, 1.0, label="b")
+        renamed = repr(joint.rename({"a": "g/a"}))
         assert renamed.startswith("FactoredMultivariateGaussian(\n    factors=(")
         assert "label='a·b'" not in renamed
         assert "_Renamed" not in renamed
@@ -499,7 +499,7 @@ class TestDistributions:
         assert repr(law).endswith("    output_name='e',\n    label='draws',\n)")
 
     def test_a_renamed_empirical_law_reads_by_its_renamed_atoms(self):
-        renamed = EmpiricalDistribution(_two_fields(), label="e").with_path_names({"a": "g/a"})
+        renamed = EmpiricalDistribution(_two_fields(), label="e").rename({"a": "g/a"})
         assert repr(renamed) == (
             "EmpiricalDistribution(\n"
             "    atoms=NumericRecordBatch('rows', levels={'row': 2}, fields=('b', 'g/a')),\n"
@@ -510,29 +510,30 @@ class TestDistributions:
     def test_a_rename_that_holds_its_law_reads_as_that_law_renamed(self):
         """A kernel density estimate does not rebuild itself, so its rename holds it."""
         kde = KDEDistribution(_two_fields(), label="kde")
-        renamed = kde.with_path_names({"a": "g/a"})
-        assert repr(renamed) == repr(kde) + ".with_path_names({'a': 'g/a'})"
+        renamed = kde.rename({"a": "g/a"})
+        assert repr(renamed) == repr(kde) + ".rename({'a': 'g/a'})"
         assert repr(renamed.with_label("other")) == repr(renamed) + ".with_label('other')"
 
-    def test_a_reordered_marginal_reads_as_the_joint_under_its_declaration(self):
-        """No rename states a reorder, so the repr shows the reordered event spec.
-
-        The kernel ``y`` conditions on ``a``, so no product lists ``a`` first.
-        """
+    def test_a_marginal_at_a_list_of_paths_keeps_the_joint_order(self):
+        """The kernel ``y`` conditions on ``a``, and the marginal lists the factors as the joint does."""
         likelihood = conditional_distribution(
             lambda a: Normal("y", a, 1.0), given_spec={"a": NumericArraySpec(())}, label="y"
         )
-        joint = likelihood * Normal("a", 0.0, 1.0, label="a")
-        reordered = repr(joint._marginal(("a", "y")))
-        assert reordered.startswith("FactoredDistribution(\n    factors=(")
-        assert "label='y·a'" not in reordered
-        assert reordered.index("a=NumericArraySpec") < reordered.index("y=NumericArraySpec")
+        joint = likelihood & Normal("a", 0.0, 1.0, label="a")
+        assert repr(joint._marginal(("a", "y"))) == (
+            "FactoredDistribution(\n"
+            "    factors=(\n"
+            "        ConditionalDistribution('y', given=('a',), label='y'),\n"
+            "        Normal('a', loc=0.0, scale=1.0, label='a'),\n"
+            "    ),\n"
+            ")"
+        )
 
-    def test_a_marginal_in_another_product_order_reads_as_that_product(self):
-        joint = Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0)
+    def test_a_marginal_named_out_of_order_reads_as_the_joint_product(self):
+        joint = Normal("a", 0.0, 1.0) & Gamma("b", 2.0, 1.0)
         assert repr(joint._marginal(("b", "a"))) == (
             "FactoredDistribution(\n"
-            "    factors=(Gamma('b', concentration=2.0, rate=1.0), Normal('a', loc=0.0, scale=1.0)),\n"
+            "    factors=(Normal('a', loc=0.0, scale=1.0), Gamma('b', concentration=2.0, rate=1.0)),\n"
             ")"
         )
 
@@ -572,7 +573,7 @@ def test_the_repr_of_a_law_that_holds_paths_fixed_follows_the_call_with_them():
 
 
 def _product() -> probpipe.Distribution:
-    return Normal("y", 0.0, 1.0, label="lik") * Gamma("mu", 2.0, 1.0, label="prior")
+    return Normal("y", 0.0, 1.0, label="lik") & Gamma("mu", 2.0, 1.0, label="prior")
 
 
 def _mixture() -> MixtureDistribution:
@@ -624,7 +625,7 @@ class TestADerivedLabel:
         assert eval(repr(given), _namespace()).label == given.label
 
     def test_a_marginal_of_one_factor_leaves_the_label_of_that_factor_out(self):
-        joint = Normal("a", 0.0, 1.0, label="a") * Normal("b", 0.0, 1.0, label="b")
+        joint = Normal("a", 0.0, 1.0, label="a") & Normal("b", 0.0, 1.0, label="b")
         marginal = joint._marginal(("a",))
         assert repr(marginal) == (
             "FactoredMultivariateGaussian(factors=(Normal('a', loc=0.0, scale=1.0, label='a'),))"
@@ -643,7 +644,7 @@ class TestACarriedLabel:
 
     @pytest.mark.parametrize("target", [EmpiricalDistribution, KDEDistribution])
     def test_a_law_converted_from_a_product_shows_the_products_label(self, target):
-        product = Normal("x", 0.0, 1.0, label="a") * Normal("y", 1.0, 2.0, label="b")
+        product = Normal("x", 0.0, 1.0, label="a") & Normal("y", 1.0, 2.0, label="b")
         with workflow_run(seed=0):
             law = convert(product, target)
         assert law.label == "a·b"
@@ -655,7 +656,7 @@ class TestACarriedLabel:
         )
         prior = EmpiricalDistribution(jnp.linspace(-1.0, 1.0, 5), output_name="mu", label="prior")
         with workflow_run(seed=0):
-            posterior = condition_on(likelihood * prior, {"y": 0.5})
+            posterior = condition_on((likelihood & prior), {"y": 0.5})
         assert posterior.label == "lik·prior"
         assert repr(posterior).endswith("    label='lik·prior',\n    fixed=('y',),\n)")
 
@@ -731,7 +732,7 @@ class TestLayout:
         "term",
         [
             _schools(),
-            Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
+            (Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)),
             EmpiricalDistribution(jnp.arange(5.0), output_name="e"),
         ],
         ids=["batch", "joint", "empirical"],
