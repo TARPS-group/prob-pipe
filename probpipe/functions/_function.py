@@ -54,8 +54,9 @@ from ..core._call_context import (
     current_call_context,
 )
 from ..core._dispatch import MethodInfo, ResolutionError
-from ..core._evaluation_points import _requested_evaluation_points
+from ..core._evaluation_points import _DescribedEvaluationPoints, _requested_evaluation_points
 from ..core._execution_claims import ProbeResult, probe
+from ..core._executors import ExecutionReport, _evaluation_report
 from ..core._expression import (
     Applied,
     AppliedValue,
@@ -347,9 +348,11 @@ def _call_function_in_context(
     # one, selects and runs its routes as any call does.
     token = _call._CHECKING.set(False)
     try:
-        return _run_call(function, args, call_inputs)
+        call_result = _run_call(function, args, call_inputs)
     finally:
         _call._CHECKING.reset(token)
+    _execution.warn_if_named_executor_ran_nothing()
+    return call_result
 
 
 def _result_expression(
@@ -1072,29 +1075,57 @@ def _evaluated_body_point(
     return _labeled_product(result)
 
 
-def _probe_checked_call(
+def _lifted_execution_report(
     function: Function,
     argument_values: Mapping[str, Any],
     broadcast_plan: _plan.BroadcastPlan,
     candidates: tuple[Any, ...] | None,
     resolved_controls: Mapping[str, Any],
     route_name: str | None,
-) -> None:
-    """Probe one evaluation point of the lifted call ``check`` reports, as the call would.
+) -> ExecutionReport:
+    """How the lifted call or sweep that ``check`` checks would run its function's evaluation points.
 
-    The call probes a function that states nothing when its route maps the
-    body, whatever executor it names, since a function JAX can trace is
-    always mapped by ``jax``. So ``check`` probes under the same conditions,
-    with the same stand-ins, and stores the outcome where the call reads it.
-    A probe of a nested sweep reads its first cell. A probe that fails stores
-    its outcome and raises nothing, as the call's would.
+    The call asks for one evaluation point per draw, combination, or grid
+    point when the engine's evaluation rule realizes it; a plain call, and a
+    call that another evaluation rule realizes, asks for none. The call
+    probes a function that states nothing when its route maps the body,
+    whatever executor it names, since a function JAX can trace is always
+    mapped by ``jax``. So ``check`` probes under the same conditions, with the
+    same stand-ins, and stores the outcome where the call reads it. A probe of
+    a nested sweep reads its first cell. A probe that fails stores its outcome
+    and raises nothing, as the call's would.
+
+    Parameters
+    ----------
+    function : Function
+        The checked function.
+    argument_values : Mapping of str to Any
+        The call's normalized arguments.
+    broadcast_plan : BroadcastPlan
+        The call's lifting regime.
+    candidates : tuple or None
+        The routes of a Function realized by routes, which realize each
+        evaluation point; ``None`` for a Function whose body does.
+    resolved_controls : Mapping of str to Any
+        The checked call's resolved controls.
+    route_name : str or None
+        The evaluation rule selected for the lifted call.
+
+    Returns
+    -------
+    ExecutionReport
+        The report of the function's evaluation points, or an empty report
+        when the call asks for none.
+
+    Raises
+    ------
+    ResolutionError
+        If the executor the call names is not registered.
+    ValueError
+        If the selected executor does not take one of its options.
     """
-    if (
-        broadcast_plan.regime == "none"
-        or function._execution_claims.traceable is not None
-        or route_name not in _rules._ENGINE_RULES
-    ):
-        return
+    if broadcast_plan.regime == "none" or route_name not in _rules._ENGINE_RULES:
+        return ExecutionReport()
     invocation_bindings = _lifted_call_bindings(function, argument_values, broadcast_plan)
     stochastic_plan = _lifted_call_stochastic_plan(
         argument_values, broadcast_plan, resolved_controls, route_name
@@ -1114,13 +1145,54 @@ def _probe_checked_call(
         probe_values, lifted_refs = dict(argument_values), list(broadcast_plan.array_args)
     else:
         probe_values, lifted_refs = dict(argument_values), list(broadcast_plan.dist_args)
-    _probe_lifted_point(
+    untraceable_reason = (
+        _sweep.untraceable_sweep_reason(
+            argument_values, list(broadcast_plan.array_args), broadcast_plan
+        )
+        if broadcast_plan.regime == "sweep"
+        else None
+    )
+    if untraceable_reason is not None:
+        traceable = False
+    else:
+        traceable, untraceable_reason = _lifted_point_traceability(
+            function,
+            partial(
+                _probe_lifted_point,
+                function,
+                probe_values,
+                lifted_refs,
+                point_body=evaluate_lifted_point,
+                stochastic_plan=stochastic_plan,
+                route_cache_key=_route_cache_key(function, resolved_controls, candidates),
+            ),
+        )
+    if stochastic_plan is None:
+        num_evaluation_points, point_noun = broadcast_plan.n_sweep, "grid point"
+    else:
+        num_evaluation_points = stochastic_plan.n_evaluations * (
+            len(stochastic_plan.logical_units) if broadcast_plan.regime == "nested" else 1
+        )
+        point_noun = "draw" if stochastic_plan.evaluation_mode == "sampled" else "combination"
+    described_points = _DescribedEvaluationPoints(
         function,
-        probe_values,
-        lifted_refs,
-        point_body=evaluate_lifted_point,
-        stochastic_plan=stochastic_plan,
-        route_cache_key=_route_cache_key(function, resolved_controls, candidates),
+        num_evaluation_points=num_evaluation_points,
+        shared=argument_values,
+        origin=function._label,
+        traceable=traceable,
+        untraceable_reason=untraceable_reason,
+        point_noun=point_noun,
+    )
+    return ExecutionReport(
+        (
+            _evaluation_report(
+                described_points,
+                current_call_context().execution_choice,
+                traceability_source=(
+                    "claimed" if function._execution_claims.traceable is not None else "probed"
+                ),
+            ),
+        )
     )
 
 
@@ -1899,10 +1971,13 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
     info, route = _route_report(
         function, argument_values, broadcast_plan, resolved_controls["method"], resolved_controls
     )
-    if route is not None:
-        _probe_checked_call(
+    execution = (
+        ExecutionReport()
+        if route is None
+        else _lifted_execution_report(
             function, argument_values, broadcast_plan, None, resolved_controls, route.name
         )
+    )
     return CallReport(
         routes=(info,),
         selected=None if info.feasible is None else info,
@@ -1910,6 +1985,7 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         result=result,
         lifted=lifted,
         conversions=MappingProxyType(conversions),
+        execution=execution,
     )
 
 
@@ -1938,6 +2014,7 @@ def _check_routes(
         return CallReport(
             routes=(pending,), lifted=lifted, conversions=MappingProxyType(dict(conversions))
         )
+    execution = ExecutionReport()
     if broadcast_plan.regime != "none":
         info, route = _route_report(
             function, argument_values, broadcast_plan, None, resolved_controls
@@ -1950,7 +2027,7 @@ def _check_routes(
                 conversions=MappingProxyType(dict(conversions)),
             )
         if route is not None:
-            _probe_checked_call(
+            execution = _lifted_execution_report(
                 function, argument_values, broadcast_plan, candidates, resolved_controls, route.name
             )
     token = _call._CHECKING.set(True)
@@ -1962,7 +2039,11 @@ def _check_routes(
         _call._CHECKING.reset(token)
     _plan.require_empty_sweep_output(broadcast_plan, points_report.result)
     return _resolution.call_report(
-        points_report, lifted=lifted, conversions=conversions, candidates=candidates
+        points_report,
+        lifted=lifted,
+        conversions=conversions,
+        candidates=candidates,
+        execution=execution,
     )
 
 

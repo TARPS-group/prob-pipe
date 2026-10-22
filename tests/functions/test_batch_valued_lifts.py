@@ -599,7 +599,7 @@ class TestMappedBatchValuedLifts:
         rowwise = self._lift(
             body, law, **_EXECUTOR_CONTROLS["sequential"], include_inputs=include_inputs
         )
-        assert mapped.provenance.metadata["dispatch"] == "jax"
+        assert mapped.provenance.metadata["evaluations"][0]["executor"] == "jax"
         assert mapped.event_spec == rowwise.event_spec
         _assert_same(mapped.atoms, rowwise.atoms)
         np.testing.assert_array_equal(mapped.weights, rowwise.weights)
@@ -624,7 +624,7 @@ class TestMappedBatchValuedLifts:
         rowwise = self._lift(
             total, law, **_EXECUTOR_CONTROLS["sequential"], include_inputs=include_inputs
         )
-        assert mapped.provenance.metadata["dispatch"] == "jax"
+        assert mapped.provenance.metadata["evaluations"][0]["executor"] == "jax"
         _assert_same(mapped.atoms, rowwise.atoms)
         np.testing.assert_array_equal(mapped.weights, rowwise.weights)
 
@@ -649,8 +649,8 @@ class TestMappedBatchValuedLifts:
             if executor == "jax":
                 # One probe trace and one mapped trace for each lift.
                 assert calls.count("first") <= 2 and calls.count("second") <= 2
-                assert law.provenance.metadata["dispatch"] == "jax"
-                assert totals.provenance.metadata["dispatch"] == "jax"
+                assert law.provenance.metadata["evaluations"][0]["executor"] == "jax"
+                assert totals.provenance.metadata["evaluations"][0]["executor"] == "jax"
             else:
                 assert calls.count("first") == 50 and calls.count("second") == 50
 
@@ -675,9 +675,12 @@ class TestMappedBatchValuedLifts:
                 with pytest.raises(ResolutionError, match=message):
                     total(law["trajectory"])
             else:
-                assert total(law["trajectory"]).provenance.metadata["dispatch"] == "sequential"
+                assert (
+                    total(law["trajectory"]).provenance.metadata["evaluations"][0]["executor"]
+                    == "sequential"
+                )
                 mapped = total(marginal(law, "trajectory"))
-                assert mapped.provenance.metadata["dispatch"] == "jax"
+                assert mapped.provenance.metadata["evaluations"][0]["executor"] == "jax"
 
     @_over_executors("default", "jax")
     def test_a_returned_record_that_holds_a_batch_is_not_mapped(self, controls):
@@ -696,4 +699,4 @@ class TestMappedBatchValuedLifts:
                     wrapped(Normal("beta", 0.0, 1.0))
             else:
                 law = wrapped(Normal("beta", 0.0, 1.0))
-                assert law.provenance.metadata["dispatch"] == "sequential"
+                assert law.provenance.metadata["evaluations"][0]["executor"] == "sequential"

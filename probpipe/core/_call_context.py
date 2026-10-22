@@ -10,7 +10,8 @@ Provides:
     which returns the one in effect;
   - :func:`_under_call_context`, the one function that installs a call context,
     and :func:`_open_call_context`, which runs one call in its own context;
-  - :class:`_ExecutionChoice`, the executor a call chose and its options;
+  - :class:`_ExecutionChoice`, the executor a call chose and its options, and
+    :class:`_NamedExecutorUse`, whether a named executor ran anything;
   - :class:`_NumSamplesUsed` and :class:`_EvaluationLog`, the call's two
     accumulators: the numbers of Monte Carlo draws its estimates took, and the
     sets of evaluation points it ran, with :func:`_collecting_call_accumulators`
@@ -29,7 +30,7 @@ import threading
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -113,6 +114,11 @@ class _ExecutionChoice:
     named_on : str or None
         The label of the call that named the executor, which a warning about
         an inherited executor names; ``None`` for automatic selection.
+    named_executor_use : _NamedExecutorUse or None
+        What became of the named executor in the call that named it and in
+        every call that inherited it, which the choices those calls inherit
+        share; ``None`` for a choice that names no executor. It takes no part
+        in equality, and a pickled choice arrives without it.
     """
 
     executor_name: str | None = None
@@ -120,6 +126,7 @@ class _ExecutionChoice:
     source: _ExecutionChoiceSource = "automatic"
     applies_only_to: Any = None
     named_on: str | None = None
+    named_executor_use: _NamedExecutorUse | None = field(default=None, compare=False, repr=False)
 
     def names_executor(self) -> bool:
         """Whether the choice names an executor rather than leaving it to automatic selection."""
@@ -268,6 +275,58 @@ class _EmbeddedCallState:
         finally:
             if self._token is not None:
                 _ACTIVE_CALLS.release(int(self._token))
+
+
+class _NamedExecutorUse:
+    """What became of the executor a call named, in that call and in every call that inherited it.
+
+    A call that names an executor itself creates one with its choice, and
+    the choices that the calls under it inherit share it, so the naming call
+    can tell, when it ends, whether its executor ran any set of evaluation
+    points. If it ran none, the call warns that the executor ran nothing,
+    unless a warning about the executor was already given, such as a
+    fallback's. The executor dispatcher writes it, and its contents are
+    guarded by a lock.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._ran_a_set = False
+        self._warned = False
+        self._jax_compiled_a_set = False
+
+    @property
+    def ran_a_set(self) -> bool:
+        """Whether the named executor ran a set of evaluation points."""
+        with self._lock:
+            return self._ran_a_set
+
+    @property
+    def warned(self) -> bool:
+        """Whether a warning about the named executor was given, such as a fallback's."""
+        with self._lock:
+            return self._warned
+
+    @property
+    def jax_compiled_a_set(self) -> bool:
+        """Whether ``jax`` compiled a set of evaluation points while the choice was in effect."""
+        with self._lock:
+            return self._jax_compiled_a_set
+
+    def note_ran_a_set(self) -> None:
+        """Note that the named executor ran a set of evaluation points."""
+        with self._lock:
+            self._ran_a_set = True
+
+    def note_warned(self) -> None:
+        """Note that a warning about the named executor was given."""
+        with self._lock:
+            self._warned = True
+
+    def note_jax_compiled_a_set(self) -> None:
+        """Note that ``jax`` compiled a set of evaluation points in place of the named executor."""
+        with self._lock:
+            self._jax_compiled_a_set = True
 
 
 @dataclass(frozen=True)

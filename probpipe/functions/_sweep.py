@@ -33,7 +33,11 @@ from ..distributions._distribution import Distribution
 from ..values import _binding
 from ..values._function_base import _validate_stacked_output
 from . import _plan, _recipe, _result
-from ._execution import evaluate_requested_points, sweep_cell_point_segment
+from ._execution import (
+    evaluate_requested_points,
+    recorded_evaluations,
+    sweep_cell_point_segment,
+)
 from ._result import _make_stack, _row_at_its_kind
 
 
@@ -264,13 +268,9 @@ def execute_sweep_rows(
             tuple(int(axis_index) for axis_index in np.unravel_index(cell_index, sweep_batch_shape))
         )
 
-    swept_objects = any(
-        isinstance(_binding.input_ref_value(values, ref), _ObjectBatch) for ref in array_args
-    )
-    if swept_objects:
-        traceable, untraceable_reason = False, "it sweeps a batch of objects"
-    elif len(plan.array_groups) > 1:
-        traceable, untraceable_reason = False, "it sweeps batches on different levels"
+    untraceable_reason = untraceable_sweep_reason(values, array_args, plan)
+    if untraceable_reason is not None:
+        traceable = False
     else:
         traceable, untraceable_reason = swept_point_traceability(values, array_args)
     if not traceable:
@@ -327,6 +327,23 @@ def execute_sweep_rows(
         function_label=function_name,
         stochastic_plan=None,
     )
+
+
+def untraceable_sweep_reason(
+    values: Mapping[str, Any],
+    array_args: Sequence[_binding.FunctionInputRef],
+    plan: _plan.BroadcastPlan,
+) -> str | None:
+    """Why ``jax`` cannot map a pure sweep over its cells, whatever its function; ``None`` when it may.
+
+    A sweep of a batch of objects, or of batches on different levels, reads
+    each cell by its coordinates, which a map cannot do.
+    """
+    if any(isinstance(_binding.input_ref_value(values, ref), _ObjectBatch) for ref in array_args):
+        return "it sweeps a batch of objects"
+    if len(plan.array_groups) > 1:
+        return "it sweeps batches on different levels"
+    return None
 
 
 def mapped_storage(
@@ -474,7 +491,9 @@ def make_sweep_provenance(
     ``parents`` carries tracked call-level lineage; ``inputs`` carries the
     original resolved plain values rather than per-cell sweep values. A nested
     sweep's metadata records the ``max_evaluations`` of the lift in each cell,
-    which a pure sweep, given ``None``, does not have.
+    which a pure sweep, given ``None``, does not have. Its ``evaluations``
+    record each set of evaluation points of the function that the sweep ran,
+    as :func:`~probpipe.functions._execution.recorded_evaluations` gives them.
     Returns ``None`` when :attr:`ProvenanceMode.OFF` is active.
     """
     regime = "nested" if dist_args else "stack"
@@ -496,6 +515,7 @@ def make_sweep_provenance(
             **({} if max_evaluations is None else {"max_evaluations": max_evaluations}),
             "ra_args": [ref.label for ref in array_args],
             "dist_args": [ref.label for ref in dist_args],
+            "evaluations": recorded_evaluations(origin=function_name),
             **(dict(route) if route is not None else {}),
         },
         inputs=inputs,

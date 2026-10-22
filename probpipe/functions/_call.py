@@ -21,6 +21,7 @@ from typing import Any, Literal
 from ..core._array_backend import _is_numeric_leaf
 from ..core._batch import Batch, BatchSpec
 from ..core._dispatch import MethodInfo
+from ..core._executors import ExecutionReport
 from ..core._repr import call_repr, format_names, mapping_repr, sequence_repr, type_name
 from ..core._specs import (
     InputSpec,
@@ -121,6 +122,11 @@ class CallReport:
         order, keyed by the names of those routes joined by ``", "``. The
         routes' reports leave them out, so each registry's methods are listed
         once.
+    execution : ExecutionReport
+        How the call would run the evaluation points it asks for: one report
+        per callable, with the executor and the executors it rejected. The
+        repr shows it only when a callable is opaque or runs on an executor
+        other than ``jax``.
     """
 
     routes: tuple[MethodInfo, ...] = ()
@@ -130,6 +136,7 @@ class CallReport:
     lifted: tuple[str, ...] = ()
     conversions: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     methods: Mapping[str, tuple[str, ...]] = field(default_factory=lambda: MappingProxyType({}))
+    execution: ExecutionReport = field(default_factory=ExecutionReport)
 
     def __repr__(self) -> str:
         """The fields the report sets, as a call of its constructor (II.4)."""
@@ -150,6 +157,8 @@ class CallReport:
         if self.methods:
             listed = {route: format_names(names) for route, names in self.methods.items()}
             keywords.append(("methods", mapping_repr(listed)))
+        if self.execution._runs_more_than_compiled_code():
+            keywords.append(("execution", repr(self.execution)))
         return call_repr("CallReport", keywords=keywords)
 
     def _repr_html_(self) -> str:

@@ -52,9 +52,9 @@ from . import _plan, _recipe
 from ._call import ApplicabilityError
 from ._execution import (
     evaluate_requested_points,
-    executor_that_ran,
     lifted_evaluation_point_segment,
     preflight_prefect_route,
+    recorded_evaluations,
 )
 from ._result import (
     ResultSchemaError,
@@ -264,7 +264,9 @@ def execute_distribution_broadcast(
     provenance = _make_broadcast_provenance(
         values=values,
         broadcast_args=broadcast_args,
-        executor_name=executor_that_ran(evaluation_points),
+        evaluations=recorded_evaluations(
+            origin=evaluation_points.origin, set_ordinal=evaluation_points._set_ordinal
+        ),
         workflow_kind=workflow_kind,
         max_evaluations=max_evaluations,
         function_name=function_name,
@@ -612,7 +614,7 @@ def _make_broadcast_provenance(
     *,
     values: dict[str, Any],
     broadcast_args: Sequence[FunctionInputRef],
-    executor_name: str | None,
+    evaluations: list[dict[str, Any]],
     workflow_kind: WorkflowKind,
     max_evaluations: int,
     function_name: str,
@@ -630,7 +632,7 @@ def _make_broadcast_provenance(
         "broadcast",
         parents=list(provenance_parents),
         metadata={
-            "dispatch": executor_name,
+            "evaluations": evaluations,
             "orchestrate": workflow_kind.value,
             "max_evaluations": max_evaluations,
             "func": function_name or func.__name__,

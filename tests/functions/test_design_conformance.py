@@ -88,8 +88,6 @@ _EXAMPLES = frozenset(
     }
 )
 
-_AWAITS_REPORTING = "check's report of how each callable's evaluation points will run (V.9)"
-
 #: The problem the design check reports for a member that does not exist yet.
 _NOT_IMPLEMENTED = "is not implemented"
 
@@ -115,9 +113,6 @@ _PENDING: dict[str, tuple[str, str]] = {
         "renaming a function's inputs and outputs, f.rename(...), is not implemented",
     ),
     "Function.__and__": (_NOT_IMPLEMENTED, "merging two functions with & is not implemented"),
-    "CallReport.execution": ("is not declared", _AWAITS_REPORTING),
-    "EvaluationReport": (_NOT_IMPLEMENTED, _AWAITS_REPORTING),
-    "ExecutionReport": (_NOT_IMPLEMENTED, _AWAITS_REPORTING),
 }
 
 #: Public names of the engine that the prose declares rather than a code block.

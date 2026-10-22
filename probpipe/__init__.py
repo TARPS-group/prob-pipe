@@ -56,7 +56,13 @@ from probpipe.core._evaluation_points import (
     EvaluationPoints,
     SharedPayload,
 )
-from probpipe.core._executors import EvaluationExecutor, evaluate_at_points, executor_registry
+from probpipe.core._executors import (
+    EvaluationExecutor,
+    EvaluationReport,
+    ExecutionReport,
+    evaluate_at_points,
+    executor_registry,
+)
 from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric import Numeric
 from probpipe.core._numeric_array import NumericArray
@@ -267,6 +273,8 @@ __all__ = [
     "EvaluationFailure",
     "EvaluationOutcomes",
     "EvaluationPoints",
+    "EvaluationReport",
+    "ExecutionReport",
     "Exponential",
     "FullFactorialDesign",
     "Function",
