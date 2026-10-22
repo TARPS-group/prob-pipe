@@ -163,8 +163,8 @@ def test_i6_a_records_spec_agrees_with_its_specs_paths():
 
 
 #: Laws and the paths of each that a view's event spec reads through the parent's.
-#: One path to a group is left out until views of groups have the group's
-#: children as outputs (T5).
+#: One path to a group is left out: a view of a group still names the group
+#: whole, until it has the group's children as outputs.
 _VIEWED = [
     (_prior, ["mu", "tau", ("tau", "mu"), ("mu",)]),
     (_grouped, ["a", "g/c", ("a", "g/c"), ["g/e", "a"], ("g",)]),

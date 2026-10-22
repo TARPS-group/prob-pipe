@@ -266,7 +266,7 @@ def _not_an_event_path(
         event_spec,
         path,
         owner=repr(label),
-        values="draws",
+        values_word="draws",
         action=action or f"index {label!r} by",
         requested=requested,
     )
@@ -322,7 +322,7 @@ def _read_event_paths(
         event_spec,
         paths,
         owner=repr(label),
-        values="draws",
+        values_word="draws",
         action=action,
         tuple_given=tuple_given,
     )
@@ -1163,6 +1163,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
         Raises
         ------
+        TypeError
+            If an operand's draws are distributions or batches, which have no
+            outputs to merge by name, until they are wrapped under a name.
         ValueError
             If an output is produced twice, the right operand consumes an
             output the left produces, or matched specs do not unify.

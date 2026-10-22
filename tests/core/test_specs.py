@@ -18,6 +18,7 @@ from probpipe import (
     DistributionBatch,
     DistributionSpec,
     EmpiricalDistribution,
+    Function,
     FunctionSpec,
     InputSpec,
     Normal,
@@ -31,6 +32,8 @@ from probpipe import (
     TermSpec,
     distribution,
     positive,
+    sample,
+    workflow_run,
 )
 from probpipe.core._specs import (
     _has_record_outputs,
@@ -248,7 +251,7 @@ class TestTheReadersOfAnOutputSpec:
     ):
         # A batch of records has the record of its marginal batches' types once batch outputs
         # are typed by their marginal batches; until then it is refused, as before.
-        with pytest.raises(TypeError, match=f"describes {described}.*wrap them under a name"):
+        with pytest.raises(TypeError, match=f"its values are {described}.*Wrap them under a name"):
             _output_record(output_spec)
 
     def test_an_output_spec_over_a_law_has_no_outputs(self):
@@ -267,7 +270,7 @@ class TestTheReadersOfAnOutputSpec:
             TypeError, match=r"cannot index .* by 'x', since its draws are distributions"
         ):
             law_over_laws["x"]
-        with pytest.raises(TypeError, match="wrap them under a name"):
+        with pytest.raises(TypeError, match="Wrap them under a name"):
             _output_record(law_over_laws.event_spec)
 
 
@@ -296,15 +299,24 @@ class TestOutputSpecSelection:
         assert wrapped["params"] == OutputSpec(law_spec)
         assert wrapped["params"].outputs == {}
 
+    def test_a_function_returning_a_wrapped_law_selects_the_law_s_output_spec(self):
+        law = Normal("mu", 0.0, 1.0) * Normal("sigma", 1.0, 1.0)
+        fit = Function(
+            lambda data: {"params": law},
+            input_spec={"data": NumericArraySpec((3,))},
+            output_spec=OutputSpec(RecordSpec(params=law.spec)),
+        )
+        assert fit.output_spec["params"] == OutputSpec(law.spec)
+
     def test_the_root_name_of_the_keyword_form_gives_the_spec_itself(self):
-        # Until the accessor of an output replaces this reading (T18).
+        # An interim reading, as a distribution over a single value is indexed by its name.
         spec = OutputSpec(x=_REAL)
         assert spec["x"] is spec
         assert "x" in spec
         assert spec[["x"]] == OutputSpec(RecordSpec(x=_REAL))
 
     def test_the_keyword_form_over_a_record_selects_below_its_name(self):
-        # The interim whole form (T12): its name gives itself, and its paths start with it.
+        # The keyword form over a record: its name gives itself, and its paths start with it.
         spec = OutputSpec(params=RecordSpec(mu=_REAL, sigma=_REAL))
         assert spec["params"] is spec
         assert spec["params/mu"] == OutputSpec(mu=_REAL)
@@ -406,7 +418,9 @@ class TestOutputSpecRemoval:
             _grouped_spec().without("z")
 
     def test_a_spec_with_no_paths_raises_type_error(self):
-        with pytest.raises(TypeError, match="cannot remove 'y', since its values are single"):
+        with pytest.raises(
+            TypeError, match="cannot remove 'y' from the output spec, since its values are single"
+        ):
             OutputSpec(x=_REAL).without("y")
 
     def test_paths_are_given_one_per_argument(self):
@@ -444,7 +458,7 @@ class TestOutputSpecMerge:
             TypeError,
             match=re.escape(
                 "cannot merge the left output spec, since its values are distributions, which "
-                "have no outputs to merge by name. Wrap them under a name, as "
+                "have no outputs to read by name. Wrap them under a name, as "
                 "OutputSpec(RecordSpec(params=...))"
             ),
         ):
@@ -452,6 +466,18 @@ class TestOutputSpecMerge:
         assert OutputSpec(RecordSpec(params=law_spec)) & OutputSpec(x=_REAL) == OutputSpec(
             RecordSpec(params=law_spec, x=_REAL)
         )
+
+    def test_a_spec_over_batches_is_refused_until_their_outputs_are_one_record(self):
+        batch_spec = BatchSpec(RecordSpec(a=_REAL, b=_REAL), n=2)
+        assert list(OutputSpec(batch_spec).outputs) == ["a", "b"]
+        with pytest.raises(
+            TypeError,
+            match=re.escape(
+                "cannot merge the left output spec, since its values are batches, whose outputs "
+                "are not read as one record yet. Wrap them under a name"
+            ),
+        ):
+            OutputSpec(batch_spec) & OutputSpec(x=_REAL)
 
     def test_a_spec_whose_type_is_not_known_is_refused(self):
         with pytest.raises(TypeError, match="the type of its output 'x' is not known yet"):
@@ -488,7 +514,7 @@ class TestALawOverLaws:
         with pytest.raises(
             TypeError,
             match=r"cannot merge factor 0 \('ℙ'\), since its draws are distributions, which have "
-            r"no outputs to merge by name\. Wrap them under a name",
+            r"no outputs to read by name\. Wrap them under a name",
         ):
             _law_over_laws() * Normal("z", 0.0, 1.0)
 
@@ -500,6 +526,10 @@ class TestALawOverLaws:
         )
         joint = wrapped * Normal("z", 0.0, 1.0)
         assert list(joint.event_spec.outputs) == ["params", "z"]
+        with workflow_run(seed=0):
+            draw = sample(joint)
+        assert isinstance(draw["params"], Distribution)
+        assert draw.keys() == ("params", "z")
 
 
 class TestOutputSpecCompletion:

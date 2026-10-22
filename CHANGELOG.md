@@ -1845,7 +1845,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   laws_of_x["x"]                # laws_of_x: a distribution over laws of x
   # before: laws_of_x itself
   # after:  TypeError: cannot index ... by 'x', since its draws are distributions
+
+  sample(laws_of_x).label
+  # before: 'x ~ ℙ'
+  # after:  '() ~ ℙ', since the law has no outputs; its notation is 'ℙ()'
   ```
+
+  A distribution whose event spec is positional over a `BatchSpec` of records
+  changes the same way: `[]` by the name of its element's one output, and `*`,
+  raise `TypeError`, since a batch's outputs are not yet read as one record.
 
 - **`merge` on records, record specs, and batches of records is shallow.** It
   merges by top-level name, so two records that both have a group `g` raise
@@ -3010,8 +3018,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   last name, as `OutputSpec(b=...)`, and a record having its top-level names
   as outputs; `O[["a", "g/b"]]` is the record of the values at a list of
   paths, each at its own path. `"g/b" in O` tests paths. `O.without("g/c")`
-  removes values by path. `O & P` merges two output specs into the record of
-  both one's outputs, `O`'s first, where the output `y` of the keyword form
+  removes values by path. `O & P` merges two output specs into one record of
+  the outputs of both, `O`'s first, where the output `y` of the keyword form
   becomes the field `y`; it refuses an output in both, and an output spec over
   distributions, whose draws have no outputs. An output spec is not iterable;
   `list(O.outputs)` lists its outputs. So a conditional distribution's inputs

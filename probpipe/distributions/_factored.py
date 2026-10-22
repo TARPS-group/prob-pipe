@@ -384,7 +384,8 @@ def _factor_graph(
     Raises
     ------
     TypeError
-        If a factor is neither distribution kind.
+        If a factor is neither distribution kind, or its draws are
+        distributions or batches, which have no outputs to merge by name.
     ValueError
         If there are no factors, an output is produced twice, a factor
         consumes an output a factor to its left produces, matched specs do
@@ -403,7 +404,7 @@ def _factor_graph(
     # outputs, and an output of two factors, naming each factor by its position.
     factor_names = [f"factor {index} ({factor.label!r})" for index, factor in enumerate(factors)]
     outputs_record = _merged_output_record(
-        [factor.event_spec for factor in factors], owners=factor_names, values="draws"
+        [factor.event_spec for factor in factors], owners=factor_names, values_word="draws"
     )
     producers: dict[str, int] = {}
     for index, factor in enumerate(factors):
@@ -460,7 +461,7 @@ def _factor_graph(
         _merged_output_record(
             [factor.event_spec for factor in factors],
             owners=factor_names,
-            values="draws",
+            values_word="draws",
         )
     )
     return _FactorGraph(
@@ -2181,7 +2182,8 @@ class FactoredDistribution(Distribution, SupportsFactors):
     Raises
     ------
     TypeError
-        If a factor is neither distribution kind.
+        If a factor is neither distribution kind, or its draws are
+        distributions or batches, which have no outputs to merge by name.
     ValueError
         If there are no factors, an output is produced twice, a factor
         conditions on an output a factor to its left produces, matched specs
@@ -2332,7 +2334,8 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
     Raises
     ------
     TypeError
-        If a factor is neither distribution kind.
+        If a factor is neither distribution kind, or its draws are
+        distributions or batches, which have no outputs to merge by name.
     ValueError
         If the factors break a composition rule, as for
         :class:`FactoredDistribution`, or meet every given, which makes the

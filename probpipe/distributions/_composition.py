@@ -52,6 +52,9 @@ def _compose(
 
     Raises
     ------
+    TypeError
+        If an operand's draws are distributions or batches, which have no
+        outputs to merge by name, until they are wrapped under a name.
     ValueError
         If an output is produced twice, the right operand consumes an
         output the left produces, or a matched spec does not unify.

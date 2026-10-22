@@ -37,7 +37,7 @@ from ..core._record_spec import NumericRecordSpec, RecordSpec
 from ..core._repr import format_value
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
 from ..core._specs import OutputSpec, _root_output_name
-from ..core.named_tree import _PATH_SEP, _unflatten_paths
+from ..core.named_tree import _PATH_SEP, _last_name, _unflatten_paths
 from ..linalg import DenseLinOp
 from ._capabilities import (
     SupportsCovariance,
@@ -812,7 +812,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         if isinstance(paths, str):
             ((requested, segments, node),) = requested_nodes
             atoms = self._projection(segments, node)
-            declaration = OutputSpec(**{requested.rsplit(_PATH_SEP, 1)[-1]: node})
+            declaration = OutputSpec(**{_last_name(requested): node})
         else:
             atoms = self._atoms_at_paths(requested_nodes)
             declaration = OutputSpec(atoms.element_spec)

@@ -67,7 +67,13 @@ from ._shapes import (
 )
 from ._spec_base import OpaqueSpec, _opaque_spec_of
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec, TermSpec
-from .named_tree import _PATH_SEP, _keyed_paths, _paths_label, _unflatten_paths
+from .named_tree import (
+    _PATH_SEP,
+    _check_no_shared_top_level_names,
+    _keyed_paths,
+    _paths_label,
+    _unflatten_paths,
+)
 from .provenance import Provenance
 from .record import (
     Record,
@@ -856,13 +862,9 @@ class RecordBatch(Batch[Record]):
                 f"{format_levels(self.level_names, self.axis_groups)} and "
                 f"{format_levels(other.level_names, other.axis_groups)}"
             )
-        shared = [name for name in self.event_template.children if name in other.event_template]
-        if shared:
-            names = repr(shared[0]) if len(shared) == 1 else str(shared)
-            raise ValueError(
-                f"cannot merge the two batches of records, since both have {names}. Rename one, "
-                f"or merge the groups first"
-            )
+        _check_no_shared_top_level_names(
+            self.event_template, other.event_template, operands="the two batches of records"
+        )
         merged = self.event_template.merge(other.event_template)
         return self._rebuilt({**self._columns, **other._columns}, merged)
 

@@ -62,6 +62,7 @@ from .named_tree import (
     _PATH_SEP,
     NamedTree,
     _check_no_path_sep,
+    _check_no_shared_top_level_names,
     _keyed_paths,
     _paths_label,
     _unflatten_paths,
@@ -994,7 +995,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         >>> Record({"a": 1.0}).merge(Record({"b": 2.0, "g": {"c": 3.0}})).keys()
         ('a', 'b', 'g/c')
         """
-        self._leaves_merged(other)  # a top-level name in both raises
+        _check_no_shared_top_level_names(self, other, operands=f"the two {type(self).__name__}s")
         new_children: dict[str, Any] = {}
         specs: dict[str, Any] = {}
         for record, children in ((self, self._tree), (other, other._tree)):

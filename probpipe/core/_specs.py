@@ -28,7 +28,7 @@ from ._spec_base import (
     _require_hashable,
     _unify_specs,
 )
-from .named_tree import _PATH_SEP
+from .named_tree import _PATH_SEP, _last_name
 
 __all__ = [
     "InputSpec",
@@ -275,19 +275,21 @@ _EXPOSED_SPECS = {
     "batch": "BatchSpec of a record or a law",
 }
 
-#: What the outputs of each kind of term in the positional form are, as a message names them.
+#: The values an output spec of each kind of term in the positional form describes, as a message
+#: names them.
 _EXPOSED_OF = {
-    "record": "a record's fields",
-    "law": "a distribution's outputs",
-    "batch": "a batch element's outputs",
+    "record": "records",
+    "law": "distributions",
+    "batch": "batches",
 }
 
 
 def _exposed_kind(spec: object) -> str | None:
-    """The kind of term the positional form exposes for *spec*, or None when it exposes none.
+    """The kind of term the positional form takes for *spec*, or None when it takes none.
 
-    A record exposes its immediate fields, a law or a kernel its event's
-    outputs, and a batch its element's outputs.
+    The positional form takes a record, whose outputs are its immediate fields;
+    a law or a kernel, which has no outputs; and a batch of records or of laws,
+    whose outputs are its element's.
     """
     from ._batch import BatchSpec
 
@@ -441,10 +443,9 @@ class OutputSpec:
             ``O["g/b"]`` is ``OutputSpec(b=...)``, and a record has its
             top-level names as outputs. For a list, the record of the chosen
             values, each at its own path, in this spec's order, as ``O[["g/b"]]``
-            is ``OutputSpec(RecordSpec(g=RecordSpec(b=...)))``. The name of the
-            one output of the keyword form gives this OutputSpec itself, and a
-            list may name it, as ``OutputSpec(x=())[["x"]]`` is
-            ``OutputSpec(RecordSpec(x=...))``.
+            is ``OutputSpec(RecordSpec(g=RecordSpec(b=...)))``. A list may name
+            the one output of the keyword form, as ``OutputSpec(x=())[["x"]]``
+            is ``OutputSpec(RecordSpec(x=...))``.
 
         Raises
         ------
@@ -458,6 +459,14 @@ class OutputSpec:
             If a path is empty or has an empty name, or a list of paths is
             empty, names a path twice, or holds a path inside another.
 
+        Notes
+        -----
+        As an interim implementation detail, the name of the one output of the
+        keyword form gives this OutputSpec itself, as ``Normal("x", 0.0,
+        1.0)["x"]`` gives the distribution itself, until an accessor of an
+        output replaces both readings; a value with no paths has no path to
+        select.
+
         Examples
         --------
         >>> O = OutputSpec(RecordSpec(a=(), g=RecordSpec(b=(), c=())))
@@ -467,22 +476,29 @@ class OutputSpec:
         OutputSpec(NumericRecordSpec(g=NumericRecordSpec(b=())))
         """
         read_paths = _read_paths(
-            self, paths, owner="the output spec", values="values", action="index the output spec by"
+            self,
+            paths,
+            owner="the output spec",
+            values_word="values",
+            action="index the output spec by",
         )
         if isinstance(read_paths, str):
             if read_paths == self._output_name:
                 return self
-            node = cast(RecordSpec, _path_record(self))[read_paths]
-            return _output_spec_at(node, read_paths.rsplit(_PATH_SEP, 1)[-1])
+            node_spec = cast(RecordSpec, _path_record(self))[read_paths]
+            return _output_spec_at(node_spec, _last_name(read_paths))
         if self._term_spec is None:
             raise TypeError(
-                f"cannot index the output spec by {list(read_paths)}, since the type of its output "
-                f"{self._output_name!r} is not known yet. Complete it first with with_term_spec"
+                f"cannot index the output spec by {list(read_paths)}, since {_type_not_known(self)}"
             )
         return OutputSpec(_output_record(self)[read_paths])
 
     def __contains__(self, path: object, /) -> bool:
-        """Whether *path* is a string and ``self[path]`` succeeds."""
+        """Whether *path* is a string and ``self[path]`` succeeds.
+
+        As ``[]`` does, it reads the name of the keyword form's one output as
+        an interim implementation detail.
+        """
         return _has_path(self, path)
 
     def __iter__(self) -> NoReturn:
@@ -532,17 +548,22 @@ class OutputSpec:
         for path in read_paths:
             if not _has_path(self, path):
                 raise _paths_error(
-                    self, path, owner="the output spec", values="values", action="remove"
+                    self,
+                    path,
+                    owner="the output spec",
+                    values_word="values",
+                    action="remove",
+                    after_path=" from the output spec",
                 )
         if self._output_name in read_paths:
             raise ValueError(
                 f"cannot remove {self._output_name!r} from the output spec, since it names the "
                 f"whole value and nothing would remain"
             )
-        record = _output_record(self).without(*read_paths)
+        remaining_record = _output_record(self).without(*read_paths)
         if self._output_name is None:
-            return OutputSpec(record)
-        return OutputSpec(**{self._output_name: record.children[self._output_name]})
+            return OutputSpec(remaining_record)
+        return OutputSpec(**{self._output_name: remaining_record.children[self._output_name]})
 
     def __and__(self, other: OutputSpec, /) -> OutputSpec:
         """Merge two OutputSpecs: the outputs of both, this one's first.
@@ -561,8 +582,10 @@ class OutputSpec:
         Raises
         ------
         TypeError
-            If either spec's type is not known yet, or its values are not read
-            by named outputs, as distributions are; wrap them under a name.
+            If either spec's type is not known yet, or it is in the
+            positional form over distributions, which have no outputs, or over
+            batches, whose outputs are not read as one record yet. Wrap such
+            values under a name to merge them.
         ValueError
             If an output name is in both.
 
@@ -577,7 +600,7 @@ class OutputSpec:
             _merged_output_record(
                 (self, other),
                 owners=("the left output spec", "the right output spec"),
-                values="values",
+                values_word="values",
             )
         )
 
@@ -644,7 +667,7 @@ class OutputSpec:
         kind = None if self._output_name is not None else _exposed_kind(self._term_spec)
         if kind is not None and _exposed_kind(term_spec) != kind:
             raise TypeError(
-                f"with_term_spec() needs a {_EXPOSED_SPECS[kind]} for an OutputSpec of "
+                f"with_term_spec() needs a {_EXPOSED_SPECS[kind]} for an OutputSpec over "
                 f"{_EXPOSED_OF[kind]}, got {type(term_spec).__name__}"
             )
         if self._term_spec is not None:
@@ -752,8 +775,7 @@ def _root_path(output_name: str | None, kind: str | None) -> str:
 
     In the keyword form the paths start at the *output_name*. In the positional
     form over a record, the record's fields are the outputs, so the root is the
-    empty path; over a law or a batch, no path lies above the event's outputs,
-    so the root is named by its *kind*.
+    empty path; over a law or a batch, the root is named by its *kind*.
     """
     if output_name is not None:
         return output_name
@@ -840,6 +862,33 @@ _VALUES_WITHOUT_RECORD = {
 }
 
 
+def _no_output_record(output_spec: OutputSpec, values_word: str) -> str:
+    """Why the values *output_spec* describes have no record of their outputs, with the fix.
+
+    The output spec is in the positional form over a distribution, a
+    conditional distribution, or a batch. *values_word* is what the message
+    calls those values, such as ``"draws"``.
+    """
+    described = _VALUES_WITHOUT_RECORD.get(type(output_spec._term_spec).__name__, "values")
+    reason = (
+        "whose outputs are not read as one record yet"
+        if described == "batches"
+        else "which have no outputs to read by name"
+    )
+    return (
+        f"its {values_word} are {described}, {reason}. Wrap them under a name, as "
+        f"OutputSpec(RecordSpec(params=...))"
+    )
+
+
+def _type_not_known(output_spec: OutputSpec) -> str:
+    """Why the keyword form *output_spec*, whose type is not known yet, cannot be read, with the fix."""
+    return (
+        f"the type of its output {output_spec._output_name!r} is not known yet. Complete it "
+        f"first with with_term_spec"
+    )
+
+
 def _output_record(output_spec: OutputSpec) -> RecordSpec:
     """The record of *output_spec*'s outputs: one field per output, holding the output's spec.
 
@@ -868,11 +917,9 @@ def _output_record(output_spec: OutputSpec) -> RecordSpec:
     if _has_record_outputs(output_spec):
         return cast(RecordSpec, output_spec._term_spec)
     if output_spec._output_name is None:
-        values = _VALUES_WITHOUT_RECORD.get(type(output_spec._term_spec).__name__, "values")
         raise TypeError(
-            f"expected the outputs of a record or of a single named value, but the output "
-            f"spec describes {values}, which are not read by their outputs; wrap them under a "
-            f"name, as OutputSpec(RecordSpec(params=...))"
+            f"cannot read the outputs of the output spec as one record, since "
+            f"{_no_output_record(output_spec, 'values')}"
         )
     return RecordSpec({output_spec._output_name: output_spec._term_spec})
 
@@ -910,8 +957,8 @@ def _has_path(output_spec: OutputSpec, path: object) -> bool:
         return False
     if path == output_spec._output_name:
         return True
-    record = _path_record(output_spec)
-    return record is not None and path in record
+    path_record = _path_record(output_spec)
+    return path_record is not None and path in path_record
 
 
 def _paths_error(
@@ -919,9 +966,10 @@ def _paths_error(
     path: str,
     *,
     owner: str,
-    values: str,
+    values_word: str,
     action: str,
     requested: tuple[str, ...] = (),
+    after_path: str = "",
 ) -> KeyError | TypeError:
     """The error for *path*, which does not select from *output_spec*.
 
@@ -936,35 +984,40 @@ def _paths_error(
         The path that does not select.
     owner : str
         The term the messages name, such as ``"'model'"``.
-    values : str
+    values_word : str
         What the term's values are called, such as ``"draws"``.
     action : str
         What the caller was asked to do, which the message completes with
         *path*, such as ``"index 'model' by"``.
     requested : tuple of str
         The list of paths that held *path*, or ``()`` for one path.
+    after_path : str
+        What the message says after *path*, such as ``" from the output
+        spec"``; nothing by default.
 
     Returns
     -------
     KeyError or TypeError
         The error to raise.
     """
-    record = _path_record(output_spec)
-    if record is not None:
+    path_record = _path_record(output_spec)
+    if path_record is not None:
         return KeyError(
-            _missing_path(path, owner=owner, available=record._node_paths(), requested=requested)
+            _missing_path(
+                path, owner=owner, available=path_record._node_paths(), requested=requested
+            )
         )
-    failed = f"cannot {action} {path!r}"
+    failed_action = f"cannot {action} {path!r}{after_path}"
     if output_spec._output_name is not None and output_spec._term_spec is None:
+        return TypeError(f"{failed_action}, since {_type_not_known(output_spec)}")
+    values_description = _VALUES_WITHOUT_RECORD.get(type(output_spec._term_spec).__name__)
+    if values_description is None:
         return TypeError(
-            f"{failed}, since the type of its output {output_spec._output_name!r} is not known yet"
+            f"{failed_action}, since its {values_word} are single values with no paths"
         )
-    described = _VALUES_WITHOUT_RECORD.get(type(output_spec._term_spec).__name__)
-    if described is None:
-        return TypeError(f"{failed}, since its {values} are single values with no paths")
     return TypeError(
-        f"{failed}, since its {values} are {described}, and indexing into them by path is not "
-        f"supported yet"
+        f"{failed_action}, since its {values_word} are {values_description}, and indexing into them "
+        f"by path is not supported yet"
     )
 
 
@@ -973,7 +1026,7 @@ def _read_paths(
     paths: Any,
     *,
     owner: str,
-    values: str,
+    values_word: str,
     action: str,
     tuple_given: bool | None = None,
 ) -> str | tuple[str, ...]:
@@ -990,7 +1043,7 @@ def _read_paths(
         One path, or a list or tuple of paths, as the caller gave them.
     owner : str
         The term the messages name, such as ``"'model'"``.
-    values : str
+    values_word : str
         What the term's values are called, such as ``"draws"``.
     action : str
         What the caller was asked to do, which the messages complete.
@@ -1015,13 +1068,18 @@ def _read_paths(
         names a path twice, or holds a path inside another.
     """
     read_paths = _as_paths(paths, action=action)
-    listed = read_paths if isinstance(read_paths, tuple) else (read_paths,)
-    hinted = isinstance(paths, tuple) if tuple_given is None else tuple_given
-    for path in listed:
+    listed_paths = read_paths if isinstance(read_paths, tuple) else (read_paths,)
+    tuple_was_given = isinstance(paths, tuple) if tuple_given is None else tuple_given
+    for path in listed_paths:
         if not _has_path(output_spec, path):
-            requested = listed if hinted and isinstance(read_paths, tuple) else ()
+            requested = listed_paths if tuple_was_given and isinstance(read_paths, tuple) else ()
             raise _paths_error(
-                output_spec, path, owner=owner, values=values, action=action, requested=requested
+                output_spec,
+                path,
+                owner=owner,
+                values_word=values_word,
+                action=action,
+                requested=requested,
             )
     if isinstance(read_paths, str) or len(read_paths) == 1:
         return read_paths
@@ -1041,7 +1099,7 @@ def _output_spec_at(node_spec: TermSpec, last_name: str) -> OutputSpec:
 
 
 def _merged_output_record(
-    output_specs: Sequence[OutputSpec], *, owners: Sequence[str], values: str
+    output_specs: Sequence[OutputSpec], *, owners: Sequence[str], values_word: str
 ) -> RecordSpec:
     """The record of the outputs of every one of *output_specs*, in order: their merge.
 
@@ -1057,7 +1115,7 @@ def _merged_output_record(
     owners : sequence of str
         The term each output spec describes, as the messages name it, such as
         ``"'prior'"``.
-    values : str
+    values_word : str
         What the terms' values are called, such as ``"draws"``.
 
     Returns
@@ -1074,31 +1132,26 @@ def _merged_output_record(
     ValueError
         If two output specs have an output of one name.
     """
-    fields: dict[str, TermSpec] = {}
-    source_of: dict[str, str] = {}
+    merged_outputs: dict[str, TermSpec] = {}
+    owner_of_output: dict[str, str] = {}
     for output_spec, owner in zip(output_specs, owners, strict=True):
         output_name = output_spec._output_name
         if output_name is not None and output_spec._term_spec is None:
-            raise TypeError(
-                f"cannot merge {owner}, since the type of its output {output_name!r} is not known "
-                f"yet. Complete it first with with_term_spec"
-            )
+            raise TypeError(f"cannot merge {owner}, since {_type_not_known(output_spec)}")
         if output_name is None and not _has_record_outputs(output_spec):
-            described = _VALUES_WITHOUT_RECORD.get(type(output_spec._term_spec).__name__, "values")
             raise TypeError(
-                f"cannot merge {owner}, since its {values} are {described}, which have no outputs "
-                f"to merge by name. Wrap them under a name, as OutputSpec(RecordSpec(params=...))"
+                f"cannot merge {owner}, since {_no_output_record(output_spec, values_word)}"
             )
-        for name, spec in _output_record(output_spec).children.items():
-            if name in fields:
+        for name, output_term_spec in _output_record(output_spec).children.items():
+            if name in merged_outputs:
                 raise ValueError(
-                    f"cannot merge {source_of[name]} and {owner}, since both have the output "
+                    f"cannot merge {owner_of_output[name]} and {owner}, since both have the output "
                     f"{name!r}. Rename it in one of them, as with_path_names({{{name!r}: "
                     f"{name + '_2'!r}}})"
                 )
-            fields[name] = spec
-            source_of[name] = owner
-    return RecordSpec(fields)
+            merged_outputs[name] = output_term_spec
+            owner_of_output[name] = owner
+    return RecordSpec(merged_outputs)
 
 
 def _unnamed_declaration(declaration: OutputSpec) -> tuple[object, ...]:

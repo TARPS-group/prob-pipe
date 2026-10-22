@@ -1003,6 +1003,17 @@ class TestStructuralTransforms:
         ):
             nested_batch().merge(nested_batch())
 
+    def test_merge_refuses_a_group_both_batches_have(self):
+        # A merge is shallow: two groups of one name are refused, whatever fields they hold.
+        left = RecordBatch({"g/b": jnp.zeros(3)}, "draw", label="left")
+        right = RecordBatch({"g/c": jnp.ones(3)}, "draw", label="right")
+        with pytest.raises(
+            ValueError,
+            match=r"cannot merge the two batches of records, since both have 'g'\. Rename one, "
+            r"or merge the groups first",
+        ):
+            left.merge(right)
+
     def test_merge_refuses_batches_on_different_levels(self):
         other = RecordBatch(
             {"z": jnp.zeros(4)},
