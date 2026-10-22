@@ -513,3 +513,39 @@ class TestProcessKeys:
 
         assert not np.array_equal(workers[0], workers[1])
         assert not np.array_equal(workers[0], own)
+
+
+class TestCompiledSimulator:
+    """pyabc's prior and simulator compile when they trace, and run eagerly otherwise."""
+
+    def test_a_function_that_does_not_trace_runs_eagerly_and_is_not_traced_again(self):
+        from probpipe.inference._pyabc import _compiled
+
+        python_runs: list = []
+
+        def to_number(x):
+            python_runs.append(x)
+            return float(x) + 1.0
+
+        compiled_to_number = _compiled(to_number)
+        assert compiled_to_number(jnp.asarray(1.0)) == 2.0
+        assert compiled_to_number(jnp.asarray(2.0)) == 3.0
+        # One failed trace, then an eager run for each call.
+        assert len(python_runs) == 3
+
+    def test_an_error_while_the_compiled_function_runs_propagates(self):
+        from probpipe.inference._pyabc import _compiled
+
+        python_runs: list = []
+
+        def simulate(x):
+            python_runs.append(x)
+
+            def solver(value):
+                raise ValueError("solver failed")
+
+            return jax.pure_callback(solver, jax.ShapeDtypeStruct(x.shape, x.dtype), x)
+
+        with pytest.raises(Exception, match="solver failed"):
+            _compiled(simulate)(jnp.ones(2))
+        assert len(python_runs) == 1

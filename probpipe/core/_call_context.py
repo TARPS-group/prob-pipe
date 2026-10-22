@@ -334,8 +334,9 @@ class _CallContext:
         *static_settings*. The executor choice is automatic selection, since the
         call that runs the JAX program decides it when it runs. The accumulators
         are new and empty, so what the trace notes stays out of the running
-        call's until the program store applies it, and they collect calls when
-        the running call does.
+        call's until the program store applies it. They collect no calls, so
+        a call that the traced code opens keeps its own notes, whichever call
+        runs the JAX program.
 
         Parameters
         ----------
@@ -363,7 +364,7 @@ class _CallContext:
                 {**self.resolved_controls, **dict(static_settings.resolved_controls)}
             ),
             execution_choice=_AUTOMATIC_SELECTION,
-        ).with_fresh_call_accumulators(collects_calls=self.collects_calls())
+        ).with_fresh_call_accumulators()
 
     def collects_calls(self) -> bool:
         """Whether the calls made directly within this context merge into its accumulators."""

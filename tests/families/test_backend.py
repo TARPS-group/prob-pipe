@@ -6,7 +6,6 @@ import asyncio
 import copy
 import functools
 import pickle
-from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -35,7 +34,7 @@ from probpipe.distributions._capabilities import (
 from probpipe.families import TFPDistribution, _backend
 from probpipe.families._backend import _allow_batched_tfp_init, _eager_sample
 from probpipe.linalg import DiagonalLinOp, LinOp
-from tests._compilation import count_compilations
+from tests._compilation import RecordingProgram, count_compilations
 
 
 def _families() -> dict[str, Distribution]:
@@ -445,24 +444,6 @@ class _NumpyNormal(tfd.Normal):
         return self.loc + self.scale * noise
 
 
-class _RecordingProgram:
-    """A ``jax.jit`` object that records the arguments of each run, and of each trace in *traces*."""
-
-    def __init__(self, jitted: Any, *, runs: list, traces: list | None = None) -> None:
-        self.jitted = jitted
-        self.runs = runs
-        self.traces = traces
-
-    def trace(self, *args: Any, **kwargs: Any) -> Any:
-        if self.traces is not None:
-            self.traces.append(args)
-        return self.jitted.trace(*args, **kwargs)
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        self.runs.append(args)
-        return self.jitted(*args, **kwargs)
-
-
 def _ran_compiled(law: Distribution) -> bool:
     """Whether every call of *law* so far ran a compiled program."""
     memo = law._memo
@@ -549,7 +530,7 @@ class TestCompiledCalls:
     def test_a_call_runs_the_compiled_program(self, monkeypatch, program, eager, call):
         compiled, uncompiled = [], []
         monkeypatch.setattr(
-            _backend, program, _RecordingProgram(getattr(_backend, program), runs=compiled)
+            _backend, program, RecordingProgram(getattr(_backend, program), runs=compiled)
         )
         original_eager = getattr(_backend, eager)
         monkeypatch.setattr(
@@ -606,7 +587,7 @@ class TestCompiledCalls:
 
         runs: list = []
         monkeypatch.setattr(
-            _backend, "_sample_program", _RecordingProgram(masked, runs=runs, traces=attempts)
+            _backend, "_sample_program", RecordingProgram(masked, runs=runs, traces=attempts)
         )
         law = F.Normal("x", 0.0, 1.0)
         key = jax.random.PRNGKey(2)

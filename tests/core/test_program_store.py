@@ -1,5 +1,6 @@
 """Tests for compiled JAX programs: the fallback rule, the program store, its static settings, and notes made while tracing."""
 
+import threading
 from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
@@ -27,34 +28,42 @@ from probpipe.core._call_context import (
     current_call_context,
 )
 from probpipe.core._compilation import (
+    _eager_decision_keys,
     _program_store_of,
+    _ProgramStore,
     _static_settings_in_effect,
     _StaticSettings,
+    _trace_cache_key,
     compiled_or_eager,
 )
 from probpipe.core.config import _num_samples_in_effect
-from tests._compilation import count_compilations
+from tests._compilation import RecordingProgram, count_compilations
 
 SCALAR = NumericArraySpec(())
 
 
-class _CountingProgram:
-    """A ``jax.jit`` object of *body*, counting the runs of the body's Python, which only a trace makes."""
+def _counted_program(body: Callable[..., Any], python_runs: list) -> RecordingProgram:
+    """A ``jax.jit`` object of *body* that adds to *python_runs* each time the body's Python runs, which only a trace does."""
 
-    def __init__(self, body: Callable[..., Any], **jit_options: Any) -> None:
-        self.python_runs = 0
+    def counted_body(*args: Any) -> Any:
+        python_runs.append(args)
+        return body(*args)
 
-        def counted_body(*args: Any, **kwargs: Any) -> Any:
-            self.python_runs += 1
-            return body(*args, **kwargs)
+    return RecordingProgram(jax.jit(counted_body), runs=[])
 
-        self.jitted = jax.jit(counted_body, **jit_options)
 
-    def trace(self, *args: Any, **kwargs: Any) -> Any:
-        return self.jitted.trace(*args, **kwargs)
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        return self.jitted(*args, **kwargs)
+def _compiled_or_eager(
+    decision_record: dict, decision_key: str, program: Any, eager: Any, *arguments: Any
+) -> Any:
+    """``compiled_or_eager`` keyed by the trace cache key of all of *arguments*."""
+    return compiled_or_eager(
+        decision_record,
+        decision_key,
+        program,
+        eager,
+        *arguments,
+        trace_cache_key=_trace_cache_key(arguments),
+    )
 
 
 def _failing_on_the_host(x: Any) -> Any:
@@ -80,7 +89,8 @@ def _rounded_draws(draws: Any) -> list[float]:
 
 class TestTheFallbackRule:
     def test_a_program_that_does_not_trace_runs_eagerly_and_is_not_traced_again(self):
-        program = _CountingProgram(float)
+        python_runs: list = []
+        program = _counted_program(float, python_runs)
         eager_runs: list = []
         decision_record: dict = {}
 
@@ -88,26 +98,30 @@ class TestTheFallbackRule:
             eager_runs.append(x)
             return float(x)
 
-        assert compiled_or_eager(decision_record, "to float", program, eager, jnp.ones(())) == 1.0
-        assert compiled_or_eager(decision_record, "to float", program, eager, jnp.ones(())) == 1.0
-        assert program.python_runs == 1
+        for _ in range(2):
+            assert (
+                _compiled_or_eager(decision_record, "to float", program, eager, jnp.ones(())) == 1.0
+            )
+        assert len(python_runs) == 1
         assert len(eager_runs) == 2
+        assert _eager_decision_keys(decision_record) == ("to float",)
 
     def test_an_eager_error_propagates_and_records_nothing(self):
-        program = _CountingProgram(float)
+        program = _counted_program(float, [])
         decision_record: dict = {}
 
         def eager(x):
             raise ValueError("invalid argument")
 
         with pytest.raises(ValueError, match="invalid argument"):
-            compiled_or_eager(decision_record, "to float", program, eager, jnp.ones(()))
-        assert not any(recorded_key[0] == "runs eagerly" for recorded_key in decision_record)
+            _compiled_or_eager(decision_record, "to float", program, eager, jnp.ones(()))
+        assert _eager_decision_keys(decision_record) == ()
 
     def test_a_program_that_traces_and_then_fails_while_running_raises_and_runs_no_eager_retry(
         self,
     ):
-        program = _CountingProgram(_failing_on_the_host)
+        python_runs: list = []
+        program = _counted_program(_failing_on_the_host, python_runs)
         eager_runs: list = []
 
         def eager(x):
@@ -115,27 +129,54 @@ class TestTheFallbackRule:
             return x
 
         with pytest.raises(Exception, match="solver failed"):
-            compiled_or_eager({}, "callback", program, eager, jnp.ones(3))
+            _compiled_or_eager({}, "callback", program, eager, jnp.ones(3))
         assert eager_runs == []
-        assert program.python_runs == 1
+        assert len(python_runs) == 1
 
     def test_a_cold_call_traces_once_and_compiles_once(self):
-        program = _CountingProgram(lambda x: jnp.sin(x) * 2.0)
+        python_runs: list = []
+        program = _counted_program(lambda x: jnp.sin(x) * 2.0, python_runs)
         x = jnp.ones(3)
         with count_compilations() as compiled:
-            compiled_or_eager({}, "sine", program, jnp.sin, x)
+            _compiled_or_eager({}, "sine", program, jnp.sin, x)
         assert compiled.count == 1
-        assert program.python_runs == 1
+        assert len(python_runs) == 1
 
-    def test_a_new_input_structure_is_traced_before_it_runs(self):
-        program = _CountingProgram(lambda x: x + 1.0)
+    def test_a_new_trace_cache_key_is_traced_before_it_runs(self):
+        python_runs: list = []
+        traces: list = []
+        program = _counted_program(lambda x: x + 1.0, python_runs)
+        program.traces = traces
         decision_record: dict = {}
-        compiled_or_eager(decision_record, "add", program, None, jnp.ones(3))
-        compiled_or_eager(decision_record, "add", program, None, jnp.zeros(3))
-        compiled_or_eager(decision_record, "add", program, None, jnp.ones(4))
-        assert program.python_runs == 2
-        traced_keys = [key for key in decision_record if key[0] == "traced"]
-        assert len(traced_keys) == 2
+        for x in (jnp.ones(3), jnp.zeros(3), np.ones(3), jnp.ones(4)):
+            _compiled_or_eager(decision_record, "add", program, None, x)
+        assert len(python_runs) == 2
+        assert len(traces) == 2
+
+
+class TestTheTraceCacheKey:
+    def test_values_jax_traces_alike_give_one_key(self):
+        assert _trace_cache_key((1.0,)) == _trace_cache_key((jnp.asarray(2.0),))
+        assert _trace_cache_key((np.ones(3),)) == _trace_cache_key((jnp.zeros(3),))
+        assert _trace_cache_key((2,)) == _trace_cache_key((3,))
+
+    def test_values_jax_traces_apart_give_two_keys(self):
+        assert _trace_cache_key((1.0,)) != _trace_cache_key((jnp.float32(1.0),))
+        assert _trace_cache_key((jnp.ones(3),)) != _trace_cache_key((jnp.ones(4),))
+        assert _trace_cache_key(((3,),), ints_by_value=True) != _trace_cache_key(
+            ((4,),), ints_by_value=True
+        )
+
+    def test_a_tracer_gives_the_key_of_the_value_it_stands_for(self):
+        concrete_key = _trace_cache_key((jnp.ones(3),))
+        traced_keys = []
+        jax.jit(lambda x: traced_keys.append(_trace_cache_key((x,))) or x)(jnp.ones(3))
+        assert traced_keys == [concrete_key]
+
+    def test_a_leaf_neither_an_array_nor_hashable_gives_no_key(self):
+        assert _trace_cache_key(([object()], "tag"))[1][-1] == (str, "tag")
+        assert _trace_cache_key((jnp.ones(2), {"a": [1]})) is not None
+        assert _trace_cache_key((jnp.ones(2), {"a": np.array(["x"])})) is None
 
 
 def _counting_kernel(read_setting: Callable[[], float], python_runs: list) -> Any:
@@ -218,13 +259,25 @@ class TestStaticSettings:
         assert len(python_runs) > runs_before
         assert _rounded_draws(retraced) == [500.0] * 4
 
-    def test_the_static_settings_hold_the_calls_counts_and_the_passed_controls(self):
+    def test_the_static_settings_hold_the_calls_counts_the_passed_controls_and_the_config(self):
+        passed_controls = {"exact_only": True, "max_evaluations": None, "num_samples": 5}
         with config.sampling.using(num_samples=7):
+            call_context = current_call_context().child_for_call(
+                entry_method_name="__call__",
+                function_label="f",
+                resolved_controls={"max_evaluations": 3, "num_samples": 9, "method": None},
+            )
+        with _under_call_context(call_context.with_passed_controls(passed_controls)):
             static_settings = _static_settings_in_effect()
         assert static_settings == _StaticSettings(
-            resolved_controls=(),
-            passed_controls=None,
-            config_values=(("sampling", (("max_evaluations", 256), ("num_samples", 7))),),
+            resolved_controls=(("max_evaluations", 3), ("num_samples", 9)),
+            passed_controls=tuple(sorted(passed_controls.items())),
+            config_values=(
+                (
+                    "sampling",
+                    (("max_evaluations", config.sampling.max_evaluations), ("num_samples", 7)),
+                ),
+            ),
         )
         hash(static_settings)
 
@@ -308,7 +361,7 @@ class TestNotesMadeWhileTracing:
         joint._sample(key, (4,))
         noted["count"] = 38
         jax.clear_caches()
-        with pytest.raises(RuntimeError, match=r"noted num_samples used \[38\].*\[37\]"):
+        with pytest.raises(RuntimeError, match=r"Monte Carlo draws \[38\] on one trace but \[37\]"):
             joint._sample(key, (4,))
 
     def test_a_run_that_raises_applies_no_notes(self):
@@ -324,6 +377,72 @@ class TestNotesMadeWhileTracing:
         ):
             joint._sample(jax.random.PRNGKey(0), (4,))
         assert scope_context.num_samples_used.num_samples_values == frozenset()
+
+
+def _noting_store_run(program_store: Any, *arguments: Any) -> Any:
+    """``x + n`` through *program_store*, whose body notes 37 draws used while it is traced."""
+
+    def add_noting(static_options: Any, x: Any, n: Any) -> Any:
+        _note_num_samples_used(37)
+        return x + n
+
+    return program_store.run("add", add_noting, None, *arguments)
+
+
+def _noted_by(run: Callable[..., Any], *arguments: Any) -> frozenset[int]:
+    """The numbers of draws that ``run(*arguments)`` notes on the scope it runs in."""
+    with _collecting_call_accumulators("always") as scope_context:
+        run(*arguments)
+    return scope_context.num_samples_used.num_samples_values
+
+
+class TestNotesReachEveryCallThatReusesATrace:
+    def test_an_integer_argument_with_a_new_value_reuses_the_trace_and_its_notes(self):
+        program_store = _ProgramStore()
+        for n in (2, 3, 3):
+            assert _noted_by(_noting_store_run, program_store, jnp.ones(3), n) == {37}
+        assert len(program_store._entries) == 1
+
+    def test_a_new_weak_type_traces_again_and_both_entries_note(self):
+        program_store = _ProgramStore()
+        for x in (1.0, jnp.float32(1.0), 2.0):
+            assert _noted_by(_noting_store_run, program_store, x, 1) == {37}
+        assert len(program_store._entries) == 2
+
+    @pytest.mark.parametrize("concrete_first", [True, False], ids=["concrete-first", "jit-first"])
+    def test_a_run_under_an_outer_jit_and_a_concrete_run_share_notes(self, concrete_first):
+        program_store = _ProgramStore()
+
+        def concrete_run():
+            return _noting_store_run(program_store, jnp.ones(3), 2)
+
+        def jitted_run():
+            return jax.jit(lambda x: _noting_store_run(program_store, x, 2))(jnp.zeros(3))
+
+        for run in (concrete_run, jitted_run) if concrete_first else (jitted_run, concrete_run):
+            assert _noted_by(run) == {37}
+
+    def test_a_jitted_density_of_a_joint_notes_after_a_concrete_density(self):
+        joint = _joint(_noting_kernel(lambda: 37, []))
+        value = joint._sample(jax.random.PRNGKey(0), (4,))
+        assert _noted_by(lambda: joint._log_prob(value)) == {37}
+        assert _noted_by(lambda: jax.jit(joint._log_prob)(value)) == {37}
+
+    def test_runs_on_several_threads_each_apply_the_notes_once(self):
+        program_store = _ProgramStore()
+        noted_by_thread: list = []
+
+        def run_in_thread() -> None:
+            noted_by_thread.append(
+                _noted_by(lambda: _noting_store_run(program_store, jnp.ones(3), 2))
+            )
+
+        threads = [threading.Thread(target=run_in_thread) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert noted_by_thread == [frozenset({37})] * 8
 
 
 class TestTheJointsMappedFactor:

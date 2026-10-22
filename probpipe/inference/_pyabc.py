@@ -12,7 +12,7 @@ import numpy as np
 import pyabc
 from pyabc.sampler import SingleCoreSampler
 
-from ..core._compilation import compiled_or_eager
+from ..core._compilation import _trace_cache_key, compiled_or_eager
 from ..core._dispatch import Feasibility
 from ..custom_types import PRNGKey
 from ..distributions._capabilities import SupportsConditionalSampling
@@ -187,7 +187,9 @@ def _compiled(fn: Callable[..., Any]) -> Callable[..., Any]:
     decision_record: dict[Hashable, Any] = {}
 
     def run_compiled_or_eager(*args: Any) -> Any:
-        return compiled_or_eager(decision_record, "pyabc", compiled_fn, fn, *args)
+        return compiled_or_eager(
+            decision_record, "pyabc", compiled_fn, fn, *args, trace_cache_key=_trace_cache_key(args)
+        )
 
     return run_compiled_or_eager
 

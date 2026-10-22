@@ -82,7 +82,9 @@ class _Setting:
 
     def __post_init__(self) -> None:
         if self.kind not in ("static", "inert"):
-            raise ValueError(f"a config setting's kind is 'static' or 'inert', got {self.kind!r}")
+            raise ValueError(
+                f"a config setting's kind must be 'static' or 'inert', got {self.kind!r}"
+            )
 
 
 class _Section:

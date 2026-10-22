@@ -35,7 +35,7 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..core._array_backend import _read_only
-from ..core._compilation import compiled_or_eager
+from ..core._compilation import _trace_cache_key, compiled_or_eager
 from ..core._execution_claims import Traceability
 from ..core._immutable import transient_memo
 from ..core._repr import format_value
@@ -191,7 +191,9 @@ def _compiled(
     :func:`~probpipe.core._compilation.compiled_or_eager` traces *program*
     before it first runs at a new input structure, and records in the law's
     memo, under *method*, a program that does not trace. The record belongs
-    to the law, since a law has one backend. An error raised while the
+    to the law, since a law has one backend, so the backend is left out of
+    the trace cache key. The integer arguments are static arguments of the
+    programs, so the key reads them by value. An error raised while the
     compiled program runs propagates.
     """
     memo = transient_memo(law)
@@ -199,7 +201,15 @@ def _compiled(
         memo["compilable"] = _compilable(law._tfp_dist)
     if not memo["compilable"]:
         return eager(law._tfp_dist, *arguments)
-    return compiled_or_eager(memo, method, program, eager, law._tfp_dist, *arguments)
+    return compiled_or_eager(
+        memo,
+        method,
+        program,
+        eager,
+        law._tfp_dist,
+        *arguments,
+        trace_cache_key=_trace_cache_key(arguments, ints_by_value=True),
+    )
 
 
 def _sample_shape(sample_shape: Any) -> tuple[int, ...]:

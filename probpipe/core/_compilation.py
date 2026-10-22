@@ -21,12 +21,13 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Callable, Hashable, Iterable, MutableMapping
-from contextvars import ContextVar
+from collections.abc import Callable, Hashable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, cast
 
 import jax
+import numpy as np
 
 from ._call_context import (
     _EvaluationLog,
@@ -36,7 +37,6 @@ from ._call_context import (
     _under_call_context,
     current_call_context,
 )
-from ._execution_claims import _input_structure
 from ._immutable import transient_memo
 from .config import _static_config_values_in_effect
 
@@ -48,6 +48,9 @@ logger = logging.getLogger(__name__)
 #: it is traced, through ``_num_samples_in_effect`` and the planning of a lift.
 _STATIC_CONTROL_NAMES = ("max_evaluations", "num_samples")
 
+#: No static keyword arguments.
+_NO_STATIC_KEYWORDS: Mapping[str, Hashable] = MappingProxyType({})
+
 
 def compiled_or_eager(
     decision_record: MutableMapping[Hashable, Any],
@@ -55,17 +58,18 @@ def compiled_or_eager(
     program: Any,
     eager: Callable[..., Any],
     *arguments: Any,
-    **static_keywords: Any,
+    trace_cache_key: Hashable | None,
+    static_keywords: Mapping[str, Hashable] = _NO_STATIC_KEYWORDS,
 ) -> Any:
     """*program* at *arguments*, or *eager* at them when *program* does not trace.
 
-    Before *program* first runs at arguments of a new input structure, it is
-    traced. When that fails, as for a body that converts a traced
-    value to a Python number, *eager* runs instead. If *eager* succeeds,
-    *decision_record* records *decision_key*, and later calls under it run
-    *eager* without tracing *program*. If *eager* raises too, its error
-    propagates and nothing is recorded, so a call that fails eagerly, such as
-    one with an invalid argument, does not disable the program.
+    Before *program* first runs under a new *trace_cache_key*, it is traced.
+    When that fails, as for a body that converts a traced value to a Python
+    number, *eager* runs instead. If *eager* succeeds, *decision_record*
+    records *decision_key*, and later calls under it run *eager* without
+    tracing *program*. If *eager* raises too, its error propagates and nothing
+    is recorded, so a call that fails eagerly, such as one with an invalid
+    argument, does not disable the program.
 
     An error raised while the traced JAX program compiles or runs
     propagates, and *eager* does not run: the eager form computes what the
@@ -77,8 +81,8 @@ def compiled_or_eager(
     decision_record : MutableMapping
         Where the outcome of each trace is kept, such as the transient memo
         of the object that owns *program*. It gains one entry for each
-        decision key that runs eagerly, and one for each input structure that
-        traced.
+        decision key that runs eagerly, and one for each trace cache key and
+        set of *static_keywords* that traced.
     decision_key : Hashable
         What decides whether *program* runs: the method, and the structure of
         the arguments when it can change the outcome.
@@ -86,13 +90,17 @@ def compiled_or_eager(
         The compiled computation, a ``jax.jit`` object, which is traced with
         its ``trace`` method.
     eager : Callable
-        The same computation, uncompiled. It takes *arguments* without
-        *static_keywords*.
+        The same computation, uncompiled, called as ``eager(*arguments)``.
     *arguments : Any
         The arguments of both.
-    **static_keywords : Any
-        Keyword arguments of *program* alone, each hashable and named in its
-        ``static_argnames``.
+    trace_cache_key : Hashable or None
+        What JAX traces *program* again for: :func:`_trace_cache_key` of the
+        arguments that can differ between calls under *decision_record*. An
+        argument fixed for its owner, such as a law's backend, may be left
+        out. ``None`` traces *program* before every run.
+    static_keywords : Mapping of str to Hashable, optional
+        Keyword arguments of *program* alone, each named in its
+        ``static_argnames``; none by default.
 
     Returns
     -------
@@ -103,13 +111,16 @@ def compiled_or_eager(
     ------
     Exception
         Whatever *eager* raises after tracing *program* failed, and whatever
-        the compiled JAX program raises while it runs.
+        the traced JAX program raises while it compiles or runs.
+    RuntimeError
+        If a trace of a program store's JAX program notes other values on the
+        running call than an earlier trace of it, which propagates rather than
+        selecting *eager*.
     """
     if (_RUNS_EAGERLY, decision_key) in decision_record:
         return eager(*arguments)
-    input_structure = _input_structure(arguments)
-    traced_key = (_TRACED, decision_key, input_structure, tuple(sorted(static_keywords.items())))
-    if input_structure is None or traced_key not in decision_record:
+    traced_key = (_TRACED, decision_key, trace_cache_key, tuple(sorted(static_keywords.items())))
+    if trace_cache_key is None or traced_key not in decision_record:
         try:
             program.trace(*arguments, **static_keywords)
         except _VaryingTraceNotesError:
@@ -119,7 +130,7 @@ def compiled_or_eager(
             decision_record[(_RUNS_EAGERLY, decision_key)] = True
             logger.debug("%r runs uncompiled: tracing it raised %r", decision_key, tracing_error)
             return eager_result
-        if input_structure is not None:
+        if trace_cache_key is not None:
             decision_record[traced_key] = True
     return program(*arguments, **static_keywords)
 
@@ -146,18 +157,26 @@ class _ProgramStore:
     the running call after each run of its JAX program, cold or warm:
 
     - **Capture.** While the body is traced, it notes into accumulators of
-      its own, never into the running call's.
+      its own, never into the running call's. A call that the body opens
+      keeps its own notes, whatever the running call collects.
+    - **One entry per trace.** An entry is keyed by the body's name, the
+      static options, the static settings, and the trace cache key of the
+      arguments, which is what JAX traces the body again for. A trace reads
+      the same key from the arguments it receives, so its notes reach the
+      entry of every call that reuses it, whether the store or JAX started
+      the trace.
     - **One set of notes per entry.** Every trace of an entry captures the
-      same notes, since a note may depend only on the entry's cache key, and
-      a trace that captures other notes raises ``RuntimeError``.
+      same notes, since a note may depend only on the entry's key, and a
+      trace that captures other notes raises ``RuntimeError``.
     - **Apply.** After each run that succeeds, the entry's notes merge into
       the running call's accumulators once. A run that raises applies none,
-      and an eager run notes into the running call directly.
+      and an eager run notes into the running call directly. Inside a trace
+      that ProbPipe does not open, such as a user's own ``jax.jit``, the JAX
+      program is staged into that trace, and its notes apply when it is
+      staged.
 
-    The entries are keyed by the body's name, the input structure of the
-    arguments, the static options, and the static settings. The store keeps
-    every entry for the owner's lifetime, as JAX keeps each JAX program it
-    compiled.
+    The store keeps every entry and every ``jax.jit`` object for the owner's
+    lifetime, with no bound.
     """
 
     def __init__(self) -> None:
@@ -190,7 +209,7 @@ class _ProgramStore:
             The arguments, which the JAX program takes as data.
         static_options : Hashable, optional
             The options that change the JAX program, which it takes as a
-            static argument; ``()`` by default.
+            static argument, ``()`` by default.
 
         Returns
         -------
@@ -206,9 +225,7 @@ class _ProgramStore:
             call than an earlier trace of it, which is a bug in the traced code.
         """
         static_settings = _static_settings_in_effect()
-        store_entry = self._entry(
-            (body_name, _input_structure(arguments), static_options, static_settings)
-        )
+        trace_cache_key = _trace_cache_key(arguments)
         ran_eagerly = False
 
         def run_eagerly(*eager_arguments: Any) -> Any:
@@ -216,22 +233,19 @@ class _ProgramStore:
             ran_eagerly = True
             return eager(*eager_arguments)
 
-        decision_key = (body_name, static_options, jax.tree.structure(arguments))
-        entry_token = _STORE_ENTRY_IN_RUN.set(store_entry)
-        try:
-            body_result = compiled_or_eager(
-                self._decision_record,
-                decision_key,
-                self._jitted_body(body_name, body),
-                run_eagerly,
-                *arguments,
-                static_options=static_options,
-                static_settings=static_settings,
-            )
-        finally:
-            _STORE_ENTRY_IN_RUN.reset(entry_token)
+        body_result = compiled_or_eager(
+            self._decision_record,
+            (body_name, static_options, jax.tree.structure(arguments)),
+            self._jitted_body(body_name, body),
+            run_eagerly,
+            *arguments,
+            trace_cache_key=trace_cache_key,
+            static_keywords={"static_options": static_options, "static_settings": static_settings},
+        )
         if not ran_eagerly:
-            store_entry.apply_trace_notes()
+            self._entry(
+                (body_name, static_options, static_settings, trace_cache_key)
+            ).apply_trace_notes()
         return body_result
 
     def runs_eagerly(self, body_name: Hashable) -> bool:
@@ -247,18 +261,81 @@ class _ProgramStore:
             jitted_body = self._jitted_bodies.get(body_name)
             if jitted_body is None:
                 jitted_body = self._jitted_bodies[body_name] = jax.jit(
-                    _wrap_body_in_static_settings(body_name, body),
+                    self._body_in_static_settings(body_name, body),
                     static_argnames=("static_options", "static_settings"),
                 )
             return jitted_body
 
-    def _entry(self, cache_key: Hashable) -> _StoreEntry:
-        """The entry under *cache_key*, created the first time."""
+    def _body_in_static_settings(
+        self, body_name: Hashable, body: Callable[..., Any]
+    ) -> Callable[..., Any]:
+        """*body*, traced under the static settings it receives, keeping what it notes on its entry."""
+
+        def run_body_in_static_settings(
+            *arguments: Any, static_options: Hashable, static_settings: _StaticSettings
+        ) -> Any:
+            traced_context = current_call_context().with_static_settings(static_settings)
+            with _under_call_context(traced_context):
+                body_output = body(static_options, *arguments)
+            self._entry(
+                (body_name, static_options, static_settings, _trace_cache_key(arguments))
+            ).add_trace_notes(
+                _TraceNotes(
+                    cast(_NumSamplesUsed, traced_context.num_samples_used).num_samples_values,
+                    cast(_EvaluationLog, traced_context.evaluation_log).set_records,
+                )
+            )
+            return body_output
+
+        return run_body_in_static_settings
+
+    def _entry(self, entry_key: Hashable) -> _StoreEntry:
+        """The entry under *entry_key*, created the first time."""
         with self._lock:
-            store_entry = self._entries.get(cache_key)
+            store_entry = self._entries.get(entry_key)
             if store_entry is None:
-                store_entry = self._entries[cache_key] = _StoreEntry()
+                store_entry = self._entries[entry_key] = _StoreEntry()
             return store_entry
+
+
+def _trace_cache_key(arguments: Any, *, ints_by_value: bool = False) -> Hashable | None:
+    """What JAX traces a ``jax.jit`` object again for, read from its positional *arguments*.
+
+    It is the tree structure of *arguments* and, for each leaf, the abstract
+    value JAX traces it as, its shape, dtype, and weak type, as
+    ``jax.typeof`` gives them. A Python number, a NumPy array, a JAX array,
+    and a tracer of the same abstract value therefore give one key, as they
+    give one trace. A leaf that is not an array, such as a string, is keyed
+    by its type and value.
+
+    Parameters
+    ----------
+    arguments : Any
+        The arguments, concrete or traced.
+    ints_by_value : bool, optional
+        Whether an integer scalar is keyed by its value, as JAX keys a static
+        argument; ``False`` by default, which keys it as data.
+
+    Returns
+    -------
+    Hashable or None
+        The key, or ``None`` when a leaf is neither an array nor hashable.
+    """
+    leaves, treedef = jax.tree.flatten(arguments)
+    leaf_keys: list[Hashable] = []
+    for leaf in leaves:
+        if ints_by_value and isinstance(leaf, int | np.integer):
+            leaf_keys.append((type(leaf), leaf))
+            continue
+        try:
+            leaf_keys.append(jax.typeof(leaf))
+        except TypeError:
+            try:
+                hash(leaf)
+            except TypeError:
+                return None
+            leaf_keys.append((type(leaf), leaf))
+    return treedef, tuple(leaf_keys)
 
 
 def _eager_decision_keys(decision_record: Iterable[Hashable]) -> tuple[Hashable, ...]:
@@ -279,7 +356,7 @@ def _program_store_of(owner: Any) -> _ProgramStore:
     memo = transient_memo(owner)
     program_store = memo.get(_PROGRAM_STORE)
     if program_store is None:
-        program_store = memo[_PROGRAM_STORE] = _ProgramStore()
+        program_store = memo.setdefault(_PROGRAM_STORE, _ProgramStore())
     return cast(_ProgramStore, program_store)
 
 
@@ -298,7 +375,7 @@ class _StaticSettings:
     ----------
     resolved_controls : tuple of (str, Any)
         The running call's resolved ``max_evaluations`` and ``num_samples``,
-        by name; empty outside every call.
+        by name, empty outside every call.
     passed_controls : tuple of (str, Any) or None
         The controls an enclosing derived route passes to the calls its
         formula makes, by name, or ``None`` where none are passed.
@@ -376,8 +453,8 @@ class _StoreEntry:
         self._lock = threading.Lock()
         self._trace_notes: _TraceNotes | None = None
 
-    def add_trace_notes(self, body_name: Hashable, trace_notes: _TraceNotes) -> None:
-        """Keep the notes of one trace of the body named *body_name*, raising if they differ from an earlier trace's."""
+    def add_trace_notes(self, trace_notes: _TraceNotes) -> None:
+        """Keep the notes of one trace, raising if they differ from an earlier trace's."""
         with self._lock:
             if self._trace_notes is None:
                 self._trace_notes = trace_notes
@@ -386,8 +463,7 @@ class _StoreEntry:
         if trace_notes.num_samples_values != kept_notes.num_samples_values:
             raise _VaryingTraceNotesError(
                 _varying_note_message(
-                    body_name,
-                    "num_samples used",
+                    "the numbers of Monte Carlo draws",
                     sorted(kept_notes.num_samples_values),
                     sorted(trace_notes.num_samples_values),
                 )
@@ -395,10 +471,9 @@ class _StoreEntry:
         if not _same_in_any_order(trace_notes.set_records, kept_notes.set_records):
             raise _VaryingTraceNotesError(
                 _varying_note_message(
-                    body_name,
-                    "sets of evaluation points",
-                    kept_notes.set_records,
-                    trace_notes.set_records,
+                    "the sets of evaluation points of",
+                    sorted(set_record.origin for set_record in kept_notes.set_records),
+                    sorted(set_record.origin for set_record in trace_notes.set_records),
                 )
             )
 
@@ -412,51 +487,21 @@ class _StoreEntry:
         )
 
 
-#: The entry of the program store whose JAX program the running thread is
-#: running, so a trace JAX starts during the run keeps its notes there.
-_STORE_ENTRY_IN_RUN: ContextVar[_StoreEntry | None] = ContextVar(
-    "probpipe_store_entry_in_run", default=None
-)
-
-
-def _wrap_body_in_static_settings(
-    body_name: Hashable, body: Callable[..., Any]
-) -> Callable[..., Any]:
-    """*body*, run under the static settings it receives, keeping what its trace notes on its store entry."""
-
-    def run_body_in_static_settings(
-        *arguments: Any, static_options: Hashable, static_settings: _StaticSettings
-    ) -> Any:
-        traced_context = current_call_context().with_static_settings(static_settings)
-        with _under_call_context(traced_context):
-            body_output = body(static_options, *arguments)
-        store_entry = _STORE_ENTRY_IN_RUN.get()
-        if store_entry is not None:
-            store_entry.add_trace_notes(
-                body_name,
-                _TraceNotes(
-                    cast(_NumSamplesUsed, traced_context.num_samples_used).num_samples_values,
-                    cast(_EvaluationLog, traced_context.evaluation_log).set_records,
-                ),
-            )
-        return body_output
-
-    return run_body_in_static_settings
-
-
 def _same_in_any_order(
     first_records: Iterable[_EvaluationSetRecord], second_records: Iterable[_EvaluationSetRecord]
 ) -> bool:
-    """Whether two sequences of set records hold the same records, in any order."""
-    return sorted(map(repr, first_records)) == sorted(map(repr, second_records))
+    """Whether two sequences of set records hold equal records, in any order."""
+    unmatched_records = list(second_records)
+    for set_record in first_records:
+        if set_record not in unmatched_records:
+            return False
+        unmatched_records.remove(set_record)
+    return not unmatched_records
 
 
-def _varying_note_message(
-    body_name: Hashable, note_name: str, kept_value: Any, traced_value: Any
-) -> str:
+def _varying_note_message(note_description: str, kept_value: Any, traced_value: Any) -> str:
     """The internal error of a trace that noted other values than an earlier trace of its JAX program."""
     return (
-        f"internal error: the compiled JAX program {body_name!r} noted {note_name} "
-        f"{traced_value!r} on one trace and {kept_value!r} on an earlier one. A note made "
-        "while tracing must depend only on the program's cache key. Please report this"
+        f"internal error: a compiled JAX program noted {note_description} {traced_value!r} "
+        f"on one trace but {kept_value!r} on an earlier one. Please report this"
     )

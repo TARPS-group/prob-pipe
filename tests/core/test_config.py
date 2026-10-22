@@ -572,7 +572,7 @@ class TestTheKindsOfSetting:
                 ), setting_name
 
     def test_a_setting_of_neither_kind_is_refused(self):
-        with pytest.raises(ValueError, match="'static' or 'inert', got 'traced'"):
+        with pytest.raises(ValueError, match="must be 'static' or 'inert', got 'traced'"):
             config_module._Setting(lambda value, source: value, "traced")
 
     def test_the_static_values_in_effect_read_blocks_then_the_session(self):

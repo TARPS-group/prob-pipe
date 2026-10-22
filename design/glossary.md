@@ -70,7 +70,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **point index**: an evaluation point's position within its set of evaluation points (V.9).
 - **probe**: a trace made only to learn whether a callable traces, run at most once per `Function` and input structure (V.13).
 - **probe result**: the stored outcome of a probe, kept per `Function` and input structure and shared by the copies that `using` makes (V.13).
-- **program store**: the compiled JAX programs that an owner, such as a kernel a joint maps, keeps for the bodies it runs, each compiled once for each input structure and each value of the call's static settings, with what their traces noted on the running call (V.9).
+- **program store**: the compiled JAX programs that an owner, such as a kernel a joint maps, keeps for the bodies it runs, each compiled once for each set of argument shapes and dtypes and each value of the call's static settings, with what their traces noted on the running call (V.9).
 - **provenance**: the record of how a tracked term was produced, which holds its operation, its tracked parents, its resolved controls, and its plain inputs (II.4).
 - **pushforward**: the law `f♯d` of `f(X)` for `X ~ d`, which the operation `pushforward(d, f)` computes by passing the map draws of `d` whatever its annotation; the direct call `f(d)` is a pushforward when the map's parameter takes draws (V.5, VI.1).
 - **raw form**: the representation layer's presentation of a value, detached from the workflow, such as a backing array or a wrapped callable; it is a term's `raw` (Part I, II.4).
