@@ -2726,6 +2726,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Minibatches sampled without replacement retain distinct indices from batches
+  of random candidates. Additional candidates supplement an incomplete batch.
+  Batches larger than half the dataset sample the excluded indices and shuffle
+  their complement. Smaller batches use space proportional to the batch size.
+  Uniform subsets and random ordering are preserved. The same seed can produce
+  different indices and training trajectories than earlier implementations.
+  Repeating a draw with the same key and arguments remains reproducible.
+
 - **A converter's `check` states only its promise.** It leaves `method_name`
   and `exact` unset on the `ConversionInfo` it returns, and the converter
   registry sets both from the registration. A converter that passes both still

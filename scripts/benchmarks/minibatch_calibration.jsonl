@@ -1,0 +1,48 @@
+{"device": "cpu", "case": "frequency", "n": 5, "k": 2, "seed": 0, "z": [1.7894427241903816, 2.033333333333333]}
+{"device": "cpu", "case": "frequency", "n": 5, "k": 2, "seed": 1, "z": [2.225332618544449, 1.45]}
+{"device": "cpu", "case": "frequency", "n": 5, "k": 2, "seed": 2, "z": [2.6153393661244038, 1.0]}
+{"device": "cpu", "case": "frequency", "n": 5, "k": 2, "seed": 3, "z": [1.8812090177386063, 2.1]}
+{"device": "cpu", "case": "frequency", "n": 5, "k": 3, "seed": 0, "z": [2.746986021695385, 2.5833333333333335]}
+{"device": "cpu", "case": "frequency", "n": 5, "k": 3, "seed": 1, "z": [2.434532635341408, 2.3]}
+{"device": "cpu", "case": "frequency", "n": 5, "k": 3, "seed": 2, "z": [2.3173626154586664, 1.4666666666666666]}
+{"device": "cpu", "case": "frequency", "n": 5, "k": 3, "seed": 3, "z": [2.564721546322229, 1.5333333333333334]}
+{"device": "cpu", "case": "frequency", "n": 4, "k": 4, "seed": 0, "z": [1.9433543390119332, 0.0]}
+{"device": "cpu", "case": "frequency", "n": 4, "k": 4, "seed": 1, "z": [2.035100681197054, 0.0]}
+{"device": "cpu", "case": "frequency", "n": 4, "k": 4, "seed": 2, "z": [2.835796031176221, 0.0]}
+{"device": "cpu", "case": "frequency", "n": 4, "k": 4, "seed": 3, "z": [2.6189410405568556, 0.0]}
+{"device": "cpu", "case": "gradient", "k": 8, "seed": 0, "mean_z": 1.1111288821622187, "cov_error": 0.024358102702979643}
+{"device": "cpu", "case": "gradient", "k": 8, "seed": 1, "mean_z": 0.28977291751664835, "cov_error": 0.007775108664856132}
+{"device": "cpu", "case": "gradient", "k": 8, "seed": 2, "mean_z": 2.032481370345505, "cov_error": 0.028953151074092784}
+{"device": "cpu", "case": "gradient", "k": 8, "seed": 3, "mean_z": 1.663114520116968, "cov_error": 0.012513776183988443}
+{"device": "cpu", "case": "gradient", "k": 64, "seed": 0, "mean_z": 1.4588074789129115, "cov_error": 0.029500186260584135}
+{"device": "cpu", "case": "gradient", "k": 64, "seed": 1, "mean_z": 1.1128351110579255, "cov_error": 0.039795780247882696}
+{"device": "cpu", "case": "gradient", "k": 64, "seed": 2, "mean_z": 0.7433464170252974, "cov_error": 0.02449626770978999}
+{"device": "cpu", "case": "gradient", "k": 64, "seed": 3, "mean_z": 1.0617748512655438, "cov_error": 0.009856138145477039}
+{"device": "cpu", "case": "gradient", "k": 120, "seed": 0, "mean_z": 1.2015101989024999, "cov_error": 0.006991810946900499}
+{"device": "cpu", "case": "gradient", "k": 120, "seed": 1, "mean_z": 1.2555475757508103, "cov_error": 0.021474794257705328}
+{"device": "cpu", "case": "gradient", "k": 120, "seed": 2, "mean_z": 0.1992834548412675, "cov_error": 0.021132888708410916}
+{"device": "cpu", "case": "gradient", "k": 120, "seed": 3, "mean_z": 1.7081271353595793, "cov_error": 0.010016270512749505}
+{"device": "gpu", "case": "frequency", "n": 5, "k": 2, "seed": 0, "z": [1.7894427241903816, 2.033333333333333]}
+{"device": "gpu", "case": "frequency", "n": 5, "k": 2, "seed": 1, "z": [2.225332618544449, 1.45]}
+{"device": "gpu", "case": "frequency", "n": 5, "k": 2, "seed": 2, "z": [2.6153393661244038, 1.0]}
+{"device": "gpu", "case": "frequency", "n": 5, "k": 2, "seed": 3, "z": [1.8812090177386063, 2.1]}
+{"device": "gpu", "case": "frequency", "n": 5, "k": 3, "seed": 0, "z": [2.746986021695385, 2.5833333333333335]}
+{"device": "gpu", "case": "frequency", "n": 5, "k": 3, "seed": 1, "z": [2.434532635341408, 2.3]}
+{"device": "gpu", "case": "frequency", "n": 5, "k": 3, "seed": 2, "z": [2.3173626154586664, 1.4666666666666666]}
+{"device": "gpu", "case": "frequency", "n": 5, "k": 3, "seed": 3, "z": [2.564721546322229, 1.5333333333333334]}
+{"device": "gpu", "case": "frequency", "n": 4, "k": 4, "seed": 0, "z": [1.9433543390119332, 0.0]}
+{"device": "gpu", "case": "frequency", "n": 4, "k": 4, "seed": 1, "z": [2.035100681197054, 0.0]}
+{"device": "gpu", "case": "frequency", "n": 4, "k": 4, "seed": 2, "z": [2.835796031176221, 0.0]}
+{"device": "gpu", "case": "frequency", "n": 4, "k": 4, "seed": 3, "z": [2.6189410405568556, 0.0]}
+{"device": "gpu", "case": "gradient", "k": 8, "seed": 0, "mean_z": 1.111132069251621, "cov_error": 0.024358096763970882}
+{"device": "gpu", "case": "gradient", "k": 8, "seed": 1, "mean_z": 0.28977132397194727, "cov_error": 0.007775102239803959}
+{"device": "gpu", "case": "gradient", "k": 8, "seed": 2, "mean_z": 2.032482963890206, "cov_error": 0.028953145751578112}
+{"device": "gpu", "case": "gradient", "k": 8, "seed": 3, "mean_z": 1.663114520116968, "cov_error": 0.012513780357555326}
+{"device": "gpu", "case": "gradient", "k": 64, "seed": 0, "mean_z": 1.4588394665065427, "cov_error": 0.02950020632574779}
+{"device": "gpu", "case": "gradient", "k": 64, "seed": 1, "mean_z": 1.1128351110579255, "cov_error": 0.039795795582235366}
+{"device": "gpu", "case": "gradient", "k": 64, "seed": 2, "mean_z": 0.7433464170252974, "cov_error": 0.024496298539091316}
+{"device": "gpu", "case": "gradient", "k": 64, "seed": 3, "mean_z": 1.0617995383538987, "cov_error": 0.0098561422393756}
+{"device": "gpu", "case": "gradient", "k": 120, "seed": 0, "mean_z": 1.2015341020730161, "cov_error": 0.006991887216580533}
+{"device": "gpu", "case": "gradient", "k": 120, "seed": 1, "mean_z": 1.2555475757508103, "cov_error": 0.02147516591572452}
+{"device": "gpu", "case": "gradient", "k": 120, "seed": 2, "mean_z": 0.19953122967610437, "cov_error": 0.021133330521371334}
+{"device": "gpu", "case": "gradient", "k": 120, "seed": 3, "mean_z": 1.7079837163364817, "cov_error": 0.010016667517446237}
