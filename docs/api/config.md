@@ -85,3 +85,7 @@ The `prefect` section stays behind, so a call in a worker process runs without P
 A setting whose value cannot be pickled travels as a placeholder, and reading it in the worker raises `UnshippableSettingError`.
 
 ::: probpipe.UnshippableSettingError
+
+A [default workflow scope](workflows.md) fixes provenance mode for each top-level
+call separately. Changing the mode between calls leaves its random stream
+unchanged. Full recording cannot recover history omitted by earlier calls.

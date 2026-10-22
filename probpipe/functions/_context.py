@@ -57,6 +57,7 @@ class _WorkflowFrame:
     provenance_mode: ProvenanceMode
     parent: _WorkflowFrame | None
     owner: _WorkflowOwner
+    default_state: _DefaultWorkflowState | None = None
     ledger: _StochasticLedger = field(default_factory=lambda: _StochasticLedger())
     state: _WorkflowFrameState = field(default_factory=lambda: _WorkflowFrameState())
 
@@ -85,6 +86,31 @@ class _WorkflowFrameState:
     root_words: tuple[int, int] | None = None
     closed: bool = False
     lock: Any = field(default_factory=Lock, repr=False)
+
+
+@dataclass(slots=True)
+class _DefaultWorkflowState:
+    """The root and positions retained between calls in one owner's default scope."""
+
+    owner: _WorkflowOwner
+    seed_words: tuple[int, int] | None
+    root_words: tuple[int, int] | None = None
+    ledger: _StochasticLedger = field(default_factory=_StochasticLedger)
+    lock: Any = field(default_factory=Lock, repr=False)
+
+    def resolve_root(self) -> tuple[int, int]:
+        """Materialize the default root once, on its first random event."""
+        with self.lock:
+            if self.root_words is None:
+                self.root_words = (
+                    self.seed_words if self.seed_words is not None else _entropy_root_words()
+                )
+            return self.root_words
+
+
+_DEFAULT_WORKFLOW_STATE: ContextVar[_DefaultWorkflowState | None] = ContextVar(
+    "probpipe_default_workflow_state", default=None
+)
 
 
 @dataclass(slots=True)
@@ -239,59 +265,210 @@ class _WorkflowRunScope:
         self._token = None
 
 
-def workflow_run(seed: int | None = None) -> _WorkflowRunScope:
-    """Create a workflow-owned random execution scope.
+class _WorkflowRun:
+    """Create explicit workflow scopes and manage the current context's default scope.
 
-    Parameters
-    ----------
-    seed : int or None
-        Non-boolean unsigned 64-bit root seed. Re-entering the same seeded
-        scope with the same stochastic structure reproduces its workflow-owned
-        random events. ``None`` requests a lazy anonymous root.
-
-    Returns
-    -------
-    context manager
-        A synchronous workflow execution scope.
-
-    Raises
-    ------
-    TypeError
-        If ``seed`` is not an integer or is a boolean.
-    ValueError
-        If ``seed`` is outside ``[0, 2**64 - 1]``.
-    UnmanagedConcurrentWorkflowEntryError
-        If an active workflow context was copied into a foreign thread or
-        asyncio task without a ProbPipe evaluation point frame.
-
-    Notes
-    -----
-    The outermost scope fixes the run's provenance mode, the
-    ``config.provenance.mode`` in effect when it is entered, and nested scopes
-    keep it. Inside the run, a ``config.provenance.using`` block, an
-    assignment, or a ``reset`` that would set another mode raises
-    ``RuntimeError``, naming the run's mode, so set the mode before the run
-    opens.
-
-    ProbPipe operations that omit a key share this scope's structural random
-    event stream. Explicit caller-owned keys do not consume that stream.
-    Anonymous and nested scopes remain unmaterialized until their first
-    workflow-owned random event. A bare omitted-key operation uses its own
-    equivalent ephemeral scope.
+    ``workflow_run(seed)`` creates an explicit context manager. Its seed and
+    nesting rules are stated by ``__call__``. ``set_default`` starts a stream
+    for successive bare calls, and ``clear_default`` removes that stream.
     """
-    return _WorkflowRunScope(seed)
+
+    def __call__(self, seed: int | None = None) -> _WorkflowRunScope:
+        """Create a workflow-owned random execution scope.
+
+        Parameters
+        ----------
+        seed : int or None
+            Non-boolean unsigned 64-bit root seed. Re-entering the same seeded
+            scope with the same stochastic structure reproduces its workflow-owned
+            random events. ``None`` requests a lazy anonymous root.
+
+        Returns
+        -------
+        context manager
+            A synchronous workflow execution scope.
+
+        Raises
+        ------
+        TypeError
+            If ``seed`` is not an integer or is a boolean.
+        ValueError
+            If ``seed`` is outside ``[0, 2**64 - 1]``.
+        UnmanagedConcurrentWorkflowEntryError
+            If an active workflow context was copied into a foreign thread or
+            asyncio task without a ProbPipe evaluation point frame.
+
+        Notes
+        -----
+        The outermost scope fixes the run's provenance mode, the
+        ``config.provenance.mode`` in effect when it is entered, and nested scopes
+        keep it. Inside the run, a ``config.provenance.using`` block, an
+        assignment, or a ``reset`` that would set another mode raises
+        ``RuntimeError``, naming the run's mode, so set the mode before the run
+        opens.
+
+        ProbPipe operations that omit a key share this scope's structural random
+        event stream. Explicit caller-owned keys do not consume that stream.
+        Anonymous and nested scopes remain unmaterialized until their first
+        workflow-owned random event. A bare omitted-key operation uses the configured
+        default scope, or its own ephemeral scope when no default is configured.
+        """
+        return _WorkflowRunScope(seed)
+
+    def set_default(self, *, seed: int | None = None) -> None:
+        """Create or replace the current context's continuing default random scope.
+
+        Each bare top-level call continues the same root and random positions.
+        Setting the default again resets those positions. Invalid seeds leave
+        the previous default intact. An explicit workflow scope or replay uses
+        its own stream, and the default resumes after it closes. A failed call
+        keeps the positions it consumed.
+
+        Each top-level call fixes its provenance mode when it opens. The mode
+        can change between calls without changing the random stream.
+        ``config.reset()`` leaves the default scope intact.
+
+        The default belongs to the process, thread, and asyncio task that sets
+        it. Using an inherited default in another owner raises
+        ``UnmanagedConcurrentWorkflowEntryError``; set or clear a default in
+        that context first. ProbPipe evaluation points use the calling
+        workflow's random authority. A new thread without a copied context has
+        no default scope.
+
+        Parameters
+        ----------
+        seed : int or None
+            Non-boolean unsigned 64-bit root seed. ``None`` creates an anonymous
+            continuing stream, reading system entropy on its first random event.
+
+        Raises
+        ------
+        TypeError
+            If ``seed`` is neither an integer nor ``None``, or is a boolean.
+        ValueError
+            If ``seed`` is outside ``[0, 2**64 - 1]``.
+        RuntimeError
+            Inside a call, workflow scope, replay, route probe, or caller-owned
+            JAX transformation. Set the default outside these contexts.
+        """
+        _guard_default_scope_change()
+        seed_words = None if seed is None else seed_to_root_words(seed)
+        _DEFAULT_WORKFLOW_STATE.set(_DefaultWorkflowState(_current_workflow_owner(), seed_words))
+
+    def clear_default(self) -> None:
+        """Remove the current context's default scope, if any.
+
+        Subsequent bare calls receive independent anonymous scopes. Clearing
+        an inherited default removes it only from the current context.
+
+        Raises
+        ------
+        RuntimeError
+            Inside a call, workflow scope, replay, route probe, or caller-owned
+            JAX transformation. Clear the default outside these contexts.
+        """
+        _guard_default_scope_change()
+        _DEFAULT_WORKFLOW_STATE.set(None)
+
+
+workflow_run = _WorkflowRun()
+"""Open explicit workflow scopes and manage the current context's default scope.
+
+``with workflow_run(seed=None):`` opens an explicit scope. An integer seed
+reproduces its draws when the stochastic structure is the same. ``None`` uses
+fresh entropy at the outermost scope and inherits the root in a nested scope.
+A nested scope extends its parent's structural positions, and an explicit
+nested seed replaces the root while retaining that structure. The scope fixes
+provenance mode for its whole block.
+
+``workflow_run.set_default(*, seed=None)`` creates or replaces the default
+scope for successive bare calls. Its random positions restart on each setting,
+including when the seed is unchanged. ``None`` starts a continuing anonymous
+stream, reading entropy on its first random event. Each top-level call fixes
+its own provenance mode, which can change between calls without resetting the
+stream. An explicit scope entered between calls or a replay uses its own
+stream, and the default resumes afterwards. Failed calls retain consumed
+positions. Calls with the same stochastic structure use the same keys as
+successive calls in one explicit scope with the same seed.
+
+``workflow_run.clear_default()`` removes the default, if set. Bare calls then
+receive independent anonymous scopes. Both management methods return ``None``.
+``config.reset()`` leaves the default scope intact.
+
+Seeds are non-boolean integers in ``[0, 2**64 - 1]`` or ``None``. An invalid
+type raises ``TypeError`` and an out-of-range integer raises ``ValueError``.
+Explicit scopes validate on entry. ``set_default`` validates before replacing
+the current default. Setting or clearing the default inside a call, explicit
+scope, replay, route probe, or caller-owned JAX transformation raises
+``RuntimeError``. Changing provenance mode within an active call or explicit
+scope also raises ``RuntimeError``.
+
+Scopes belong to the process, thread, and asyncio task that opens them.
+ProbPipe evaluation points carry their parent's random authority to workers.
+A copied default used by another owner raises
+``UnmanagedConcurrentWorkflowEntryError``; that owner can set or clear its own
+default before calling. A new thread without a copied context has no default.
+An explicit scope copied into another owner also raises on use. Explicit-key
+numerical functions consume none of the workflow's random stream.
+"""
+
+
+def _guard_default_scope_change() -> None:
+    """Refuse a default-scope mutation during a running or traced computation."""
+    context = current_call_context()
+    if (
+        _ACTIVE_WORKFLOW_FRAME.get() is not None
+        or context.call_depth > 0
+        or context.in_evaluation_point
+        or context.forbids_workflow_randomness
+        or _workflow_side_effects_forbidden()
+        or _jax_transformation_active()
+    ):
+        raise RuntimeError(
+            "cannot change the default workflow scope during a call, workflow_run, "
+            "replay_run, route probe, or JAX transformation. Set or clear the default "
+            "outside the computation."
+        )
 
 
 @contextmanager
 def _ephemeral_workflow_run() -> Generator[None, None, None]:
-    """Install one lazy ephemeral root unless a workflow frame is active."""
+    """Reuse an active frame, or open a call under the default or a fresh root."""
     frame = _ACTIVE_WORKFLOW_FRAME.get()
     if frame is not None:
         _assert_workflow_admission(frame)
         yield
         return
-    with _WorkflowRunScope(None, root_kind="ephemeral"):
+    default = _DEFAULT_WORKFLOW_STATE.get()
+    if default is None:
+        with _WorkflowRunScope(None, root_kind="ephemeral"):
+            yield
+        return
+    if not _is_current_workflow_owner(default.owner):
+        raise UnmanagedConcurrentWorkflowEntryError(
+            "the default workflow scope belongs to another thread, process, or asyncio task. "
+            "Call workflow_run.set_default() or workflow_run.clear_default() in this context "
+            "before making a bare call."
+        )
+    frame = _WorkflowFrame(
+        kind="seeded" if default.seed_words is not None else "anonymous",
+        seed_words=default.seed_words,
+        provenance_mode=config.provenance.mode,
+        parent=None,
+        owner=default.owner,
+        default_state=default,
+        ledger=default.ledger,
+        state=_WorkflowFrameState(path_prefix=()),
+    )
+    token = _ACTIVE_WORKFLOW_FRAME.set(frame)
+    try:
         yield
+    finally:
+        current = _ACTIVE_WORKFLOW_FRAME.get()
+        _ACTIVE_WORKFLOW_FRAME.reset(token)
+        _close_workflow_frame(frame)
+        if current is not frame:
+            raise RuntimeError("workflow_run contexts must exit in nesting order")
 
 
 @contextmanager
@@ -455,14 +632,10 @@ def _current_workflow_owner() -> _WorkflowOwner:
     )
 
 
-def _assert_workflow_admission(frame: _WorkflowFrame | None = None) -> None:
-    """Reject passive context copies entering from another thread or task."""
-    active = _ACTIVE_WORKFLOW_FRAME.get() if frame is None else frame
-    if active is None:
-        return
-    owner = active.owner
+def _is_current_workflow_owner(owner: _WorkflowOwner) -> bool:
+    """Whether *owner* is the current process, thread, and asyncio task."""
     current = _current_workflow_owner()
-    same_owner = (
+    return (
         owner.process_id == current.process_id
         and owner.thread_ref() is current.thread_ref()
         and (
@@ -474,7 +647,14 @@ def _assert_workflow_admission(frame: _WorkflowFrame | None = None) -> None:
             )
         )
     )
-    if not same_owner:
+
+
+def _assert_workflow_admission(frame: _WorkflowFrame | None = None) -> None:
+    """Reject passive context copies entering from another thread or task."""
+    active = _ACTIVE_WORKFLOW_FRAME.get() if frame is None else frame
+    if active is None:
+        return
+    if not _is_current_workflow_owner(active.owner):
         raise UnmanagedConcurrentWorkflowEntryError(
             "this workflow_run belongs to another thread, process, or asyncio task. Run "
             "concurrent work through a Function (e.g. executor='thread'), or start a separate "
@@ -624,14 +804,20 @@ def _resolve_root_words(frame: _WorkflowFrame) -> tuple[int, int]:
                     raise RuntimeError(
                         "rootless evaluation point workflow frame requires transported parent RNG authority"
                     )
-                entropy = _os_urandom(8)
-                if len(entropy) != 8:  # pragma: no cover - OS contract guard
-                    raise RuntimeError("OS entropy provider did not return 8 bytes")
                 frame.state.root_words = (
-                    int.from_bytes(entropy[:4], "big"),
-                    int.from_bytes(entropy[4:], "big"),
+                    frame.default_state.resolve_root()
+                    if frame.default_state is not None
+                    else _entropy_root_words()
                 )
         return frame.state.root_words
+
+
+def _entropy_root_words() -> tuple[int, int]:
+    """Read one 64-bit root from the operating system."""
+    entropy = _os_urandom(8)
+    if len(entropy) != 8:  # pragma: no cover - OS contract guard
+        raise RuntimeError("OS entropy provider did not return 8 bytes")
+    return int.from_bytes(entropy[:4], "big"), int.from_bytes(entropy[4:], "big")
 
 
 def _describe_rng_origin(frame: _WorkflowFrame) -> dict[str, str | int | None]:

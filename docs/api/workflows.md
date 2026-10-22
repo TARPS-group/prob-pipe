@@ -8,7 +8,39 @@ This page also documents the orchestration modes, and the settings `config.prefe
 
 ## Workflow scopes
 
+`workflow_run.set_default(seed=...)` starts a continuing random stream for bare calls.
+Setting it again restarts that stream. `clear_default()` restores independent
+anonymous scopes for bare calls. Both methods apply to the current context.
+
+```python
+from probpipe import Normal, sample, workflow_run
+
+law = Normal("x", loc=0.0, scale=1.0)
+workflow_run.set_default(seed=114514)
+first = sample(law)
+second = sample(law)
+with workflow_run(seed=42):
+    separate = sample(law)
+third = sample(law)
+workflow_run.clear_default()
+```
+
+The first, second, and third draws use consecutive positions of the default
+stream. The explicit scope has its own positions. `set_default()` without a
+seed creates one continuing stream rooted in fresh entropy on its first draw.
+A default scope fixes the provenance mode separately for each top-level call,
+so the mode can change between calls. An explicit scope fixes it for the whole
+block. Setting or clearing the default inside either running calculation raises
+`RuntimeError`. A failed call keeps the random positions it consumed.
+
+The default belongs to the process, thread, and asyncio task that set it.
+A copied context in another owner must set or clear its own default before a
+bare call. Workers dispatched by ProbPipe inherit their calling workflow's
+random authority. `config.reset()` leaves the default intact.
+
 ::: probpipe.workflow_run
+    options:
+      show_attribute_values: false
 
 ::: probpipe.UnmanagedConcurrentWorkflowEntryError
 
