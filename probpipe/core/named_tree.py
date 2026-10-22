@@ -1015,6 +1015,16 @@ class NamedTree[L]:
     def _leaves_merged(self, other: Any) -> dict[str, Any]:
         """Flat leaf-map of ``self``'s leaves then *other*'s, keyed by path, for two trees with no top-level name in common.
 
+        Parameters
+        ----------
+        other : NamedTree
+            The tree merged after this one.
+
+        Returns
+        -------
+        dict of str to Any
+            Each leaf of both trees, keyed by its path, this tree's first.
+
         Raises
         ------
         ValueError
