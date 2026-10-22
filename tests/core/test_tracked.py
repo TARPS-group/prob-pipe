@@ -177,7 +177,7 @@ class TestLabelLifecycle:
         assert named.label == "mine"
 
     def test_composite_distribution_derives_default_label(self):
-        joint = Normal("mu", loc=0.0, scale=1.0) * Normal("sigma", loc=0.0, scale=1.0)
+        joint = Normal("mu", loc=0.0, scale=1.0) & Normal("sigma", loc=0.0, scale=1.0)
         assert joint.label == "Normal·Normal"
         assert str(joint) == "Normal(mu)·Normal(sigma)"
 
@@ -196,16 +196,19 @@ class TestLabelLifecycle:
             pytest.param(lambda r: r.map(lambda x: x + 1), {"a": 2.0, "b": 3.0}, id="map"),
             pytest.param(lambda r: r.replace(a=3.0), {"a": 3.0, "b": 2.0}, id="replace"),
             pytest.param(
-                lambda r: r.merge(
-                    Record(
-                        {"c": 3.0},
-                        label="other",
+                lambda r: (
+                    r
+                    & (
+                        Record(
+                            {"c": 3.0},
+                            label="other",
+                        )
                     )
                 ),
                 {"a": 1.0, "b": 2.0, "c": 3.0},
                 id="merge",
             ),
-            pytest.param(lambda r: r.with_path_names(a="z"), {"z": 1.0, "b": 2.0}, id="rename"),
+            pytest.param(lambda r: r.rename(a="z"), {"z": 1.0, "b": 2.0}, id="rename"),
         ],
     )
     def test_structural_transforms_preserve_labels_and_apply_the_edit(
@@ -232,7 +235,7 @@ class TestLabelLifecycle:
             label="record(a)",
         )
         assert nested.label == "record(a)"
-        assert nested.with_path_names({"a/b": "z"}).label == "record(a)"
+        assert nested.rename({"a/b": "z"}).label == "record(a)"
         assert nested.map(lambda x: x).label == "record(a)"
 
     def test_record_labels_survive_pickle(self):
@@ -392,8 +395,8 @@ class TestWithLabelOnCustomNewHosts:
         key = jax.random.PRNGKey(0)
         assert jnp.allclose(jnp.asarray(t._sample(key, (5,))), jnp.asarray(t2._sample(key, (5,))))
 
-    def test_field_view(self):
-        joint = Normal("mu", loc=0.0, scale=1.0) * Normal("sigma", loc=1.0, scale=0.5)
+    def test_coupled_marginal(self):
+        joint = Normal("mu", loc=0.0, scale=1.0) & Normal("sigma", loc=1.0, scale=0.5)
         view = joint["mu"]
         renamed = view.with_label("mu_view")
         assert renamed.label == "mu_view"
@@ -438,7 +441,7 @@ class TestLabelPreservation:
         assert named.label == "mine"
 
     def test_joint_conditioning_preserves_labels(self):
-        auto_joint = Normal("mu", loc=0.0, scale=1.0) * Normal("sigma", loc=1.0, scale=0.5)
+        auto_joint = Normal("mu", loc=0.0, scale=1.0) & Normal("sigma", loc=1.0, scale=0.5)
         cond = auto_joint._condition_on({"mu": 0.5})
         assert cond.label == auto_joint.label
         named_joint = auto_joint.with_label("my_joint")
@@ -541,7 +544,7 @@ class TestAnnotated:
 
 class TestJointPickleRoundTrip:
     def test_joint_keeps_derived_label_through_pickle(self):
-        joint = Normal("mu", loc=0.0, scale=1.0) * Normal("sigma", loc=1.0, scale=0.5)
+        joint = Normal("mu", loc=0.0, scale=1.0) & Normal("sigma", loc=1.0, scale=0.5)
         back = pickle.loads(pickle.dumps(joint))
         assert back.label == joint.label
 

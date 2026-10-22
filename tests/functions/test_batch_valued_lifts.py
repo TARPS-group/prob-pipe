@@ -176,7 +176,7 @@ def _trajectory_law(include_inputs):
 class TestBatchValuedFieldSampling:
     @pytest.mark.parametrize("sample_shape", [(), (4,), (2, 3)])
     @pytest.mark.parametrize("include_inputs", [False, True])
-    def test_a_field_view_draws_what_the_marginal_draws(self, include_inputs, sample_shape):
+    def test_a_coupled_marginal_draws_what_the_marginal_draws(self, include_inputs, sample_shape):
         with workflow_run(seed=0):
             law = _trajectory_law(include_inputs)
             viewed = sample(law["trajectory"], sample_shape)

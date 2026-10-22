@@ -576,7 +576,7 @@ class TestElementSpec:
 
     def test_renaming_the_outputs_of_a_batch_spec_renames_its_element_spec(self):
         spec = OutputSpec(BatchSpec(RecordSpec(a=(), b=()), sample=4))
-        renamed = spec.with_path_names({"a": "z"})
+        renamed = spec.rename({"a": "z"})
         assert renamed.term_spec.element_spec == OutputSpec(RecordSpec(z=(), b=()))
 
     def test_completing_a_declared_batch_keeps_its_element_name(self):
@@ -599,7 +599,7 @@ class TestElementSpec:
         assert "OutputSpec" not in repr(batch.spec)
 
     def test_a_batch_of_records_has_its_fields_as_outputs(self):
-        draws = sample(Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), sample_shape=3)
+        draws = sample((Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)), sample_shape=3)
         assert list(draws.element_spec.outputs) == ["a", "b"]
         assert list(OutputSpec(draws.spec).outputs) == ["a", "b"]
 
@@ -1401,7 +1401,7 @@ class TestTheBatchLabelIsGroupedBeforeTheSelection:
 
     def test_draws_of_a_product_group_their_label(self):
         draws = sample(
-            Normal("x", 0.0, 1.0, label="x") * Normal("y", 0.0, 1.0, label="y"), sample_shape=6
+            (Normal("x", 0.0, 1.0, label="x") & Normal("y", 0.0, 1.0, label="y")), sample_shape=6
         )
         assert draws.label == "(x, y) ~ x·y"
         assert draws[0:2].label == "((x, y) ~ x·y)[sample=0:2]"

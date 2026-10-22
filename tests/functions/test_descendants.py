@@ -2,9 +2,9 @@
 
 A lifted law's root is the root of the law whose draws it reads:
 
-- a field view: its parent;
+- a coupled marginal: its parent;
 - a batch element: its stored law;
-- every law that ``with_path_names``, ``with_label``, ``with_dim_names``, or
+- every law that ``rename``, ``with_label``, ``with_dim_names``, or
   ``with_dim_sizes`` returns: the law it is made from;
 - a bijector-transformed law: its base.
 
@@ -42,7 +42,7 @@ from probpipe import (
     iterate,
     workflow_run,
 )
-from probpipe.distributions import Distribution, FactoredDistribution, FieldView
+from probpipe.distributions import CoupledMarginal, Distribution, FactoredDistribution
 from probpipe.functions import _descendants
 from probpipe.functions._plan import build_broadcast_plan, build_stochastic_plan
 from probpipe.operations._marginal import factor, marginal
@@ -80,7 +80,7 @@ class _RecordingMultivariateNormal(MultivariateNormal):
 
 
 def _joint():
-    return Normal("x", 0.0, 1.0) * Normal("y", 2.0, 1.0)
+    return Normal("x", 0.0, 1.0) & Normal("y", 2.0, 1.0)
 
 
 def _raw_mean(law):
@@ -93,10 +93,10 @@ def _raw_variance(law):
     return np.asarray(jax.tree.leaves(variance.using(raw=True)(law))[0])
 
 
-# -- Field views ---------------------------------------------------------------
+# -- Coupled marginals ---------------------------------------------------------------
 
 
-class TestFieldViews:
+class TestCoupledMarginals:
     def test_a_view_captures_its_parents_root_and_projects_its_node(self):
         root = _joint()
         view = root["x"]
@@ -121,7 +121,7 @@ class TestFieldViews:
 
     def test_a_selection_records_its_paths_in_its_descriptor(self):
         root = _joint()
-        captured = _descendants.capture_stochastic_consumer(FieldView(root, ("y", "x")))
+        captured = _descendants.capture_stochastic_consumer(CoupledMarginal(root, ("y", "x")))
         draw = root._sample(jax.random.key(3), ())
 
         assert captured.root is root
@@ -135,7 +135,7 @@ class TestFieldViews:
 
     def test_the_golden_selection_descriptor_and_digest_are_hard_coded(self):
         root = _joint()
-        plan = _stochastic_plan({"value": FieldView(root, ("y", "x"))})
+        plan = _stochastic_plan({"value": CoupledMarginal(root, ("y", "x"))})
         descriptor = plan.source_groups[0].consumers[0].descendant_descriptor
         expected = (
             "stochastic-descendant",
@@ -150,7 +150,7 @@ class TestFieldViews:
         )
 
     @pytest.mark.parametrize("cycle_kind", ["self", "pair"])
-    def test_cyclic_field_view_graphs_fail_closed(self, cycle_kind):
+    def test_cyclic_coupled_marginal_graphs_fail_closed(self, cycle_kind):
         root = _joint()
         first = root["x"]
         if cycle_kind == "self":
@@ -160,7 +160,7 @@ class TestFieldViews:
             object.__setattr__(first, "_parent", second)
             object.__setattr__(second, "_parent", first)
 
-        with pytest.raises(TypeError, match="Cyclic field view"):
+        with pytest.raises(TypeError, match="Cyclic coupled marginal"):
             _descendants.capture_stochastic_consumer(first)
 
     def test_sibling_views_and_their_parent_form_one_plan_group(self):
@@ -212,7 +212,7 @@ class TestFieldViews:
         )
 
         with workflow_run(seed=33):
-            result = workflow(root["x"], FieldView(root, "x"))
+            result = workflow(root["x"], CoupledMarginal(root, "x"))
 
         np.testing.assert_allclose(_raw_variance(result), 0.0, atol=1e-6)
 
@@ -347,19 +347,17 @@ def _kde():
 #: A law, a rename that copies it or rebuilds it as a factored joint, the class of
 #: the result, and the difference of the field the rename moves.
 _COPIES_AND_REBUILDS = [
-    pytest.param(
-        _normal, lambda law: law.with_path_names(x="z"), Normal, lambda a, b: a - b, id="copy"
-    ),
+    pytest.param(_normal, lambda law: law.rename(x="z"), Normal, lambda a, b: a - b, id="copy"),
     pytest.param(
         _joint,
-        lambda law: law.with_path_names(x="u"),
+        lambda law: law.rename(x="u"),
         FactoredDistribution,
         lambda a, b: a["x"] - b["u"],
         id="through-factors",
     ),
     pytest.param(
         _joint,
-        lambda law: law.with_path_names({"x": "g/x"}),
+        lambda law: law.rename({"x": "g/x"}),
         FactoredDistribution,
         lambda a, b: a["x"] - b["g/x"],
         id="regrouped",
@@ -368,18 +366,16 @@ _COPIES_AND_REBUILDS = [
 
 #: A law and two renames in a row, one for each kind of law that a rename returns.
 _RENAMES_OF_RENAMES = [
-    pytest.param(_normal, lambda law: law.with_path_names(x="y").with_path_names(y="z"), id="copy"),
-    pytest.param(
-        _joint, lambda law: law.with_path_names(x="u").with_path_names(u="v"), id="factored"
-    ),
+    pytest.param(_normal, lambda law: law.rename(x="y").rename(y="z"), id="copy"),
+    pytest.param(_joint, lambda law: law.rename(x="u").rename(u="v"), id="factored"),
     pytest.param(
         _posterior,
-        lambda law: law.with_path_names(_GROUPING).with_path_names({"population/mu": "mu"}),
+        lambda law: law.rename(_GROUPING).rename({"population/mu": "mu"}),
         id="empirical",
     ),
     pytest.param(
         _kde,
-        lambda law: law.with_path_names({"a": "g/a"}).with_path_names({"b": "g/b"}),
+        lambda law: law.rename({"a": "g/a"}).rename({"b": "g/b"}),
         id="boundary",
     ),
 ]
@@ -387,7 +383,7 @@ _RENAMES_OF_RENAMES = [
 
 def _renamed_view():
     joint = _joint()
-    return joint["x"].with_path_names(x="z"), joint
+    return joint["x"].rename(x="z"), joint
 
 
 def _renamed_element():
@@ -397,18 +393,18 @@ def _renamed_element():
         "law",
         label="laws",
     )
-    return batch[0].with_path_names(n="m"), root
+    return batch[0].rename(n="m"), root
 
 
 def _renamed_transform():
     base = Normal("x", 0.0, 1.0)
-    return BijectorTransformedDistribution("t", base, tfb.Exp()).with_path_names(t="z"), base
+    return BijectorTransformedDistribution("t", base, tfb.Exp()).rename(t="z"), base
 
 
 class TestRenamedLaws:
     def test_a_renamed_empirical_law_captures_the_law_it_renames_as_root(self):
         root = _posterior()
-        renamed = root.with_path_names(_GROUPING)
+        renamed = root.rename(_GROUPING)
         captured = _descendants.capture_stochastic_consumer(renamed)
         index = jnp.array([3, 0, 11])
 
@@ -424,13 +420,13 @@ class TestRenamedLaws:
 
     def test_a_law_and_its_rename_form_one_plan_group(self):
         root = _posterior()
-        plan = _stochastic_plan({"root": root, "renamed": root.with_path_names(_GROUPING)})
+        plan = _stochastic_plan({"root": root, "renamed": root.rename(_GROUPING)})
 
         assert len(plan.source_groups) == 1
         assert plan.runtime_bindings[0].root is root
 
     def test_the_raw_form_of_a_renamed_law_is_its_own_root(self):
-        detached = _posterior().with_path_names(_GROUPING).raw
+        detached = _posterior().rename(_GROUPING).raw
 
         assert _descendants.capture_stochastic_consumer(detached).root is detached
 
@@ -445,7 +441,7 @@ class TestRenamedLaws:
             output_spec=OutputSpec(difference=None),
         )
 
-        renamed = root.with_path_names(_GROUPING)
+        renamed = root.rename(_GROUPING)
         assert workflow.check(root, renamed).selected.method_name == "sampling_lift"
         with workflow_run(seed=37):
             result = workflow(root, renamed)
@@ -504,7 +500,7 @@ class TestRenamedLaws:
 
     def test_the_raw_form_of_a_view_of_a_rebuilt_joint_is_its_own_root(self):
         """The view's marginal is a renamed factor, and detaching it drops the factor it renames."""
-        detached = _joint().with_path_names(x="u")["u"].raw
+        detached = _joint().rename(x="u")["u"].raw
 
         assert _descendants.capture_stochastic_consumer(detached).root is detached
 
@@ -585,7 +581,7 @@ class TestCopies:
 
     @pytest.mark.parametrize("copy", _COPIES)
     def test_a_copy_of_a_factored_joint_forms_one_plan_group_with_it(self, copy):
-        joint = _FreeNormal("a") * _FreeNormal("b")
+        joint = _FreeNormal("a") & _FreeNormal("b")
         plan = _stochastic_plan({"joint": joint, "copy": copy(joint)})
 
         assert len(plan.source_groups) == 1
@@ -594,8 +590,8 @@ class TestCopies:
     @pytest.mark.parametrize(("make", "renames"), _FREE_LAWS_AND_RENAMES)
     def test_a_rename_and_a_dimension_binding_commute_in_their_root(self, make, renames):
         law = make()
-        renamed_first = law.with_path_names(renames).with_dim_sizes(n=3)
-        bound_first = law.with_dim_sizes(n=3).with_path_names(renames)
+        renamed_first = law.rename(renames).with_dim_sizes(n=3)
+        bound_first = law.with_dim_sizes(n=3).rename(renames)
 
         assert renamed_first.event_spec == bound_first.event_spec
         assert _descendants.capture_stochastic_consumer(renamed_first).root is law
@@ -625,7 +621,7 @@ class TestCopies:
     )
     @pytest.mark.parametrize("copy", _COPIES)
     def test_the_raw_form_marginal_or_factor_of_a_copy_is_its_own_root(self, copy, detach):
-        detached = detach(copy(_FreeNormal("a") * _FreeNormal("b")))
+        detached = detach(copy(_FreeNormal("a") & _FreeNormal("b")))
 
         assert _descendants.capture_stochastic_consumer(detached).root is detached
 

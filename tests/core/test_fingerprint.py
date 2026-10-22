@@ -418,7 +418,7 @@ class TestDistributionHashing:
         assert fingerprint(_Located("x", 2.0)) != fingerprint(law)
 
     def test_whether_a_joint_was_labeled_leaves_its_fingerprint_unchanged(self):
-        joint = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        joint = Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)
         labeled = copy.copy(joint)
         _with_named(labeled, True)
         assert fingerprint(labeled) == fingerprint(joint)

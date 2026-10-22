@@ -677,16 +677,14 @@ class OutputSpec:
             term_spec = _unification(self._term_spec, term_spec, bindings)
         return self._with_term_spec(term_spec)
 
-    def with_path_names(
-        self, mapping: Mapping[str, str] | None = None, /, **kwargs: str
-    ) -> OutputSpec:
+    def rename(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> OutputSpec:
         """Rename or move nodes of this OutputSpec by their paths, ``old -> new``.
 
         A path starts with an output. In the positional form over a record, the
         paths are the record's; in the keyword form, a path is the output's name
         followed by a path within its value. Each key is the exact path of a node
         and each target its new exact path, under the rule of
-        :meth:`~probpipe.core.named_tree.NamedTree.with_path_names`. The result
+        :meth:`~probpipe.core.named_tree.NamedTree.rename`. The result
         keeps the form. In the positional form a move may add or remove an
         output. In the keyword form the output is renamed in place and the
         fields of its value stay under it, so a field moves only within the
@@ -709,7 +707,7 @@ class OutputSpec:
         KeyError
             If a key is not a path of this OutputSpec.
         ValueError
-            As :meth:`~probpipe.core.named_tree.NamedTree.with_path_names` raises
+            As :meth:`~probpipe.core.named_tree.NamedTree.rename` raises
             it, or if the keyword form's output moves into a group or one of its
             fields moves out of it.
         """
@@ -723,7 +721,7 @@ class OutputSpec:
         renamed_output_name = renames.get(output_name, output_name)
         if _PATH_SEP in renamed_output_name:
             raise ValueError(
-                f"cannot rename {output_name!r} to {renamed_output_name!r}: with_path_names() can "
+                f"cannot rename {output_name!r} to {renamed_output_name!r}: rename() can "
                 f"rename the output of the keyword form but cannot move it into a group. "
                 f"Choose a name without {_PATH_SEP!r}."
             )
@@ -739,7 +737,7 @@ class OutputSpec:
                     f"cannot move {source!r} to {target!r}: fields of {owner} must stay "
                     f"under {prefix!r}"
                 )
-        ((name, term),) = outputs.with_path_names(renames).children.items()
+        ((name, term),) = outputs.rename(renames).children.items()
         return OutputSpec(**{name: None if spec is None else term})
 
     def _with_term_spec(self, term_spec: TermSpec | None) -> OutputSpec:
@@ -818,7 +816,7 @@ def _renamed_exposed(
 ) -> TermSpec:
     """*spec* in the positional form, with the nodes its outputs start renamed.
 
-    The renames are read as ``with_path_names`` reads them. A record renames
+    The renames are read as ``rename`` reads them. A record renames
     its own paths, a law or a kernel its event spec's, and a batch its
     element spec's, so the term keeps its kind.
     """
@@ -826,14 +824,14 @@ def _renamed_exposed(
 
     kind = _exposed_kind(spec)
     if kind == "record":
-        return cast(RecordSpec, spec).with_path_names(mapping, **kwargs)
+        return cast(RecordSpec, spec).rename(mapping, **kwargs)
     if kind == "law":
         event = cast(OutputSpec, spec.event_spec)  # type: ignore[attr-defined]
-        return replace(spec, event_spec=event.with_path_names(mapping, **kwargs))  # type: ignore[type-var]
+        return replace(spec, event_spec=event.rename(mapping, **kwargs))  # type: ignore[type-var]
     from ._batch import BatchSpec
 
     batch = cast(BatchSpec, spec)
-    return batch._replace(element=batch.element_spec.with_path_names(mapping, **kwargs))
+    return batch._replace(element=batch.element_spec.rename(mapping, **kwargs))
 
 
 def _root_output_name(output_spec: OutputSpec) -> str | None:
@@ -1146,7 +1144,7 @@ def _merged_output_record(
             if name in merged_outputs:
                 raise ValueError(
                     f"cannot merge {owner_of_output[name]} and {owner}, since both have the output "
-                    f"{name!r}. Rename it in one of them, as with_path_names({{{name!r}: "
+                    f"{name!r}. Rename it in one of them, as rename({{{name!r}: "
                     f"{name + '_2'!r}}})"
                 )
             merged_outputs[name] = output_term_spec

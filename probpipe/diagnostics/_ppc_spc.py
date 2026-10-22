@@ -432,7 +432,7 @@ def add_ppc(
         :func:`~probpipe.validation.predictive_check` takes.
     kernel : ConditionalDistribution
         The law of the observations given the parameters, such as the
-        likelihood of a model ``likelihood * prior``.
+        likelihood of a model ``likelihood & prior``.
     n_replications : int
         Number of replicated datasets.
 

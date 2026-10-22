@@ -76,12 +76,14 @@ class _NumpyKernel(ConditionalDistribution, SupportsConditionalLogProb):
 
 class TestTheRoute:
     def test_condition_on_selects_the_method_and_reports_it_exact(self):
-        report = condition_on.check(_normal_kernel() * _grid_prior(), {"y": Y})
+        report = condition_on.check((_normal_kernel() & _grid_prior()), {"y": Y})
         assert report.selected.method_name == "inference_methods/empirical_reweighting"
         assert report.selected.exact is True
 
     def test_exact_only_admits_the_method(self):
-        posterior = condition_on.using(exact_only=True)(_normal_kernel() * _grid_prior(), {"y": Y})
+        posterior = condition_on.using(exact_only=True)(
+            (_normal_kernel() & _grid_prior()), {"y": Y}
+        )
         assert posterior.provenance.metadata["method"] == "empirical_reweighting"
         assert posterior.provenance.metadata["exact"] is True
 
@@ -92,19 +94,19 @@ class TestTheRoute:
 
 class TestThePosterior:
     def test_the_posterior_keeps_the_models_label_and_holds_the_data_fixed(self):
-        model = (_normal_kernel() * _grid_prior()).with_label("model")
+        model = (_normal_kernel() & _grid_prior()).with_label("model")
         posterior = condition_on(model, {"y": Y})
         assert posterior.label == "model"
         assert str(posterior) == posterior.notation == "model(mu; y)"
 
     def test_the_atoms_are_labeled_by_the_posteriors_outputs(self):
         prior = EmpiricalDistribution(GRID, event_spec=OutputSpec(mu=None), label="prior")
-        posterior = condition_on(_normal_kernel() * prior, {"y": Y})
+        posterior = condition_on((_normal_kernel() & prior), {"y": Y})
         assert posterior.atoms.label == "mu"
         assert prior.atoms.label == "mu"
 
     def test_the_weights_are_the_prior_weights_times_the_likelihood(self):
-        posterior = condition_on(_normal_kernel() * _grid_prior(), {"y": Y})
+        posterior = condition_on((_normal_kernel() & _grid_prior()), {"y": Y})
         np.testing.assert_allclose(
             posterior.weights, _expected_weights(np.ones(41) / 41), atol=1e-6
         )
@@ -114,7 +116,7 @@ class TestThePosterior:
         prior_weights = np.linspace(1.0, 3.0, 41)
         prior_weights /= prior_weights.sum()
         posterior = condition_on(
-            _normal_kernel() * _grid_prior(jnp.asarray(prior_weights)), {"y": Y}
+            (_normal_kernel() & _grid_prior(jnp.asarray(prior_weights))), {"y": Y}
         )
         np.testing.assert_allclose(posterior.weights, _expected_weights(prior_weights), atol=1e-6)
 
@@ -135,7 +137,7 @@ class TestThePosterior:
             given_spec=particles.event_spec.outputs,
             label="count",
         )
-        posterior = condition_on(observe * particles, {"y": 250.0})
+        posterior = condition_on((observe & particles), {"y": 250.0})
         assert posterior.event_spec == particles.event_spec
         rate = np.asarray(atoms["phi"].raw * atoms["N"].raw)
         log_likelihood = np.asarray(jax.scipy.stats.poisson.logpmf(250.0, rate))
@@ -144,7 +146,7 @@ class TestThePosterior:
         np.testing.assert_allclose(posterior.weights, expected / expected.sum(), rtol=2e-4)
 
     def test_a_likelihood_that_does_not_trace_is_evaluated_at_each_atom(self):
-        posterior = condition_on(_NumpyKernel() * _grid_prior(), {"y": Y})
+        posterior = condition_on((_NumpyKernel() & _grid_prior()), {"y": Y})
         np.testing.assert_allclose(
             posterior.weights, _expected_weights(np.ones(41) / 41), atol=1e-6
         )
@@ -155,7 +157,7 @@ class TestThePosterior:
             given_spec={"mu": REAL},
             label="y",
         )
-        posterior = condition_on(kernel * _grid_prior(), {"y": Y})
+        posterior = condition_on((kernel & _grid_prior()), {"y": Y})
         log_likelihood = np.array(
             [jax.scipy.stats.norm.logpdf(Y, mu, 2.0).sum() for mu in np.asarray(GRID)]
         )
@@ -165,13 +167,13 @@ class TestThePosterior:
     def test_observed_values_in_an_xarray_dataarray_give_the_weights_of_the_array(self):
         xr = pytest.importorskip("xarray")
         observed = xr.DataArray(np.asarray(Y), dims="observation")
-        posterior = condition_on(_normal_kernel() * _grid_prior(), {"y": observed})
+        posterior = condition_on((_normal_kernel() & _grid_prior()), {"y": observed})
         np.testing.assert_allclose(
             posterior.weights, _expected_weights(np.ones(41) / 41), atol=1e-6
         )
 
     def test_the_annotations_record_the_method(self):
-        posterior = condition_on(_normal_kernel() * _grid_prior(), {"y": Y})
+        posterior = condition_on((_normal_kernel() & _grid_prior()), {"y": Y})
         assert posterior.annotations.attrs["method"] == "empirical_reweighting"
 
     def test_zero_likelihood_at_every_atom_raises(self):
@@ -182,12 +184,12 @@ class TestThePosterior:
             label="count",
         )
         with pytest.raises(ValueError, match="zero likelihood at every atom"):
-            condition_on.using(method="empirical_reweighting")(observe * prior, {"y": -1.0})
+            condition_on.using(method="empirical_reweighting")((observe & prior), {"y": -1.0})
 
 
 class TestWhenItApplies:
     def test_a_parametric_prior_takes_another_method(self):
-        model = _normal_kernel() * Normal("mu", 0.0, 1.0)
+        model = _normal_kernel() & Normal("mu", 0.0, 1.0)
         info = inference_method_registry.check(
             condition_on.using(method="unnormalized")(model, {"y": Y})
         )
@@ -211,7 +213,7 @@ class TestWhenItApplies:
                 return Normal("y", float(given["mu"]) * jnp.ones(3), 1.0)
 
         target = condition_on.using(method="unnormalized")(
-            _SamplingOnly() * _grid_prior(), {"y": Y}
+            (_SamplingOnly() & _grid_prior()), {"y": Y}
         )
         report = inference_method_registry.get_method("empirical_reweighting").check(target)
         assert report.feasible is False
@@ -221,6 +223,6 @@ class TestWhenItApplies:
         draws = jax.random.normal(jax.random.PRNGKey(0), (500,))
         prior = EmpiricalDistribution(draws, output_name="mu")
         with workflow_run(seed=0):
-            posterior = condition_on(_normal_kernel() * prior, {"y": Y})
+            posterior = condition_on((_normal_kernel() & prior), {"y": Y})
         assert posterior.num_atoms == 500
         assert float(np.sum(posterior.weights)) == pytest.approx(1.0, rel=1e-5)

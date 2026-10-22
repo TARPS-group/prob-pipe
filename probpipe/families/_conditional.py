@@ -75,7 +75,7 @@ __all__ = [
 class LinearGaussianConditional(ConditionalDistribution):
     """The linear-Gaussian kernel ``s ↦ N(A @ s + b, cov)``.
 
-    It is the conditional member of the Gaussian algebra: composed with a
+    It is the conditional member of the Gaussian algebra: merged with a
     Gaussian prior it yields a ``FactoredMultivariateGaussian``, and
     conditioning through it is exact. The kernel's one input is ``A``'s input,
     and its event type is ``A``'s output type, under the kernel's own output.

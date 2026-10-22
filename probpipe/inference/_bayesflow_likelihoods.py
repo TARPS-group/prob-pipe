@@ -5,7 +5,7 @@ conditional coupling flow) or of the likelihood-to-evidence ratio (NRE: an NRE-C
 classifier) and returns it as a ``ConditionalDistribution`` from the parameters
 to datasets of observation rows: NLE's kernel has the network's density and
 NRE's an unnormalized one. The scores are **jax.grad-transparent**, so
-``condition_on(learned * prior, {"observation": y})`` runs ProbPipe's registered
+``condition_on(learned & prior, {"observation": y})`` runs ProbPipe's registered
 BlackJAX/TFP NUTS methods with no new samplers and no PyTorch.
 
 Both kernels treat a dataset's rows as conditionally independent: the estimator
@@ -108,7 +108,7 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
     """A learned kernel from the parameters to conditionally independent observation rows.
 
     Its inputs are the prior's outputs, so composing it with the prior
-    it was trained against, as ``learned * prior``, gives the joint law, and
+    it was trained against, as ``learned & prior``, gives the joint law, and
     conditioning that joint on an observation is Bayes' rule, which the
     normalization stage completes by inference. Its event is a dataset of
     observation rows, of any number, whose score is the sum of per-row scores
@@ -300,7 +300,7 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase, SupportsConditionalLogProb):
     The score path is pure keras-jax ops (standardize, conditional-flow
     ``log_prob``, plus the standardization log-det-jacobian), so it is
     ``jax.grad``-transparent and jit-stable, and gradient-based MCMC normalizes
-    ``condition_on(learned * prior, {"observation": y})``. Values are faithful
+    ``condition_on(learned & prior, {"observation": y})``. Values are faithful
     to the public ``approximator.log_prob`` (same standardization and
     log-det-jacobian); the only difference is staying on-device.
 
@@ -398,7 +398,7 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase, SupportsConditionalUnnormalizedLo
     ``log[p(y_i | theta) / p(y_i)]``, so a dataset's score equals its joint
     log-likelihood **up to a theta-independent constant** (``sum_i log p(y_i)``).
     The kernel therefore claims ``SupportsConditionalUnnormalizedLogProb``
-    alone: conditioning ``learned * prior`` on an observation cancels the
+    alone: conditioning ``learned & prior`` on an observation cancels the
     constant, but the values are not normalized log-likelihoods, so do not use
     them for model comparison, information criteria (LOO / WAIC), or any
     reading of absolute likelihood magnitudes.
@@ -631,7 +631,7 @@ def learn_amortized_likelihood(
     Trains a conditional coupling flow on offline ``(theta, y)`` simulations and
     returns a :class:`BayesFlowLikelihood`, the kernel ``p̂(y | theta)`` from the
     prior's outputs to datasets of observation rows, with the network's
-    jax-traceable density. ``condition_on(learned * prior, {"observation": y})``
+    jax-traceable density. ``condition_on(learned & prior, {"observation": y})``
     then runs a registered gradient-based MCMC method (BlackJAX/TFP NUTS) for
     datasets of any size, since per-row scores sum under conditional
     independence. The network conditions on the raw constrained ``theta``.
@@ -769,7 +769,7 @@ def learn_amortized_ratio(
     :class:`BayesFlowRatio`, the kernel from the prior's outputs to datasets
     of observation rows whose summed per-row log-ratios are its unnormalized
     density: the log-likelihood **up to a theta-independent constant** -- valid
-    for ``condition_on(learned * prior, {"observation": y})``, invalid for
+    for ``condition_on(learned & prior, {"observation": y})``, invalid for
     absolute-likelihood uses (model comparison, LOO/WAIC); see the class
     docstring. The classifier handles discrete-valued observations and
     one-dimensional data natively.

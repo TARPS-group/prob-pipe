@@ -136,8 +136,7 @@ definition site.
   `EmpiricalDistribution`, `BootstrapReplicateDistribution`.
 - **Base / mixin classes:** `Distribution`, `NumericDistribution`,
   `TFPDistribution`, `RandomFunction`.
-- **View classes:** end in "View" — `FieldView` (the field view `d[path]`),
-  `DiagnosticsView` (the accessor `Distribution.diagnostics`).
+- **View classes:** end in "View" — `DiagnosticsView` (the accessor `Distribution.diagnostics`).
 - **Private helper classes:** Leading underscore — `_LinearMapGRF`, `_ShiftedGRF`.
 
 ### 1.6 Modules
@@ -251,7 +250,7 @@ into every `Mapping`, whether passed as a keyword value or nested inside
 a positional mapping). There is no way to carry an opaque payload dict
 inside a `Record`; use a non-mapping container if you need one leaf.
 
-**Renaming fields.** `with_path_names(old=new, ...)` returns a
+**Renaming fields.** `rename(old=new, ...)` returns a
 same-family tree with the given nodes (leaves or whole subtrees)
 renamed. Each key is the exact path of a node, so a single name
 addresses a top-level node and a nested node takes its full path. It
@@ -856,8 +855,8 @@ Each pair below shows a message that breaks these rules and its rewrite.
 
 ```text
 # Explains the design (rules 1-3)
-with_path_names() keeps the form, so the value type's root output 'mu' is renamed in place, not moved to 'population/mu'
-cannot rename 'mu' to 'population/mu': with_path_names() can rename the output of the keyword form but cannot move it into a group. Choose a name without '/'.
+rename() keeps the form, so the value type's root output 'mu' is renamed in place, not moved to 'population/mu'
+cannot rename 'mu' to 'population/mu': rename() can rename the output of the keyword form but cannot move it into a group. Choose a name without '/'.
 
 # Inverted lookup with no fix (rules 1 and 5)
 not levels of this batch: ['test']; have ['quantile']

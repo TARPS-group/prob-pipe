@@ -239,7 +239,7 @@ class SupportsApproximateConditioning(ABC):
 
 @runtime_checkable
 class SupportsMarginals(Protocol):
-    """A distribution that returns the detached marginal of a field or field group.
+    """A distribution that returns the standalone marginal of a field or field group.
 
     ``_marginal(path)`` returns a standalone ``Distribution`` over the node at
     ``path``, an event path of this law, with no reference back to it. One path,
@@ -367,7 +367,7 @@ class SupportsConditionalExpectation(Protocol):
 
 @runtime_checkable
 class SupportsConditionalMarginals(Protocol):
-    """A kernel with the detached marginal of ``K(given, ·)`` at an event path.
+    """A kernel with the standalone marginal of ``K(given, ·)`` at an event path.
 
     The path argument follows :class:`SupportsMarginals`: one path, or a tuple
     of paths that keeps each node at its own path.

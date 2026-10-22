@@ -20,7 +20,7 @@ opaque ``minibatch`` argument.
 
 Both methods require ``batch_size=`` to be passed, so SGMCMC applies only
 when the user has opted into minibatching, as in
-``condition_on(likelihood * prior, y=y, method="blackjax_sgld", batch_size=…)``.
+``condition_on(likelihood & prior, y=y, method="blackjax_sgld", batch_size=…)``.
 ``blackjax_sgld`` is registered at priority 45 and ``blackjax_sghmc`` is
 opt-in-only; the method classes state why.
 """

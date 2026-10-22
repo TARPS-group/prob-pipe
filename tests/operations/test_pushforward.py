@@ -256,9 +256,9 @@ class TestTheMapReceivesDraws:
         )
         assert law.num_atoms == 4
 
-    def test_the_identity_over_a_field_view_gives_one_atom_per_draw(self):
+    def test_the_identity_over_a_coupled_marginal_gives_one_atom_per_draw(self):
         """The map returns its operand, so the stacked draws' term reaches the result step."""
-        view = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0))["a"]
+        view = (Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0))["a"]
         law = pushforward.using(max_evaluations=3)(
             view, Function(lambda x: x, output_spec=OutputSpec(a=None))
         )

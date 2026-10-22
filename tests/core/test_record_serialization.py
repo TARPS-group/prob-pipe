@@ -529,7 +529,7 @@ class TestRoundTripPreservesAnnotations:
             ).annotations
             is None
         )
-        assert roundtrip(Normal("v", 0.0, 1.0) * Normal("w", 0.0, 1.0)).annotations is None
+        assert roundtrip(Normal("v", 0.0, 1.0) & Normal("w", 0.0, 1.0)).annotations is None
 
     def test_the_reconstruction_has_the_same_type(self, term):
         # A term whose class is chosen from its constructor arguments — a record

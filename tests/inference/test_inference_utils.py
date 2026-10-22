@@ -56,20 +56,20 @@ def _gaussian_mean(prior, n, scale=1.0):
         NumericArraySpec((n,)),
         lambda mu: tfd.Independent(tfd.Normal(jnp.broadcast_to(mu, (n,)), scale), 1),
     )
-    return likelihood * prior
+    return likelihood & prior
 
 
 @pytest.fixture
 def small_model():
     """The unnormalized conditional of a joint with a 2-field factored prior."""
-    prior = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=2.0, scale=0.5)
+    prior = Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=2.0, scale=0.5)
     likelihood = ObservationKernel(
         "y",
         dict(prior.event_spec.outputs),
         NumericArraySpec((4,)),
         lambda a, b: tfd.Independent(tfd.Normal(jnp.zeros(4), 1.0), 1),
     )
-    return observed_target(likelihood * prior, {"y": jnp.zeros((4,))})
+    return observed_target((likelihood & prior), {"y": jnp.zeros((4,))})
 
 
 class TestBuildTargetLogProbFlat:
@@ -317,15 +317,15 @@ class TestModelFactorsWithOptionalInputs:
     """An optional input of the likelihood takes its default unless the prior produces it."""
 
     def test_an_unmet_optional_input_is_left_to_its_default(self):
-        factors = model_factors(observed_target(_shifted() * Normal("mu", 0.0, 1.0), {"y": Y}))
+        factors = model_factors(observed_target((_shifted() & Normal("mu", 0.0, 1.0)), {"y": Y}))
         # The prior is the whole-term law of mu, so its draw is the value itself.
         given = parameter_given(factors, jnp.asarray(1.0))
         assert list(given) == ["mu"]
         np.testing.assert_allclose(given["mu"], 1.0)
 
     def test_the_prior_meets_an_optional_input(self):
-        prior = Normal("mu", 0.0, 1.0) * Normal("shift", 0.0, 1.0)
-        factors = model_factors(observed_target(_shifted() * prior, {"y": Y}))
+        prior = Normal("mu", 0.0, 1.0) & Normal("shift", 0.0, 1.0)
+        factors = model_factors(observed_target((_shifted() & prior), {"y": Y}))
         given = parameter_given(factors, {"mu": jnp.asarray(1.0), "shift": jnp.asarray(0.5)})
         assert set(given) == {"mu", "shift"}
 
@@ -333,7 +333,7 @@ class TestModelFactorsWithOptionalInputs:
     def test_a_prior_of_several_factors_is_labeled_as_the_model_is(self, labeled):
         from probpipe.distributions._factored import _is_named
 
-        model = _shifted() * Normal("mu", 0.0, 1.0) * Normal("shift", 0.0, 1.0)
+        model = (_shifted() & Normal("mu", 0.0, 1.0)) & Normal("shift", 0.0, 1.0)
         model = model.with_label("model") if labeled else model
         factors = model_factors(observed_target(model, {"y": Y}))
         assert isinstance(factors.prior, FactoredDistribution)
@@ -341,7 +341,7 @@ class TestModelFactorsWithOptionalInputs:
 
     def test_a_prior_kernel_at_its_defaults_is_the_prior(self):
         hyper = conditional_distribution(lambda loc=0.0: Normal("mu", loc, 1.0), label="mu")
-        factors = model_factors(observed_target(_shifted() * hyper, {"y": Y}))
+        factors = model_factors(observed_target((_shifted() & hyper), {"y": Y}))
         assert isinstance(factors.prior, Normal)
 
     @pytest.mark.parametrize("met", [False, True], ids=["default", "prior"])
@@ -354,13 +354,13 @@ class TestModelFactorsWithOptionalInputs:
         ``(sum(y) / 4) / (1 / v + 5 / 4)`` for prior variance ``v``.
         """
         prior = (
-            Normal("mu", 0.0, 1.0) * Normal("shift", 0.0, 1.0) if met else Normal("mu", 0.0, 1.0)
+            (Normal("mu", 0.0, 1.0) & Normal("shift", 0.0, 1.0)) if met else Normal("mu", 0.0, 1.0)
         )
         budget = {"num_results": 2000, "num_warmup": 200, "num_chains": 2}
         with workflow_run(seed=0):
             posterior = condition_on.using(
                 method="blackjax_elliptical_slice", method_options=budget
-            )(_shifted() * prior, {"y": Y})
+            )((_shifted() & prior), {"y": Y})
         draws = flat_draws(posterior)
         location = np.asarray(draws["mu"]) + (np.asarray(draws["shift"]) if met else 0.0)
         variance = 2.0 if met else 1.0
@@ -449,7 +449,7 @@ class TestGetInitState:
     def test_a_factored_prior_starts_at_its_own_draw(self):
         # A factored prior draws a nested mapping, which is flattened rather
         # than replaced by the Uniform(-2, 2) box.
-        prior = Normal("a", 0.0, 1.0) * MultivariateNormal(
+        prior = Normal("a", 0.0, 1.0) & MultivariateNormal(
             "b", jnp.array([10.0, -10.0]), cov=jnp.eye(2)
         )
         out = get_init_state(prior, init=None, random_seed=0)
@@ -459,7 +459,7 @@ class TestGetInitState:
 
     @pytest.mark.parametrize("seed", range(12))
     def test_a_factored_prior_starts_inside_its_support(self, seed):
-        prior = Normal("a", 0.0, 1.0) * HalfNormal("scale", 1.0)
+        prior = Normal("a", 0.0, 1.0) & HalfNormal("scale", 1.0)
         out = get_init_state(prior, init=None, random_seed=seed)
         assert float(out[1]) > 0.0
 

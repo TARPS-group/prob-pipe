@@ -531,7 +531,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     spec: where its type is unspecified it takes that spec, and a declared type
     must unify with it.
 
-    **Renaming.** For record atoms, ``with_path_names`` returns an
+    **Renaming.** For record atoms, ``rename`` returns an
     ``EmpiricalDistribution`` with the same label and weights, whose atoms are
     these atoms with each field at its new path, on the same levels and in the
     same order.

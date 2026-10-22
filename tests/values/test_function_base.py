@@ -1008,7 +1008,7 @@ class TestCompletedOutputDeclarations:
         assert stored.event_spec.outputs["y"].support == real
 
     def test_a_returned_joint_is_checked_field_by_field(self):
-        stored = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        stored = Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)
         declared = RecordSpec(a=NumericArraySpec((), support=positive), b=NumericArraySpec(()))
         factory = Function(
             lambda: stored,
@@ -1065,7 +1065,7 @@ class TestCompletedOutputDeclarations:
     def test_a_returned_law_over_a_whole_record_is_checked_field_by_field(self):
         from probpipe import Distribution
 
-        joint = Normal("y", 0.0, 1.0) * Normal("z", 0.0, 1.0)
+        joint = Normal("y", 0.0, 1.0) & Normal("z", 0.0, 1.0)
         stored = Distribution(
             OutputSpec(bundle=joint.event_spec.term_spec),
             label="bundle",

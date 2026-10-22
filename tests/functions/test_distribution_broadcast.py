@@ -259,9 +259,9 @@ class TestExecuteDistributionBroadcast:
         assert not np.array_equal(first_calls[0][0], second_calls[0][0])
 
     def test_root_and_nested_view_use_the_same_sampled_realization(self):
-        joint = (
-            Normal("leaf", loc=0.0, scale=1.0) * Normal("other", loc=3.0, scale=1.0)
-        ).with_path_names({"leaf": "nested/leaf"})
+        joint = (Normal("leaf", loc=0.0, scale=1.0) & Normal("other", loc=3.0, scale=1.0)).rename(
+            {"leaf": "nested/leaf"}
+        )
         values = {"root": joint, "leaf": joint["nested/leaf"]}
 
         plan = _stochastic_plan(values, 8)
@@ -544,7 +544,7 @@ class TestExecuteDistributionBroadcast:
         assert commits == []
 
     def test_same_parent_views_share_parent_sample(self):
-        joint = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=10.0, scale=1.0)
+        joint = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=10.0, scale=1.0)
         view_x = joint["x"]
         values = {"a": view_x, "b": view_x}
 
@@ -683,7 +683,7 @@ class TestCoSamplingGroups:
 
     @staticmethod
     def _joint():
-        return Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=10.0, scale=1.0)
+        return Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=10.0, scale=1.0)
 
     @staticmethod
     def _sample(values, names, *, n=8, seed=3):
@@ -850,7 +850,7 @@ class TestCoSamplingThroughACall:
         Its ``len`` is the field count and its ``shape`` raises, so the row count
         had to come from somewhere that means one thing for every batched value.
         """
-        joint = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=10.0, scale=1.0)
+        joint = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=10.0, scale=1.0)
         lifted = Function(
             lambda a: a["x"],
             label="function",
@@ -864,7 +864,7 @@ class TestCoSamplingThroughACall:
 
     def test_a_parent_and_its_own_view_lift_together(self):
         """The remaining IV.2 case, end to end: ``f(d, d["x"])`` is one draw."""
-        joint = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=10.0, scale=1.0)
+        joint = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=10.0, scale=1.0)
         lifted = Function(
             lambda a, b: a["x"] - b,
             label="function",
@@ -915,7 +915,7 @@ class TestCoSamplingThroughACall:
                 label="r",
             ),
         )
-        renamed = empirical.with_path_names({"x": "group/x", "y": "group/y"})
+        renamed = empirical.rename({"x": "group/x", "y": "group/y"})
         lifted = Function(
             lambda a: a.at_path("group")["y"],
             label="function",
@@ -940,7 +940,7 @@ class TestCoSamplingThroughACall:
                 label="r",
             ),
         )
-        renamed = empirical.with_path_names({"x": "group/x", "y": "group/y"})
+        renamed = empirical.rename({"x": "group/x", "y": "group/y"})
         lifted = Function(
             lambda a, b: a["y"] - b.at_path("group")["y"],
             label="function",
@@ -1070,8 +1070,8 @@ class TestCoSamplingThroughACall:
     def test_a_sampled_nested_record_valued_law_lifts_on_each_executor(self, controls):
         """A sampled law of nested records lifts on the default executor and one draw at a time."""
         nested = (
-            (Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=10.0, scale=1.0))
-            .with_path_names({"x": "group/x", "y": "group/y"})
+            (Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=10.0, scale=1.0))
+            .rename({"x": "group/x", "y": "group/y"})
             .with_label("nested")
         )
         lifted = Function(
@@ -1087,8 +1087,8 @@ class TestCoSamplingThroughACall:
     def test_a_sampled_nested_record_valued_law_matches_one_at_a_time_under_jax(self):
         """The draw supplies nested record structure before either body is mapped."""
         nested = (
-            (Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=10.0, scale=1.0))
-            .with_path_names({"x": "group/x", "y": "group/y"})
+            (Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=10.0, scale=1.0))
+            .rename({"x": "group/x", "y": "group/y"})
             .with_label("nested")
         )
         mapped = Function(
@@ -1426,7 +1426,7 @@ class TestTheProbeModelsItsExecutorsTransform:
 
     def test_the_views_of_a_dependent_joint_are_probed(self, caplog):
         """The root's resolved output metadata supplies the probe dtypes."""
-        joint = _ShiftKernel() * Normal("z", loc=0.0, scale=1.0)
+        joint = _ShiftKernel() & Normal("z", loc=0.0, scale=1.0)
         difference = Function(
             lambda a, b: a - b,
             label="function",
@@ -1456,7 +1456,7 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         Kept because the draw-based probe must not narrow what it accepts.
         """
-        law = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=1.0, scale=1.0)
+        law = Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=1.0, scale=1.0)
         totals = Function(
             lambda r: r["a"] + r["b"],
             label="function",

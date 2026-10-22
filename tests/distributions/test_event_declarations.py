@@ -66,9 +66,9 @@ from probpipe import (
     sample,
 )
 from probpipe.distributions import (
+    CoupledMarginal,
     FactoredDistribution,
     FactoredNumericDistribution,
-    FieldView,
 )
 from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.distributions._factored import _SoleField
@@ -276,10 +276,10 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
         event_spec=OutputSpec(x=probpipe.NumericArraySpec((2,))),
         label="u",
     ),
-    FieldView: lambda: FieldView(Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), "a"),
-    FactoredDistribution: lambda: Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0),
+    CoupledMarginal: lambda: CoupledMarginal((Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)), "a"),
+    FactoredDistribution: lambda: Normal("a", 0.0, 1.0) & Gamma("b", 2.0, 1.0),
     _UnnormalizedConditional: lambda: _unnormalized_conditional(
-        Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
+        (Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)),
         Record(
             {"a": 0.0},
             label="given",
@@ -300,7 +300,7 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     BijectorTransformedDistribution: lambda: BijectorTransformedDistribution(
         "y", Normal("x", 0.0, 1.0), tfb.Exp()
     ),
-    FactoredMultivariateGaussian: lambda: Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
+    FactoredMultivariateGaussian: lambda: Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0),
     GaussianProcess: lambda: GaussianProcess("f", _zero_mean, _squared_exponential),
     _SoleField: lambda: _SoleField(
         FactoredDistribution(
@@ -317,7 +317,7 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
             label="rows",
         ),
         label="kde",
-    ).with_path_names({"a": "g/a"}),
+    ).rename({"a": "g/a"}),
 }
 
 # The catalog's families whose implementation has not merged construct by raising.

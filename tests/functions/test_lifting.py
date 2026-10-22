@@ -471,7 +471,7 @@ class TestARawClassAnnotation:
         names no ProbPipe law, so the body receives its draws.
         """
         tfd = pytest.importorskip("tensorflow_probability.substrates.jax.distributions")
-        views = [(Normal("a", loc, 1.0) * Normal("b", 0.0, 1.0))["a"] for loc in (0.0, 2.0)]
+        views = [(Normal("a", loc, 1.0) & Normal("b", 0.0, 1.0))["a"] for loc in (0.0, 2.0)]
         wrapped, seen = _receiving({"x": tfd.Distribution})
 
         wrapped(

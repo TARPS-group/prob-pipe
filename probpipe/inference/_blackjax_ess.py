@@ -191,7 +191,7 @@ def elliptical_slice(
 ) -> EmpiricalDistribution:
     """Elliptical slice sampling of a joint with a Gaussian prior, at observed fields.
 
-    The joint is a factored one, such as ``likelihood * prior``. The factors that
+    The joint is a factored one, such as ``likelihood & prior``. The factors that
     produce the observed fields are the likelihood, and the others are the
     prior, which must be Gaussian, as :func:`_gaussian_prior_params` recognizes.
     The run's key is drawn from a workflow-owned random event, so

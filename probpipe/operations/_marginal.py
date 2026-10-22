@@ -1,6 +1,6 @@
 """The marginal and factor operations: detached parts of a structured or factored law.
 
-``marginal(d, paths)`` returns the detached marginal at a path or a list of
+``marginal(d, paths)`` returns the standalone marginal at a path or a list of
 paths, a standalone law with no reference back to ``d``, unlike the
 correlation-preserving view ``d[paths]``. ``factor(d, output_name)`` returns
 the detached building-block factor of a joint that produces the named output.
@@ -118,7 +118,7 @@ def _marginal_expression(d: Any, paths: Any) -> Expression:
 
 @operation(result=_marginal_result)
 def marginal(d: Distribution, paths: PathsLike):
-    """The detached marginal of *d* at *paths*, a standalone law with no reference back to *d*.
+    """The standalone marginal of *d* at *paths*, a standalone law with no reference back to *d*.
 
     ``marginal(d, paths)`` is the law of the view ``d[paths]``, detached: one
     path gives the node there whole under the path's last name, and a list or
@@ -177,7 +177,7 @@ def _detached_marginal(call: BoundCall, result: OutputSpec | None) -> Distributi
 
     A marginal can be a factor of a factored joint, and a factor can record a
     batch it was an element of or a law it renames, which a lift reads to draw
-    it with that law. The detached marginal records neither, so a lift draws it
+    it with that law. The standalone marginal records neither, so a lift draws it
     independently of the joint (V.5). The result boundary then gives it the
     marginal's expression, which holds the paths the law holds fixed, and
     records the call's provenance on it.

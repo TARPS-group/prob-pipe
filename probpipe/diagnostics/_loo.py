@@ -333,7 +333,7 @@ def add_loo(
 
     model : Distribution, optional
         The factored joint the posterior was conditioned from, such as
-        ``likelihood * prior``. When ``_annotations/arviz/log_likelihood`` is
+        ``likelihood & prior``. When ``_annotations/arviz/log_likelihood`` is
         missing, ``add_loo`` computes the pointwise log likelihoods from *model*
         and *data*, and needs no separate precomputation step.
 
@@ -548,7 +548,7 @@ def _add_log_likelihood(
         ``chain`` and ``draw``.
     model : Distribution
         The factored joint the posterior was conditioned from, such as
-        ``likelihood * prior``. Its likelihood factor scores each of its
+        ``likelihood & prior``. Its likelihood factor scores each of its
         conditionally independent observations, as the kernel
         :func:`~probpipe.families.glm_likelihood` returns does.
     data : Record or Mapping
@@ -577,7 +577,7 @@ def _add_log_likelihood(
     --------
     ::
 
-        add_loo(posterior, model=likelihood * prior, data={"y": y})
+        add_loo(posterior, model=likelihood & prior, data={"y": y})
         print(posterior.diagnostics.loo.elpd_loo)
     """
     import jax

@@ -410,7 +410,7 @@ class TestEditTemplateThreading:
             event_template=RecordSpec(obs=NumericArraySpec((), dtype=jnp.dtype("float32"))),
             label="r",
         )
-        m = left.merge(right)
+        m = left & (right)
         assert m.event_template.at_path("physics/force").dtype == jnp.dtype("float32")
         assert m.event_template["obs"].dtype == jnp.dtype("float32")
 
@@ -449,13 +449,16 @@ class TestEditTemplateThreading:
 
     def test_merge_field_versus_prefix_clash_raises(self):
         with pytest.raises(ValueError):
-            Record(
-                {"a/b": 1.0},
-                label="r",
-            ).merge(
+            (
                 Record(
-                    {"a": 2.0},
+                    {"a/b": 1.0},
                     label="r",
+                )
+                & (
+                    Record(
+                        {"a": 2.0},
+                        label="r",
+                    )
                 )
             )
 
@@ -464,20 +467,20 @@ class TestEditTemplateThreading:
         with pytest.raises(
             ValueError, match=r"since both have 'g'\. Rename one, or merge the groups"
         ):
-            Record({"g/x": 1.0}, label="r").merge(Record({"g/y": 2.0}, label="r"))
+            (Record({"g/x": 1.0}, label="r") & (Record({"g/y": 2.0}, label="r")))
 
     def test_a_merge_of_record_specs_refuses_a_group_both_have(self):
         with pytest.raises(
             ValueError, match=r"since both have 'g'\. Rename one, or merge the groups first"
         ):
-            RecordSpec(g=RecordSpec(b=())).merge(RecordSpec(g=RecordSpec(c=())))
+            (RecordSpec(g=RecordSpec(b=())) & (RecordSpec(g=RecordSpec(c=()))))
 
     def test_a_merge_of_records_sharing_a_field_says_to_rename_one(self):
         with pytest.raises(ValueError, match=r"since both have 'a'\. Rename one of them$"):
-            Record({"a": 1.0}, label="r").merge(Record({"a": 2.0}, label="s"))
+            (Record({"a": 1.0}, label="r") & (Record({"a": 2.0}, label="s")))
 
     def test_a_merge_places_the_right_record_s_groups_after_the_left_s(self):
-        m = Record({"g/x": 1.0, "h/y": 2.0}, label="r").merge(Record({"k/z": 3.0}, label="r"))
+        m = Record({"g/x": 1.0, "h/y": 2.0}, label="r") & (Record({"k/z": 3.0}, label="r"))
         assert tuple(m.keys()) == ("g/x", "h/y", "k/z")
 
     def test_replace_to_opaque_demotes_numeric_template(self):
@@ -492,7 +495,7 @@ class TestEditTemplateThreading:
         assert r2["x"].raw == "hello"
         assert not isinstance(r2.event_template, NumericRecordSpec)
         # ... and merging a mixed record into a numeric one likewise demotes.
-        m = r.merge(
+        m = r & (
             Record(
                 {"label": "fox"},
                 label="r",
@@ -520,10 +523,13 @@ class TestEditTemplateThreading:
         for edited in (
             r.without("obs"),
             r.replace(obs="new"),
-            r.merge(
-                Record(
-                    {"extra": 5.0},
-                    label="r",
+            (
+                r
+                & (
+                    Record(
+                        {"extra": 5.0},
+                        label="r",
+                    )
                 )
             ),
         ):
@@ -566,7 +572,7 @@ class TestRecordSpecOps:
     def test_without_merge_on_template(self):
         tpl = RecordSpec(physics=RecordSpec(force=(), mass=()), obs=())
         assert tuple(tpl.without("physics/mass").keys()) == ("physics/force", "obs")
-        merged = RecordSpec(a=()).merge(RecordSpec(b=(3,)))
+        merged = RecordSpec(a=()) & (RecordSpec(b=(3,)))
         assert tuple(merged.keys()) == ("a", "b")
 
     def test_map_over_specs_requires_coercible_output(self):

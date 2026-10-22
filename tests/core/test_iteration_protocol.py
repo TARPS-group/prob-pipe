@@ -71,7 +71,7 @@ DISTRIBUTIONS = [
         id="MultivariateNormal",
     ),
     pytest.param(
-        lambda: Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=0.0, scale=1.0),
+        lambda: Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=0.0, scale=1.0),
         id="FactoredDistribution",
     ),
     pytest.param(

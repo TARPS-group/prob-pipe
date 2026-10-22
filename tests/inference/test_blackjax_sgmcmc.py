@@ -2,7 +2,7 @@
 
 End-to-end coverage of the inference-method-registry path:
 ``condition_on.using(method="blackjax_sgld", method_options={"batch_size": …})``
-applied to ``(likelihood * prior, {"y": y})``,
+applied to ``(likelihood & prior, {"y": y})``,
 plus checks that the gradient estimator actually drives convergence
 toward the posterior mode on a 200-row Bayesian logistic regression.
 """
@@ -64,7 +64,7 @@ def logistic_problem():
     # No-intercept logistic regression: prior dims pair 1-to-1 with X columns.
     lik = glm_likelihood("y", BernoulliFamily(), X=X)
     return {
-        "model": lik * prior,
+        "model": (lik & prior),
         "prior": prior,
         "likelihood": lik,
         "X": X,
@@ -210,7 +210,7 @@ class TestCheck:
         prior = MultivariateNormal("x", loc=jnp.zeros(2), cov=jnp.eye(2))
         info = BlackJAXSGLDMethod().check(prior, batch_size=10)
         assert not info.feasible
-        assert "likelihood * prior" in info.description
+        assert "likelihood & prior" in info.description
 
     def test_rejects_a_likelihood_that_scores_no_subset(self):
         """A likelihood kernel that cannot score a subset of its observations is rejected."""
@@ -221,7 +221,7 @@ class TestCheck:
             NumericArraySpec((5, 2)),
             lambda x: tfd.Independent(tfd.Normal(jnp.broadcast_to(x, (5, 2)), 1.0), 2),
         )
-        target = observed_target(likelihood * prior, {"y": jnp.zeros((5, 2))})
+        target = observed_target((likelihood & prior), {"y": jnp.zeros((5, 2))})
         info = BlackJAXSGLDMethod().check(target, batch_size=2)
         assert not info.feasible
         assert "score a subset of its observations" in info.description
@@ -370,7 +370,7 @@ class TestConditionOnDispatch:
         n, p = 200, 2
         X = jax.random.normal(jax.random.PRNGKey(0), (n, p))
         y = X @ jnp.array([1.0, -0.5]) + 0.5 * jax.random.normal(jax.random.PRNGKey(1), (n,))
-        prior = MultivariateNormal("beta", jnp.zeros(p), cov=jnp.eye(p)) * HalfNormal(
+        prior = MultivariateNormal("beta", jnp.zeros(p), cov=jnp.eye(p)) & HalfNormal(
             "dispersion", 1.0
         )
         with workflow_run(seed=1):
@@ -382,7 +382,7 @@ class TestConditionOnDispatch:
                     "num_warmup": 0,
                     "step_size": 1e-4,
                 },
-            )(glm_likelihood("y", GaussianFamily(), X=X) * prior, {"y": y})
+            )((glm_likelihood("y", GaussianFamily(), X=X) & prior), {"y": y})
         assert float(_draws(post)[0, 2]) > 0.0
 
     def test_with_replacement_kwarg_is_accepted_and_dispatches(self, logistic_problem):
