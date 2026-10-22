@@ -60,8 +60,8 @@ from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._factored import _outputs_of
 from ..families._random_functions import RandomFunction, RandomMeasure
+from ..operations._inference_target import _described
 from ..values._function_base import FunctionSpec
-from ._inference_utils import described
 
 __all__ = ["MinibatchedDistribution"]
 
@@ -212,7 +212,7 @@ def _subset_scoring_reason(likelihood: Any) -> str:
     """Why *likelihood*, which :func:`_reads_observations` rejects, cannot be minibatched."""
     return (
         "the likelihood must be a ConditionalDistribution that can score a subset of its "
-        f"observations, such as one from glm_likelihood; got {described(likelihood)}"
+        f"observations, such as one from glm_likelihood; got {_described(likelihood)}"
     )
 
 
@@ -304,7 +304,7 @@ class MinibatchedDistribution(
         if not isinstance(prior, SupportsLogProb):
             raise TypeError(
                 f"MinibatchedDistribution: prior must have a log-density (SupportsLogProb); "
-                f"got {described(prior)}"
+                f"got {_described(prior)}"
             )
         if not _reads_observations(likelihood):
             raise TypeError(f"MinibatchedDistribution: {_subset_scoring_reason(likelihood)}")

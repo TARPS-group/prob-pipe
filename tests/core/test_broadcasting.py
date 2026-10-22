@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import suppress
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -16,6 +14,7 @@ from probpipe import (
     MultivariateNormal,
     Normal,
     OutputSpec,
+    ResolutionError,
     config,
     workflow_run,
 )
@@ -27,7 +26,7 @@ def key():
 
 
 # ---------------------------------------------------------------------------
-# Basic broadcasting (loop backend) - default returns marginal
+# Basic broadcasting, one draw at a time (traceable=False) - default returns marginal
 # ---------------------------------------------------------------------------
 
 
@@ -40,7 +39,8 @@ class TestBroadcastingBasic:
             double_it,
             label="double_it",
             max_evaluations=50,
-            dispatch="sequential",
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(double_it=None),
         )
         g = Normal("x", loc=1.0, scale=0.5)
@@ -58,7 +58,8 @@ class TestBroadcastingBasic:
             add_one,
             label="add_one",
             max_evaluations=200,
-            dispatch="sequential",
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(add_one=None),
         )
         g = Normal("x", loc=0.0, scale=0.1)
@@ -75,7 +76,8 @@ class TestBroadcastingBasic:
             compute_norm,
             label="compute_norm",
             max_evaluations=20,
-            dispatch="sequential",
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(compute_norm=None),
         )
         mvn = MultivariateNormal("x", loc=jnp.zeros(3), cov=jnp.eye(3))
@@ -88,7 +90,12 @@ class TestBroadcastingBasic:
         """Function accepts positional arguments."""
         from probpipe.functions import function
 
-        @function(max_evaluations=30, dispatch="sequential", output_spec=OutputSpec(add=None))
+        @function(
+            max_evaluations=30,
+            traceable=False,
+            executor="sequential",
+            output_spec=OutputSpec(add=None),
+        )
         def add(x, y):
             return x + y
 
@@ -115,7 +122,8 @@ class TestBroadcastingBasic:
             double_it,
             label="double_it",
             max_evaluations=20,
-            dispatch="sequential",
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(double_it=None),
         )
         g = Normal("x", loc=1.0, scale=0.5)
@@ -133,7 +141,8 @@ class TestBroadcastingMultipleArgs:
             add_them,
             label="add_them",
             max_evaluations=100,
-            dispatch="sequential",
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(add_them=None),
         )
         g1 = Normal("a", loc=1.0, scale=0.1)
@@ -153,7 +162,8 @@ class TestBroadcastingMixedArgs:
             scale,
             label="scale",
             max_evaluations=50,
-            dispatch="sequential",
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(scale=None),
         )
         g = Normal("x", loc=5.0, scale=0.1)
@@ -171,7 +181,7 @@ class TestBroadcastingNSamples:
         w = Function(
             identity,
             label="identity",
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         g = Normal("x", loc=0.0, scale=1.0)
@@ -187,7 +197,7 @@ class TestBroadcastingNSamples:
             identity,
             label="identity",
             max_evaluations=100,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         g = Normal("x", loc=0.0, scale=1.0)
@@ -199,7 +209,7 @@ class TestBroadcastingNSamples:
         def identity(x: jnp.ndarray) -> jnp.ndarray:
             return x
 
-        w = Function(identity, label="identity", dispatch="sequential")
+        w = Function(identity, label="identity", executor="sequential")
         g = Normal("x", loc=0.0, scale=1.0)
 
         with pytest.raises(TypeError, match="max_evaluations must be an integer"):
@@ -210,7 +220,7 @@ class TestBroadcastingNSamples:
         def identity(x: jnp.ndarray) -> jnp.ndarray:
             return x
 
-        w = Function(identity, label="identity", dispatch="sequential")
+        w = Function(identity, label="identity", executor="sequential")
         g = Normal("x", loc=0.0, scale=1.0)
 
         with pytest.raises(ValueError, match="max_evaluations must be a positive integer"):
@@ -222,7 +232,7 @@ class TestWorkflowControlParameterNames:
         def func(x: jnp.ndarray, max_evaluations: int = 10) -> float:
             return float(max_evaluations)
 
-        wf = Function(func, label="func", dispatch="sequential")
+        wf = Function(func, label="func", executor="sequential")
 
         assert float(wf(x=jnp.asarray(1.0), max_evaluations=3)) == 3.0
 
@@ -230,7 +240,7 @@ class TestWorkflowControlParameterNames:
         def func(x: jnp.ndarray, seed: int = 0) -> float:
             return float(seed)
 
-        wf = Function(func, label="func", dispatch="sequential")
+        wf = Function(func, label="func", executor="sequential")
 
         assert float(wf(x=jnp.asarray(1.0), seed=5)) == 5.0
 
@@ -238,7 +248,7 @@ class TestWorkflowControlParameterNames:
         def func(x: jnp.ndarray, include_inputs: bool = False) -> float:
             return 1.0 if include_inputs else 0.0
 
-        wf = Function(func, label="func", dispatch="sequential")
+        wf = Function(func, label="func", executor="sequential")
 
         assert float(wf(x=jnp.asarray(1.0), include_inputs=True)) == 1.0
 
@@ -248,7 +258,7 @@ class TestFunctionCallResolution:
         def identity(x):
             return x
 
-        w = Function(identity, label="identity", dispatch="sequential")
+        w = Function(identity, label="identity", traceable=False, executor="sequential")
 
         with pytest.raises(TypeError, match="unexpected keyword argument 'typo'"):
             w(x=1.0, typo=2.0)
@@ -260,7 +270,7 @@ class TestFunctionCallResolution:
             seen.append(kwargs)
             return x
 
-        w = Function(identity, label="identity", dispatch="sequential")
+        w = Function(identity, label="identity", traceable=False, executor="sequential")
         out = w(x=1.0, kwargs={"scale": 2.0})
 
         assert float(out) == 1.0
@@ -273,7 +283,7 @@ class TestFunctionCallResolution:
             seen.append(kwargs)
             return x
 
-        w = Function(identity, label="identity", dispatch="sequential")
+        w = Function(identity, label="identity", traceable=False, executor="sequential")
         out = w(x=1.0, scale=2.0)
 
         assert float(out) == 1.0
@@ -287,7 +297,7 @@ class TestNoBroadcasting:
         def add(a: float, b: float) -> float:
             return a + b
 
-        w = Function(add, label="add", dispatch="sequential")
+        w = Function(add, label="add", executor="sequential")
         result = w(a=1.0, b=2.0)
         # Concrete args return the Function's auto-wrapped scalar:
         # ``NumericRecord({"add": 3.0})``. The ``__float__`` shim unwraps it.
@@ -312,7 +322,7 @@ class TestBroadcastingEnumeration:
             identity,
             label="identity",
             max_evaluations=100,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         result = w(x=ed)
@@ -330,7 +340,7 @@ class TestBroadcastingEnumeration:
             add_them,
             label="add_them",
             max_evaluations=100,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(add_them=None),
         )
         result = w(a=ed1, b=ed2)
@@ -354,7 +364,7 @@ class TestBroadcastingEnumeration:
             sum_three,
             label="sum_three",
             max_evaluations=50,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(sum_three=None),
         )
         with workflow_run(seed=9):
@@ -373,7 +383,7 @@ class TestBroadcastingEnumeration:
             add_them,
             label="add_them",
             max_evaluations=30,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(add_them=None),
         )
         with workflow_run(seed=10):
@@ -394,7 +404,7 @@ class TestBroadcastingEnumeration:
             identity,
             label="identity",
             max_evaluations=100,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         result = w.using(include_inputs=True)(x=ed)
@@ -420,7 +430,8 @@ class TestBroadcastingNonNumeric:
             describe,
             label="describe",
             max_evaluations=5,
-            dispatch="sequential",
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(describe=None),
         )
         g = Normal("x", loc=0.0, scale=1.0)
@@ -446,7 +457,7 @@ class TestBroadcastingJAX:
             double_it,
             label="double_it",
             max_evaluations=50,
-            dispatch="jax",
+            executor="jax",
             output_spec=OutputSpec(double_it=None),
         )
         g = Normal("x", loc=1.0, scale=0.5)
@@ -463,7 +474,7 @@ class TestBroadcastingJAX:
             add_one,
             label="add_one",
             max_evaluations=200,
-            dispatch="jax",
+            executor="jax",
             output_spec=OutputSpec(add_one=None),
         )
         g = Normal("x", loc=0.0, scale=0.1)
@@ -479,7 +490,7 @@ class TestBroadcastingJAX:
             add_them,
             label="add_them",
             max_evaluations=100,
-            dispatch="jax",
+            executor="jax",
             output_spec=OutputSpec(add_them=None),
         )
         g1 = Normal("a", loc=1.0, scale=0.1)
@@ -497,7 +508,7 @@ class TestBroadcastingJAX:
             scale,
             label="scale",
             max_evaluations=50,
-            dispatch="jax",
+            executor="jax",
             output_spec=OutputSpec(scale=None),
         )
         g = Normal("x", loc=5.0, scale=0.1)
@@ -514,7 +525,7 @@ class TestBroadcastingJAX:
             halve,
             label="halve",
             max_evaluations=30,
-            dispatch="jax",
+            executor="jax",
             output_spec=OutputSpec(halve=None),
         )
         mvn = MultivariateNormal("x", loc=jnp.array([4.0, 6.0]), cov=0.01 * jnp.eye(2))
@@ -535,7 +546,7 @@ class TestBroadcastingJAX:
             double_it,
             label="double_it",
             max_evaluations=30,
-            dispatch="jax",
+            executor="jax",
             output_spec=OutputSpec(double_it=None),
         )
         g = Normal("x", loc=1.0, scale=0.5)
@@ -549,12 +560,12 @@ class TestBroadcastingJAX:
 
 
 # ---------------------------------------------------------------------------
-# Auto dispatch detection
+# Executor choice from traceability
 # ---------------------------------------------------------------------------
 
 
-class TestAutoDispatch:
-    def test_auto_selects_jax_for_traceable(self):
+class TestExecutorChoice:
+    def test_a_traceable_function_is_mapped_by_jax(self):
         def pure_jax(x: jnp.ndarray) -> jnp.ndarray:
             return jnp.sin(x)
 
@@ -562,16 +573,15 @@ class TestAutoDispatch:
             pure_jax,
             label="pure_jax",
             max_evaluations=20,
-            dispatch="auto",
             output_spec=OutputSpec(pure_jax=None),
         )
         g = Normal("x", loc=0.0, scale=1.0)
         with workflow_run(seed=30):
             result = w(x=g)
         assert isinstance(result, EmpiricalDistribution)
-        assert not hasattr(w, "_resolved_dispatch")
+        assert result.provenance.metadata["dispatch"] == "jax"
 
-    def test_auto_falls_back_to_sequential_for_non_traceable(self):
+    def test_a_function_jax_cannot_trace_runs_one_draw_at_a_time(self):
         import scipy.special
 
         def scipy_fn(x: jnp.ndarray) -> jnp.ndarray:
@@ -581,52 +591,49 @@ class TestAutoDispatch:
             scipy_fn,
             label="scipy_fn",
             max_evaluations=20,
-            dispatch="auto",
             output_spec=OutputSpec(scipy_fn=None),
         )
         g = Normal("x", loc=2.0, scale=0.1)
         with workflow_run(seed=31):
             result = w(x=g)
         assert isinstance(result, EmpiricalDistribution)
-        assert not hasattr(w, "_resolved_dispatch")
+        assert result.provenance.metadata["dispatch"] == "sequential"
 
-    def test_jax_dispatch_rejects_non_traceable_function_with_clear_error(self):
+    def test_the_jax_executor_refuses_a_function_jax_cannot_trace_with_clear_error(self):
         import scipy.special
 
         def scipy_fn(x: jnp.ndarray) -> jnp.ndarray:
             return jnp.asarray(scipy.special.gamma(np.asarray(x)))
 
-        w = Function(scipy_fn, label="scipy_fn", max_evaluations=20, dispatch="jax")
+        w = Function(scipy_fn, label="scipy_fn", max_evaluations=20, executor="jax")
         g = Normal("x", loc=2.0, scale=0.1)
 
-        with pytest.raises(ValueError, match="failed while tracing"):
+        with pytest.raises(
+            ResolutionError,
+            match=r"executor 'jax' cannot run the evaluation points of 'scipy_fn': "
+            r"JAX cannot trace 'scipy_fn': tracing it raised ",
+        ):
             w(x=g)
 
-    def test_auto_falls_back_to_row_wise_for_multi_field_joint(self):
-        """A multi-field joint broadcast argument
-        can't be probed with a single ``event_shape`` (the property
-        raises ``NotImplementedError`` / ``TypeError`` on multi-leaf
-        instances). The auto-detect path should catch that and
-        fall back to row-wise dispatch rather than crash.
+    def test_a_multi_field_joint_argument_does_not_crash_the_executor_choice(self):
+        """A multi-field joint broadcast argument has no single ``event_shape``
+        (the property raises ``NotImplementedError`` / ``TypeError`` on
+        multi-leaf instances), so the probe that decides traceability must
+        not read one: the call lifts the joint and returns one atom per draw.
         """
 
         def consume(joint) -> jnp.ndarray:
-            # The function works on a Record / dict; the probe never
-            # actually calls it under JAX tracing for this case.
             return jnp.asarray(joint["x"] + joint["y"])
 
         w = Function(
             consume,
             label="consume",
             max_evaluations=10,
-            dispatch="auto",
         )
-        joint = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=0.0, scale=1.0)
-        # Probing fails gracefully (NotImplementedError caught inside
-        # ``_resolve_dispatch``) and the call-local planner falls back.
-        with workflow_run(seed=32), suppress(Exception):
-            w(joint=joint)
-        assert not hasattr(w, "_resolved_dispatch")
+        joint = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=0.0, scale=1.0)
+        with workflow_run(seed=32):
+            result = w(joint=joint)
+        assert result.num_atoms == 10
 
 
 # ---------------------------------------------------------------------------
@@ -645,7 +652,7 @@ class TestWorkflowRngManagement:
             identity,
             label="identity",
             max_evaluations=20,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         r1 = w1(x=g)
@@ -654,7 +661,7 @@ class TestWorkflowRngManagement:
             identity,
             label="identity",
             max_evaluations=20,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         r2 = w2(x=g)
@@ -670,7 +677,7 @@ class TestWorkflowRngManagement:
             identity,
             label="identity",
             max_evaluations=20,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
 
@@ -695,7 +702,7 @@ class TestIncludeInputsArgument:
             double_it,
             label="double_it",
             max_evaluations=20,
-            dispatch="sequential",
+            executor="sequential",
             include_inputs=True,
             output_spec=OutputSpec(double_it=None),
         )
@@ -714,7 +721,7 @@ class TestIncludeInputsArgument:
             double_it,
             label="double_it",
             max_evaluations=20,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(double_it=None),
         )
         g = Normal("x", loc=1.0, scale=0.5)
@@ -731,7 +738,7 @@ class TestIncludeInputsArgument:
             double_it,
             label="double_it",
             max_evaluations=20,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(double_it=None),
         )
         g = Normal("x", loc=1.0, scale=0.5)
@@ -748,7 +755,7 @@ class TestIncludeInputsArgument:
             add_them,
             label="add_them",
             max_evaluations=20,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(add_them=None),
         )
         g1 = Normal("a", loc=1.0, scale=0.1)
@@ -762,7 +769,7 @@ class TestIncludeInputsArgument:
         def mu(mu):
             return 2.0 * mu
 
-        clashing = Function(mu, max_evaluations=4, dispatch="sequential", include_inputs=True)
+        clashing = Function(mu, max_evaluations=4, executor="sequential", include_inputs=True)
         with (
             workflow_run(seed=0),
             pytest.raises(
@@ -777,7 +784,7 @@ class TestIncludeInputsArgument:
         renamed = Function(
             mu,
             max_evaluations=4,
-            dispatch="sequential",
+            executor="sequential",
             include_inputs=True,
             output_spec=OutputSpec(output=None),
         )
@@ -800,7 +807,7 @@ class TestNamedOutputs:
             add_them,
             label="add_them",
             max_evaluations=20,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(add_them=None),
         )
         g1 = Normal("a", loc=1.0, scale=0.1)
@@ -817,7 +824,7 @@ class TestNamedOutputs:
             double_it,
             label="double_it",
             max_evaluations=20,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(double_it=None),
         )
         g = Normal("x", loc=1.0, scale=0.5)
@@ -835,7 +842,7 @@ class TestNamedOutputs:
             double_it,
             label="double_it",
             max_evaluations=20,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(double_it=None),
         )
         g = Normal("x", loc=1.0, scale=0.5)
@@ -847,29 +854,37 @@ class TestNamedOutputs:
 
 
 # ---------------------------------------------------------------------------
-# Cross-dispatch consistency: sequential / thread / auto must agree
+# Cross-executor consistency: jax and one-at-a-time executors must agree
 # ---------------------------------------------------------------------------
 #
 # Empirical enumeration semantics (cartesian product of small
-# empiricals, weighted) do not depend on the dispatch mode; under
-# ``dispatch="jax"`` the enumeration runs in one ``jax.vmap``.
+# empiricals, weighted) do not depend on the executor; under
+# ``executor="jax"`` the enumeration runs in one ``jax.vmap``.
 # ---------------------------------------------------------------------------
 
 
-class TestDispatchConsistency:
-    """Empirical enumeration and count semantics match across
-    row-wise dispatch modes."""
+class TestExecutorConsistency:
+    """Empirical enumeration and count semantics match between the mapped
+    evaluation and the executors that run one point at a time."""
 
-    ROWWISE_DISPATCH_MODES = ("sequential", "thread", "auto")
-    SAMPLE_DISPATCH_MODES = ("sequential", "thread", "auto", "jax")
+    ROWWISE_EXECUTORS = ("sequential", "thread", None)
+    SAMPLE_EXECUTORS = ("sequential", "thread", None, "jax")
 
-    def _run(self, mode, func, **kwargs):
+    def _run(self, executor, func, **kwargs):
+        """Call ``func`` on ``executor``; ``None`` names no executor.
+
+        The sequential and thread executors run a ``traceable=False`` copy
+        of ``func``, since JAX maps a traceable function whatever executor
+        is named.
+        """
+        claims = {} if executor in (None, "jax") else {"traceable": False}
         w = Function(
             func,
             label="func",
             output_spec=OutputSpec(result=None),
             max_evaluations=kwargs.pop("max_evaluations", 100),
-            dispatch=mode,
+            executor=executor,
+            **claims,
         )
         return w(**kwargs)
 
@@ -883,7 +898,7 @@ class TestDispatchConsistency:
         ed1 = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), output_name="x")
         ed2 = EmpiricalDistribution(jnp.array([[10.0], [20.0], [30.0]]), output_name="x")
 
-        results = {m: self._run(m, add_them, a=ed1, b=ed2) for m in self.ROWWISE_DISPATCH_MODES}
+        results = {m: self._run(m, add_them, a=ed1, b=ed2) for m in self.ROWWISE_EXECUTORS}
         # Same size (2 x 3 = 6) in every mode - regression guard.
         for mode, r in results.items():
             assert r.num_atoms == 6, f"{mode}: expected n=6, got {r.num_atoms}"
@@ -893,7 +908,7 @@ class TestDispatchConsistency:
             return np.asarray(d.atoms)
 
         ref = sorted(_samples_array(results["sequential"]).ravel().tolist())
-        for mode in ("auto", "thread"):
+        for mode in (None, "thread"):
             got = sorted(_samples_array(results[mode]).ravel().tolist())
             np.testing.assert_allclose(
                 got,
@@ -926,7 +941,7 @@ class TestDispatchConsistency:
                 0.2 * 0.75,
             ]
         )
-        for mode in self.ROWWISE_DISPATCH_MODES:
+        for mode in self.ROWWISE_EXECUTORS:
             r = self._run(mode, add_them, a=ed1, b=ed2)
             assert r.num_atoms == 4
             got = sorted(np.asarray(r.weights).tolist())
@@ -938,7 +953,7 @@ class TestDispatchConsistency:
             )
 
     def test_mixed_empirical_and_parametric_count_all_modes(self):
-        """Mixed empirical and continuous inputs preserve row-wise results."""
+        """Mixed empirical and continuous inputs give the same draws on every executor."""
 
         def add_them(a, b):
             return a + b
@@ -947,7 +962,7 @@ class TestDispatchConsistency:
         g = Normal("b", loc=0.0, scale=1.0)
 
         samples = []
-        for mode in self.ROWWISE_DISPATCH_MODES:
+        for mode in self.ROWWISE_EXECUTORS:
             with workflow_run(seed=0):
                 r = self._run(mode, add_them, a=ed, b=g, max_evaluations=30)
             # 3 empirical combos x 10 reps each = 30 evaluations.
@@ -969,7 +984,7 @@ class TestDispatchConsistency:
         big = EmpiricalDistribution(
             jnp.arange(200).reshape(-1, 1).astype(jnp.float32), output_name="x"
         )
-        for mode in self.SAMPLE_DISPATCH_MODES:
+        for mode in self.SAMPLE_EXECUTORS:
             with workflow_run(seed=0):
                 r = self._run(mode, identity, x=big, max_evaluations=20)
             assert r.num_atoms == 20, f"{mode}: expected n=20, got {r.num_atoms}"
@@ -983,7 +998,7 @@ class TestDispatchConsistency:
         n1 = Normal("a", loc=0.0, scale=1.0)
         n2 = Normal("b", loc=5.0, scale=1.0)
         samples = []
-        for mode in self.SAMPLE_DISPATCH_MODES:
+        for mode in self.SAMPLE_EXECUTORS:
             with workflow_run(seed=0):
                 r = self._run(mode, add_them, a=n1, b=n2, max_evaluations=50)
             assert r.num_atoms == 50, f"{mode}: expected n=50, got {r.num_atoms}"
@@ -992,7 +1007,7 @@ class TestDispatchConsistency:
         for sample_values in samples[1:]:
             np.testing.assert_array_equal(sample_values, samples[0])
 
-    def test_jax_dispatch_maps_exact_empirical_enumeration(self):
+    def test_jax_maps_exact_empirical_enumeration(self):
         def add_them(a, b):
             return a + b
 
@@ -1005,5 +1020,6 @@ class TestDispatchConsistency:
         mapped = self._run("jax", add_them, a=ed1, b=ed2, max_evaluations=20)
         sequential = self._run("sequential", add_them, a=ed1, b=ed2, max_evaluations=20)
         assert mapped.provenance.metadata["dispatch"] == "jax"
+        assert sequential.provenance.metadata["dispatch"] == "sequential"
         np.testing.assert_array_equal(np.asarray(mapped.atoms), np.asarray(sequential.atoms))
         np.testing.assert_array_equal(np.asarray(mapped.weights), np.asarray(sequential.weights))

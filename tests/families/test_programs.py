@@ -177,11 +177,16 @@ class TestStanModel:
         assert law.event_spec.term_spec["z"].shape == (2,)
 
     def test_the_stan_methods_read_the_posterior(self, regression_file):
+        from probpipe.inference._inference_utils import joint_and_given, observed_target
+
         posterior = StanModel(regression_file, data=_data(), label="regression")
+        target = observed_target(posterior, None)
+        assert joint_and_given(target) == (posterior, None)
         registry = probpipe.inference_method_registry
         for name in ("cmdstan_nuts", "nutpie_nuts"):
             if name in registry.list_methods():
-                assert type(posterior) in (registry.get_method(name).supported_types()), name
+                admitted = registry.get_method(name).supported_types()
+                assert isinstance(target, admitted), name
 
     @pytest.mark.usefixtures("_stan_toolchain")
     def test_the_density_is_bridgestans_without_the_jacobian(self, regression_file):

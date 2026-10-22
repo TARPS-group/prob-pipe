@@ -1,8 +1,8 @@
-"""The joint operation: composition after realigning field names.
+"""The joint operation: merge after realigning field names.
 
-``A * B`` composes two factors when a producer's field names match the names
+``A & B`` merges two factors when a producer's field names match the names
 its consumer conditions on. ``joint(A, B, **align)`` renames ``B``'s fields
-first, so it equals ``A * B.with_path_names(**align)``, which connects
+first, so it equals ``A & B.rename(**align)``, which connects
 mismatched factors without altering their joint law.
 """
 
@@ -21,14 +21,14 @@ _FACTOR_KINDS = (DistributionSpec, ConditionalDistributionSpec)
 
 
 def _joint_result(A: Any, B: Any, align: Any) -> None:
-    """None: the composed law, or a kernel over the unmet givens, carries the declaration composition derives."""
+    """None: the merged law, or a kernel over the unmet givens, carries the declaration merge derives."""
     return None
 
 
-def _composed_expression() -> None:
-    """None: the joint carries the product of its operands' expressions, as ``*`` gives it (IV.2).
+def _merged_expression() -> None:
+    """None: the joint carries the product of its operands' expressions, as ``&`` gives it (IV.2).
 
-    The route composes *A* with *B* after renaming *B*'s fields, so the joint
+    The route merges *A* with *B* after renaming *B*'s fields, so the joint
     reads factor by factor under the realigned names.
     """
     return None
@@ -39,7 +39,7 @@ def _composed_expression() -> None:
     roles={"A": _FACTOR_KINDS, "B": _FACTOR_KINDS},
 )
 def joint(A: Any, B: Any, **align: str):
-    """Compose *A* with *B* after renaming *B*'s fields, as ``A * B.with_path_names(**align)``.
+    """merge *A* with *B* after renaming *B*'s fields, as ``A & B.rename(**align)``.
 
     The factors are consumed as objects, so a batch of laws is refused rather
     than swept (VI.11).
@@ -48,17 +48,17 @@ def joint(A: Any, B: Any, **align: str):
     ----------
     A : Distribution or ConditionalDistribution
         The first factor, which may condition on what *B* produces, since the
-        factors are composed conditional-first.
+        factors are merged conditional-first.
     B : Distribution or ConditionalDistribution
         The second factor, whose paths *align* renames.
     **align : str
-        Renames of *B*'s paths, ``old=new``, as ``with_path_names`` takes them.
+        Renames of *B*'s paths, ``old=new``, as ``rename`` takes them.
 
     Returns
     -------
     Distribution or ConditionalDistribution
         The joint; a kernel when a given is left unmet. The joint is unlabeled,
-        as one that ``*`` builds is, so its notation joins its factors'
+        as one that ``&`` builds is, so its notation joins its factors'
         notations with ``·``.
 
     Raises
@@ -66,22 +66,22 @@ def joint(A: Any, B: Any, **align: str):
     ApplicabilityError
         If a factor is neither distribution kind, a batch of laws included.
     ValueError
-        If composition rejects the realigned factors.
+        If merge rejects the realigned factors.
     """
 
 
-def _can_compose(call: BoundCall, result: OutputSpec | None) -> bool:
-    """Both factors are distributions or conditional distributions, which composition joins."""
+def _can_merge(call: BoundCall, result: OutputSpec | None) -> bool:
+    """Both factors are distributions or conditional distributions, which merge joins."""
     kinds = (Distribution, ConditionalDistribution)
     return isinstance(call.operands["A"], kinds) and isinstance(call.operands["B"], kinds)
 
 
-def _compose(call: BoundCall, result: OutputSpec | None) -> Any:
-    """``A * B`` after ``B.with_path_names(align)``."""
+def _merge(call: BoundCall, result: OutputSpec | None) -> Any:
+    """``A & B`` after ``B.rename(align)``."""
     A, B = call.operands["A"], call.operands["B"]
     align = call.operands.get("align") or {}
-    return A * (B.with_path_names(dict(align)) if align else B)
+    return A & (B.rename(dict(align)) if align else B)
 
 
-joint.structural_route("compose", check=_can_compose, execute=_compose, exact=True)
-_install_expression_rule(joint, _composed_expression)
+joint.structural_route("merge", check=_can_merge, execute=_merge, exact=True)
+_install_expression_rule(joint, _merged_expression)

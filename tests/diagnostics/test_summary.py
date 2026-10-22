@@ -29,7 +29,7 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.distributions._batches import DistributionBatch
-from probpipe.inference._approximate_distribution import make_posterior
+from probpipe.inference._approximate_distribution import _posterior_from_chains
 
 # Each summary of these laws is a float32 closed form, which matches SciPy's
 # float64 value to within a few units in the last place.
@@ -46,7 +46,7 @@ FLOAT32_TOLERANCE = {"rtol": 1e-6}
 
 @pytest.fixture
 def model():
-    return (Normal("mu", 0.0, 2.0) * Gamma("tau", 2.0, 1.0)).with_label("model")
+    return (Normal("mu", 0.0, 2.0) & Gamma("tau", 2.0, 1.0)).with_label("model")
 
 
 def _kernel_model():
@@ -57,7 +57,7 @@ def _kernel_model():
 
     prior = Normal("mu", 0.0, 2.0)
     kernel = conditional_distribution(y_given_mu, given_spec=prior.event_spec.outputs)
-    return (kernel * prior).with_label("model")
+    return (kernel & prior).with_label("model")
 
 
 def _posterior(
@@ -75,7 +75,7 @@ def _posterior(
         event = OutputSpec(RecordSpec(population=RecordSpec(mu=scalar, sigma=scalar)))
     else:
         event = OutputSpec(RecordSpec(mu=scalar, sigma=scalar))
-    return make_posterior(list(draws), (), "test", event_spec=event)
+    return _posterior_from_chains(list(draws), (), "test", event_spec=event)
 
 
 @pytest.fixture
@@ -150,10 +150,10 @@ class TestTheDefaultColumns:
         assert rows == ["y[0]", "y[1]", "y[2]"]
 
     def test_a_nested_law_keeps_its_paths(self):
-        hyper = (Normal("mu", 0.0, 2.0) * Gamma("tau", 2.0, 1.0)).with_path_names(
+        hyper = (Normal("mu", 0.0, 2.0) & Gamma("tau", 2.0, 1.0)).rename(
             {"mu": "population/mu", "tau": "population/tau"}
         )
-        law = (hyper * Normal("x", 1.0, 1.0)).with_label("hierarchical")
+        law = (hyper & Normal("x", 1.0, 1.0)).with_label("hierarchical")
 
         summary = summarize(law)
 
@@ -370,7 +370,7 @@ class TestTheFooter:
         assert repr(summarize(model)).splitlines()[-1] == "mean, sd, median, q10, q90: exact."
 
     def test_monte_carlo_columns_state_their_draws(self):
-        law = (Normal("mu", 0.0, 2.0) * Poisson("count", 4.0)).with_label("pair")
+        law = (Normal("mu", 0.0, 2.0) & Poisson("count", 4.0)).with_label("pair")
         draws = quantile.options["num_samples"]
 
         with workflow_run(seed=0):
@@ -398,8 +398,8 @@ class TestABatchOfLaws:
     def test_it_gives_a_batch_of_summary_records(self):
         laws = DistributionBatch(
             [
-                Normal("mu", 0.0, 1.0) * Gamma("tau", 2.0, 1.0),
-                Normal("mu", 1.0, 2.0) * Gamma("tau", 3.0, 1.0),
+                (Normal("mu", 0.0, 1.0) & Gamma("tau", 2.0, 1.0)),
+                (Normal("mu", 1.0, 2.0) & Gamma("tau", 3.0, 1.0)),
             ],
             "law",
             label="laws",
@@ -424,8 +424,8 @@ class TestABatchOfLaws:
         # The median of the Normal count is exact, and of the Poisson count Monte Carlo.
         laws = DistributionBatch(
             [
-                Normal("mu", 0.0, 1.0) * Normal("count", 4.0, 1.0),
-                Normal("mu", 0.0, 1.0) * Poisson("count", 4.0),
+                (Normal("mu", 0.0, 1.0) & Normal("count", 4.0, 1.0)),
+                (Normal("mu", 0.0, 1.0) & Poisson("count", 4.0)),
             ],
             "law",
         )
@@ -438,7 +438,7 @@ class TestABatchOfLaws:
 
     def test_a_column_only_some_laws_give_is_nan_for_the_others(self, chain_draws):
         laws = DistributionBatch(
-            [_posterior(chain_draws), Normal("mu", 0.0, 1.0) * Normal("sigma", 1.0, 1.0)], "law"
+            [_posterior(chain_draws), (Normal("mu", 0.0, 1.0) & Normal("sigma", 1.0, 1.0))], "law"
         )
 
         summary = summarize(laws, mean)

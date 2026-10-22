@@ -5,7 +5,6 @@ from __future__ import annotations
 import inspect
 import re
 import threading
-import warnings
 from typing import Any
 
 import jax
@@ -17,6 +16,7 @@ from probpipe import (
     ApplicabilityError,
     BatchSpec,
     EmpiricalDistribution,
+    EvaluationError,
     FunctionBatch,
     NumericArrayBatch,
     NumericArraySpec,
@@ -30,12 +30,14 @@ from probpipe import (
     function,
     workflow_run,
 )
+from probpipe.core import _executors
 from probpipe.core._dispatch import (
     Feasibility,
     ResolutionError,
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
+from probpipe.core._evaluation_points import EvaluationOutcomes
 from probpipe.core._expression import Conditioned, Named, Summary, draw_of
 from probpipe.core._spec_base import TermSpec
 from probpipe.core._specs import OutputSpec
@@ -43,7 +45,6 @@ from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import SupportsMean, SupportsSampling
 from probpipe.distributions._conditional import ConditionalDistributionSpec
 from probpipe.distributions._distribution import Distribution, DistributionSpec, _fixed_paths
-from probpipe.functions import _execution
 from probpipe.functions._resolution import PointReport, RouteOutcome
 from probpipe.operations import (
     BoundCall,
@@ -326,18 +327,21 @@ class TestRoles:
 
         def execute(call: BoundCall, result: Any) -> Any:
             seen.append((call.operands["d"], call.operands["value"]))
-            return jnp.asarray(call.operands["value"]) + 1.0
+            # NumPy reads the value, so JAX cannot trace the route and each point runs in Python.
+            return jnp.asarray(np.asarray(call.operands["value"])) + 1.0
 
         shifted.structural_route(
             "shift", check=lambda call, result: True, execute=execute, exact=True
         )
         law = Gaussian("g")
-        report = shifted.check(law, Gaussian("v", 2.0))
+        view = shifted.using(max_evaluations=8, executor="sequential")
+        report = view.check(law, Gaussian("v", 2.0))
         assert (report.route, report.lifted) == ("shift", ("value",))
+        # check traces one evaluation point, as the call would, to learn whether it traces.
+        assert len(seen) == 1
+        seen.clear()
         with workflow_run(seed=0):
-            pushforward = shifted.using(max_evaluations=8, dispatch="sequential")(
-                law, Gaussian("v", 2.0)
-            )
+            pushforward = view(law, Gaussian("v", 2.0))
         assert isinstance(pushforward, EmpiricalDistribution)
         assert len(seen) == 8
         assert all(d is law and not isinstance(value, Distribution) for d, value in seen)
@@ -1144,8 +1148,11 @@ class TestLiftedChecks:
         assert report.feasible is False
         assert "sweep cell (1,)" in report.description
         assert "does not implement SupportsMean" in report.description
-        with pytest.raises(ResolutionError, match=r"Bare '\S+' does not implement SupportsMean"):
+        with pytest.raises(
+            EvaluationError, match=r"Bare '\S+' does not implement SupportsMean"
+        ) as raised:
             center(batch)
+        assert isinstance(raised.value.__cause__, ResolutionError)
 
     def test_elements_that_select_different_routes_leave_the_route_undecided(self):
         report = center.check(_laws(Gaussian("g", 1.0), Sampler("g", 2.0)))
@@ -1155,7 +1162,7 @@ class TestLiftedChecks:
         values = NumericArrayBatch(
             jnp.zeros(3),
             "values",
-            element_spec=REAL,
+            element=REAL,
             label="values",
         )
         with pytest.raises(ApplicabilityError, match="but got NumericArrayBatch"):
@@ -1167,7 +1174,7 @@ class TestLiftedChecks:
         empty = DistributionBatch(
             np.empty(0, object),
             "laws",
-            element_spec=Gaussian("g").spec,
+            element=Gaussian("g").spec,
             label="laws",
         )
         report = center.check(empty)
@@ -1446,7 +1453,7 @@ class TestDerivedRouteControls:
 
     def test_the_points_of_a_threaded_call_pass_num_samples(self):
         first, second = Sampler("s", 1.0), Sampler("s", 2.0)
-        view = _body_doubled().using(num_samples=33, dispatch="thread")
+        view = _body_doubled().using(num_samples=33, executor="thread")
         view(_laws(first, second))
         assert first.shapes == second.shapes == [(33,)]
 
@@ -1454,66 +1461,57 @@ class TestDerivedRouteControls:
         def worker(d: Distribution) -> Any:
             return center.using(raw=True)(d)
 
-        inner = Function(worker).using(dispatch="thread", raw=True)
+        inner = Function(worker).using(executor="thread", raw=True)
         doubled = _body_doubled(
             lambda d: jnp.sum(jnp.asarray(inner(_laws(d, d)))), check=lambda d: True
         )
         law = Sampler("s")
         view = doubled.using(exact_only=True)
-        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
+        with pytest.raises(
+            EvaluationError, match="center: no route applies with exact_only"
+        ) as raised:
             view(law)
+        assert isinstance(raised.value.__cause__, ResolutionError)
         assert law.shapes == []
 
     def test_exact_only_holds_in_a_worker_that_receives_a_serialized_function(self, monkeypatch):
         cloudpickle = pytest.importorskip("cloudpickle")
 
-        def in_fresh_threads(request: Any, *, parent_frame: Any, parent_broker: Any) -> list[Any]:
-            # Stand in for a worker in another process: the work function arrives
-            # serialized, and each item runs in a thread with an empty context.
-            func = cloudpickle.loads(cloudpickle.dumps(request.func))
-            outcomes: list[Any] = []
+        def in_fresh_threads(
+            executor: Any, evaluation_points: Any, /, **executor_options: Any
+        ) -> EvaluationOutcomes:
+            # Stand in for a worker in another process: each chunk arrives
+            # serialized, and runs in a thread with an empty context.
+            shipped_payload = cloudpickle.dumps(evaluation_points.shared_payload())
+            chunk_outcomes: list[Any] = []
 
-            def run(item: Any) -> None:
-                try:
-                    outcomes.append(
-                        _execution._execute_evaluation_point(
-                            func, item, parent_frame, parent_broker
-                        )
-                    )
-                except BaseException as error:
-                    outcomes.append(error)
+            def run(shipped_chunk: bytes) -> None:
+                chunk_outcomes.append(
+                    cloudpickle.loads(_executors._run_shipped_chunk(shipped_chunk, shipped_payload))
+                )
 
-            for item in request.evaluation_points:
-                worker = threading.Thread(target=run, args=(item,))
+            for chunk in evaluation_points.chunks(chunk_size=1):
+                worker = threading.Thread(target=run, args=(cloudpickle.dumps(chunk),))
                 worker.start()
                 worker.join()
-            for outcome in outcomes:
-                if isinstance(outcome, BaseException):
-                    raise outcome
-            return outcomes
+            return EvaluationOutcomes.merge(chunk_outcomes)
 
-        monkeypatch.setattr(_execution, "execute_many_threaded", in_fresh_threads)
+        monkeypatch.setattr(_executors._ThreadExecutor, "execute", in_fresh_threads)
 
         def worker(d: Distribution) -> Any:
             return center.using(raw=True)(d)
 
-        inner = Function(worker).using(dispatch="thread", raw=True)
+        inner = Function(worker).using(executor="thread", raw=True)
         doubled = _body_doubled(
             lambda d: jnp.sum(jnp.asarray(inner(_laws(d, d)))), check=lambda d: True
         )
         law = Sampler("s")
-        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
+        with pytest.raises(
+            EvaluationError, match="center: no route applies with exact_only"
+        ) as raised:
             doubled.using(exact_only=True)(law)
+        assert isinstance(raised.value.__cause__, ResolutionError)
         assert law.shapes == []
-
-    def test_an_inherited_view_does_not_repeat_its_construction_warnings(self):
-        with pytest.warns(UserWarning, match="max_workers configures only"):
-            shifted = Function(lambda x: x + 1.0, label="shifted", max_workers=2)
-        doubled = _body_doubled(lambda d: shifted(center.using(raw=True)(d)))
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            for _ in range(3):
-                doubled.using(num_samples=50)(Gaussian("g", 1.5))
 
     def test_a_derived_route_check_may_defer_a_constituent_to_the_run(self):
         def center_later(d: Any) -> Any:

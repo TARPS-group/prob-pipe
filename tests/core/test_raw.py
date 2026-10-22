@@ -120,7 +120,7 @@ class TestValues:
         assert list(school.raw["data"]) == ["effect", "se"]
         assert school.raw["data"]["effect"] is effect
 
-    def test_an_array_field_view_gives_the_stored_array(self):
+    def test_an_array_coupled_marginal_gives_the_stored_array(self):
         effect = jnp.asarray(28.0)
         school = Record(
             {"data": {"effect": effect, "se": 15.0}, "label": "A"},
@@ -155,7 +155,7 @@ class TestValues:
         assert isinstance(detached, EmpiricalDistribution) and detached is not law
         assert detached.provenance is None
 
-    def test_a_field_view_presents_a_stored_python_scalar_as_an_array(self):
+    def test_a_coupled_marginal_presents_a_stored_python_scalar_as_an_array(self):
         record = Record(
             {"x": 42.0, "label": "tag"},
             label="r",
@@ -199,13 +199,13 @@ def _numeric_record_batch():
     return NumericRecordBatch(
         {"g/a": jnp.arange(3.0), "g/b": jnp.ones(3), "c": jnp.zeros((3, 2))},
         "draw",
-        element_spec=NumericRecordSpec(g=NumericRecordSpec(a=(), b=()), c=(2,)),
+        element=NumericRecordSpec(g=NumericRecordSpec(a=(), b=()), c=(2,)),
         label="draws",
     )
 
 
 class TestBatches:
-    def test_a_record_batch_field_view_gives_its_column(self):
+    def test_a_record_batch_coupled_marginal_gives_its_column(self):
         np.testing.assert_array_equal(
             np.asarray(_numeric_record_batch()["g/a"].raw), np.arange(3.0)
         )
@@ -220,7 +220,7 @@ class TestBatches:
         batch = NumericArrayBatch(
             stored,
             "draw",
-            element_spec=NumericArraySpec((2,)),
+            element=NumericArraySpec((2,)),
             label="x",
         )
         assert batch.raw is stored
@@ -230,7 +230,7 @@ class TestBatches:
         batch = RecordBatch(
             {"data/effect": effects, "label": np.array(["A", "B", "C"], dtype=object)},
             "school",
-            element_spec=RecordSpec(
+            element=RecordSpec(
                 {
                     "data/effect": (),
                     "label": Opaque(
@@ -283,7 +283,7 @@ class TestBatches:
         batch = NumericArrayBatch(
             stored,
             "draw",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="x",
         )
         np.testing.assert_array_equal(batch[2:4].raw, stored[2:4])
@@ -350,8 +350,8 @@ class TestTheRawFormIsShared:
         kernel = Kernel("k")
         assert kernel.raw is kernel.raw
 
-    def test_a_field_view_resolves_its_marginal_once(self):
-        view = (Normal("a", 0.0, 1.0) * Normal("b", 1.0, 1.0))["a"]
+    def test_a_coupled_marginal_resolves_its_marginal_once(self):
+        view = (Normal("a", 0.0, 1.0) & Normal("b", 1.0, 1.0))["a"]
         assert view.raw is view.raw
 
     def test_a_failed_resolution_is_not_kept(self):
@@ -486,7 +486,7 @@ class TestTheRemovedAccessors:
         batch = NumericArrayBatch(
             jnp.zeros((4, 2)),
             "draw",
-            element_spec=NumericArraySpec((2,)),
+            element=NumericArraySpec((2,)),
             label="x",
         )
         assert not hasattr(batch, "values")

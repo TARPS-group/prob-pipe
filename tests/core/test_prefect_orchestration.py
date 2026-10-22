@@ -1,8 +1,11 @@
 """Tests for Prefect orchestration in Function.
 
-Exercises all Prefect dispatch paths:
-- workflow_kind=WorkflowKind.TASK with sequential, thread-option, and JAX dispatch
-- workflow_kind=WorkflowKind.FLOW with sequential and JAX dispatch
+Exercises every way Prefect runs a call's evaluation points:
+- workflow_kind=WorkflowKind.TASK, one task per evaluation point of a function
+  that claims traceable=False, a named executor that has no effect, and one
+  task that maps a traceable function with JAX
+- workflow_kind=WorkflowKind.FLOW, one task per evaluation point and one flow
+  that maps a traceable function
 - Import guard when Prefect is unavailable
 - Provenance metadata includes orchestration info
 
@@ -25,9 +28,12 @@ from probpipe import (
     Distribution,
     DistributionBatch,
     EmpiricalDistribution,
+    EvaluationError,
     Function,
     Normal,
+    NumericArrayBatch,
     OutputSpec,
+    ProvenanceMode,
     ResolutionError,
     WorkflowKind,
     config,
@@ -35,6 +41,7 @@ from probpipe import (
     sample,
     workflow_run,
 )
+from probpipe.functions._context import _active_provenance_mode
 from probpipe.operations import OperationRegistry, operation
 
 from ..operations._laws import Sampler
@@ -92,8 +99,9 @@ def _draw_standard_normal():
 
 _THREADED_DRAW = Function(
     _draw_standard_normal,
-    dispatch="thread",
-    max_workers=1,
+    traceable=False,
+    executor="thread",
+    executor_options={"max_workers": 1},
     label="threaded_draw",
 )
 
@@ -139,7 +147,7 @@ class TestPrefectRngConformance:
                     add_one,
                     label="add_one",
                     workflow_kind=WorkflowKind.OFF,
-                    dispatch="sequential",
+                    traceable=False,
                     max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
@@ -150,7 +158,7 @@ class TestPrefectRngConformance:
                     add_one,
                     label="add_one",
                     workflow_kind=WorkflowKind.OFF,
-                    dispatch="jax",
+                    executor="jax",
                     max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
@@ -161,8 +169,9 @@ class TestPrefectRngConformance:
                     add_one,
                     label="add_one",
                     workflow_kind=WorkflowKind.OFF,
-                    dispatch="thread",
-                    max_workers=2,
+                    traceable=False,
+                    executor="thread",
+                    executor_options={"max_workers": 2},
                     max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
@@ -173,7 +182,7 @@ class TestPrefectRngConformance:
                     add_one,
                     label="add_one",
                     workflow_kind=WorkflowKind.TASK,
-                    dispatch="sequential",
+                    traceable=False,
                     max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
@@ -184,7 +193,6 @@ class TestPrefectRngConformance:
                     add_one,
                     label="add_one",
                     workflow_kind=WorkflowKind.TASK,
-                    dispatch="jax",
                     max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
@@ -195,8 +203,9 @@ class TestPrefectRngConformance:
                     add_one,
                     label="add_one",
                     workflow_kind=WorkflowKind.TASK,
-                    dispatch="thread",
-                    max_workers=2,
+                    traceable=False,
+                    executor="thread",
+                    executor_options={"max_workers": 2},
                     max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
@@ -207,7 +216,7 @@ class TestPrefectRngConformance:
                     add_one,
                     label="add_one",
                     workflow_kind=WorkflowKind.FLOW,
-                    dispatch="sequential",
+                    traceable=False,
                     max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
@@ -218,7 +227,6 @@ class TestPrefectRngConformance:
                     add_one,
                     label="add_one",
                     workflow_kind=WorkflowKind.FLOW,
-                    dispatch="jax",
                     max_evaluations=6,
                     output_spec=OutputSpec(add_one=None),
                 ),
@@ -229,7 +237,7 @@ class TestPrefectRngConformance:
         samples = []
         for workflow, warns_about_local_controls in workflows:
             warning_context = (
-                pytest.warns(UserWarning, match="do not control Prefect scheduling")
+                pytest.warns(UserWarning, match="has no effect: workflow_kind=WorkflowKind.TASK")
                 if warns_about_local_controls
                 else nullcontext()
             )
@@ -245,13 +253,13 @@ class TestPrefectRngConformance:
             _draw_under_nested_seed,
             label="_draw_under_nested_seed",
             workflow_kind=WorkflowKind.OFF,
-            dispatch="sequential",
+            traceable=False,
         )
         remote = Function(
             _draw_under_nested_seed,
             label="_draw_under_nested_seed",
             workflow_kind=WorkflowKind.TASK,
-            dispatch="sequential",
+            traceable=False,
         )
 
         results = []
@@ -267,17 +275,17 @@ class TestPrefectRngConformance:
         for result in results[1:]:
             np.testing.assert_array_equal(result, results[0])
 
-    def test_rootless_task_coordinates_a_nested_thread_evaluation_point(self):
+    def test_a_task_whose_body_calls_a_threaded_draw_draws_as_it_does_locally(self):
         local = Function(
             _call_threaded_draw,
             workflow_kind=WorkflowKind.OFF,
-            dispatch="sequential",
+            traceable=False,
             label="nested_thread_owner",
         )
         remote = Function(
             _call_threaded_draw,
             workflow_kind=WorkflowKind.TASK,
-            dispatch="sequential",
+            traceable=False,
             label="nested_thread_owner",
         )
 
@@ -311,7 +319,7 @@ class TestPrefectRngConformance:
             _claim_key_and_fail_once,
             label="_claim_key_and_fail_once",
             workflow_kind=WorkflowKind.TASK,
-            dispatch="sequential",
+            traceable=False,
         )
 
         with (
@@ -333,19 +341,19 @@ class TestPrefectRngConformance:
 
 
 # ---------------------------------------------------------------------------
-# workflow_kind=WorkflowKind.TASK with sequential dispatch
+# workflow_kind=WorkflowKind.TASK, one task per evaluation point
 # ---------------------------------------------------------------------------
 
 
 class TestPrefectTaskRowWise:
-    """Exercises Prefect task execution via row-wise dispatch."""
+    """Exercises Prefect running one task per evaluation point of an opaque function."""
 
     def test_returns_empirical_distribution(self, normal_dist):
         wf = Function(
             add_one,
             label="add_one",
             workflow_kind=WorkflowKind.TASK,
-            dispatch="sequential",
+            traceable=False,
             max_evaluations=30,
             output_spec=OutputSpec(add_one=None),
         )
@@ -359,7 +367,7 @@ class TestPrefectTaskRowWise:
             add_one,
             label="add_one",
             workflow_kind=WorkflowKind.TASK,
-            dispatch="sequential",
+            traceable=False,
             max_evaluations=200,
             output_spec=OutputSpec(add_one=None),
         )
@@ -377,7 +385,7 @@ class TestPrefectTaskRowWise:
             sum_xy,
             label="sum_xy",
             workflow_kind=WorkflowKind.TASK,
-            dispatch="sequential",
+            traceable=False,
             max_evaluations=30,
             output_spec=OutputSpec(sum_xy=None),
         )
@@ -389,19 +397,19 @@ class TestPrefectTaskRowWise:
 
 
 # ---------------------------------------------------------------------------
-# workflow_kind=WorkflowKind.FLOW with sequential dispatch
+# workflow_kind=WorkflowKind.FLOW, one task per evaluation point
 # ---------------------------------------------------------------------------
 
 
 class TestPrefectFlowRowWise:
-    """Exercises Prefect flow execution via row-wise dispatch."""
+    """Exercises Prefect running one flow with a task per evaluation point of an opaque function."""
 
     def test_returns_empirical_distribution(self, normal_dist):
         wf = Function(
             double_it,
             label="double_it",
             workflow_kind=WorkflowKind.FLOW,
-            dispatch="sequential",
+            traceable=False,
             max_evaluations=25,
             output_spec=OutputSpec(double_it=None),
         )
@@ -415,7 +423,7 @@ class TestPrefectFlowRowWise:
             double_it,
             label="double_it",
             workflow_kind=WorkflowKind.FLOW,
-            dispatch="sequential",
+            traceable=False,
             max_evaluations=200,
             output_spec=OutputSpec(double_it=None),
         )
@@ -442,7 +450,7 @@ class TestPrefectProvenance:
             add_one,
             label="add_one",
             workflow_kind=WorkflowKind.TASK,
-            dispatch="sequential",
+            traceable=False,
             max_evaluations=20,
             output_spec=OutputSpec(add_one=None),
         )
@@ -458,7 +466,7 @@ class TestPrefectProvenance:
             add_one,
             label="add_one",
             workflow_kind=WorkflowKind.FLOW,
-            dispatch="sequential",
+            traceable=False,
             max_evaluations=20,
             output_spec=OutputSpec(add_one=None),
         )
@@ -472,7 +480,7 @@ class TestPrefectProvenance:
             add_one,
             label="add_one",
             workflow_kind=WorkflowKind.OFF,
-            dispatch="sequential",
+            traceable=False,
             max_evaluations=20,
             output_spec=OutputSpec(add_one=None),
         )
@@ -495,7 +503,7 @@ class TestPrefectNonBroadcast:
             add_one,
             label="add_one",
             workflow_kind=WorkflowKind.TASK,
-            dispatch="sequential",
+            traceable=False,
             output_spec=OutputSpec(add_one=None),
         )
         # Pass concrete value, not a distribution — no broadcasting
@@ -507,7 +515,7 @@ class TestPrefectNonBroadcast:
             double_it,
             label="double_it",
             workflow_kind=WorkflowKind.FLOW,
-            dispatch="sequential",
+            traceable=False,
             output_spec=OutputSpec(double_it=None),
         )
         result = wf(x=jnp.array(3.0))
@@ -532,7 +540,7 @@ class TestPrefectImportGuard:
             add_one,
             label="add_one",
             workflow_kind=WorkflowKind.TASK,
-            dispatch="sequential",
+            traceable=False,
             max_evaluations=10,
             output_spec=OutputSpec(add_one=None),
         )
@@ -550,7 +558,7 @@ class TestPrefectImportGuard:
             add_one,
             label="add_one",
             workflow_kind=WorkflowKind.FLOW,
-            dispatch="sequential",
+            traceable=False,
             max_evaluations=10,
             output_spec=OutputSpec(add_one=None),
         )
@@ -568,7 +576,6 @@ class TestPrefectImportGuard:
             add_one,
             label="add_one",
             workflow_kind=WorkflowKind.TASK,
-            dispatch="jax",
             max_evaluations=10,
             output_spec=OutputSpec(add_one=None),
         )
@@ -595,9 +602,9 @@ class TestInheritedControlsInPrefectTasks:
     """
 
     def test_exact_only_holds_in_a_prefect_task_constituent(self):
-        inner = Function(
-            _mean_of_law, workflow_kind=WorkflowKind.TASK, dispatch="sequential"
-        ).using(raw=True)
+        inner = Function(_mean_of_law, workflow_kind=WorkflowKind.TASK, traceable=False).using(
+            raw=True
+        )
 
         @operation(
             result=lambda d: None, registry=OperationRegistry(), derived_route_check=lambda d: True
@@ -610,20 +617,45 @@ class TestInheritedControlsInPrefectTasks:
         law = Sampler("s")
         with (
             workflow_run(seed=63),
-            pytest.raises(ResolutionError, match="mean: no route applies with exact_only"),
+            pytest.raises(
+                EvaluationError, match="mean: no route applies with exact_only"
+            ) as raised,
         ):
             summed_means.using(exact_only=True)(law)
+        assert isinstance(raised.value.__cause__, ResolutionError)
         assert law.shapes == []
 
 
 class TestConfigBlocksInPrefectTasks:
-    """A ``config.using`` block applies to the work a call inside it dispatches to Prefect tasks."""
+    """A ``config.using`` block applies to the work a call inside it runs as Prefect tasks."""
 
     def test_a_block_sets_the_draws_of_a_summary_in_a_prefect_task(self):
-        inner = Function(
-            _mean_of_law, workflow_kind=WorkflowKind.TASK, dispatch="sequential"
-        ).using(raw=True)
+        inner = Function(_mean_of_law, workflow_kind=WorkflowKind.TASK, traceable=False).using(
+            raw=True
+        )
         first, second = Sampler("s", 1.0), Sampler("s", 2.0)
         with workflow_run(seed=64), config.sampling.using(num_samples=37):
             inner(DistributionBatch([first, second], "laws", label="laws"))
         assert first.shapes == second.shapes == [(37,)]
+
+
+def _provenance_mode_code(x: jnp.ndarray) -> jnp.ndarray:
+    """The position in ``ProvenanceMode`` of the mode the running work is recorded under, plus 0 * x."""
+    return x * 0.0 + list(ProvenanceMode).index(_active_provenance_mode())
+
+
+class TestProvenanceModeInPrefectTasks:
+    """A Prefect task runs under the provenance mode of the workflow run that started it.
+
+    A worker that receives a chunk of evaluation points pickled is covered in
+    ``tests/functions/test_parallel.py``.
+    """
+
+    def test_a_prefect_task_runs_under_the_runs_mode(self):
+        reporter = Function(
+            _provenance_mode_code, workflow_kind=WorkflowKind.TASK, traceable=False
+        ).using(raw=True)
+        config.provenance.mode = ProvenanceMode.OFF
+        with workflow_run(seed=65):
+            codes = reporter(NumericArrayBatch(jnp.zeros(2), "x", label="xs"))
+        assert np.asarray(codes).tolist() == [list(ProvenanceMode).index(ProvenanceMode.OFF)] * 2

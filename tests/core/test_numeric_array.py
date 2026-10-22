@@ -15,7 +15,7 @@ from probpipe.core.tracked import _NO_DESCRIPTION
 def _batch(values=None, level_names="draw", label="draws", **kwargs) -> NumericArrayBatch:
     if values is None:
         values = jnp.arange(12.0).reshape(4, 3)
-    kwargs.setdefault("element_spec", NumericArraySpec(shape=(3,), dtype=jnp.float32))
+    kwargs.setdefault("element", NumericArraySpec(shape=(3,), dtype=jnp.float32))
     return NumericArrayBatch(
         values,
         level_names,
@@ -375,7 +375,7 @@ class TestNumericArrayComputesAsAnArray:
         batch = NumericArrayBatch(
             jnp.zeros((2, 3)),
             ("chain", "draw"),
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             axes_per_level=(1, 1),
             label="posterior",
         )
@@ -613,13 +613,13 @@ class TestNumericArrayBatchHoldsTheMultiplicity:
 
         assert batch.batch_shape == (4,)
         assert batch.batch_size == 4
-        assert tuple(batch.element_spec.shape) == (3,)
+        assert tuple(batch.element_spec.term_spec.shape) == (3,)
 
     def test_scalar_elements_leave_every_axis_to_the_batch(self):
         batch = NumericArrayBatch(
             jnp.arange(4.0),
             "draw",
-            element_spec=NumericArraySpec(shape=(), dtype=jnp.float32),
+            element=NumericArraySpec(shape=(), dtype=jnp.float32),
             label="draws",
         )
 
@@ -644,7 +644,7 @@ class TestNumericArrayBatchHoldsTheMultiplicity:
     def test_the_repr_states_the_levels_and_the_element_spec_then_the_values(self):
         assert repr(_batch(label="x")) == (
             "NumericArrayBatch('x', levels={'draw': 4}, "
-            "element_spec=NumericArraySpec(shape=(3,), dtype=float32))\n"
+            "element=NumericArraySpec(shape=(3,), dtype=float32))\n"
             "  [[ 0.  1.  2.]\n"
             "   [ 3.  4.  5.]\n"
             "   [ 6.  7.  8.]\n"
@@ -670,7 +670,7 @@ class TestNumericArrayBatchInfersItsElementSpec:
         )
 
         assert batch.batch_shape == (4,)
-        assert batch.element_spec == NumericArraySpec(shape=(), dtype=jnp.float32)
+        assert batch.element_spec.term_spec == NumericArraySpec(shape=(), dtype=jnp.float32)
 
     def test_the_levels_fix_where_the_event_axes_start(self):
         batch = NumericArrayBatch(
@@ -680,7 +680,7 @@ class TestNumericArrayBatchInfersItsElementSpec:
         )
 
         assert batch.batch_shape == (2, 4)
-        assert batch.element_spec == NumericArraySpec(shape=(3,), dtype=jnp.int32)
+        assert batch.element_spec.term_spec == NumericArraySpec(shape=(3,), dtype=jnp.int32)
 
     @pytest.mark.parametrize("axes", [2, [2], (2,)])
     def test_a_level_of_several_axes_counts_them_all(self, axes):
@@ -692,7 +692,7 @@ class TestNumericArrayBatchInfersItsElementSpec:
         )
 
         assert batch.axis_groups == ((2, 4),)
-        assert batch.element_spec.shape == (3,)
+        assert batch.element_spec.term_spec.shape == (3,)
 
     def test_a_one_shot_iterator_of_counts_is_refused(self):
         """The counts are read more than once, so an iterator would arrive empty."""
@@ -735,7 +735,7 @@ class TestNumericArrayBatchSelection:
         assert batch[1].provenance is batch.provenance
 
     def test_an_element_carries_the_batch_element_spec(self):
-        assert _batch()[1].spec == _batch().element_spec
+        assert _batch()[1].spec == _batch().element_spec.term_spec
 
     def test_a_sub_batch_takes_the_declared_view_type(self):
         """`Batch._view_type` is the hook a subclass overrides to shed its state."""
@@ -750,7 +750,7 @@ class TestNumericArrayBatchSelection:
         derived = _Derived(
             jnp.arange(12.0).reshape(4, 3),
             "draw",
-            element_spec=NumericArraySpec(shape=(3,), dtype=jnp.float32),
+            element=NumericArraySpec(shape=(3,), dtype=jnp.float32),
             label="derived",
         )
 
@@ -780,7 +780,7 @@ class TestNumericArrayBatchOverNativeContainers:
         batch = NumericArrayBatch(
             self._frame(),
             "draw",
-            element_spec=NumericArraySpec(shape=(3,), dtype=np.float64),
+            element=NumericArraySpec(shape=(3,), dtype=np.float64),
             label="draws",
         )
 
@@ -794,7 +794,7 @@ class TestNumericArrayBatchOverNativeContainers:
         batch = NumericArrayBatch(
             self._frame(),
             "draw",
-            element_spec=NumericArraySpec(shape=(3,), dtype=np.float64),
+            element=NumericArraySpec(shape=(3,), dtype=np.float64),
             label="draws",
         )
 
@@ -810,7 +810,7 @@ class TestNumericArrayBatchOverNativeContainers:
         batch = NumericArrayBatch(
             frame,
             "draw",
-            element_spec=NumericArraySpec(shape=(3,), dtype=np.float64),
+            element=NumericArraySpec(shape=(3,), dtype=np.float64),
             label="draws",
         )
 
@@ -824,16 +824,16 @@ class TestNumericArrayBatchRefusals:
             NumericArrayBatch(
                 jnp.zeros(3),
                 "draw",
-                element_spec=NumericArraySpec(shape=(3,), dtype=jnp.float32),
+                element=NumericArraySpec(shape=(3,), dtype=jnp.float32),
                 label="draws",
             )
 
     def test_trailing_axes_that_are_not_the_event_shape_are_refused(self):
-        with pytest.raises(ValueError, match="but element_spec declares event shape"):
+        with pytest.raises(ValueError, match="but element declares event shape"):
             NumericArrayBatch(
                 jnp.zeros((4, 5)),
                 "draw",
-                element_spec=NumericArraySpec(shape=(3,), dtype=jnp.float32),
+                element=NumericArraySpec(shape=(3,), dtype=jnp.float32),
                 label="draws",
             )
 
@@ -843,7 +843,7 @@ class TestNumericArrayBatchRefusals:
             NumericArrayBatch(
                 jnp.zeros((4, 3)),
                 "draw",
-                element_spec=NumericArraySpec(shape=("n",), dtype=jnp.float32),
+                element=NumericArraySpec(shape=("n",), dtype=jnp.float32),
                 label="draws",
             )
 
@@ -852,7 +852,7 @@ class TestNumericArrayBatchRefusals:
             NumericArrayBatch(
                 object(),
                 "draw",
-                element_spec=NumericArraySpec(shape=(), dtype=jnp.float32),
+                element=NumericArraySpec(shape=(), dtype=jnp.float32),
                 label="draws",
             )
 
@@ -862,7 +862,7 @@ class TestNumericArrayBatchRefusals:
             NumericArrayBatch(
                 jnp.zeros((2, 3), dtype=jnp.float32),
                 "draw",
-                element_spec=NumericArraySpec(shape=(3,), dtype=jnp.int32),
+                element=NumericArraySpec(shape=(3,), dtype=jnp.int32),
                 label="draws",
             )
 
@@ -890,7 +890,7 @@ class TestNumericArrayBatchRefusals:
             NumericArrayBatch(
                 store,
                 "draw",
-                element_spec=NumericArraySpec(shape=(3,), dtype=np.int32),
+                element=NumericArraySpec(shape=(3,), dtype=np.int32),
                 label="draws",
             )
 
@@ -898,7 +898,7 @@ class TestNumericArrayBatchRefusals:
         assert NumericArrayBatch(
             store,
             "draw",
-            element_spec=NumericArraySpec(shape=(3,)),
+            element=NumericArraySpec(shape=(3,)),
             label="draws",
         ).batch_shape == (4,)
 
@@ -907,7 +907,7 @@ class TestNumericArrayBatchRefusals:
         batch = NumericArrayBatch(
             jnp.zeros((2, 3), dtype=jnp.float32),
             "draw",
-            element_spec=NumericArraySpec(shape=(3,), dtype=jnp.float64),
+            element=NumericArraySpec(shape=(3,), dtype=jnp.float64),
             label="draws",
         )
 
@@ -918,7 +918,7 @@ class TestNumericArrayBatchRefusals:
             NumericArrayBatch(
                 jnp.zeros((4, 3)),
                 "draw",
-                element_spec="not a spec",
+                element="not a spec",
                 label="draws",
             )
 
@@ -1182,7 +1182,7 @@ class TestNativeConversionAcrossTransforms:
             value = NumericArrayBatch(
                 native,
                 "row",
-                element_spec=NumericArraySpec(()),
+                element=NumericArraySpec(()),
                 label="native",
             )
 
@@ -1208,7 +1208,7 @@ class TestANativeBackedBatchCrossesJax:
         return NumericArrayBatch(
             pd.Series([1.0, 2.0, 3.0]),
             "row",
-            element_spec=NumericArraySpec(shape=()),
+            element=NumericArraySpec(shape=()),
             label="b",
         )
 
@@ -1243,7 +1243,7 @@ class TestUnflattenChecksTheElementItRebuilds:
         return NumericArrayBatch(
             jnp.zeros((4, 3)),
             "row",
-            element_spec=NumericArraySpec(shape=(3,)),
+            element=NumericArraySpec(shape=(3,)),
             label="b",
         )
 

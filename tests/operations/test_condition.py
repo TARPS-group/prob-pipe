@@ -143,6 +143,14 @@ class _SuiteMethod(InferenceMethod):
         return _SuitePosterior(target.event_spec, self._loc)
 
 
+class _PythonSuiteMethod(_SuiteMethod):
+    """A suite method that reads its target's given as NumPy arrays, so JAX cannot trace it."""
+
+    def execute(self, target: Any, /, **options: Any) -> Any:
+        jax.tree.map(np.asarray, target.given)
+        return super().execute(target, **options)
+
+
 def _normalize_with(monkeypatch: pytest.MonkeyPatch, *methods: InferenceMethod) -> None:
     """Make every route that normalizes delegate to a registry of *methods*, for one test.
 
@@ -332,7 +340,7 @@ class TestBindInputs:
         assert set(rest.given_spec) == {"theta"}
 
     def test_inputs_bind_together_with_produced_fields(self, approximate_method):
-        joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",))
+        joint = Kernel("y", ("mu",)) & Kernel("z", ("mu",))
         law = condition_on(joint, {"mu": 1.0, "y": 0.0})
         assert isinstance(law, Distribution)
         (target,) = approximate_method.targets
@@ -348,13 +356,13 @@ def _by_name(routes: Any) -> dict[str, Any]:
 
 class TestSlice:
     def test_the_slice_route_declines_a_factored_law_with_a_reason(self):
-        joint = Kernel("y", ("mu",)) * Gaussian("mu")
+        joint = Kernel("y", ("mu",)) & Gaussian("mu")
         declined = _by_name(condition_on.check(joint, {"y": 0.3}).routes)["slice (exact methods)"]
         assert declined.feasible is False
         assert "factors" in declined.description
 
     def test_fixing_a_root_field_leaves_its_consumer_at_the_value(self):
-        joint = _NormalKernel("y", ("mu",)) * Gaussian("mu")
+        joint = _NormalKernel("y", ("mu",)) & Gaussian("mu")
         report = condition_on.check(joint, {"mu": 1.5})
         assert (report.route, report.method, report.exact) == ("slice", None, True)
         law = condition_on(joint, {"mu": 1.5})
@@ -362,12 +370,12 @@ class TestSlice:
         assert law.loc == 1.5
 
     def test_fixing_an_independent_factor_leaves_the_others(self):
-        law = condition_on(Gaussian("a", 1.0) * Gaussian("b", 2.0), {"a": 0.0})
+        law = condition_on((Gaussian("a", 1.0) & Gaussian("b", 2.0)), {"a": 0.0})
         assert isinstance(law, Gaussian)
         assert law.loc == 2.0
 
     def test_fixing_the_root_of_a_chain_keeps_the_joint_downstream(self):
-        joint = _NormalKernel("c", ("b",)) * _NormalKernel("b", ("a",), 1.0) * Gaussian("a")
+        joint = (_NormalKernel("c", ("b",)) & _NormalKernel("b", ("a",), 1.0)) & Gaussian("a")
         law = condition_on(joint, {"a": 2.0})
         assert isinstance(law, FactoredDistribution)
         assert tuple(law.event_spec.outputs) == ("c", "b")
@@ -375,7 +383,7 @@ class TestSlice:
         assert upstream.loc == 3.0
 
     def test_a_field_whose_parent_stays_free_is_conditioned_by_bayes_rule(self, approximate_method):
-        joint = _NormalKernel("c", ("b",)) * _NormalKernel("b", ("a",)) * Gaussian("a")
+        joint = (_NormalKernel("c", ("b",)) & _NormalKernel("b", ("a",))) & Gaussian("a")
         report = condition_on.check(joint, {"b": 0.5})
         declined = _by_name(report.routes)["slice (exact methods)"]
         assert "conditions on ['a']" in declined.description
@@ -383,25 +391,25 @@ class TestSlice:
 
     def test_part_of_a_law_is_fixed_by_its_exact_conditioning(self):
         model = ExactPosterior("model")
-        joint = _NormalKernel("w", ("theta",)) * model
+        joint = _NormalKernel("w", ("theta",)) & model
         assert condition_on.check(joint, {"y": 0.3}).route == "slice"
         law = condition_on(joint, {"y": 0.3})
         assert tuple(law.event_spec.outputs) == ("w", "theta")
         assert [dict(given) for given in model.givens] == [{"y": 0.3}]
 
     def test_part_of_a_law_without_exact_conditioning_is_not_sliced(self):
-        joint = Kernel("w", ("a",)) * Pair("p")
+        joint = Kernel("w", ("a",)) & Pair("p")
         declined = _by_name(condition_on.check(joint, {"a": 0.3}).routes)["slice (exact methods)"]
         assert declined.feasible is False
         assert "cannot condition on part of its fields exactly" in declined.description
 
     def test_fixing_every_field_leaves_no_law(self):
-        joint = Gaussian("a") * Gaussian("b")
+        joint = Gaussian("a") & Gaussian("b")
         declined = _by_name(condition_on.check(joint, {"a": 0.0, "b": 0.0}).routes)
         assert "leaves no field to infer" in declined["slice (exact methods)"].description
 
     def test_binding_an_approximate_kernel_makes_the_slice_approximate(self):
-        joint = _AmortizedKernel() * Gaussian("y")
+        joint = _AmortizedKernel() & Gaussian("y")
         report = condition_on.check(joint, {"y": 0.3})
         assert (report.route, report.exact) == ("slice", False)
         assert condition_on(joint, {"y": 0.3}).loc == 3.0
@@ -409,19 +417,19 @@ class TestSlice:
             condition_on.using(exact_only=True)(joint, {"y": 0.3})
 
     def test_a_consumer_that_declares_nothing_leaves_the_check_unresolved(self):
-        joint = Kernel("y", ("beta",)) * Gaussian("beta")
+        joint = Kernel("y", ("beta",)) & Gaussian("beta")
         assert condition_on.check(joint, {"beta": 0.5}).feasible is None
         assert condition_on(joint, {"beta": 0.5}).loc == 0.5
 
     def test_the_slice_records_its_stage(self):
-        joint = _NormalKernel("y", ("mu",)) * Gaussian("mu")
+        joint = _NormalKernel("y", ("mu",)) & Gaussian("mu")
         law = condition_on.using(method="unnormalized")(joint, {"mu": 1.5})
         assert law.provenance is not None
 
     def test_fixing_a_produced_field_of_a_factored_joint_reaches_bayes_rule(
         self, approximate_method
     ):
-        joint = Kernel("y", ("mu",)) * Gaussian("mu")
+        joint = Kernel("y", ("mu",)) & Gaussian("mu")
         report = condition_on.check(joint, {"y": 0.3})
         assert (report.route, report.method) == ("inference_methods", "operations_suite_factored")
         assert condition_on(joint, {"y": 0.3}).loc == 4.0
@@ -437,27 +445,27 @@ class TestTheConditionedLabel:
 
     def test_fixing_an_upstream_factor_leaves_the_label_of_the_factor_left(self):
         likelihood = _NormalKernel("y", ("mu",)).with_label("likelihood")
-        joint = (likelihood * Gaussian("mu").with_label("prior")).with_label("model")
+        joint = (likelihood & Gaussian("mu").with_label("prior")).with_label("model")
         assert condition_on(joint, {"mu": 1.5}).label == "likelihood"
 
     def test_the_factors_left_join_their_labels(self):
-        joint = Gaussian("a").with_label("first") * Gaussian("b").with_label("second")
-        joint = joint * Gaussian("c").with_label("third")
+        joint = Gaussian("a").with_label("first") & Gaussian("b").with_label("second")
+        joint = joint & Gaussian("c").with_label("third")
         assert condition_on(joint, {"a": 0.0}).label == "second·third"
 
     def test_conditioning_part_of_a_factor_keeps_the_laws_label(self):
-        joint = (_NormalKernel("w", ("theta",)) * ExactPosterior("model")).with_label("joint")
+        joint = (_NormalKernel("w", ("theta",)) & ExactPosterior("model")).with_label("joint")
         assert condition_on.check(joint, {"y": 0.3}).route == "slice"
         result = condition_on(joint, {"y": 0.3})
         assert (result.label, result.notation) == ("joint", "joint(w, theta; y)")
 
     def test_bayes_rule_keeps_a_label_with_a_space_and_groups_it(self, approximate_method):
-        joint = (Kernel("y", ("mu",)) * Gaussian("mu")).with_label("my model")
+        joint = (Kernel("y", ("mu",)) & Gaussian("mu")).with_label("my model")
         posterior = condition_on(joint, {"y": 0.3})
         assert (posterior.label, posterior.notation) == ("my model", "[my model](mu; y)")
 
     def test_bayes_rule_keeps_the_label_of_an_unlabeled_joint(self, approximate_method):
-        posterior = condition_on(Kernel("y", ("mu",)) * Gaussian("mu"), {"y": 0.3})
+        posterior = condition_on((Kernel("y", ("mu",)) & Gaussian("mu")), {"y": 0.3})
         assert (posterior.label, posterior.notation) == ("y·mu", "(y·mu)(mu; y)")
 
     def test_a_given_that_names_no_path_keeps_the_laws_label_and_fixes_none(self):
@@ -467,8 +475,8 @@ class TestTheConditionedLabel:
         assert condition_on._derived_expression(values).fixed_paths() == ()
 
     def test_the_factors_left_are_an_unlabeled_joint_that_shows_its_fixed_paths(self):
-        joint = Gaussian("a").with_label("first") * Gaussian("b").with_label("second")
-        joint = (joint * Gaussian("c").with_label("third")).with_label("model")
+        joint = Gaussian("a").with_label("first") & Gaussian("b").with_label("second")
+        joint = (joint & Gaussian("c").with_label("third")).with_label("model")
         left = condition_on(joint, {"a": 0.0})
         assert _is_named(left) is False
         assert left.notation == "(second·third)(b, c; a)"
@@ -483,7 +491,7 @@ class TestThePosteriorsRecord:
         )
         prior = EmpiricalDistribution(jnp.linspace(-2.0, 2.0, 9), output_name="mu", label="prior")
         with workflow_run(seed=0):
-            return condition_on((likelihood * prior).with_label("model"), {"y": 0.5})
+            return condition_on((likelihood & prior).with_label("model"), {"y": 0.5})
 
     def test_the_methods_posterior_is_recorded_under_the_posteriors_label(self):
         posterior = self._posterior()
@@ -504,19 +512,19 @@ class TestTheFixedPaths:
     """A conditioned law holds the paths it is conditioned on fixed, after any it held (II.4)."""
 
     def test_a_posterior_holds_the_data_fixed(self, approximate_method):
-        joint = (Kernel("y", ("mu",)) * Gaussian("mu")).with_label("model")
+        joint = (Kernel("y", ("mu",)) & Gaussian("mu")).with_label("model")
         posterior = condition_on(joint, {"y": 0.3})
         assert _fixed_paths(posterior) == ("y",)
         assert str(posterior) == posterior.notation == "model(mu; y)"
 
     def test_a_factor_at_a_value_holds_the_value_fixed(self):
         likelihood = _NormalKernel("y", ("mu",)).with_label("likelihood")
-        joint = (likelihood * Gaussian("mu").with_label("prior")).with_label("model")
+        joint = (likelihood & Gaussian("mu").with_label("prior")).with_label("model")
         assert condition_on(joint, {"mu": 1.5}).notation == "likelihood(y; mu)"
 
     def test_a_factor_returned_as_the_result_is_left_unchanged(self):
         prior = Gaussian("mu").with_label("prior")
-        joint = Gaussian("y").with_label("other") * prior
+        joint = Gaussian("y").with_label("other") & prior
         left = condition_on(joint, {"y": 1.5})
         assert left.notation == "prior(mu; y)"
         assert _fixed_paths(prior) == () and prior.notation == "prior(mu)"
@@ -540,7 +548,7 @@ class TestTheFixedPaths:
         assert law.notation == "glm(y; beta, sigma)"
 
     def test_conditioning_a_conditioned_law_again_appends_the_new_paths(self):
-        joint = Gaussian("a") * Gaussian("b") * Gaussian("c").with_label("third")
+        joint = (Gaussian("a") & Gaussian("b")) & Gaussian("c").with_label("third")
         left = condition_on(condition_on(joint.with_label("model"), {"a": 0.0}), {"b": 1.0})
         assert _fixed_paths(left) == ("a", "b")
         assert left.notation == "third(c; a, b)"
@@ -550,7 +558,7 @@ class TestTheFixedPaths:
         givens = NumericRecordBatch(
             {"beta": jnp.array([0.0, 1.0])},
             "row",
-            element_spec=RecordSpec(beta=REAL),
+            element=RecordSpec(beta=REAL),
             label="betas",
         )
         laws = condition_on(kernel, givens)
@@ -568,12 +576,14 @@ class TestTheConditionedDeclaration:
         kernel = _NormalKernel("y", ("mu",))
         result = condition_on.check(kernel, {"mu": 1.5}).result
         assert result == OutputSpec(DistributionSpec(kernel.event_spec))
-        assert list(result.outputs) == ["y"]
+        assert list(result.term_spec.event_spec.outputs) == ["y"]
+        # A law as a value has no outputs of its own.
+        assert list(result.outputs) == []
 
     def test_conditioning_a_produced_field_leaves_the_declaration_to_the_law(
         self, approximate_method
     ):
-        joint = Kernel("y", ("mu",)) * Gaussian("mu")
+        joint = Kernel("y", ("mu",)) & Gaussian("mu")
         assert condition_on.check(joint, {"y": 0.3}).result is None
 
 
@@ -599,18 +609,18 @@ class TestOptionalInputs:
         )
 
     def test_slicing_a_joint_at_a_required_input_leaves_the_default(self):
-        law = condition_on(self._scaled() * Normal("mu", 0.0, 1.0), {"mu": 0.0})
+        law = condition_on((self._scaled() & Normal("mu", 0.0, 1.0)), {"mu": 0.0})
         assert isinstance(law, Normal)
         np.testing.assert_allclose(law._variance(), 4.0)
 
     def test_slicing_off_every_producer_leaves_a_kernel_at_its_defaults(self):
         kernel = conditional_distribution(lambda scale=2.0: Normal("y", 0.0, scale), label="lik0")
-        law = condition_on(kernel * Normal("mu", 0.0, 1.0), {"mu": 0.0})
+        law = condition_on((kernel & Normal("mu", 0.0, 1.0)), {"mu": 0.0})
         assert isinstance(law, Normal)
         np.testing.assert_allclose(law._variance(), 4.0)
 
     def test_slicing_at_the_output_that_meets_an_optional_input_binds_it(self):
-        joint = self._scaled() * (Normal("mu", 0.0, 1.0) * HalfNormal("scale", 1.0))
+        joint = self._scaled() & (Normal("mu", 0.0, 1.0) & HalfNormal("scale", 1.0))
         law = condition_on(joint, {"mu": 0.0, "scale": 3.0})
         np.testing.assert_allclose(law._variance(), 9.0)
 
@@ -781,7 +791,7 @@ class TestTheExactStage:
 
 class TestTheNormalizationStage:
     def test_the_posterior_keeps_the_conditioned_laws_label(self, approximate_method):
-        joint = (Kernel("y", ("mu",)) * Gaussian("mu")).with_label("model")
+        joint = (Kernel("y", ("mu",)) & Gaussian("mu")).with_label("model")
         assert condition_on(joint, {"y": 0.0}).label == "model"
 
     def test_a_normalized_result_is_returned_without_inference(self, suite_methods):
@@ -808,7 +818,7 @@ class TestTheNormalizationStage:
         assert (parent.type_name, parent.label) == ("_UnnormalizedKernel", kernel.label)
 
     def test_the_target_of_bayes_rule_records_the_binding_of_its_inputs(self, approximate_method):
-        joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",))
+        joint = Kernel("y", ("mu",)) & Kernel("z", ("mu",))
         condition_on(joint, {"mu": 1.0, "y": 0.0})
         (target,) = approximate_method.targets
         assert target.provenance.metadata == {"stage": "exact", "route": "inference_methods"}
@@ -924,7 +934,7 @@ class TestTheNormalizationStage:
             condition_on(kernel, {"b": 2.0})
 
     def test_conditioning_a_produced_field_of_a_kernel_keeps_it_a_kernel(self, approximate_method):
-        joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",))
+        joint = Kernel("y", ("mu",)) & Kernel("z", ("mu",))
         kernel = condition_on(joint, {"y": 0.0})
         assert isinstance(kernel, ConditionalDistribution)
         assert set(kernel.given_spec) == {"mu"}
@@ -935,7 +945,7 @@ class TestTheNormalizationStage:
         assert set(target.event_spec.outputs) == {"z"}
 
     def test_check_on_mixed_keys_of_a_per_value_kernel_runs_no_method(self, approximate_method):
-        joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",)) * Kernel("w", ("mu",))
+        joint = (Kernel("y", ("mu",)) & Kernel("z", ("mu",))) & Kernel("w", ("mu",))
         kernel = condition_on(joint, {"y": 0.0})
         report = condition_on.check(kernel, {"mu": 1.0, "z": 0.5})
         assert (report.route, report.method) == ("inference_methods", "operations_suite_factored")
@@ -944,7 +954,7 @@ class TestTheNormalizationStage:
     def test_mixed_keys_of_a_per_value_kernel_bind_its_inputs_then_condition_once(
         self, approximate_method
     ):
-        joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",)) * Kernel("w", ("mu",))
+        joint = (Kernel("y", ("mu",)) & Kernel("z", ("mu",))) & Kernel("w", ("mu",))
         kernel = condition_on(joint, {"y": 0.0})
         assert condition_on(kernel, {"mu": 1.0, "z": 0.5}).loc == 4.0
         (target,) = approximate_method.targets
@@ -956,7 +966,7 @@ class TestTheNormalizationStage:
     def test_conditioning_a_per_value_kernel_on_a_field_conditions_its_unnormalized_laws(
         self, approximate_method
     ):
-        joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",)) * Kernel("w", ("mu",))
+        joint = (Kernel("y", ("mu",)) & Kernel("z", ("mu",))) & Kernel("w", ("mu",))
         kernel = condition_on(condition_on(joint, {"y": 0.0}), {"z": 0.5})
         assert approximate_method.targets == []
         assert condition_on(kernel, {"mu": 1.0}).loc == 4.0
@@ -965,7 +975,7 @@ class TestTheNormalizationStage:
         assert set(target.given.fields) == {"y", "z"}
 
     def test_the_target_of_a_law_that_samples_claims_its_density(self, approximate_method):
-        joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",))
+        joint = Kernel("y", ("mu",)) & Kernel("z", ("mu",))
         law = condition_on(joint, {"mu": 1.0, "y": 0.0})
         assert law.loc == 4.0
         (target,) = approximate_method.targets
@@ -1050,7 +1060,7 @@ class TestTheOperation:
             condition_on(jnp.zeros(2), {"x": 1.0})
 
     def test_fixing_an_upstream_field_leaves_the_existing_kernel(self):
-        joint = Kernel("y", ("beta",)) * Gaussian("beta")
+        joint = Kernel("y", ("beta",)) & Gaussian("beta")
         conditional = condition_on(joint, {"beta": 0.5})
         assert conditional.event_spec.outputs.keys() == {"y"}
 
@@ -1073,7 +1083,7 @@ class TestNoRouteMessages:
             condition_on(_NormalKernel(), {"zz": 1.0})
 
     def test_a_nested_path_that_does_not_exist_is_unknown(self):
-        joint = Normal("b", 0.0, 1.0) * Normal("a", 0.0, 1.0)
+        joint = Normal("b", 0.0, 1.0) & Normal("a", 0.0, 1.0)
         with pytest.raises(ResolutionError, match=r"^condition_on: unknown field 'a/q'"):
             condition_on(joint, {"a/q": 1.0})
 
@@ -1101,7 +1111,7 @@ def _givens(field: str, values: list[float]) -> NumericRecordBatch:
     return NumericRecordBatch(
         {field: jnp.asarray(values, jnp.float32)},
         "dataset",
-        element_spec=RecordSpec(**{field: REAL}),
+        element=RecordSpec(**{field: REAL}),
         label="data",
     )
 
@@ -1114,13 +1124,17 @@ class TestABatchOfGivens:
         assert laws.level_names == ("dataset",)
         assert [law.loc for law in laws] == [1.0, 2.0, 3.0]
 
-    def test_each_given_is_conditioned_as_one_given_alone_is(self, approximate_method):
-        # Sequential dispatch, so the method records each target at concrete values.
-        joint = Kernel("y", ("mu",)) * Gaussian("mu")
-        posteriors = condition_on.using(dispatch="sequential")(joint, _givens("y", [0.0, 1.0]))
+    def test_each_given_is_conditioned_as_one_given_alone_is(self, monkeypatch):
+        # JAX cannot trace the method, so the sweep runs it at each given's concrete values.
+        method = _PythonSuiteMethod(
+            "operations_suite_python", False, (Distribution, _UnnormalizedKernel), 4.0
+        )
+        _normalize_with(monkeypatch, method)
+        joint = Kernel("y", ("mu",)) & Gaussian("mu")
+        posteriors = condition_on.using(executor="sequential")(joint, _givens("y", [0.0, 1.0]))
         assert isinstance(posteriors, DistributionBatch)
         assert posteriors.batch_shape == (2,)
-        assert [float(target.given["y"]) for target in approximate_method.targets] == [0.0, 1.0]
+        assert [float(target.given["y"]) for target in method.targets] == [0.0, 1.0]
         assert all(tuple(law.event_spec.outputs) == ("mu",) for law in posteriors)
 
     def test_the_batch_is_labeled_by_the_kernel_and_each_law_by_its_position(self):
@@ -1146,7 +1160,7 @@ def _logistic_joint():
 
     X = jnp.array([[1.0, 0.5], [1.0, -0.3], [1.0, 1.2], [1.0, -1.1]])
     likelihood = glm_likelihood("y", BernoulliFamily(), X=X)
-    return likelihood * MultivariateNormal("beta", jnp.zeros(2), jnp.eye(2))
+    return likelihood & MultivariateNormal("beta", jnp.zeros(2), jnp.eye(2))
 
 
 def _unnormalized_pair():
@@ -1234,7 +1248,7 @@ class TestEndToEnd:
         givens = NumericRecordBatch(
             {"y": jnp.array([[1, 0, 1, 0], [0, 0, 1, 1]])},
             "dataset",
-            element_spec=RecordSpec(y=NumericArraySpec((4,), jnp.int32)),
+            element=RecordSpec(y=NumericArraySpec((4,), jnp.int32)),
             label="data",
         )
         with workflow_run(seed=0):

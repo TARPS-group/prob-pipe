@@ -83,19 +83,19 @@ def _labeled(kind):
         "RecordBatch": lambda: RecordBatch(
             COLUMNS,
             "lvl",
-            element_spec=ELEMENT,
+            element=ELEMENT,
             label="given",
         ),
         "NumericRecordBatch": lambda: NumericRecordBatch(
             COLUMNS,
             "lvl",
-            element_spec=ELEMENT,
+            element=ELEMENT,
             label="given",
         ),
         "NumericArrayBatch": lambda: NumericArrayBatch(
             jnp.arange(4.0),
             "lvl",
-            element_spec=NumericArraySpec(shape=()),
+            element=NumericArraySpec(shape=()),
             label="given",
         ),
         "OpaqueBatch": lambda: OpaqueBatch(
@@ -233,7 +233,7 @@ class TestADerivedLabelSaysSo:
         return NumericArrayBatch(
             jnp.arange(12.0).reshape(4, 3),
             "draw",
-            element_spec=NumericArraySpec(shape=(3,)),
+            element=NumericArraySpec(shape=(3,)),
             label="posterior",
         )
 
@@ -291,7 +291,7 @@ class TestAnOperationLabelsItsResultByItsLaw:
     @staticmethod
     def _params():
         prior_x = Normal("x", 0.0, 1.0, label="prior_x")
-        return (prior_x * Normal("y", 2.0, 3.0, label="prior_y")).with_label("params")
+        return (prior_x & Normal("y", 2.0, 3.0, label="prior_y")).with_label("params")
 
     def test_a_record_mean_is_labeled_over_the_law_and_names_its_outputs(
         self, full_provenance_mode
@@ -380,7 +380,7 @@ class TestLevelsAreNamedForWhatMintsThem:
                 NumericRecordBatch(
                     {"u": jnp.arange(4.0)},
                     "row",
-                    element_spec=RecordSpec(u=()),
+                    element=RecordSpec(u=()),
                     label="rows",
                 ),
                 None,
@@ -484,7 +484,7 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
         drawn = NumericArrayBatch(
             jnp.zeros((2, 3)),
             ("chain", "draw"),
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             axes_per_level=(1, 1),
             label="draws",
         )
@@ -546,12 +546,12 @@ class TestEveryAggregateIsLabeledForItsFunction:
         return NumericRecordBatch(
             {"x": jnp.arange(float(n))},
             "row",
-            element_spec=NumericRecordSpec(x=()),
+            element=NumericRecordSpec(x=()),
             label="rows",
         )
 
     def _swept(self, body, **controls):
-        return Function(body, label="double", dispatch="sequential", **controls)(v=self._rows())
+        return Function(body, label="double", executor="sequential", **controls)(v=self._rows())
 
     @pytest.mark.parametrize(
         ("label", "body"),
@@ -582,12 +582,12 @@ class TestEveryAggregateIsLabeledForItsFunction:
         grid = NumericRecordBatch(
             {"x": jnp.arange(6.0).reshape(2, 3)},
             ("a", "b"),
-            element_spec=NumericRecordSpec(x=()),
+            element=NumericRecordSpec(x=()),
             label="grid",
         )
 
         result = Function(
-            lambda v: {"y": jnp.asarray(v["x"])}, label="double", dispatch="sequential"
+            lambda v: {"y": jnp.asarray(v["x"])}, label="double", executor="sequential"
         )(v=grid)
 
         assert result.label == "double(grid)"
@@ -637,7 +637,7 @@ class TestNoKindInventsALabel:
         batch = NumericRecordBatch(
             {"a": jnp.zeros(3), "b": jnp.zeros(3)},
             "lvl",
-            element_spec=NumericRecordSpec(a=(), b=()),
+            element=NumericRecordSpec(a=(), b=()),
             label="derived",
         )
 
@@ -665,14 +665,14 @@ def _likelihood() -> Any:
 
 def _model() -> Any:
     """The joint ``model`` over ``y`` and ``mu``."""
-    return (_likelihood() * _prior()).with_label("model")
+    return (_likelihood() & _prior()).with_label("model")
 
 
 def _empirical_model() -> Any:
     """``model`` over ``y`` and ``mu`` whose prior is empirical, so conditioning on ``y`` is exact."""
     atoms = jnp.linspace(-2.0, 2.0, 41)
     prior = EmpiricalDistribution(atoms, event_spec=OutputSpec(mu=None), label="prior")
-    return (_likelihood() * prior).with_label("model")
+    return (_likelihood() & prior).with_label("model")
 
 
 def _glm(*inputs: str) -> Any:
@@ -724,7 +724,7 @@ class TestTheLabelsOfResults:
 
     def test_the_prior_predictive_keeps_the_models_label(self):
         """``marginal(model, "y")`` integrates ``mu`` out, which no route of this model does."""
-        expression = marginal._derived_expression({"d": _model(), "field": "y"})
+        expression = marginal._derived_expression({"d": _model(), "paths": "y"})
         assert expression.render_notation(Signature(("y",))) == "model(y)"
 
 
@@ -763,8 +763,8 @@ class TestADefaultedInputShowsItsDefault:
         assert str(condition_on(_counts(), {"n0": 10.0})) == "counts(y | K, r; n0)"
 
     def test_a_factor_left_by_conditioning_a_joint_keeps_the_defaulted_input(self):
-        prior = (Normal("K", 300.0, 10.0) * Normal("r", 0.4, 0.1)).with_label("prior")
-        model = _counts() * prior
+        prior = (Normal("K", 300.0, 10.0) & Normal("r", 0.4, 0.1)).with_label("prior")
+        model = _counts() & prior
         assert str(model) == "counts(y | K, r, n0=50.0)·prior(K, r)"
         assert condition_on(model, {"K": 300.0, "r": 0.4}).notation == ("counts(y | n0=50.0; K, r)")
 
@@ -775,7 +775,7 @@ class TestADefaultedInputShowsItsDefault:
     def test_a_relabeled_law_keeps_the_defaulted_input_inside_another_term(self):
         at = condition_on(_counts(), {"K": 300.0, "r": 0.4}).with_label("at_values")
         assert log_prob(at, 1.0).label == "log at_values(y | n0=50.0; K, r)"
-        assert str(at * Normal("z", 0.0, 1.0)) == "at_values(y | n0=50.0; K, r)·Normal(z)"
+        assert str(at & Normal("z", 0.0, 1.0)) == "at_values(y | n0=50.0; K, r)·Normal(z)"
 
     def test_a_value_computed_from_the_law_reads_its_notation(self):
         at = condition_on(_counts(), {"K": 300.0, "r": 0.4})
@@ -931,7 +931,7 @@ class TestTheLabelsOfALiftedFunction:
 
         with workflow_run(seed=2):
             posterior = condition_on(
-                _empirical_model().with_label("oring_model").with_path_names(y="damage", mu="beta"),
+                _empirical_model().with_label("oring_model").rename(y="damage", mu="beta"),
                 {"damage": 0.5},
             )
             damage_prob = challenger_damage_probability(posterior["beta"])
@@ -948,7 +948,7 @@ class TestTheLabelsOfALiftedFunction:
         def f(a: jax.Array, b: jax.Array) -> jax.Array:
             return a + b
 
-        model = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_label("model")
+        model = (Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)).with_label("model")
         with workflow_run(seed=0):
             assert f(model["a"], model["b"]).notation == "f((a, b) ~ model)"
             assert f(model["a"], 2.0).notation == "f(a ~ Normal, 2.0)"

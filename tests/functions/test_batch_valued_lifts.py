@@ -24,6 +24,7 @@ from probpipe import (
     OutputSpec,
     Record,
     RecordBatch,
+    ResolutionError,
     ResultSchemaError,
     function,
     marginal,
@@ -34,21 +35,38 @@ from probpipe import (
     workflow_run,
 )
 
+# The controls that run a lift on each executor. ``jax`` maps a body it can
+# trace, the other executors run a body that claims ``traceable=False`` one draw
+# at a time, and the default leaves the choice to the probe.
+_EXECUTOR_CONTROLS = {
+    "jax": {"executor": "jax"},
+    "sequential": {"executor": "sequential", "traceable": False},
+    "thread": {"executor": "thread", "traceable": False},
+    "default": {},
+}
+
+
+def _over_executors(*names: str) -> pytest.MarkDecorator:
+    """Parametrize a test's ``controls`` over the executors *names*."""
+    return pytest.mark.parametrize(
+        "controls", [_EXECUTOR_CONTROLS[name] for name in names], ids=names
+    )
+
 
 def _trajectory(beta):
     return NumericArrayBatch(beta * jnp.arange(1.0, 4.0), "time", label="path")
 
 
 class TestBatchValuedLifts:
-    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "thread"])
+    @_over_executors("default", "sequential", "thread")
     @pytest.mark.parametrize("include_inputs", [False, True])
-    def test_exact_lifts_keep_whole_events_and_weighted_inputs(self, dispatch, include_inputs):
+    def test_exact_lifts_keep_whole_events_and_weighted_inputs(self, controls, include_inputs):
         source = EmpiricalDistribution(jnp.array([2.0, 5.0]), [1.0, 3.0], output_name="beta")
         trajectory = Function(
             _trajectory,
             output_spec=OutputSpec(trajectory=None),
             output_label="display alias",
-            dispatch=dispatch,
+            **controls,
             include_inputs=include_inputs,
         )
         with workflow_run(seed=0):
@@ -76,7 +94,7 @@ class TestBatchValuedLifts:
     def test_a_second_lift_receives_the_batch_kind(self, sampled, include_inputs):
         trajectory = Function(_trajectory, output_spec=OutputSpec(trajectory=None))
 
-        @function(dispatch="auto", max_evaluations=5, include_inputs=include_inputs)
+        @function(max_evaluations=5, include_inputs=include_inputs)
         def total(path: NumericArrayBatch):
             assert isinstance(path, NumericArrayBatch)
             return jnp.sum(path.raw)
@@ -106,7 +124,7 @@ class TestBatchValuedLifts:
         bad = Function(
             time,
             output_spec=OutputSpec(time=None) if declared else None,
-            dispatch="sequential",
+            executor="sequential",
             include_inputs=include_inputs,
         )
         message = r"level 'time'.*\['time'\].*OutputSpec with a distinct output"
@@ -129,7 +147,7 @@ class TestBatchValuedLiftMoments:
     def test_a_weighted_trajectory_law_has_elementwise_moments(self):
         source = EmpiricalDistribution(jnp.array([2.0, 5.0]), [0.25, 0.75], output_name="beta")
         trajectory = Function(
-            _trajectory, output_spec=OutputSpec(trajectory=None), dispatch="sequential"
+            _trajectory, output_spec=OutputSpec(trajectory=None), executor="sequential"
         )
         with workflow_run(seed=0):
             law = trajectory(source)
@@ -158,7 +176,7 @@ def _trajectory_law(include_inputs):
 class TestBatchValuedFieldSampling:
     @pytest.mark.parametrize("sample_shape", [(), (4,), (2, 3)])
     @pytest.mark.parametrize("include_inputs", [False, True])
-    def test_a_field_view_draws_what_the_marginal_draws(self, include_inputs, sample_shape):
+    def test_a_coupled_marginal_draws_what_the_marginal_draws(self, include_inputs, sample_shape):
         with workflow_run(seed=0):
             law = _trajectory_law(include_inputs)
             viewed = sample(law["trajectory"], sample_shape)
@@ -206,7 +224,7 @@ class TestBatchValuedFieldSampling:
                 [Record.from_fields(x=beta, y=beta * k) for k in (1.0, 2.0)], level_name="time"
             )
 
-        wrapped = Function(trajectory, include_inputs=True, dispatch="sequential")
+        wrapped = Function(trajectory, include_inputs=True, executor="sequential")
         with workflow_run(seed=0):
             law = wrapped(EmpiricalDistribution(jnp.array([2.0, 5.0]), output_name="beta"))
             single = sample(law["trajectory"], sample_shape)
@@ -232,9 +250,9 @@ def _gap(beta, trajectory: NumericArrayBatch):
 
 
 class TestLiftsOverBatchValuedFields:
-    @pytest.mark.parametrize("dispatch", ["sequential", "auto"])
+    @_over_executors("sequential", "default")
     @pytest.mark.parametrize("sampled", [False, True])
-    def test_a_lift_over_a_field_reads_one_batch_per_draw(self, sampled, dispatch):
+    def test_a_lift_over_a_field_reads_one_batch_per_draw(self, sampled, controls):
         source = (
             Normal("beta", 0.0, 1.0)
             if sampled
@@ -246,8 +264,8 @@ class TestLiftsOverBatchValuedFields:
             include_inputs=True,
             max_evaluations=5,
         )
-        total = Function(_total, dispatch=dispatch, max_evaluations=5)
-        gap = Function(_gap, dispatch=dispatch, max_evaluations=5)
+        total = Function(_total, **controls, max_evaluations=5)
+        gap = Function(_gap, **controls, max_evaluations=5)
         with workflow_run(seed=0):
             law = joint(source)
             totals = total(law["trajectory"])
@@ -266,8 +284,8 @@ class TestLiftsOverBatchValuedFields:
 
         source = EmpiricalDistribution(jnp.array([2.0, 5.0]), output_name="beta")
         with workflow_run(seed=0):
-            law = Function(summary, dispatch="sequential")(source)
-            totals = Function(total, dispatch="sequential")(law["traj"])
+            law = Function(summary, executor="sequential")(source)
+            totals = Function(total, executor="sequential")(law["traj"])
         assert isinstance(law.event_spec.term_spec["traj"], BatchSpec)
         np.testing.assert_allclose(totals.atoms.raw, [12.0, 30.0])
 
@@ -279,7 +297,7 @@ class TestSampleLevelCollision:
 
     def test_a_sample_shape_names_the_event_level_it_repeats(self):
         wrapped = Function(
-            self._on_sample, output_spec=OutputSpec(trajectory=None), dispatch="sequential"
+            self._on_sample, output_spec=OutputSpec(trajectory=None), executor="sequential"
         )
         with workflow_run(seed=0):
             law = wrapped(EmpiricalDistribution(jnp.array([2.0, 5.0]), output_name="beta"))
@@ -289,7 +307,7 @@ class TestSampleLevelCollision:
 
     def test_a_nested_sweep_names_the_event_level_it_repeats(self):
         wrapped = Function(
-            self._on_sample, output_spec=OutputSpec(trajectory=None), dispatch="sequential"
+            self._on_sample, output_spec=OutputSpec(trajectory=None), executor="sequential"
         )
         scales = NumericArrayBatch(jnp.array([1.0, 10.0]), "horizon", label="scale")
         with workflow_run(seed=0):
@@ -307,7 +325,7 @@ class TestBatchOutputComposition:
                 [Record.from_fields(x=beta, y=beta * k) for k in (1.0, 2.0)], level_name="time"
             )
 
-        wrapped = Function(trajectory, include_inputs=True, dispatch="sequential")
+        wrapped = Function(trajectory, include_inputs=True, executor="sequential")
         with workflow_run(seed=0):
             law = wrapped(EmpiricalDistribution(jnp.array([2.0, 5.0]), output_name="beta"))
             draws = sample(law, 3)
@@ -323,7 +341,7 @@ class TestBatchOutputComposition:
         wrapped = Function(
             _trajectory,
             output_spec=OutputSpec(trajectory=None),
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=5,
         )
         source = Normal("beta", 0.0, 1.0)
@@ -345,7 +363,9 @@ class TestObjectBatchEvents:
                 label="payload",
             )
 
-        wrapped = Function(payload, dispatch="sequential", include_inputs=include_inputs)
+        wrapped = Function(
+            payload, traceable=False, executor="sequential", include_inputs=include_inputs
+        )
         with workflow_run(seed=0):
             law = wrapped(EmpiricalDistribution(jnp.array([2.0]), output_name="x"))
             drawn = sample(law)
@@ -364,19 +384,19 @@ class TestObjectBatchEvents:
 class TestBatchOutputDeclarations:
     def test_a_polymorphic_declaration_completes_without_mutating_the_function(self):
         declared = OutputSpec(trajectory=BatchSpec(NumericArraySpec(()), time="n"))
-        wrapped = Function(_trajectory, output_spec=declared, dispatch="sequential")
+        wrapped = Function(_trajectory, output_spec=declared, executor="sequential")
         with workflow_run(seed=0):
             law = wrapped(EmpiricalDistribution(jnp.array([2.0]), output_name="beta"))
         assert law.event_spec.term_spec.axis_groups == ((3,),)
-        assert law.event_spec.term_spec.element_spec.dtype == jnp.float32
+        assert law.event_spec.term_spec.element_spec.term_spec.dtype == jnp.float32
         assert wrapped.output_spec is declared
         assert wrapped.output_spec.term_spec.axis_groups == (("n",),)
-        assert wrapped.output_spec.term_spec.element_spec.dtype is None
+        assert wrapped.output_spec.term_spec.element_spec.term_spec.dtype is None
 
     @pytest.mark.parametrize("element", [NumericArraySpec((), jnp.float32), OpaqueSpec()])
     def test_an_empty_sweep_of_a_batch_output_has_no_batch_form(self, element):
         declared = OutputSpec(trajectory=BatchSpec(element, time=3))
-        wrapped = Function(_trajectory, output_spec=declared, dispatch="sequential")
+        wrapped = Function(_trajectory, output_spec=declared, executor="sequential")
         with pytest.raises(ValueError, match="An empty sweep has no batch form for BatchSpec"):
             wrapped(NumericArrayBatch(jnp.zeros((0,)), "beta", label="beta"))
 
@@ -387,7 +407,7 @@ class TestBatchOutputDeclarations:
             level = "time" if difference == "shape" or int(x) == 0 else "other"
             return NumericArrayBatch(jnp.ones(size), level, label="path")
 
-        wrapped = Function(trajectory, dispatch="sequential")
+        wrapped = Function(trajectory, traceable=False, executor="sequential")
         source = EmpiricalDistribution(jnp.array([0.0, 1.0]), output_name="x")
         with workflow_run(seed=0), pytest.raises(ResultSchemaError):
             wrapped(source)
@@ -397,7 +417,7 @@ class TestBatchValuedDrawsArriveRaw:
     """A lifted body receives a batch-valued draw raw, unless its annotation names a batch class."""
 
     @staticmethod
-    def _received(body, law, dispatch="sequential"):
+    def _received(body, law):
         """The draws *body* received over *law*, and the lifted law."""
         seen = []
 
@@ -406,7 +426,9 @@ class TestBatchValuedDrawsArriveRaw:
             return body(value)
 
         with workflow_run(seed=0):
-            lifted = Function(record, dispatch=dispatch, max_evaluations=6)(law)
+            lifted = Function(record, traceable=False, executor="sequential", max_evaluations=6)(
+                law
+            )
         return seen, lifted
 
     def test_a_bootstrap_replicate_arrives_as_an_array(self):
@@ -424,7 +446,7 @@ class TestBatchValuedDrawsArriveRaw:
             _trajectory,
             output_spec=OutputSpec(trajectory=None),
             include_inputs=include_inputs,
-            dispatch="sequential",
+            executor="sequential",
         )
         with workflow_run(seed=0):
             law = trajectory(source)
@@ -444,7 +466,7 @@ class TestBatchValuedDrawsArriveRaw:
 
         total.__annotations__["path"] = annotation
         with workflow_run(seed=0):
-            totals = Function(total, dispatch="sequential")(trajectory(source))
+            totals = Function(total, traceable=False, executor="sequential")(trajectory(source))
         assert all(isinstance(path, NumericArrayBatch) for path in seen)
         assert all(path.level_names == ("time",) for path in seen)
         np.testing.assert_allclose(totals.atoms.raw, [12.0, 30.0], rtol=1e-6)
@@ -459,7 +481,7 @@ class TestBatchValuedDrawsArriveRaw:
             return jnp.sum(path)
 
         with workflow_run(seed=0):
-            Function(total, dispatch="sequential")(trajectory(source))
+            Function(total, traceable=False, executor="sequential")(trajectory(source))
         assert all(isinstance(path, jax.Array) and path.shape == (3,) for path in seen)
 
     @pytest.mark.parametrize("annotated", [False, True])
@@ -480,8 +502,8 @@ class TestBatchValuedDrawsArriveRaw:
             total.__annotations__["path"] = RecordBatch
         source = EmpiricalDistribution(jnp.array([2.0, 5.0]), output_name="beta")
         with workflow_run(seed=0):
-            law = Function(trajectory, dispatch="sequential")(source)
-            totals = Function(total, dispatch="sequential")(law)
+            law = Function(trajectory, executor="sequential")(source)
+            totals = Function(total, traceable=False, executor="sequential")(law)
         for path in seen:
             if annotated:
                 assert isinstance(path, RecordBatch)
@@ -493,9 +515,9 @@ class TestBatchValuedDrawsArriveRaw:
 
 
 class TestNestedBatchValuedInputs:
-    @pytest.mark.parametrize("dispatch", ["auto", "jax", "sequential", "thread"])
+    @_over_executors("default", "jax", "sequential", "thread")
     @pytest.mark.parametrize("annotated", [False, True])
-    def test_joint_lifts_keep_a_whole_bootstrap_replicate(self, dispatch, annotated):
+    def test_joint_lifts_keep_a_whole_bootstrap_replicate(self, controls, annotated):
         source = EmpiricalDistribution(
             jnp.array([[2.0, 4.0, 6.0]]),
             event_spec=OutputSpec(path=BatchSpec(NumericArraySpec(()), time=3)),
@@ -511,7 +533,7 @@ class TestNestedBatchValuedInputs:
 
         if annotated:
             total.__annotations__["p"] = NumericArrayBatch
-        wrapped = Function(total, dispatch=dispatch, include_inputs=True, max_evaluations=5)
+        wrapped = Function(total, **controls, include_inputs=True, max_evaluations=5)
         with workflow_run(seed=0):
             law = wrapped(replicate)
             drawn = sample(law)
@@ -558,34 +580,36 @@ def _sources():
 
 
 class TestMappedBatchValuedLifts:
-    """``auto`` and ``jax`` map a body over batch-valued outputs and draws, as row-wise runs do."""
+    """``jax`` maps a body over batch-valued outputs and draws, as one-at-a-time runs evaluate it."""
 
     @staticmethod
-    def _lift(body, law, dispatch, **controls):
+    def _lift(body, law, **controls):
         with workflow_run(seed=3):
-            return Function(body, dispatch=dispatch, max_evaluations=7, **controls)(law)
+            return Function(body, max_evaluations=7, **controls)(law)
 
-    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    @_over_executors("default", "jax")
     @pytest.mark.parametrize("include_inputs", [False, True])
     @pytest.mark.parametrize("body", [_trajectory, _record_trajectory])
     @pytest.mark.parametrize("source", ["sampled", "enumerated"])
-    def test_a_batch_returning_body_maps_as_the_row_wise_lift_runs(
-        self, dispatch, include_inputs, body, source
+    def test_a_batch_returning_body_maps_as_the_one_at_a_time_lift_runs(
+        self, controls, include_inputs, body, source
     ):
         law = _sources()[source]
-        mapped = self._lift(body, law, dispatch, include_inputs=include_inputs)
-        rowwise = self._lift(body, law, "sequential", include_inputs=include_inputs)
+        mapped = self._lift(body, law, **controls, include_inputs=include_inputs)
+        rowwise = self._lift(
+            body, law, **_EXECUTOR_CONTROLS["sequential"], include_inputs=include_inputs
+        )
         assert mapped.provenance.metadata["dispatch"] == "jax"
         assert mapped.event_spec == rowwise.event_spec
         _assert_same(mapped.atoms, rowwise.atoms)
         np.testing.assert_array_equal(mapped.weights, rowwise.weights)
 
-    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    @_over_executors("default", "jax")
     @pytest.mark.parametrize("include_inputs", [False, True])
     @pytest.mark.parametrize("annotated", [False, True])
     @pytest.mark.parametrize("source", ["sampled", "enumerated"])
-    def test_a_second_lift_maps_as_the_row_wise_lift_runs(
-        self, dispatch, include_inputs, annotated, source
+    def test_a_second_lift_maps_as_the_one_at_a_time_lift_runs(
+        self, controls, include_inputs, annotated, source
     ):
         def total(trajectory):
             values = trajectory.raw if annotated else trajectory
@@ -596,8 +620,10 @@ class TestMappedBatchValuedLifts:
         first = Function(_trajectory, output_spec=OutputSpec(trajectory=None))
         with workflow_run(seed=1):
             law = first(_sources()[source])
-        mapped = self._lift(total, law, dispatch, include_inputs=include_inputs)
-        rowwise = self._lift(total, law, "sequential", include_inputs=include_inputs)
+        mapped = self._lift(total, law, **controls, include_inputs=include_inputs)
+        rowwise = self._lift(
+            total, law, **_EXECUTOR_CONTROLS["sequential"], include_inputs=include_inputs
+        )
         assert mapped.provenance.metadata["dispatch"] == "jax"
         _assert_same(mapped.atoms, rowwise.atoms)
         np.testing.assert_array_equal(mapped.weights, rowwise.weights)
@@ -614,12 +640,13 @@ class TestMappedBatchValuedLifts:
             return jnp.sum(path)
 
         source = Normal("beta", 0.0, 1.0)
-        for dispatch in ("jax", "sequential"):
+        for executor in ("jax", "sequential"):
+            controls = _EXECUTOR_CONTROLS[executor]
             calls.clear()
             with workflow_run(seed=0):
-                law = Function(trajectory, dispatch=dispatch, max_evaluations=50)(source)
-                totals = Function(total, dispatch=dispatch, max_evaluations=50)(law)
-            if dispatch == "jax":
+                law = Function(trajectory, **controls, max_evaluations=50)(source)
+                totals = Function(total, **controls, max_evaluations=50)(law)
+            if executor == "jax":
                 # One probe trace and one mapped trace for each lift.
                 assert calls.count("first") <= 2 and calls.count("second") <= 2
                 assert law.provenance.metadata["dispatch"] == "jax"
@@ -627,43 +654,45 @@ class TestMappedBatchValuedLifts:
             else:
                 assert calls.count("first") == 50 and calls.count("second") == 50
 
-    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
-    def test_a_joint_field_that_stores_batches_is_not_mapped(self, dispatch):
+    @_over_executors("default", "jax")
+    def test_a_joint_field_that_stores_batches_is_not_mapped(self, controls):
         joint = Function(
             _trajectory,
             output_spec=OutputSpec(trajectory=None),
             include_inputs=True,
             max_evaluations=5,
         )
-        total = Function(lambda path: jnp.sum(path), dispatch=dispatch, max_evaluations=5)
+        total = Function(lambda path: jnp.sum(path), **controls, max_evaluations=5)
         with workflow_run(seed=0):
             law = joint(Normal("beta", 0.0, 1.0))
-            if dispatch == "jax":
+            if controls.get("executor") == "jax":
                 message = (
-                    r"dispatch='jax' cannot map over the draws of '_trajectory', whose field "
+                    r"executor 'jax' cannot run .*JAX cannot trace .*UnmappedBatchError: "
+                    r"jax.vmap cannot map over the draws of '_trajectory', whose field "
                     r"'trajectory' stores a batch on the levels \['time'\].*"
                     r"marginal\(law, 'trajectory'\)"
                 )
-                with pytest.raises(ValueError, match=message):
+                with pytest.raises(ResolutionError, match=message):
                     total(law["trajectory"])
             else:
                 assert total(law["trajectory"]).provenance.metadata["dispatch"] == "sequential"
                 mapped = total(marginal(law, "trajectory"))
                 assert mapped.provenance.metadata["dispatch"] == "jax"
 
-    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
-    def test_a_returned_record_that_holds_a_batch_is_not_mapped(self, dispatch):
+    @_over_executors("default", "jax")
+    def test_a_returned_record_that_holds_a_batch_is_not_mapped(self, controls):
         def summary(beta):
             return Record.from_fields(scale=2.0 * beta, traj=_trajectory(beta))
 
-        wrapped = Function(summary, dispatch=dispatch, max_evaluations=5)
+        wrapped = Function(summary, **controls, max_evaluations=5)
         with workflow_run(seed=0):
-            if dispatch == "jax":
+            if controls.get("executor") == "jax":
                 message = (
-                    r"dispatch='jax' cannot stack a returned record whose field 'traj' is a "
-                    r"batch on the levels \['time'\]"
+                    r"executor 'jax' cannot run .*JAX cannot trace 'summary': .*"
+                    r"UnmappedBatchError: jax.vmap cannot stack a returned record whose field "
+                    r"'traj' is a batch on the levels \['time'\]"
                 )
-                with pytest.raises(ValueError, match=message):
+                with pytest.raises(ResolutionError, match=message):
                     wrapped(Normal("beta", 0.0, 1.0))
             else:
                 law = wrapped(Normal("beta", 0.0, 1.0))

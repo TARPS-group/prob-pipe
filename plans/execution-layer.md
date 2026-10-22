@@ -1093,19 +1093,23 @@ A requester asks for evaluations through one helper in `core/_evaluation_points.
 
 ```python
 def evaluate_at_points(fn, /, *, varying: Mapping[str, Any], shared: Mapping[str, Any],
-                       origin: str, output_spec: OutputSpec | None) -> tuple[Any, ...]:
-    """Each evaluation point's output, in point order.
+                       origin: str, output_spec: OutputSpec | None, stacked: bool = False) -> Any:
+    """Each evaluation point's output, in point order, or under stacked the outputs stacked.
 
     varying maps each argument that differs between evaluation points to its values stacked
     on a leading axis; shared maps each argument every evaluation point receives unchanged.
     With traced arguments, calls fn inline, so an opaque Function becomes an embedded call.
     Otherwise builds one EvaluationPoints, whose keys come from each evaluation point's workflow scope
     (step 3), and runs it through the executor registry under the current call context.
+    With stacked=True, returns one tree stacked on a leading axis of evaluation points: the jax
+    executor's mapped output whole, checked once, leading axis included; any other executor's
+    outputs stacked leaf by leaf when every leaf is numeric and they share one tree structure,
+    and otherwise, tuples and lists included, a one-dimensional object array holding each output.
     Raises EvaluationError naming every failed evaluation point (6.4, rule 1)."""
 ```
 
-`origin` names the requester's callable or site for messages and reports, and `output_spec` is the callable's output spec, which the chunk checks each output against (6.4, rule 7). A second form, `evaluate_at_points_outcomes(...) -> EvaluationOutcomes`, with the same parameters, serves a requester that may drop failed evaluation points; it comes after the workshop with dropping (6.4, rule 3). After #554, a `random_keys` parameter carries one key per evaluation point.
-*Which step defines the helper and moves lifting and sweeps onto it, E3b or E5, is pending the maintainer's decision N8 in `decisions.md`.*
+`origin` names the requester's callable or site for messages and reports, and `output_spec` is the callable's output spec, which the chunk checks each output against (6.4, rule 7). `stacked=True` lets a lift and a sweep take the `jax` executor's mapped output whole, since cutting 1024 rows out of a mapped output and stacking them again costs about a hundred times a warm lifted call (decided 2026-10-21, #621 Q1); the default stays one output per evaluation point. A second form, `evaluate_at_points_outcomes(...) -> EvaluationOutcomes`, with the same parameters, serves a requester that may drop failed evaluation points; it comes after the workshop with dropping (6.4, rule 3). After #554, a `random_keys` parameter carries one key per evaluation point.
+Step E3b defines the helper and moves lifting, sweeps, and plain calls onto its dispatcher (decided 2026-10-21, N8 option (1)); E5 moves joint factors, laws built from functions, and expectations.
 
 > **Today → Proposed.** Lifts and sweeps build a list of evaluation points, one per row, before the first call, and each mode ships them its own way. Proposed, they build one lazy set of evaluation points, and the workflow scope registers its evaluation points as an index range (#510).
 
@@ -2291,7 +2295,7 @@ None of this is bridging code: it is the existing behaviour, unchanged, with the
 #### The provenance mode, fixed for a run (step PV)
 
 Step PV, a small PR after P0b and before E3a, applies decision N9 (2026-10-20), jhuggins's rule, which replaced OD2's per-call mode: the provenance mode is fixed when the outermost `workflow_run` opens, so a result's ancestry never stops at a call with no sign of the gap. The silent conflict OD2 removed, a block that reads OFF while provenance is still recorded, is removed by the raise.
-1. **The raise.** Inside an open `workflow_run`, entering a `config.provenance.using` block that sets a mode other than the run's raises, and the message names the run's mode and says to set the mode before the run opens. A block that sets the run's own mode is accepted. Outside any run, a block works as before, and the outermost `workflow_run` takes the mode in effect when it opens.
+1. **The raise.** Inside an open workflow run, entering a `config.provenance.using` block, or a `config.using` block, that sets a mode other than the run's raises `RuntimeError`, and the message names the run's mode and says to set the mode before the run opens. An assignment to `config.provenance.mode` and a `reset` that would set another mode raise the same error (decided 2026-10-20 in PV's session, decision 1). An open run is any active workflow scope: an explicit or nested `workflow_run`, the scope a call outside every `workflow_run` opens for itself, an evaluation point's scope, and a worker's scope (decision 2). A block that sets the run's own mode is accepted. Outside any run, a block works as before, and the outermost `workflow_run` takes the mode in effect when it opens.
 2. **One home.** The `workflow_run` frame keeps the run's mode, and the Prefect payload stops carrying a copy of it. A Prefect process worker reads the mode from the carried context: a block's value from `config_blocks`, and otherwise the session's value from `session_config_values`; the raise keeps a block's value equal to the run's mode.
 3. **The session snapshot.** PV adds `session_config_values` holding every section but `prefect`, snapshotted when the root call opens, and `in_evaluation_point`. Inside an evaluation point, `_value_in_effect` reads a setting that no block sets from the snapshot, for every section at once, so no section is migrated before another (README directive 7). This is decision M20's behaviour change for worker threads. E3a then only ships the snapshot to process workers.
 4. **Documentation.** `workflow_run`'s docstring and V.8 keep the rule that "a top-level workflow takes the mode in effect when it is entered", and add that a block changing it inside the run raises.

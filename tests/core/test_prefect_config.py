@@ -226,7 +226,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(noop, label="noop", dispatch="sequential")
+        wf = Function(noop, label="noop", executor="sequential")
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
     def test_explicit_task_overrides_global(self, prefect_available):
@@ -242,7 +242,7 @@ class TestEffectiveWorkflowKind:
             noop,
             label="noop",
             workflow_kind=WorkflowKind.TASK,
-            dispatch="sequential",
+            executor="sequential",
         )
 
         assert wf.effective_workflow_kind is WorkflowKind.TASK
@@ -260,7 +260,7 @@ class TestEffectiveWorkflowKind:
             noop,
             label="noop",
             workflow_kind=WorkflowKind.OFF,
-            dispatch="sequential",
+            executor="sequential",
         )
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
@@ -279,7 +279,7 @@ class TestEffectiveWorkflowKind:
             noop,
             label="noop",
             workflow_kind=WorkflowKind.TASK,
-            dispatch="sequential",
+            executor="sequential",
         )
         with pytest.warns(UserWarning, match="Prefect is not installed") as caught:
             kind = wf.effective_workflow_kind
@@ -299,7 +299,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(noop, label="noop", dispatch="sequential")
+        wf = Function(noop, label="noop", executor="sequential")
         with pytest.warns(UserWarning, match="Prefect is not installed"):
             assert wf.effective_workflow_kind is WorkflowKind.OFF
 
@@ -312,7 +312,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(noop, label="noop", dispatch="sequential")
+        wf = Function(noop, label="noop", executor="sequential")
 
         assert wf.effective_workflow_kind is WorkflowKind.FLOW
 
@@ -323,7 +323,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(noop, label="noop", dispatch="sequential")
+        wf = Function(noop, label="noop", executor="sequential")
         config.prefect.workflow_kind = WorkflowKind.OFF
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
@@ -375,7 +375,7 @@ class TestEffectiveWorkflowKind:
         monkeypatch.setattr(engine, "_orchestration_mode", orchestration_mode)
         wf = Function(
             lambda x: x + 1,
-            dispatch="sequential",
+            executor="sequential",
             label="increment",
             workflow_kind=WorkflowKind.TASK,
         )
@@ -403,7 +403,7 @@ class TestWorkflowKindConstructorValidation:
                 noop,
                 label="noop",
                 workflow_kind="task",
-                dispatch="sequential",
+                executor="sequential",
             )
 
     def test_function_rejects_none(self):
@@ -417,7 +417,7 @@ class TestWorkflowKindConstructorValidation:
                 noop,
                 label="noop",
                 workflow_kind=None,
-                dispatch="sequential",
+                executor="sequential",
             )
 
 

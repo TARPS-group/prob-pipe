@@ -58,12 +58,12 @@ def _record_batch(value: Any, call: BoundCall, result: OutputSpec | None) -> Any
     spec = result.term_spec
     if isinstance(spec, BatchSpec):
         spec = _flat_batch_spec(spec)
-    if not isinstance(spec, BatchSpec) or not isinstance(spec.element_spec, RecordSpec):
+    if not isinstance(spec, BatchSpec) or not isinstance(spec.element_spec.term_spec, RecordSpec):
         return value
-    return _batch_class_for(spec.element_spec)(
+    return _batch_class_for(spec.element_spec.term_spec)(
         _raw_record(value),
         tuple(spec.level_names),
-        element_spec=spec.element_spec,
+        element=spec.element_spec.term_spec,
         axes_per_level=_ranks_of(spec.axis_groups),
         label=_call_label(call),
     )

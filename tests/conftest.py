@@ -143,3 +143,20 @@ def _stan_toolchain(tmp_path_factory):
         bridgestan.StanModel(str(probe), make_args=list(_BRIDGESTAN_MAKE_ARGS))
     except Exception as exc:
         pytest.skip(f"Stan compilation unavailable: {exc}")
+
+
+@pytest.fixture
+def probe_attempts(monkeypatch):
+    """Whether each attempt of a JAX traceability probe traced, recorded as the probe runs it."""
+    from probpipe.core import _execution_claims
+
+    attempts: list[bool] = []
+    trace_once = _execution_claims._trace_once
+
+    def recording_trace_once(traced_function, probe_arguments, label):
+        attempt = trace_once(traced_function, probe_arguments, label)
+        attempts.append(attempt.traces)
+        return attempt
+
+    monkeypatch.setattr(_execution_claims, "_trace_once", recording_trace_once)
+    return attempts

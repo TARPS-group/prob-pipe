@@ -11,9 +11,12 @@ from __future__ import annotations
 from abc import ABC
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, NoReturn, Self
 
-from ..core._specs import _has_record_outputs, _root_output_name, _single_output_name
+import jax
+import jax.numpy as jnp
+
+from ..core._specs import _has_record_outputs, _root_output_name
 
 if TYPE_CHECKING:
     from ..core.constraints import Constraint
@@ -23,16 +26,20 @@ if TYPE_CHECKING:
     from ._factored import FactoredConditionalDistribution, FactoredDistribution
     from ._views import _EventRenames
 
+from ..core._execution_claims import Traceability, probe, spec_stand_in
 from ..core._expression import _GENERIC_LAW_SYMBOL, Named, Signature
 from ..core._immutable import transient_memo
-from ..core._record_spec import RecordSpec
+from ..core._record_spec import RecordSpec, _layout_record_mapping
 from ..core._repr import call_repr, format_names, public_class_name, term_repr, type_name
+from ..core._shapes import PathsLike
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
-from ..core._specs import OutputSpec
+from ..core._specs import OutputSpec, _paths_error, _read_paths
 from ..core.constraints import _known_equal
+from ..core.named_tree import _PATH_SEP
 from ..core.provenance import Provenance
+from ..core.record import Record
 from ..core.tracked import Annotated, TrackedTerm, _as_raw_form, _is_raw_form, _TrackedTermMeta
-from ._capabilities import _check_guards
+from ._capabilities import SupportsSampling, SupportsUnnormalizedLogProb, _check_guards
 
 # ---------------------------------------------------------------------------
 # The event spec: completion and class membership
@@ -239,22 +246,85 @@ def _record_default_expression(term: Any) -> None:
         object.__setattr__(term, "_default_expression", term._expression)
 
 
-#: The message for a selection of field paths that names none.
-_EMPTY_SELECTION = "select at least one field path; got an empty tuple"
+def _not_an_event_path(
+    event_spec: OutputSpec,
+    label: str,
+    path: str,
+    requested: tuple[str, ...] = (),
+    *,
+    action: str | None = None,
+) -> KeyError | TypeError:
+    """The error for *path*, which is not an event path of the law *label* over *event_spec*.
 
-
-def _shared_final_names(paths: tuple[str, ...] | list[str]) -> str:
-    """The message that two of the selected *paths* end in the same name.
-
-    The selected fields are named by the last part of each path, so two such
-    paths would give the result two fields of one name.
+    A law over a record lacks that path, which is a ``KeyError`` listing the
+    paths it has; *requested* is the tuple of paths that held *path*, or
+    ``()``. A law over any other value has no paths to look up, which is a
+    ``TypeError`` whose message completes *action*, by default indexing the
+    law. :func:`~probpipe.core._specs._paths_error` words both.
     """
-    finals = [path.rsplit("/", 1)[-1] for path in paths]
-    shared = sorted({final for final in finals if finals.count(final) > 1})
-    names = repr(shared[0]) if len(shared) == 1 else str(shared)
-    return (
-        f"cannot select {list(paths)} together: more than one path ends in {names}, which "
-        f"would give the result two fields of the same name"
+    return _paths_error(
+        event_spec,
+        path,
+        owner=repr(label),
+        values_word="draws",
+        action=action or f"index {label!r} by",
+        requested=requested,
+    )
+
+
+def _read_event_paths(
+    event_spec: OutputSpec,
+    label: str,
+    paths: Any,
+    *,
+    action: str,
+    tuple_given: bool | None = None,
+) -> str | tuple[str, ...]:
+    """*paths*, read as event paths of the law *label* over *event_spec*.
+
+    A law's paths are those of its event spec, so this is the reader of
+    :meth:`OutputSpec.__getitem__ <probpipe.core._specs.OutputSpec.__getitem__>`,
+    with messages that name the law and its draws. One path is returned as it
+    is, and a list of paths in the event's canonical order, whatever order it
+    was given in.
+
+    Parameters
+    ----------
+    event_spec : OutputSpec
+        The law's event spec.
+    label : str
+        The law's label, which the messages name.
+    paths : Any
+        One path, or a list or tuple of paths, as the caller gave them.
+    action : str
+        What the caller was asked to do, which the reader's messages complete.
+    tuple_given : bool or None
+        Whether the caller was given its list of paths as a tuple, which a
+        missing path's message reads; ``None`` reads it from *paths*.
+
+    Returns
+    -------
+    str or tuple of str
+        The one path, or the list of paths in canonical order.
+
+    Raises
+    ------
+    KeyError
+        If the law is over a record and a path is not one of its paths.
+    TypeError
+        If *paths* is neither a string nor a list or tuple of strings, or the
+        law is over a value with no paths, such as an array.
+    ValueError
+        If a path is empty or has an empty name, or a list of paths is empty,
+        names a path twice, or holds a path inside another.
+    """
+    return _read_paths(
+        event_spec,
+        paths,
+        owner=repr(label),
+        values_word="draws",
+        action=action,
+        tuple_given=tuple_given,
     )
 
 
@@ -393,7 +463,7 @@ def _array_leaves(declaration: OutputSpec) -> dict[str, NumericArraySpec]:
             leaves[path] = spec
         elif isinstance(spec, RecordSpec):
             for child, child_spec in spec.children.items():
-                visit(f"{path}/{child}", child_spec)
+                visit(f"{path}{_PATH_SEP}{child}", child_spec)
 
     for output_name, spec in declaration.outputs.items():
         visit(output_name, spec)
@@ -418,26 +488,26 @@ def _check_marker_claims(instance: Any) -> None:
             )
 
 
-#: The engine behind ``*``, installed by the composition module at import.
-_composition_engine: Callable[[Any, Any], Any] | None = None
+#: The engine behind ``&``, installed by the merge module at import.
+_merge_engine: Callable[[Any, Any], Any] | None = None
 
 
-def _install_composition(engine: Callable[[Any, Any], Any]) -> None:
-    """Install the engine that ``*`` delegates to on both distribution kinds.
+def _install_merge(engine: Callable[[Any, Any], Any]) -> None:
+    """Install the engine that ``&`` delegates to on both distribution kinds.
 
-    Called once, by the composition module at import, so this module never
+    Called once, by the merge module at import, so this module never
     imports the module that imports it.
     """
-    global _composition_engine
-    _composition_engine = engine
+    global _merge_engine
+    _merge_engine = engine
 
 
-#: The law that ``with_path_names`` returns, installed by the views module at import.
+#: The law that ``rename`` returns, installed by the views module at import.
 _renamed_law_factory: Callable[[Any, OutputSpec, Mapping[str, str]], Any] | None = None
 
 
 def _install_renamed_law(factory: Callable[[Any, OutputSpec, Mapping[str, str]], Any]) -> None:
-    """Install the factory of the law whose draws carry the names ``with_path_names`` gives.
+    """Install the factory of the law whose draws carry the names ``rename`` gives.
 
     Called once, by the views module at import, so this module never imports the
     module that imports it.
@@ -468,18 +538,18 @@ def _recorded_copy(copy: Any, law: Any) -> Any:
     return _copy_source_recorder(copy, law, {})
 
 
-#: The field view that indexing returns, installed by the views module at import.
-_field_view_factory: Callable[[Any, Any], Any] | None = None
+#: The coupled marginal that indexing returns, installed by the views module at import.
+_coupled_marginal_factory: Callable[[Any, Any], Any] | None = None
 
 
-def _install_field_view(factory: Callable[[Any, Any], Any]) -> None:
-    """Install the factory of the field view that ``d[path]`` returns.
+def _install_coupled_marginal(factory: Callable[[Any, Any], Any]) -> None:
+    """Install the factory of the coupled marginal that ``d[path]`` returns.
 
     Called once, by the views module at import, so this module never imports the
     module that imports it.
     """
-    global _field_view_factory
-    _field_view_factory = factory
+    global _coupled_marginal_factory
+    _coupled_marginal_factory = factory
 
 
 #: Indexing a ``DistributionBatch`` returns a copy of the stored law under a derived
@@ -488,7 +558,7 @@ def _install_field_view(factory: Callable[[Any, Any], Any]) -> None:
 #: (V.5). Detaching the copy deletes the attribute.
 _ELEMENT_SOURCE = "_element_source"
 
-#: ``with_path_names``, ``with_label``, ``with_dim_names``, and ``with_dim_sizes`` set
+#: ``rename``, ``with_label``, ``with_dim_names``, and ``with_dim_sizes`` set
 #: this attribute of each law they return that does not hold the law it is made from
 #: as its parent. The value is the pair of that law and the renames from its
 #: event spec to the result's, which are the identity for a relabeling and for a
@@ -532,7 +602,7 @@ def _cached_raw(term: Any, build: Callable[[], Any]) -> Any:
     Returns
     -------
     Any
-        The raw form, such as a detached law or a backend object.
+        The raw form, such as a standalone law or a backend object.
     """
     if _is_raw_form(term):
         return term
@@ -567,16 +637,30 @@ def _keeps_fixed_paths(term: Any, source: Any) -> Any:
     return term
 
 
-def _compose_operands(left: Any, right: Any) -> Any:
+def _merge_operands(left: Any, right: Any) -> Any:
     """*left* ``*`` *right* through the installed engine.
 
     The engine returns ``NotImplemented`` for an operand that is neither
     distribution kind, so Python tries the reflected operation and a scalar
     operand can scale.
     """
-    if _composition_engine is None:
-        raise RuntimeError("the composition engine is not installed; import probpipe")
-    return _composition_engine(left, right)
+    if _merge_engine is None:
+        raise RuntimeError("the merge engine is not installed; import probpipe")
+    return _merge_engine(left, right)
+
+
+def _refuse_distribution_multiplication(other: object) -> Any:
+    """Refuse multiplication by a law or a conditional distribution."""
+    from ._conditional import ConditionalDistribution
+
+    if isinstance(other, (Distribution, ConditionalDistribution)):
+        raise TypeError("cannot multiply distributions with *. To merge them, write lik & prior")
+    return NotImplemented
+
+
+def _refuse_distribution_truth_value() -> NoReturn:
+    """Refuse the truth value shared by laws and conditional distributions."""
+    raise TypeError("a distribution has no truth value. To merge distributions, write a & b")
 
 
 class _DistributionMeta(_TrackedTermMeta):
@@ -638,7 +722,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     name of its event's output first and an optional ``label=``, which defaults to
     the family's class name, so ``Normal("mu", 0.0, 1.0)`` is labeled
     ``Normal`` over the output ``mu``; any other law's label defaults to
-    ``ℙ``, and a joint that ``*`` composes is labeled by its operands' labels.
+    ``ℙ``, and a joint that ``*`` merges is labeled by its operands' labels.
     Every transform preserves the label; only ``with_label`` replaces it. ``str(d)``
     returns the law's :attr:`notation`, its label followed by its signature, as
     ``prior(mu)``, and the repr reads as a call of the constructor, with
@@ -730,7 +814,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         A law is represented by itself, so its raw form is a copy that shares
         its representation and carries no provenance, no annotations, and no
         reference to a container or a parent, such as a batch it was an element
-        of or a law it is a copy of. A field view returns the raw form of its
+        of or a law it is a copy of. A coupled marginal returns the raw form of its
         parent's marginal at its path instead, and a backend adapter its
         wrapped backend distribution.
 
@@ -779,6 +863,41 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
                 f"{sorted(free)}; bind them with with_dim_sizes"
             )
         return spec.shape
+
+    def _traceability(self) -> Traceability:
+        """Whether JAX can trace this law's density, or its sampler when it has none (V.13).
+
+        It is traceable, embeddable, or host-only, and inference methods read it
+        instead of tracing the law. The value is derived from the law's parts
+        the first time it is read and kept for the law's life: a family is
+        traceable, a law built from other laws or kernels takes the least
+        permissive of theirs, and any other law is probed once, as
+        :meth:`_derived_traceability` states.
+
+        Returns
+        -------
+        Traceability
+            The law's traceability.
+        """
+        memo = transient_memo(self)
+        if "traceability" not in memo:
+            memo["traceability"] = self._derived_traceability()
+        return memo["traceability"]
+
+    def _derived_traceability(self) -> Traceability:
+        """The traceability of a law that states none: its density probed at one value of its event.
+
+        A dimension not yet bound stands in with size one. A law without a
+        density probes its sampler at one key instead, and one whose event has
+        no stand-in, such as a value that is not an array, is host-only. A subclass whose methods are JAX code, or are built from
+        parts that state their traceability, overrides this.
+
+        Returns
+        -------
+        Traceability
+            ``TRACEABLE`` when the probe traced, and ``HOST_ONLY`` otherwise.
+        """
+        return _probed_law_traceability(self)
 
     def __getattr__(self, name: str) -> Any:
         """Resolve a view of :class:`NumericDistribution` for a numeric law of another class.
@@ -898,12 +1017,10 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         )
         return _recorded_copy(copy, self)
 
-    def with_path_names(
-        self, mapping: Mapping[str, str] | None = None, /, **kwargs: str
-    ) -> Distribution:
+    def rename(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Distribution:
         """Rename or move nodes of the event spec by their paths, ``old -> new``.
 
-        The result is this law with :meth:`OutputSpec.with_path_names` applied to
+        The result is this law with :meth:`OutputSpec.rename` applied to
         its event spec. A path starts with an output's name, and the form is
         kept, so a whole term's output is renamed in place with the term's
         fields under it. The law is unchanged: a draw of the result is a draw of
@@ -941,9 +1058,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         KeyError
             If a key is not a path of the event spec.
         ValueError
-            As :meth:`OutputSpec.with_path_names` raises it.
+            As :meth:`OutputSpec.rename` raises it.
         """
-        renamed = self.event_spec.with_path_names(mapping, **kwargs)
+        renamed = self.event_spec.rename(mapping, **kwargs)
         renames = {**dict(mapping or {}), **kwargs}
         if _renamed_law_factory is None:
             raise RuntimeError("the renamed law is not installed; import probpipe")
@@ -952,7 +1069,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     def _renamed_in_family(self, event: _EventRenames) -> Distribution | None:
         """The member of this law's family that holds its values under *event*'s new paths, or None.
 
-        ``with_path_names`` calls this for a rename that changes the path of a
+        ``rename`` calls this for a rename that changes the path of a
         field of a record draw, and returns a law that renames this one's values
         at its boundary when it gives None. A family whose parameters carry the
         event's paths overrides it to return the member that declares
@@ -980,60 +1097,93 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     # a law iterable through it.
     __iter__ = None
 
-    def __getitem__(self, key: str | tuple[str, ...]) -> Distribution:
-        """The law itself at a whole term's output, or the field view at another event path.
+    def __getitem__(self, key: PathsLike) -> Distribution:
+        """The law itself at a whole term's output, or the coupled marginal at a path or a list of paths.
 
         A whole-term law is itself under its output, so ``d[name]`` returns
         ``d``; the output is fixed at construction, so after ``with_label`` the
         law is still addressed by it. Any other event path, an output that is a
         record's field or a path below a whole record's output, gives the
-        ``FieldView`` of the node there, which holds a reference to this law, and
-        a tuple of paths gives the view of their selection.
+        ``CoupledMarginal`` of the node there, which holds a reference to this law and
+        gives the node whole under the path's last name. A list or a tuple of
+        paths gives the view over the record that keeps each node at its own
+        path, in this law's order, so ``grouped["a", "g/c"]`` draws records
+        ``{a, g: {c}}``. A tuple is a list of paths; a nested path is written
+        with ``/``.
 
         Parameters
         ----------
-        key : str or tuple of str
-            An event path, which starts with an output's name, or a tuple of event
+        key : str, or list or tuple of str
+            An event path, which starts with an output's name, or a list of event
             paths to view jointly.
 
         Returns
         -------
         Distribution
-            This law itself, or a ``FieldView`` of it.
+            This law itself, or a ``CoupledMarginal`` of it.
 
         Raises
         ------
         KeyError
-            If *key* is not an event path of this law, or names one that is not.
+            If this law is over a record and a path is not one of its paths.
         TypeError
-            If *key* is neither a string nor a tuple of strings.
+            If *key* is neither a string nor a list or tuple of strings, or
+            this law is over a value with no paths, such as an array.
         ValueError
-            If *key* is an empty tuple, or two selected paths share their final
-            segment.
+            If a path is empty or has an empty name, or a list of paths is
+            empty, names a path twice, or holds a path inside another.
         """
-        if isinstance(key, str) and key == _single_output_name(self.event_spec):
+        read_paths = _read_event_paths(
+            self.event_spec, self.label, key, action=f"index {self.label!r} by"
+        )
+        if read_paths == _root_output_name(self.event_spec):
             return self
-        if _field_view_factory is None:
-            raise RuntimeError("the field view is not installed; import probpipe")
-        try:
-            return _field_view_factory(self, key)
-        except KeyError as error:
-            requested = key if isinstance(key, tuple) else (key,)
-            if len(error.args) == 1 and error.args[0] in requested:
-                raise KeyError(
-                    f"{error.args[0]!r} is not an event path of {self.label!r}; its fields: "
-                    f"{list(self.event_spec.outputs)}"
-                ) from None
-            raise
+        if _coupled_marginal_factory is None:
+            raise RuntimeError("the coupled marginal is not installed; import probpipe")
+        return _coupled_marginal_factory(self, read_paths)
 
-    # -- composition ------------------------------------------------------------
+    def __contains__(self, path: object) -> bool:
+        """Whether *path* is a ``str`` and ``self[path]`` gives a law: an event path, or a whole term's output."""
+        return path in self.event_spec
 
-    def __mul__(
+    def __mul__(self, other: object) -> Any:
+        """Refuse ``*`` between distributions. Use ``&`` to merge them.
+
+        Parameters
+        ----------
+        other : object
+            The right operand.
+
+        Returns
+        -------
+        Any
+            ``NotImplemented`` for an operand of another kind.
+
+        Raises
+        ------
+        TypeError
+            If *other* is a distribution or a conditional distribution.
+        """
+        return _refuse_distribution_multiplication(other)
+
+    def __bool__(self) -> NoReturn:
+        """Refuse a truth value, so ``a and b`` raises. Use ``a & b`` to merge.
+
+        Raises
+        ------
+        TypeError
+            Always: a distribution has no truth value.
+        """
+        _refuse_distribution_truth_value()
+
+    # -- merge ------------------------------------------------------------
+
+    def __and__(
         self, other: Distribution | ConditionalDistribution
     ) -> FactoredDistribution | FactoredConditionalDistribution:
-        """The joint of this law and *other*, composed conditional-first.
+        """The joint of this law and *other*, merged conditional-first.
 
-        The left operand may condition on what the right produces, so ``lik *
+        The left operand may condition on what the right produces, so ``lik &
         prior`` reads as ``p(y | β) · p(β)``. The result is a
         ``FactoredDistribution`` when no given is left unmet and a
         ``FactoredConditionalDistribution`` otherwise, flattened over the
@@ -1055,11 +1205,14 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
         Raises
         ------
+        TypeError
+            If an operand's draws are distributions or batches, which have no
+            outputs to merge by name, until they are wrapped under a name.
         ValueError
             If an output is produced twice, the right operand consumes an
             output the left produces, or matched specs do not unify.
         """
-        return _compose_operands(self, other)
+        return _merge_operands(self, other)
 
     # -- keyword-form value construction ------------------------------------
 
@@ -1420,7 +1573,7 @@ def _unify_declarations(
         If the form or the name of a whole term's output differs, or the specs do not
         unify in the shared scope *bindings*.
     """
-    wanted, found = _single_output_name(expected), _single_output_name(actual)
+    wanted, found = _root_output_name(expected), _root_output_name(actual)
     if (wanted is None) != (found is None):
         raise ValueError(
             f"{path} declares {_event_form(wanted)}, but the law declares {_event_form(found)}"
@@ -1432,7 +1585,7 @@ def _unify_declarations(
         expected.term_spec,
         actual.term_spec,
         bindings,
-        path if wanted is None else f"{path}/{wanted}",
+        path if wanted is None else f"{path}{_PATH_SEP}{wanted}",
     )
 
 
@@ -1527,3 +1680,43 @@ class DistributionSpec(TermSpec):
         except ValueError:
             return False
         return True
+
+
+def _value_at_declared_kind(spec: TermSpec, record_label: str, value: Any) -> Any:
+    """*value* at the kind *spec* declares, as a function's body receives a draw.
+
+    A value of a record spec is a ``Record``, labeled *record_label* when it
+    is built here, and a value of an array spec is an array; a value of
+    another kind is passed as it is.
+    """
+    if isinstance(spec, RecordSpec):
+        return (
+            value
+            if isinstance(value, Record)
+            else Record(_layout_record_mapping(spec, value), label=record_label)
+        )
+    if isinstance(spec, NumericArraySpec):
+        return jnp.asarray(value)
+    return value
+
+
+def _probed_law_traceability(law: Distribution) -> Traceability:
+    """*law*'s density traced at a stand-in of one value of its event, or its sampler at one key."""
+    spec = law.event_spec.term_spec
+    stand_in = spec_stand_in(spec, unbound_size=1)
+    if isinstance(law, SupportsUnnormalizedLogProb) and stand_in is not None:
+        probe_result = probe(
+            None,
+            lambda value: law._unnormalized_log_prob(
+                _value_at_declared_kind(spec, law.label, value)
+            ),
+            stand_in,
+            label=law.label,
+        )
+    elif isinstance(law, SupportsSampling):
+        probe_result = probe(
+            None, lambda key: law._sample(key, sample_shape=()), jax.random.key(0), label=law.label
+        )
+    else:
+        return Traceability.HOST_ONLY
+    return probe_result.traceability

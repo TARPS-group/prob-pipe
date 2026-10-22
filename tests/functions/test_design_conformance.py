@@ -15,7 +15,9 @@ from pathlib import Path
 import pytest
 
 import probpipe.functions as functions
+import probpipe.testing as testing
 import probpipe.values as values
+from probpipe.core import _evaluation_points, _execution_claims, _executors
 from probpipe.core import config as _config
 from probpipe.functions import (
     _call,
@@ -51,6 +53,7 @@ _SECTIONS = (
     "V.10",
     "V.11",
     "V.12",
+    "V.13",
 )
 
 #: The modules a declared name is looked up in, first match winning. The
@@ -65,15 +68,35 @@ _MODULES = (
     _replay,
     _reparameterization,
     _config,
+    _execution_claims,
+    _evaluation_points,
+    _executors,
+    testing,
 )
 
 #: Names the code blocks define as worked examples rather than as declarations.
-_EXAMPLES = frozenset({"growth", "predict", "predict_impl", "rate"})
+_EXAMPLES = frozenset(
+    {
+        "growth",
+        "predict",
+        "predict_impl",
+        "rate",
+        "ricker",
+        "forward",
+        "forward_batch",
+        "forward_with_adjoint",
+    }
+)
+
+_AWAITS_REPORTING = "check's report of how each callable's evaluation points will run (V.9)"
 
 #: Declarations the implementation does not match yet, with the change each awaits.
 _PENDING: dict[str, str] = {
     "Function": "III.3 declares [] by paths, output, without, rename, and & on a Function; "
     "the code has none of them",
+    "CallReport": _AWAITS_REPORTING,
+    "EvaluationReport": _AWAITS_REPORTING,
+    "ExecutionReport": _AWAITS_REPORTING,
 }
 
 #: Public names of the engine that the prose declares rather than a code block.

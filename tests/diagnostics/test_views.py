@@ -20,7 +20,7 @@ from probpipe.diagnostics._views import (
     PPCView,
 )
 from probpipe.families import PoissonFamily, glm_likelihood
-from probpipe.inference._approximate_distribution import make_posterior
+from probpipe.inference._approximate_distribution import _posterior_from_chains
 from probpipe.inference._inference_utils import build_mcmc_datatree
 
 # ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ def poisson_regression():
     """A Poisson regression of 20 counts on two coefficients, with an inference result.
 
     The fixture is the tuple ``(likelihood, model, data, posterior)``, where
-    *model* is ``likelihood * prior`` and *posterior* is an inference result of
+    *model* is ``likelihood & prior`` and *posterior* is an inference result of
     two chains of 500 seeded draws whose annotations hold the ArviZ groups an
     MCMC method records.
     """
@@ -44,14 +44,14 @@ def poisson_regression():
     likelihood = glm_likelihood("y", PoissonFamily(), X=design)
     prior = Normal("beta", jnp.zeros(2), jnp.ones(2))
     chains = [rng.normal([0.5, 0.3], 0.1, size=(500, 2)).astype(np.float32) for _ in range(2)]
-    posterior = make_posterior(
+    posterior = _posterior_from_chains(
         chains,
         parents=(prior,),
         method="test",
         annotations=build_mcmc_datatree(chains, {"diverging": np.zeros((2, 500), dtype=bool)}),
         event_spec=OutputSpec(beta=NumericArraySpec((2,))),
     )
-    return likelihood, likelihood * prior, {"y": y}, posterior
+    return likelihood, (likelihood & prior), {"y": y}, posterior
 
 
 def total_count(y: jax.Array) -> jax.Array:

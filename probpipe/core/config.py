@@ -34,46 +34,109 @@ __all__ = [
     "ProvenanceConfig",
     "ProvenanceMode",
     "SamplingConfig",
+    "UnshippableSettingError",
     "WorkflowKind",
     "config",
 ]
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
+from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar, Literal, Self
 
 from .._messages import unknown_names
-from ._call_context import _under_call_context, current_call_context
+from ._call_context import (
+    _TRACED_CALL_TOKEN,
+    _UnclassifiedSettingError,
+    _under_call_context,
+    _UnshippableSetting,
+    current_call_context,
+)
 from ._expression import _STORED_DEPTH
 
 # ---------------------------------------------------------------------------
 # Sections and their blocks
 # ---------------------------------------------------------------------------
 
+#: The two kinds of ``config`` setting, which :class:`Config` defines.
+_SettingKind = Literal["static", "inert"]
+
+
+@dataclass(frozen=True)
+class _Setting:
+    """How a section checks one of its settings, and the setting's kind.
+
+    Attributes
+    ----------
+    check : Callable
+        Takes the value and the setting's name, and returns the value or
+        raises as an assignment raises.
+    kind : {"static", "inert"}
+        ``"static"`` for a setting that can change what a compiled JAX program
+        computes, whose value is then part of the program's cache key, and
+        ``"inert"`` for one that changes no computed value.
+
+    Raises
+    ------
+    ValueError
+        On construction, if *kind* is neither ``"static"`` nor ``"inert"``.
+    """
+
+    check: Callable[[Any, str], Any]
+    kind: _SettingKind
+
+    def __post_init__(self) -> None:
+        if self.kind not in ("static", "inert"):
+            raise ValueError(
+                f"a config setting's kind must be 'static' or 'inert', got {self.kind!r}"
+            )
+
 
 class _Section:
-    """A section of ``config``: named settings, each with a session value and a check.
+    """A section of ``config``: named settings, each with a session value, a check, and a kind.
 
     Reading a setting returns the value that the innermost active ``using``
-    block sets for it, and otherwise the session's value. Assigning a setting
-    checks the value and sets the session's value, which an active block that
-    sets the setting overrides until it exits.
+    block sets for it, and otherwise the session's value: inside the work a
+    call dispatches, the session's value when the outermost call opened.
+    Assigning a setting checks the value and sets the session's value, which
+    an active block that sets the setting overrides until it exits.
     """
 
     #: The section's name in ``config``, which the blocks are keyed by.
     _name: ClassVar[str]
 
-    #: The check of each setting, by name: it takes the value and the setting's
-    #: name, and returns the value or raises as an assignment raises.
-    _checks: ClassVar[Mapping[str, Callable[[Any, str], Any]]]
+    #: Whether the work a call dispatches reads the section's session values
+    #: as they were when the outermost call opened, rather than as they are.
+    _is_in_session_snapshot: ClassVar[bool] = True
+
+    #: The check and the kind of each setting, by name.
+    _settings: ClassVar[Mapping[str, _Setting]]
 
     def _value_in_effect(self, setting_name: str) -> Any:
-        """The value of *setting_name* that the innermost block sets, or else the session's value."""
-        section_block = current_call_context().config_blocks.get(self._name)
+        """The value of *setting_name* that the innermost block sets, or else the session's value.
+
+        Inside an evaluation point the session's value is the one in the
+        snapshot that the root call took, when it holds the section.
+        """
+        if _TRACED_CALL_TOKEN.get() is not None and setting_name not in self._settings:
+            raise _UnclassifiedSettingError(
+                f"config setting {self._name}.{setting_name} has no declared kind. "
+                "Declare it static or inert before reading it while ProbPipe traces"
+            )
+        call_context = current_call_context()
+        section_block = call_context.config_blocks.get(self._name)
         if section_block is not None and setting_name in section_block:
-            return section_block[setting_name]
+            return _shipped_value(section_block[setting_name])
+        if call_context.in_evaluation_point:
+            section_snapshot = call_context.session_config_values.get(self._name)
+            if section_snapshot is not None:
+                return _shipped_value(section_snapshot[setting_name])
         return getattr(self, f"_{setting_name}")
+
+    def _session_values(self) -> dict[str, Any]:
+        """The session's value of each setting of the section, by setting name."""
+        return {setting_name: getattr(self, f"_{setting_name}") for setting_name in self._settings}
 
     def _checked_block_values(
         self, block_settings: Mapping[str, Any], caller: str
@@ -101,14 +164,14 @@ class _Section:
             As the setting's assignment raises.
         """
         unknown_setting_names = [
-            setting_name for setting_name in block_settings if setting_name not in self._checks
+            setting_name for setting_name in block_settings if setting_name not in self._settings
         ]
         if unknown_setting_names:
             raise TypeError(
-                f"{caller}: {unknown_names('setting', unknown_setting_names, self._checks)}"
+                f"{caller}: {unknown_names('setting', unknown_setting_names, self._settings)}"
             )
         return {
-            setting_name: self._checks[setting_name](setting_value, setting_name)
+            setting_name: self._settings[setting_name].check(setting_value, setting_name)
             for setting_name, setting_value in block_settings.items()
         }
 
@@ -118,6 +181,7 @@ class _Section:
         The block's values apply to every read inside it, by the calls a
         ``Function`` dispatches to worker threads or Prefect workers included,
         and the previous values apply again when it exits, an error included.
+        Inside a workflow run, a block cannot change the provenance mode.
         Blocks nest, and an inner block's value wins. Blocks close in the
         reverse order of opening, and :class:`Config` states what happens when
         a generator that holds a block open breaks that order. A view's own control,
@@ -143,10 +207,13 @@ class _Section:
         ValueError
             If a value is inadmissible, as an assignment raises.
         RuntimeError
-            On exit, if the block closes out of order, as :class:`Config` states.
+            On entry, if the block sets a provenance mode other than that of the
+            workflow run open in this thread, naming the run's mode. On exit,
+            if the block closes out of order, as :class:`Config` states.
         """
-        checked_block_values = self._checked_block_values(settings, f"config.{self._name}.using()")
-        return _config_block({self._name: checked_block_values}, yields=self)
+        caller = f"config.{self._name}.using()"
+        checked_block_values = self._checked_block_values(settings, caller)
+        return _config_block({self._name: checked_block_values}, caller=caller, yields=self)
 
 
 # ---------------------------------------------------------------------------
@@ -269,8 +336,14 @@ class PrefectConfig(_Section):
     """
 
     _name = "prefect"
-    _checks = MappingProxyType(
-        {"workflow_kind": _checked_workflow_kind, "task_runner": lambda value, source: value}
+    # A task runner need not pickle, so the work a call dispatches reads the
+    # section's current values rather than a snapshot that travels with it.
+    _is_in_session_snapshot = False
+    _settings = MappingProxyType(
+        {
+            "workflow_kind": _Setting(_checked_workflow_kind, "inert"),
+            "task_runner": _Setting(lambda value, source: value, "inert"),
+        }
     )
 
     def __init__(self) -> None:
@@ -288,7 +361,11 @@ class PrefectConfig(_Section):
 
     @property
     def workflow_kind(self) -> WorkflowKind:
-        """Current global orchestration mode."""
+        """Current global orchestration mode.
+
+        An inert setting: it changes no computed value, so no compiled JAX
+        program depends on it.
+        """
         return self._value_in_effect("workflow_kind")
 
     @workflow_kind.setter
@@ -297,7 +374,11 @@ class PrefectConfig(_Section):
 
     @property
     def task_runner(self) -> Any:
-        """Explicit task runner, or ``None`` for auto-detection."""
+        """Explicit task runner, or ``None`` for auto-detection.
+
+        An inert setting: it changes no computed value, so no compiled JAX
+        program depends on it.
+        """
         return self._value_in_effect("task_runner")
 
     @task_runner.setter
@@ -404,12 +485,24 @@ class ProvenanceConfig(_Section):
 
     The initial mode can also be set via the ``PROBPIPE_PROVENANCE_MODE``
     environment variable (``full``, ``lightweight``, or ``off``,
-    case-insensitive). A top-level workflow takes the mode in effect when it
-    is entered.
+    case-insensitive).
+
+    The mode is fixed for a workflow run. The outermost ``workflow_run`` takes
+    the mode in effect when it is entered, and a call outside every
+    ``workflow_run`` takes it when the call opens. Inside the run, a ``using``
+    block, an assignment, or a ``reset`` that would set another mode raises
+    ``RuntimeError``, naming the run's mode; one that sets the run's own mode
+    is accepted::
+
+        with probpipe.workflow_run(seed=0):
+            with probpipe.config.provenance.using(mode=ProvenanceMode.OFF):  # raises
+                ...
+
+    Set the mode before the run opens instead.
     """
 
     _name = "provenance"
-    _checks = MappingProxyType({"mode": _checked_provenance_mode})
+    _settings = MappingProxyType({"mode": _Setting(_checked_provenance_mode, "inert")})
 
     def __init__(self) -> None:
         self.reset()
@@ -418,17 +511,37 @@ class ProvenanceConfig(_Section):
         """Restore the session's mode to its default (re-reading the env var).
 
         An active ``using`` block that sets the mode still applies until it exits.
+
+        Raises
+        ------
+        RuntimeError
+            Inside a workflow run, if the default differs from the run's mode.
         """
-        self._mode: ProvenanceMode = _initial_provenance_mode()
+        initial_mode = _initial_provenance_mode()
+        _refuse_changing_the_run_provenance_mode(initial_mode, "config.provenance.reset()")
+        self._mode: ProvenanceMode = initial_mode
 
     @property
     def mode(self) -> ProvenanceMode:
-        """Current global provenance tracking mode."""
+        """Current global provenance tracking mode.
+
+        An inert setting: it changes no computed value, so no compiled JAX
+        program depends on it.
+
+        Raises
+        ------
+        TypeError
+            On assignment of a value that is not a ``ProvenanceMode``.
+        RuntimeError
+            On assignment inside a workflow run of a mode other than the run's.
+        """
         return self._value_in_effect("mode")
 
     @mode.setter
     def mode(self, value: ProvenanceMode) -> None:
-        self._mode = _checked_provenance_mode(value, "mode")
+        checked_mode = _checked_provenance_mode(value, "mode")
+        _refuse_changing_the_run_provenance_mode(checked_mode, "config.provenance.mode")
+        self._mode = checked_mode
 
 
 # ---------------------------------------------------------------------------
@@ -527,8 +640,8 @@ class NotationConfig(_Section):
     """
 
     _name = "notation"
-    _checks = MappingProxyType(
-        {"max_depth": lambda value, source: _checked_max_depth(value, source)}
+    _settings = MappingProxyType(
+        {"max_depth": _Setting(lambda value, source: _checked_max_depth(value, source), "inert")}
     )
 
     def __init__(self) -> None:
@@ -569,6 +682,9 @@ class NotationConfig(_Section):
         which shows so at any setting, with a ``UserWarning`` that says no
         setting shows it. A loop that adds to a value therefore gives, every 63
         steps, a label that shows the last step alone, as ``… + 1``.
+
+        An inert setting: it changes no computed value, so no compiled JAX
+        program depends on it.
 
         Raises
         ------
@@ -681,7 +797,12 @@ class SamplingConfig(_Section):
     """
 
     _name = "sampling"
-    _checks = MappingProxyType({"max_evaluations": _checked_count, "num_samples": _checked_count})
+    _settings = MappingProxyType(
+        {
+            "max_evaluations": _Setting(_checked_count, "static"),
+            "num_samples": _Setting(_checked_count, "static"),
+        }
+    )
 
     def __init__(self) -> None:
         self.reset()
@@ -709,6 +830,10 @@ class SamplingConfig(_Section):
 
         :class:`~probpipe.Function` states how a lift spends the count.
 
+        A static setting: a JAX program that ProbPipe compiles for a call is
+        compiled for the value in effect, and a call under another value
+        compiles its own.
+
         Raises
         ------
         TypeError
@@ -728,6 +853,10 @@ class SamplingConfig(_Section):
 
         A converter that draws, such as moment matching, takes the converting
         call's ``num_samples`` unless its own ``num_samples`` option is given.
+
+        A static setting: a JAX program that ProbPipe compiles for a call is
+        compiled for the value in effect, and a call under another value
+        compiles its own.
 
         Raises
         ------
@@ -774,7 +903,12 @@ class Config:
     configured copy of ``f``, while ``config.using(...)`` is a context manager.
     A block applies in the thread that opens it and in the workers that
     ``Function`` calls inside it dispatch to, whether threads or Prefect
-    workers, and not in another thread. Assigning a setting inside a block sets
+    workers, and not in another thread. The work a call dispatches reads the
+    session's values as they were when the outermost call opened, except
+    those of ``prefect``, so a session assignment made while the call runs
+    reaches none of that work. Inside a workflow run, a block or an
+    assignment cannot change the provenance mode, as :class:`ProvenanceConfig`
+    states. Assigning a setting inside a block sets
     the session's value, which applies once the block exits, and
     :meth:`reset` inside a block restores the session's values while the block
     still applies. Blocks close in the reverse order of opening, and a block
@@ -790,6 +924,20 @@ class Config:
     when it opens. ProbPipe code
     inside a user's own ``jax.jit`` keeps the values in effect while JAX traced
     it.
+
+    Each setting is one of two kinds, which its docstring states:
+
+    1. A **static** setting can change what a compiled JAX program computes,
+       because ProbPipe code reads it while JAX traces the program, as the
+       size of a Monte Carlo estimate inside a kernel. A JAX program that
+       ProbPipe compiles for a call is compiled for the values of the static
+       settings in effect, so a call under other values compiles its own and
+       never reuses one compiled under the first. The static settings are
+       ``sampling.max_evaluations`` and ``sampling.num_samples``.
+    2. An **inert** setting changes no computed value, such as how a label
+       renders or whether provenance is recorded, so no compiled JAX program
+       depends on it. Every setting of ``notation``, ``provenance``, and
+       ``prefect`` is inert.
     """
 
     def __init__(self) -> None:
@@ -849,7 +997,9 @@ class Config:
         ValueError
             As a section's ``using`` raises.
         RuntimeError
-            On exit, if the block closes out of order, as the class docstring states.
+            On entry, if the block sets a provenance mode other than that of the
+            workflow run open in this thread. On exit, if the block closes out
+            of order, as the class docstring states.
         """
         unknown = [name for name in sections if name not in self._sections]
         if unknown:
@@ -864,7 +1014,7 @@ class Config:
             checked_config_values[name] = self._sections[name]._checked_block_values(
                 settings, f"config.using({name}=...)"
             )
-        return _config_block(checked_config_values, yields=self)
+        return _config_block(checked_config_values, caller="config.using()", yields=self)
 
     def reset(self) -> None:
         """Restore every section's session settings to their defaults, reading the environment variables again.
@@ -876,14 +1026,45 @@ class Config:
         ValueError
             If an environment variable that a section reads is set to an
             inadmissible value, as each section's ``reset`` states.
+        RuntimeError
+            Inside a workflow run, if the default provenance mode differs from
+            the run's mode. No section is reset then.
         """
+        _refuse_changing_the_run_provenance_mode(_initial_provenance_mode(), "config.reset()")
         for section in self._sections.values():
             section.reset()
 
+    def _session_values_snapshot(self) -> dict[str, dict[str, Any]]:
+        """The session's values of every section but ``prefect``, by section name and then setting name.
 
-# Module-level singleton
-config = Config()
-"""The global settings of ProbPipe, an instance of ``Config``."""
+        A root call takes this snapshot when it opens, and the work it
+        dispatches reads it in place of the session's current values.
+        """
+        return {
+            section_name: section._session_values()
+            for section_name, section in self._sections.items()
+            if section._is_in_session_snapshot
+        }
+
+
+def _static_config_values_in_effect() -> tuple[tuple[str, tuple[tuple[str, Any], ...]], ...]:
+    """The value in effect of each static setting, by section name and then setting name.
+
+    Pairs are sorted by name, so equal values give equal tuples, which a
+    compiled JAX program's cache key holds.
+    """
+    return tuple(
+        (
+            section_name,
+            tuple(
+                (setting_name, section._value_in_effect(setting_name))
+                for setting_name, setting in sorted(section._settings.items())
+                if setting.kind == "static"
+            ),
+        )
+        for section_name, section in sorted(config._sections.items())
+        if any(setting.kind == "static" for setting in section._settings.values())
+    )
 
 
 def _num_samples_in_effect() -> int:
@@ -895,12 +1076,94 @@ def _num_samples_in_effect() -> int:
 
 
 @contextmanager
-def _config_block(config_values: Mapping[str, Mapping[str, Any]], *, yields: Any) -> Iterator[Any]:
+def _config_block(
+    config_values: Mapping[str, Mapping[str, Any]], *, caller: str, yields: Any
+) -> Iterator[Any]:
     """A block in which the checked *config_values* of each named section apply, yielding *yields*.
 
     The block installs the call context in effect with one more ``config``
     block, so its values merge over those of the enclosing blocks, and the
-    enclosing values apply again when it exits, an error included.
+    enclosing values apply again when it exits, an error included. A block
+    that would change the provenance mode of the open workflow run raises
+    when it is entered, before it installs anything, with a message that opens
+    with *caller*, the ``using`` call that opened the block.
     """
+    block_provenance_mode = config_values.get("provenance", {}).get("mode")
+    if block_provenance_mode is not None:
+        _refuse_changing_the_run_provenance_mode(block_provenance_mode, caller)
     with _under_call_context(current_call_context().with_config_block(config_values)):
         yield yields
+
+
+def _no_open_run_provenance_mode() -> ProvenanceMode | None:
+    """No workflow run is open, as before the workflow scopes register their reader."""
+    return None
+
+
+#: Reads the provenance mode of the workflow run open in the running thread,
+#: or ``None`` outside every run. The workflow scopes are defined above
+#: ``core``, so they register the reader when they are imported.
+_open_run_provenance_mode: Callable[[], ProvenanceMode | None] = _no_open_run_provenance_mode
+
+
+def _register_open_run_provenance_mode_reader(
+    open_run_provenance_mode: Callable[[], ProvenanceMode | None],
+) -> None:
+    """Register the reader of the open workflow run's provenance mode, which the workflow scopes define."""
+    global _open_run_provenance_mode
+    _open_run_provenance_mode = open_run_provenance_mode
+
+
+def _refuse_changing_the_run_provenance_mode(requested_mode: ProvenanceMode, caller: str) -> None:
+    """Raise if *caller* would set *requested_mode* inside a workflow run fixed to another mode.
+
+    Parameters
+    ----------
+    requested_mode : ProvenanceMode
+        The mode that a block, an assignment, or a reset would set.
+    caller : str
+        The block, the assignment, or the reset, which the message opens with.
+
+    Raises
+    ------
+    RuntimeError
+        If a workflow run is open in the running thread and its provenance mode
+        is not *requested_mode*.
+    """
+    run_provenance_mode = _open_run_provenance_mode()
+    if run_provenance_mode is None or run_provenance_mode is requested_mode:
+        return
+    raise RuntimeError(
+        f"{caller}: cannot set the provenance mode to ProvenanceMode.{requested_mode.name} "
+        f"inside a workflow run under ProvenanceMode.{run_provenance_mode.name}. Set the mode "
+        "before the workflow_run opens, or before the call if no workflow_run is open"
+    )
+
+
+class UnshippableSettingError(RuntimeError):
+    """A ``config`` setting could not be sent to a worker process, and code there read it.
+
+    A call that runs work in another process sends its settings with the work.
+    A value that cannot be pickled, such as an object that holds a lock, is
+    sent as a placeholder, and reading it in the worker raises this error. The
+    ``prefect`` section is never sent, so a call in a worker process runs
+    without Prefect orchestration. The message names the setting, the class
+    of its value, and why pickling failed.
+    """
+
+
+def _shipped_value(setting_value: Any) -> Any:
+    """*setting_value*, read in a worker process: raises if it stands for a value that could not be sent."""
+    if isinstance(setting_value, _UnshippableSetting):
+        raise UnshippableSettingError(
+            f"config.{setting_value.section_name}.{setting_value.setting_name} holds a "
+            f"{setting_value.value_type_name} that could not be sent to this worker process "
+            f"({setting_value.pickling_error}). Set it inside the work the worker runs, or use "
+            "an executor that runs in the calling process"
+        )
+    return setting_value
+
+
+# Module-level singleton, built after the helpers its sections call.
+config = Config()
+"""The global settings of ProbPipe, an instance of ``Config``."""

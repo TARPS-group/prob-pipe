@@ -407,15 +407,13 @@ def pushforward(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
 #: the law of the map's inputs and outputs together.
 _FORWARDED_CONTROLS = (
     "max_evaluations",
-    "dispatch",
-    "max_workers",
     "workflow_kind",
     "method_options",
 )
 
 #: The map's own controls that the map built around it keeps, when the map sets
 #: them; the others resolve when the new map's call opens.
-_MAP_CONTROLS = ("max_evaluations", "dispatch", "max_workers", "workflow_kind")
+_MAP_CONTROLS = ("max_evaluations", "executor", "executor_options", "workflow_kind")
 
 
 def _draw_map(
@@ -430,7 +428,8 @@ def _draw_map(
     calls *f* on it with the fixed arguments. A map whose parameter is annotated
     ``Any`` is applied to the draw with schema validation, so it traces; any other is called
     as a direct call, so the draw goes through its admission, conversions, and
-    routes. The new map keeps *f*'s label, output spec, and ``max_evaluations``.
+    routes. The new map keeps *f*'s label, output spec, ``max_evaluations``, and
+    executor.
     """
     operation = isinstance(f, Operation)
     if not operation and _plan.lift_at(f, parameter, d) == "broadcast":

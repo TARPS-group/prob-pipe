@@ -124,7 +124,7 @@ def _gaussian_glm(p: int = 2, n: int = 12, seed: int = 7):
     X = jax.random.normal(jax.random.PRNGKey(seed), (n, p - 1))
     design = jnp.concatenate([jnp.ones((n, 1)), X], axis=1)
     prior = MultivariateNormal("beta", loc=jnp.zeros(p), cov=jnp.eye(p))
-    return glm_likelihood("y", GaussianFamily(), X=design, dispersion=1.0) * prior
+    return glm_likelihood("y", GaussianFamily(), X=design, dispersion=1.0) & prior
 
 
 def _conjugate_model():
@@ -135,7 +135,7 @@ def _conjugate_model():
         given_spec=prior.event_spec.outputs,
         label="y_given_mu",
     )
-    return likelihood * prior
+    return likelihood & prior
 
 
 def _posterior_at(y, scale_factor: float = 1.0):
@@ -311,7 +311,7 @@ class TestFlattening:
         atoms = NumericRecordBatch(
             {"a": jnp.zeros((10, 2)), "b": jnp.zeros((10,))},
             "atom",
-            element_spec=NumericRecordSpec(a=(2,), b=()),
+            element=NumericRecordSpec(a=(2,), b=()),
             label="r",
         )
         emp = EmpiricalDistribution(atoms, label="m")
@@ -473,7 +473,7 @@ class TestSBCPosteriorKernel:
         pytest.importorskip("bayesflow")
         from probpipe import learn_amortized_posterior
 
-        prior = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        prior = Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)
         simulator = conditional_distribution(
             lambda a, b: Normal("y", jnp.stack([a + b, a - b]), 0.1),
             given_spec=prior.event_spec.outputs,
@@ -491,7 +491,7 @@ class TestSBCPosteriorKernel:
         assert list(amortized.given_spec) == ["observation"]
         with workflow_run(seed=0):
             result = simulation_based_calibration(
-                simulator * prior,
+                (simulator & prior),
                 observed="y",
                 posterior=amortized,
                 num_simulations=6,
@@ -575,7 +575,7 @@ class TestSBCPosteriorKernel:
             )
 
     def test_one_input_rejects_several_observed_fields(self):
-        model = _conjugate_model() * Normal("w", 0.0, 1.0)
+        model = _conjugate_model() & Normal("w", 0.0, 1.0)
         with pytest.raises(ValueError, match=r"observed fields \['y', 'w'\]"):
             simulation_based_calibration(
                 model,
@@ -587,7 +587,7 @@ class TestSBCPosteriorKernel:
 
     def test_rejects_a_posterior_whose_draw_is_not_the_parameters(self):
         other_fields = conditional_distribution(
-            lambda y: Normal("a", jnp.sum(y), 1.0) * Normal("b", 0.0, 1.0),
+            lambda y: Normal("a", jnp.sum(y), 1.0) & Normal("b", 0.0, 1.0),
             given_spec={"y": NumericArraySpec((_N,))},
             label="posterior",
         )
@@ -639,7 +639,7 @@ class TestSBCFit:
         # SBC rejects because the shift is *systematic* across simulations and
         # accumulates. Measured ks_pvalue.max ≤ 8e-5 and mean rank ≤ 0.32 over
         # seeds 0–3 at S=48.
-        model = _BiasedMeanKernel(0.25) * Normal("mu", loc=0.0, scale=2.0)
+        model = _BiasedMeanKernel(0.25) & Normal("mu", loc=0.0, scale=2.0)
         with workflow_run(seed=0):
             res = simulation_based_calibration(
                 model,

@@ -45,7 +45,7 @@ from ..core._repr import format_value, type_name
 from ..core._spec_base import NumericArraySpec, TermSpec
 from ..core._specs import OutputSpec, _check_output_name
 from ..core.constraints import real
-from ..core.named_tree import _unflatten_paths
+from ..core.named_tree import _PATH_SEP, _unflatten_paths
 from ..distributions._capabilities import (
     SupportsCovariance,
     SupportsLogProb,
@@ -77,8 +77,6 @@ __all__ = [
     "KDEDistribution",
     "SmoothingKernel",
 ]
-
-_PATH_SEP = "/"
 
 
 class _BankNames(NamedTuple):
@@ -548,7 +546,7 @@ def _record_scales(
     scales : NumericRecord
         One scale per field of the centers, each broadcastable over that field's shape.
     fields : NumericRecordSpec or None
-        The element spec of record centers, or None for array centers.
+        The elements' spec of record centers, or None for array centers.
     names : _BankNames
         The names the caller passed the bank by, which the error messages use.
 
@@ -611,7 +609,7 @@ def _flat_scales(
     centers : Array
         The centers as :func:`_flat_centers` returns them.
     fields : NumericRecordSpec or None
-        The element spec of record centers, or None for array centers.
+        The elements' spec of record centers, or None for array centers.
     names : _BankNames
         The names the caller passed the bank by, which the error messages use.
 
@@ -952,7 +950,7 @@ def _kde_atoms(atoms: Any) -> tuple[Array | NumericRecordBatch, TermSpec]:
     if isinstance(atoms, list | tuple):
         atoms = _listed_atoms(atoms)
     if isinstance(atoms, NumericRecordBatch):
-        spec = atoms.element_spec.map(
+        spec = atoms.element_spec.term_spec.map(
             lambda leaf: NumericArraySpec(leaf.shape, _floating(leaf.dtype), real)
         )
         return atoms, spec

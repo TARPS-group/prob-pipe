@@ -15,17 +15,18 @@ anonymous ``(N, S)``, while anything stated over ``batch_shape`` — flat
 vectorization above all — applies to a multi-level batch unchanged.
 
 **Indexing.** ``[]`` dispatches on the key. A *position* — an integer, a slice,
-or a tuple of those — addresses the batch axes; a *name*, or a tuple of names,
-addresses a field within every element, which only a batch whose elements have
-fields answers. :meth:`Batch.at_levels` is the by-name counterpart over levels,
+or a tuple of those — addresses the batch axes; a *path*, or a list or a tuple
+of paths, addresses every element by path, which only a batch whose elements
+have paths answers. ``in`` tests the elements' paths, never the elements
+themselves. :meth:`Batch.at_levels` is the by-name counterpart over levels,
 taking one indexer per named level and keeping the levels not named. Either way
 an integer drops its axis and a slice keeps it, a level whose axes are all
 dropped is removed, and the result is an element once the selection reaches one
 and a sub-batch view otherwise.
 
 **A batch's type is its own.** :class:`BatchSpec` is the term spec at the
-*family* kind: the element's specification together with that named
-multiplicity. A batch stores it and nothing else about its type, so
+*family* kind: the element spec, the output spec of one element, together with
+that named multiplicity. A batch stores it and nothing else about its type, so
 :attr:`Batch.spec` names the collection just as any other term's spec names the
 term, :attr:`Batch.element_spec` and the level accessors are views on it, and a
 batch of values naming no kind is specified all the same.
@@ -49,9 +50,9 @@ normalization for :meth:`Batch.at_levels`, and the identity a view derives. A
 concrete batch supplies two hooks, :meth:`Batch._element_at` and
 :meth:`Batch._sub_batch_at`, which present an element or a sub-batch — a view
 over the same storage, not a copy of it — at a normalized positional index. A
-third, :meth:`Batch._at_fields`, addresses the *fields* of an element and is
-supplied only by a batch whose elements have any: ``[]`` dispatches on the key
-type, so a name reaches the elements and a position reaches the axes. Renaming a
+third, :meth:`Batch._at_paths`, addresses the elements by path and is
+supplied only by a batch whose elements have paths: ``[]`` dispatches on the key
+type, so a path reaches the elements and a position reaches the axes. Renaming a
 level needs no hook at all: it touches no axes and no elements, so
 :meth:`Batch._with_level_names` defaults to a shallow copy.
 
@@ -88,9 +89,9 @@ from ._repr import (
     term_repr,
     type_name,
 )
-from ._shapes import LevelsLike, ShapeLike, _as_dim, _as_levels
+from ._shapes import LevelsLike, ShapeLike, _as_dim, _as_levels, _as_paths, _as_positions
 from ._spec_base import OpaqueSpec, _agree, _unify_array_shape, _unify_specs
-from ._specs import TermSpec, _check_output_name
+from ._specs import NumericArraySpec, OutputSpec, TermSpec, _check_output_name, _exposed_kind
 from .provenance import Provenance
 from .tracked import TrackedTerm
 
@@ -106,8 +107,8 @@ type LevelIndexer = int | slice | tuple[int | slice | None, ...] | None
 class BatchSpec(TermSpec):
     """A term spec for a :class:`Batch`: an element spec plus a named multiplicity.
 
-    ``BatchSpec(element_spec, **levels)`` declares a batch whose elements satisfy
-    *element_spec*, with one keyword per level mapping the level's name to the
+    ``BatchSpec(element, **levels)`` declares a batch whose elements are described
+    by *element*, with one keyword per level mapping the level's name to the
     shape of its axes, outermost level first::
 
         BatchSpec(NumericArraySpec(()), chain=4, draw=1000)
@@ -123,6 +124,16 @@ class BatchSpec(TermSpec):
     returns the mapping, so ``BatchSpec(other_spec, batch.spec.levels)`` declares
     another element type over the same levels.
 
+    :attr:`element_spec` is the output spec of one element: its spec,
+    ``element_spec.term_spec``, and its outputs. A bare spec given as *element*
+    takes the raw default: a single array or opaque value names the elements
+    ``"element"``, as ``OutputSpec(element=NumericArraySpec(()))``, and a record, a
+    distribution, a conditional distribution, or a batch of records or of
+    distributions is in the positional form, as ``OutputSpec(RecordSpec(...))``.
+    For now a function's spec, and the spec of a batch of single arrays or
+    opaque values, also name the elements ``"element"``, since the positional
+    form does not take them yet. The repr leaves the raw default's name out.
+
     The stored form is :attr:`axis_groups` and :attr:`level_names`: the batch
     axes tiled into named levels as :class:`Batch` describes them. Level names
     are unique within a batch, and ``batch_shape`` / ``batch_size`` read off the
@@ -134,9 +145,10 @@ class BatchSpec(TermSpec):
 
     Parameters
     ----------
-    element_spec : TermSpec
-        What every element of the batch satisfies, including numeric-array
-        and opaque kinds. Positional-only.
+    element : OutputSpec or TermSpec
+        The output spec of one element, or the spec every element satisfies,
+        including numeric-array and opaque kinds, which takes the raw default.
+        Positional-only.
     levels : Mapping of str to shape, optional
         The levels as a mapping from level name to shape, outermost first.
         Positional-only, and given only when no level is given as a keyword.
@@ -149,6 +161,9 @@ class BatchSpec(TermSpec):
 
     Attributes
     ----------
+    element_spec : OutputSpec
+        The output spec of one element: its spec, ``element_spec.term_spec``, and
+        its outputs.
     axis_groups : tuple of tuple of int or str
         The axis sizes each level holds, in order, outermost level first.
     level_names : tuple of str
@@ -161,7 +176,8 @@ class BatchSpec(TermSpec):
     Raises
     ------
     TypeError
-        If ``element_spec`` is not a :class:`TermSpec`; both a mapping and
+        If *element* is neither a :class:`TermSpec` nor an :class:`OutputSpec`,
+        or is an ``OutputSpec`` whose spec is not known yet; both a mapping and
         keywords are given; ``levels`` is not a mapping, or is given as a keyword
         holding a mapping; a key of the mapping is not a str; or a level's shape is
         not an int, a str, or a sequence of them.
@@ -172,9 +188,9 @@ class BatchSpec(TermSpec):
 
     Notes
     -----
-    A batch whose elements name no kind is specified all the same: a raw-value
-    ``element_spec`` is as well formed here as a term spec, which is what lets a
-    batch of opaque values carry a term spec of its own.
+    A batch whose elements name no kind is specified all the same: an opaque
+    element spec is as well formed here as any other, which is what lets a batch
+    of opaque values carry a term spec of its own.
 
     An axis size may be a **symbolic dimension name** instead of an integer, as
     a ``NumericArraySpec`` shape entry may, so that a declaration can fix the number of
@@ -189,18 +205,28 @@ class BatchSpec(TermSpec):
     A duplicate level name cannot be written in either form, and
     :meth:`Batch.with_level_names` raises on a collision, since an operation that
     mints a level takes the name to give it.
+
+    Examples
+    --------
+    >>> from probpipe import NumericArraySpec, OutputSpec
+    >>> BatchSpec(NumericArraySpec(()), sample=4).element_spec
+    OutputSpec(element=NumericArraySpec(shape=()))
+    >>> BatchSpec(NumericArraySpec(()), sample=4)
+    BatchSpec(NumericArraySpec(shape=()), sample=4)
+    >>> BatchSpec(OutputSpec(x=NumericArraySpec(())), sample=4)
+    BatchSpec(OutputSpec(x=NumericArraySpec(shape=())), sample=4)
     """
 
     # ``init=False``: the constructor takes levels by name rather than these
     # fields, so ``dataclasses.replace`` refuses them; ``copy.replace`` and
     # ``_replace`` rebuild a spec from them instead.
-    element_spec: TermSpec = field(init=False)
+    element_spec: OutputSpec = field(init=False)
     axis_groups: tuple[tuple[int | str, ...], ...] = field(init=False)
     level_names: tuple[str, ...] = field(init=False)
 
     def __init__(
         self,
-        element_spec: TermSpec,
+        element: OutputSpec | TermSpec,
         levels: LevelsLike | None = None,
         /,
         **level_shapes: ShapeLike,
@@ -211,12 +237,12 @@ class BatchSpec(TermSpec):
                 "got levels= as a keyword"
             )
         names, groups = _as_levels(levels, level_shapes, what="BatchSpec")
-        self._init_fields(element_spec, groups, names)
+        self._init_fields(element, groups, names)
 
     @classmethod
     def _from_groups(
         cls,
-        element_spec: TermSpec,
+        element: OutputSpec | TermSpec,
         axis_groups: Iterable[Iterable[int | str]],
         level_names: Iterable[str],
     ) -> BatchSpec:
@@ -224,24 +250,26 @@ class BatchSpec(TermSpec):
 
         The constructor takes levels by name; an operation that already holds a
         tiling, such as a batch's own ``axis_groups`` and ``level_names``, builds
-        its spec here instead.
+        its spec here instead. *element* is read as the constructor reads it.
         """
         spec = object.__new__(cls)
-        spec._init_fields(
-            element_spec, tuple(tuple(group) for group in axis_groups), tuple(level_names)
-        )
+        spec._init_fields(element, tuple(tuple(group) for group in axis_groups), tuple(level_names))
         return spec
 
     def _replace(
         self,
         *,
-        element_spec: TermSpec | None = None,
+        element: OutputSpec | TermSpec | None = None,
         axis_groups: Iterable[Iterable[int | str]] | None = None,
         level_names: Iterable[str] | None = None,
     ) -> BatchSpec:
-        """This spec with the given parts replaced and the rest kept."""
+        """This spec with the given parts replaced and the rest kept.
+
+        *element* is read as the constructor reads it, so a bare spec takes the
+        raw default.
+        """
         return BatchSpec._from_groups(
-            self.element_spec if element_spec is None else element_spec,
+            self.element_spec if element is None else element,
             self.axis_groups if axis_groups is None else axis_groups,
             self.level_names if level_names is None else level_names,
         )
@@ -252,7 +280,8 @@ class BatchSpec(TermSpec):
         Parameters
         ----------
         **changes : Any
-            New values of ``element_spec``, ``axis_groups``, or ``level_names``.
+            New values of ``element_spec``, ``axis_groups``, or ``level_names``. A
+            new ``element_spec`` is read as the constructor reads *element*.
 
         Returns
         -------
@@ -270,19 +299,18 @@ class BatchSpec(TermSpec):
                 f"copy.replace() can change element_spec, axis_groups, and level_names of a "
                 f"BatchSpec, got {', '.join(unknown)}"
             )
+        if "element_spec" in changes:
+            changes["element"] = changes.pop("element_spec")
         return self._replace(**changes)
 
     def _init_fields(
         self,
-        element_spec: TermSpec,
+        element: OutputSpec | TermSpec,
         axis_groups: tuple[tuple[Any, ...], ...],
         level_names: tuple[str, ...],
     ) -> None:
         """Check the parts and store them; the one place a spec's fields are set."""
-        if not isinstance(element_spec, TermSpec):
-            raise TypeError(
-                f"BatchSpec element_spec must be a TermSpec, got {type_name(element_spec)}"
-            )
+        element_spec = _as_element_spec(element)
         if not axis_groups:
             raise ValueError("BatchSpec must have at least one level, such as draw=4")
         if len(level_names) != len(axis_groups):
@@ -315,8 +343,8 @@ class BatchSpec(TermSpec):
     def levels(self) -> Mapping[str, tuple[int | str, ...]]:
         """The levels as a read-only mapping from level name to its axis sizes, outermost first.
 
-        ``BatchSpec(element_spec, spec.levels)`` rebuilds a spec with the same
-        levels, so another element type is declared over them.
+        ``BatchSpec(element, spec.levels)`` rebuilds a spec with the same levels,
+        so another element type is declared over them.
         """
         return MappingProxyType(dict(zip(self.level_names, self.axis_groups, strict=True)))
 
@@ -348,7 +376,7 @@ class BatchSpec(TermSpec):
         element's schema is one dimension, so a batch declared as ``("n",)`` of
         arrays of shape ``("n",)`` states that it is square.
         """
-        return self.element_spec.free_dims | self.free_axis_dims
+        return self._element_term_spec.free_dims | self.free_axis_dims
 
     @property
     def free_axis_dims(self) -> frozenset[str]:
@@ -363,7 +391,7 @@ class BatchSpec(TermSpec):
     def _substitute_dims(self, bindings: Mapping[str, int | str]) -> BatchSpec:
         """This spec with both its element schema and its axis sizes substituted."""
         return BatchSpec._from_groups(
-            self.element_spec._substitute_dims(bindings),
+            self.element_spec._with_term_spec(self._element_term_spec._substitute_dims(bindings)),
             tuple(
                 tuple(bindings.get(size, size) if isinstance(size, str) else size for size in group)
                 for group in self.axis_groups
@@ -387,7 +415,7 @@ class BatchSpec(TermSpec):
         """Bind the declared axis sizes and element schema against *actual*'s own.
 
         The multiplicity binds like an array shape: a symbolic axis size takes the
-        actual size, and a name already bound must agree. The element spec binds
+        actual size, and a name already bound must agree. The elements' spec binds
         by the same rule one level in. Both use the caller's *bindings*, so an
         axis size and an element dimension sharing a name are one dimension — a
         batch of ``("n",)`` over arrays of shape ``("n",)`` binds ``n`` once and
@@ -411,18 +439,25 @@ class BatchSpec(TermSpec):
                 f"from axis_groups={self.axis_groups!r}"
             )
         _unify_array_shape(self.batch_shape, actual.batch_shape, bindings, path)
-        _unify_specs(self.element_spec, actual.element_spec, bindings, path)
+        _unify_specs(self._element_term_spec, actual._element_term_spec, bindings, path)
         return True
 
-    def __repr__(self) -> str:
-        """The constructor call: the element spec, then one keyword per level.
+    @property
+    def _element_term_spec(self) -> TermSpec:
+        """The spec every element satisfies, ``element_spec.term_spec``, which is always known."""
+        return cast(TermSpec, self.element_spec.term_spec)
 
-        A level of one axis shows its size alone, as ``draw=4``, and a level name
-        that no keyword spells puts the levels in one ``**{...}`` argument.
+    def __repr__(self) -> str:
+        """The constructor call: the element, then one keyword per level.
+
+        The element shows as its bare spec when the element spec is the raw
+        default for it, and as the element spec otherwise. A level of one axis
+        shows its size alone, as ``draw=4``, and a level name that no keyword
+        spells puts the levels in one ``**{...}`` argument.
         """
         return call_repr(
             "BatchSpec",
-            [repr(self.element_spec)],
+            [_element_repr(self.element_spec)],
             [
                 (name, repr(group[0] if len(group) == 1 else group))
                 for name, group in zip(self.level_names, self.axis_groups, strict=True)
@@ -430,10 +465,12 @@ class BatchSpec(TermSpec):
         )
 
     def is_valid(self, value: Any) -> bool:
-        """Whether *value* is a :class:`Batch` whose own spec equals this one.
+        """Whether *value* is a :class:`Batch` whose own spec equals this one, element name aside.
 
-        An opaque type this spec leaves open admits the type a batch inferred
-        from its values, in the elements and in any record field of them.
+        The levels and the elements' specs are compared; the name an element
+        spec gives single values is not. An opaque type this spec leaves open
+        admits the type a batch inferred from its values, in the elements and in
+        any record field of them.
         Anything that is not a ``Batch``, or a ``Batch`` whose spec cannot be
         read, does not satisfy the spec and returns ``False``. Mirrors
         :meth:`~probpipe.RecordSpec.is_valid`.
@@ -461,7 +498,7 @@ def _admits(declared: TermSpec, actual: TermSpec) -> bool:
         return (declared.axis_groups, declared.level_names) == (
             actual.axis_groups,
             actual.level_names,
-        ) and _admits(declared.element_spec, actual.element_spec)
+        ) and _admits(declared._element_term_spec, actual._element_term_spec)
     return False
 
 
@@ -483,8 +520,9 @@ class Batch[E](TrackedTerm, ABC):
     spec : BatchSpec
         This batch's own specification, at the family kind. The single stored
         source of its type: everything below is a view on it.
-    element_spec : TermSpec
-        The specification every element satisfies.
+    element_spec : OutputSpec
+        The output spec of one element: its spec, ``element_spec.term_spec``,
+        which every element satisfies, and its outputs.
     batch_shape : tuple of int
         The batch axes, the flat concatenation of :attr:`axis_groups`. Always
         non-empty: a batch has at least one batch axis.
@@ -598,8 +636,12 @@ class Batch[E](TrackedTerm, ABC):
         return self._spec
 
     @property
-    def element_spec(self) -> TermSpec:
-        """The specification every element satisfies — a view on :attr:`spec`."""
+    def element_spec(self) -> OutputSpec:
+        """The output spec of one element: its spec, ``element_spec.term_spec``, and its outputs.
+
+        A view on :attr:`spec`. A batch built from bare values takes the raw
+        default, which names single arrays or opaque values ``"element"``.
+        """
         return self._spec.element_spec
 
     @property
@@ -672,7 +714,7 @@ class Batch[E](TrackedTerm, ABC):
 
         Notes
         -----
-        The level counterpart of ``with_path_names``, which renames the *fields
+        The level counterpart of ``rename``, which renames the *fields
         within* an element. The two namespaces are independent: renaming a level
         never touches a field name, or the reverse.
         """
@@ -769,8 +811,8 @@ class Batch[E](TrackedTerm, ABC):
         return term_repr(public_class_name(type(self)), self._displayed_label(), arguments)
 
     def _element_repr_arguments(self) -> list[tuple[str, str]]:
-        """The elements' structure as the repr shows it: their spec, by default."""
-        return [("element_spec", repr(self.element_spec))]
+        """The elements' structure as the repr shows it: by default, their spec, as ``element=``."""
+        return [("element", _element_repr(self.element_spec))]
 
     # -- indexing -----------------------------------------------------------
 
@@ -782,75 +824,76 @@ class Batch[E](TrackedTerm, ABC):
         """Iterate the leading batch axis, yielding views."""
         return (self[index] for index in range(len(self)))
 
-    def __getitem__(self, key: Any) -> Any:
-        """Index the batch axes by position, or an element's fields by name.
+    def __getitem__(self, paths_or_positions: Any) -> Any:
+        """Index the batch axes by position, or every element by path.
 
         By **position**, a single indexer addresses the leading axis and a tuple
         the leading axes in order, as ``batch[i, j]`` does for an array. Each
-        indexer is an integer or a slice; an integer drops its axis and a slice
-        keeps it, a whole axis being written ``:``. The result is an element once
+        indexer is an integer, anything with ``__index__`` such as a NumPy or JAX
+        integer scalar, or a slice; an integer drops its axis and a slice keeps
+        it, a whole axis being written ``:``. The result is an element once
         every axis is dropped and a sub-batch view otherwise, exactly as for
         :meth:`at_levels`, which is the by-name counterpart over *levels*.
 
-        By **name**, ``batch["x"]`` addresses a field within every element and
-        ``batch["outer", "a"]`` a path of fields, which a batch whose elements have
-        fields answers and others refuse.
+        By **path**, ``batch["x"]`` addresses the node at the path ``x`` of every
+        element, and a list or a tuple of paths, as ``batch["a", "g/c"]``, the
+        elements cut down to those nodes. A tuple is a list of paths; a nested
+        path is written with ``/``. A batch whose elements are records
+        answers; a batch whose elements are arrays or opaque values has no
+        paths.
 
         Parameters
         ----------
-        key : int, slice, str, or tuple
-            An integer, a slice, or a tuple of them addresses the batch axes, and a
-            string or a tuple of strings addresses a field path.
+        paths_or_positions : int, slice, str, list, or tuple
+            An integer, a slice, or a tuple of them addresses the batch axes; a
+            string is one path, and a list or a tuple of strings a list of paths.
 
         Returns
         -------
         E or Self or Any
-            An element or a sub-batch view for a position; whatever the elements'
-            fields yield for a name.
+            An element or a sub-batch view for a position; the batch of the
+            elements' nodes for paths.
 
         Raises
         ------
         IndexError
             If more indexers are given than there are batch axes, or an integer
             is out of range for its axis.
+        KeyError
+            If the elements are records and a path is not one of their paths.
         TypeError
-            If an indexer is not an integer or a slice, if a tuple mixes field
-            names with axis indexers, or if a name is given to a batch whose
-            elements have no fields.
+            If *paths_or_positions* is neither a position nor paths, such as ``None``, a
+            ``bool``, ``...``, a set, or an array; if it mixes paths with
+            positions; if it is a list of positions; or if it is paths and the
+            elements have no paths, as arrays and opaque values have none.
         ValueError
-            If a slice has a step of zero.
+            If a slice has a step of zero, a path is empty or has an empty name,
+            or a list of paths is empty, as ``batch[()]`` is, names a path
+            twice, or holds a path inside another.
 
         Notes
         -----
-        The two readings never collide, an axis having no name and a field no
+        The two readings never collide, an axis having no name and a path no
         position, which is what lets one operator serve both. The axis side is
-        stated once here for every batch; the field side is left to
-        :meth:`_at_fields`. ``None`` is not a position: it spells a whole axis in
+        stated once here for every batch; the path side is left to
+        :meth:`_at_paths`. ``None`` is not a position: it spells a whole axis in
         :meth:`at_levels` alone, where a keyword cannot take a ``:`` literal.
         """
-        # A lone key is decided by its type: a string is a one-element field path,
-        # and anything else is an indexer for the leading axis. A non-position is
-        # not rejected here — _at_axes reports it against the axis it was given
-        # for, which is more than this method knows.
-        if isinstance(key, str):
-            return self._at_fields((key,))
-        if not isinstance(key, tuple):
-            return self._at_axes((key,))
-        # A tuple is the one key legal on both sides — a path of field names, or
-        # one indexer per leading axis — so what is inside it decides rather than
-        # its type. All names is a path; no names is an index, which is also what
-        # gives ``batch[()]`` the whole batch instead of an empty path; and a
-        # mixture is neither, so it is refused as the mixture it is rather than
-        # left for the axis side to complain about the count.
-        named = [entry for entry in key if isinstance(entry, str)]
-        if not named:
-            return self._at_axes(key)
-        if len(named) == len(key):
-            return self._at_fields(key)
-        raise TypeError(
-            f"cannot mix field names and axis indices in one key, got {key!r}; index the "
-            f"axes and the fields in separate steps"
+        positions = _as_positions(paths_or_positions)
+        if positions is not None:
+            return self._at_axes(positions)
+        return self._at_paths(
+            _as_paths(
+                paths_or_positions,
+                action=f"index {public_class_name(type(self))} by",
+                positions=True,
+            ),
+            tuple_given=isinstance(paths_or_positions, tuple),
         )
+
+    def __contains__(self, path: object) -> bool:
+        """Whether *path* is a ``str`` and a path of the elements; an element is never tested."""
+        return isinstance(path, str) and self._has_path(path)
 
     def at_levels(self, /, **levels: LevelIndexer) -> E | Self:
         """Index by named level, returning an element or a sub-batch view.
@@ -1022,20 +1065,50 @@ class Batch[E](TrackedTerm, ABC):
             return produced
         return produced.with_provenance(self._provenance)
 
-    def _at_fields(self, path: tuple[str, ...]) -> Any:
-        """The batched field at *path* within every element, for a named ``[]`` key.
+    def _at_paths(self, paths: str | tuple[str, ...], *, tuple_given: bool = False) -> Any:
+        """The batch of every element's node at a path, or cut down to a list of paths.
 
-        A batch whose elements have named fields answers this; the default
-        reports that these elements have none. Only the *field* side of ``[]``
-        lands here — the axis side is this class's own, so a subclass gains
-        indexing by name without restating what indexing by position means.
+        A batch whose elements have paths answers this. By default, elements
+        that are arrays or opaque values have no paths, and the paths of laws,
+        kernels, functions, and batches are not read through a batch of them.
+        Only the path side of ``[]`` lands here, so a subclass gains indexing by
+        path without restating what indexing by position means.
+
+        Parameters
+        ----------
+        paths : str or tuple of str
+            One path, or a list of paths, as ``[]`` read them.
+        tuple_given : bool
+            Whether ``[]`` was given the list of paths as a tuple, which a
+            missing path's message reads.
+
+        Returns
+        -------
+        Any
+            The batch of the elements' nodes, from a subclass whose elements
+            have paths.
+
+        Raises
+        ------
+        TypeError
+            By default: the elements are arrays or opaque values, which have no
+            paths, or their paths are not read through a batch yet.
         """
-        addressed = path[0] if len(path) == 1 else path
+        class_name = public_class_name(type(self))
+        if isinstance(self.element_spec.term_spec, NumericArraySpec | OpaqueSpec):
+            raise TypeError(
+                f"cannot index {class_name} {self.label!r} by {paths!r}, since its elements are "
+                f"single values with no paths. Read the values with .raw"
+            )
         raise TypeError(
-            f"cannot index {public_class_name(type(self))} by {addressed!r}: its elements have "
-            f"no named fields. Use integers or slices for the batch axes, or at_levels() to "
-            f"index by level name"
+            f"cannot index {class_name} by {paths!r}, since indexing its elements by path is not "
+            f"supported yet. Index an element by position first, or use at_levels() to index by "
+            f"level name"
         )
+
+    def _has_path(self, path: str) -> bool:
+        """Whether *path* is a path of the elements; by default, elements have none."""
+        return False
 
     # -- internals ----------------------------------------------------------
 
@@ -1286,7 +1359,7 @@ def _axis_groups_for(
 def _batch_axis_count(names: tuple[str, ...], axes_per_level: tuple[int, ...] | None) -> int:
     """How many batch axes the levels hold: the sum of *axes_per_level*, or one per name.
 
-    A constructor that infers its element spec reads the event axes as the axes
+    A constructor that infers its elements' spec reads the event axes as the axes
     past these, so this count fixes where the batch axes end.
 
     Parameters
@@ -1339,8 +1412,8 @@ def _flat_batch_spec(spec: BatchSpec) -> BatchSpec:
     ValueError
         If a nested batch repeats a level name of its container.
     """
-    while isinstance(spec.element_spec, BatchSpec):
-        inner = spec.element_spec
+    while isinstance(spec._element_term_spec, BatchSpec):
+        inner = spec._element_term_spec
         shared = [name for name in inner.level_names if name in spec.level_names]
         if shared:
             raise ValueError(
@@ -1523,3 +1596,56 @@ def _assign_expression(
     object.__setattr__(term, "_expression", expression)
     object.__setattr__(term, "_label", label)
     object.__setattr__(term, "_label_collapse", collapse)
+
+
+#: The name the raw default gives the elements of a batch of single arrays or
+#: opaque values.
+_RAW_ELEMENT_NAME = "element"
+
+
+def _as_element_spec(element: object) -> OutputSpec:
+    """*element* as the output spec of one element of a batch.
+
+    An ``OutputSpec`` is kept as it is. A bare spec takes the raw default: the
+    positional form for a spec whose outputs the positional form reads, a
+    record, a distribution, a conditional distribution, or a batch of these,
+    and otherwise the keyword form under :data:`_RAW_ELEMENT_NAME`.
+
+    Parameters
+    ----------
+    element : object
+        What a ``BatchSpec`` was given as its element.
+
+    Returns
+    -------
+    OutputSpec
+        The output spec of one element.
+
+    Raises
+    ------
+    TypeError
+        If *element* is neither an ``OutputSpec`` nor a ``TermSpec``, or is an
+        ``OutputSpec`` whose spec is not known yet.
+    """
+    if isinstance(element, OutputSpec):
+        if element.term_spec is None:
+            raise TypeError(
+                f"cannot build a BatchSpec from {element!r}, whose spec is not known yet. "
+                f"Give the spec, as OutputSpec(x=NumericArraySpec(())), or pass the spec alone"
+            )
+        return element
+    if not isinstance(element, TermSpec):
+        raise TypeError(
+            f"BatchSpec element must be a TermSpec or an OutputSpec, got {type_name(element)}"
+        )
+    if _exposed_kind(element) is not None:
+        return OutputSpec(element)
+    return OutputSpec(**{_RAW_ELEMENT_NAME: element})
+
+
+def _element_repr(element_spec: OutputSpec) -> str:
+    """How a repr shows a batch's element: its bare spec when *element_spec* is the raw default."""
+    term_spec = cast(TermSpec, element_spec.term_spec)
+    if element_spec == _as_element_spec(term_spec):
+        return repr(term_spec)
+    return repr(element_spec)

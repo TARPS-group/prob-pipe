@@ -76,7 +76,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from .._messages import unknown_names
 from ..core._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
@@ -1261,6 +1261,11 @@ class _GivenCandidate:
 class Operation(Function):
     """A Function realized by routes, with operand roles, applicability checks, and a result rule.
 
+    A plain call runs its coordinating route in the calling thread under the
+    logical call context. Its named executor runs the evaluation points the
+    route requests, including embedded opaque calls, rather than the route
+    itself. A plain Function body retains its own executor dispatch.
+
     Calling it runs the engine's stack, whose admission, planning, resolution,
     and return steps read the declarations below: each argument is admitted and
     lifted by its role, the applicability checks and the result rule derive
@@ -1354,6 +1359,8 @@ class Operation(Function):
         a derived route is given beside a derived route check, or it is not a
         delegating route.
     """
+
+    _options_need_named_executor: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -1493,6 +1500,7 @@ class Operation(Function):
         set_attribute(self, "_route_table", _RouteTable())
         set_attribute(self, "_label_rule", label)
         set_attribute(self, "_expression_rule", None)
+        set_attribute(self, "_input_layout", None)
         if derived_route is not None:
             # A copy carries the derived route's rank, so the caller's route keeps its own.
             derived_route = copy.copy(derived_route)
@@ -1987,6 +1995,8 @@ class Operation(Function):
                 raise ApplicabilityError(
                     f"{self.name}: ConditionalDistributionSpec requires given values"
                 )
+        if self._input_layout is not None:
+            operand_values = dict(self._input_layout(operand_values))
         call = BoundCall(self, MappingProxyType(operand_values), controls)
         result_declaration, deferred = self._plan(call)
         if self._given_subject is not None and argument_values.get("given") is not None:
@@ -2634,3 +2644,14 @@ def _install_expression_rule(op: Operation, rule: Callable[..., Expression | Non
             f"does not declare as parameters"
         )
     object.__setattr__(op, "_expression_rule", rule)
+
+
+def _install_input_layout(
+    op: Operation, layout: Callable[[Mapping[str, Any]], Mapping[str, Any]]
+) -> None:
+    """Install a raw-input layout applied before this operation infers operand specs.
+
+    A layout may arrange raw mappings against a declaration determined by
+    another operand. It preserves constructed terms and their declared order.
+    """
+    object.__setattr__(op, "_input_layout", layout)

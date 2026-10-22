@@ -16,7 +16,7 @@ from probpipe.diagnostics._datatree_store import (
     to_named_posterior_dataset,
 )
 from probpipe.diagnostics._view_base import NotComputed
-from probpipe.inference._approximate_distribution import make_posterior
+from probpipe.inference._approximate_distribution import _posterior_from_chains
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -191,7 +191,9 @@ class TestToNamedPosteriorDataset:
         specs = {p: NumericArraySpec(tuple(shapes.get(p, ()))) for p in params}
         width = sum(int(np.prod(spec.shape)) for spec in specs.values())
         chains = [rng.standard_normal((n_draws, width)) for _ in range(n_chains)]
-        return make_posterior(chains, (), "test", event_spec=OutputSpec(RecordSpec(**specs)))
+        return _posterior_from_chains(
+            chains, (), "test", event_spec=OutputSpec(RecordSpec(**specs))
+        )
 
     def test_output_is_dataset(self):
         post = self._posterior(["mu", "sigma"])

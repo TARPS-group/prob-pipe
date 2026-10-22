@@ -63,7 +63,8 @@ class TestSequentialLiftingWorkflowRun:
 
         @function(
             max_evaluations=5,
-            dispatch="sequential",
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         def identity(value):
@@ -81,7 +82,8 @@ class TestSequentialLiftingWorkflowRun:
     def test_function_builds_one_stochastic_plan_for_a_lifted_call(self):
         @function(
             max_evaluations=8,
-            dispatch="sequential",
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         def identity(x):
@@ -104,18 +106,17 @@ class TestSequentialLiftingWorkflowRun:
             lambda x: x,
             label="function",
             max_evaluations=8,
-            dispatch="auto",
         )
 
         with (
-            patch("probpipe.functions._function._resolve_dispatch") as resolve_dispatch,
+            patch("probpipe.functions._function._lifted_point_traceability") as traceability,
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit_invocation,
             workflow_run(seed=7),
             pytest.raises(ValueError, match="max_evaluations must be a positive integer"),
         ):
             workflow.using(max_evaluations=0)(Normal("x", loc=0.0, scale=1.0))
 
-        resolve_dispatch.assert_not_called()
+        traceability.assert_not_called()
         commit_invocation.assert_not_called()
 
     def test_nested_sources_claim_raw_keys_by_row_major_logical_unit(self):
@@ -132,7 +133,8 @@ class TestSequentialLiftingWorkflowRun:
 
         @function(
             max_evaluations=6,
-            dispatch="sequential",
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(combine=None),
         )
         def combine(row, first, second):
@@ -196,7 +198,8 @@ class TestSequentialLiftingWorkflowRun:
     def test_seeded_run_reproduces_distinct_lifted_occurrences(self):
         @function(
             max_evaluations=16,
-            dispatch="sequential",
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         def identity(x):
@@ -218,7 +221,8 @@ class TestSequentialLiftingWorkflowRun:
     def test_bare_lifted_calls_receive_independent_ephemeral_roots(self):
         @function(
             max_evaluations=16,
-            dispatch="sequential",
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         def identity(x):
@@ -238,13 +242,16 @@ class TestSequentialLiftingWorkflowRun:
     def test_non_stochastic_siblings_do_not_shift_later_lifting(self):
         @function(
             max_evaluations=16,
-            dispatch="sequential",
+            traceable=False,
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         def identity(x):
             return x
 
-        @function(dispatch="sequential", output_spec=OutputSpec(deterministic=None))
+        @function(
+            traceable=False, executor="sequential", output_spec=OutputSpec(deterministic=None)
+        )
         def deterministic(x):
             return x + 1
 
@@ -272,10 +279,11 @@ class TestSequentialLiftingWorkflowRun:
         assert jnp.array_equal(actual[1].atoms, expected[1].atoms)
 
 
-def test_auto_probe_detects_nested_randomness_caught_by_user_code():
+def test_the_probe_detects_nested_randomness_caught_by_user_code():
     @function(
         max_evaluations=5,
-        dispatch="sequential",
+        traceable=False,
+        executor="sequential",
         output_spec=OutputSpec(inner_identity=None),
     )
     def inner_identity(value):
@@ -288,24 +296,25 @@ def test_auto_probe_detects_nested_randomness_caught_by_user_code():
             inner_identity(nested_dist)
         return value
 
-    auto = Function(
+    probed = Function(
         call_nested_and_catch,
         label="call_nested_and_catch",
         max_evaluations=5,
-        dispatch="auto",
         output_spec=OutputSpec(call_nested_and_catch=None),
     )
     sequential = Function(
         call_nested_and_catch,
         label="call_nested_and_catch",
         max_evaluations=5,
-        dispatch="sequential",
+        traceable=False,
+        executor="sequential",
         output_spec=OutputSpec(call_nested_and_catch=None),
     )
 
     @function(
         max_evaluations=5,
-        dispatch="sequential",
+        traceable=False,
+        executor="sequential",
         output_spec=OutputSpec(following_identity=None),
     )
     def following_identity(value):
@@ -318,4 +327,4 @@ def test_auto_probe_detects_nested_randomness_caught_by_user_code():
             workflow(outer_dist)
             return following_identity(outer_dist)._rows
 
-    assert jnp.array_equal(following_samples(auto), following_samples(sequential))
+    assert jnp.array_equal(following_samples(probed), following_samples(sequential))

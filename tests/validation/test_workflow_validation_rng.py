@@ -23,7 +23,8 @@ from probpipe import (
 )
 from probpipe.families import GaussianFamily, glm_likelihood
 from probpipe.functions import _context, _rng
-from probpipe.inference._inference_utils import integer_seed, run_seed
+from probpipe.inference._inference_utils import integer_seed
+from probpipe.operations._condition import _inference_run_key
 from probpipe.validation import (
     Reference,
     score_posterior,
@@ -135,8 +136,8 @@ class TestPredictiveCheckBroker:
 class _FakeConditionOn:
     """A stand-in for ``condition_on`` that records its observed values and returns zero draws.
 
-    A fit also records the seed it reads through ``run_seed``, as an inference
-    method does, so the seed is a key of the workflow scope the fit runs in.
+    A fit also records the seed of its run's key, as the registry derives it for an
+    inference method, so the seed is a key of the workflow scope the fit runs in.
     The evaluation of a kernel reads no seed.
     """
 
@@ -150,7 +151,7 @@ class _FakeConditionOn:
 
     def using(self, *, method=None, method_options=None):
         def fit(d, given):
-            self.seeds.append(integer_seed(run_seed("fake")))
+            self.seeds.append(integer_seed(_inference_run_key("fake")))
             return self(d, given)
 
         return fit
@@ -170,7 +171,7 @@ def _conjugate_calibration(**options):
         label="posterior",
     )
     return simulation_based_calibration(
-        likelihood * prior,
+        (likelihood & prior),
         observed="y",
         posterior=exact,
         num_posterior_draws=10,
@@ -183,7 +184,7 @@ class TestSimulationBasedCalibrationBroker:
     def _model():
         x = jnp.ones((3, 1))
         prior = MultivariateNormal("beta", loc=jnp.zeros(1), cov=jnp.eye(1))
-        return glm_likelihood("y", GaussianFamily(), X=x, dispersion=1.0) * prior
+        return glm_likelihood("y", GaussianFamily(), X=x, dispersion=1.0) & prior
 
     def test_a_call_in_a_seeded_scope_reproduces_its_ranks(self):
         with workflow_run(seed=7):

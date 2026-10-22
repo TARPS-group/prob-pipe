@@ -47,7 +47,7 @@ class TestBatchValuedAtoms:
             else NumericArrayBatch(
                 values,
                 ("trajectory", "time"),
-                element_spec=NumericArraySpec(()),
+                element=NumericArraySpec(()),
                 axes_per_level=(1, len(event_shape)),
                 label="trajectories",
             )
@@ -83,7 +83,7 @@ class TestBatchValuedAtoms:
         atoms = RecordBatch(
             {"x": values, "y": 10 * values},
             ("trajectory", "time"),
-            element_spec=RecordSpec(x=(), y=()),
+            element=RecordSpec(x=(), y=()),
             label="paths",
         )
         event = BatchSpec(RecordSpec(x=(), y=()), time=3)
@@ -155,7 +155,7 @@ class TestNestedBatchEvents:
             NumericArraySpec((), jnp.float32), replicate=2, time=(2, 3)
         )
         assert declaration.term_spec is nested
-        assert isinstance(nested.element_spec, BatchSpec)
+        assert isinstance(nested.element_spec.term_spec, BatchSpec)
         with workflow_run(seed=0):
             drawn = sample(law, 4)
             mu = mean(law)
@@ -286,7 +286,7 @@ class TestBatchValuedMoments:
         atoms = RecordBatch(
             {"x": x, "y": 10 * x},
             ("trajectory", "time"),
-            element_spec=RecordSpec(x=(), y=()),
+            element=RecordSpec(x=(), y=()),
             label="paths",
         )
         event = BatchSpec(RecordSpec(x=(), y=()), time=3)

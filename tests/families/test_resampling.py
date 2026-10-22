@@ -66,7 +66,7 @@ def record_centers(centers):
     return NumericRecordBatch(
         {"a": centers[:, 0], "b": centers[:, 1]},
         "atom",
-        element_spec=NumericRecordSpec(a=(), b=()),
+        element=NumericRecordSpec(a=(), b=()),
         label="atoms",
     )
 
@@ -132,7 +132,7 @@ class TestTheUniformConstructor:
         batch = NumericRecordBatch(
             {"x/p": points[:, 0], "x/q": points[:, 1:3], "y": points[:, 3]},
             "atom",
-            element_spec=NumericRecordSpec(x=NumericRecordSpec(p=(), q=(2,)), y=()),
+            element=NumericRecordSpec(x=NumericRecordSpec(p=(), q=(2,)), y=()),
             label="atoms",
         )
         scales = NumericRecord(
@@ -152,7 +152,7 @@ class TestTheUniformConstructor:
         batch = NumericRecordBatch(
             {"a": points[:, 0], "b": points[:, 1:]},
             "atom",
-            element_spec=NumericRecordSpec(a=(), b=(2,)),
+            element=NumericRecordSpec(a=(), b=(2,)),
             label="atoms",
         )
         from_records = kernel.build_kernels(
@@ -545,7 +545,7 @@ class TestTheKDEDeclaration:
         atoms = NumericRecordBatch(
             {"s": jnp.array([1.0, 2.0, 3.0])},
             "atom",
-            element_spec=NumericRecordSpec(s=NumericArraySpec((), jnp.float32, positive)),
+            element=NumericRecordSpec(s=NumericArraySpec((), jnp.float32, positive)),
             label="atoms",
         )
         kde = KDEDistribution(atoms, 0.5, label="post")
@@ -604,7 +604,7 @@ class TestARecordKDE:
         batch = NumericRecordBatch(
             {"a": jnp.array([0.5, 0.6, 0.7]), "b": jnp.array([-0.3, -0.4, -0.5])},
             "value",
-            element_spec=NumericRecordSpec(a=(), b=()),
+            element=NumericRecordSpec(a=(), b=()),
             label="values",
         )
         expected = flat._log_prob(jnp.array([[0.5, -0.3], [0.6, -0.4], [0.7, -0.5]]))
@@ -617,7 +617,7 @@ class TestARecordKDE:
                 "b": jnp.array([1.0, 3.0, 2.0]),
             },
             "atom",
-            element_spec=NumericRecordSpec(a=(2,), b=()),
+            element=NumericRecordSpec(a=(2,), b=()),
             label="atoms",
         )
         kde = KDEDistribution(
@@ -632,13 +632,13 @@ class TestARecordKDE:
         in_order = NumericRecordBatch(
             {"a": a, "b": b},
             "value",
-            element_spec=NumericRecordSpec(a=(2,), b=()),
+            element=NumericRecordSpec(a=(2,), b=()),
             label="values",
         )
         reordered = NumericRecordBatch(
             {"b": b, "a": a},
             "value",
-            element_spec=NumericRecordSpec(b=(), a=(2,)),
+            element=NumericRecordSpec(b=(), a=(2,)),
             label="values",
         )
         expected = kde._log_prob({"a": a, "b": b})
@@ -667,7 +667,7 @@ def _rows() -> NumericRecordBatch:
     return NumericRecordBatch(
         {"x": jnp.arange(4.0), "y": 10.0 * jnp.arange(4.0)},
         "row",
-        element_spec=NumericRecordSpec(x=(), y=()),
+        element=NumericRecordSpec(x=(), y=()),
         label="xy",
     )
 
@@ -719,7 +719,7 @@ class TestTheBootstrapReplicate:
         assert list(replicate.event_spec.outputs) == ["b"]
         assert replicate.event_spec.term_spec.batch_shape == (5,)
         assert (
-            replicate.event_spec.term_spec.element_spec
+            replicate.event_spec.term_spec.element_spec.term_spec
             == Normal("x", 0.0, 1.0).event_spec.term_spec
         )
 
@@ -810,7 +810,7 @@ class TestTheReplicateLevel:
         atoms = NumericArrayBatch(
             jnp.zeros((2, 3)),
             ("chain", "draw"),
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="draws",
         )
         replicate = BootstrapReplicateDistribution(
@@ -822,7 +822,7 @@ class TestTheReplicateLevel:
         atoms = NumericRecordBatch(
             {"x": jnp.zeros((2, 3)), "y": jnp.zeros((2, 3))},
             ("chain", "draw"),
-            element_spec=NumericRecordSpec(x=(), y=()),
+            element=NumericRecordSpec(x=(), y=()),
             axes_per_level=(1, 1),
             label="draws",
         )

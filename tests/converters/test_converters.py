@@ -366,7 +366,7 @@ class TestARecordSource:
         atoms = NumericRecordBatch(
             {"lam": lam},
             "draw",
-            element_spec=spec,
+            element=spec,
             label="atoms",
         )
         return EmpiricalDistribution(atoms, label="posterior")
@@ -1056,7 +1056,7 @@ class TestTheDrawCountOfAConversion:
         def atoms(d: EmpiricalDistribution) -> int:
             return d.num_atoms
 
-        counted = Function(atoms, label="atoms", dispatch="sequential")
+        counted = Function(atoms, label="atoms", executor="sequential")
         assert int(counted.using(num_samples=19)(Normal("x", 0.0, 1.0)).raw) == 19
 
     def test_an_exact_conversion_records_no_num_samples(self):
@@ -1156,7 +1156,7 @@ class TestProtocolConversion:
                 "log_sigma": jax.random.normal(jax.random.PRNGKey(3), (n,)),
             },
             "row",
-            element_spec=NumericRecordSpec(mu=(), log_sigma=()),
+            element=NumericRecordSpec(mu=(), log_sigma=()),
             label="r",
         )
         emp = EmpiricalDistribution(rows, label="emp")
@@ -1272,7 +1272,7 @@ class TestProtocolConversion:
                 "slope": jax.random.normal(jax.random.PRNGKey(1), (n,)),
             },
             "row",
-            element_spec=NumericRecordSpec(intercept=(), slope=()),
+            element=NumericRecordSpec(intercept=(), slope=()),
             label="r",
         )
         emp = EmpiricalDistribution(rows, label="emp")

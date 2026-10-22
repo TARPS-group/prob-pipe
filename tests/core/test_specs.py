@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import pickle
+import re
 from dataclasses import FrozenInstanceError
 
 import jax
@@ -17,6 +18,7 @@ from probpipe import (
     DistributionBatch,
     DistributionSpec,
     EmpiricalDistribution,
+    Function,
     FunctionSpec,
     InputSpec,
     Normal,
@@ -28,13 +30,15 @@ from probpipe import (
     Record,
     RecordSpec,
     TermSpec,
+    distribution,
     positive,
+    sample,
+    workflow_run,
 )
 from probpipe.core._specs import (
     _has_record_outputs,
     _output_record,
     _root_output_name,
-    _single_output_name,
 )
 
 
@@ -48,6 +52,20 @@ def declared_law():
             )
 
     return DeclaredLaw
+
+
+_REAL = NumericArraySpec(())
+
+
+def _grouped_spec():
+    """The output spec of a law over ``{a, g: {b, c}}``."""
+    return OutputSpec(RecordSpec(a=_REAL, g=RecordSpec(b=_REAL, c=_REAL)))
+
+
+def _law_over_laws():
+    """A law over laws, declared in the positional form over a law over an array ``x``."""
+    laws = DistributionBatch([Normal("x", 0.0, 1.0), Normal("x", 1.0, 2.0)], "law")
+    return EmpiricalDistribution(laws, event_spec=OutputSpec(laws.element_spec.term_spec))
 
 
 class TestOutputSpec:
@@ -91,17 +109,18 @@ class TestOutputSpec:
         assert exposed.outputs["law"] is law
         assert list(OutputSpec(posterior=law).outputs) == ["posterior"]
 
-    def test_a_law_or_a_batch_exposes_its_outputs(self):
+    def test_a_law_has_no_outputs_and_a_batch_has_its_elements(self):
+        # A law as a value has no outputs: the laws of its draws' fields do not determine it.
         record = RecordSpec(mu=(), tau=())
         law = OutputSpec(DistributionSpec(OutputSpec(record)))
-        assert (list(law.outputs), _has_record_outputs(law)) == (["mu", "tau"], False)
-        assert law.with_path_names({"mu": "center"}).term_spec == DistributionSpec(
-            OutputSpec(record.with_path_names({"mu": "center"}))
+        assert (list(law.outputs), _has_record_outputs(law)) == ([], False)
+        assert law.rename({"mu": "center"}).term_spec == DistributionSpec(
+            OutputSpec(record.rename({"mu": "center"}))
         )
         batch = OutputSpec(BatchSpec(record, sample=3))
         assert (list(batch.outputs), _has_record_outputs(batch)) == (["mu", "tau"], False)
-        assert batch.with_path_names({"mu": "center"}).term_spec == BatchSpec(
-            record.with_path_names({"mu": "center"}), sample=3
+        assert batch.rename({"mu": "center"}).term_spec == BatchSpec(
+            record.rename({"mu": "center"}), sample=3
         )
         with pytest.raises(TypeError, match=r"with_term_spec\(\) needs a DistributionSpec"):
             law.with_term_spec(record)
@@ -132,7 +151,6 @@ class TestOutputSpec:
             ((RecordSpec(x=()), RecordSpec(y=())), {}),
             ((RecordSpec(x=()),), {"y": spec}),
             ((), {"x": None, "y": spec}),
-            ((), {"x": ()}),
         ]:
             with pytest.raises(TypeError):
                 OutputSpec(*args, **kwargs)
@@ -147,8 +165,8 @@ class TestOutputSpec:
         assert hole.with_dim_sizes(n=3).with_dim_names(n="m") == hole
 
     def test_the_record_of_the_outputs_of_each_form(self):
-        assert RecordSpec(OutputSpec(theta=NumericArraySpec(())).outputs) == RecordSpec(theta=())
-        assert RecordSpec(OutputSpec(RecordSpec(a=())).outputs) == RecordSpec(a=())
+        assert _output_record(OutputSpec(theta=NumericArraySpec(()))) == RecordSpec(theta=())
+        assert _output_record(OutputSpec(RecordSpec(a=()))) == RecordSpec(a=())
 
 
 class TestTheFinalNames:
@@ -201,12 +219,6 @@ class TestTheFinalNames:
 class TestTheReadersOfAnOutputSpec:
     """The private helpers through which code outside ``core/_specs.py`` reads an output spec."""
 
-    @staticmethod
-    def _law_over_laws():
-        """A law over laws, declared in the positional form over a law over an array ``x``."""
-        laws = DistributionBatch([Normal("x", 0.0, 1.0), Normal("x", 1.0, 2.0)], "law")
-        return EmpiricalDistribution(laws, event_spec=OutputSpec(laws.element_spec))
-
     def test_each_form_has_its_root_name_and_its_record_form(self):
         record = OutputSpec(RecordSpec(a=()))
         keyword = OutputSpec(x=NumericArraySpec(()))
@@ -238,22 +250,285 @@ class TestTheReadersOfAnOutputSpec:
     ):
         # A batch of records has the record of its marginal batches' types once batch outputs
         # are typed by their marginal batches; until then it is refused, as before.
-        with pytest.raises(TypeError, match=f"describes {described}.*wrap them under a name"):
+        with pytest.raises(TypeError, match=f"its values are {described}.*Wrap them under a name"):
             _output_record(output_spec)
 
-    def test_the_single_output_of_each_form(self):
-        assert _single_output_name(OutputSpec(RecordSpec(a=(), b=()))) is None
-        assert _single_output_name(OutputSpec(x=NumericArraySpec(()))) == "x"
-        # The positional form over a law still has the outputs of one draw of that law.
-        assert _single_output_name(OutputSpec(Normal("mu", 0.0, 1.0).spec)) == "mu"
+    def test_an_output_spec_over_a_law_has_no_outputs(self):
+        # The distributions of a law's draws' fields do not determine it, so a law as a value
+        # has no outputs, and a batch of laws has none either.
+        law_spec = Normal("mu", 0.0, 1.0).spec
+        assert OutputSpec(law_spec).outputs == {}
+        assert OutputSpec(_law_over_laws().spec).outputs == {}
 
-    def test_a_law_over_laws_is_indexed_by_its_draws_one_output(self):
-        # Until an output spec over a law has no outputs, the name of the drawn laws' output
-        # selects the law itself; afterwards it is not a path, and this raises KeyError.
-        law_over_laws = self._law_over_laws()
-        assert law_over_laws["x"].label == law_over_laws.label
-        with pytest.raises(TypeError, match="wrap them under a name"):
+    def test_a_law_over_laws_has_no_paths(self):
+        # x names the output at the root of the laws it is over, not a path of the law over them.
+        law_over_laws = _law_over_laws()
+        assert law_over_laws.event_spec.outputs == {}
+        assert "x" not in law_over_laws
+        with pytest.raises(
+            TypeError, match=r"cannot index .* by 'x', since its draws are distributions"
+        ):
+            law_over_laws["x"]
+        with pytest.raises(TypeError, match="Wrap them under a name"):
             _output_record(law_over_laws.event_spec)
+
+
+class TestOutputSpecSelection:
+    """``OutputSpec[]`` and ``in``: selecting from an output spec by path."""
+
+    def test_one_path_to_a_single_value_names_it_by_the_path_s_last_name(self):
+        assert _grouped_spec()["g/b"] == OutputSpec(b=_REAL)
+        assert _grouped_spec()["a"] == OutputSpec(a=_REAL)
+
+    def test_one_path_to_a_group_has_the_group_s_children_as_outputs(self):
+        assert _grouped_spec()["g"] == OutputSpec(RecordSpec(b=_REAL, c=_REAL))
+        assert list(_grouped_spec()["g"].outputs) == ["b", "c"]
+
+    def test_a_list_keeps_each_node_at_its_path_in_the_spec_s_order(self):
+        assert _grouped_spec()[["g"]] == OutputSpec(RecordSpec(g=RecordSpec(b=_REAL, c=_REAL)))
+        assert _grouped_spec()[["g/c", "a"]] == OutputSpec(
+            RecordSpec(a=_REAL, g=RecordSpec(c=_REAL))
+        )
+        # A tuple is a list of paths.
+        assert _grouped_spec()["g/c", "a"] == _grouped_spec()[["g/c", "a"]]
+
+    def test_a_field_holding_a_law_gives_the_law_s_output_spec(self):
+        law_spec = (Normal("mu", 0.0, 1.0) & Normal("sigma", 1.0, 1.0)).spec
+        wrapped = OutputSpec(RecordSpec(params=law_spec))
+        assert wrapped["params"] == OutputSpec(law_spec)
+        assert wrapped["params"].outputs == {}
+
+    def test_a_function_returning_a_wrapped_law_selects_the_law_s_output_spec(self):
+        law = Normal("mu", 0.0, 1.0) & Normal("sigma", 1.0, 1.0)
+        fit = Function(
+            lambda data: {"params": law},
+            input_spec={"data": NumericArraySpec((3,))},
+            output_spec=OutputSpec(RecordSpec(params=law.spec)),
+        )
+        assert fit.output_spec["params"] == OutputSpec(law.spec)
+
+    def test_the_root_name_of_the_keyword_form_gives_the_spec_itself(self):
+        # An interim reading, as a distribution over a single value is indexed by its name.
+        spec = OutputSpec(x=_REAL)
+        assert spec["x"] is spec
+        assert "x" in spec
+        assert spec[["x"]] == OutputSpec(RecordSpec(x=_REAL))
+
+    def test_the_keyword_form_over_a_record_selects_below_its_name(self):
+        # The keyword form over a record: its name gives itself, and its paths start with it.
+        spec = OutputSpec(params=RecordSpec(mu=_REAL, sigma=_REAL))
+        assert spec["params"] is spec
+        assert spec["params/mu"] == OutputSpec(mu=_REAL)
+        assert spec[["params/mu"]] == OutputSpec(RecordSpec(params=RecordSpec(mu=_REAL)))
+
+    def test_in_tests_paths_and_never_raises(self):
+        spec = _grouped_spec()
+        assert "g/b" in spec and "g" in spec and "a" in spec
+        assert "z" not in spec and "g/z" not in spec
+        assert ["a"] not in spec and 0 not in spec and None not in spec
+        assert "y" not in OutputSpec(x=_REAL)
+        assert "mu" not in OutputSpec(Normal("mu", 0.0, 1.0).spec)
+
+    def test_a_path_the_spec_lacks_raises_key_error_listing_its_paths(self):
+        with pytest.raises(
+            KeyError,
+            match=re.escape(
+                "unknown path 'z' in the output spec; available paths: ['a', 'g', 'g/b', 'g/c']"
+            ),
+        ):
+            _grouped_spec()["z"]
+        with pytest.raises(KeyError, match="To select the nested path, write 'g/b'"):
+            _grouped_spec()["g", "b"]
+
+    def test_a_spec_with_no_paths_raises_type_error(self):
+        with pytest.raises(
+            TypeError,
+            match="cannot index the output spec by 'y', since its values are single values with "
+            "no paths",
+        ):
+            OutputSpec(x=_REAL)["y"]
+        with pytest.raises(TypeError, match="since its values are distributions"):
+            OutputSpec(Normal("mu", 0.0, 1.0).spec)["mu"]
+        with pytest.raises(TypeError, match="the type of its output 'x' is not known yet"):
+            OutputSpec(x=None)["y"]
+        with pytest.raises(TypeError, match="the type of its output 'x' is not known yet"):
+            OutputSpec(x=None)[["x"]]
+
+    @pytest.mark.parametrize(
+        ("paths", "error"),
+        [
+            ("", ValueError),
+            ("g//b", ValueError),
+            ([], ValueError),
+            (("a", "a"), ValueError),
+            (("g", "g/b"), ValueError),
+            ({"a"}, TypeError),
+            (("a", 0), TypeError),
+            (None, TypeError),
+        ],
+        ids=repr,
+    )
+    def test_a_malformed_path_is_refused_by_the_path_reader(self, paths, error):
+        with pytest.raises(error):
+            _grouped_spec()[paths]
+
+    def test_an_output_spec_is_not_iterable(self):
+        with pytest.raises(
+            TypeError,
+            match=re.escape(
+                "cannot iterate over an OutputSpec. Iterate over its outputs instead, as "
+                "list(spec.outputs)"
+            ),
+        ):
+            list(_grouped_spec())
+
+
+class TestOutputSpecRemoval:
+    """``OutputSpec.without``."""
+
+    def test_removal_keeps_every_other_node_at_its_path(self):
+        assert _grouped_spec().without("g/c") == OutputSpec(
+            RecordSpec(a=_REAL, g=RecordSpec(b=_REAL))
+        )
+        assert _grouped_spec().without("g/b", "g/c") == OutputSpec(RecordSpec(a=_REAL))
+
+    def test_selection_and_removal_partition_the_fields(self):
+        spec = _grouped_spec()
+        kept, removed = spec[["a", "g/b"]], spec.without("a", "g/b")
+        assert set(_output_record(kept).keys()) | set(_output_record(removed).keys()) == {
+            "a",
+            "g/b",
+            "g/c",
+        }
+        assert not set(_output_record(kept).keys()) & set(_output_record(removed).keys())
+
+    def test_the_keyword_form_over_a_record_keeps_its_name(self):
+        spec = OutputSpec(params=RecordSpec(mu=_REAL, sigma=_REAL))
+        assert spec.without("params/sigma") == OutputSpec(params=RecordSpec(mu=_REAL))
+
+    def test_removing_everything_is_refused(self):
+        with pytest.raises(ValueError):
+            _grouped_spec().without("a", "g")
+        with pytest.raises(ValueError, match="cannot remove 'x' from the output spec"):
+            OutputSpec(x=_REAL).without("x")
+
+    def test_a_path_the_spec_lacks_raises_key_error(self):
+        with pytest.raises(KeyError, match="unknown path 'z' in the output spec"):
+            _grouped_spec().without("z")
+
+    def test_a_spec_with_no_paths_raises_type_error(self):
+        with pytest.raises(
+            TypeError, match="cannot remove 'y' from the output spec, since its values are single"
+        ):
+            OutputSpec(x=_REAL).without("y")
+
+    def test_paths_are_given_one_per_argument(self):
+        with pytest.raises(TypeError):
+            _grouped_spec().without(("a", "g/c"))
+        with pytest.raises(ValueError):
+            _grouped_spec().without("g", "g/b")
+
+
+class TestOutputSpecMerge:
+    """``&`` on output specs."""
+
+    def test_the_outputs_of_both_the_left_s_first(self):
+        merged = OutputSpec(x=_REAL) & _grouped_spec()
+        assert merged == OutputSpec(RecordSpec(x=_REAL, a=_REAL, g=RecordSpec(b=_REAL, c=_REAL)))
+        assert list((_grouped_spec() & OutputSpec(x=_REAL)).outputs) == ["a", "g", "x"]
+
+    def test_selections_merge_back_into_their_spec(self):
+        spec = _grouped_spec()
+        assert spec[["a"]] & spec[["g"]] == spec
+
+    def test_an_output_in_both_is_refused(self):
+        with pytest.raises(
+            ValueError,
+            match=re.escape(
+                "cannot merge the left output spec and the right output spec, since both have "
+                "the output 'a'. Rename it in one of them, as rename({'a': 'a_2'})"
+            ),
+        ):
+            _grouped_spec() & OutputSpec(a=_REAL)
+
+    def test_a_spec_over_distributions_is_refused_with_the_advice_to_wrap(self):
+        law_spec = Normal("mu", 0.0, 1.0).spec
+        with pytest.raises(
+            TypeError,
+            match=re.escape(
+                "cannot merge the left output spec, since its values are distributions, which "
+                "have no outputs to read by name. Wrap them under a name, as "
+                "OutputSpec(RecordSpec(params=...))"
+            ),
+        ):
+            OutputSpec(law_spec) & OutputSpec(x=_REAL)
+        assert OutputSpec(RecordSpec(params=law_spec)) & OutputSpec(x=_REAL) == OutputSpec(
+            RecordSpec(params=law_spec, x=_REAL)
+        )
+
+    def test_a_spec_over_batches_is_refused_until_their_outputs_are_one_record(self):
+        batch_spec = BatchSpec(RecordSpec(a=_REAL, b=_REAL), n=2)
+        assert list(OutputSpec(batch_spec).outputs) == ["a", "b"]
+        with pytest.raises(
+            TypeError,
+            match=re.escape(
+                "cannot merge the left output spec, since its values are batches, whose outputs "
+                "are not read as one record yet. Wrap them under a name"
+            ),
+        ):
+            OutputSpec(batch_spec) & OutputSpec(x=_REAL)
+
+    def test_a_spec_whose_type_is_not_known_is_refused(self):
+        with pytest.raises(TypeError, match="the type of its output 'x' is not known yet"):
+            OutputSpec(x=_REAL) & OutputSpec(x=None)
+
+    def test_another_operand_is_not_merged(self):
+        with pytest.raises(TypeError):
+            _grouped_spec() & RecordSpec(z=_REAL)
+
+
+class TestOutputSpecEquality:
+    def test_equal_specs_are_equal_and_hash_alike(self):
+        assert _grouped_spec() == _grouped_spec()
+        assert hash(_grouped_spec()) == hash(_grouped_spec())
+        assert OutputSpec(x=_REAL) == OutputSpec(x=_REAL)
+
+    def test_the_root_name_and_the_field_order_count(self):
+        assert OutputSpec(x=_REAL) != OutputSpec(y=_REAL)
+        assert OutputSpec(x=_REAL) != OutputSpec(RecordSpec(x=_REAL))
+        assert OutputSpec(RecordSpec(a=_REAL, b=_REAL)) != OutputSpec(RecordSpec(b=_REAL, a=_REAL))
+
+    def test_an_output_spec_equals_only_an_output_spec(self):
+        assert _grouped_spec() != _grouped_spec().term_spec
+        assert OutputSpec(x=_REAL) != _REAL
+
+
+class TestALawOverLaws:
+    """A law whose event is positional over a law: it has no outputs, and a merge refuses it."""
+
+    def test_it_builds_with_no_outputs(self):
+        assert _law_over_laws().event_spec.outputs == {}
+
+    def test_a_merge_refuses_it_with_the_advice_to_wrap(self):
+        with pytest.raises(
+            TypeError,
+            match=r"cannot merge factor 0 \('ℙ'\), since its draws are distributions, which have "
+            r"no outputs to read by name\. Wrap them under a name",
+        ):
+            (_law_over_laws() & Normal("z", 0.0, 1.0))
+
+    def test_wrapped_under_a_name_it_merges(self):
+        law_spec = Normal("x", 0.0, 1.0).spec
+        wrapped = distribution(
+            sample=lambda key: {"params": Normal("x", 0.0, 1.0)},
+            event_spec=OutputSpec(RecordSpec(params=law_spec)),
+        )
+        joint = wrapped & Normal("z", 0.0, 1.0)
+        assert list(joint.event_spec.outputs) == ["params", "z"]
+        with workflow_run(seed=0):
+            draw = sample(joint)
+        assert isinstance(draw["params"], Distribution)
+        assert draw.keys() == ("params", "z")
 
 
 class TestOutputSpecCompletion:
@@ -321,33 +596,31 @@ class TestOutputSpecCompletion:
 
     def test_a_whole_term_is_renamed_by_its_output(self):
         array = NumericArraySpec(())
-        assert OutputSpec(prior=array).with_path_names(prior="beta") == OutputSpec(beta=array)
-        assert OutputSpec(prior=None).with_path_names(prior="beta") == OutputSpec(beta=None)
+        assert OutputSpec(prior=array).rename(prior="beta") == OutputSpec(beta=array)
+        assert OutputSpec(prior=None).rename(prior="beta") == OutputSpec(beta=None)
         with pytest.raises(KeyError):
-            OutputSpec(prior=array).with_path_names(sigma="s")
+            OutputSpec(prior=array).rename(sigma="s")
         with pytest.raises(KeyError):
-            OutputSpec(prior=array).with_path_names({"prior/x": "y"})
+            OutputSpec(prior=array).rename({"prior/x": "y"})
         # The output is renamed in place: moving it into a group would
         # change the form, so a path target raises.
         with pytest.raises(ValueError, match="cannot move it into a group"):
-            OutputSpec(prior=array).with_path_names(prior="group/beta")
+            OutputSpec(prior=array).rename(prior="group/beta")
 
     def test_a_whole_record_renames_its_fields_through_its_output(self):
         record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
-        renamed = OutputSpec(parameters=record).with_path_names({"parameters/beta": "parameters/b"})
-        assert renamed == OutputSpec(parameters=record.with_path_names(beta="b"))
-        assert renamed.with_path_names(parameters="theta") == OutputSpec(
-            theta=record.with_path_names(beta="b")
-        )
+        renamed = OutputSpec(parameters=record).rename({"parameters/beta": "parameters/b"})
+        assert renamed == OutputSpec(parameters=record.rename(beta="b"))
+        assert renamed.rename(parameters="theta") == OutputSpec(theta=record.rename(beta="b"))
         with pytest.raises(KeyError):
-            OutputSpec(parameters=record).with_path_names(beta="b")
+            OutputSpec(parameters=record).rename(beta="b")
 
     def test_an_output_and_a_field_below_it_are_renamed_in_two_calls(self):
         # Each target is a new exact path, so renaming the output to theta
         # and its field to theta/b in one call gives one target inside another.
         record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
         with pytest.raises(ValueError, match="overlap"):
-            OutputSpec(parameters=record).with_path_names(
+            OutputSpec(parameters=record).rename(
                 {"parameters": "theta", "parameters/beta": "theta/b"}
             )
 
@@ -355,24 +628,22 @@ class TestOutputSpecCompletion:
         inner = RecordSpec(beta=NumericArraySpec(()))
         renames = {"parameters/beta": "parameters/b"}
         renamed_inner = RecordSpec(b=NumericArraySpec(()))
-        whole = OutputSpec(parameters=inner).with_path_names(renames)
-        exposed = OutputSpec(RecordSpec(parameters=inner)).with_path_names(renames)
-        assert whole.with_path_names(parameters="theta") == OutputSpec(theta=renamed_inner)
-        assert exposed.with_path_names(parameters="theta") == OutputSpec(
-            RecordSpec(theta=renamed_inner)
-        )
+        whole = OutputSpec(parameters=inner).rename(renames)
+        exposed = OutputSpec(RecordSpec(parameters=inner)).rename(renames)
+        assert whole.rename(parameters="theta") == OutputSpec(theta=renamed_inner)
+        assert exposed.rename(parameters="theta") == OutputSpec(RecordSpec(theta=renamed_inner))
 
     def test_an_output_and_a_field_of_one_name_have_distinct_paths(self):
         record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
         declaration = OutputSpec(beta=record)
-        assert declaration.with_path_names(beta="b") == OutputSpec(b=record)
-        assert declaration.with_path_names({"beta/beta": "beta/b"}) == OutputSpec(
-            beta=record.with_path_names(beta="b")
+        assert declaration.rename(beta="b") == OutputSpec(b=record)
+        assert declaration.rename({"beta/beta": "beta/b"}) == OutputSpec(
+            beta=record.rename(beta="b")
         )
 
     def test_a_whole_record_moves_a_field_within_its_output(self):
         record = RecordSpec(a=NumericArraySpec(()), g=RecordSpec(b=NumericArraySpec(())))
-        moved = OutputSpec(p=record).with_path_names({"p/a": "p/g/a"})
+        moved = OutputSpec(p=record).rename({"p/a": "p/g/a"})
         assert moved == OutputSpec(
             p=RecordSpec(g=RecordSpec(b=NumericArraySpec(()), a=NumericArraySpec(())))
         )
@@ -388,37 +659,37 @@ class TestOutputSpecCompletion:
     def test_a_whole_record_keeps_its_fields_under_its_output(self, renames):
         record = RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec(()))
         with pytest.raises(ValueError, match="must stay under"):
-            OutputSpec(p=record).with_path_names(renames)
+            OutputSpec(p=record).rename(renames)
 
     def test_a_whole_term_refuses_a_repeated_or_an_empty_rename(self):
         record = RecordSpec(beta=NumericArraySpec(()))
         with pytest.raises(ValueError, match="more than once"):
-            OutputSpec(p=record).with_path_names({"p": "q"}, p="r")
+            OutputSpec(p=record).rename({"p": "q"}, p="r")
         with pytest.raises(ValueError, match="more than once"):
-            OutputSpec(p=record).with_path_names({"p/beta": "b"}, **{"p/beta": "c"})
+            OutputSpec(p=record).rename({"p/beta": "b"}, **{"p/beta": "c"})
         with pytest.raises(ValueError, match="at least one rename"):
-            OutputSpec(p=record).with_path_names()
+            OutputSpec(p=record).rename()
 
     def test_an_exposed_record_renames_its_fields(self):
         record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
-        renamed = OutputSpec(record).with_path_names(beta="b")
-        assert renamed == OutputSpec(record.with_path_names(beta="b"))
+        renamed = OutputSpec(record).rename(beta="b")
+        assert renamed == OutputSpec(record.rename(beta="b"))
         assert _has_record_outputs(renamed)
         nested = OutputSpec(RecordSpec(g=RecordSpec(mu=NumericArraySpec(()))))
-        assert tuple(nested.with_path_names({"g/mu": "g/m"}).outputs) == ("g",)
+        assert tuple(nested.rename({"g/mu": "g/m"}).outputs) == ("g",)
         with pytest.raises(KeyError):
-            nested.with_path_names(mu="m")
+            nested.rename(mu="m")
 
     def test_an_exposed_record_moves_fields_across_its_outputs(self):
         scalar = NumericArraySpec(())
         declaration = OutputSpec(RecordSpec(g=RecordSpec(mu=scalar, sigma=scalar), y=scalar))
-        out = declaration.with_path_names({"g/mu": "mu"})
+        out = declaration.rename({"g/mu": "mu"})
         assert out == OutputSpec(RecordSpec(g=RecordSpec(sigma=scalar), y=scalar, mu=scalar))
-        into = declaration.with_path_names({"y": "g/y"})
+        into = declaration.rename({"y": "g/y"})
         assert into == OutputSpec(RecordSpec(g=RecordSpec(mu=scalar, sigma=scalar, y=scalar)))
         assert _has_record_outputs(into)
         # An output that the moves leave empty is removed.
-        emptied = OutputSpec(RecordSpec(g=RecordSpec(mu=scalar))).with_path_names({"g/mu": "m"})
+        emptied = OutputSpec(RecordSpec(g=RecordSpec(mu=scalar))).rename({"g/mu": "m"})
         assert tuple(emptied.outputs) == ("m",)
 
 
@@ -466,7 +737,7 @@ class TestDeclarationConstruction:
         with pytest.raises(ValueError, match="output names must be non-empty"):
             OutputSpec(**{name: NumericArraySpec(())})
 
-    @pytest.mark.parametrize("value", [None, (), {}, 1, "spec"])
+    @pytest.mark.parametrize("value", [None, {}, 1, "spec"])
     def test_inputs_require_specs(self, value):
         with pytest.raises(TypeError):
             InputSpec(x=value)
@@ -624,7 +895,7 @@ class TestDimensionBinding:
         assert renamed["data"].shape == ("m", "n")
         assert renamed["data"].dtype == np.dtype("float32")
         assert renamed["batch"].axis_groups == (("n",),)
-        assert renamed["batch"].element_spec.shape == ("m",)
+        assert renamed["batch"].element_spec.term_spec.shape == ("m",)
         assert renamed["batch"].level_names == ("draw",)
         assert renamed["law"].event_spec.outputs["x"].shape == ("m",)
         assert renamed["function"].input_spec["x"].shape == ("n",)
@@ -744,7 +1015,7 @@ class TestSpecKinds:
         batch = NumericArrayBatch(
             np.zeros((2, 3)),
             "draw",
-            element_spec=NumericArraySpec((3,)),
+            element=NumericArraySpec((3,)),
             label="draws",
         )
         schema = RecordSpec.infer_from({"batch": batch})
@@ -999,7 +1270,7 @@ class TestNestedValueBinding:
                 atoms = NumericRecordBatch(
                     {"x": np.zeros((2, width))},
                     "row",
-                    element_spec=RecordSpec(x=(width,)),
+                    element=RecordSpec(x=(width,)),
                     label="rows",
                 )
                 return EmpiricalDistribution(atoms, label="x")
@@ -1100,20 +1371,15 @@ class TestNestedValueBinding:
                     label="value",
                 )
 
-    def test_field_order_does_not_change_a_match(self, wrap_binding, declared_law):
+    def test_a_law_with_other_field_order_does_not_match(self, wrap_binding, declared_law):
         law = declared_law(RecordSpec(y=(), x=(3,)))
         spec = DistributionSpec(RecordSpec(x=(3,), y=()))
         schema = RecordSpec(law=spec)
-        assert spec.is_valid(law)
+        assert not spec.is_valid(law)
         declared, value = wrap_binding(spec, law)
-        assert declared.bind_dims_from_value(value) == declared
-        assert schema.is_valid(
-            Record(
-                {"law": law},
-                event_template=schema,
-                label="value",
-            )
-        )
+        with pytest.raises(ValueError, match="not in the declared order"):
+            declared.bind_dims_from_value(value)
+        assert not schema.is_valid({"law": law})
 
     def test_fields_sharing_a_dimension_bind_it_once(self, declared_law):
         spec = DistributionSpec(RecordSpec(x=("n",), y=("n",)))
@@ -1219,7 +1485,7 @@ class TestNestedSpecBinding:
         expected = DistributionSpec(
             RecordSpec(x=NumericArraySpec((size,), dtype="float64", support=positive), y=())
         )
-        actual = DistributionSpec(RecordSpec(y=(), x=NumericArraySpec((3,), dtype=dtype)))
+        actual = DistributionSpec(RecordSpec(x=NumericArraySpec((3,), dtype=dtype), y=()))
         declared = wrap_spec(expected)
         bound = declared.bind_dims_from_spec(wrap_spec(actual))
         assert bound == wrap_spec(expected.with_dim_sizes(n=3))
@@ -1232,7 +1498,8 @@ class TestNestedSpecBinding:
         fields = [("x", NumericArraySpec((3,))), ("nested", RecordSpec(y=(4,)))]
         if reverse:
             fields.reverse()
-        with pytest.raises(ValueError, match="already bound"):
+        message = "not in the declared order" if reverse else "already bound"
+        with pytest.raises(ValueError, match=message):
             wrap_spec(expected).bind_dims_from_spec(
                 wrap_spec(DistributionSpec(RecordSpec(dict(fields))))
             )
@@ -1252,9 +1519,8 @@ class TestDeclarationMessages:
         with pytest.raises(TypeError, match=r"cannot take a NumericArraySpec positionally; name"):
             OutputSpec(NumericArraySpec(()))
 
-    def test_a_shape_tuple_input_is_told_to_use_an_array_spec(self):
-        with pytest.raises(TypeError, match=r"input 'x' needs a TermSpec, got tuple; use Num"):
-            InputSpec(x=(3,))
+    def test_a_shape_tuple_input_is_an_array_spec(self):
+        assert InputSpec(x=(3,))["x"] == NumericArraySpec((3,))
 
     def test_an_unknown_optional_input_lists_the_inputs(self):
         with pytest.raises(KeyError, match=r"unknown input 'y'; available inputs: \['x'\]"):

@@ -43,7 +43,7 @@ def record_law(label: str = "joint", *, n: int = 12) -> EmpiricalDistribution:
     atoms = NumericRecordBatch(
         {"a": a, "b": 2.0 * a},
         "atom",
-        element_spec=spec,
+        element=spec,
         label="atoms",
     )
     return EmpiricalDistribution(atoms, label=label)
@@ -56,7 +56,7 @@ def one_field_law(label: str = "posterior", *, n: int = 12) -> EmpiricalDistribu
     atoms = NumericRecordBatch(
         {"beta": beta},
         "atom",
-        element_spec=spec,
+        element=spec,
         label="atoms",
     )
     return EmpiricalDistribution(atoms, label=label)

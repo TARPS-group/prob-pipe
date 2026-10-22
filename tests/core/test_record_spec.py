@@ -155,13 +155,13 @@ class TestOpaqueSpecTypeAndMeta:
             ["north", "south"],
             "site",
             label="b",
-        ).element_spec == OpaqueSpec(type=str)
+        ).element_spec.term_spec == OpaqueSpec(type=str)
         assert (
             OpaqueBatch(
                 ["north", 3],
                 "site",
                 label="b",
-            ).element_spec
+            ).element_spec.term_spec
             == OpaqueSpec()
         )
         assert (
@@ -169,7 +169,7 @@ class TestOpaqueSpecTypeAndMeta:
                 [],
                 "site",
                 label="b",
-            ).element_spec
+            ).element_spec.term_spec
             == OpaqueSpec()
         )
 
@@ -403,21 +403,30 @@ class TestNamedTreeSurfaceOnRecordSpec:
         assert nested["theta/scale"] == NumericArraySpec(())
         assert nested["sigma"] == NumericArraySpec((3,))
 
-    def test_tuple_indexing_matches_slash_path(self, nested):
-        assert nested["theta", "loc"] == nested["theta/loc"]
+    def test_a_tuple_is_a_list_of_paths(self, nested):
+        assert nested["theta/loc", "sigma"] == RecordSpec(theta=RecordSpec(loc=(2,)), sigma=(3,))
+        assert nested[["sigma", "theta/scale"]] == RecordSpec(
+            theta=RecordSpec(scale=()), sigma=(3,)
+        )
 
-    def test_partial_path_navigates_to_subtree(self, nested):
-        # A partial path reaches a subtree via at_path; [] is leaf-only.
-        assert nested.at_path("theta") == RecordSpec(loc=(2,), scale=())
-        with pytest.raises(KeyError):
-            nested["theta"]
+    def test_a_list_of_one_path_keeps_its_name(self, nested):
+        assert nested[["theta"]] == RecordSpec(theta=RecordSpec(loc=(2,), scale=()))
 
-    def test_path_membership_is_leaf_only(self, nested):
-        # Leaf-keyed membership: a key (leaf path) is a member; a partial path is
-        # navigable but not a member.
+    def test_a_group_path_gives_the_group_spec(self, nested):
+        assert nested["theta"] == RecordSpec(loc=(2,), scale=())
+        assert nested["theta"] == nested.at_path("theta")
+        assert nested["theta"]["loc"] == nested["theta/loc"]
+
+    def test_a_list_of_paths_and_without_partition_the_fields(self, nested):
+        chosen, rest = nested[["theta/loc"]], nested.without("theta/loc")
+        assert set(chosen.keys()) | set(rest.keys()) == set(nested.keys())
+        assert not set(chosen.keys()) & set(rest.keys())
+
+    def test_path_membership_covers_groups(self, nested):
+        # A path is a member when [] gives a node there, a field or a group.
         assert "theta/loc" in nested
         assert "sigma" in nested
-        assert "theta" not in nested  # subtree, not a field
+        assert "theta" in nested
         assert "theta/missing" not in nested
         assert "nonexistent" not in nested
         # children is the one-level view that does include subtrees

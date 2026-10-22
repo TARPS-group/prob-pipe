@@ -203,7 +203,7 @@ class FullFactorialDesign(Design):
             self,
             fields,
             DESIGN_LEVEL,
-            element_spec=RecordSpec(template_spec),
+            element=RecordSpec(template_spec),
             axes_per_level=(1,),
             label=f"FullFactorialDesign({','.join(names)})",
         )

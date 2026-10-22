@@ -360,7 +360,7 @@ class TestFixedPaths:
             pytest.param(lambda law: law.with_label("posterior"), id="with_label"),
             pytest.param(lambda law: law.with_dim_sizes(n=3), id="with_dim_sizes"),
             pytest.param(lambda law: law.with_dim_names(n="m"), id="with_dim_names"),
-            pytest.param(lambda law: law.with_path_names(x="z"), id="with_path_names"),
+            pytest.param(lambda law: law.rename(x="z"), id="rename"),
         ],
     )
     def test_a_copy_keeps_the_fixed_paths(self, copy):
@@ -370,7 +370,7 @@ class TestFixedPaths:
 
     def test_a_rename_that_holds_its_law_keeps_the_fixed_paths(self):
         law = with_fixed_paths(_DeclaredLaw("model", OutputSpec(RecordSpec(a=(), b=()))), "y")
-        renamed = law.with_path_names({"a": "g/a"})
+        renamed = law.rename({"a": "g/a"})
         assert type(renamed) is not type(law)
         assert renamed.notation == "model(b, g; y)"
 
@@ -493,7 +493,7 @@ class TestWithLabelTemplateRoundtrip:
         distribution's label, so relabeling leaves them."""
         import jax.numpy as jnp
 
-        jg = MultivariateNormal("x", jnp.zeros(1), cov=jnp.eye(1)) * MultivariateNormal(
+        jg = MultivariateNormal("x", jnp.zeros(1), cov=jnp.eye(1)) & MultivariateNormal(
             "y", jnp.zeros(1), cov=jnp.eye(1)
         )
         original_fields = tuple(jg.event_spec.outputs)
@@ -509,7 +509,7 @@ class TestWithLabelTemplateRoundtrip:
         rows = RecordBatch(
             {"labels": np.array(["a", "b", "c"], dtype=object), "ids": np.array([0, 1, 2])},
             "row",
-            element_spec=RecordSpec(labels=OpaqueSpec(), ids=()),
+            element=RecordSpec(labels=OpaqueSpec(), ids=()),
             label="rows",
         )
         law = EmpiricalDistribution(rows, label="rows")
@@ -591,7 +591,7 @@ def _public_distribution_classes() -> list[type]:
 _PUBLIC_CLASSES = _public_distribution_classes()
 
 # Laws that indexing constructs from a parent, so no caller labels them.
-_CONSTRUCTED_BY_INDEXING = {"FieldView"}
+_CONSTRUCTED_BY_INDEXING = {"CoupledMarginal"}
 
 
 # Laws that combine or wrap other laws, which take their label first, required.
@@ -721,7 +721,7 @@ class TestDerivedLabels:
                 id="bootstrap-replicate",
             ),
             pytest.param(
-                lambda: (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0))["a"],
+                lambda: (Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0))["a"],
                 lambda x: x,
                 "𝔼[𝒻(a ~ Normal)]",
                 id="field-view",
@@ -830,26 +830,27 @@ class TestOutputAccess:
     def test_a_whole_term_is_itself_under_its_output(self, make):
         law = make()
         assert law["x"] is law
-        with pytest.raises(KeyError):
+        # A law over a single value has no paths to look up.
+        with pytest.raises(TypeError, match="since its draws are single values with no paths"):
             law["y"]
 
     def test_a_tuple_selects_its_paths_as_an_exposed_record(self):
-        from probpipe.distributions import FieldView
+        from probpipe.distributions import CoupledMarginal
 
         law = _DeclaredLaw("x", NumericArraySpec(()))
         selection = law[("x",)]
-        assert isinstance(selection, FieldView)
+        assert isinstance(selection, CoupledMarginal)
         assert selection.parent is law
         assert selection.event_spec == OutputSpec(RecordSpec(x=NumericArraySpec(())))
 
     def test_the_output_addresses_a_relabeled_law(self):
         renamed = _DeclaredLaw("x", NumericArraySpec(())).with_label("y")
         assert renamed["x"] is renamed
-        with pytest.raises(KeyError):
+        with pytest.raises(TypeError, match="since its draws are single values with no paths"):
             renamed["y"]
 
     def test_a_joint_field_is_a_view_declaring_the_field(self):
-        product = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        product = Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)
         assert product["a"].event_spec.term_spec == product.event_spec.term_spec["a"]
 
     def test_indexing_does_not_make_a_law_iterable(self):
@@ -1186,7 +1187,7 @@ class TestJointDeclarations:
     """A joint's event spec is in the positional form, a record of its outputs' declared terms."""
 
     def test_a_joint_keeps_each_output_dtype_and_support(self):
-        joint = Normal("a", 0.0, 1.0) * Gamma("c", 2.0, 1.0)
+        joint = Normal("a", 0.0, 1.0) & Gamma("c", 2.0, 1.0)
         dtype = jnp.asarray(0.0).dtype
         assert joint.event_spec == OutputSpec(
             RecordSpec(
@@ -1211,7 +1212,7 @@ class TestJointDeclarations:
         assert tuple(joint.event_spec.outputs) == ("growth",)
 
     def test_a_gaussian_joint_declares_its_blocks(self):
-        joint = MultivariateNormal("x", jnp.zeros(1), cov=jnp.eye(1)) * MultivariateNormal(
+        joint = MultivariateNormal("x", jnp.zeros(1), cov=jnp.eye(1)) & MultivariateNormal(
             "y", jnp.zeros(2), cov=jnp.eye(2)
         )
         assert joint.event_spec.term_spec == RecordSpec(
@@ -1223,7 +1224,7 @@ class TestJointDeclarations:
         rows = RecordBatch(
             {"labels": np.array(["a", "b"], dtype=object), "ids": np.array([0, 1], dtype=np.int32)},
             "row",
-            element_spec=RecordSpec(labels=OpaqueSpec(), ids=NumericArraySpec((), np.int32)),
+            element=RecordSpec(labels=OpaqueSpec(), ids=NumericArraySpec((), np.int32)),
             label="rows",
         )
         joint = EmpiricalDistribution(rows, label="rows")
@@ -1238,12 +1239,12 @@ class TestEmpiricalDeclarations:
     """An empirical or bootstrap law declares what one draw is, read off its atoms or source."""
 
     def test_a_replicate_of_a_record_valued_law_declares_a_batch_of_records(self):
-        source = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_label("p")
+        source = (Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)).with_label("p")
         replicate = BootstrapReplicateDistribution("rep", source, replicate_size=3, level="row")
         spec = replicate.event_spec.term_spec
         assert isinstance(spec, BatchSpec)
         assert spec.batch_shape == (3,)
-        assert tuple(spec.element_spec.fields) == ("a", "b")
+        assert tuple(spec.element_spec.term_spec.fields) == ("a", "b")
         assert spec.is_valid(sample(replicate))
 
     def test_a_replicate_of_a_nested_posterior_keeps_its_groups(self):
@@ -1256,8 +1257,8 @@ class TestEmpiricalDeclarations:
         replicate = BootstrapReplicateDistribution("rep", posterior, level="draw")
         spec = replicate.event_spec.term_spec
         assert spec.batch_shape == (10,)
-        assert spec.element_spec == posterior.event_spec.term_spec
-        assert set(spec.element_spec.children["a"].children) == {"b", "c"}
+        assert spec.element_spec.term_spec == posterior.event_spec.term_spec
+        assert set(spec.element_spec.term_spec.children["a"].children) == {"b", "c"}
 
     def test_opaque_atoms_are_a_whole_term(self):
         law = EmpiricalDistribution(
@@ -1282,7 +1283,7 @@ class TestEmpiricalDeclarations:
         atoms = NumericRecordBatch(
             {"a": jnp.zeros(4), "b/c": jnp.zeros((4, 3))},
             "atom",
-            element_spec=NumericRecordSpec(a=(), b=NumericRecordSpec(c=(3,))),
+            element=NumericRecordSpec(a=(), b=NumericRecordSpec(c=(3,))),
             label="r",
         )
         law = EmpiricalDistribution(atoms, label="r")
@@ -1295,7 +1296,7 @@ class TestEmpiricalDeclarations:
         )
         spec = law.event_spec.term_spec
         assert (spec.batch_shape, spec.level_names) == ((3,), ("x",))
-        assert spec.element_spec.shape == (2,)
+        assert spec.element_spec.term_spec.shape == (2,)
 
     def test_a_replicate_of_an_array_law_is_a_batch_of_its_term(self):
         law = BootstrapReplicateDistribution("reps", Normal("x", 0.0, 1.0), replicate_size=4)
@@ -1322,7 +1323,7 @@ class TestEmpiricalDeclarations:
         atoms = NumericRecordBatch(
             {"u": jnp.ones((4, 2)), "v": jnp.zeros(4)},
             "row",
-            element_spec=NumericRecordSpec(
+            element=NumericRecordSpec(
                 u=NumericArraySpec((2,), None, real), v=NumericArraySpec((), None, real)
             ),
             label="rows",
@@ -1404,7 +1405,7 @@ class TestViewAndWrapperDeclarations:
         with pytest.raises(KeyError):
             group["b/c"]
 
-    def test_a_field_view_is_a_whole_term_under_its_last_segment(self):
+    def test_a_coupled_marginal_is_a_whole_term_under_its_last_segment(self):
         dtype = jnp.asarray(0.0).dtype
         a, c = NumericArraySpec((), dtype, real), NumericArraySpec((), dtype, positive)
         law = _DeclaredLaw("p", RecordSpec(a=a, b=RecordSpec(c=c)))
@@ -1424,10 +1425,10 @@ class TestModelDeclarations:
     """Posteriors declare what their targets or stored draws are."""
 
     def test_a_posterior_declares_its_targets_event(self):
-        from probpipe.inference._approximate_distribution import make_posterior
+        from probpipe.inference._approximate_distribution import _posterior_from_chains
 
         prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
-        post = make_posterior(
+        post = _posterior_from_chains(
             [jnp.zeros((10, 2))],
             parents=(prior,),
             method="test",
@@ -1435,7 +1436,7 @@ class TestModelDeclarations:
         )
         assert post.event_spec == OutputSpec(RecordSpec(a=(), b=()))
         positive_target = RecordSpec(a=NumericArraySpec((), None, positive), b=())
-        post = make_posterior(
+        post = _posterior_from_chains(
             [jnp.ones((10, 2))], parents=(prior,), method="test", event_spec=positive_target
         )
         assert post.event_spec == OutputSpec(positive_target)

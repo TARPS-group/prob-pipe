@@ -47,7 +47,7 @@ def _rate_function() -> Function:
 
 
 def _lifted_rate() -> Function:
-    @function(output_spec=_RATE, max_evaluations=6, dispatch="sequential")
+    @function(output_spec=_RATE, max_evaluations=6, executor="sequential")
     def rate(x, z):
         return jnp.exp(x + z)
 
@@ -116,7 +116,7 @@ class TestTheResultOfALift:
         assert result.event_spec.term_spec.support is positive
 
     def test_an_undeclared_array_return_lifts_to_a_whole_term_under_output_name(self):
-        @function(max_evaluations=6, dispatch="sequential", output_spec=OutputSpec(square=None))
+        @function(max_evaluations=6, executor="sequential", output_spec=OutputSpec(square=None))
         def square(x):
             return x * x
 
@@ -127,7 +127,7 @@ class TestTheResultOfALift:
         assert not _has_record_outputs(result.event_spec)
 
     def test_the_sampling_lift_constructs_an_empirical_approximation(self):
-        @function(max_evaluations=6, dispatch="sequential", output_spec=OutputSpec(square=None))
+        @function(max_evaluations=6, executor="sequential", output_spec=OutputSpec(square=None))
         def square(x):
             return x * x
 
@@ -137,22 +137,33 @@ class TestTheResultOfALift:
         assert isinstance(result, EmpiricalDistribution)
 
     def test_an_empty_sweep_without_a_declaration_is_refused(self):
-        @function(dispatch="sequential")
+        @function(executor="sequential")
         def double(x):
             return 2.0 * x
 
         empty = NumericArrayBatch(
             jnp.zeros((0,)),
             "row",
-            element_spec=NumericArraySpec(()),
+            element=NumericArraySpec(()),
             label="rows",
         )
 
         assert error_of(lambda: double(empty)) is not None
 
 
+#: Each executor of an empty sweep, with the claim that makes it the one that
+#: would run: JAX maps a traceable function whatever executor is named, so the
+#: one-at-a-time executors take ``traceable=False``, and None selects automatically.
+_EXECUTORS = [
+    pytest.param("sequential", False, id="sequential"),
+    pytest.param("thread", False, id="thread"),
+    pytest.param(None, None, id="automatic"),
+    pytest.param("jax", None, id="jax"),
+]
+
+
 class TestEmptySweepPlanning:
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto", "jax"])
+    @pytest.mark.parametrize("executor, traceable", _EXECUTORS)
     @pytest.mark.parametrize(
         "declaration",
         [None, OutputSpec(value=None), NumericArraySpec(("n",)), RecordSpec(x=("n",))],
@@ -160,9 +171,9 @@ class TestEmptySweepPlanning:
     )
     @pytest.mark.parametrize("check", [False, True], ids=["execute", "check"])
     def test_an_incomplete_declaration_is_refused_without_running_the_body(
-        self, dispatch, declaration, check
+        self, executor, traceable, declaration, check
     ):
-        @function(dispatch=dispatch, output_spec=declaration)
+        @function(executor=executor, traceable=traceable, output_spec=declaration)
         def unexpected(x):
             raise AssertionError("An empty sweep must not evaluate the body")
 
@@ -171,10 +182,11 @@ class TestEmptySweepPlanning:
         with pytest.raises(ValueError, match="empty sweep requires a concrete output_spec"):
             call(empty)
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto", "jax"])
-    def test_input_dimensions_complete_an_empty_sweeps_output(self, dispatch):
+    @pytest.mark.parametrize("executor, traceable", _EXECUTORS)
+    def test_input_dimensions_complete_an_empty_sweeps_output(self, executor, traceable):
         @function(
-            dispatch=dispatch,
+            executor=executor,
+            traceable=traceable,
             input_spec=InputSpec(x=NumericArraySpec(("n",))),
             output_spec=NumericArraySpec(("n",)),
         )
@@ -186,7 +198,7 @@ class TestEmptySweepPlanning:
         result = unexpected(empty)
         assert isinstance(result, NumericArrayBatch)
         assert result.batch_shape == (0,)
-        assert result.element_spec.shape == (2,)
+        assert result.element_spec.term_spec.shape == (2,)
         assert result.raw.shape == (0, 2)
 
     def test_an_operation_derives_the_empty_sweeps_declaration(self):
@@ -195,14 +207,14 @@ class TestEmptySweepPlanning:
         empty = DistributionBatch(
             np.empty((0,), dtype=object),
             "row",
-            element_spec=DistributionSpec(OutputSpec(x=NumericArraySpec(()))),
+            element=DistributionSpec(OutputSpec(x=NumericArraySpec(()))),
             label="laws",
         )
         assert mean.check(empty).result.term_spec.shape == ()
         result = mean(empty)
         assert isinstance(result, NumericArrayBatch)
         assert result.batch_shape == (0,)
-        assert result.element_spec.shape == ()
+        assert result.element_spec.term_spec.shape == ()
 
 
 class TestIncludingTheInputs:
@@ -212,7 +224,7 @@ class TestIncludingTheInputs:
             output_spec=OutputSpec(mean=None),
             include_inputs=True,
             max_evaluations=6,
-            dispatch="sequential",
+            executor="sequential",
         )
         def predict(theta, x):
             return x * theta
@@ -242,7 +254,7 @@ class TestIncludingTheInputs:
         @function(
             include_inputs=True,
             max_evaluations=6,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(weigh=None),
         )
         def weigh(theta):
@@ -255,7 +267,7 @@ class TestIncludingTheInputs:
         assert isinstance(theta, RecordSpec) and set(theta) == {"beta"}
 
     def test_a_parameter_named_like_an_output_raises(self):
-        @function(include_inputs=True, max_evaluations=6, dispatch="sequential")
+        @function(include_inputs=True, max_evaluations=6, executor="sequential")
         def x(x):
             return x
 

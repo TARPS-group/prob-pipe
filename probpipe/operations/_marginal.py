@@ -1,8 +1,8 @@
 """The marginal and factor operations: detached parts of a structured or factored law.
 
-``marginal(d, field)`` returns the detached marginal of a field or field
-group, a standalone law with no reference back to ``d``, unlike the
-correlation-preserving view ``d[field]``. ``factor(d, output_name)`` returns
+``marginal(d, paths)`` returns the standalone marginal at a path or a list of
+paths, a standalone law with no reference back to ``d``, unlike the
+correlation-preserving view ``d[paths]``. ``factor(d, output_name)`` returns
 the detached building-block factor of a joint that produces the named output.
 """
 
@@ -12,7 +12,7 @@ from typing import Any
 
 from ..core._dispatch import Feasibility
 from ..core._expression import Expression
-from ..core._record_spec import RecordSpec
+from ..core._shapes import PathsLike
 from ..core._specs import OutputSpec
 from ..distributions._capabilities import SupportsMarginals, _capability_guard
 from ..distributions._conditional import ConditionalDistributionSpec
@@ -20,59 +20,65 @@ from ..distributions._distribution import (
     Distribution,
     DistributionSpec,
     _detached_term,
-    _shared_final_names,
+    _read_event_paths,
 )
 from ..distributions._factored import SupportsFactors
-from ..distributions._views import _marginal_expression_at, _node_at
+from ..distributions._views import _marginal_expression_at, _view_declaration
 from ..functions._call import ApplicabilityError
 from ._operation import BoundCall, _install_expression_rule, operation
 
 __all__ = ["factor", "marginal"]
 
-_PATH_SEP = "/"
 
-
-def _node(d: DistributionSpec, path: str) -> Any:
-    """The term spec at *path* in the law's event spec.
+def _read_marginal_paths(event_spec: OutputSpec, label: str, paths: Any) -> str | tuple[str, ...]:
+    """The *paths* of a call of ``marginal``, read: one event path, or a list of them in the law's order.
 
     Parameters
     ----------
-    d : DistributionSpec
-        The law's spec, whose event spec holds the node.
-    path : str
-        A path that starts with an output and may name an interior node.
+    event_spec : OutputSpec
+        The law's event spec.
+    label : str
+        The law's label, which the error messages name.
+    paths : Any
+        The paths as the caller gave them.
 
     Returns
     -------
-    TermSpec
-        A leaf's spec, or the record spec of the fields under an interior node.
+    str or tuple of str
+        The one path, or the list of paths in the canonical order of *event_spec*.
 
     Raises
     ------
     ApplicabilityError
-        If *path* is not an event path of the law.
+        If the law is over a record and a path is not one of its paths.
+    TypeError
+        If *paths* is neither a string nor a list or tuple of strings, or the
+        law is over a value with no paths, such as an array.
+    ValueError
+        If a path is empty or has an empty name, or a list of paths is empty,
+        names a path twice, or holds a path inside another.
     """
     try:
-        return _node_at(d.event_spec, path)
-    except (KeyError, TypeError):
-        raise ApplicabilityError(
-            f"marginal: {path!r} is not an event path of the law; its fields: "
-            f"{list(d.event_spec.outputs)}"
-        ) from None
+        return _read_event_paths(
+            event_spec, label, paths, action=f"take the marginal of {label!r} at"
+        )
+    except KeyError as error:
+        raise ApplicabilityError(f"marginal: {error.args[0]}") from None
 
 
-def _marginal_result(d: DistributionSpec, field: Any) -> OutputSpec:
-    """A law over the node at the path, whose event is one output named by the path's final segment.
+def _marginal_result(d: DistributionSpec, paths: Any) -> OutputSpec:
+    """A law over the node at the path, or over the nodes at the list of paths.
 
-    A tuple of paths selects several nodes, and the law's event is then the
-    positional form over a record of them.
+    One path gives the node whole under the path's last name, and a list of
+    paths a law over the record that keeps each node at its own path, in the
+    law's order.
 
     Parameters
     ----------
     d : DistributionSpec
         The law's spec, whose event spec holds the selected nodes.
-    field : str or tuple of str
-        An event path, or a tuple of paths whose nodes the marginal draws
+    paths : str, or list or tuple of str
+        An event path, or a list of paths whose nodes the marginal draws
         jointly.
 
     Returns
@@ -84,53 +90,50 @@ def _marginal_result(d: DistributionSpec, field: Any) -> OutputSpec:
     Raises
     ------
     ApplicabilityError
-        If *field* is neither a str nor a tuple, a path is not an event path, or
-        two selected paths end in the same segment.
+        If a path is not an event path.
+    TypeError
+        If *paths* is neither a string nor a list or tuple of strings.
+    ValueError
+        If a path is malformed, or a list of paths is empty, names a path
+        twice, or holds a path inside another.
     """
-    if isinstance(field, tuple):
-        nodes = {path.rsplit(_PATH_SEP, 1)[-1]: _node(d, path) for path in field}
-        if len(nodes) != len(field):
-            raise ApplicabilityError(f"marginal: {_shared_final_names(field)}")
-        return OutputSpec(DistributionSpec(OutputSpec(RecordSpec(nodes))))
-    if not isinstance(field, str):
-        raise ApplicabilityError(
-            f"marginal: field must be a path string or a tuple of path strings; got {field!r}"
-        )
-    output_name = field.rsplit(_PATH_SEP, 1)[-1]
-    return OutputSpec(DistributionSpec(OutputSpec(**{output_name: _node(d, field)})))
+    read = _read_marginal_paths(d.event_spec, "the law", paths)
+    return OutputSpec(DistributionSpec(_view_declaration(d.event_spec, read)))
 
 
-def _marginal_expression(d: Any, field: Any) -> Expression:
-    """The expression of the marginal of *d* at *field*: the factors it is, or *d* selected at *field*.
+def _marginal_expression(d: Any, paths: Any) -> Expression:
+    """The expression of the marginal of *d* at *paths*: the factors it is, or *d* selected at *paths*.
 
     A marginal over the whole events of some factors of a joint, none of which
     conditions on an output outside them, is the product of those factors,
     so ``marginal(location * scale, "tau")`` is ``scale`` and takes its label.
-    Several such factors form a product without a label, joined in the order
-    the paths name them where a product in that order declares the fields in
-    the order of the paths, as ``marginal(model, ("b", "a"))`` is ``b·a``. The
-    factors of a field view are its parent's. Any other marginal integrates a
-    factor out, as the prior predictive does, so it is *d* selected at
-    *field* and keeps *d*'s label. The view ``d[field]`` carries the same
-    expression.
+    Several such factors form a product without a label, in the joint's
+    order, as ``marginal(model, ["b", "a"])`` is ``a·b``. The factors of a
+    field view are its parent's. Any other marginal integrates a factor out,
+    as the prior predictive does, so it is *d* selected at *paths* and keeps
+    *d*'s label. The view ``d[paths]`` carries the same expression.
     """
-    return _marginal_expression_at(d, field)
+    return _marginal_expression_at(d, _read_marginal_paths(d.event_spec, d.label, paths))
 
 
 @operation(result=_marginal_result)
-def marginal(d: Distribution, field: str):
-    """The detached marginal of *d* at *field*, a standalone law with no reference back to *d*.
+def marginal(d: Distribution, paths: PathsLike):
+    """The standalone marginal of *d* at *paths*, a standalone law with no reference back to *d*.
 
-    A lift draws the marginal independently of *d* and of the laws *d* is
-    built from (V.5).
+    ``marginal(d, paths)`` is the law of the view ``d[paths]``, detached: one
+    path gives the node there whole under the path's last name, and a list or
+    a tuple of paths a law over the record that keeps each node at its own
+    path, in *d*'s order, so ``marginal(grouped, ["a", "g/c"])`` draws records
+    ``{a, g: {c}}``. A lift draws the marginal independently of *d* and of
+    the laws *d* is built from (V.5).
 
     Parameters
     ----------
     d : Distribution
         The law.
-    field : str or tuple of str
-        An event path, whose interior node selects the group of fields under
-        it, or a tuple of paths.
+    paths : str, or list or tuple of str
+        An event path, whose group selects the fields under it, or a list of
+        event paths.
 
     Returns
     -------
@@ -138,36 +141,48 @@ def marginal(d: Distribution, field: str):
         The marginal, which holds the paths *d* holds fixed. A marginal over
         the whole events of factors of a joint that condition on nothing
         outside them is those factors: one factor keeps its own label, and
-        several form a product without a label, as
-        ``marginal(model, ("a", "b"))`` displays as ``a(a)·b(b)``. Any other
+        several form a product without a label in the joint's order, as
+        ``marginal(model, ["a", "b"])`` displays as ``a(a)·b(b)``. Any other
         marginal keeps *d*'s label, as ``marginal(model, "y")`` displays as
-        ``model(y)``. The view ``d[field]`` displays as the marginal does.
+        ``model(y)``. The view ``d[paths]`` displays as the marginal does.
 
     Raises
     ------
     ApplicabilityError
-        If *field* is not an event path of *d*.
+        If *d* is over a record and a path is not one of its paths.
+    TypeError
+        If *paths* is neither a string nor a list or tuple of strings, or *d*
+        is over a value with no paths, such as an array.
+    ValueError
+        If a path is empty or has an empty name, or a list of paths is empty,
+        names a path twice, or holds a path inside another.
     ResolutionError
-        If *d* has no exact marginal at *field* and does not sample.
+        If *d* has no exact marginal at *paths* and does not sample.
     """
 
 
+def _call_paths(call: BoundCall) -> str | tuple[str, ...]:
+    """The call's paths, read against its law."""
+    law = call.operands["d"]
+    return _read_marginal_paths(law.event_spec, law.label, call.operands["paths"])
+
+
 def _can_marginalize_path(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The law's marginal guard admits the requested path, where its class defines one."""
-    return _capability_guard(call.operands["d"], "_marginal", call.operands["field"])
+    """The law's marginal guard admits the requested paths, where its class defines one."""
+    return _capability_guard(call.operands["d"], "_marginal", _call_paths(call))
 
 
 def _detached_marginal(call: BoundCall, result: OutputSpec | None) -> Distribution:
-    """The law's exact marginal at the path, detached as a law's raw form is.
+    """The law's exact marginal at the paths, detached as a law's raw form is.
 
     A marginal can be a factor of a factored joint, and a factor can record a
     batch it was an element of or a law it renames, which a lift reads to draw
-    it with that law. The detached marginal records neither, so a lift draws it
+    it with that law. The standalone marginal records neither, so a lift draws it
     independently of the joint (V.5). The result boundary then gives it the
     marginal's expression, which holds the paths the law holds fixed, and
     records the call's provenance on it.
     """
-    return _detached_term(call.operands["d"]._marginal(call.operands["field"]))
+    return _detached_term(call.operands["d"]._marginal(_call_paths(call)))
 
 
 def _can_sample(call: BoundCall, result: OutputSpec | None) -> Any:

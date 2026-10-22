@@ -30,14 +30,13 @@ import jax.numpy as jnp
 import numpy as np
 
 from .._messages import unknown_names
-from ..core._record_spec import RecordSpec
 from ..core._shapes import NamesLike, _as_names
 from ..core._specs import OutputSpec, _has_record_outputs
 from ..custom_types import Array, ArrayLike
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution, _array_leaves
 from ..distributions._empirical import EmpiricalDistribution, _coordinates
-from ..distributions._factored import _raw_record
+from ..distributions._factored import _raw_leaves, _raw_record
 from ..functions import _context
 from ..operations._condition import condition_on
 from ..operations._sample import sample
@@ -58,17 +57,7 @@ def _flatten(value: Any, event_spec: OutputSpec, batch_ndim: int = 0) -> Array:
     leaf order. The *batch_ndim* leading axes of a batch are kept, so one value
     gives a ``(p,)`` array and a batch of ``n`` draws an ``(n, p)`` array.
     """
-    spec = event_spec.term_spec
-    if isinstance(spec, RecordSpec):
-        raw = _raw_record(value)
-        leaves = []
-        for path in spec:
-            leaf = raw
-            for segment in path.split("/"):
-                leaf = leaf[segment]
-            leaves.append(jnp.asarray(leaf))
-    else:
-        leaves = [jnp.asarray(value)]
+    leaves = _raw_leaves(value, event_spec.term_spec)
     lead = leaves[0].shape[:batch_ndim]
     return jnp.concatenate([jnp.reshape(leaf, (*lead, -1)) for leaf in leaves], axis=-1)
 
@@ -370,7 +359,7 @@ def simulation_based_calibration(
     ----------
     model : Distribution
         A joint that samples, over the parameters and the *observed* fields,
-        such as ``likelihood * prior``.
+        such as ``likelihood & prior``.
     observed : str or sequence of str
         The fields of a draw that the posterior conditions on; the others are
         the parameters. A str names one field.
@@ -451,7 +440,7 @@ def simulation_based_calibration(
     ... )
     >>> with workflow_run(seed=0):
     ...     result = simulation_based_calibration(
-    ...         likelihood * prior,
+    ...         (likelihood & prior),
     ...         observed="y",
     ...         posterior=exact,
     ...         num_simulations=100,

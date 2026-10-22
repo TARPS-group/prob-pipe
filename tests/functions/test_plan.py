@@ -404,7 +404,7 @@ class TestStochasticSourceGrouping:
         assert len(stochastic_plan.random_events) == 6
 
     def test_record_views_share_their_known_parent_group(self):
-        joint = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=1.0, scale=1.0)
+        joint = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=1.0, scale=1.0)
 
         plan = _stochastic_plan(
             {
@@ -458,11 +458,9 @@ class TestStochasticSourceGrouping:
         assert plan.runtime_bindings[1].root is second
 
     def test_root_sibling_and_transitive_views_share_canonical_paths(self):
-        joint = (
-            Normal("left", loc=0.0, scale=1.0) * Normal("right", loc=1.0, scale=1.0)
-        ).with_path_names({"left": "nested/left", "right": "nested/right"}) * Normal(
-            "top", loc=2.0, scale=1.0
-        )
+        joint = (Normal("left", loc=0.0, scale=1.0) & Normal("right", loc=1.0, scale=1.0)).rename(
+            {"left": "nested/left", "right": "nested/right"}
+        ) & Normal("top", loc=2.0, scale=1.0)
 
         plan = _stochastic_plan(
             {
@@ -638,7 +636,7 @@ def _batch(level: str = "draw", n: int = 3, **fields) -> Any:
     return NumericRecordBatch(
         dict(fields),
         (level,),
-        element_spec=RecordSpec({name: value.shape[1:] for name, value in fields.items()}),
+        element=RecordSpec({name: value.shape[1:] for name, value in fields.items()}),
         label="batch",
     )
 
@@ -713,7 +711,7 @@ class TestPartialLevelOverlap:
         two = NumericRecordBatch(
             {"x": jnp.arange(6.0).reshape(2, 3)},
             ("chain", "draw"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=(1, 1),
             label="batch",
         )
@@ -732,14 +730,14 @@ class TestPartialLevelOverlap:
         ga = NumericRecordBatch(
             {"x": jnp.zeros((2, 3, 4))},
             ("a", "b"),
-            element_spec=RecordSpec(x=()),
+            element=RecordSpec(x=()),
             axes_per_level=(1, 2),
             label="batch",
         )
         gb = NumericRecordBatch(
             {"y": jnp.zeros((2, 3, 4))},
             ("a", "b"),
-            element_spec=RecordSpec(y=()),
+            element=RecordSpec(y=()),
             axes_per_level=(2, 1),
             label="batch",
         )

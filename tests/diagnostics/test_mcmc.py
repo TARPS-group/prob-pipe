@@ -441,7 +441,7 @@ class TestAddMcmcDiagnostics:
         import jax.numpy as jnp
 
         from probpipe import MultivariateNormal
-        from probpipe.inference._approximate_distribution import make_posterior
+        from probpipe.inference._approximate_distribution import _posterior_from_chains
         from probpipe.inference._inference_utils import build_mcmc_datatree
 
         rng = np.random.default_rng(0)
@@ -450,7 +450,7 @@ class TestAddMcmcDiagnostics:
         diverging[0, [3, 7]] = True
         diverging[1, 11] = True
         prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
-        posterior = make_posterior(
+        posterior = _posterior_from_chains(
             chains,
             parents=(prior,),
             method="test",

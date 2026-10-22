@@ -94,11 +94,11 @@ def _lookup(spec: Any, side: int) -> type | None:
     kind's batch form, since a batch of batches has that same form.
     """
     if isinstance(spec, BatchSpec):
-        if isinstance(spec.element_spec, RecordSpec):
+        if isinstance(spec.element_spec.term_spec, RecordSpec):
             from ._record_batch import _batch_class_for
 
-            return _batch_class_for(spec.element_spec)
-        return _lookup(spec.element_spec, 1)
+            return _batch_class_for(spec.element_spec.term_spec)
+        return _lookup(spec.element_spec.term_spec, 1)
     for candidate in type(spec).__mro__:
         entry = _KINDS.get(candidate)
         if entry is not None and entry[side] is not None:

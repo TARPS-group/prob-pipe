@@ -385,7 +385,7 @@ class TestDistributionSupport:
         atoms = NumericArrayBatch(
             jnp.ones((5, 2)),
             "atom",
-            element_spec=NumericArraySpec((2,), support=real),
+            element=NumericArraySpec((2,), support=real),
             label="x",
         )
         assert EmpiricalDistribution(atoms, output_name="x").support == real

@@ -65,7 +65,7 @@ def test_components_with_different_shapes_raise_without_a_rename_hint():
     vector = MultivariateNormal("a", jnp.zeros(2), cov=jnp.eye(2))
     with pytest.raises(ValueError, match=r"'a' is an array of shape \(\) in component 0") as info:
         MixtureDistribution([Normal("a", 0.0, 1.0), vector], jnp.array([0.5, 0.5]), label="m")
-    assert "with_path_names" not in str(info.value)
+    assert "rename" not in str(info.value)
 
 
 def test_a_mixture_has_at_least_one_component():
@@ -207,7 +207,7 @@ def test_a_record_event_combines_leaf_by_leaf():
         NumericRecordBatch(
             {"a": jnp.zeros(3), "b": jnp.ones(3)},
             "atom",
-            element_spec=spec,
+            element=spec,
             label="p",
         ),
         label="p",
@@ -216,7 +216,7 @@ def test_a_record_event_combines_leaf_by_leaf():
         NumericRecordBatch(
             {"a": jnp.ones(3), "b": jnp.ones(3)},
             "atom",
-            element_spec=spec,
+            element=spec,
             label="q",
         ),
         label="q",

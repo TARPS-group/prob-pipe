@@ -36,6 +36,12 @@ In the examples, `x` is a law over `{a, b, c, sigma}`, `ke` a kernel `ke(e | sig
 
 | Old | New | Step | Silent? |
 |---|---|---|---|
+| `RecordSpec(x=(), y=())` admitted a built record or record spec ordered `{y, x}` | it raises `ValueError`; use a raw mapping or build the record in declaration order, including nested records | S2b-in | no |
+| a raw mapping at a declared function input or return, or a kernel conditioning input, could keep its own order | it is laid out recursively in declaration order without changing the caller's mapping | S2b-in | yes |
+| `InputSpec(x=()).without("missing")` ignored the unknown input | it raises `KeyError`, naming available inputs | S2b-in | no |
+| an optional input declaration without a Python default was accepted | construction raises `ValueError`; give the parameter a default or declare it required | S2b-in | no |
+| a declared Python parameter with a default could appear required | its input spec marks it optional | S2b-in | yes |
+
 | a tuple of `str` is one nested path: `r["g", "b"]` is `r["g/b"]` | a tuple or list is a list of paths; a nested path is written `"g/b"` | S1 | yes, where each name is also a top-level path |
 | `sample(d)["g"]` raises "use at_path()" | `sample(d)["g"]` is the group | S1 | no |
 | `d["a", "g/b"]` is a law over `{a, b}` | a law over `{a, g: {b}}`, labelled `(a, g/b)` | S1 | yes |
@@ -82,11 +88,14 @@ In the examples, `x` is a law over `{a, b, c, sigma}`, `ke` a kernel `ke(e | sig
 | Old | New | Step | Silent? |
 |---|---|---|---|
 | `lik * prior` between laws or kernels | `lik & prior`; `*` between laws or kernels raises `TypeError` naming `&` | S3 | no |
+| `bool(Record({"x": 0.0}))` was false; an empty numeric record raised | every record uses length: the former is true, the empty record is false; test `bool(record["x"])` for field truth | S3 | yes |
 | `lik and prior` returned `prior` | `bool()` on a law or kernel raises | S3 | no |
 | `record_a.merge(record_b)` on `NamedTree`, `Record`, `RecordSpec`, `RecordBatch` | `record_a & record_b` | S3 | no |
 | `with_path_names` | `rename` | S3 | no |
 | `FieldView` | `CoupledMarginal` | S3 | no |
 | the `joint` route `"compose"` in `provenance.metadata["route"]` | `"merge"`; a recipe recorded before cannot be replayed | S3 | yes |
+
+| `d["a"] & d["b"]` silently treated coupled marginals as independent | raises `ValueError`; use `d["a", "b"]` for the joint, or `marginal(d, "a") & marginal(d, "b")` for independent laws | S3 | no |
 
 ## Batches
 
@@ -94,6 +103,7 @@ In the examples, `x` is a law over `{a, b, c, sigma}`, `ke` a kernel `ke(e | sig
 |---|---|---|---|
 | `batch.spec.element_spec`, a type | `batch.spec.element_spec.term_spec`; `element_spec` is an output spec, naming base elements `element` | S4a | no |
 | `BatchSpec(element_spec, ...)` | `BatchSpec(element, ...)`, taking an `OutputSpec` or a type | S4a | no |
+| `NumericArrayBatch(..., element_spec=...)`, likewise `RecordBatch`, `NumericRecordBatch`, `OpaqueBatch`, `FunctionBatch`, `DistributionBatch`, `ConditionalDistributionBatch`, and `RecordBatch.stack` | `element=...`, taking the elements' spec; a batch's repr shows `element=` | S4a | no |
 
 ## Execution
 
@@ -106,9 +116,19 @@ In the examples, `x` is a law over `{a, b, c, sigma}`, `ke` a kernel `ke(e | sig
 | `metadata["route"] == "identity"` in a derived operation's provenance | `metadata["route"] == "derived"` | E0 | yes |
 | a seeded draw inside an evaluation point | another value, once; a replay record written before cannot be replayed | E0 | yes |
 | `is_jax_traceable(f, x)` | `f.check(x)` reports whether `f` traces | E2 | no |
-| `except ValueError:` around a lifted call whose evaluation point fails | `except EvaluationError as error:`, reading `error.failures` | E3a, E4 | no, but an `except` of the user's own exception type stops catching |
+| `except ValueError:` around a lifted call whose evaluation point fails | `except EvaluationError as error:`, reading `error.failures` | E3b, E4 | no, but an `except` of the user's own exception type stops catching |
 | an output that does not match its output spec failed later; a `float64` output under a `float32` spec lost precision silently | `EvaluationError` naming the evaluation point; the cast warns | E3a | no |
-| a replay recipe recorded `requested_dispatch` | it records `executor`; an old recipe is refused | E3a | no |
+| a replay recipe recorded `requested_dispatch` | it records `executor`; an old recipe is refused | E3b | no |
+| a compiled JAX program that failed while it ran, such as a joint's mapping of a kernel, ran again eagerly | the error propagates, with no eager rerun | E3a | no |
+| a kernel in a joint that read `num_samples` while it was traced kept the first call's value | it reads the value of the call that runs it | E3a | yes |
 | `f.using(dispatch="thread", max_workers=8)` | `f.using(executor="thread", executor_options={"max_workers": 8})` | E3b | no |
+| `f.using(dispatch="sequential")` ran a function JAX can trace one draw at a time | `jax` maps it whatever executor is named; `@function(traceable=False)` runs it one draw at a time | E3b | yes, up to the last bit of rounding |
 | a `float64` output spec with 64-bit floats off silently gave `float32` | an error that says to set `jax_enable_x64` | E4 | no |
 | an inference method reads `run_seed` and imports `ModelFactors` privately | `InferenceMethod.execute(target, /, *, key, **options)` with an `InferenceTarget`; `ModelFactors` and `make_posterior` are public | E6 | no |
+
+## Embedded calls
+
+| Old | New | Step | Silent? |
+|---|---|---|---|
+| an opaque evaluation inside a compiled JAX program could not cross the boundary | a concrete numeric opaque Function runs on the host; a failed evaluation stops the program and raises `EvaluationError` | E4a | no |
+| a `float64` output declaration with 64-bit floats disabled could be stored as `float32` | the call refuses; set `jax_enable_x64=True` before calling, or declare `float32` | E4a | no |

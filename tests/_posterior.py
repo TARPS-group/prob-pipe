@@ -15,7 +15,11 @@ import numpy as np
 
 from probpipe.core._numeric_record import _reconstruct_from_vector
 from probpipe.core._specs import RecordSpec, _output_record
-from probpipe.inference._approximate_distribution import _flat_chains, _num_chains, make_posterior
+from probpipe.inference._approximate_distribution import (
+    _flat_chains,
+    _num_chains,
+    _posterior_from_chains,
+)
 
 
 def posterior_of(
@@ -23,17 +27,15 @@ def posterior_of(
     *,
     label: str | None = None,
     event_spec: Any = None,
-    field_order: list[str] | None = None,
     weights: Any = None,
     method: str = "test",
 ) -> Any:
     """The inference result an inference method builds from *chains*, labeled *label*."""
-    return make_posterior(
+    return _posterior_from_chains(
         chains,
         (),
         method,
         event_spec=event_spec,
-        field_order=field_order,
         weights=weights,
         label=label or "posterior",
     )

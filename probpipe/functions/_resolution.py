@@ -65,7 +65,7 @@ class StandIn:
 
     A check draws nothing, so where a call passes a law's draw the check passes
     this stand-in, whose spec is the law's event spec, and an empty
-    sweep's point holds one whose spec is the batch's element spec.
+    sweep's point holds one whose spec is the spec of the batch's elements.
     """
 
     spec: TermSpec
@@ -344,7 +344,7 @@ def _stand_ins(values: Mapping[str, Any], plan: BroadcastPlan) -> dict[FunctionI
     for ref in plan.array_args:
         spec = getattr(input_ref_value(values, ref), "spec", None)
         if isinstance(spec, BatchSpec):
-            stand_ins[ref] = StandIn(spec.element_spec)
+            stand_ins[ref] = StandIn(spec.element_spec.term_spec)
     return stand_ins
 
 
