@@ -1080,6 +1080,8 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         ------
         KeyError
             If a key is not the path of a node.
+        TypeError
+            As :meth:`NamedTree.rename` raises it.
         ValueError
             As :meth:`NamedTree.rename` raises it.
         """

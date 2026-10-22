@@ -859,6 +859,8 @@ class OutputSpec:
         ------
         KeyError
             If a key is not a path of this OutputSpec.
+        TypeError
+            As :meth:`~probpipe.core.named_tree.NamedTree.rename` raises it.
         ValueError
             As :meth:`~probpipe.core.named_tree.NamedTree.rename` raises
             it, or if the keyword form's output moves into a group or one of its

@@ -1519,3 +1519,21 @@ class TestLawLabels:
         law = Distribution(OutputSpec(tau=NumericArraySpec(())))
         assert law.notation == "ℙ(tau)"
         assert law.with_label("prior").event_spec == law.event_spec
+
+
+class TestPathParameters:
+    """A law's ``[]`` and ``in`` take their path positionally, and ``rename`` its renames as declared."""
+
+    def test_index_and_membership_take_their_path_positionally_only(self):
+        law = Normal("x", 0.0, 1.0)
+        assert law.__getitem__("x") is law
+        assert law.__contains__("x")
+        with pytest.raises(TypeError, match="positional-only"):
+            law.__getitem__(paths="x")
+        with pytest.raises(TypeError, match="positional-only"):
+            law.__contains__(path="x")
+
+    def test_an_output_named_like_a_parameter_renames_by_keyword(self):
+        law = Normal("renames", 0.0, 1.0)
+        assert list(law.rename(renames="r").event_spec.outputs) == ["r"]
+        assert list(law.rename({"renames": "r"}).event_spec.outputs) == ["r"]

@@ -32,7 +32,7 @@ from ..core._record_spec import RecordSpec
 from ..core._repr import format_default, format_names, public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OutputSpec, _has_record_outputs, _inputs_with_defaults
-from ..core.named_tree import _PATH_SEP, _resolved_path_renames
+from ..core.named_tree import _PATH_SEP, _checked_path_renames
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import Annotated, TrackedTerm, _TrackedTermMeta
@@ -197,8 +197,10 @@ def _moved_inputs(
         The kernel's inputs, whose nodes the moves address.
     moves : Mapping[str, str]
         The new exact path of each node to move, keyed by the node's current
-        path, as :func:`~probpipe.core.named_tree._resolved_path_renames`
-        checked them.
+        path. The caller checks them first: each key is a node of the given
+        side, each target is a valid path that lies outside its own node, and
+        no two targets are equal or lie one inside the other, as
+        :func:`~probpipe.core.named_tree._checked_path_renames` checks.
 
     Returns
     -------
@@ -214,36 +216,41 @@ def _moved_inputs(
     """
     leaves = _given_leaf_specs(given_spec)
 
-    def parent(path: str) -> str:
+    def parent_path(path: str) -> str:
         return path.rpartition(_PATH_SEP)[0]
 
-    kept: list[tuple[str, str]] = []
-    moved: dict[str, list[tuple[str, str]]] = {old: [] for old in moves}
+    leaves_in_place: list[tuple[str, str]] = []
+    appended_leaves: dict[str, list[tuple[str, str]]] = {source: [] for source in moves}
     for path in leaves:
-        sources = [old for old in moves if path == old or path.startswith(old + _PATH_SEP)]
+        sources = [
+            source for source in moves if path == source or path.startswith(source + _PATH_SEP)
+        ]
         if not sources:
-            kept.append((path, path))
+            leaves_in_place.append((path, path))
             continue
         source = max(sources, key=len)
         target = moves[source] + path[len(source) :]
-        if parent(source) == parent(moves[source]):
-            kept.append((target, path))
+        if parent_path(source) == parent_path(moves[source]):
+            leaves_in_place.append((target, path))
         else:
-            moved[source].append((target, path))
-    tree: dict[str, Any] = {}
+            appended_leaves[source].append((target, path))
+    moved_tree: dict[str, Any] = {}
     origins: dict[str, str] = {}
-    for target, path in [*kept, *(entry for old in moves for entry in moved[old])]:
+    for target, path in [
+        *leaves_in_place,
+        *(entry for source in moves for entry in appended_leaves[source]),
+    ]:
         *groups, name = target.split(_PATH_SEP)
-        node = tree
+        group_node = moved_tree
         for group in groups:
-            node = node.setdefault(group, {})
-            if not isinstance(node, dict):
+            group_node = group_node.setdefault(group, {})
+            if not isinstance(group_node, dict):
                 raise ValueError(
                     f"rename(): cannot move to {target!r} because {group!r} is a field, not a group"
                 )
-        if name in node:
+        if name in group_node:
             raise ValueError(f"rename(): two input paths would be at {target!r}")
-        node[name] = leaves[path]
+        group_node[name] = leaves[path]
         origins[target] = path
 
     def spec_of(node: Any) -> TermSpec:
@@ -251,7 +258,7 @@ def _moved_inputs(
             return RecordSpec({name: spec_of(child) for name, child in node.items()})
         return node
 
-    moved_spec = InputSpec({input_name: spec_of(node) for input_name, node in tree.items()})
+    moved_spec = InputSpec({input_name: spec_of(node) for input_name, node in moved_tree.items()})
     # An optional input stays optional when it moves whole to an input of its own;
     # grouped into a structured input, it is part of a value the binding supplies.
     optional = []
@@ -741,34 +748,44 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         NotImplementedError
             If this kernel is factored, since a joint renames through its factors.
         """
-        pairs = _resolved_path_renames(
+        resolved_renames = _checked_path_renames(
             renames, keyword_renames, check_source=self._check_rename_source
         )
-        moves = {
+        input_moves = {
             source: target
-            for source, target in pairs.items()
-            if source.split(_PATH_SEP, 1)[0] in self.given_spec
+            for source, target in resolved_renames.items()
+            if self._is_input_path(source)
         }
-        event_renames = {source: target for source, target in pairs.items() if source not in moves}
-        given_spec, origins = _moved_inputs(self.given_spec, moves)
+        event_renames = {
+            source: target
+            for source, target in resolved_renames.items()
+            if source not in input_moves
+        }
+        given_spec, origins = _moved_inputs(self.given_spec, input_moves)
         event_spec = self.event_spec.rename(event_renames) if event_renames else self.event_spec
         _check_disjoint_sides(given_spec, event_spec, repr(self.label))
         if _renamed_kernel_factory is None:
             raise RuntimeError("the renamed kernel is not installed; import probpipe")
-        return _renamed_kernel_factory(self, given_spec, event_spec, origins, event_renames, pairs)
+        return _renamed_kernel_factory(
+            self, given_spec, event_spec, origins, event_renames, resolved_renames
+        )
+
+    def _is_input_path(self, path: str) -> bool:
+        """Whether *path* starts with the name of an input, so it addresses the given side."""
+        return path.split(_PATH_SEP, 1)[0] in self.given_spec
 
     def _check_rename_source(self, source: str) -> None:
         """Raise ``KeyError`` unless *source* is the path of an input's node or starts with an output's name.
 
         An event path is checked further by the event spec's own ``rename``.
         """
-        head = source.split(_PATH_SEP, 1)[0]
-        if head in self.event_spec.outputs and head not in self.given_spec:
-            return
-        if head not in self.given_spec:
+        if not self._is_input_path(source):
+            if source.split(_PATH_SEP, 1)[0] in self.event_spec.outputs:
+                return
             raise KeyError(
-                f"rename(): {source!r} is neither an input nor a field of {self.label!r}. "
-                f"Inputs: {list(self.given_spec)}, fields: {list(self.event_spec.outputs)}"
+                f"cannot rename {source!r} in {self.label!r}, since it is neither an input nor "
+                f"an output. Inputs: {list(self.given_spec)}, outputs: "
+                f"{list(self.event_spec.outputs)}"
             )
         input_nodes = {
             _PATH_SEP.join(segments[:end])

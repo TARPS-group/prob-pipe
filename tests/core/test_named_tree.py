@@ -256,6 +256,27 @@ class TestRename:
         with pytest.raises(TypeError, match="a path must be a str, got tuple"):
             record.rename({"x": ("g", "x")})
 
+    @pytest.mark.parametrize(
+        "tree",
+        [
+            pytest.param(Record({"renames": 1.0, "keyword_renames": 2.0}), id="record"),
+            pytest.param(RecordSpec(renames=(), keyword_renames=()), id="record-spec"),
+            pytest.param(OutputSpec(RecordSpec(renames=(), keyword_renames=())), id="output-spec"),
+        ],
+    )
+    def test_a_node_named_like_a_parameter_renames_by_keyword(self, tree):
+        renamed = tree.rename(renames="r", keyword_renames="k")
+        assert "r" in renamed and "k" in renamed
+        assert "renames" not in renamed
+
+    def test_index_and_membership_take_their_path_positionally_only(self, record):
+        assert record.__getitem__("x") == record["x"]
+        assert record.__contains__("x")
+        with pytest.raises(TypeError, match="positional-only"):
+            record.__getitem__(paths="x")
+        with pytest.raises(TypeError, match="positional-only"):
+            record.__contains__(path="x")
+
     def test_no_renames_raises(self, record):
         with pytest.raises(ValueError):
             record.rename()

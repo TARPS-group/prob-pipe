@@ -2027,14 +2027,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`rename`, `[]`, and `in` take the parameters the design declares.** On a
   law, a kernel, a record, a record batch, and an output spec, `rename` takes
   `(renames, /, **keyword_renames)`, and `[]` and `in` on a law and a record
-  take their path positionally only. A call by position or by a keyword
-  rename is unchanged. Calling the special methods with the path as a keyword
-  now raises `TypeError`: replace `d.__getitem__(key="x")` with `d["x"]` and
-  `d.__contains__(path="x")` with `"x" in d`.
-  A new path in a `rename` of a record, a record batch, an output spec, or a
-  kernel is read as every path is, so a target that is not a string now
-  raises `TypeError`, where it raised `ValueError`, and an empty name in a
-  target reads as one in an index:
+  take their path positionally only. A call that gives its renames by position
+  or as keywords is unchanged. Calling the special methods with the path as a
+  keyword now raises `TypeError`: replace `d.__getitem__(key="x")` with
+  `d["x"]` and `d.__contains__(path="x")` with `"x" in d`.
+
+  A `rename` now checks each key and each new path with the rules that `[]`
+  applies to a path, on a record, a record batch, an output spec, and a
+  kernel. A new path that is not a string raises `TypeError`, where it raised
+  `ValueError`. A kernel's key that is not a string raises `TypeError`, where
+  it raised `AttributeError`. A key that is not a path of the term raises
+  `KeyError` before its new path is read, so `record.rename(zz="")` raises
+  `KeyError`, where it raised `ValueError`. The messages are those of `[]`:
 
   ```python
   record.rename(x=("g", "x"))

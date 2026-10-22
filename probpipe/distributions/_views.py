@@ -2130,10 +2130,10 @@ class _RenamedDistribution(Distribution):
         the new ones, so a rename of the output alone keeps the renames of
         the fields below it.
         """
-        renamed = self.event_spec.rename(renames, **keyword_renames)
-        given_renames = {**dict(renames or {}), **keyword_renames}
+        renamed_event_spec = self.event_spec.rename(renames, **keyword_renames)
+        all_renames = {**dict(renames or {}), **keyword_renames}
         return _renamed(
-            self, _EventRenames.of(self.event_spec, renamed, given_renames), given_renames
+            self, _EventRenames.of(self.event_spec, renamed_event_spec, all_renames), all_renames
         )
 
     def _original_given(self, given: Any) -> Record | None:

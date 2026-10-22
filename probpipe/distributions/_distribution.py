@@ -1059,14 +1059,16 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         ------
         KeyError
             If a key is not a path of the event spec.
+        TypeError
+            As :meth:`OutputSpec.rename` raises it.
         ValueError
             As :meth:`OutputSpec.rename` raises it.
         """
-        renamed = self.event_spec.rename(renames, **keyword_renames)
-        given_renames = {**dict(renames or {}), **keyword_renames}
+        renamed_event_spec = self.event_spec.rename(renames, **keyword_renames)
+        all_renames = {**dict(renames or {}), **keyword_renames}
         if _renamed_law_factory is None:
             raise RuntimeError("the renamed law is not installed; import probpipe")
-        return _renamed_law_factory(self, renamed, given_renames)
+        return _renamed_law_factory(self, renamed_event_spec, all_renames)
 
     def _renamed_in_family(self, event: _EventRenames) -> Distribution | None:
         """The member of this law's family that holds its values under *event*'s new paths, or None.

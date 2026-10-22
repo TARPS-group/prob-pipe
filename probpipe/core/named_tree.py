@@ -356,7 +356,7 @@ def _moved_tree(
     return _stripped(root, (), origins), origins
 
 
-def _resolved_path_renames(
+def _checked_path_renames(
     renames: Mapping[str, str] | None,
     keyword_renames: Mapping[str, str],
     *,
@@ -397,8 +397,8 @@ def _resolved_path_renames(
         its own node, or two targets are equal or one lies inside the other.
     """
     pairs: dict[str, str] = {}
-    for given_renames in (renames or {}), keyword_renames:
-        for old, new in given_renames.items():
+    for renames_given_one_way in (renames or {}), keyword_renames:
+        for old, new in renames_given_one_way.items():
             source = _as_path(old, action="call rename() with")
             check_source(source)
             if source in pairs:
@@ -1231,9 +1231,9 @@ class NamedTree[L]:
     ) -> dict[str, str]:
         """Resolve :meth:`rename` inputs to ``{source path: target path}``, each source a node of this tree.
 
-        :func:`_resolved_path_renames` states the rules and the errors.
+        :func:`_checked_path_renames` states the rules and the errors.
         """
-        return _resolved_path_renames(renames, keyword_renames, check_source=self._existing_node_at)
+        return _checked_path_renames(renames, keyword_renames, check_source=self._existing_node_at)
 
     def _renamed_tree(self, renames: Mapping[str, str]) -> tuple[dict[str, Any], dict[str, str]]:
         """This tree as a nested dict with *renames* applied, and each node's original path.
@@ -1320,11 +1320,13 @@ class NamedTree[L]:
         ------
         KeyError
             If a key is not the path of a node.
+        TypeError
+            If a key or a target is not a string, such as a tuple of names.
         ValueError
-            If a target is empty or has an empty segment, two keys rename the
-            same node, no renames are given, a node moves into its own subtree,
-            two targets are equal or one lies inside the other, or a target
-            collides with a node that remains.
+            If a key or a target is empty or has an empty name, two keys rename
+            the same node, no renames are given, a node moves into its own
+            subtree, two targets are equal or one lies inside the other, or a
+            target collides with a node that remains.
         """
         tree, _ = self._renamed_tree(self._resolve_path_renames(renames, keyword_renames))
         return self._rebuild_node(tree, node_name=None)

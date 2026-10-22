@@ -728,6 +728,8 @@ class RecordBatch(Batch[Record]):
         ------
         KeyError
             If a key is not the path of a node of the elements.
+        TypeError
+            As :meth:`~probpipe.core.named_tree.NamedTree.rename` raises it.
         ValueError
             As :meth:`~probpipe.core.named_tree.NamedTree.rename` raises it.
         """

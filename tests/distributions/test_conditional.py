@@ -695,6 +695,19 @@ class TestRename:
             with pytest.raises(error, match=message):
                 tree.rename(renames)
 
+    def test_a_key_that_is_not_a_string_raises_type_error(self):
+        with pytest.raises(TypeError, match="a path must be a str, got tuple"):
+            _kernel().rename({("mu",): "m"})
+
+    def test_a_bad_event_target_is_read_as_a_path(self):
+        kernel = _kernel(event=OutputSpec(RecordSpec(y=(), z=())))
+        with pytest.raises(ValueError, match="'y//a', since the path 'y//a' has an empty name"):
+            kernel.rename(y="y//a")
+
+    def test_a_key_on_neither_side_names_both_sides(self):
+        with pytest.raises(KeyError, match=r"neither an input nor an output\. Inputs: \['mu'\]"):
+            _kernel().rename(sigma="s")
+
     def test_rename_takes_its_renames_by_position_and_as_keywords_only(self):
         kernel = _kernel(given={"renames": SCALAR})
         renamed = kernel.rename(renames="r")

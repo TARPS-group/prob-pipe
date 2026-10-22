@@ -63,18 +63,34 @@ _OTHER_PACKAGES = frozenset(
     }
 )
 
+#: The problem the design check reports for a member that does not exist yet.
+_NOT_IMPLEMENTED = "is not implemented"
+
 #: The members the implementation does not match yet, by the name a finding
-#: gives them, each with the behavior it awaits. Any other difference fails.
-_PENDING: dict[str, str] = {
-    "Distribution.output": "the term at one output of a law, d.output(name), is not implemented",
-    "Distribution.without": "a law over its event without some paths, d.without(*paths), "
-    "is not implemented",
-    "ConditionalDistribution.__getitem__": "the marginal kernel at paths, k[paths], "
-    "is not implemented",
-    "ConditionalDistribution.output": "the term at one output of a kernel, k.output(name), "
-    "is not implemented",
-    "ConditionalDistribution.without": "a kernel over its event without some paths, "
-    "k.without(*paths), is not implemented",
+#: gives them: the problem the check reports for each, and the behavior it
+#: awaits. Each has a pending case of its own, and any other difference fails,
+#: including another problem with a listed member.
+_PENDING: dict[str, tuple[str, str]] = {
+    "Distribution.output": (
+        _NOT_IMPLEMENTED,
+        "the term at one output of a law, d.output(name), is not implemented",
+    ),
+    "Distribution.without": (
+        _NOT_IMPLEMENTED,
+        "a law over its event without some paths, d.without(*paths), is not implemented",
+    ),
+    "ConditionalDistribution.__getitem__": (
+        _NOT_IMPLEMENTED,
+        "the marginal kernel at paths, k[paths], is not implemented",
+    ),
+    "ConditionalDistribution.output": (
+        _NOT_IMPLEMENTED,
+        "the term at one output of a kernel, k.output(name), is not implemented",
+    ),
+    "ConditionalDistribution.without": (
+        _NOT_IMPLEMENTED,
+        "a kernel over its event without some paths, k.without(*paths), is not implemented",
+    ),
 }
 
 
@@ -116,20 +132,36 @@ def _cases() -> list:
     return cases
 
 
+def _pending_member_cases() -> list:
+    return [
+        pytest.param(
+            member_name,
+            id=member_name,
+            marks=pytest.mark.pending(reason=reason, raises=AssertionError),
+        )
+        for member_name, (_, reason) in _PENDING.items()
+    ]
+
+
 class TestDeclarationsAreImplemented:
     @pytest.mark.parametrize("declaration", _cases())
     def test_the_declaration_matches_the_implementation(self, declaration):
         findings = _tool().check([declaration], _resolve)
-        unexpected = [f"{f.name} {f.problem}" for f in findings if f.name not in _PENDING]
+        unexpected = [
+            f"{f.name} {f.problem}"
+            for f in findings
+            if f.name not in _PENDING or f.problem != _PENDING[f.name][0]
+        ]
         assert not unexpected, "; ".join(unexpected)
 
-    def test_each_pending_member_still_differs_from_its_declaration(self):
+    @pytest.mark.parametrize("member_name", _pending_member_cases())
+    def test_a_pending_member_matches_its_declaration(self, member_name):
         tool = _tool()
         declarations = [
             d for d in tool.declarations(_SECTIONS) if _declared_name(d) not in _OTHER_PACKAGES
         ]
-        differing = {finding.name for finding in tool.check(declarations, _resolve)}
-        assert set(_PENDING) <= differing, sorted(set(_PENDING) - differing)
+        findings = [f for f in tool.check(declarations, _resolve) if f.name == member_name]
+        assert not findings, "; ".join(f"{f.name} {f.problem}" for f in findings)
 
     def test_a_kernel_merges_by_the_declared_signature(self):
         tool = _tool()
