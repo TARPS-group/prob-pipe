@@ -3,7 +3,7 @@
 Covers:
 - make_posterior: the posterior of an inference target, its event and its provenance
 - the private builder of a result: its levels, annotations, warmup, and draws, with a record target too
-- FieldView: output views, select, broadcasting
+- CoupledMarginal: output views, select, broadcasting
 - rwmh Function: basic sampling with SupportsLogProb
 """
 
@@ -34,7 +34,7 @@ from probpipe import (
 )
 from probpipe.core._record_batch import RecordBatch
 from probpipe.core._specs import NumericArraySpec, OutputSpec
-from probpipe.distributions import Distribution, FieldView
+from probpipe.distributions import CoupledMarginal, Distribution
 from probpipe.inference import make_posterior, rwmh
 from probpipe.inference._approximate_distribution import _posterior_from_chains
 from probpipe.inference._inference_utils import build_mcmc_datatree, observed_target
@@ -61,8 +61,8 @@ def _regression_target() -> Any:
         given_spec={"beta": NumericArraySpec((2,)), "mu": NumericArraySpec(())},
         label="likelihood",
     )
-    model = likelihood * (
-        MultivariateNormal("beta", jnp.zeros(2), jnp.eye(2)) * Normal("mu", 0.0, 1.0)
+    model = likelihood & (
+        MultivariateNormal("beta", jnp.zeros(2), jnp.eye(2)) & Normal("mu", 0.0, 1.0)
     )
     return observed_target(model, {"y": jnp.array([0.4, 0.9, -0.1])})
 
@@ -566,9 +566,9 @@ class TestMakePosteriorRecordTarget:
         """A field view and a KDE of the posterior read its target record."""
         from probpipe import KDEDistribution, convert
 
-        prior = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_path_names(
+        prior = (Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)).rename(
             {"a": "params/a", "b": "params/b"}
-        ) * Normal("s", 0.0, 1.0)
+        ) & Normal("s", 0.0, 1.0)
         chain = jax.random.normal(jax.random.PRNGKey(0), (40, 3))
         post = _posterior_from_chains(
             [chain], parents=(prior,), method="test", event_spec=prior.event_spec
@@ -979,11 +979,11 @@ class TestRWMH:
 
 
 # ---------------------------------------------------------------------------
-# FieldView + select
+# CoupledMarginal + select
 # ---------------------------------------------------------------------------
 
 
-class TestPosteriorFieldView:
+class TestPosteriorCoupledMarginal:
     """Field views of a posterior over a record."""
 
     @pytest.fixture
@@ -1003,7 +1003,7 @@ class TestPosteriorFieldView:
 
     def test_getitem_returns_view(self, posterior):
         view = posterior["r"]
-        assert isinstance(view, FieldView)
+        assert isinstance(view, CoupledMarginal)
         assert view.parent is posterior
 
     def test_getitem_missing_field_raises(self, posterior):
@@ -1064,7 +1064,7 @@ class TestPosteriorFieldView:
     def test_repr(self, posterior):
         view = posterior["r"]
         r = repr(view)
-        assert "FieldView" in r
+        assert "CoupledMarginal" in r
         assert repr(posterior.label) in r
         assert "'r'" in r
 
@@ -1090,7 +1090,7 @@ class TestPosteriorFieldView:
 
     def test_a_view_of_a_factored_joint_at_a_factor_takes_the_factor_label(self):
         """A view at a whole factor takes the factor's label, and its event exposes the field."""
-        p = Normal("x", loc=0.0, scale=1.0, label="px") * Normal(
+        p = Normal("x", loc=0.0, scale=1.0, label="px") & Normal(
             "y", loc=0.0, scale=1.0, label="py"
         )
         assert (p["x"].label, p["y"].label) == ("px", "py")
@@ -1107,7 +1107,7 @@ class TestViewProtocolDuckTyping:
     def test_a_joint_view_claims_the_density_of_its_factor(self):
         from probpipe import SupportsLogProb
 
-        joint = Normal("x", 0, 1) * Normal("y", 3, 2)
+        joint = Normal("x", 0, 1) & Normal("y", 3, 2)
         view = joint["x"]
         assert isinstance(view, SupportsLogProb)
 
@@ -1126,7 +1126,7 @@ class TestViewProtocolDuckTyping:
         """A view samples when its parent does."""
         from probpipe import SupportsSampling
 
-        joint = Normal("x", 0, 1) * Normal("y", 3, 2)
+        joint = Normal("x", 0, 1) & Normal("y", 3, 2)
         assert isinstance(joint["x"], SupportsSampling)
 
         template = RecordSpec(a=())
@@ -1139,7 +1139,7 @@ class TestViewProtocolDuckTyping:
         """A view of a parent with moments has them."""
         from probpipe import SupportsMean, SupportsVariance
 
-        joint = Normal("x", 0, 1) * Normal("y", 3, 2)
+        joint = Normal("x", 0, 1) & Normal("y", 3, 2)
         view = joint["x"]
         assert isinstance(view, SupportsMean)
         assert isinstance(view, SupportsVariance)
@@ -1148,7 +1148,7 @@ class TestViewProtocolDuckTyping:
         """A joint view's density is its factor's, the joint's marginal at the path."""
         import scipy.stats
 
-        joint = Normal("x", loc=2.0, scale=0.5) * Normal("y", 0, 1)
+        joint = Normal("x", loc=2.0, scale=0.5) & Normal("y", 0, 1)
         view = joint["x"]
         lp = float(view._log_prob(jnp.array(2.0)))
         expected = scipy.stats.norm.logpdf(2.0, loc=2.0, scale=0.5)
@@ -1158,14 +1158,14 @@ class TestViewProtocolDuckTyping:
         """A view claims a covariance exactly when its parent does."""
         from probpipe import SupportsCovariance
 
-        joint = Normal("x", 0, 1) * Normal("y", 3, 2)
+        joint = Normal("x", 0, 1) & Normal("y", 3, 2)
         assert isinstance(joint["x"], SupportsCovariance) == isinstance(joint, SupportsCovariance)
 
     def test_dynamic_protocol_depends_on_parent(self):
-        """One FieldView class, different claims by parent."""
+        """One CoupledMarginal class, different claims by parent."""
         from probpipe import SupportsLogProb
 
-        joint = Normal("x", 0, 1) * Normal("y", 3, 2)
+        joint = Normal("x", 0, 1) & Normal("y", 3, 2)
         view_with = joint["x"]
         assert isinstance(view_with, SupportsLogProb)
 
@@ -1177,9 +1177,9 @@ class TestViewProtocolDuckTyping:
         assert not isinstance(view_without, SupportsLogProb)
 
     def test_view_still_isinstance_base_class(self):
-        """A view of any parent is a FieldView."""
-        joint = Normal("x", 0, 1) * Normal("y", 3, 2)
-        assert isinstance(joint["x"], FieldView)
+        """A view of any parent is a CoupledMarginal."""
+        joint = Normal("x", 0, 1) & Normal("y", 3, 2)
+        assert isinstance(joint["x"], CoupledMarginal)
 
 
 class TestValuesSelect:
@@ -1270,7 +1270,7 @@ class TestEndToEndValuesPipeline:
                     "num_warmup": 200,
                     "step_size": 0.3,
                 }
-            )(likelihood * prior, {"y": jnp.array([1.0, 2.0])})
+            )((likelihood & prior), {"y": jnp.array([1.0, 2.0])})
 
     def test_template_propagation(self, posterior):
         """The posterior is a law over the joint's unconditioned field, a record of params."""
@@ -1306,7 +1306,7 @@ class TestEndToEndValuesPipeline:
     def test_view_values_match_draws(self, posterior):
         """The view of the field is a law whose mean matches the draws."""
         view = posterior["params"]
-        assert isinstance(view, FieldView)
+        assert isinstance(view, CoupledMarginal)
         assert view.event_shape == (2,)
 
         # Delegation check: view._mean() == draws().params.mean()
@@ -1388,7 +1388,7 @@ class TestEndToEndValuesPipeline:
 
         # Per-field views
         view_a = post["a"]
-        assert isinstance(view_a, FieldView)
+        assert isinstance(view_a, CoupledMarginal)
         np.testing.assert_allclose(float(view_a._mean()), float(draws["a"].raw.mean()), atol=1e-5)
 
     def test_workflow_mixed_posterior_and_independent(self, posterior):

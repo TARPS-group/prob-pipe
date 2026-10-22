@@ -1217,7 +1217,7 @@ def _closure():
 
 class TestTheMonteCarloDrawsACallRecords:
     def test_a_monte_carlo_route_records_its_draws_by_the_part_it_drew(self):
-        law = Normal("mu", 0.0, 2.0) * Poisson("count", 4.0)
+        law = Normal("mu", 0.0, 2.0) & Poisson("count", 4.0)
         with workflow_run(seed=0):
             median = quantile(law, 0.5)
 

@@ -25,11 +25,11 @@ from probpipe import (
     unnormalized_log_prob,
     variance,
 )
-from probpipe.distributions import FieldView
+from probpipe.distributions import CoupledMarginal
 
 __all__ = [
+    "CoupledMarginal",
     "EmpiricalDistribution",
-    "FieldView",
     "condition_on",
     "convert",
     "cov",

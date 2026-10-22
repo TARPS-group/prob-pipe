@@ -75,7 +75,8 @@ def _regression_case() -> ModelTestCase:
 
 class TestReferences:
     @pytest.mark.parametrize(
-        "case_name", [name for name in canonical.CASES if canonical.case(name).posterior]
+        "case_name",
+        [name for name in canonical.CASES if canonical.case(name).posterior is not None],
     )
     def test_the_closed_form_posterior_meets_its_own_reference(self, case_name):
         """Independent draws of the closed-form posterior law meet the case's reference.
@@ -244,7 +245,7 @@ class TestExactness:
             "y", DenseLinOp(X), jnp.zeros(X.shape[0]), DenseLinOp(jnp.eye(X.shape[0]))
         )
         prior = MultivariateNormal("beta", jnp.zeros(X.shape[1]), cov=4.0 * jnp.eye(X.shape[1]))
-        posterior = condition_on.using(exact_only=True)(likelihood * prior, case.data)
+        posterior = condition_on.using(exact_only=True)((likelihood & prior), case.data)
         np.testing.assert_allclose(
             np.asarray(mean.using(raw=True)(posterior)["beta"]),
             case.reference.leaves["beta"].mean,

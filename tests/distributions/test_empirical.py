@@ -41,7 +41,7 @@ from probpipe import (
 from probpipe.core._dispatch import Feasibility
 from probpipe.core._specs import _has_record_outputs
 from probpipe.core.constraints import positive
-from probpipe.distributions import DistributionBatch, FieldView, NumericDistribution
+from probpipe.distributions import CoupledMarginal, DistributionBatch, NumericDistribution
 from probpipe.distributions._capabilities import (
     SupportsCovariance,
     SupportsExpectation,
@@ -204,7 +204,7 @@ class TestEventCompletion:
         assert law.event_spec == OutputSpec(_RECORD_SPEC)
 
     def test_a_declaration_keeps_the_dtypes_the_atoms_leave_open(self):
-        prior = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        prior = Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)
         atoms = NumericRecordBatch(
             {"a": jnp.zeros(5), "b": jnp.ones(5)},
             ("draw",),
@@ -707,7 +707,7 @@ class TestMarginals:
         law = _record_law()
         marginal = law._marginal("b")
         assert isinstance(marginal, EmpiricalDistribution)
-        assert not isinstance(marginal, FieldView)
+        assert not isinstance(marginal, CoupledMarginal)
         assert marginal.label == law.label
         assert marginal.event_spec == OutputSpec(b=_RECORD_SPEC["b"])
         assert jnp.array_equal(marginal.atoms.raw, _B)
@@ -846,27 +846,27 @@ def _posterior() -> EmpiricalDistribution:
 class TestRenaming:
     def test_renaming_the_fields_keeps_the_empirical_family(self):
         law = _posterior()
-        renamed = law.with_path_names(_GROUPING)
+        renamed = law.rename(_GROUPING)
         assert isinstance(renamed, EmpiricalDistribution)
         assert type(renamed) is type(law)
         assert renamed.label == "posterior"
-        assert renamed.event_spec == law.event_spec.with_path_names(_GROUPING)
+        assert renamed.event_spec == law.event_spec.rename(_GROUPING)
         assert renamed.num_atoms == 6
-        assert renamed.provenance.operation == "with_path_names"
+        assert renamed.provenance.operation == "rename"
 
     def test_the_atoms_carry_the_new_paths_on_the_same_levels(self):
-        atoms = _posterior().with_path_names(_GROUPING).atoms
+        atoms = _posterior().rename(_GROUPING).atoms
         assert tuple(atoms.element_spec.term_spec.keys()) == tuple(_GROUPING.values())
         assert atoms.level_names == ("chain", "draw")
         for old, new in _GROUPING.items():
             np.testing.assert_array_equal(np.asarray(atoms[new]), _POSTERIOR_COLUMNS[old])
 
     def test_uniform_weights_stay_uniform(self):
-        renamed = _posterior().with_path_names(_GROUPING)
+        renamed = _posterior().rename(_GROUPING)
         np.testing.assert_allclose(renamed.weights, np.full(6, 1 / 6))
 
     def test_a_weighted_law_keeps_its_weights_and_its_weighted_moments(self):
-        renamed = _record_law().with_path_names({"a": "g/a"})
+        renamed = _record_law().rename({"a": "g/a"})
         np.testing.assert_allclose(renamed.weights, _RECORD_WEIGHTS)
         np.testing.assert_allclose(
             renamed._mean()["g"]["a"], _weighted_sum(_RECORD_WEIGHTS, _A), rtol=1e-6
@@ -874,7 +874,7 @@ class TestRenaming:
 
     def test_a_draw_at_a_key_is_the_draw_of_the_law_under_the_new_paths(self, key):
         law = _record_law()
-        draws = law.with_path_names({"a": "g/a"})._sample(key, (7,))
+        draws = law.rename({"a": "g/a"})._sample(key, (7,))
         original = law._sample(key, (7,))
         np.testing.assert_array_equal(draws["g"]["a"], original["a"])
         np.testing.assert_array_equal(draws["b"], original["b"])
@@ -883,9 +883,9 @@ class TestRenaming:
         law = EmpiricalDistribution(
             _record_atoms(), event_spec=OutputSpec(params=None), label="post"
         )
-        renamed = law.with_path_names({"params/a": "params/alpha"})
+        renamed = law.rename({"params/a": "params/alpha"})
         assert isinstance(renamed, EmpiricalDistribution)
-        assert renamed.event_spec == law.event_spec.with_path_names({"params/a": "params/alpha"})
+        assert renamed.event_spec == law.event_spec.rename({"params/a": "params/alpha"})
         assert tuple(renamed.atoms.element_spec.term_spec.keys()) == ("b", "alpha")
         np.testing.assert_array_equal(np.asarray(renamed.atoms["alpha"]), _A)
 
@@ -898,9 +898,7 @@ class TestRenaming:
             element=spec,
             label="rows",
         )
-        renamed = EmpiricalDistribution(atoms, label="m").with_path_names(
-            {"p/x": "g/x", "q/y": "g/y"}
-        )
+        renamed = EmpiricalDistribution(atoms, label="m").rename({"p/x": "g/x", "q/y": "g/y"})
         assert _capability_guard(renamed, "_marginal", "g") == Feasibility(True)
         marginal = renamed._marginal("g")
         assert marginal.event_spec == OutputSpec(g=RecordSpec(x=(), y=()))
@@ -913,7 +911,7 @@ class TestRenaming:
         assert law._renamed_in_family(event) is None
 
     def test_a_renamed_law_round_trips_through_pickle(self):
-        renamed = _record_law().with_path_names({"a": "g/a"})
+        renamed = _record_law().rename({"a": "g/a"})
         restored = pickle.loads(pickle.dumps(renamed))
         assert type(restored) is type(renamed)
         assert restored.event_spec == renamed.event_spec

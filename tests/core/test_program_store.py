@@ -79,7 +79,7 @@ def _failing_on_the_host(x: Any) -> Any:
 
 def _joint(kernel: Any) -> Any:
     """``kernel`` over ``mu ~ Normal(0, 1e-3)``, whose kernel the joint maps over the draws of ``mu``."""
-    return kernel * Normal("mu", 0.0, 1e-3)
+    return kernel & Normal("mu", 0.0, 1e-3)
 
 
 def _rounded_draws(draws: Any) -> list[float]:

@@ -115,8 +115,8 @@ def _regression() -> Distribution:
         given_spec={"beta": NumericArraySpec((2,)), "mu": NumericArraySpec(())},
         label="likelihood",
     )
-    prior = MultivariateNormal("beta", jnp.zeros(2), jnp.eye(2)) * Normal("mu", 0.0, 2.0)
-    return likelihood * prior
+    prior = MultivariateNormal("beta", jnp.zeros(2), jnp.eye(2)) & Normal("mu", 0.0, 2.0)
+    return likelihood & prior
 
 
 def _log_joint(beta: Any, mu: Any) -> Any:
@@ -294,13 +294,13 @@ class TestTheFactors:
     def test_a_factor_that_produces_an_observed_and_an_unobserved_field_gives_none(
         self, received_target
     ):
-        model = Normal("a", 0.0, 1.0) * MultivariateNormal("b", jnp.zeros(2), jnp.eye(2))
+        model = Normal("a", 0.0, 1.0) & MultivariateNormal("b", jnp.zeros(2), jnp.eye(2))
         joint = conditional_distribution(
-            lambda a: Normal("c", a, 1.0) * Normal("d", a, 1.0),
+            lambda a: Normal("c", a, 1.0) & Normal("d", a, 1.0),
             given_spec={"a": NumericArraySpec(())},
             label="pair",
         )
-        target = received_target(_by_condition_on, joint * model, {"c": 0.2})
+        target = received_target(_by_condition_on, (joint & model), {"c": 0.2})
         assert target.factors() is None
 
 

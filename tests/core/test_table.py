@@ -31,7 +31,7 @@ from probpipe.core.provenance import Provenance
 
 @pytest.fixture
 def model():
-    return (Normal("mu", 0.0, 2.0) * Gamma("tau", 2.0, 1.0)).with_label("model")
+    return (Normal("mu", 0.0, 2.0) & Gamma("tau", 2.0, 1.0)).with_label("model")
 
 
 @pytest.fixture
@@ -66,7 +66,7 @@ class TestARecordOfSummariesIsATable:
             assert str(record) == "       sd\nmu   2.\ntau  1.41"
 
     def test_an_array_path_takes_a_row_per_element(self):
-        law = Normal("y", jnp.array([1.0, 2.0]), 1.0) * Normal("a", 0.5, 2.0)
+        law = Normal("y", jnp.array([1.0, 2.0]), 1.0) & Normal("a", 0.5, 2.0)
 
         summary = summarize(law, mean, {"sd": standard_deviation})
 
@@ -146,14 +146,14 @@ class TestARecordThatIsNotOfSummariesShowsALinePerPath:
         )
 
     def test_the_mean_of_a_law_whose_groups_share_field_names_shows_a_line_per_path(self):
-        group_a = (Normal("mu", 0.0, 1.0) * Normal("sigma", 1.0, 1.0)).with_path_names(
+        group_a = (Normal("mu", 0.0, 1.0) & Normal("sigma", 1.0, 1.0)).rename(
             {"mu": "a/mu", "sigma": "a/sigma"}
         )
-        group_b = (Normal("mu", 2.0, 1.0) * Normal("sigma", 3.0, 1.0)).with_path_names(
+        group_b = (Normal("mu", 2.0, 1.0) & Normal("sigma", 3.0, 1.0)).rename(
             {"mu": "b/mu", "sigma": "b/sigma"}
         )
 
-        lines = repr(mean((group_a * group_b).with_label("groups"))).splitlines()
+        lines = repr(mean((group_a & group_b).with_label("groups"))).splitlines()
 
         assert [line.split()[0] for line in lines[1:]] == ["a/mu", "a/sigma", "b/mu", "b/sigma"]
 
@@ -186,7 +186,7 @@ class TestARecordThatIsNotOfSummariesShowsALinePerPath:
 
 class TestTheFooterStatesHowEachColumnWasComputed:
     def test_a_monte_carlo_column_states_its_draws(self):
-        law = Normal("mu", 0.0, 2.0) * Poisson("count", 4.0)
+        law = Normal("mu", 0.0, 2.0) & Poisson("count", 4.0)
         draws = quantile.options["num_samples"]
 
         with workflow_run(seed=0):
@@ -205,7 +205,7 @@ class TestTheFooterStatesHowEachColumnWasComputed:
         prior = Normal("mu", 0.0, 2.0)
         kernel = conditional_distribution(y_given_mu, given_spec=prior.event_spec.outputs)
         with workflow_run(seed=0):
-            record = Record({"sd": standard_deviation(kernel * prior)}, label="r")
+            record = Record({"sd": standard_deviation(kernel & prior)}, label="r")
 
         assert repr(record).splitlines()[-1] == "sd: approximate."
 

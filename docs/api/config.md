@@ -41,7 +41,7 @@ def likelihood(mu):
     return Normal("y", mu, 1.0)
 
 
-model = likelihood * Normal("mu", 0.0, 1.0)
+model = (likelihood & Normal("mu", 0.0, 1.0))
 with workflow_run(seed=0):
     sample(model, 100)  # compiles the joint's JAX program for the session's num_samples, 1024
     with probpipe.config.sampling.using(num_samples=2000):

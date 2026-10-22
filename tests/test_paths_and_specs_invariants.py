@@ -37,17 +37,17 @@ _REAL = NumericArraySpec(())
 
 
 def _prior():
-    return Normal("mu", 0.0, 5.0) * Normal("tau", 1.0, 1.0)
+    return Normal("mu", 0.0, 5.0) & Normal("tau", 1.0, 1.0)
 
 
 def _grouped():
-    joint = Normal("a", 0.0, 1.0) * Normal("c", 1.0, 2.0) * Normal("e", 2.0, 3.0)
-    return joint.with_path_names({"c": "g/c", "e": "g/e"})
+    joint = (Normal("a", 0.0, 1.0) & Normal("c", 1.0, 2.0)) & Normal("e", 2.0, 3.0)
+    return joint.rename({"c": "g/c", "e": "g/e"})
 
 
 def _hier():
-    joint = Normal("t1", 0.0, 1.0) * Normal("t2", 0.0, 2.0) * Normal("mu", 0.0, 1.0)
-    return joint.with_path_names({"t1": "s1/theta", "t2": "s2/theta"})
+    joint = (Normal("t1", 0.0, 1.0) & Normal("t2", 0.0, 2.0)) & Normal("mu", 0.0, 1.0)
+    return joint.rename({"t1": "s1/theta", "t2": "s2/theta"})
 
 
 def _lik():
@@ -290,7 +290,6 @@ def test_i15_a_kernels_sides_are_disjoint():
     assert not set(lik.given_spec) & set(lik.event_spec.outputs)
 
 
-@pytest.mark.pending(reason="S3: & merges laws and kernels", raises=TypeError)
 def test_i15_a_merges_sides_are_disjoint():
     model = _lik() & _prior()
     assert not set(getattr(model, "given_spec", {})) & set(model.event_spec.outputs)
@@ -302,20 +301,20 @@ def test_i15_a_merges_sides_are_disjoint():
         (_lik, _prior),
         (_grouped, lambda: Normal("x", 0.0, 1.0)),
         (_hier, lambda: Normal("z", 0.0, 1.0)),
-        (_lik, lambda: _grouped().with_path_names({"a": "mu"})),
+        (_lik, lambda: _grouped().rename({"a": "mu"})),
         (lambda: Normal("x", 0.0, 1.0), _hier),
     ],
-    ids=["lik*prior", "grouped*x", "hier*z", "lik*grouped", "x*hier"],
+    ids=["lik&prior", "grouped&x", "hier&z", "lik&grouped", "x&hier"],
 )
 def test_i16_the_spec_of_a_merge_is_the_merge_of_the_specs(left, right):
     """I16 for outputs: the event spec of a merge is the merge of the operands' event specs."""
     first, second = left(), right()
-    assert (first * second).event_spec == first.event_spec & second.event_spec
+    assert (first & second).event_spec == first.event_spec & second.event_spec
 
 
 def test_i17_a_merge_keeps_paths():
     grouped = _grouped()
-    joint = grouped * Normal("x", 0.0, 1.0)
+    joint = grouped & Normal("x", 0.0, 1.0)
     assert joint.event_spec["g/c"] == grouped.event_spec["g/c"]
 
 
@@ -334,37 +333,38 @@ def test_i18_on_an_output_spec(key):
         assert (key in spec) == (isinstance(key, str) and _succeeds(spec, key))
 
 
-@pytest.mark.pending(reason="S3: rename", raises=AttributeError)
 def test_i18_rename_takes_the_same_paths():
-    assert _grouped().rename({"g/c": "g/k"}).event_spec.term_spec["g/k"] == _REAL
+    grouped = _grouped()
+    assert (
+        grouped.rename({"g/c": "g/k"}).event_spec.term_spec["g/k"]
+        == grouped.event_spec.term_spec["g/c"]
+    )
 
 
 def test_i19_a_merge_is_associative():
-    """I19, which holds today for ``*``."""
+    """I19, which holds for ``&``."""
     a, b, c = Normal("a", 0.0, 1.0), Normal("b", 1.0, 2.0), Normal("c", 2.0, 3.0)
-    left, right = (a * b) * c, a * (b * c)
+    left, right = ((a & b) & c), (a & (b & c))
     assert left.event_spec == right.event_spec
     for name in ("a", "b", "c"):
         np.testing.assert_allclose(variance(left)[name].raw, variance(right)[name].raw)
 
 
-@pytest.mark.pending(reason="S3: & merges laws", raises=TypeError)
 def test_i20_sampling_commutes_with_merge():
     merged = Normal("x", 0.0, 1.0) & Normal("y", 0.0, 2.0)
     assert _sample(merged).keys() == ("x", "y")
 
 
-@pytest.mark.pending(reason="S3: rename", raises=AttributeError)
 def test_i21_merge_commutes_with_renaming():
     x, y = Normal("x", 0.0, 1.0), Normal("y", 0.0, 2.0)
-    assert (x * y).rename(x="z").event_spec == (x.rename(x="z") * y).event_spec
+    assert (x & y).rename(x="z").event_spec == (x.rename(x="z") & y).event_spec
 
 
 def test_i22_a_merge_reads_no_label():
     """I22, which holds today: relabeling an operand changes only the result's label."""
     a, b = Normal("a", 0.0, 1.0), Normal("b", 1.0, 2.0)
-    relabeled = a.with_label("first") * b
-    plain = a * b
+    relabeled = a.with_label("first") & b
+    plain = a & b
     assert relabeled.event_spec == plain.event_spec
     assert relabeled.label != plain.label
     np.testing.assert_allclose(variance(relabeled)["b"].raw, variance(plain)["b"].raw)

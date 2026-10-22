@@ -1,10 +1,10 @@
-"""Field views and renamed laws: laws that read a parent distribution's values.
+"""Field coupled marginals and renamed laws: laws that read a parent distribution's values.
 
 Provides:
-  - ``FieldView`` – the ``Distribution`` that ``d[path]`` returns for a node
+  - ``CoupledMarginal`` – the ``Distribution`` that ``d[path]`` returns for a node
     below a law's whole term, or for a list of paths, holding a reference to
     its parent.
-  - the renamed law and the renamed kernel that ``with_path_names`` returns
+  - the renamed law and the renamed kernel that ``rename`` returns
     when the values must carry new names and the family does not rebuild
     itself under them, which this module installs on the two distribution
     kinds at import.
@@ -85,7 +85,7 @@ from ._distribution import (
     _fixed_paths,
     _fixes_every_field,
     _install_copy_source,
-    _install_field_view,
+    _install_coupled_marginal,
     _install_renamed_law,
     _keeps_fixed_paths,
     _law_repr,
@@ -113,7 +113,7 @@ from ._factored import (
 if TYPE_CHECKING:
     from ..custom_types import Array, ArrayLike, PRNGKey
 
-__all__ = ["FieldView"]
+__all__ = ["CoupledMarginal"]
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ def _node_at(declaration: OutputSpec, path: str) -> TermSpec:
 
 
 def _view_declaration(parent_event_spec: OutputSpec, paths: str | tuple[str, ...]) -> OutputSpec:
-    """The event spec of the view at *paths* of a law whose event spec is *parent_event_spec*.
+    """The event spec of the coupled marginal at *paths* of a law whose event spec is *parent_event_spec*.
 
     It is ``parent_event_spec[paths]``: one path to a single value gives the value
     under an output named by its last name, and a list of paths gives the
@@ -161,7 +161,7 @@ def _view_declaration(parent_event_spec: OutputSpec, paths: str | tuple[str, ...
     the canonical order of *parent_event_spec*. As an interim implementation
     detail, one path to a group, or to a field that holds a distribution or a
     batch, gives the node whole under an output named by its last name, until a
-    view of a group has the group's children as outputs and a view at such a
+    coupled marginal of a group has the group's children as outputs and a coupled marginal at such a
     field is in the positional form.
 
     Parameters
@@ -305,21 +305,21 @@ def _path_tuple(path: str | tuple[str, ...]) -> tuple[str, ...]:
 
 
 def _marginal_expression_at(law: Distribution, paths: str | tuple[str, ...]) -> Expression:
-    """The expression of the marginal of *law* at *paths*, which the view of *law* at *paths* carries too.
+    """The expression of the marginal of *law* at *paths*, which the coupled marginal of *law* at *paths* carries too.
 
     A marginal over the whole events of some factors, none of which conditions
     on an output outside them, is those factors (VI.8): one factor gives its
     own expression, and several their product without a label, in the law's
     order, which reads factor by factor, as ``a(a)·b(b)``. The factors of a
-    field view are its parent's, at the parent's paths. The marginal of a view
-    at its whole event is the view, and any other marginal is *law* selected
+    field coupled marginal are its parent's, at the parent's paths. The marginal of a coupled marginal
+    at its whole event is the coupled marginal, and any other marginal is *law* selected
     at *paths*, which keeps *law*'s label. The marginal holds the paths its
     factors hold fixed, followed by those *law* holds.
 
     Parameters
     ----------
     law : Distribution
-        The law, which may be a field view.
+        The law, which may be a field coupled marginal.
     paths : str or tuple of str
         An event path of *law*, or a list of them in *law*'s canonical order.
 
@@ -330,7 +330,7 @@ def _marginal_expression_at(law: Distribution, paths: str | tuple[str, ...]) -> 
     """
     requested = _path_tuple(paths)
     owner, listed_paths = law, requested
-    if isinstance(law, FieldView):
+    if isinstance(law, CoupledMarginal):
         parent_paths = tuple(law._parent_path(selected_path) for selected_path in requested)
         if parent_paths == _path_tuple(law.path):
             return law._expression
@@ -380,12 +380,12 @@ def _keeps_expression(term: Any, source: Any) -> Any:
 # ---------------------------------------------------------------------------
 #
 # Each function realizes one row of the derivation from a parent's capability,
-# with pi the extraction of the view's node from a parent draw, or of the record
+# with pi the extraction of the coupled marginal's node from a parent draw, or of the record
 # of the selected nodes.
 
-#: The method of each moment row. A view projects the moment of a parent that
+#: The method of each moment row. A coupled marginal projects the moment of a parent that
 #: claims it, and otherwise computes it from the parent's exact marginal at the
-#: view's path, when the parent reports that marginal claims it.
+#: coupled marginal's path, when the parent reports that marginal claims it.
 _MOMENT_METHODS: dict[type, str] = {
     SupportsMean: "_mean",
     SupportsVariance: "_variance",
@@ -397,17 +397,17 @@ _MOMENT_METHODS: dict[type, str] = {
 _NUMERIC_MOMENTS = (SupportsCovariance, SupportsQuantile)
 
 
-def _marginal_moment(self: FieldView, method: str, *arguments: Any) -> Any:
-    """The moment *method* of the parent's exact marginal at the view's path."""
+def _marginal_moment(self: CoupledMarginal, method: str, *arguments: Any) -> Any:
+    """The moment *method* of the parent's exact marginal at the coupled marginal's path."""
     return getattr(self._parent._marginal(self._path), method)(*arguments)
 
 
-def _view_sample(self: FieldView, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any:
+def _view_sample(self: CoupledMarginal, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any:
     """Co-sample: draw ``X`` from the parent with the same key and return ``pi(X)``.
 
-    The key and the sample shape pass to the parent unchanged, so views of one
+    The key and the sample shape pass to the parent unchanged, so coupled marginals of one
     parent drawn with one key project one parent draw. The draws take the raw
-    form of the view's own event, which is the raw form of its detached
+    form of the coupled marginal's own event, which is the raw form of its standalone
     marginal's draws (see :func:`_drawn_form`).
     """
     drawn = self._project(self._parent._sample(key, sample_shape))
@@ -421,7 +421,7 @@ def _drawn_form(value: Any, spec: TermSpec, sample_shape: tuple[int, ...]) -> An
     drawn as its raw values, with the sample axes before the batch axes. A field
     of a record that is a batch is drawn as one batch per draw: the batch itself
     for one draw, and an object array of batches over the sample axes otherwise.
-    A field view's node can have the other form in its parent, so the view's
+    A field coupled marginal's node can have the other form in its parent, so the coupled marginal's
     draws are converted to the form its own event declares.
 
     Parameters
@@ -429,7 +429,7 @@ def _drawn_form(value: Any, spec: TermSpec, sample_shape: tuple[int, ...]) -> An
     value : Any
         The projected draws, with the sample axes leading.
     spec : TermSpec
-        The view's event type.
+        The coupled marginal's event type.
     sample_shape : tuple of int
         The sample axes that lead *value*.
 
@@ -509,8 +509,8 @@ def _entry_at(value: Any, index: tuple[int, ...]) -> Any:
     return value[index]
 
 
-def _view_mean(self: FieldView) -> Any:
-    """Projection: the parent's mean at the view's path, since ``𝔼[pi X] = pi 𝔼[X]``.
+def _view_mean(self: CoupledMarginal) -> Any:
+    """Projection: the parent's mean at the coupled marginal's path, since ``𝔼[pi X] = pi 𝔼[X]``.
 
     A parent without a mean gives the mean of its exact marginal at the path.
     """
@@ -519,8 +519,8 @@ def _view_mean(self: FieldView) -> Any:
     return self._project(self._parent._mean())
 
 
-def _view_variance(self: FieldView) -> Any:
-    """Restriction of the parent's variance to the coordinates of the view's path.
+def _view_variance(self: CoupledMarginal) -> Any:
+    """Restriction of the parent's variance to the coordinates of the coupled marginal's path.
 
     A parent without a variance gives the variance of its exact marginal at the
     path.
@@ -530,22 +530,22 @@ def _view_variance(self: FieldView) -> Any:
     return self._project(self._parent._variance())
 
 
-def _view_cov(self: FieldView) -> LinOp:
+def _view_cov(self: CoupledMarginal) -> LinOp:
     """The sub-block ``P Σ Pᵀ`` of the parent's covariance, ``P`` selecting the path.
 
-    ``P`` selects the view's coordinates of the parent's flat vector, in the
+    ``P`` selects the coupled marginal's coordinates of the parent's flat vector, in the
     parent's order, and the product stays lazy. A parent without a covariance
     gives the covariance of its exact marginal at the path.
 
     Parameters
     ----------
-    self : FieldView
-        The view whose capability subclass installs this function as ``_cov``.
+    self : CoupledMarginal
+        The coupled marginal whose capability subclass installs this function as ``_cov``.
 
     Returns
     -------
     LinOp
-        A ``(k, k)`` operator, where ``k`` is the size of the view's flat vector.
+        A ``(k, k)`` operator, where ``k`` is the size of the coupled marginal's flat vector.
 
     Raises
     ------
@@ -560,12 +560,12 @@ def _view_cov(self: FieldView) -> LinOp:
     return selection @ cov @ selection.T
 
 
-def _view_quantile(self: FieldView, q: ArrayLike) -> Any:
-    """Restriction of the parent's per-coordinate quantiles to the view's node.
+def _view_quantile(self: CoupledMarginal, q: ArrayLike) -> Any:
+    """Restriction of the parent's per-coordinate quantiles to the coupled marginal's node.
 
     The parent's quantiles are its event's raw form with the level axes
-    leading in each leaf, so the view's quantiles are the parent's at the
-    view's node, projected as a draw is, with the level axes leading in each
+    leading in each leaf, so the coupled marginal's quantiles are the parent's at the
+    coupled marginal's node, projected as a draw is, with the level axes leading in each
     leaf. A parent without quantiles gives those of its exact marginal at the
     path.
     """
@@ -574,21 +574,21 @@ def _view_quantile(self: FieldView, q: ArrayLike) -> Any:
     return self._project(self._parent._quantile(q))
 
 
-def _view_expectation(self: FieldView, f: Callable[[Any], Array]) -> Array:
+def _view_expectation(self: CoupledMarginal, f: Callable[[Any], Array]) -> Array:
     """Composition: the parent's exact expectation of ``f ∘ pi``."""
     return self._parent._expectation(lambda value: f(self._project(value)))
 
 
-def _view_log_prob(self: FieldView, value: Any) -> Array:
-    """The log-density of the parent's detached marginal at the path.
+def _view_log_prob(self: CoupledMarginal, value: Any) -> Array:
+    """The log-density of the parent's standalone marginal at the path.
 
     Parameters
     ----------
-    self : FieldView
-        The view whose capability subclass installs this function as
+    self : CoupledMarginal
+        The coupled marginal whose capability subclass installs this function as
         ``_log_prob``.
     value : Any
-        A value of the view's event, or a batch of them.
+        A value of the coupled marginal's event, or a batch of them.
 
     Returns
     -------
@@ -608,16 +608,16 @@ def _view_log_prob(self: FieldView, value: Any) -> Array:
     return marginal._log_prob(value)
 
 
-def _view_unnormalized_log_prob(self: FieldView, value: Any) -> Array:
-    """The unnormalized log-density of the parent's detached marginal at the path.
+def _view_unnormalized_log_prob(self: CoupledMarginal, value: Any) -> Array:
+    """The unnormalized log-density of the parent's standalone marginal at the path.
 
     Parameters
     ----------
-    self : FieldView
-        The view whose capability subclass installs this function as
+    self : CoupledMarginal
+        The coupled marginal whose capability subclass installs this function as
         ``_unnormalized_log_prob``.
     value : Any
-        A value of the view's event, or a batch of them.
+        A value of the coupled marginal's event, or a batch of them.
 
     Returns
     -------
@@ -635,30 +635,30 @@ def _view_unnormalized_log_prob(self: FieldView, value: Any) -> Array:
     return marginal._unnormalized_log_prob(value)
 
 
-def _view_log_prob_guard(self: FieldView) -> Feasibility:
-    """The parent's marginal guard at the view's path.
+def _view_log_prob_guard(self: CoupledMarginal) -> Feasibility:
+    """The parent's marginal guard at the coupled marginal's path.
 
-    The parent's report of that marginal's capabilities, read when the view was
-    constructed, decides whether the view claims the density.
+    The parent's report of that marginal's capabilities, read when the coupled marginal was
+    constructed, decides whether the coupled marginal claims the density.
     """
     return _capability_guard(self._parent, "_marginal", self._path)
 
 
-def _view_marginal(self: FieldView, paths: str | tuple[str, ...]) -> Distribution:
+def _view_marginal(self: CoupledMarginal, paths: str | tuple[str, ...]) -> Distribution:
     """Path composition: the parent's marginal at the parent's paths for *paths*.
 
-    *paths* is an event path of the view, or a list of them, and the result is
-    indexed by the paths of the view. The result carries the expression
+    *paths* is an event path of the coupled marginal, or a list of them, and the result is
+    indexed by the paths of the coupled marginal. The result carries the expression
     ``marginal`` gives it: the parent's factors whose whole events the paths
-    select, and otherwise the view selected at *paths*.
+    select, and otherwise the coupled marginal selected at *paths*.
 
     Parameters
     ----------
-    self : FieldView
-        The view whose capability subclass installs this function as
+    self : CoupledMarginal
+        The coupled marginal whose capability subclass installs this function as
         ``_marginal``.
     paths : str or tuple of str
-        An event path of the view, or a list of them.
+        An event path of the coupled marginal, or a list of them.
 
     Returns
     -------
@@ -668,7 +668,7 @@ def _view_marginal(self: FieldView, paths: str | tuple[str, ...]) -> Distributio
     Raises
     ------
     KeyError
-        If a path is not an event path of the view.
+        If a path is not an event path of the coupled marginal.
     """
     request = _ordered_paths_of(self, paths)
     parent_request = self._parent_request(request)
@@ -676,14 +676,14 @@ def _view_marginal(self: FieldView, paths: str | tuple[str, ...]) -> Distributio
     if parent_request.group is not None:
         marginal = _law_of_group(marginal, parent_request.group)
     if parent_request.renames:
-        marginal = marginal.with_path_names(parent_request.renames)
+        marginal = marginal.rename(parent_request.renames)
     return _carrying(marginal, _marginal_expression_at(self, request))
 
 
-def _view_marginal_guard(self: FieldView, paths: str | tuple[str, ...]) -> Feasibility:
-    """The parent's marginal guard at the parent's paths for *paths*, paths of the view.
+def _view_marginal_guard(self: CoupledMarginal, paths: str | tuple[str, ...]) -> Feasibility:
+    """The parent's marginal guard at the parent's paths for *paths*, paths of the coupled marginal.
 
-    For a group that the view's list of paths cut down, the parent's paths are
+    For a group that the coupled marginal's list of paths cut down, the parent's paths are
     the selected paths below it.
     """
     try:
@@ -693,28 +693,30 @@ def _view_marginal_guard(self: FieldView, paths: str | tuple[str, ...]) -> Feasi
     return _capability_guard(self._parent, "_marginal", parent_request.paths)
 
 
-def _view_marginal_capabilities(self: FieldView, paths: str | tuple[str, ...]) -> frozenset[type]:
-    """The parent's report of its marginal at the parent's paths for *paths*, paths of the view.
+def _view_marginal_capabilities(
+    self: CoupledMarginal, paths: str | tuple[str, ...]
+) -> frozenset[type]:
+    """The parent's report of its marginal at the parent's paths for *paths*, paths of the coupled marginal.
 
     Parameters
     ----------
-    self : FieldView
-        The view whose capability subclass installs this function as
+    self : CoupledMarginal
+        The coupled marginal whose capability subclass installs this function as
         ``_marginal_capabilities``.
     paths : str or tuple of str
-        An event path of the view, or a list of them.
+        An event path of the coupled marginal, or a list of them.
 
     Returns
     -------
     frozenset of type
         The capability protocols the parent reports for that marginal. For a
-        group that the view's list of paths cut down, the parent's paths are
+        group that the coupled marginal's list of paths cut down, the parent's paths are
         the selected paths below it.
 
     Raises
     ------
     KeyError
-        If a path is not an event path of the view.
+        If a path is not an event path of the coupled marginal.
     """
     parent_request = self._parent_request(_ordered_paths_of(self, paths))
     return _marginal_claims(self._parent, parent_request.paths)
@@ -728,39 +730,39 @@ def _law_of_group(law: Distribution, group: str) -> Distribution:
     to the top, and the law of the record's one field is that group whole.
     """
     name = _last_name(group)
-    return _SoleField(law if group == name else law.with_path_names({group: name}))
+    return _SoleField(law if group == name else law.rename({group: name}))
 
 
-def _view_condition_on(self: FieldView, given: Any, /, **options: Any) -> Distribution:
+def _view_condition_on(self: CoupledMarginal, given: Any, /, **options: Any) -> Distribution:
     """Conditioning commutes with marginalization: the parent conditioned, then viewed.
 
-    *given* is keyed by event paths of the view. The parent is conditioned at
-    the parent's paths for them, and the result is the view of the conditioned
-    parent at each of the view's nodes that keeps a field unconditioned. A
-    value given at a group that the view's list of paths cut down conditions
+    *given* is keyed by event paths of the coupled marginal. The parent is conditioned at
+    the parent's paths for them, and the result is the coupled marginal of the conditioned
+    parent at each of the coupled marginal's nodes that keeps a field unconditioned. A
+    value given at a group that the coupled marginal's list of paths cut down conditions
     the parent at each selected path below the group.
 
     Parameters
     ----------
-    self : FieldView
-        The view whose capability subclass installs this function as
+    self : CoupledMarginal
+        The coupled marginal whose capability subclass installs this function as
         ``_condition_on``.
     given : Record or Mapping[str, Any]
-        The observed values, keyed by event paths of the view.
+        The observed values, keyed by event paths of the coupled marginal.
     **options : Any
         Options passed to the parent's ``_condition_on``.
 
     Returns
     -------
     Distribution
-        The view of the conditioned parent, at the view's paths.
+        The coupled marginal of the conditioned parent, at the coupled marginal's paths.
 
     Raises
     ------
     KeyError
-        If a key of *given* is not an event path of the view.
+        If a key of *given* is not an event path of the coupled marginal.
     ValueError
-        If *given* covers every field of the view.
+        If *given* covers every field of the coupled marginal.
     """
     items = list(given.items())
     kept = self._kept_nodes([path for path, _ in items])
@@ -776,13 +778,13 @@ def _view_condition_on(self: FieldView, given: Any, /, **options: Any) -> Distri
         for selected in parent_request.paths:
             parent_given[selected] = _extract(raw, tuple(_below(selected, path).split(_PATH_SEP)))
     conditioned = self._parent._condition_on(parent_given, **options)
-    return FieldView(conditioned, self._path if isinstance(self._path, str) else kept)
+    return CoupledMarginal(conditioned, self._path if isinstance(self._path, str) else kept)
 
 
-def _view_condition_on_guard(self: FieldView, paths: tuple[str, ...]) -> Feasibility:
-    """The parent's conditioning guard at the parent's paths for *paths*, paths of the view.
+def _view_condition_on_guard(self: CoupledMarginal, paths: tuple[str, ...]) -> Feasibility:
+    """The parent's conditioning guard at the parent's paths for *paths*, paths of the coupled marginal.
 
-    Some field of the view must remain unconditioned.
+    Some field of the coupled marginal must remain unconditioned.
     """
     parent_paths: list[str] = []
     for path in paths:
@@ -827,22 +829,22 @@ def _ordered_paths_of(
 
 @dataclass(frozen=True)
 class _ParentRequest:
-    """A request of a field view, a path or a list of paths of its event, stated on its parent.
+    """A request of a field coupled marginal, a path or a list of paths of its event, stated on its parent.
 
     Attributes
     ----------
     paths : str or tuple of str
         The parent's path, or its list of paths in the parent's canonical
-        order, at which the parent's marginal or view answers the request.
+        order, at which the parent's marginal or coupled marginal answers the request.
     group : str or None
-        For one path of a view over a list of paths that names a group the list
+        For one path of a coupled marginal over a list of paths that names a group the list
         cut down, that path: the parent's law at *paths* keeps the group at its
         path, and the request is the law of that group (:func:`_law_of_group`).
         Otherwise None.
     renames : Mapping[str, str] or None
-        For a view over one path whose output differs from the parent's
+        For a coupled marginal over one path whose output differs from the parent's
         node path, the rename the parent's law at *paths* takes to be indexed
-        by the view's paths: for a list of paths, the move of the parent's node
+        by the coupled marginal's paths: for a list of paths, the move of the parent's node
         to the output, and for the output itself, the rename of the
         whole term to it. Otherwise None.
     """
@@ -852,7 +854,7 @@ class _ParentRequest:
     renames: Mapping[str, str] | None = None
 
 
-def _parent_guard(method: str, owner: str = "FieldView") -> Callable[..., Feasibility]:
+def _parent_guard(method: str, owner: str = "CoupledMarginal") -> Callable[..., Feasibility]:
     """The guard of *owner*'s *method*, which calls the parent's *method* and takes its guard."""
 
     def guard(self: Any, *arguments: Any, **keywords: Any) -> Feasibility:
@@ -873,7 +875,7 @@ def _moment_guard(protocol: type) -> Callable[..., Feasibility]:
     """
     method = _MOMENT_METHODS[protocol]
 
-    def guard(self: FieldView, *arguments: Any) -> Feasibility:
+    def guard(self: CoupledMarginal, *arguments: Any) -> Feasibility:
         if isinstance(self._parent, protocol):
             return _capability_guard(self._parent, method, *arguments)
         exact = _capability_guard(self._parent, "_marginal", self._path)
@@ -889,7 +891,7 @@ def _moment_guard(protocol: type) -> Callable[..., Feasibility]:
         return _capability_guard(marginal, method, *arguments)
 
     guard.__name__ = f"{method}_guard"
-    guard.__qualname__ = f"FieldView.{method}_guard"
+    guard.__qualname__ = f"CoupledMarginal.{method}_guard"
     guard.__doc__ = (
         f"The parent's guard of ``{method}``, or the parent's marginal guard at the path "
         f"followed by that marginal's guard of ``{method}``."
@@ -897,7 +899,7 @@ def _moment_guard(protocol: type) -> Callable[..., Feasibility]:
     return guard
 
 
-#: Each capability a view may derive, with the methods that realize it and their
+#: Each capability a coupled marginal may derive, with the methods that realize it and their
 #: guards. The density's protocol default ``_unnormalized_log_prob`` takes the
 #: guard of ``_log_prob``.
 _VIEW_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
@@ -940,11 +942,11 @@ _VIEW_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
 def _derived_protocols(
     parent: Distribution, node: TermSpec, paths: str | tuple[str, ...]
 ) -> set[type]:
-    """The capabilities a view of *parent* at *paths* derives, over the event declared by *node*.
+    """The capabilities a coupled marginal of *parent* at *paths* derives, over the event declared by *node*.
 
     The projection rows derive from the parent's own capabilities. The density
     rows, and the moment rows the parent does not claim, derive from the
-    parent's report of its marginal at *paths*, read once, here: the view claims
+    parent's report of its marginal at *paths*, read once, here: the coupled marginal claims
     the normalized density when the report includes it, and otherwise the
     unnormalized one when the report includes that, and it claims each moment
     the report includes. The covariance and quantile rows need a numeric node
@@ -974,17 +976,17 @@ def _derived_protocols(
 
 
 # ---------------------------------------------------------------------------
-# FieldView
+# CoupledMarginal
 # ---------------------------------------------------------------------------
 
 
-class FieldView(Distribution):
+class CoupledMarginal(Distribution):
     """The law of the node at one event path of a parent law, or of the nodes at a list of paths.
 
-    ``d[path]`` returns a ``FieldView`` for a node below the law's whole term,
+    ``d[path]`` returns a ``CoupledMarginal`` for a node below the law's whole term,
     and ``d[paths]`` for a list or a tuple of paths; it is never constructed by
-    hand. The view holds a reference to its parent rather than a detached law,
-    so sibling views co-sample from one parent draw and the correlation between
+    hand. The coupled marginal holds a reference to its parent rather than a standalone law,
+    so sibling coupled marginals co-sample from one parent draw and the correlation between
     them is preserved. For one path, its event spec is the parent's schema at
     the path, the leaf or group whole, under an output named by the path's
     last name. For a list of paths, its event spec is the positional form over
@@ -992,19 +994,19 @@ class FieldView(Distribution):
     whatever the order of the list, so ``grouped["g/e", "a"]`` draws records
     ``{a, g: {e}}``.
 
-    The view displays as the detached marginal at its path does, and its repr
+    The coupled marginal displays as the standalone marginal at its path does, and its repr
     names the class and the path, which distinguishes it from that marginal.
     It is labeled as ``marginal`` labels the marginal there (VI.8), so
     ``model["y"]`` reads as ``model(y)``, and ``model["mu"]`` at the factor
-    ``prior`` reads as ``prior(mu)``. A view of the whole events of several
+    ``prior`` reads as ``prior(mu)``. A coupled marginal of the whole events of several
     factors reads factor by factor, as ``a(a)·b(b)`` (:attr:`notation`). The
-    view holds the paths its parent holds fixed, after those of the one factor
+    coupled marginal holds the paths its parent holds fixed, after those of the one factor
     it is when it is one.
 
     Its capabilities are derived from the parent's, one by one:
 
     ======================================  ========================================
-    capability on the view                  available when
+    capability on the coupled marginal                  available when
     ======================================  ========================================
     ``_sample``                             the parent samples
     ``_mean``, ``_variance``                the parent has the moment, or has marginals
@@ -1021,23 +1023,23 @@ class FieldView(Distribution):
     Each derived capability carries the parent's guard for the call it makes.
     A moment the parent does not claim is the moment of the parent's exact
     marginal at the path, under the parent's marginal guard and then the
-    marginal's guard of the moment, so a view of a dependent joint at a root
+    marginal's guard of the moment, so a coupled marginal of a dependent joint at a root
     factor takes the factor's moments. The projection rows are exact whenever
     the parent's answer is, and only sampling requires the parent to sample.
     The parent reports what its marginal at the path claims through
     ``_marginal_capabilities``, and a parent that defines none reports its own
-    claims; the view reads the report once, at construction.
+    claims; the coupled marginal reads the report once, at construction.
 
-    The view's ``raw`` is the raw form of the parent's marginal at the path,
+    The coupled marginal's ``raw`` is the raw form of the parent's marginal at the path,
     ``parent._marginal(path).raw``: the backend object where the marginal
-    has one, such as the TFP distribution of a TFP family, and the detached
+    has one, such as the TFP distribution of a TFP family, and the standalone
     law otherwise. ``with_dim_sizes`` and ``with_dim_names`` apply to the
-    parent and return the view of the result at the same path.
+    parent and return the coupled marginal of the result at the same path.
 
     Parameters
     ----------
     parent : Distribution
-        The law whose event the view reads.
+        The law whose event the coupled marginal reads.
     path : str, or list or tuple of str
         An event path of *parent*, a slash path that starts with an output's
         name, or a list of them.
@@ -1056,17 +1058,19 @@ class FieldView(Distribution):
 
     _capability_table = _VIEW_CAPABILITIES
 
-    def __new__(cls, parent: Distribution, path: PathsLike) -> FieldView:
+    def __new__(cls, parent: Distribution, path: PathsLike) -> CoupledMarginal:
         if not isinstance(parent, Distribution):
             raise TypeError(
-                f"FieldView: parent must be a Distribution; got {type(parent).__name__}"
+                f"CoupledMarginal: parent must be a Distribution; got {type(parent).__name__}"
             )
         path = _read_event_paths(
             parent.event_spec, parent.label, path, action=f"index {parent.label!r} by"
         )
         declaration = _view_declaration(parent.event_spec, path)
         return object.__new__(
-            _capability_subclass(FieldView, _derived_protocols(parent, declaration.term_spec, path))
+            _capability_subclass(
+                CoupledMarginal, _derived_protocols(parent, declaration.term_spec, path)
+            )
         )
 
     def __init__(self, parent: Distribution, path: PathsLike) -> None:
@@ -1085,37 +1089,37 @@ class FieldView(Distribution):
         )
 
     def _derived_traceability(self) -> Traceability:
-        """The parent's traceability, since every method of the view reads the parent."""
+        """The parent's traceability, since every method of the coupled marginal reads the parent."""
         return self._parent._traceability()
 
     @property
     def parent(self) -> Distribution:
-        """The law this view reads, which sibling views share."""
+        """The law this coupled marginal reads, which sibling coupled marginals share."""
         return self._parent
 
     @property
     def path(self) -> str | tuple[str, ...]:
-        """The event path of the parent that this view reads, or the tuple of them in the parent's order."""
+        """The event path of the parent that this coupled marginal reads, or the tuple of them in the parent's order."""
         return self._path
 
     def _selected_paths(self) -> tuple[str, ...]:
-        """The parent's paths of the nodes this view reads, in the parent's order."""
+        """The parent's paths of the nodes this coupled marginal reads, in the parent's order."""
         return _path_tuple(self._path)
 
     def _parent_request(self, request: str | tuple[str, ...]) -> _ParentRequest:
-        """*request*, a path or a list of paths of this view in its order, stated on the parent.
+        """*request*, a path or a list of paths of this coupled marginal in its order, stated on the parent.
 
-        A view over one path names its node by the path's last name, so a path
-        of the view is the parent's path with the output in place of the
+        A coupled marginal over one path names its node by the path's last name, so a path
+        of the coupled marginal is the parent's path with the output in place of the
         node's path, and a list of paths moves the parent's node back to the
-        output. A view over a list of paths keeps the parent's paths, so a
+        output. A coupled marginal over a list of paths keeps the parent's paths, so a
         path at or below a selected node is the parent's own, and a group that
         the list cut down stands for the selected paths below it.
 
         Parameters
         ----------
         request : str or tuple of str
-            One path of this view, or a list of them in its order.
+            One path of this coupled marginal, or a list of them in its order.
 
         Returns
         -------
@@ -1125,9 +1129,9 @@ class FieldView(Distribution):
         Raises
         ------
         KeyError
-            If this view is over a record and a path is not one of its paths.
+            If this coupled marginal is over a record and a path is not one of its paths.
         TypeError
-            If this view is over a value with no paths, such as an array.
+            If this coupled marginal is over a value with no paths, such as an array.
         """
         requested = _path_tuple(request)
         for path in requested:
@@ -1138,7 +1142,7 @@ class FieldView(Distribution):
             output_name = cast(str, _root_output_name(self.event_spec))
             parent_paths = tuple(self._path + path[len(output_name) :] for path in requested)
             if isinstance(request, str):
-                # A view renamed by its output names the node otherwise than
+                # A coupled marginal renamed by its output names the node otherwise than
                 # the parent's path does.
                 node_name = _last_name(self._path)
                 if request != output_name or node_name == output_name:
@@ -1156,18 +1160,18 @@ class FieldView(Distribution):
         return _ParentRequest(tuple(parent_paths))
 
     def _is_selected(self, path: str) -> bool:
-        """Whether *path*, a path of this view, is at or below a node the view reads."""
+        """Whether *path*, a path of this coupled marginal, is at or below a node the coupled marginal reads."""
         return any(_is_within(path, selected) for selected in self._selected_paths())
 
     def _selected_below(self, group: str) -> tuple[str, ...]:
-        """The paths of the nodes this view reads below *group*, a group the list of paths cut down."""
+        """The paths of the nodes this coupled marginal reads below *group*, a group the list of paths cut down."""
         return tuple(selected for selected in self._selected_paths() if _is_within(selected, group))
 
     def _parent_path(self, path: Any) -> str | None:
-        """The parent's path for *path*, an event path of this view, or None if it has none.
+        """The parent's path for *path*, an event path of this coupled marginal, or None if it has none.
 
-        A path has none when it is not an event path of the view, or names a
-        group that the view's list of paths cut down.
+        A path has none when it is not an event path of the coupled marginal, or names a
+        group that the coupled marginal's list of paths cut down.
         """
         if not isinstance(path, str):
             return None
@@ -1178,9 +1182,9 @@ class FieldView(Distribution):
         return None if request.group is not None else cast(str, request.paths)
 
     def _kept_nodes(self, paths: Sequence[str]) -> tuple[str, ...]:
-        """The parent's paths of the nodes this view reads that keep a field no path of *paths* covers.
+        """The parent's paths of the nodes this coupled marginal reads that keep a field no path of *paths* covers.
 
-        *paths* are paths of the view.
+        *paths* are paths of the coupled marginal.
         """
         leaves = [
             leaf
@@ -1196,7 +1200,7 @@ class FieldView(Distribution):
         )
 
     def _project(self, value: Any) -> Any:
-        """pi: the view's node of *value*, a raw parent draw or a value shaped like one.
+        """pi: the coupled marginal's node of *value*, a raw parent draw or a value shaped like one.
 
         The node is in raw form: a leaf's raw value, or the nested mapping of a
         group's raw leaves, and a list of paths gives the nested mapping that
@@ -1206,7 +1210,7 @@ class FieldView(Distribution):
         return _projector(self._parent.event_spec, self._path)(_raw_record(value))
 
     def _coordinates(self) -> list[int]:
-        """The view's coordinates of the parent's flat vector, in the view's order.
+        """The coupled marginal's coordinates of the parent's flat vector, in the coupled marginal's order.
 
         Returns
         -------
@@ -1225,34 +1229,34 @@ class FieldView(Distribution):
         ]
 
     def __getitem__(self, paths: PathsLike) -> Distribution:
-        """This view itself, or the law at a path or a list of paths of the view.
+        """This coupled marginal itself, or the law at a path or a list of paths of the coupled marginal.
 
         A tuple is a list of paths; a nested path is written with ``/``.
-        A path of a view over one path starts with its output's name, so
+        A path of a coupled marginal over one path starts with its output's name, so
         ``d["a"]["a/b/c"]`` reads the node that ``d["a/b/c"]`` reads. A list of
-        paths of the view gives the law whose event keeps each node at its path
-        of the view. A view over a list of paths keeps its parent's paths, so
+        paths of the coupled marginal gives the law whose event keeps each node at its path
+        of the coupled marginal. A coupled marginal over a list of paths keeps its parent's paths, so
         ``d["a", "g/c"]["g/c"]`` reads the node that ``d["g/c"]`` reads. The
-        result is labeled as the marginal of this view at *paths* is labeled
-        (:func:`marginal`), and it holds the paths this view holds fixed.
+        result is labeled as the marginal of this coupled marginal at *paths* is labeled
+        (:func:`marginal`), and it holds the paths this coupled marginal holds fixed.
 
         Parameters
         ----------
         paths : str, or list or tuple of str
-            An event path of the view, or a list of them.
+            An event path of the coupled marginal, or a list of them.
 
         Returns
         -------
         Distribution
-            This view itself, or a law that reads the parent.
+            This coupled marginal itself, or a law that reads the parent.
 
         Raises
         ------
         KeyError
-            If the view is over a record and a path is not one of its paths.
+            If the coupled marginal is over a record and a path is not one of its paths.
         TypeError
             If *paths* is neither a string nor a list or tuple of strings, or
-            the view is over a value with no paths, such as an array.
+            the coupled marginal is over a value with no paths, such as an array.
         ValueError
             If a path is empty or has an empty name, or a list of paths is
             empty, names a path twice, or holds a path inside another.
@@ -1265,34 +1269,38 @@ class FieldView(Distribution):
         )
         parent_request = self._parent_request(request)
         if parent_request.group is not None:
-            return FieldView(self, request)
+            return CoupledMarginal(self, request)
         if parent_request.paths == self._path:
             return self
-        view = self._sub_view(request, parent_request.paths)
-        return view.with_path_names(parent_request.renames) if parent_request.renames else view
+        coupled_marginal = self._sub_view(request, parent_request.paths)
+        return (
+            coupled_marginal.rename(parent_request.renames)
+            if parent_request.renames
+            else coupled_marginal
+        )
 
     def _sub_view(
         self, key: str | tuple[str, ...], parent_path: str | tuple[str, ...]
-    ) -> FieldView:
-        """The parent's view at *parent_path*, for *key*, labeled as this view's marginal at *key*."""
-        view = FieldView(self._parent, parent_path)
-        view._store_expression(_marginal_expression_at(self, key))
-        return view
+    ) -> CoupledMarginal:
+        """The parent's coupled marginal at *parent_path*, for *key*, labeled as this coupled marginal's marginal at *key*."""
+        coupled_marginal = CoupledMarginal(self._parent, parent_path)
+        coupled_marginal._store_expression(_marginal_expression_at(self, key))
+        return coupled_marginal
 
     @property
     def raw(self) -> Any:
         """The raw form of the parent's marginal at the path, ``parent._marginal(path).raw``.
 
         Every read returns the same object, resolved on the first read. A
-        detached law refuses provenance, since every reader shares it.
+        standalone law refuses provenance, since every reader shares it.
 
         Returns
         -------
         Any
             The marginal's backend object where it has one, such as the TFP
-            distribution of a TFP family. Otherwise the marginal detached: a
+            distribution of a TFP family. Otherwise the marginal standalone: a
             standalone law with no reference to the parent, and no provenance
-            or annotations, which carries the view's expression, so it is
+            or annotations, which carries the coupled marginal's expression, so it is
             labeled as ``marginal`` labels it and holds the paths the parent
             holds fixed.
 
@@ -1300,7 +1308,7 @@ class FieldView(Distribution):
         ------
         ResolutionError
             If the parent has no exact marginal at the path. The error is not
-            an ``AttributeError``, so ``hasattr(view, "raw")`` raises it rather
+            an ``AttributeError``, so ``hasattr(coupled marginal, "raw")`` raises it rather
             than returning ``False``, and each read tries the marginal again.
         """
         return _cached_raw(self, self._resolved_raw)
@@ -1310,7 +1318,7 @@ class FieldView(Distribution):
         parent = self._parent
         if not isinstance(parent, SupportsMarginals):
             raise ResolutionError(
-                f"{parent.label!r} has no marginals, so the view {self.label!r} has no detached law"
+                f"{parent.label!r} has no marginals, so the coupled_marginal {self.label!r} has no standalone law"
             )
         report = _capability_guard(parent, "_marginal", self._path)
         if report.feasible is not True:
@@ -1323,35 +1331,35 @@ class FieldView(Distribution):
             return raw
         return _carrying(raw, self._expression)
 
-    def with_dim_sizes(self, **sizes: int) -> FieldView:
-        """Bind named symbolic dimensions in the parent, and view the result at the same path.
+    def with_dim_sizes(self, **sizes: int) -> CoupledMarginal:
+        """Bind named symbolic dimensions in the parent, and coupled marginal the result at the same path.
 
-        The view's event spec is the parent's schema at the path, and a schema
+        The coupled marginal's event spec is the parent's schema at the path, and a schema
         is one dimension scope, so a dimension binds wherever the parent
         declares it.
 
         Parameters
         ----------
         **sizes : int
-            Sizes for free dimensions of the view's declaration.
+            Sizes for free dimensions of the coupled marginal's declaration.
 
         Returns
         -------
-        FieldView
-            The view, under the same label, of the parent with the sizes bound.
+        CoupledMarginal
+            The coupled marginal, under the same label, of the parent with the sizes bound.
 
         Raises
         ------
         ValueError
-            If a name is not a free dimension of the view's declaration.
+            If a name is not a free dimension of the coupled marginal's declaration.
         """
         unbound = set(sizes) - self.event_spec.term_spec.free_dims
         if unbound:
             raise ValueError(_no_free_dims(self, unbound, self.event_spec.term_spec.free_dims))
         return self._viewed(self._parent.with_dim_sizes(**sizes))
 
-    def with_dim_names(self, **names: str) -> FieldView:
-        """Rename symbolic dimensions in the parent, and view the result at the same path.
+    def with_dim_names(self, **names: str) -> CoupledMarginal:
+        """Rename symbolic dimensions in the parent, and coupled marginal the result at the same path.
 
         Parameters
         ----------
@@ -1360,21 +1368,21 @@ class FieldView(Distribution):
 
         Returns
         -------
-        FieldView
-            The view, under the same label, of the parent with the dimensions
+        CoupledMarginal
+            The coupled marginal, under the same label, of the parent with the dimensions
             renamed.
         """
         return self._viewed(self._parent.with_dim_names(**names))
 
-    def _viewed(self, parent: Distribution) -> FieldView:
-        """The view of *parent* at this view's path, carrying this view's expression."""
-        return _carrying(FieldView(parent, self._path), self._expression)
+    def _viewed(self, parent: Distribution) -> CoupledMarginal:
+        """The coupled marginal of *parent* at this coupled marginal's path, carrying this coupled marginal's expression."""
+        return _carrying(CoupledMarginal(parent, self._path), self._expression)
 
     def __repr__(self) -> str:
-        """``FieldView(parent, path=...)``, followed by ``.with_label(...)`` for a view under another label.
+        """``CoupledMarginal(parent, path=...)``, followed by ``.with_label(...)`` for a coupled marginal under another label.
 
-        The constructor gives a view the label of its parent's marginal at its
-        path, so a view that ``with_label`` relabeled reads as the constructor
+        The constructor gives a coupled marginal the label of its parent's marginal at its
+        path, so a coupled marginal that ``with_label`` relabeled reads as the constructor
         call relabeled. The parent's repr shows any paths it holds fixed.
         """
         text = call_repr(
@@ -1773,10 +1781,10 @@ def _original_nodes(
 
 
 def _regrouped_path(path: str, owner: str) -> str:
-    """The message that *path* gathers fields that ``with_path_names`` moved from several places."""
+    """The message that *path* gathers fields that ``rename`` moved from several places."""
     return (
         f"{path!r} does not correspond to a single field of {owner!r} because "
-        f"with_path_names() regrouped fields into it; select its fields individually"
+        f"rename() regrouped fields into it; select its fields individually"
     )
 
 
@@ -1823,7 +1831,7 @@ def _renamed_by_leaves(
         _has_record_outputs(source) or _has_record_outputs(target)
     ):
         (output_name,), (renamed,) = source.outputs, target.outputs
-        return law.with_path_names({output_name: renamed})
+        return law.rename({output_name: renamed})
     return _renamed(law, event, leaves)
 
 
@@ -1937,7 +1945,7 @@ def _renamed_marginal_capabilities(
 
     A path that holds no single node of the parent, as a regrouping node does,
     has no exact marginal here, which the marginal guard reports, so its report
-    claims nothing and a view there claims no density.
+    claims nothing and a coupled marginal there claims no density.
 
     Parameters
     ----------
@@ -2062,7 +2070,7 @@ _RENAMED_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
 class _RenamedDistribution(Distribution):
     """A parent law under renamed or moved event paths, which translates values at its boundary.
 
-    ``Distribution.with_path_names`` returns it for a rename that changes the
+    ``Distribution.rename`` returns it for a rename that changes the
     path of a field of a record draw when the parent's family does not rebuild
     itself under the new paths. It claims each of the parent's capabilities
     that a rename carries over: a draw, a moment, a quantile, or a marginal is
@@ -2113,16 +2121,14 @@ class _RenamedDistribution(Distribution):
         object.__setattr__(self, "_renames", tuple(dict(step) for step in renames))
         self._init_declaration(event.renamed)
 
-    def with_path_names(
-        self, mapping: Mapping[str, str] | None = None, /, **kwargs: str
-    ) -> Distribution:
-        """Rename or move nodes of the event spec, as :meth:`Distribution.with_path_names`.
+    def rename(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Distribution:
+        """Rename or move nodes of the event spec, as :meth:`Distribution.rename`.
 
         The result renames this law's parent by this law's renames followed by
         the new ones, so a rename of the output alone keeps the renames of
         the fields below it.
         """
-        renamed = self.event_spec.with_path_names(mapping, **kwargs)
+        renamed = self.event_spec.rename(mapping, **kwargs)
         renames = {**dict(mapping or {}), **kwargs}
         return _renamed(self, _EventRenames.of(self.event_spec, renamed, renames), renames)
 
@@ -2166,7 +2172,7 @@ class _RenamedDistribution(Distribution):
         return _original_nodes(self._event, self.event_spec, paths, self._parent.label)
 
     def __repr__(self) -> str:
-        """The parent's repr followed by ``.with_path_names({...})`` for each rename.
+        """The parent's repr followed by ``.rename({...})`` for each rename.
 
         Each rename shows the paths it changed, and a label that differs from
         the parent's follows as ``.with_label(...)``. A reorder that changes no
@@ -2181,7 +2187,7 @@ class _RenamedDistribution(Distribution):
         text = repr(parent)
         for step in renames:
             mapping = mapping_repr({old: repr(new) for old, new in step.items()})
-            text = _method_call(text, "with_path_names", mapping)
+            text = _method_call(text, "rename", mapping)
         if self.label != parent.label:
             text = _method_call(text, "with_label", repr(self._displayed_label()))
         return text
@@ -2220,7 +2226,7 @@ def _renamed(law: Distribution, event: _EventRenames, arguments: Mapping[str, st
     else:
         renamed = _RenamedDistribution(law, event, (arguments,))
     _keeps_expression(renamed, law).with_provenance(
-        Provenance.create("with_path_names", parents=[law], metadata=dict(arguments))
+        Provenance.create("rename", parents=[law], metadata=dict(arguments))
     )
     return renamed
 
@@ -2229,7 +2235,7 @@ def _copy_source(law: Distribution) -> tuple[Distribution, _EventRenames] | None
     """The law *law* is made from, with the renames from its event spec to *law*'s, or None.
 
     A law that translates its parent's values at its boundary holds its parent.
-    Every other law that ``with_path_names``, ``with_label``, ``with_dim_names``,
+    Every other law that ``rename``, ``with_label``, ``with_dim_names``,
     or ``with_dim_sizes`` returns records the law it is made from, and the
     renames of a relabeling or a dimension transform are the identity. Each one
     reads that law's draws in a lift (V.5).
@@ -2257,7 +2263,7 @@ def _with_copy_source(
 def _renamed_law(
     parent: Distribution, event_spec: OutputSpec, renames: Mapping[str, str]
 ) -> Distribution:
-    """The law ``with_path_names`` returns for *parent*, which reads the draw of *parent*.
+    """The law ``rename`` returns for *parent*, which reads the draw of *parent*.
 
     A rename of a whole term's output alone changes only the event spec, so
     the result is a copy of *parent*. A factored law renames through its factors
@@ -2270,7 +2276,7 @@ def _renamed_law(
     reads to draw the result together with *parent* (V.5).
     """
     if event_spec.term_spec == parent.event_spec.term_spec:
-        copy = parent._with_declaration(event_spec, "with_path_names", renames)
+        copy = parent._with_declaration(event_spec, "rename", renames)
         return _with_copy_source(_keeps_expression(copy, parent), parent, renames)
     if isinstance(parent, SupportsFactors):
         joint = _renamed_through_factors(parent, renames, event_spec)
@@ -2283,7 +2289,7 @@ def _renamed_law(
     if member is None:
         return _renamed(parent, event, renames)
     return _with_copy_source(member, parent, renames).with_provenance(
-        Provenance.create("with_path_names", parents=[parent], metadata=dict(renames))
+        Provenance.create("rename", parents=[parent], metadata=dict(renames))
     )
 
 
@@ -2360,7 +2366,7 @@ def _renamed_through_factors(
         pairs, form_keywords = inner, {"_output_name": target}
     try:
         factors = [
-            factor.with_path_names(renames) if renames else factor
+            factor.rename(renames) if renames else factor
             for factor, renames in zip(graph.factors, _factor_renames(graph, pairs), strict=True)
         ]
         kind = (
@@ -2378,7 +2384,7 @@ def _renamed_through_factors(
     if {edge[:2] for edge in renamed._graph.edges} != {edge[:2] for edge in graph.edges}:
         return None
     return renamed.with_provenance(
-        Provenance.create("with_path_names", parents=[joint], metadata=dict(pairs))
+        Provenance.create("rename", parents=[joint], metadata=dict(pairs))
     )
 
 
@@ -2490,7 +2496,7 @@ def _widened(
     event = _EventRenames.of(kernel.event_spec, kernel.event_spec, {})
     widened = _RenamedConditionalDistribution(kernel, given_spec, kernel.event_spec, origins, event)
     return widened.with_provenance(
-        Provenance.create("with_path_names", parents=[kernel], metadata={"widened": input_name})
+        Provenance.create("rename", parents=[kernel], metadata={"widened": input_name})
     )
 
 
@@ -2525,7 +2531,7 @@ def _regrouped(
         groups[index] = next(iter(joined), None)
     try:
         renamed = [
-            factor.with_path_names(renames) if renames else factor
+            factor.rename(renames) if renames else factor
             for factor, renames in zip(
                 graph.factors, _regrouped_renames(graph, pairs, nodes, groups), strict=True
             )
@@ -2587,7 +2593,7 @@ def _regrouped(
     if _leaf_specs(result.event_spec) != _leaf_specs(event_spec):
         return None
     return _derived_product(result, joint).with_provenance(
-        Provenance.create("with_path_names", parents=[joint], metadata=dict(pairs))
+        Provenance.create("rename", parents=[joint], metadata=dict(pairs))
     )
 
 
@@ -2846,7 +2852,7 @@ _RENAMED_KERNEL_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
 class _RenamedConditionalDistribution(ConditionalDistribution):
     """A parent kernel under renamed inputs and event paths, renaming at its boundary.
 
-    ``ConditionalDistribution.with_path_names`` returns it. Binding translates a
+    ``ConditionalDistribution.rename`` returns it. Binding translates a
     given value to the parent's inputs, moving the fields that a split or a
     grouping moved, and renames the law or the kernel over the rest the parent
     returns. A binding that completes only part of a parent input, as binding
@@ -3077,7 +3083,7 @@ def _renamed_kernel(
     renames: Mapping[str, str],
     pairs: Mapping[str, str],
 ) -> ConditionalDistribution:
-    """The kernel ``with_path_names`` returns for *parent*, with the rename's provenance.
+    """The kernel ``rename`` returns for *parent*, with the rename's provenance.
 
     A factored kernel renames through its factors where they carry the rename,
     and regroups them where the rename gathers their outputs under new
@@ -3094,12 +3100,12 @@ def _renamed_kernel(
     event = _EventRenames.of(parent.event_spec, event_spec, renames)
     kernel = _RenamedConditionalDistribution(parent, given_spec, event_spec, origins, event)
     _keeps_expression(kernel, parent).with_provenance(
-        Provenance.create("with_path_names", parents=[parent], metadata=dict(pairs))
+        Provenance.create("rename", parents=[parent], metadata=dict(pairs))
     )
     return kernel
 
 
 _install_copy_source(_with_copy_source)
-_install_field_view(FieldView)
+_install_coupled_marginal(CoupledMarginal)
 _install_renamed_law(_renamed_law)
 _install_renamed_kernel(_renamed_kernel)

@@ -31,14 +31,14 @@ from probpipe.core.named_tree import _PATH_SEP
 
 def _grouped():
     """A law whose draws are records ``{a, g: {c, e}}``."""
-    joint = Normal("a", 0.0, 1.0) * Normal("c", 1.0, 2.0) * Normal("e", 2.0, 3.0)
-    return joint.with_path_names({"c": "g/c", "e": "g/e"})
+    joint = (Normal("a", 0.0, 1.0) & Normal("c", 1.0, 2.0)) & Normal("e", 2.0, 3.0)
+    return joint.rename({"c": "g/c", "e": "g/e"})
 
 
 def _hier():
     """A law whose draws are records ``{s1: {theta}, s2: {theta}, mu}``."""
-    joint = Normal("t1", 0.0, 1.0) * Normal("t2", 0.0, 2.0) * Normal("mu", 0.0, 1.0)
-    return joint.with_path_names({"t1": "s1/theta", "t2": "s2/theta"})
+    joint = (Normal("t1", 0.0, 1.0) & Normal("t2", 0.0, 2.0)) & Normal("mu", 0.0, 1.0)
+    return joint.rename({"t1": "s1/theta", "t2": "s2/theta"})
 
 
 def _draw():

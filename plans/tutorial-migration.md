@@ -88,11 +88,14 @@ In the examples, `x` is a law over `{a, b, c, sigma}`, `ke` a kernel `ke(e | sig
 | Old | New | Step | Silent? |
 |---|---|---|---|
 | `lik * prior` between laws or kernels | `lik & prior`; `*` between laws or kernels raises `TypeError` naming `&` | S3 | no |
+| `bool(Record({"x": 0.0}))` was false; an empty numeric record raised | every record uses length: the former is true, the empty record is false; test `bool(record["x"])` for field truth | S3 | yes |
 | `lik and prior` returned `prior` | `bool()` on a law or kernel raises | S3 | no |
 | `record_a.merge(record_b)` on `NamedTree`, `Record`, `RecordSpec`, `RecordBatch` | `record_a & record_b` | S3 | no |
 | `with_path_names` | `rename` | S3 | no |
 | `FieldView` | `CoupledMarginal` | S3 | no |
 | the `joint` route `"compose"` in `provenance.metadata["route"]` | `"merge"`; a recipe recorded before cannot be replayed | S3 | yes |
+
+| `d["a"] & d["b"]` silently treated coupled marginals as independent | raises `ValueError`; use `d["a", "b"]` for the joint, or `marginal(d, "a") & marginal(d, "b")` for independent laws | S3 | no |
 
 ## Batches
 

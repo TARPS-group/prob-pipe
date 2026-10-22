@@ -531,14 +531,14 @@ class TestComposition:
         likelihood = glm_likelihood("y", GaussianFamily(), X=X)
         prior = MultivariateNormal("beta", jnp.zeros(2), cov=jnp.eye(2))
         scale = HalfNormal("dispersion", 1.0)
-        joint = likelihood * prior * scale
+        joint = (likelihood & prior) & scale
         assert isinstance(joint, FactoredDistribution)
         assert joint.factors == (likelihood, prior, scale)
         assert list(joint.event_spec.outputs) == ["y", "beta", "dispersion"]
 
     def test_an_unbound_design_leaves_a_conditional_joint(self, X):
         likelihood = glm_likelihood("y", BernoulliFamily())
-        joint = likelihood * MultivariateNormal("beta", jnp.zeros(2), cov=jnp.eye(2))
+        joint = likelihood & MultivariateNormal("beta", jnp.zeros(2), cov=jnp.eye(2))
         assert isinstance(joint, FactoredConditionalDistribution)
         assert list(joint.given_spec) == ["X"]
         assert joint.given_spec["X"].shape == ("obs", 2)
@@ -548,7 +548,7 @@ class TestComposition:
 
     def test_the_joint_samples(self, X):
         likelihood = glm_likelihood("y", PoissonFamily(), X=X)
-        joint = likelihood * MultivariateNormal("beta", jnp.zeros(2), cov=jnp.eye(2))
+        joint = likelihood & MultivariateNormal("beta", jnp.zeros(2), cov=jnp.eye(2))
         draw = sample(joint)
         assert draw["y"].shape == (4,)
 

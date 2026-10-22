@@ -157,9 +157,9 @@ def _derived_product(joint: Any, source: Any) -> Any:
     ways:
 
     1. factor by factor over its own factors, when their labels join to
-       *source*'s label, as a renamed ``lik * prior`` does;
+       *source*'s label, as a renamed ``lik & prior`` does;
     2. as *source* reads, when its factors carry the labels of *source*'s
-       factors, as a dimension transform of ``model * d`` does;
+       factors, as a dimension transform of ``model & d`` does;
     3. by *source*'s label and its own outputs otherwise, as a joint whose
        conditioning dropped a factor does, as ``(a·b)(b)``.
     """
@@ -232,7 +232,7 @@ class _FactorGraph:
         factor order.
     scope : Mapping[str, int]
         The joint's dimension scope: each dimension name bound while the factors
-        were unified, so a later composition binds the same name to the same
+        were unified, so a later merge binds the same name to the same
         size, whatever the grouping.
     """
 
@@ -279,7 +279,7 @@ def _flattened(
     Parameters
     ----------
     factors : sequence of Factor
-        The factors in composition order, any of which may be a factored joint.
+        The factors in merge order, any of which may be a factored joint.
     scope : Mapping[str, int] or None
         The size of each dimension bound so far, keyed by its name, or ``None``
         when none is bound.
@@ -287,7 +287,7 @@ def _flattened(
     Returns
     -------
     factors : tuple of Factor
-        The flat factors, in composition order.
+        The flat factors, in merge order.
     scope : dict[str, int]
         *scope* merged with the scope of each flattened joint.
 
@@ -320,7 +320,7 @@ def _flattened(
 def _factor_graph(
     factors: Sequence[Factor], scope: Mapping[str, int] | None = None
 ) -> _FactorGraph:
-    """Validate the ordered *factors* by the composition rules and derive their graph.
+    """Validate the ordered *factors* by the merge rules and derive their graph.
 
     A factored factor enters as its own factors, with its scope. The order is
     conditional-first: a factor may condition on an output that a factor to
@@ -399,9 +399,10 @@ def _factor_graph(
                 continue
             if producer < index:
                 raise ValueError(
-                    f"{factor.label!r} conditions on {input_name!r}, but {factors[producer].label!r} "
-                    f"defines {input_name!r} to its left in the product; put "
-                    f"{factors[producer].label!r} to the right of {factor.label!r}"
+                    f"cannot merge {factors[producer].label} & {factor.label}: "
+                    f"{factor.label} takes {input_name}, which "
+                    f"{factors[producer].label} outputs. "
+                    f"Write {factor.label} & {factors[producer].label}"
                 )
             _unify_specs(
                 input_term_spec,
@@ -1988,7 +1989,7 @@ def _joint_protocols(graph: _FactorGraph, *, conditional: bool) -> set[type]:
 
     Sampling and the densities are the intersection of the factors'. The moments
     are claimed by an edge-free joint whose every factor has them; a dependent
-    joint claims no moment, since factor-wise conditional moments do not compose.
+    joint claims no moment, since factor-wise conditional moments do not merge.
     The unconditional joint claims marginals, guarded per path.
     """
     factors = graph.factors
@@ -2331,7 +2332,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         If a factor is neither distribution kind, or its draws are
         distributions or batches, which have no outputs to merge by name.
     ValueError
-        If the factors break a composition rule, as for
+        If the factors break a merge rule, as for
         :class:`FactoredDistribution`, or meet every given, which makes the
         joint a ``FactoredDistribution``.
     """

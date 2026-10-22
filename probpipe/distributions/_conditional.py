@@ -17,7 +17,7 @@ import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, NoReturn, Self
 
 import jax
 import jax.numpy as jnp
@@ -54,14 +54,16 @@ from ._distribution import (
     _cached_raw,
     _check_marker_claims,
     _complete_event_spec,
-    _compose_operands,
     _constructor_label,
     _detached_term,
     _event_repr_parts,
     _given_label,
     _law_repr,
+    _merge_operands,
     _no_free_dims,
     _record_default_expression,
+    _refuse_distribution_multiplication,
+    _refuse_distribution_truth_value,
     _unify_declarations,
     _value_at_declared_kind,
 )
@@ -218,21 +220,18 @@ def _moved_inputs(
     }
     for old, new in moves.items():
         if old not in nodes:
-            raise KeyError(
-                f"with_path_names(): {unknown_names('input path', [old], sorted(nodes))}"
-            )
+            raise KeyError(f"rename(): {unknown_names('input path', [old], sorted(nodes))}")
         if not isinstance(new, str):
             raise ValueError(
-                f"with_path_names(): the new path of {old!r} must be a string; got "
-                f"{type(new).__name__}"
+                f"rename(): the new path of {old!r} must be a string; got {type(new).__name__}"
             )
         if not new or not all(new.split(_PATH_SEP)):
             raise ValueError(
-                f"with_path_names(): invalid new path {new!r} for {old!r}; each part between "
+                f"rename(): invalid new path {new!r} for {old!r}; each part between "
                 f"{_PATH_SEP!r} must be non-empty"
             )
         if new.startswith(old + _PATH_SEP):
-            raise ValueError(f"with_path_names(): cannot move {old!r} inside itself, to {new!r}")
+            raise ValueError(f"rename(): cannot move {old!r} inside itself, to {new!r}")
     targets = list(moves.values())
     for first, target in enumerate(targets):
         for other in targets[first + 1 :]:
@@ -241,9 +240,7 @@ def _moved_inputs(
                 or other.startswith(target + _PATH_SEP)
                 or target.startswith(other + _PATH_SEP)
             ):
-                raise ValueError(
-                    f"with_path_names(): the new paths {target!r} and {other!r} overlap"
-                )
+                raise ValueError(f"rename(): the new paths {target!r} and {other!r} overlap")
 
     def parent(path: str) -> str:
         return path.rpartition(_PATH_SEP)[0]
@@ -270,11 +267,10 @@ def _moved_inputs(
             node = node.setdefault(group, {})
             if not isinstance(node, dict):
                 raise ValueError(
-                    f"with_path_names(): cannot move to {target!r} because {group!r} is a "
-                    f"field, not a group"
+                    f"rename(): cannot move to {target!r} because {group!r} is a field, not a group"
                 )
         if name in node:
-            raise ValueError(f"with_path_names(): two input paths would be at {target!r}")
+            raise ValueError(f"rename(): two input paths would be at {target!r}")
         node[name] = leaves[path]
         origins[target] = path
 
@@ -296,12 +292,12 @@ def _moved_inputs(
     return moved_spec.with_optional(*optional), origins
 
 
-#: The kernel that ``with_path_names`` returns, installed by the views module at import.
+#: The kernel that ``rename`` returns, installed by the views module at import.
 _renamed_kernel_factory: Callable[..., Any] | None = None
 
 
 def _install_renamed_kernel(factory: Callable[..., Any]) -> None:
-    """Install the factory of the kernel that renames at its boundary for ``with_path_names``.
+    """Install the factory of the kernel that renames at its boundary for ``rename``.
 
     Called once, by the views module at import, so this module never imports the
     module that imports it.
@@ -730,14 +726,14 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
             names,
         )
 
-    def with_path_names(
+    def rename(
         self, mapping: Mapping[str, str] | None = None, /, **kwargs: str
     ) -> ConditionalDistribution:
         """Rename or move inputs and event paths, ``old -> new``.
 
         A key that starts with an input's name addresses the given side, and
         one that starts with an output's name the event side, which behaves as
-        :meth:`Distribution.with_path_names`. On the given side a target is the
+        :meth:`Distribution.rename`. On the given side a target is the
         node's new exact path, so it may split or group inputs, since a kernel has
         no signature that fixes its top level: ``{"a": "theta/a"}`` moves the
         input ``a`` into a structured input ``theta``, and ``{"theta/a": "a"}``
@@ -775,10 +771,10 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         for source in (mapping or {}), kwargs:
             for old, new in source.items():
                 if old in pairs:
-                    raise ValueError(f"with_path_names(): {old!r} is renamed more than once")
+                    raise ValueError(f"rename(): {old!r} is renamed more than once")
                 pairs[old] = new
         if not pairs:
-            raise ValueError("with_path_names() requires at least one rename")
+            raise ValueError("rename() requires at least one rename")
         moves: dict[str, str] = {}
         renames: dict[str, str] = {}
         for old, new in pairs.items():
@@ -789,12 +785,12 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
                 renames[old] = new
             else:
                 raise KeyError(
-                    f"with_path_names(): {old!r} is neither an input nor a field of "
+                    f"rename(): {old!r} is neither an input nor a field of "
                     f"{self.label!r}; inputs: {list(self.given_spec)}, fields: "
                     f"{list(self.event_spec.outputs)}"
                 )
         given_spec, origins = _moved_inputs(self.given_spec, moves)
-        event_spec = self.event_spec.with_path_names(renames) if renames else self.event_spec
+        event_spec = self.event_spec.rename(renames) if renames else self.event_spec
         _check_disjoint_sides(given_spec, event_spec, repr(self.label))
         if _renamed_kernel_factory is None:
             raise RuntimeError("the renamed kernel is not installed; import probpipe")
@@ -843,19 +839,49 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
             kernel over the remaining inputs.
         """
 
-    # -- composition ------------------------------------------------------------
+    def __mul__(self, other: object) -> Any:
+        """Refuse ``*`` between distributions. Use ``&`` to merge them.
 
-    def __mul__(
+        Parameters
+        ----------
+        other : object
+            The right operand.
+
+        Returns
+        -------
+        Any
+            ``NotImplemented`` for an operand of another kind.
+
+        Raises
+        ------
+        TypeError
+            If *other* is a distribution or a conditional distribution.
+        """
+        return _refuse_distribution_multiplication(other)
+
+    def __bool__(self) -> NoReturn:
+        """Refuse a truth value, so ``a and b`` raises. Use ``a & b`` to merge.
+
+        Raises
+        ------
+        TypeError
+            Always: a distribution has no truth value.
+        """
+        _refuse_distribution_truth_value()
+
+    # -- merge ------------------------------------------------------------
+
+    def __and__(
         self, other: Distribution | ConditionalDistribution
     ) -> FactoredConditionalDistribution | Distribution:
-        """The joint of this kernel and *other*, composed conditional-first.
+        """The joint of this kernel and *other*, merged conditional-first.
 
         This kernel may condition on what *other* produces. The result is a
         ``FactoredDistribution`` when *other* meets every input, and a
         ``FactoredConditionalDistribution`` over the unmet inputs otherwise;
-        see :meth:`Distribution.__mul__`.
+        see :meth:`Distribution.__and__`.
         """
-        return _compose_operands(self, other)
+        return _merge_operands(self, other)
 
     # -- notation ---------------------------------------------------------------
 
@@ -1670,8 +1696,8 @@ def conditional_distribution(
             label="counts",
             given_spec={"r": real},
         )
-        fixed = counts * Normal("r", 0.0, 1.0)                           # n0 is 50
-        uncertain = counts * (Normal("r", 0.0, 1.0) * LogNormal("n0", 4.0, 0.3))
+        fixed = counts & Normal("r", 0.0, 1.0)                           # n0 is 50
+        uncertain = counts & (Normal("r", 0.0, 1.0) & LogNormal("n0", 4.0, 0.3))
 
     and the decorator form labels the kernel after the function, or as given::
 

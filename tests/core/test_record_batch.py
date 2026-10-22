@@ -894,9 +894,9 @@ class TestStructuralTransforms:
     levels come through untouched.
     """
 
-    def test_with_path_names_renames_within_every_element(self):
+    def test_rename_renames_within_every_element(self):
         batch = nested_batch(label="post")
-        renamed = batch.with_path_names({"outer/a": "outer/alpha"})
+        renamed = batch.rename({"outer/a": "outer/alpha"})
         assert tuple(renamed.event_template.keys()) == ("outer/alpha", "outer/b", "m")
         np.testing.assert_array_equal(
             np.asarray(renamed["outer/alpha"]), np.asarray(batch["outer/a"])
@@ -904,39 +904,39 @@ class TestStructuralTransforms:
         assert renamed.level_names == batch.level_names
         assert renamed.batch_shape == batch.batch_shape
 
-    def test_with_path_names_takes_a_top_level_name(self):
-        assert "mass" in nested_batch().with_path_names(m="mass").event_template
+    def test_rename_takes_a_top_level_name(self):
+        assert "mass" in nested_batch().rename(m="mass").event_template
         with pytest.raises(KeyError):
-            nested_batch().with_path_names(a="alpha")
+            nested_batch().rename(a="alpha")
 
-    def test_with_path_names_moves_a_column_out_of_its_group(self):
+    def test_rename_moves_a_column_out_of_its_group(self):
         batch = nested_batch()
-        moved = batch.with_path_names({"outer/a": "a"})
+        moved = batch.rename({"outer/a": "a"})
         assert tuple(moved.event_template.keys()) == ("outer/b", "m", "a")
         np.testing.assert_array_equal(np.asarray(moved["a"]), np.asarray(batch["outer/a"]))
         np.testing.assert_array_equal(np.asarray(moved["outer/b"]), np.asarray(batch["outer/b"]))
         assert (moved.level_names, moved.batch_shape) == (batch.level_names, batch.batch_shape)
 
-    def test_with_path_names_moves_a_column_into_a_group(self):
+    def test_rename_moves_a_column_into_a_group(self):
         batch = nested_batch()
-        moved = batch.with_path_names({"m": "outer/m"})
+        moved = batch.rename({"m": "outer/m"})
         assert tuple(moved.event_template.keys()) == ("outer/a", "outer/b", "outer/m")
         np.testing.assert_array_equal(np.asarray(moved["outer/m"]), np.asarray(batch["m"]))
         # Each element is the element of the batch moved the same way.
-        assert moved[1] == batch[1].with_path_names({"m": "outer/m"})
+        assert moved[1] == batch[1].rename({"m": "outer/m"})
 
-    def test_with_path_names_removes_a_group_its_moves_empty(self):
-        moved = nested_batch().with_path_names({"outer/a": "a", "outer/b": "b"})
+    def test_rename_removes_a_group_its_moves_empty(self):
+        moved = nested_batch().rename({"outer/a": "a", "outer/b": "b"})
         assert tuple(moved.event_template.children) == ("m", "a", "b")
 
-    def test_with_path_names_refuses_a_move_onto_a_field(self):
+    def test_rename_refuses_a_move_onto_a_field(self):
         with pytest.raises(ValueError, match="already taken"):
-            nested_batch().with_path_names({"m": "outer/a"})
+            nested_batch().rename({"m": "outer/a"})
 
     def test_the_two_name_spaces_are_independent(self):
         # Renaming a field never touches a level, or the reverse.
         batch = nested_batch()
-        assert batch.with_path_names(m="mass").level_names == ("draw",)
+        assert batch.rename(m="mass").level_names == ("draw",)
         assert tuple(batch.with_level_names(draw="s").event_template.keys()) == tuple(
             batch.event_template.keys()
         )
@@ -982,18 +982,21 @@ class TestStructuralTransforms:
             element=RecordSpec(z=()),
             label="batch",
         )
-        merged = batch.merge(other)
+        merged = batch & (other)
         assert tuple(merged.event_template.keys()) == ("outer/a", "outer/b", "m", "z")
         np.testing.assert_array_equal(np.asarray(merged["z"]), np.asarray(jnp.ones(3)))
 
     def test_merge_pairs_elements_so_the_axes_must_agree(self):
-        with pytest.raises(ValueError, match="needs both batches to have the same levels"):
-            nested_batch(3).merge(
-                NumericRecordBatch(
-                    {"z": jnp.ones(4)},
-                    "draw",
-                    element=RecordSpec(z=()),
-                    label="batch",
+        with pytest.raises(ValueError, match="cannot merge batches with different levels"):
+            (
+                nested_batch(3)
+                & (
+                    NumericRecordBatch(
+                        {"z": jnp.ones(4)},
+                        "draw",
+                        element=RecordSpec(z=()),
+                        label="batch",
+                    )
                 )
             )
 
@@ -1001,7 +1004,7 @@ class TestStructuralTransforms:
         with pytest.raises(
             ValueError, match=r"cannot merge the two batches of records, since both have \["
         ):
-            nested_batch().merge(nested_batch())
+            (nested_batch() & (nested_batch()))
 
     def test_merge_refuses_a_group_both_batches_have(self):
         # A merge is shallow: two groups of one name are refused, whatever fields they hold.
@@ -1012,7 +1015,7 @@ class TestStructuralTransforms:
             match=r"cannot merge the two batches of records, since both have 'g'\. Rename one, "
             r"or merge the groups first",
         ):
-            left.merge(right)
+            (left & (right))
 
     def test_merge_refuses_batches_on_different_levels(self):
         other = RecordBatch(
@@ -1022,10 +1025,10 @@ class TestStructuralTransforms:
         )
         with pytest.raises(
             ValueError,
-            match=r"merge\(\) needs both batches to have the same levels, "
-            r"got \{'draw': 3\} and \{'draw': 4\}",
+            match=r"cannot merge batches with different levels: "
+            r"\{'draw': 3\} and \{'draw': 4\}",
         ):
-            nested_batch().merge(other)
+            (nested_batch() & (other))
 
     def test_stack_names_the_record_whose_fields_differ(self):
         records = [
@@ -1075,7 +1078,7 @@ class TestStructuralTransforms:
         )
         assert type(numeric.replace({"x": _object_column(list("abc"))})) is RecordBatch
         assert type(plain.replace({"s": jnp.ones(3)})) is NumericRecordBatch
-        assert type(numeric.merge(plain)) is type(plain.merge(numeric)) is RecordBatch
+        assert type(numeric & (plain)) is type(plain & (numeric)) is RecordBatch
 
     def test_an_edited_field_is_typed_the_way_inference_would(self):
         plain = RecordBatch(
@@ -1308,7 +1311,7 @@ class TestLevels:
 
 
 class TestSelect:
-    def test_select_returns_single_field_views(self):
+    def test_select_returns_single_coupled_marginals(self):
         batch = nested_batch(label="post")
         selected = batch.select("m")
         assert set(selected) == {"m"}

@@ -1998,6 +1998,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for the evaluations with `evaluate_at_points`, which takes a place of its
   own, or through a ProbPipe call, such as a lifted call.
 
+- Multiplication and truth values of distributions and kernels now raise
+  `TypeError`: replace `lik * prior` and `lik and prior` with `lik & prior`.
+  Merging coupled marginals now raises `ValueError` instead of silently treating
+  them as independent: replace `d["a"] & d["b"]` with `d["a", "b"]`
+  for their joint law, or `marginal(d, "a") & marginal(d, "b")` for independent laws.
+  Scalar multiplication of Gaussian random functions and record truth values
+  retain their existing behavior.
+
+- **Every record uses container truth, including `NumericRecord`.**
+  `bool(Record({"x": 0.0}))` now returns `True`, where scalar conversion
+  returned `False`; `bool(Record({}, label="empty"))` returns `False`, where it raised.
+  Test `bool(record["x"])` when the field's value should decide truth.
+
 ### Added
 
 - **Input declarations read four sources.** `InputSpec`, a mapping, a

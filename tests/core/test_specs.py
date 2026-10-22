@@ -114,13 +114,13 @@ class TestOutputSpec:
         record = RecordSpec(mu=(), tau=())
         law = OutputSpec(DistributionSpec(OutputSpec(record)))
         assert (list(law.outputs), _has_record_outputs(law)) == ([], False)
-        assert law.with_path_names({"mu": "center"}).term_spec == DistributionSpec(
-            OutputSpec(record.with_path_names({"mu": "center"}))
+        assert law.rename({"mu": "center"}).term_spec == DistributionSpec(
+            OutputSpec(record.rename({"mu": "center"}))
         )
         batch = OutputSpec(BatchSpec(record, sample=3))
         assert (list(batch.outputs), _has_record_outputs(batch)) == (["mu", "tau"], False)
-        assert batch.with_path_names({"mu": "center"}).term_spec == BatchSpec(
-            record.with_path_names({"mu": "center"}), sample=3
+        assert batch.rename({"mu": "center"}).term_spec == BatchSpec(
+            record.rename({"mu": "center"}), sample=3
         )
         with pytest.raises(TypeError, match=r"with_term_spec\(\) needs a DistributionSpec"):
             law.with_term_spec(record)
@@ -293,13 +293,13 @@ class TestOutputSpecSelection:
         assert _grouped_spec()["g/c", "a"] == _grouped_spec()[["g/c", "a"]]
 
     def test_a_field_holding_a_law_gives_the_law_s_output_spec(self):
-        law_spec = (Normal("mu", 0.0, 1.0) * Normal("sigma", 1.0, 1.0)).spec
+        law_spec = (Normal("mu", 0.0, 1.0) & Normal("sigma", 1.0, 1.0)).spec
         wrapped = OutputSpec(RecordSpec(params=law_spec))
         assert wrapped["params"] == OutputSpec(law_spec)
         assert wrapped["params"].outputs == {}
 
     def test_a_function_returning_a_wrapped_law_selects_the_law_s_output_spec(self):
-        law = Normal("mu", 0.0, 1.0) * Normal("sigma", 1.0, 1.0)
+        law = Normal("mu", 0.0, 1.0) & Normal("sigma", 1.0, 1.0)
         fit = Function(
             lambda data: {"params": law},
             input_spec={"data": NumericArraySpec((3,))},
@@ -446,7 +446,7 @@ class TestOutputSpecMerge:
             ValueError,
             match=re.escape(
                 "cannot merge the left output spec and the right output spec, since both have "
-                "the output 'a'. Rename it in one of them, as with_path_names({'a': 'a_2'})"
+                "the output 'a'. Rename it in one of them, as rename({'a': 'a_2'})"
             ),
         ):
             _grouped_spec() & OutputSpec(a=_REAL)
@@ -515,7 +515,7 @@ class TestALawOverLaws:
             match=r"cannot merge factor 0 \('ℙ'\), since its draws are distributions, which have "
             r"no outputs to read by name\. Wrap them under a name",
         ):
-            _law_over_laws() * Normal("z", 0.0, 1.0)
+            (_law_over_laws() & Normal("z", 0.0, 1.0))
 
     def test_wrapped_under_a_name_it_merges(self):
         law_spec = Normal("x", 0.0, 1.0).spec
@@ -523,7 +523,7 @@ class TestALawOverLaws:
             sample=lambda key: {"params": Normal("x", 0.0, 1.0)},
             event_spec=OutputSpec(RecordSpec(params=law_spec)),
         )
-        joint = wrapped * Normal("z", 0.0, 1.0)
+        joint = wrapped & Normal("z", 0.0, 1.0)
         assert list(joint.event_spec.outputs) == ["params", "z"]
         with workflow_run(seed=0):
             draw = sample(joint)
@@ -596,33 +596,31 @@ class TestOutputSpecCompletion:
 
     def test_a_whole_term_is_renamed_by_its_output(self):
         array = NumericArraySpec(())
-        assert OutputSpec(prior=array).with_path_names(prior="beta") == OutputSpec(beta=array)
-        assert OutputSpec(prior=None).with_path_names(prior="beta") == OutputSpec(beta=None)
+        assert OutputSpec(prior=array).rename(prior="beta") == OutputSpec(beta=array)
+        assert OutputSpec(prior=None).rename(prior="beta") == OutputSpec(beta=None)
         with pytest.raises(KeyError):
-            OutputSpec(prior=array).with_path_names(sigma="s")
+            OutputSpec(prior=array).rename(sigma="s")
         with pytest.raises(KeyError):
-            OutputSpec(prior=array).with_path_names({"prior/x": "y"})
+            OutputSpec(prior=array).rename({"prior/x": "y"})
         # The output is renamed in place: moving it into a group would
         # change the form, so a path target raises.
         with pytest.raises(ValueError, match="cannot move it into a group"):
-            OutputSpec(prior=array).with_path_names(prior="group/beta")
+            OutputSpec(prior=array).rename(prior="group/beta")
 
     def test_a_whole_record_renames_its_fields_through_its_output(self):
         record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
-        renamed = OutputSpec(parameters=record).with_path_names({"parameters/beta": "parameters/b"})
-        assert renamed == OutputSpec(parameters=record.with_path_names(beta="b"))
-        assert renamed.with_path_names(parameters="theta") == OutputSpec(
-            theta=record.with_path_names(beta="b")
-        )
+        renamed = OutputSpec(parameters=record).rename({"parameters/beta": "parameters/b"})
+        assert renamed == OutputSpec(parameters=record.rename(beta="b"))
+        assert renamed.rename(parameters="theta") == OutputSpec(theta=record.rename(beta="b"))
         with pytest.raises(KeyError):
-            OutputSpec(parameters=record).with_path_names(beta="b")
+            OutputSpec(parameters=record).rename(beta="b")
 
     def test_an_output_and_a_field_below_it_are_renamed_in_two_calls(self):
         # Each target is a new exact path, so renaming the output to theta
         # and its field to theta/b in one call gives one target inside another.
         record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
         with pytest.raises(ValueError, match="overlap"):
-            OutputSpec(parameters=record).with_path_names(
+            OutputSpec(parameters=record).rename(
                 {"parameters": "theta", "parameters/beta": "theta/b"}
             )
 
@@ -630,24 +628,22 @@ class TestOutputSpecCompletion:
         inner = RecordSpec(beta=NumericArraySpec(()))
         renames = {"parameters/beta": "parameters/b"}
         renamed_inner = RecordSpec(b=NumericArraySpec(()))
-        whole = OutputSpec(parameters=inner).with_path_names(renames)
-        exposed = OutputSpec(RecordSpec(parameters=inner)).with_path_names(renames)
-        assert whole.with_path_names(parameters="theta") == OutputSpec(theta=renamed_inner)
-        assert exposed.with_path_names(parameters="theta") == OutputSpec(
-            RecordSpec(theta=renamed_inner)
-        )
+        whole = OutputSpec(parameters=inner).rename(renames)
+        exposed = OutputSpec(RecordSpec(parameters=inner)).rename(renames)
+        assert whole.rename(parameters="theta") == OutputSpec(theta=renamed_inner)
+        assert exposed.rename(parameters="theta") == OutputSpec(RecordSpec(theta=renamed_inner))
 
     def test_an_output_and_a_field_of_one_name_have_distinct_paths(self):
         record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
         declaration = OutputSpec(beta=record)
-        assert declaration.with_path_names(beta="b") == OutputSpec(b=record)
-        assert declaration.with_path_names({"beta/beta": "beta/b"}) == OutputSpec(
-            beta=record.with_path_names(beta="b")
+        assert declaration.rename(beta="b") == OutputSpec(b=record)
+        assert declaration.rename({"beta/beta": "beta/b"}) == OutputSpec(
+            beta=record.rename(beta="b")
         )
 
     def test_a_whole_record_moves_a_field_within_its_output(self):
         record = RecordSpec(a=NumericArraySpec(()), g=RecordSpec(b=NumericArraySpec(())))
-        moved = OutputSpec(p=record).with_path_names({"p/a": "p/g/a"})
+        moved = OutputSpec(p=record).rename({"p/a": "p/g/a"})
         assert moved == OutputSpec(
             p=RecordSpec(g=RecordSpec(b=NumericArraySpec(()), a=NumericArraySpec(())))
         )
@@ -663,37 +659,37 @@ class TestOutputSpecCompletion:
     def test_a_whole_record_keeps_its_fields_under_its_output(self, renames):
         record = RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec(()))
         with pytest.raises(ValueError, match="must stay under"):
-            OutputSpec(p=record).with_path_names(renames)
+            OutputSpec(p=record).rename(renames)
 
     def test_a_whole_term_refuses_a_repeated_or_an_empty_rename(self):
         record = RecordSpec(beta=NumericArraySpec(()))
         with pytest.raises(ValueError, match="more than once"):
-            OutputSpec(p=record).with_path_names({"p": "q"}, p="r")
+            OutputSpec(p=record).rename({"p": "q"}, p="r")
         with pytest.raises(ValueError, match="more than once"):
-            OutputSpec(p=record).with_path_names({"p/beta": "b"}, **{"p/beta": "c"})
+            OutputSpec(p=record).rename({"p/beta": "b"}, **{"p/beta": "c"})
         with pytest.raises(ValueError, match="at least one rename"):
-            OutputSpec(p=record).with_path_names()
+            OutputSpec(p=record).rename()
 
     def test_an_exposed_record_renames_its_fields(self):
         record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
-        renamed = OutputSpec(record).with_path_names(beta="b")
-        assert renamed == OutputSpec(record.with_path_names(beta="b"))
+        renamed = OutputSpec(record).rename(beta="b")
+        assert renamed == OutputSpec(record.rename(beta="b"))
         assert _has_record_outputs(renamed)
         nested = OutputSpec(RecordSpec(g=RecordSpec(mu=NumericArraySpec(()))))
-        assert tuple(nested.with_path_names({"g/mu": "g/m"}).outputs) == ("g",)
+        assert tuple(nested.rename({"g/mu": "g/m"}).outputs) == ("g",)
         with pytest.raises(KeyError):
-            nested.with_path_names(mu="m")
+            nested.rename(mu="m")
 
     def test_an_exposed_record_moves_fields_across_its_outputs(self):
         scalar = NumericArraySpec(())
         declaration = OutputSpec(RecordSpec(g=RecordSpec(mu=scalar, sigma=scalar), y=scalar))
-        out = declaration.with_path_names({"g/mu": "mu"})
+        out = declaration.rename({"g/mu": "mu"})
         assert out == OutputSpec(RecordSpec(g=RecordSpec(sigma=scalar), y=scalar, mu=scalar))
-        into = declaration.with_path_names({"y": "g/y"})
+        into = declaration.rename({"y": "g/y"})
         assert into == OutputSpec(RecordSpec(g=RecordSpec(mu=scalar, sigma=scalar, y=scalar)))
         assert _has_record_outputs(into)
         # An output that the moves leave empty is removed.
-        emptied = OutputSpec(RecordSpec(g=RecordSpec(mu=scalar))).with_path_names({"g/mu": "m"})
+        emptied = OutputSpec(RecordSpec(g=RecordSpec(mu=scalar))).rename({"g/mu": "m"})
         assert tuple(emptied.outputs) == ("m",)
 
 

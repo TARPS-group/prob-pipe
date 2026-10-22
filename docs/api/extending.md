@@ -102,7 +102,7 @@ from probpipe import Normal, NumericArraySpec, condition_on, conditional_distrib
 likelihood = conditional_distribution(
     lambda mu: Normal("y", mu * jnp.ones(3), 1.0), given_spec={"mu": NumericArraySpec(())}
 )
-model = likelihood * Normal("mu", 0.0, 1.0)
+model = (likelihood & Normal("mu", 0.0, 1.0))
 observed = {"y": jnp.array([0.4, 0.9, -0.1])}
 
 with workflow_run(seed=0):

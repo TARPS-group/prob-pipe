@@ -407,7 +407,7 @@ class TestNutpieStanIntegration:
             """
         )
         data = {"N": 3, "y": [0.5, -0.2, 1.0]}
-        renamed = StanModel(str(stan_file), label="location").with_path_names(
+        renamed = StanModel(str(stan_file), label="location").rename(
             {"mu": "scale_free/mu", "sigma": "scale_free/sigma"}
         )
         assert condition_on.check(renamed, data).method == "nutpie_nuts"
@@ -501,9 +501,7 @@ class TestNutpieIntegration:
         from probpipe import workflow_run
         from probpipe.operations._condition import condition_on
 
-        renamed = PyMCModel(_gaussian_pymc_fn, label="gaussian").with_path_names(
-            {"mu": "location/mu"}
-        )
+        renamed = PyMCModel(_gaussian_pymc_fn, label="gaussian").rename({"mu": "location/mu"})
         data = {"y": np.array([0.0, 1.0])}
         assert condition_on.check(renamed, data).method == "nutpie_nuts"
         options = {"num_results": 30, "num_warmup": 30, "num_chains": 1}

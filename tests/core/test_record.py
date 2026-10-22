@@ -94,18 +94,21 @@ class TestConstruction:
 
     def test_merge_refuses_a_field_against_a_group(self):
         with pytest.raises(ValueError, match=r"since both have 'x'\. Rename one"):
-            Record(
-                {"x": 1.0},
-                label="a",
-            ).merge(
+            (
                 Record(
-                    {
-                        "x": Record(
-                            {"z": 1.0},
-                            label="c",
-                        )
-                    },
-                    label="b",
+                    {"x": 1.0},
+                    label="a",
+                )
+                & (
+                    Record(
+                        {
+                            "x": Record(
+                                {"z": 1.0},
+                                label="c",
+                            )
+                        },
+                        label="b",
+                    )
                 )
             )
 
@@ -436,7 +439,7 @@ class TestImmutability:
             {"b": 2.0},
             label="r",
         )
-        merged = v1.merge(v2)
+        merged = v1 & (v2)
         assert merged.fields == ("a", "b")
 
     def test_merge_overlap_raises(self):
@@ -451,7 +454,7 @@ class TestImmutability:
         with pytest.raises(
             ValueError, match="cannot merge the two NumericRecords, since both have 'a'"
         ):
-            v1.merge(v2)
+            (v1 & (v2))
 
     def test_without(self):
         v = Record(
@@ -513,7 +516,8 @@ class TestImmutability:
         )
         assert (
             type(
-                nr.merge(
+                nr
+                & (
                     NumericRecord(
                         {"b": 2.0},
                         label="nr",
@@ -1641,7 +1645,7 @@ class TestProvenance:
             {"x": 1.0},
             label="r",
         ).with_provenance(Provenance("orig", parents=()))
-        merged = r.merge(
+        merged = r & (
             Record(
                 {"y": 2.0},
                 label="r",

@@ -1,7 +1,7 @@
 """Tests for the jax-native NLE / NRE kernels (BayesFlow backend).
 
 Requires the ``[bayesflow]`` extra (Python 3.12-3.13); skipped otherwise. The
-learned kernels are exercised end to end through ``condition_on(learned * prior,
+learned kernels are exercised end to end through ``condition_on(learned & prior,
 {"observation": y})`` (BlackJAX NUTS), judged against analytic conjugate
 posteriors and, for the constrained-prior case, against NUTS run with the exact
 likelihood on the same model.
@@ -70,7 +70,7 @@ def _sim(prior):
 
 
 def _prior():
-    return Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)
+    return Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=0.0, scale=1.0)
 
 
 _SIM = _sim(_prior())
@@ -80,10 +80,10 @@ def _nested_prior():
     """Nested conjugate prior: a sub-record ``outer={a, b}`` plus a
     top-level ``m`` -- leaves ``outer/a``, ``outer/b``, ``m``, all ``N(0, 1)`` so
     ``_analytic_posterior`` applies per leaf (``flatten`` order ``[a, b, m]``)."""
-    outer = (Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)).with_path_names(
+    outer = (Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=0.0, scale=1.0)).rename(
         {"a": "outer/a", "b": "outer/b"}
     )
-    return (outer * Normal("m", loc=0.0, scale=1.0)).with_label("joint")
+    return (outer & Normal("m", loc=0.0, scale=1.0)).with_label("joint")
 
 
 def _analytic_posterior(y_rows: np.ndarray) -> tuple[np.ndarray, float]:
@@ -107,10 +107,10 @@ def _score(lik, theta, rows):
 
 
 def _posterior(lik, prior, y):
-    """The posterior of ``lik * prior`` at the observation rows *y*, by the registry's method."""
+    """The posterior of ``lik & prior`` at the observation rows *y*, by the registry's method."""
     view = condition_on_operation.using(method_options={"num_results": 1500, "num_warmup": 500})
     with workflow_run(seed=0):
-        return view(lik * prior, {"observation": jnp.asarray(y)})
+        return view((lik & prior), {"observation": jnp.asarray(y)})
 
 
 @pytest.fixture(scope="module")
@@ -322,7 +322,7 @@ class TestTheLabel:
 
 
 class TestConditioning:
-    """End-to-end: condition_on(learned * prior, observation) -> NUTS, against
+    """End-to-end: condition_on(learned & prior, observation) -> NUTS, against
     the analytic conjugate posterior (mean AND spread).
 
     Bounds are measured: each test's config was run across four workflow seeds
@@ -347,7 +347,7 @@ class TestConditioning:
         self._check_posterior(nle, _prior(), y, mean_tol=0.3, ratio_band=(0.85, 1.25))
 
     def test_a_learned_likelihood_times_a_prior_runs_a_registered_method(self, nle):
-        report = condition_on_operation.check(nle * _prior(), {"observation": jnp.zeros((1, 2))})
+        report = condition_on_operation.check((nle & _prior()), {"observation": jnp.zeros((1, 2))})
         assert (report.route, report.method, report.exact) == (
             "inference_methods",
             "blackjax_nuts",
@@ -433,7 +433,7 @@ class TestConditioning:
         theta."""
 
         def _gamma_prior():
-            return pp.Gamma("lam", 5.0, 1.0) * Normal("m", loc=0.0, scale=1.0)
+            return pp.Gamma("lam", 5.0, 1.0) & Normal("m", loc=0.0, scale=1.0)
 
         y = np.asarray(_rows(jnp.array([5.0, 0.5]), 4, jax.random.PRNGKey(5)))
 
@@ -449,7 +449,7 @@ class TestConditioning:
         )
         with workflow_run(seed=0):
             ref_post = condition_on.using(method_options={"num_results": 1500, "num_warmup": 500})(
-                true_likelihood * prior, {"observation": jnp.asarray(y)}
+                (true_likelihood & prior), {"observation": jnp.asarray(y)}
             )
         ref = np.asarray(flat_draws(ref_post)["lam"]).reshape(-1)
         with workflow_run(seed=0):

@@ -500,25 +500,13 @@ class TestSingleFieldCoercion:
         )
         assert int(nr) == 3
 
-    def test_bool_scalar(self):
-        assert (
-            bool(
-                NumericRecord(
-                    {"result": 1.0},
-                    label="nr",
-                )
-            )
-            is True
-        )
-        assert (
-            bool(
-                NumericRecord(
-                    {"result": 0.0},
-                    label="nr",
-                )
-            )
-            is False
-        )
+    @pytest.mark.parametrize(
+        "fields",
+        [{}, {"result": 0.0}, {"a": 0.0, "b": 0.0}, {"x": jnp.zeros(3)}, {"nested": {"x": 0.0}}],
+    )
+    def test_truth_depends_on_top_level_length(self, fields):
+        record = NumericRecord(fields, label="nr")
+        assert bool(record) is bool(len(fields))
 
     def test_np_asarray_scalar(self):
         nr = NumericRecord(

@@ -347,7 +347,7 @@ class TestRandomLogDensities:
 def test_raw_density_mapping_order_is_not_a_record_order_commitment(operation):
     from probpipe import Normal
 
-    law = Normal("a", 0.0, 1.0) * Normal("b", 1.0, 2.0)
+    law = Normal("a", 0.0, 1.0) & Normal("b", 1.0, 2.0)
     ordered = {"a": 0.5, "b": 2.0}
     reversed_value = {"b": 2.0, "a": 0.5}
     expected = float(operation(law, ordered))

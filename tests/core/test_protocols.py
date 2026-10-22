@@ -71,7 +71,7 @@ def bootstrap():
 
 @pytest.fixture
 def joint():
-    return Normal("x", 0, 1) * Normal("y", 1, 2)
+    return Normal("x", 0, 1) & Normal("y", 1, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -243,12 +243,12 @@ class TestConditioningCapabilities:
 
     def test_a_dependent_joint_claims_no_conditioning_capability(self):
         """A dependent joint claims no conditioning capability, so the inference registry conditions it."""
-        joint = _ShiftKernel() * Normal("x", 0, 1)
+        joint = _ShiftKernel() & Normal("x", 0, 1)
         assert not isinstance(joint, SupportsExactConditioning)
         assert not isinstance(joint, SupportsApproximateConditioning)
 
     def test_multivariate_gaussian_joint(self):
-        jg = MultivariateNormal("x", jnp.zeros(2), jnp.eye(2)) * MultivariateNormal(
+        jg = MultivariateNormal("x", jnp.zeros(2), jnp.eye(2)) & MultivariateNormal(
             "y", jnp.zeros(2), jnp.eye(2)
         )
         assert isinstance(jg, SupportsExactConditioning)
@@ -291,7 +291,7 @@ class TestNamedOutputs:
 # ---------------------------------------------------------------------------
 
 
-class TestFieldViewDynamicProtocols:
+class TestCoupledMarginalDynamicProtocols:
     """A view over a field must only claim protocols its parent supports."""
 
     def test_view_over_log_prob_only_parent_is_not_sampling(self):
@@ -326,7 +326,7 @@ class TestFieldViewDynamicProtocols:
     def test_view_over_full_parent_gets_all_protocols(self):
         """A joint of normals supports sampling and (through its TFP
         factors) mean / variance — its views should match."""
-        dist = Normal("intercept", loc=0.0, scale=1.0) * Normal("slope", loc=0.0, scale=1.0)
+        dist = Normal("intercept", loc=0.0, scale=1.0) & Normal("slope", loc=0.0, scale=1.0)
         view = dist["intercept"]
         assert isinstance(view, SupportsSampling)
         assert isinstance(view, SupportsMean)
@@ -362,7 +362,7 @@ class TestSampleReturnTypeConvention:
         from probpipe import Record, sample
         from probpipe.core._numeric_record_batch import NumericRecordBatch
 
-        dist = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=0.0, scale=1.0)
+        dist = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=0.0, scale=1.0)
         k = jax.random.PRNGKey(0)
         # unbatched
         s0 = dist._sample(k, ())
@@ -380,7 +380,7 @@ class TestSampleReturnTypeConvention:
         ``_sample(key, ())`` is the sole entry point for a single draw."""
         distributions = [
             Normal("x", loc=0.0, scale=1.0),
-            Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0),
+            (Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=0.0, scale=1.0)),
             EmpiricalDistribution(jnp.arange(5.0), output_name="x"),
             BootstrapDistribution(
                 "bootstrap", EmpiricalDistribution(jnp.arange(5.0), output_name="y")
@@ -409,7 +409,7 @@ class TestSampleReturnTypeConvention:
         from probpipe import Record, sample
         from probpipe.core._numeric_record_batch import NumericRecordBatch
 
-        jg = MultivariateNormal("x", jnp.zeros(1), jnp.eye(1)) * MultivariateNormal(
+        jg = MultivariateNormal("x", jnp.zeros(1), jnp.eye(1)) & MultivariateNormal(
             "y", jnp.zeros(1), jnp.eye(1)
         )
         k = jax.random.PRNGKey(0)
@@ -468,7 +468,7 @@ class TestJointDynamicProtocols:
     """A joint's protocol claims match its factors'."""
 
     def test_all_tfp_factors_all_protocols(self):
-        joint = Normal("z", loc=0.0, scale=1.0) * Normal("x", loc=0.0, scale=1.0)
+        joint = Normal("z", loc=0.0, scale=1.0) & Normal("x", loc=0.0, scale=1.0)
         assert isinstance(joint, SupportsSampling)
         assert isinstance(joint, SupportsLogProb)
         assert isinstance(joint, SupportsMean)
@@ -479,7 +479,7 @@ class TestJointDynamicProtocols:
         """``EmpiricalDistribution`` lacks ``SupportsLogProb``; a
         joint containing one should not claim it."""
         boot = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), output_name="b")
-        joint = boot * Normal("z", loc=0.0, scale=1.0)
+        joint = boot & Normal("z", loc=0.0, scale=1.0)
         # Sampling is always available; a joint that is not Gaussian claims no
         # conditioning capability, so the inference registry conditions it.
         assert isinstance(joint, SupportsSampling)

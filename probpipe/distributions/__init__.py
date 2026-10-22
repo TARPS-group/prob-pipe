@@ -1,4 +1,4 @@
-from . import _composition
+from . import _merge
 from ._batches import ConditionalDistributionBatch, DistributionBatch
 from ._capabilities import (
     SupportsConditionalCovariance,
@@ -35,7 +35,7 @@ from ._factored import (
     SupportsFactors,
 )
 from ._from_functions import distribution
-from ._views import FieldView
+from ._views import CoupledMarginal
 
 __all__ = [
     "ConditionalDistribution",
@@ -45,6 +45,7 @@ __all__ = [
     "ConversionInfo",
     "Converter",
     "ConverterRegistry",
+    "CoupledMarginal",
     "Distribution",
     "DistributionBatch",
     "DistributionSpec",
@@ -55,7 +56,6 @@ __all__ = [
     "FactoredFullyNumericConditionalDistribution",
     "FactoredNumericConditionalDistribution",
     "FactoredNumericDistribution",
-    "FieldView",
     "FullyNumericConditionalDistribution",
     "NumericConditionalDistribution",
     "NumericDistribution",

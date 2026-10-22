@@ -359,7 +359,7 @@ def simulation_based_calibration(
     ----------
     model : Distribution
         A joint that samples, over the parameters and the *observed* fields,
-        such as ``likelihood * prior``.
+        such as ``likelihood & prior``.
     observed : str or sequence of str
         The fields of a draw that the posterior conditions on; the others are
         the parameters. A str names one field.
@@ -440,7 +440,7 @@ def simulation_based_calibration(
     ... )
     >>> with workflow_run(seed=0):
     ...     result = simulation_based_calibration(
-    ...         likelihood * prior,
+    ...         (likelihood & prior),
     ...         observed="y",
     ...         posterior=exact,
     ...         num_simulations=100,
