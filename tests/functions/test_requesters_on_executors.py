@@ -8,6 +8,7 @@ executor gives the same draws, and ``jax`` agrees with them up to rounding.
 import threading
 import warnings
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -305,6 +306,32 @@ class TestTheChoiceOfExecutor:
                 x=Normal("x", 0.0, 1.0)
             )
         assert result.provenance.metadata["dispatch"] == "jax"
+
+    @pytest.mark.parametrize("traceable", [True, False])
+    def test_a_plain_call_runs_its_body_on_the_named_executor(self, traceable):
+        threads_that_ran = []
+
+        def shifted(x):
+            threads_that_ran.append(threading.get_ident())
+            return x + 1.0
+
+        named = Function(shifted, label="shifted", traceable=traceable, executor="thread")
+        assert float(named(x=1.0)) == 2.0
+        assert len(threads_that_ran) == 1
+        assert threads_that_ran[0] != threading.get_ident()
+
+    @pytest.mark.parametrize("executor", ["thread", "process"])
+    @pytest.mark.parametrize("traceable", [True, None])
+    def test_a_traceable_plain_call_inside_a_jax_transformation_ignores_the_executor(
+        self, executor, traceable
+    ):
+        doubled = Function(lambda x: 2.0 * x, label="doubled", traceable=traceable)
+        named = doubled.using(executor=executor)
+        assert float(jax.grad(lambda x: named(x=x))(3.0)) == 2.0
+        np.testing.assert_allclose(
+            np.asarray(jax.vmap(lambda x: named(x=x))(jnp.arange(3.0))), [0.0, 2.0, 4.0]
+        )
+        assert float(jax.jit(lambda x: named(x=x))(1.5)) == 3.0
 
     def test_the_removed_controls_raise_naming_the_unknown_control(self):
         with pytest.raises(TypeError, match="unknown Function option 'dispatch'"):

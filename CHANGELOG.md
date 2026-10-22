@@ -4283,6 +4283,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A plain call that names the `thread` or `process` executor runs inside
+  `jax.grad` and `jax.vmap`.** Inside a JAX transformation the call runs its
+  body in the calling thread, as a call that names `jax` does, where it used
+  to send traced arguments to the named executor and raise JAX's
+  `UnexpectedTracerError` or fail to pickle them. Outside a transformation the
+  named executor runs the body.
 - **An installed PyMC older than 6.2 raises an `ImportError` that names the
   upgrade,** as `PyMC 5.28.5 is installed, but PyMCModel requires PyMC 6.2 or
   later`, where PyMC 5 failed on import with an error about ArviZ. A missing

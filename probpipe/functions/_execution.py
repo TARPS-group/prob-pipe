@@ -29,7 +29,11 @@ try:
 except ImportError:
     task = flow = NO_CACHE = None
 
-from ..core._call_context import _AUTOMATIC_SELECTION, current_call_context
+from ..core._call_context import (
+    _AUTOMATIC_SELECTION,
+    _jax_transformation_active,
+    current_call_context,
+)
 from ..core._dispatch import Feasibility
 from ..core._evaluation_points import (
     EvaluationOutcomes,
@@ -146,7 +150,8 @@ def evaluate_plain_call(
     A plain call's failure is its body's: the call raises the exception its
     body raised, as if the body had run in the calling thread. ``jax`` never
     maps a plain call, so a call that names ``jax`` runs its body in the
-    calling thread, as automatic selection does.
+    calling thread, as automatic selection does. So does a call made inside a
+    JAX transformation, whose traced arguments no other executor can run.
 
     Parameters
     ----------
@@ -177,11 +182,10 @@ def evaluate_plain_call(
         evaluation_outcomes = _prefect_outcomes(evaluation_points, workflow_kind, function_label)
     else:
         names_jax = current_call_context().execution_choice.executor_name == "jax"
+        in_calling_thread = side_effects_forbidden or names_jax or _jax_transformation_active()
         evaluation_outcomes = _evaluated_outcomes(
             evaluation_points,
-            execution_choice=(
-                _AUTOMATIC_SELECTION if side_effects_forbidden or names_jax else None
-            ),
+            execution_choice=_AUTOMATIC_SELECTION if in_calling_thread else None,
         )
     body_failure = evaluation_outcomes.failures.get(0)
     if body_failure is not None and body_failure.error is not None:
