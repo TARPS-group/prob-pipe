@@ -362,48 +362,62 @@ def _checked_path_renames(
     *,
     check_source: Callable[[str], object],
 ) -> dict[str, str]:
-    """The renames a ``rename`` call gives, as ``{source path: target path}``, checked.
+    """Check the arguments of a ``rename`` call, and return them as one mapping from old path to new path.
 
-    Each source is the exact path of a node, which *check_source* confirms, and
-    each target is the node's new exact path. Both are read as paths are
-    everywhere, so a path that is not a string, is empty, or has an empty
-    name raises as indexing by it does.
+    Every ``rename`` in ProbPipe, on a record, an output spec, or a kernel,
+    takes its renames the same way: a mapping given by position, keyword
+    renames, or both, each from a node's current path to its new path. This
+    function merges the two, checks every pair, and returns them in the order
+    given, so each ``rename`` has one set of rules and one set of messages.
+    It checks that:
+
+    1. each old path is a valid path, read as ``[]`` reads a path, and is the
+       path of a node, which *check_source* confirms for the caller's term;
+    2. no node is renamed twice;
+    3. each new path is a valid path, read the same way;
+    4. no node moves inside itself, as ``{"g": "g/h"}`` would;
+    5. no two nodes move to the same path, or one into the other.
+
+    It moves nothing: the caller applies the moves.
+
+    For example, ``_checked_path_renames({"g/mu": "loc"}, {"x": "y"},
+    check_source=tree._existing_node_at)`` returns ``{"g/mu": "loc", "x": "y"}``
+    when ``tree`` has nodes at ``g/mu`` and ``x``.
 
     Parameters
     ----------
     renames : Mapping of str to str or None
-        The renames given positionally.
+        The renames given by position, each keyed by a node's current path.
     keyword_renames : Mapping of str to str
-        The renames given as keywords.
+        The renames given as keywords, each keyed by a node's current path.
     check_source : Callable
-        Called with each source path, and raises ``KeyError`` when no node is
-        at it.
+        Called with each old path, and raises ``KeyError`` when the caller's
+        term has no node at it.
 
     Returns
     -------
     dict of str to str
-        The target of each node, keyed by its ``/``-joined path, in the order
-        given.
+        The new path of each node, keyed by its old path, the positional
+        renames first, in the order given.
 
     Raises
     ------
     KeyError
-        As *check_source* raises for a source that is not the path of a node.
+        As *check_source* raises for an old path that is not the path of a node.
     TypeError
-        If a source or a target is not a string, such as a tuple of names.
+        If an old or a new path is not a string, such as a tuple of names.
     ValueError
-        If a source or a target is empty or has an empty name, two sources
-        resolve to the same node, no renames are given, a target lies inside
-        its own node, or two targets are equal or one lies inside the other.
+        If an old or a new path is empty or has an empty name, a node is renamed
+        twice, no renames are given, a node moves inside itself, or two new paths
+        are equal or one lies inside the other.
     """
     pairs: dict[str, str] = {}
-    for renames_given_one_way in (renames or {}), keyword_renames:
-        for old, new in renames_given_one_way.items():
-            source = _as_path(old, action="call rename() with")
-            check_source(source)
-            if source in pairs:
-                raise ValueError(f"rename(): {source!r} is renamed more than once")
-            pairs[source] = _as_path(new, action=f"call rename() to move {source!r} to")
+    for old, new in [*(renames or {}).items(), *keyword_renames.items()]:
+        source = _as_path(old, action="call rename() with")
+        check_source(source)
+        if source in pairs:
+            raise ValueError(f"rename(): {source!r} is renamed more than once")
+        pairs[source] = _as_path(new, action=f"call rename() to move {source!r} to")
     if not pairs:
         raise ValueError("rename() requires at least one rename")
     for source, target in pairs.items():
