@@ -73,7 +73,8 @@ def _recording(annotation: Any) -> tuple[Function, list[Any]]:
     return Function(
         body,
         max_evaluations=6,
-        dispatch="sequential",
+        executor="sequential",
+        traceable=False,
         label="body",
         output_spec=OutputSpec(result=None),
     ), seen
@@ -368,7 +369,7 @@ class TestTheDirectCall:
         registry.register(_ClosedForm(exact=True, priority=0))
         monkeypatch.setattr(_rules, "evaluation_rule_registry", registry)
 
-        @function(max_evaluations=6, dispatch="sequential")
+        @function(max_evaluations=6, executor="sequential")
         def identity(x):
             return x
 
@@ -415,7 +416,7 @@ class TestTheDirectCall:
     def test_the_selected_route_is_recorded_in_provenance(self):
         @function(
             max_evaluations=6,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         def identity(x):

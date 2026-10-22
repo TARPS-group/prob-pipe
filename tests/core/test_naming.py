@@ -551,7 +551,7 @@ class TestEveryAggregateIsLabeledForItsFunction:
         )
 
     def _swept(self, body, **controls):
-        return Function(body, label="double", dispatch="sequential", **controls)(v=self._rows())
+        return Function(body, label="double", executor="sequential", **controls)(v=self._rows())
 
     @pytest.mark.parametrize(
         ("label", "body"),
@@ -587,7 +587,7 @@ class TestEveryAggregateIsLabeledForItsFunction:
         )
 
         result = Function(
-            lambda v: {"y": jnp.asarray(v["x"])}, label="double", dispatch="sequential"
+            lambda v: {"y": jnp.asarray(v["x"])}, label="double", executor="sequential"
         )(v=grid)
 
         assert result.label == "double(grid)"

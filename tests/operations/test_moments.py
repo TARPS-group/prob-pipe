@@ -1492,7 +1492,7 @@ class TestTheDrawCount:
             shapes.extend(law.shapes)
             return estimate.raw
 
-        lifted = Function(centered, label="centered", dispatch="sequential")
+        lifted = Function(centered, label="centered", traceable=False, executor="sequential")
         with workflow_run(seed=0):
             law = lifted.using(max_evaluations=7, num_samples=99)(Gaussian("theta", 0.0))
         assert law.num_atoms == 7
@@ -1509,7 +1509,7 @@ class TestTheDrawCount:
             shapes.extend(law.shapes)
             return estimate.raw
 
-        lifted = Function(centered, label="centered", dispatch="sequential")
+        lifted = Function(centered, label="centered", traceable=False, executor="sequential")
         with workflow_run(seed=0):
             law = lifted.using(max_evaluations=6, num_samples=99)(Gaussian("theta", 0.0))
         assert law.num_atoms == 6

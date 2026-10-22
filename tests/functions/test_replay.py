@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    EvaluationError,
     Function,
     Normal,
     NumericArraySpec,
@@ -53,7 +54,7 @@ def _lifted_draw(seed: int = 7):
     workflow = Function(
         replayable_identity,
         label="replayable_identity",
-        dispatch="sequential",
+        executor="sequential",
         max_evaluations=5,
         output_spec=OutputSpec(replayable_identity=None),
     )
@@ -163,7 +164,7 @@ class TestReplayScope:
             captured.append(result)
             return result
 
-        workflow = Function(outer, label="outer", dispatch="sequential")
+        workflow = Function(outer, label="outer", executor="sequential")
         with workflow_run(seed=17):
             workflow(value=0.0)
         nested = captured[0]
@@ -983,7 +984,7 @@ class TestReplayAdmission:
         inner = Function(
             lambda value: sample(Normal("inner", loc=value, scale=1.0)),
             label="function",
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(function=None),
         )
 
@@ -993,7 +994,7 @@ class TestReplayAdmission:
         outer = Function(
             nested,
             label="nested",
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(nested=None),
         )
         with workflow_run(seed=8):
@@ -1193,7 +1194,7 @@ class TestReplayPreflight:
             replayable_identity,
             output_label="result",
             output_spec=declaration,
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=8,
             label="identity",
         )
@@ -1210,7 +1211,7 @@ class TestReplayPreflight:
             replayable_identity,
             output_label="result",
             output_spec=declarations[change],
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=8,
             label="identity",
         )
@@ -1275,15 +1276,15 @@ class TestReplayPreflight:
             replayable_identity,
             label="replayable_identity",
             max_evaluations=9,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(replayable_identity=None),
         )
         replay_workflow = Function(
             replayable_identity,
             label="replayable_identity",
             max_evaluations=9,
-            dispatch="thread",
-            max_workers=3,
+            executor="thread",
+            executor_options={"max_workers": 3},
             output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=31):
@@ -1403,14 +1404,14 @@ class TestReplayPreflight:
             replayable_identity,
             label="replayable_identity",
             max_evaluations=7,
-            dispatch="jax",
+            executor="jax",
             output_spec=OutputSpec(replayable_identity=None),
         )
         replay_workflow = Function(
             replayable_identity,
             label="replayable_identity",
             max_evaluations=7,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=41):
@@ -1637,9 +1638,10 @@ class TestReplayEventRegistry:
         workflow = Function(
             replayable_optional_nested,
             label="replayable_optional_nested",
+            traceable=False,
             max_evaluations=5,
-            dispatch="thread",
-            max_workers=2,
+            executor="thread",
+            executor_options={"max_workers": 2},
             output_spec=OutputSpec(replayable_optional_nested=None),
         )
         with workflow_run(seed=71):
@@ -1651,10 +1653,11 @@ class TestReplayEventRegistry:
         )
 
         with (
-            pytest.raises(ReplayCompatibilityError, match="matches no draw of the recorded call"),
+            pytest.raises(EvaluationError, match="matches no draw of the recorded call") as raised,
             replay_run(original.provenance),
         ):
             workflow(value=Normal("value", loc=0.0, scale=1.0))
+        assert isinstance(raised.value.__cause__, ReplayCompatibilityError)
 
 
 def test_replay_provenance_inputs_are_not_mutated():

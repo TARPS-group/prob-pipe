@@ -12,6 +12,7 @@ from probpipe import (
     ApplicabilityError,
     Distribution,
     EmpiricalDistribution,
+    EvaluationError,
     Normal,
     NumericArrayBatch,
     NumericArraySpec,
@@ -71,7 +72,7 @@ def test_a_maps_own_max_evaluations_survives_pushforward():
     double = Function(
         lambda x: 2.0 * x,
         max_evaluations=9,
-        dispatch="sequential",
+        executor="sequential",
         label="double",
         output_spec=OutputSpec(double=None),
     )
@@ -514,25 +515,28 @@ def test_explicit_constant_overrides_a_bound_law(operation):
     assert _value(mean(result) if operation is pushforward else result) == pytest.approx(3.3)
 
 
-@pytest.mark.parametrize("dispatch", ["jax", "sequential"])
+@pytest.mark.parametrize(
+    ("executor", "traceable"), [("jax", None), ("sequential", False)], ids=["jax", "sequential"]
+)
 @pytest.mark.parametrize("output_size", [2, 3])
-def test_any_map_preserves_shared_input_output_dimensions(dispatch, output_size):
+def test_any_map_preserves_shared_input_output_dimensions(executor, traceable, output_size):
     def mapped(x: Any):
         return jnp.ones(output_size)
 
     fn = Function(
         mapped,
         label="mapped",
+        traceable=traceable,
         input_spec={"x": NumericArraySpec(("n",))},
         output_spec=NumericArraySpec(("n",)),
     )
     law = EmpiricalDistribution(jnp.ones((2, 2)), output_name="x")
-    op = pushforward.using(dispatch=dispatch)
+    op = pushforward.using(executor=executor)
     if output_size == 3:
-        with pytest.raises(ValueError) as error:
+        with pytest.raises(EvaluationError, match="already bound to 2") as error:
             op(law, fn)
-        cause = error.value.__cause__ if dispatch == "jax" else error.value
-        assert "already bound to 2" in str(cause)
+        assert isinstance(error.value.__cause__, ValueError)
+        assert "already bound to 2" in str(error.value.__cause__)
     else:
         result = op(law, fn)
         assert result.event_spec.term_spec.shape == (2,)

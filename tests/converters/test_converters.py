@@ -1056,7 +1056,7 @@ class TestTheDrawCountOfAConversion:
         def atoms(d: EmpiricalDistribution) -> int:
             return d.num_atoms
 
-        counted = Function(atoms, label="atoms", dispatch="sequential")
+        counted = Function(atoms, label="atoms", executor="sequential")
         assert int(counted.using(num_samples=19)(Normal("x", 0.0, 1.0)).raw) == 19
 
     def test_an_exact_conversion_records_no_num_samples(self):

@@ -21,6 +21,7 @@ from probpipe import (
     Normal,
     NumericArrayBatch,
     NumericArraySpec,
+    ResolutionError,
     conditional_distribution,
     function,
     workflow_run,
@@ -177,8 +178,10 @@ class TestTheProbe:
 
 
 class TestTraceableFalse:
-    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "thread"])
-    def test_it_runs_once_per_point_with_no_probe(self, probe_attempts, dispatch):
+    @pytest.mark.parametrize(
+        "executor", [None, "sequential", "thread"], ids=["automatic", "sequential", "thread"]
+    )
+    def test_it_runs_once_per_point_with_no_probe(self, probe_attempts, executor):
         traced_runs = []
         concrete_runs = []
 
@@ -188,7 +191,7 @@ class TestTraceableFalse:
             return np.asarray(theta) * 2.0
 
         with workflow_run(seed=0):
-            forward.using(max_evaluations=6, dispatch=dispatch)(_prior())
+            forward.using(max_evaluations=6, executor=executor)(_prior())
         assert probe_attempts == []
         assert traced_runs == []
         assert len(concrete_runs) == 6
@@ -201,7 +204,7 @@ class TestTraceableFalse:
         forward.check(_prior())
         assert probe_attempts == []
 
-    def test_jax_dispatch_refuses_it(self):
+    def test_the_jax_executor_refuses_it(self):
         @function(traceable=False)
         def forward(theta):
             return np.asarray(theta)
@@ -209,11 +212,14 @@ class TestTraceableFalse:
         with (
             workflow_run(seed=0),
             pytest.raises(
-                ValueError,
-                match=r"dispatch='jax' cannot run 'forward', which claims traceable=False",
+                ResolutionError,
+                match=(
+                    r"executor 'jax' cannot run the evaluation points of 'forward': JAX cannot "
+                    r"trace 'forward': it claims traceable=False\. Name another executor"
+                ),
             ),
         ):
-            forward.using(max_evaluations=4, dispatch="jax")(_prior())
+            forward.using(max_evaluations=4, executor="jax")(_prior())
 
 
 class TestTraceableTrue:
@@ -264,16 +270,17 @@ class TestTraceableTrue:
                 label="likelihood",
             )
 
-    def test_a_true_claim_maps_the_same_values_as_sequential_dispatch(self):
-        @function(traceable=True)
-        def growth(r):
+    def test_a_true_claim_maps_the_same_values_as_one_point_at_a_time(self):
+        def body(r):
             return jnp.exp(r)
 
+        growth = Function(body, label="growth", traceable=True)
+        growth_in_python = Function(body, label="growth", traceable=False, executor="sequential")
         assert float(growth.apply(0.0)) == 1.0
         with workflow_run(seed=0):
             mapped = growth.using(max_evaluations=8)(_prior())
         with workflow_run(seed=0):
-            sequential = growth.using(max_evaluations=8, dispatch="sequential")(_prior())
+            sequential = growth_in_python.using(max_evaluations=8)(_prior())
         np.testing.assert_allclose(
             np.asarray(mapped.atoms), np.asarray(sequential.atoms), rtol=1e-6
         )
@@ -316,14 +323,20 @@ class TestCheckSharesItsProbe:
             shifted.using(max_evaluations=8)(rows, _prior())
         assert len(probe_attempts) == 1
 
-    def test_jax_dispatch_refuses_a_function_that_draws_from_numpys_generator(self):
-        @function(dispatch="jax")
+    def test_the_jax_executor_refuses_a_function_that_draws_from_numpys_generator(self):
+        @function(executor="jax")
         def simulate(r):
             return r + np.random.normal()
 
         with (
             workflow_run(seed=0),
             pytest.warns(UserWarning, match="global random generator"),
-            pytest.raises(ValueError, match="dispatch='jax' cannot trace 'simulate'"),
+            pytest.raises(
+                ResolutionError,
+                match=(
+                    r"executor 'jax' cannot run the evaluation points of 'simulate': JAX cannot "
+                    r"trace 'simulate': it draws from NumPy's global random generator"
+                ),
+            ),
         ):
             simulate.using(max_evaluations=5)(_prior())

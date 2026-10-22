@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    EmpiricalDistribution,
     Function,
     FunctionBatch,
     FunctionSpec,
@@ -35,12 +36,23 @@ from probpipe import (
     Record,
     RecordSpec,
     function,
+    workflow_run,
 )
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._record_batch import RecordBatch
 from probpipe.core._specs import NumericRecordSpec
 
 ELEMENT = NumericRecordSpec(a=(), b=(2,))
+
+# The controls of each way a call runs its evaluation points. ``default`` names
+# no executor, and a one-at-a-time executor runs a function that claims
+# ``traceable=False``, since ``jax`` maps any function it can trace.
+_EXECUTION: dict[str, dict[str, Any]] = {
+    "default": {},
+    "jax": {"executor": "jax"},
+    "sequential": {"executor": "sequential", "traceable": False},
+    "thread": {"executor": "thread", "traceable": False},
+}
 
 
 def _draws(n: int = 4, *, label: str = "draws") -> NumericRecordBatch:
@@ -179,20 +191,39 @@ class TestFieldExtraction:
 
 
 class TestDistributionBroadcastIndexing:
-    """Indexing one row of a batched per-argument sample gives a record."""
+    """One draw of a law over a batch of records reaches the body as one record."""
 
-    def test_indexing_a_batch_sample_gives_one_record(self):
-        from probpipe.functions._broadcast import _index_sample
+    @staticmethod
+    def _received(batch: NumericRecordBatch) -> list[Any]:
+        """What the body receives at each draw of a lifted call on the empirical law of *batch*."""
+        seen: list[Any] = []
 
-        row = _index_sample(_draws(4), 2)
+        def body(v):
+            seen.append(v)
+            return 0.0
 
-        assert isinstance(row, Record)
-        assert np.allclose(row["a"], 2.0)
+        law = EmpiricalDistribution(batch, label="law")
+        with workflow_run(seed=1):
+            Function(body, label="body", traceable=False, max_evaluations=batch.batch_shape[0])(
+                v=law
+            )
+        return seen
 
-    def test_indexing_a_single_field_batch_sample_gives_its_scalar(self):
-        from probpipe.functions._broadcast import _index_sample
+    def test_a_draw_of_a_batch_law_reaches_the_body_as_one_record(self):
+        seen = self._received(_draws(4))
 
-        assert np.allclose(_index_sample(_one_field(4), 3), 3.0)
+        assert len(seen) == 4
+        assert all(isinstance(row, Record) for row in seen)
+        np.testing.assert_allclose(sorted(float(row["a"]) for row in seen), [0.0, 1.0, 2.0, 3.0])
+        for row in seen:
+            np.testing.assert_allclose(row["b"], [1.0, 1.0])
+
+    def test_a_draw_of_a_single_field_batch_law_reaches_the_body_as_its_scalar(self):
+        seen = self._received(_one_field(4))
+
+        assert all(isinstance(row, Record) for row in seen)
+        assert all(np.allclose(row, float(row["x"])) for row in seen)
+        np.testing.assert_allclose(sorted(float(row["x"]) for row in seen), [0.0, 1.0, 2.0, 3.0])
 
 
 class TestDiagnosticsBridge:
@@ -471,12 +502,13 @@ class TestMultiLevelSweeps:
         np.testing.assert_allclose(np.asarray(out["s"]), np.asarray(expected))
 
 
-class TestAutoDispatchFallsBackForABatchReturningBody:
-    def test_the_default_dispatch_produces_the_sequential_result(self):
-        """The probe traces the vmap the dispatch is choosing, so a body vmap
-        cannot run — one returning a batch, whose added axis no level names —
-        resolves to sequential instead of failing mid-call. Dispatch paths
-        agree on results by contract, so the fallback changes speed alone."""
+class TestTheDefaultExecutorFallsBackForABatchReturningBody:
+    def test_the_default_executor_produces_the_one_at_a_time_result(self):
+        """The probe traces the vmap the executor choice depends on, so a body
+        vmap cannot run — one returning a batch, whose added axis no level
+        names — runs one evaluation point at a time instead of failing
+        mid-call. Executors agree on results by contract, so the fallback
+        changes speed alone."""
         source = NumericRecordBatch(
             {"x": jnp.arange(3.0)},
             "draw",
@@ -500,10 +532,10 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
 
         assert out.level_names == ("draw", "inner")
         assert out.batch_shape == (3, 2)
-        # The fallback and an explicit sequential dispatch agree on values —
-        # the dispatch-equivalence contract — and both match the independently
+        # The fallback and an explicit sequential executor agree on values —
+        # the executor-equivalence contract — and both match the independently
         # computed result, so agreement is not two wrongs agreeing.
-        explicit = Function(body, label="body", dispatch="sequential")(v=source)
+        explicit = Function(body, label="body", traceable=False, executor="sequential")(v=source)
         np.testing.assert_allclose(np.asarray(out["s"]), np.asarray(explicit["s"]))
         np.testing.assert_allclose(np.asarray(out["s"]), [[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]])
 
@@ -680,7 +712,7 @@ class TestZeroWidthEventsUnderExplicitJax:
         out = Function(
             lambda v: jnp.sum(jnp.asarray(v["x"])) + jnp.asarray(v["row"]),
             label="function",
-            dispatch="jax",
+            executor="jax",
         )(v=source)
 
         assert out.batch_shape == (3,)
@@ -746,8 +778,8 @@ class TestATransformCannotRetypeTheElement:
         assert widened._raw_column("x").dtype == jnp.float32
 
 
-class TestZeroRowsAgreeAcrossDispatch:
-    def test_every_dispatch_takes_the_same_empty_aggregation(self):
+class TestZeroRowsAgreeAcrossExecutors:
+    def test_every_executor_takes_the_same_empty_aggregation(self):
         """Zero rows run nothing, so there is no body to trace and no per-row
         output for the paths to disagree over; the output schema must not
         depend on how the rows would have been executed."""
@@ -763,10 +795,10 @@ class TestZeroRowsAgreeAcrossDispatch:
             return jnp.sum(jnp.asarray(v["x"]))
 
         results = {
-            name: Function(body, label="body", dispatch=name, output_spec=NumericArraySpec(()))(
-                v=source
-            )
-            for name in ("auto", "sequential", "jax")
+            name: Function(
+                body, label="body", output_spec=NumericArraySpec(()), **_EXECUTION[name]
+            )(v=source)
+            for name in ("default", "sequential", "thread", "jax")
         }
 
         types = {type(r).__name__ for r in results.values()}
@@ -896,16 +928,18 @@ class TestBatchValuedRowAggregation:
             with pytest.raises(
                 TypeError, match="some rows returned a batch and some did not"
             ) as exc:
-                Function(body, label="body", dispatch="sequential")(x=self._rows(2))
+                Function(body, label="body", traceable=False, executor="sequential")(
+                    x=self._rows(2)
+                )
             messages.append(str(exc.value))
         assert messages[0] == messages[1]
 
     @pytest.mark.parametrize("kind", ["opaque", "function"])
-    @pytest.mark.parametrize("dispatch", ["auto", "sequential"])
-    def test_object_batch_rows_keep_their_declaration(self, kind, dispatch):
+    @pytest.mark.parametrize("execution", ["default", "sequential"])
+    def test_object_batch_rows_keep_their_declaration(self, kind, execution):
         inner = self._inner_objects(kind)
 
-        result = Function(lambda x: inner, label="collect", dispatch=dispatch)(x=self._rows())
+        result = Function(lambda x: inner, label="collect", **_EXECUTION[execution])(x=self._rows())
 
         assert type(result) is type(inner)
         assert result.element_spec.term_spec == inner.element_spec.term_spec
@@ -928,7 +962,9 @@ class TestBatchValuedRowAggregation:
                 return f(3)
 
             expected = [4, 6]
-        downstream = Function(evaluate, label="evaluate", dispatch="sequential")(result)
+        downstream = Function(evaluate, label="evaluate", traceable=False, executor="sequential")(
+            result
+        )
         assert downstream.level_names == result.level_names
         assert downstream.axis_groups == result.axis_groups
         np.testing.assert_array_equal(np.asarray(downstream), np.tile(expected, (3, 1)))
@@ -943,7 +979,7 @@ class TestBatchValuedRowAggregation:
             return first if float(x["x"]) == 0 else second
 
         with pytest.raises(ValueError, match="returned batches that disagree"):
-            Function(body, label="body", dispatch="sequential")(x=self._rows(2))
+            Function(body, label="body", traceable=False, executor="sequential")(x=self._rows(2))
 
     @pytest.mark.parametrize(
         "second",
@@ -957,7 +993,7 @@ class TestBatchValuedRowAggregation:
             return self._inner(2) if float(x["x"]) < 0.5 else second(self)
 
         with pytest.raises(ValueError, match="returned batches that disagree"):
-            Function(body, label="body", dispatch="sequential")(x=self._rows())
+            Function(body, label="body", traceable=False, executor="sequential")(x=self._rows())
 
     def test_rows_disagreeing_on_their_element_spec_are_refused(self):
         def body(x):
@@ -971,12 +1007,12 @@ class TestBatchValuedRowAggregation:
             )
 
         with pytest.raises(ValueError, match="returned batches that disagree"):
-            Function(body, label="body", dispatch="sequential")(x=self._rows())
+            Function(body, label="body", traceable=False, executor="sequential")(x=self._rows())
 
     def test_compatible_batch_rows_stack_with_the_sweep_in_front(self):
-        out = Function(lambda x: self._inner(2), label="function", dispatch="sequential")(
-            x=self._rows()
-        )
+        out = Function(
+            lambda x: self._inner(2), label="function", traceable=False, executor="sequential"
+        )(x=self._rows())
         assert out.batch_shape == (3, 2)
         assert out.level_names == ("row", "inner")
 
@@ -995,9 +1031,9 @@ class TestBatchValuedRowAggregation:
         Read as event shape instead, the rows' axis would say each cell holds
         one 2-vector where it holds two elements on a level.
         """
-        out = Function(lambda x: self._inner_array(2), label="function", dispatch="sequential")(
-            x=self._rows()
-        )
+        out = Function(
+            lambda x: self._inner_array(2), label="function", traceable=False, executor="sequential"
+        )(x=self._rows())
 
         assert isinstance(out, NumericArrayBatch)
         assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "inner"))
@@ -1038,7 +1074,9 @@ class TestBatchValuedRowAggregation:
             label="held",
         )
         source = self._rows()
-        collect = Function(lambda row: inner, label="collect", dispatch="sequential")
+        collect = Function(
+            lambda row: inner, label="collect", traceable=False, executor="sequential"
+        )
         expected = np.tile([1.0, 2.0], (3, 1))
 
         np.testing.assert_array_equal(jax.jit(lambda: collect(source).as_jax())(), expected)
@@ -1056,7 +1094,7 @@ class TestBatchValuedRowAggregation:
             return self._inner_array(2) if float(x["x"]) < 0.5 else self._inner_array(3)
 
         with pytest.raises(ValueError, match="returned batches that disagree"):
-            Function(body, label="body", dispatch="sequential")(x=self._rows())
+            Function(body, label="body", traceable=False, executor="sequential")(x=self._rows())
 
     def test_mixing_array_batch_and_record_batch_rows_is_refused(self):
         """The two kinds hold different things, so there is no one aggregate."""
@@ -1065,7 +1103,7 @@ class TestBatchValuedRowAggregation:
             return self._inner_array(2) if float(x["x"]) < 0.5 else self._inner(2)
 
         with pytest.raises(TypeError, match="returned batches of different kinds"):
-            Function(body, label="body", dispatch="sequential")(x=self._rows())
+            Function(body, label="body", traceable=False, executor="sequential")(x=self._rows())
 
     def test_a_returned_design_aggregates_as_a_plain_batch(self):
         """The aggregate is not itself a design: a subclass with its own
@@ -1073,15 +1111,18 @@ class TestBatchValuedRowAggregation:
         from probpipe.record.design import FullFactorialDesign
 
         out = Function(
-            lambda x: FullFactorialDesign(a=[1.0, 2.0]), label="function", dispatch="sequential"
+            lambda x: FullFactorialDesign(a=[1.0, 2.0]),
+            label="function",
+            traceable=False,
+            executor="sequential",
         )(x=self._rows())
         assert type(out) is NumericRecordBatch
         assert out.batch_shape == (3, 2)
 
 
-class TestDeclaredOpaqueOutputAcrossDispatches:
+class TestDeclaredOpaqueOutputAcrossExecutors:
     """A field the declaration calls opaque holds one value per row, whatever
-    those values look like — on every dispatch.
+    those values look like — on every executor.
 
     Stacking them numerically instead would turn each row's own axes into batch
     axes the levels never named, and the batch refuses its own output. The
@@ -1089,8 +1130,8 @@ class TestDeclaredOpaqueOutputAcrossDispatches:
     equivalence is asserted rather than assumed.
     """
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "jax", "auto"])
-    def test_an_opaque_field_of_arrays_is_one_object_per_row(self, dispatch):
+    @pytest.mark.parametrize("execution", ["sequential", "jax", "default"])
+    def test_an_opaque_field_of_arrays_is_one_object_per_row(self, execution):
         rows = NumericRecordBatch.stack(
             [
                 NumericRecord(
@@ -1105,7 +1146,7 @@ class TestDeclaredOpaqueOutputAcrossDispatches:
             level_name="row",
         )
 
-        @function(output_spec=RecordSpec(y=OpaqueSpec()), dispatch=dispatch)
+        @function(output_spec=RecordSpec(y=OpaqueSpec()), **_EXECUTION[execution])
         def make_vector(row):
             return {"y": jnp.array([row["i"], row["i"] + 1])}
 
@@ -1141,18 +1182,18 @@ class TestEveryBatchIsAnOperand:
     def test_a_numeric_array_batch_reaches_the_body_as_an_element(self):
         seen: list = []
 
-        Function(lambda v: (seen.append(v), 0.0)[1], label="f", dispatch="sequential")(
-            v=self._numeric()
-        )
+        Function(
+            lambda v: (seen.append(v), 0.0)[1], label="f", traceable=False, executor="sequential"
+        )(v=self._numeric())
 
         assert seen
         assert all(isinstance(row, NumericArray) for row in seen)
         assert not any(isinstance(row, NumericArrayBatch) for row in seen)
 
     def test_sweeping_a_numeric_array_batch_keeps_its_level(self):
-        out = Function(lambda v: jnp.asarray(v) * 2.0, label="double", dispatch="sequential")(
-            v=self._numeric()
-        )
+        out = Function(
+            lambda v: jnp.asarray(v) * 2.0, label="double", traceable=False, executor="sequential"
+        )(v=self._numeric())
 
         assert (out.batch_shape, out.level_names) == ((3,), ("row",))
 
@@ -1161,7 +1202,9 @@ class TestEveryBatchIsAnOperand:
         `Opaque` holding the caller's own object."""
         seen: list = []
 
-        Function(lambda v: (seen.append(v), 0.0)[1], label="f", dispatch="sequential")(
+        Function(
+            lambda v: (seen.append(v), 0.0)[1], label="f", traceable=False, executor="sequential"
+        )(
             v=OpaqueBatch(
                 ["a", "b"],
                 "row",
@@ -1173,7 +1216,7 @@ class TestEveryBatchIsAnOperand:
         assert [element.label for element in seen] == ["rows[row=0]", "rows[row=1]"]
 
     def test_a_function_batch_is_swept_too(self):
-        out = Function(lambda f: float(f()), label="call", dispatch="sequential")(
+        out = Function(lambda f: float(f()), label="call", traceable=False, executor="sequential")(
             f=FunctionBatch(
                 [lambda: 1.0, lambda: 2.0],
                 "row",
@@ -1185,7 +1228,7 @@ class TestEveryBatchIsAnOperand:
         np.testing.assert_allclose(out.raw, [1.0, 2.0])
 
 
-class TestSweepingASingleStoreBatchAgreesAcrossDispatch:
+class TestSweepingASingleStoreBatchAgreesAcrossExecutors:
     """A row that returns a single-store batch keeps its levels, as a record row does."""
 
     @staticmethod
@@ -1206,9 +1249,9 @@ class TestSweepingASingleStoreBatchAgreesAcrossDispatch:
             label="i",
         )
 
-    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
-    def test_the_rows_own_level_survives(self, dispatch):
-        out = Function(self._inner, label="f", dispatch=dispatch)(v=self._rows())
+    @pytest.mark.parametrize("execution", ["default", "sequential", "thread", "jax"])
+    def test_the_rows_own_level_survives(self, execution):
+        out = Function(self._inner, label="f", **_EXECUTION[execution])(v=self._rows())
 
         assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "inner"))
         np.testing.assert_allclose(out.raw, np.repeat(np.arange(3.0), 2).reshape(3, 2))
@@ -1222,7 +1265,7 @@ class TestSweepingASingleStoreBatchAgreesAcrossDispatch:
             seen.append(v)
             return jnp.asarray(v) * 2.0
 
-        out = Function(double, label="double", dispatch="jax")(v=self._rows(5))
+        out = Function(double, label="double", executor="jax")(v=self._rows(5))
 
         assert seen and len(seen) < 5
         assert all(isinstance(row, NumericArray) for row in seen)

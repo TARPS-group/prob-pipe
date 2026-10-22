@@ -181,12 +181,15 @@ class TestFieldViews:
         plan = _stochastic_plan({"x": root._marginal("x"), "y": root._marginal("y")})
         assert len(plan.source_groups) == 2
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
-    def test_a_function_of_a_parent_and_its_view_reads_one_parent_draw(self, dispatch):
+    @pytest.mark.parametrize(
+        ("executor", "traceable"), [("jax", None), ("sequential", False)], ids=["jax", "sequential"]
+    )
+    def test_a_function_of_a_parent_and_its_view_reads_one_parent_draw(self, executor, traceable):
         root = _joint()
         workflow = Function(
             lambda joint, x: joint["x"] - x,
-            dispatch=dispatch,
+            executor=executor,
+            traceable=traceable,
             max_evaluations=16,
             label="difference",
             output_spec=OutputSpec(difference=None),
@@ -202,7 +205,7 @@ class TestFieldViews:
         root = _joint()
         workflow = Function(
             lambda a, b: a - b,
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=16,
             label="difference",
             output_spec=OutputSpec(difference=None),
@@ -220,7 +223,7 @@ class TestFieldViews:
 def _difference():
     return Function(
         lambda a, b: a - b,
-        dispatch="sequential",
+        executor="sequential",
         max_evaluations=16,
         label="difference",
         output_spec=OutputSpec(difference=None),
@@ -436,7 +439,7 @@ class TestRenamedLaws:
         root = _posterior()
         workflow = Function(
             lambda a, b: a["mu"] - b.at_path("population")["mu"],
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=8,
             label="difference",
             output_spec=OutputSpec(difference=None),
@@ -469,7 +472,7 @@ class TestRenamedLaws:
         law = make()
         workflow = Function(
             difference,
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=8,
             label="difference",
             output_spec=OutputSpec(difference=None),
@@ -821,8 +824,10 @@ class TestCaptureMemo:
 
 
 class TestLifts:
-    @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
-    def test_a_function_co_samples_a_root_and_its_transforms(self, dispatch):
+    @pytest.mark.parametrize(
+        ("executor", "traceable"), [("jax", None), ("sequential", False)], ids=["jax", "sequential"]
+    )
+    def test_a_function_co_samples_a_root_and_its_transforms(self, executor, traceable):
         calls = []
         root = _RecordingNormal(calls)
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
@@ -831,7 +836,8 @@ class TestLifts:
             lambda base, exp_base, shifted_base: jnp.stack(
                 (exp_base - jnp.exp(base), shifted_base - (base + 2.0))
             ),
-            dispatch=dispatch,
+            executor=executor,
+            traceable=traceable,
             max_evaluations=16,
             label="function",
             output_spec=OutputSpec(function=None),
@@ -850,7 +856,7 @@ class TestLifts:
         descendant = BijectorTransformedDistribution("descendant", root, tfb.Exp())
         workflow = Function(
             lambda value: value,
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=14,
             label="function",
             output_spec=OutputSpec(function=None),
@@ -861,13 +867,14 @@ class TestLifts:
 
         assert [shape for _key, shape in calls] == [(14,)]
 
-    def test_sequential_and_jax_dispatch_agree_on_the_captured_graph(self):
-        def run(dispatch):
+    def test_the_jax_and_one_at_a_time_paths_agree_on_the_captured_graph(self):
+        def run(executor, traceable):
             root = Normal("base", 0.0, 1.0)
             exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
             workflow = Function(
                 lambda base, exp_base: exp_base - jnp.exp(base),
-                dispatch=dispatch,
+                executor=executor,
+                traceable=traceable,
                 max_evaluations=16,
                 label="difference",
                 output_spec=OutputSpec(difference=None),
@@ -875,8 +882,8 @@ class TestLifts:
             with workflow_run(seed=41):
                 return workflow(root, exponentiated)
 
-        for dispatch in ("sequential", "jax"):
-            np.testing.assert_allclose(_raw_variance(run(dispatch)), 0.0, atol=1e-6)
+        for executor, traceable in (("jax", None), ("sequential", False)):
+            np.testing.assert_allclose(_raw_variance(run(executor, traceable)), 0.0, atol=1e-6)
 
     def test_an_exact_empirical_root_and_its_transform_enumerate_without_sampling(self):
         root = EmpiricalDistribution(
@@ -885,7 +892,7 @@ class TestLifts:
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
         workflow = Function(
             lambda base, exp_base: exp_base - jnp.exp(base),
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=16,
             label="function",
             output_spec=OutputSpec(function=None),
@@ -903,7 +910,7 @@ class TestLifts:
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
         workflow = Function(
             lambda exp_base, base: exp_base - jnp.exp(base),
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=16,
             label="function",
             output_spec=OutputSpec(function=None),
@@ -932,7 +939,7 @@ class TestLifts:
             lambda joint, x_value, exp_x: jnp.stack(
                 (joint["x"] - x_value, exp_x - jnp.exp(x_value))
             ),
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=16,
             label="function",
             output_spec=OutputSpec(function=None),
@@ -942,8 +949,10 @@ class TestLifts:
 
         np.testing.assert_allclose(_raw_mean(result), 0.0, atol=1e-5)
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
-    def test_a_nested_sweep_samples_a_shared_root_once_per_cell(self, dispatch):
+    @pytest.mark.parametrize(
+        ("executor", "traceable"), [("jax", None), ("sequential", False)], ids=["jax", "sequential"]
+    )
+    def test_a_nested_sweep_samples_a_shared_root_once_per_cell(self, executor, traceable):
         rows = NumericRecordBatch.stack(
             [
                 NumericRecord(
@@ -959,7 +968,8 @@ class TestLifts:
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
         workflow = Function(
             lambda row, base, exp_base: exp_base - jnp.exp(base),
-            dispatch=dispatch,
+            executor=executor,
+            traceable=traceable,
             max_evaluations=12,
             label="function",
             output_spec=OutputSpec(function=None),
@@ -981,7 +991,7 @@ class TestEmpiricalRootWeights:
         transformed = BijectorTransformedDistribution("b", base, tfb.Exp())
         workflow = Function(
             lambda a, b: b - jnp.exp(a),
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=64,
             label="difference",
             output_spec=OutputSpec(difference=None),
@@ -1002,7 +1012,7 @@ class TestEmpiricalRootWeights:
         workflow = Function(
             lambda base, exp_base: exp_base - jnp.exp(base),
             label="function",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=16,
             include_inputs=True,
             output_spec=OutputSpec(function=None),
@@ -1038,7 +1048,7 @@ class TestEmpiricalRootWeights:
                 (joint["x"] - x_value, exp_x - jnp.exp(x_value))
             ),
             label="function",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=16,
             include_inputs=True,
             output_spec=OutputSpec(function=None),
@@ -1062,7 +1072,7 @@ class TestEmpiricalRootWeights:
         workflow = Function(
             lambda exact, exp_exact, noise: jnp.stack((exp_exact - jnp.exp(exact), noise)),
             label="function",
-            dispatch="sequential",
+            executor="sequential",
             max_evaluations=12,
             include_inputs=True,
             output_spec=OutputSpec(function=None),

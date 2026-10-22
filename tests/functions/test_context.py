@@ -295,7 +295,7 @@ class TestWorkflowAdmission:
 
     def test_thread_evaluation_point_can_enter_the_parent_run(self):
         def run_once():
-            workflow = Function(_nested_draw, label="_nested_draw", dispatch="thread")
+            workflow = Function(_nested_draw, label="_nested_draw", executor="thread")
             with workflow_run(seed=7):
                 return float(workflow(1.0))
 
@@ -388,12 +388,12 @@ class TestWorkflowOccurrences:
 
         assert inner_key(1) == inner_key(2)
 
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread"])
+    @pytest.mark.parametrize("executor", ["sequential", "thread"])
     def test_explicit_nested_seed_inside_an_evaluation_point_replaces_outer_root(
         self,
-        dispatch,
+        executor,
     ):
-        workflow = Function(_nested_seeded_draw, label="_nested_seeded_draw", dispatch=dispatch)
+        workflow = Function(_nested_seeded_draw, label="_nested_seeded_draw", executor=executor)
         occurrence_paths = []
         original_key_for = _context._WorkflowInvocation.key_for
 

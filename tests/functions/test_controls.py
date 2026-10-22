@@ -43,8 +43,8 @@ _FRAMEWORK_CONTROLS = {
     "conversions": {},
     "method_options": {},
     "raw": False,
-    "dispatch": "auto",
-    "max_workers": None,
+    "executor": None,
+    "executor_options": {},
     "workflow_kind": WorkflowKind.DEFAULT,
 }
 
@@ -71,7 +71,7 @@ class TestTwoNamespaces:
             return x
 
         wrapped = Function(
-            body, dispatch="sequential", label="body", output_spec=OutputSpec(body=None)
+            body, executor="sequential", label="body", output_spec=OutputSpec(body=None)
         )
         with workflow_run(seed=0):
             lifted = wrapped(standard_normal(), max_evaluations=3, raw=True)
@@ -139,7 +139,7 @@ class TestResolution:
     def test_the_resolved_max_evaluations_governs_the_lift(self):
         @function(
             max_evaluations=7,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         def identity(x):
@@ -173,7 +173,7 @@ class TestResolution:
         assert wrapped.using(raw=True).options["max_evaluations"] == 7
 
     def test_the_default_read_at_call_time_governs_the_lift(self, monkeypatch):
-        @function(dispatch="sequential", output_spec=OutputSpec(identity=None))
+        @function(executor="sequential", output_spec=OutputSpec(identity=None))
         def identity(x):
             return x
 
@@ -188,7 +188,8 @@ class TestResolution:
         [
             ("max_evaluations", 7),
             ("num_samples", 7),
-            ("dispatch", "sequential"),
+            ("executor", "thread"),
+            ("executor_options", {"max_workers": 2}),
             ("include_inputs", True),
             ("method", "sampling_lift"),
             ("exact_only", True),
@@ -254,7 +255,10 @@ class TestAdmissibility:
             ({"num_samples": -1}, ValueError),
             ({"num_samples": 2.5}, TypeError),
             ({"num_samples": True}, TypeError),
-            ({"dispatch": "gpu"}, ValueError),
+            ({"executor": 3}, TypeError),
+            ({"executor": ""}, TypeError),
+            ({"executor_options": 3}, TypeError),
+            ({"executor_options": {"": 1}}, TypeError),
             ({"include_inputs": "yes"}, TypeError),
             ({"method": 3}, TypeError),
             ({"method": ""}, TypeError),
@@ -335,11 +339,27 @@ class TestAdmissibility:
             mean.using(n_broadcast_samples=5)
 
     def test_an_unknown_control_lists_the_controls(self):
-        with pytest.raises(TypeError, match=r"available Function options: \[.*'dispatch'"):
+        with pytest.raises(TypeError, match=r"available Function options: \[.*'executor'"):
             Function(
                 _identity,
                 label="identity",
             ).using(budget=3)
+
+    @pytest.mark.parametrize("name", ["dispatch", "max_workers"])
+    @pytest.mark.parametrize(
+        "make",
+        [
+            lambda name: Function(_identity, label="identity").using(**{name: 2}),
+            lambda name: Function(_identity, label="identity", **{name: 2}),
+        ],
+        ids=["using", "constructor"],
+    )
+    def test_the_removed_execution_controls_are_unknown_controls(self, make, name):
+        """``executor`` and ``executor_options`` replace them, with no alias."""
+        with pytest.raises(TypeError, match=f"unknown Function option '{name}'") as raised:
+            make(name)
+        assert "'executor'" in str(raised.value)
+        assert "'executor_options'" in str(raised.value)
 
     def test_a_differentiability_claim_is_refused_naming_the_keyword(self):
         with pytest.raises(
@@ -370,15 +390,6 @@ class TestAdmissibility:
 
         with pytest.raises(TypeError, match=message):
             wrapped(standard_normal())
-
-    def test_an_inadmissible_worker_count_shows_the_value(self):
-        with pytest.raises(
-            ValueError, match="max_workers must be a positive integer or None; got 0"
-        ):
-            Function(
-                _identity,
-                label="identity",
-            ).using(max_workers=0)
 
     def test_an_argument_binds_at_construction_through_bind(self):
         wrapped = Function(
@@ -455,7 +466,7 @@ class TestControlsThatSelectTheRoute:
     def test_method_names_the_route_of_a_lifted_call(self):
         @function(
             max_evaluations=8,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         def identity(x):
@@ -477,7 +488,7 @@ class TestControlsThatSelectTheRoute:
     def test_conversions_configure_the_conversion_of_their_parameter(self):
         @function(
             max_evaluations=8,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(identity=None),
         )
         def identity(x):
@@ -494,7 +505,7 @@ class TestTheCountOfALift:
 
     @pytest.mark.parametrize("num_samples", [1, 5000])
     def test_a_sampled_lift_follows_max_evaluations_and_ignores_num_samples(self, num_samples):
-        identity = Function(_identity, label="identity", dispatch="sequential")
+        identity = Function(_identity, label="identity", executor="sequential")
         with workflow_run(seed=0):
             law = identity.using(max_evaluations=9, num_samples=num_samples)(standard_normal())
         assert law.num_atoms == 9
@@ -511,7 +522,7 @@ class TestTheCountOfALift:
     )
     def test_enumeration_fits_under_max_evaluations(self, max_evaluations, route, atoms):
         law = EmpiricalDistribution(jnp.arange(6.0), output_name="x")
-        identity = Function(_identity, label="identity", dispatch="sequential")
+        identity = Function(_identity, label="identity", executor="sequential")
         with workflow_run(seed=0):
             pushed = identity.using(max_evaluations=max_evaluations, num_samples=1)(law)
         assert pushed.provenance.metadata["route"] == route
@@ -525,7 +536,7 @@ class TestTheCountOfALift:
             calls.append(None)
             return a + b
 
-        added = Function(add, label="add", dispatch="sequential")
+        added = Function(add, label="add", traceable=False, executor="sequential")
         a = EmpiricalDistribution(jnp.arange(4.0), output_name="a")
         with workflow_run(seed=0):
             law = added.using(max_evaluations=10, num_samples=3)(a, standard_normal("b"))
@@ -539,7 +550,7 @@ class TestTheCountOfALift:
             calls.append(None)
             return a + b + c
 
-        lifted = Function(total, label="total", dispatch="sequential")
+        lifted = Function(total, label="total", traceable=False, executor="sequential")
         a = EmpiricalDistribution(jnp.arange(3.0), output_name="a")
         b = EmpiricalDistribution(jnp.arange(2.0), output_name="b")
         with workflow_run(seed=0):

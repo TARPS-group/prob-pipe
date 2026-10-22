@@ -298,7 +298,7 @@ class TestReplay:
             replayable_difference,
             label="replayable_difference",
             max_evaluations=8,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(replayable_difference=None),
         )
 

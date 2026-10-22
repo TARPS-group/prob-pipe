@@ -143,6 +143,14 @@ class _SuiteMethod(InferenceMethod):
         return _SuitePosterior(target.event_spec, self._loc)
 
 
+class _PythonSuiteMethod(_SuiteMethod):
+    """A suite method that reads its target's given as NumPy arrays, so JAX cannot trace it."""
+
+    def execute(self, target: Any, /, **options: Any) -> Any:
+        jax.tree.map(np.asarray, target.given)
+        return super().execute(target, **options)
+
+
 def _normalize_with(monkeypatch: pytest.MonkeyPatch, *methods: InferenceMethod) -> None:
     """Make every route that normalizes delegate to a registry of *methods*, for one test.
 
@@ -1116,13 +1124,17 @@ class TestABatchOfGivens:
         assert laws.level_names == ("dataset",)
         assert [law.loc for law in laws] == [1.0, 2.0, 3.0]
 
-    def test_each_given_is_conditioned_as_one_given_alone_is(self, approximate_method):
-        # Sequential dispatch, so the method records each target at concrete values.
+    def test_each_given_is_conditioned_as_one_given_alone_is(self, monkeypatch):
+        # JAX cannot trace the method, so the sweep runs it at each given's concrete values.
+        method = _PythonSuiteMethod(
+            "operations_suite_python", False, (Distribution, _UnnormalizedKernel), 4.0
+        )
+        _normalize_with(monkeypatch, method)
         joint = Kernel("y", ("mu",)) * Gaussian("mu")
-        posteriors = condition_on.using(dispatch="sequential")(joint, _givens("y", [0.0, 1.0]))
+        posteriors = condition_on.using(executor="sequential")(joint, _givens("y", [0.0, 1.0]))
         assert isinstance(posteriors, DistributionBatch)
         assert posteriors.batch_shape == (2,)
-        assert [float(target.given["y"]) for target in approximate_method.targets] == [0.0, 1.0]
+        assert [float(target.given["y"]) for target in method.targets] == [0.0, 1.0]
         assert all(tuple(law.event_spec.outputs) == ("mu",) for law in posteriors)
 
     def test_the_batch_is_labeled_by_the_kernel_and_each_law_by_its_position(self):

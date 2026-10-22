@@ -1330,7 +1330,7 @@ class TestEndToEndValuesPipeline:
 
         @function(
             max_evaluations=100,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(predict=None),
         )
         def predict(params, x):
@@ -1356,7 +1356,7 @@ class TestEndToEndValuesPipeline:
 
         @function(
             max_evaluations=50,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(identity_pair=None),
         )
         def identity_pair(a, b):
@@ -1397,7 +1397,7 @@ class TestEndToEndValuesPipeline:
 
         @function(
             max_evaluations=posterior.num_atoms,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(noisy_predict=None),
         )
         def noisy_predict(params, noise):

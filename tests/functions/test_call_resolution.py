@@ -237,7 +237,7 @@ class TestArgumentBinding:
         def unannotated(f, x):
             return f(x)
 
-        f = Function(increment, dispatch="sequential") if wrapped else increment
+        f = Function(increment, executor="sequential") if wrapped else increment
         for body in (apply, unannotated):
             bound = Function(body, bind={"f": f, "x": 3.0})
             assert bound.check().feasible is True
@@ -246,37 +246,37 @@ class TestArgumentBinding:
             assert float(bound(f=Function(lambda x: 2.0 * x))) == 6.0
 
     def test_positional_and_mixed_arguments_bind_like_python_calls(self, add_func):
-        wf = Function(add_func, label="add_func", dispatch="sequential")
+        wf = Function(add_func, label="add_func", executor="sequential")
 
         assert float(wf(jnp.asarray(1.0), jnp.asarray(2.0))) == 3.0
         assert float(wf(jnp.asarray(1.0), y=jnp.asarray(2.0))) == 3.0
 
     def test_duplicate_positional_and_keyword_argument_raises(self, add_func):
-        wf = Function(add_func, label="add_func", dispatch="sequential")
+        wf = Function(add_func, label="add_func", executor="sequential")
 
         with pytest.raises(TypeError, match="multiple values"):
             wf(jnp.asarray(1.0), x=jnp.asarray(2.0))
 
     def test_var_keyword_expands_extra_keywords(self, kwargs_recorder):
         identity, seen = kwargs_recorder
-        wf = Function(identity, label="identity", dispatch="sequential")
+        wf = Function(identity, label="identity", executor="sequential")
 
         assert float(wf(x=1.0, scale=2.0)) == 1.0
         assert seen == [{"scale": 2.0}]
 
     def test_literal_kwargs_argument_is_not_unpacked(self, kwargs_recorder):
         identity, seen = kwargs_recorder
-        wf = Function(identity, label="identity", dispatch="sequential")
+        wf = Function(identity, label="identity", executor="sequential")
 
         assert float(wf(x=1.0, kwargs={"scale": 2.0})) == 1.0
         assert seen == [{"kwargs": {"scale": 2.0}}]
 
     def test_bind_values_and_function_defaults_are_resolved_before_call(self, affine_func):
-        default_wf = Function(affine_func, label="affine_func", dispatch="sequential")
+        default_wf = Function(affine_func, label="affine_func", executor="sequential")
         bound_wf = Function(
             affine_func,
             label="affine_func",
-            dispatch="sequential",
+            executor="sequential",
             bind={"offset": 3.0, "scale": 2.0},
         )
 
@@ -285,7 +285,7 @@ class TestArgumentBinding:
         assert float(bound_wf(x=1.0, offset=4.0)) == 10.0
 
     def test_missing_required_input_raises_after_all_resolution_sources_fail(self, add_func):
-        wf = Function(add_func, label="add_func", dispatch="sequential")
+        wf = Function(add_func, label="add_func", executor="sequential")
 
         with pytest.raises(TypeError, match=r"add_func\(\) missing required argument 'y'"):
             wf(x=1.0)
@@ -301,7 +301,7 @@ class TestCallOptions:
             identity_func,
             label="identity_func",
             max_evaluations=20,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(identity_func=None),
         )
 
@@ -324,7 +324,7 @@ class TestCallOptions:
             identity_func,
             label="identity_func",
             max_evaluations=8,
-            dispatch="sequential",
+            executor="sequential",
             output_spec=OutputSpec(identity_func=None),
         )
 
