@@ -1902,7 +1902,7 @@ P["g"]                           # OutputSpec(RecordSpec(b=..., c=...)): outputs
 P[["g"]]                         # OutputSpec(RecordSpec(g=RecordSpec(b=..., c=...)))
 P.without("g/c")                 # OutputSpec(RecordSpec(a=..., g=RecordSpec(b=...)))
 OutputSpec(x=()) & P             # OutputSpec(RecordSpec(x=..., a=..., g=...))
-OutputSpec(x=())["x"]            # KeyError: x names the value at the root
+OutputSpec(x=())["x"]            # TypeError: x names the value at the root, which has no paths
 OutputSpec(x=())[["x"]]          # OutputSpec(RecordSpec(x=...))
 OutputSpec(params=RecordSpec(mu=()))   # TypeError: cannot use the keyword params for a RecordSpec: ...
 OutputSpec(mean=None).with_term_spec(NumericArraySpec(()))   # OutputSpec(mean=...)
@@ -1929,9 +1929,12 @@ Every argument that takes one path, such as `without(*paths)` or `Record.at_path
 | `x["a", 0]` | `TypeError` | "cannot mix a path and a position in one [], got ('a', 0). Index the position and the path separately, as b[0]['a']" |
 | `b[[0, 2]]`, `b[np.array([0, 2])]` | `TypeError` | "cannot index a batch by a list of positions, got [0, 2]. Index one position or a slice" |
 | `x[{"a"}]`, `x[iter(["a"])]` | `TypeError` | a set has no order, an iterator is read once |
-| `x["z"]` | `KeyError` | "unknown path 'z' in 'x'; available paths: [...]" |
+| `x["z"]`, for `x` with paths | `KeyError` | "unknown path 'z' in 'x'; available paths: [...]" |
+| `x["z"]`, for `x` with no paths | `TypeError` | "cannot index 'x' by 'z', since its draws are single values with no paths" |
 
 When a missing path comes from a tuple whose `/`-joined form is a path, the message adds "To select the nested path, write 'g/b'".
+
+A term whose value type has no paths, such as a law over an array, a batch of arrays, or an output spec over a base value, has none to look up, so a path given to it raises `TypeError`, as a list given a string key does, while a term with paths that lacks the one given raises `KeyError` (decided 2026-10-21). Whether a term has paths is read at its root, so a record that lacks `a/b` raises `KeyError`, whatever its field `a` holds.
 
 ### 12.2 `[]` and `in` on each class
 
@@ -2601,7 +2604,7 @@ d.without("g/c")                 # the same law as d["a", "g/b"]
 
 x = Normal("x", 0.0, 1.0)
 x.output("x")                    # x itself: its output x is at the root
-x["x"]                           # KeyError: x names the output at the root, not a path
+x["x"]                           # TypeError: x has no paths. Use x.output('x') for the law itself
 x[["x"]]                         # the law over {x}
 ```
 
@@ -3087,9 +3090,8 @@ x = sample(Normal("x", 0.0, 1.0), sample_shape=4)
 x.element_spec                   # OutputSpec(x=NumericArraySpec(...))
 x.element_spec.term_spec         # NumericArraySpec(...)
 x.output("x")                    # x itself
-x["x"]                           # KeyError: 'x' is the name of this batch's elements, not a path
-                                 # inside them. Use x.output('x') for the batch, or x.raw for
-                                 # its array
+x["x"]                           # TypeError: its elements are single values with no paths.
+                                 # Use x.output('x') for the batch, or x.raw for its values
 x[["x"]]                         # a batch of records {x}
 x.rename(x="y").element_spec     # OutputSpec(y=...)
 NumericArrayBatch(jnp.arange(4.0), "sample", label="b").element_spec   # OutputSpec(element=...)
@@ -3110,8 +3112,8 @@ Every message follows `STYLE_GUIDE.md` §9.3 and names the fix.
 | Operation | Error | Section |
 | --- | --- | --- |
 | a malformed path or position | `ValueError` or `TypeError`, by the reader's table | § 12.1 |
-| a path that does not exist | `KeyError` listing the paths | § 12.1 |
-| the name of the output at the root given to `[]` | `KeyError` pointing to `output` | §§ 11, 15, 18 |
+| a path that does not exist, in a term with paths | `KeyError` listing the paths | § 12.1 |
+| a path given to a term with no paths, the name of its output at the root included | `TypeError`, pointing to `output` for that name | §§ 11, 12.1, 15, 18 |
 | an `InputSpec` source of another class, or an `OutputSpec` whose type is unspecified | `TypeError` | § 10 |
 | an input name that is not an identifier | `ValueError` | § 10 |
 | a declared input the function does not take, or a group's parts where it takes the group | `TypeError` naming the fix | § 10.3 |
@@ -3462,7 +3464,7 @@ m["G"]["mu"]         # KeyError: paths do not chain at the name (T16)
 
 | # | Until S4b | Applies to | From | Why |
 | --- | --- | --- | --- | --- |
-| T4 | A batch stores only its element's type, so no base element's name: for samples from `Normal("mu", 0.0, 1.0)`, `samples[["mu"]]` raises `KeyError`, and the name cannot be renamed. A batch of records has its marginal batches as outputs, typed by the element's fields, not by the marginal batches' `BatchSpec`s, and `_output_record` refuses an output spec over a batch type | every batch; `OutputSpec(bt.spec)`; `_output_record` | — | today's `BatchSpec` (fact 11) |
+| T4 | A batch stores only its element's type, so no base element's name: for samples from `Normal("mu", 0.0, 1.0)`, `samples[["mu"]]` raises `TypeError`, and the name cannot be renamed. A batch of records has its marginal batches as outputs, typed by the element's fields, not by the marginal batches' `BatchSpec`s, and `_output_record` refuses an output spec over a batch type | every batch; `OutputSpec(bt.spec)`; `_output_record` | — | today's `BatchSpec` (fact 11) |
 
 #### Rules that end at G1a
 
@@ -3500,7 +3502,7 @@ For a law `d` over `{a, g: {b, c}}` whose group `g` is one factor:
 | --- | --- | --- | --- | --- |
 | T18 | `[]` reads the name of the output at the root in the keyword form over a base type: `Normal("x", 0.0, 1.0)["x"]` is the law and `OutputSpec(x=NumericArraySpec(()))["x"]` the spec itself, so `t[...]`, `marginal(d, ...)`, and `O[...]` accept the name; `"x" in Normal("x", 0.0, 1.0)` is true; no accessor exists | laws; output specs | S1 for `in` on laws; S2b-out for `O[n]` | `O[n]` mirrors `Distribution.__getitem__` (`distributions/_distribution.py:1015`), so I6 holds for laws at every step; G3 removes both readings with the accessor that replaces them, and moves library code to it, so it is not bridging code |
 | T19 | A coupled marginal at or below a field that holds a law, kernel, function, or batch keeps today's interim whole form named by the field: `d[p].event_spec == OutputSpec(**{last: d.event_spec[p].term_spec})`, `last` being `p`'s last name, so I2, I5, I6, and I9 have an exception there. S2b-out's switch to `O[s]` leaves out one path to such a field, and G1a's rule applies to groups only | views of laws at held fields; `_view_declaration` | — | G2's refusal would refuse these views, so G2 follows G3 (O16). The source text names two ending steps; A.2 records the reading |
-| T20 | `samples["mu"]` raises `KeyError` while `samples.spec.element_spec["mu"]` is that output spec, by T18, so I6 fails for a batch's output at the root | batches of base values | S4b | the output spec's reading mirrors laws (T18), and a batch's `[]` refuses the name today |
+| T20 | `samples["mu"]` raises `TypeError` while `samples.spec.element_spec["mu"]` is that output spec, by T18, so I6 fails for a batch's output at the root | batches of base values | S4b | the output spec's reading mirrors laws (T18), and a batch's `[]` refuses the name today |
 | T21 | Paths stop at a held field: for `r = Record({"n": 3.0, "G": p})`, `r["G/mu"]` raises `KeyError` and `"G/mu" in r` is false; a function has no `[]`, so `f["mean"]` raises `TypeError` | objects with held fields; functions | — | G3 delivers paths through every kind and `Function[]` |
 
 #### Rules that end at G4
@@ -3639,7 +3641,7 @@ V.6 and III.3 state the reading of a bare `output_spec`. `STYLE_GUIDE.md` does n
 - `h["g1/theta", "g2/theta"]` and `marginal(d, paths=["a", "g/b"])` give the laws of § 4.2;
 - `samples[3]["g"] == samples["g"][3]` for `samples = sample(d, sample_shape=4)`, and `mean(d)["g"]` is the record of means;
 - `"g" in sample(d)`, `"a" in d`, and `"a" in sample(d, sample_shape=4)` are true, and `1.0 in sample(Normal("x", 0.0, 1.0), sample_shape=3)` is false;
-- `sample(Normal("mu", 0.0, 1.0), sample_shape=4)["mu"]` raises `KeyError` with § 18's message;
+- `sample(Normal("mu", 0.0, 1.0), sample_shape=4)["mu"]` raises `TypeError` with § 18's message, and so does a path given to any other term with no paths (§ 12.1);
 - `sample(d).select("a", "g/b")` is `{"a": ..., "b": ...}`, and `sample(h).select("g1/theta", "g2/theta")` raises `ValueError`;
 - `Normal("x", 0.0, 1.0)[["x"]]` keeps today's result;
 - only `named_tree.py` defines `_PATH_SEP`, and each literal `"/"` that splits or joins a path uses it and the reader; any other, such as a DataTree group path, is named in the PR as unrelated;
@@ -3691,7 +3693,7 @@ Typing a batch's outputs by their marginal batches waits for S4b, the `condition
 - `OutputSpec(law_spec).outputs == {}`, and a function whose output spec wraps a law under `params` has `output_spec["params"] == OutputSpec(law_spec)`;
 - a law `ll` whose event is positional over a law builds, with `ll.event_spec.outputs == {}`; `ll * Normal("z", 0.0, 1.0)` raises `TypeError` whose message says to wrap the laws it is over under a name; `ll` with them wrapped merges;
 - `Normal("z", 0.0, 1.0) * gp` still merges, as T15 states;
-- `_single_output_name` is gone, its callers read `_root_output_name`, and for `ll` over a law over an array named `x`, `ll["x"]` raises `KeyError` with § 12.1's message, since `x` names the inner law's output at the root and is not a path of `ll` (§ 2.3, § 4.2);
+- `_single_output_name` is gone, its callers read `_root_output_name`, and for `ll` over a law over an array named `x`, `ll["x"]` raises `TypeError` with § 12.1's message, since `x` names the inner law's output at the root and `ll` has no paths (§ 2.3, § 4.2);
 - `_output_record(OutputSpec(law_spec))` still raises `TypeError` saying to wrap, and no caller reads the record of the outputs as `RecordSpec(O.outputs)`, which would be the empty record once a law type has no outputs (§ 3.2, Definition (record of the outputs));
 - `Record({"g": {"b": 1.0}}).merge(Record({"g": {"c": 2.0}}))` raises `ValueError`, as do `RecordSpec.merge` and `RecordBatch.merge` on a shared top-level name;
 - tests cover each error of selection, removal, and merge on output specs (§ 19), and check I6 and I16 for outputs;
@@ -3854,7 +3856,7 @@ A grouped sub-joint's outputs, `{g}`, differ from its factors', `{b, c}`, so it 
 - the property tests of I1, I5, I12, and I13 pass; I12's test checks `output_spec(t).outputs[name]` against `t.output(name).spec` for a record or batch, including `r`, whose `outputs["G"]` is `p.spec`, against `t.output(name).event_spec.term_spec` for a law, and `t.output(name).output_spec.term_spec` for a function;
 - for a law `L` declared `OutputSpec(RecordSpec(G=law_spec))`, built in the test from a sampler so as not to depend on G2, `L["G"].event_spec == OutputSpec(law_spec)`, `sample(L["G"])` is a law, and `L["G"]["mu"] == L["G/mu"]`;
 - `r["G/mu"]` is the coupled marginal `p["mu"]`, `r["n", "G/mu"]` is the record `{n, G}` whose `G` is `p[["mu"]]`, and `"G/mu" in r`;
-- `Normal("x", 0.0, 1.0)["x"]` raises `KeyError`, `Normal("x", 0.0, 1.0).output("x")` is the law, and `samples.output("mu") is samples` for samples from `Normal("mu", 0.0, 1.0)`;
+- `Normal("x", 0.0, 1.0)["x"]` raises `TypeError`, `Normal("x", 0.0, 1.0).output("x")` is the law, and `samples.output("mu") is samples` for samples from `Normal("mu", 0.0, 1.0)`;
 - rule 3 of the interim whole form still holds for a law declared `OutputSpec(G=law_spec)` (T16);
 - no `_view_declaration` remains, and the probe passes with G3's rows gone.
 
