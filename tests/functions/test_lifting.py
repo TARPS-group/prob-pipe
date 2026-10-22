@@ -38,6 +38,7 @@ from probpipe import (
     NumericArrayBatch,
     NumericArraySpec,
     NumericRecord,
+    NumericRecordBatch,
     NumericRecordSpec,
     OutputSpec,
     Record,
@@ -954,21 +955,64 @@ class TestSingletonAlignment:
             )
 
 
-class TestALiftedRecordDrawKeepsTheEventsOrder:
-    """JAX maps a dict with its keys sorted, so each lifted record draw is laid out in the event's order again."""
+class TestALiftedRecordKeepsItsDeclaredOrder:
+    """JAX maps a dict with its keys sorted, so a lift lays a record out in its declared order."""
 
-    def test_a_function_declaring_the_record_lifts_over_a_merge_out_of_alphabetical_order(self):
-        record_spec = NumericRecordSpec(
-            r=NumericArraySpec((), "float32"), m=NumericArraySpec((), "float32")
-        )
+    _RECORD = NumericRecordSpec(
+        r=NumericArraySpec((), "float32"), m=NumericArraySpec((), "float32")
+    )
 
-        @function(input_spec=InputSpec(x=record_spec))
-        def difference(x):
-            return x["r"] - x["m"]
-
+    @_over_executors("jax", "sequential", "thread", "default")
+    def test_a_draw_of_a_merge_arrives_in_the_events_order(self, controls):
         prior = Gamma("r", 3.0, 1.0) & Normal("m", 0.0, 1.0)
+        declared = Function(
+            lambda x: x["r"] - x["m"],
+            label="difference",
+            input_spec=InputSpec(x=self._RECORD),
+            **controls,
+        )
+        undeclared = Function(lambda x: x["r"] - x["m"], label="difference", **controls)
         with workflow_run(seed=0):
-            lifted_mean = mean(difference(prior))
-        # E[r - m] = 3 for r ~ Gamma(3, 1) and m ~ Normal(0, 1). The difference has
-        # standard deviation 2, so the mean of 256 draws is within 0.5 at 4 standard errors.
-        np.testing.assert_allclose(np.asarray(lifted_mean), 3.0, atol=0.5)
+            declared_mean = np.asarray(mean(declared(prior)))
+        with workflow_run(seed=0):
+            undeclared_mean = np.asarray(mean(undeclared(prior)))
+        np.testing.assert_allclose(declared_mean, undeclared_mean, atol=0, rtol=0)
+
+    @_over_executors("jax", "sequential", "thread", "default")
+    def test_a_nested_record_draw_keeps_its_order_at_each_level(self, controls):
+        inner = NumericRecordSpec(z=NumericArraySpec(()), y=NumericArraySpec(()))
+        combine = Function(
+            lambda x: x["b"] + 10 * x["a"]["z"] - 100 * x["a"]["y"],
+            label="combine",
+            input_spec=InputSpec(x=NumericRecordSpec(b=NumericArraySpec(()), a=inner)),
+            **controls,
+        )
+        draws = NumericRecordBatch(
+            {"b": jnp.arange(3.0), "a": {"z": jnp.ones(3), "y": 2 * jnp.ones(3)}},
+            level_names=("draw",),
+        )
+        with workflow_run(seed=0):
+            lifted_mean = mean(combine(EmpiricalDistribution(draws, label="x")))
+        np.testing.assert_allclose(np.asarray(lifted_mean), -189.0, atol=0, rtol=0)
+
+    @_over_executors("jax", "sequential", "thread", "default")
+    def test_a_returned_dict_keeps_the_functions_order(self, controls):
+        prior = Gamma("r", 3.0, 1.0) & Normal("m", 0.0, 1.0)
+        rename = Function(lambda x: {"s": x["r"], "a": x["m"]}, label="renamed", **controls)
+        difference = Function(
+            lambda y: y["s"] - y["a"],
+            label="difference",
+            input_spec=InputSpec(
+                y=NumericRecordSpec(s=NumericArraySpec(()), a=NumericArraySpec(()))
+            ),
+            **controls,
+        )
+        with workflow_run(seed=0):
+            renamed = rename(prior)
+            assert list(renamed.event_spec.term_spec.children) == ["s", "a"]
+            chained_mean = np.asarray(mean(difference(renamed)))
+        with workflow_run(seed=0):
+            direct = Function(lambda x: x["r"] - x["m"], label="difference", **controls)
+            direct_mean = np.asarray(mean(direct(prior)))
+        # Both means average the same draws, up to float32 rounding.
+        np.testing.assert_allclose(chained_mean, direct_mean, atol=0, rtol=1e-6)

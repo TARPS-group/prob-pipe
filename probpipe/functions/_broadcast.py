@@ -972,6 +972,10 @@ def mapped_draw_body(
             for ref, row in zip(broadcast_args, lifted_rows, strict=True)
         }
         draw_output = func(**replace_input_refs(values, replacements))
+        if isinstance(draw_output, Mapping):
+            # JAX maps and stacks a dict with its keys sorted, so a returned
+            # mapping becomes a record first, which keeps the function's order.
+            draw_output = Record(dict(draw_output))
         if not _holds_tracer(lifted_rows):
             # One draw evaluated alone returns its result as it is, which the
             # aggregate stacks with the other draws' results.
