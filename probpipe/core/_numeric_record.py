@@ -87,7 +87,7 @@ class NumericRecord(Record, Numeric):
     returns a record with bare ``jax.Array`` leaves (unflatten
     cannot rebuild native containers); structural transforms
     (:meth:`~Record.without` / :meth:`~Record.merge` / :meth:`~Record.replace`
-    / :meth:`~Record.with_path_names`) and pickling reuse the native leaves
+    / :meth:`~Record.rename`) and pickling reuse the native leaves
     verbatim, so native types survive them.
 
     **Aliasing and mutation.** Native leaves are stored **by reference**, exactly as a

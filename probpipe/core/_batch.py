@@ -714,7 +714,7 @@ class Batch[E](TrackedTerm, ABC):
 
         Notes
         -----
-        The level counterpart of ``with_path_names``, which renames the *fields
+        The level counterpart of ``rename``, which renames the *fields
         within* an element. The two namespaces are independent: renaming a level
         never touches a field name, or the reverse.
         """

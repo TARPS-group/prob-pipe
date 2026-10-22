@@ -13,7 +13,7 @@ from ._laws import Gaussian, Kernel
 
 def test_mixture_is_derived_from_its_formula():
     assert mixture.is_derived
-    assert mixture.formula == "pushforward(K * mixing, _kernel_output_projection(K))"
+    assert mixture.formula == "pushforward(K & mixing, _kernel_output_projection(K))"
 
 
 def test_the_result_carries_the_kernel_event_spec():

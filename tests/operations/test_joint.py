@@ -1,4 +1,4 @@
-"""Contract tests of joint: composition after realigning the right factor's field names."""
+"""Contract tests of joint: merge after realigning the right factor's field names."""
 
 from __future__ import annotations
 
@@ -16,13 +16,13 @@ from ._laws import Gaussian, Kernel
 
 
 class TestJoint:
-    def test_without_renames_joint_is_composition(self):
+    def test_without_renames_joint_is_merge(self):
         likelihood, prior = Kernel("y", ("slope",)), Gaussian("slope")
         result = joint(likelihood, prior)
         assert isinstance(result, FactoredDistribution)
-        assert result.event_spec == (likelihood * prior).event_spec
+        assert result.event_spec == (likelihood & prior).event_spec
 
-    def test_the_composed_law_carries_the_declaration_composition_derives(self):
+    def test_the_merged_law_carries_the_declaration_merge_derives(self):
         likelihood, prior = Kernel("y", ("slope",)), Gaussian("slope")
         assert joint.check(likelihood, prior).result is None
 
@@ -33,9 +33,9 @@ class TestJoint:
         assert isinstance(realigned, FactoredDistribution)
         assert set(realigned.event_spec.outputs) == {"y", "slope"}
 
-    def test_the_joint_is_labeled_as_composition_labels_it(self):
+    def test_the_joint_is_labeled_as_merge_labels_it(self):
         likelihood, prior = Kernel("y", ("slope",)), Gaussian("beta")
-        assert joint(likelihood, prior, beta="slope").label == (likelihood * prior).label
+        assert joint(likelihood, prior, beta="slope").label == (likelihood & prior).label
 
     def test_the_joint_is_unlabeled_so_it_reads_factor_by_factor(self):
         likelihood, prior = Kernel("y", ("slope",)), Gaussian("beta")
@@ -43,11 +43,11 @@ class TestJoint:
         assert _is_named(result) is False
         assert str(result) == result.notation == "y(y | slope)·beta(slope)"
 
-    def test_joint_equals_composition_with_the_renamed_right_factor(self):
+    def test_joint_equals_merge_with_the_renamed_right_factor(self):
         likelihood, prior = Kernel("y", ("slope",)), Gaussian("beta")
         assert (
             joint(likelihood, prior, beta="slope").event_spec
-            == (likelihood * prior.with_path_names(beta="slope")).event_spec
+            == (likelihood & prior.rename(beta="slope")).event_spec
         )
 
     def test_a_factor_that_is_not_a_distribution_raises_applicability_error(self):
@@ -65,7 +65,7 @@ class TestJoint:
 
     def test_the_route_is_structural_and_exact(self):
         (route,) = joint.summary().routes
-        assert (route.name, route.source, route.exact) == ("compose", RouteSource.STRUCTURAL, True)
+        assert (route.name, route.source, route.exact) == ("merge", RouteSource.STRUCTURAL, True)
 
     def test_a_kernel_on_the_right_is_realigned_too(self):
         upstream = Kernel("mu", ("alpha",))

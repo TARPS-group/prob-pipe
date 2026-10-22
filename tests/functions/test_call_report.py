@@ -45,14 +45,16 @@ class TestTheRepr:
         assert "deferred=" not in text and "lifted=" not in text
 
     def test_no_line_passes_the_width_but_a_long_reason(self):
-        lines = repr(condition_on.check(Normal("a", 0.0, 1.0) * Normal("y", 0.0, 1.0), {"y": 1.0}))
+        lines = repr(
+            condition_on.check((Normal("a", 0.0, 1.0) & Normal("y", 0.0, 1.0)), {"y": 1.0})
+        )
 
         assert all(len(line) <= WIDTH or "description=" in line for line in lines.splitlines())
 
 
 class TestTheRegistryMethods:
     def test_routes_that_share_a_registry_list_its_methods_once(self):
-        report = condition_on.check(Normal("a", 0.0, 1.0) * Normal("y", 0.0, 1.0), {"y": 1.0})
+        report = condition_on.check((Normal("a", 0.0, 1.0) & Normal("y", 0.0, 1.0)), {"y": 1.0})
 
         (routes,) = report.methods
         assert routes == "bind_inputs, slice, inference_methods"

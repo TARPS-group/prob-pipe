@@ -82,7 +82,7 @@ class TestBatches:
         assert draws.level_names == ("sample",)
 
     def test_a_joint_draws_a_batch_of_records_under_its_declaration(self):
-        joint = Gaussian("a") * Gaussian("b", 5.0)
+        joint = Gaussian("a") & Gaussian("b", 5.0)
         draws = sample(joint, sample_shape=(4,))
         assert isinstance(draws, NumericRecordBatch)
         assert (draws.batch_shape, draws.level_names) == ((4,), ("sample",))
@@ -131,7 +131,7 @@ class TestRawDraws:
         assert isinstance(draws, np.ndarray) and draws.dtype == object
 
     def test_a_raw_batch_of_a_joint_is_the_mapping_of_its_columns(self):
-        draws = sample.using(raw=True)(Gaussian("a") * Gaussian("b"), sample_shape=(3,))
+        draws = sample.using(raw=True)((Gaussian("a") & Gaussian("b")), sample_shape=(3,))
         assert isinstance(draws, dict) and list(draws) == ["a", "b"]
         assert all(jnp.shape(column) == (3,) for column in draws.values())
 

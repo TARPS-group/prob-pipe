@@ -70,7 +70,7 @@ from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _labeled_product
-from ..distributions._views import FieldView
+from ..distributions._views import CoupledMarginal
 from ..values._function_base import (
     _WARNING_SKIP_PREFIXES,
     Function,
@@ -495,8 +495,8 @@ def _drawn_together_from(laws: list[Any], plan: _plan.StochasticPlan, index: int
     ``model["a"]`` and ``model["b"]``, and the root of the plan's source group
     *index* otherwise.
     """
-    parents = {id(law.parent): law.parent for law in laws if isinstance(law, FieldView)}
-    if len(parents) == 1 and all(isinstance(law, FieldView) for law in laws):
+    parents = {id(law.parent): law.parent for law in laws if isinstance(law, CoupledMarginal)}
+    if len(parents) == 1 and all(isinstance(law, CoupledMarginal) for law in laws):
         return next(iter(parents.values()))
     return plan.runtime_bindings[index].root
 

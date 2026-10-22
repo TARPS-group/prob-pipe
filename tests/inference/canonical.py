@@ -315,7 +315,7 @@ def gaussian_linear(num_features: int = 3, num_observations: int = 40) -> ModelT
     prior = MultivariateNormal(
         "beta", jnp.zeros(num_features), cov=prior_variance * jnp.eye(num_features)
     )
-    model = glm_likelihood("y", GaussianFamily(), X=X, dispersion=1.0) * prior
+    model = glm_likelihood("y", GaussianFamily(), X=X, dispersion=1.0) & prior
 
     def pymc_model() -> Any:
         import pymc as pm
@@ -420,7 +420,7 @@ def beta_bernoulli() -> ModelTestCase:
     """
     return ModelTestCase(
         name="beta_bernoulli",
-        model=likelihood * prior,
+        model=(likelihood & prior),
         data={"y": y},
         reference=reference,
         tags=frozenset({"skewed", "constrained"}),
@@ -481,7 +481,7 @@ def gamma_poisson() -> ModelTestCase:
     """
     return ModelTestCase(
         name="gamma_poisson",
-        model=likelihood * prior,
+        model=(likelihood & prior),
         data={"y": counts},
         reference=reference,
         tags=frozenset({"skewed", "constrained", "discrete-likelihood"}),
@@ -563,7 +563,7 @@ def dirichlet_multinomial() -> ModelTestCase:
     """
     return ModelTestCase(
         name="dirichlet_multinomial",
-        model=likelihood * prior,
+        model=(likelihood & prior),
         data={"y": counts},
         reference=reference,
         tags=frozenset({"simplex", "constrained", "discrete-likelihood"}),
@@ -628,7 +628,7 @@ def poisson_regression(num_observations: int = 40) -> ModelTestCase:
         return np.array([_grid_quantile(axes[i], marginals[i], q) for i in range(2)])
 
     reference = PosteriorReference({"beta": _leaf(mean, variance, ppf)}, "quadrature")
-    model = glm_likelihood("y", PoissonFamily(), X=X) * MultivariateNormal(
+    model = glm_likelihood("y", PoissonFamily(), X=X) & MultivariateNormal(
         "beta", jnp.zeros(2), cov=jnp.eye(2)
     )
 
@@ -874,7 +874,7 @@ def eight_schools() -> ModelTestCase:
     """
     return ModelTestCase(
         name="eight_schools",
-        model=likelihood * theta_tilde * tau * mu,
+        model=(((likelihood & theta_tilde) & tau) & mu),
         data={"y": jnp.asarray(SCHOOL_EFFECTS, jnp.float32)},
         reference=reference,
         tags=frozenset({"hierarchical", "constrained"}),

@@ -291,7 +291,7 @@ class TestAnOperationLabelsItsResultByItsLaw:
     @staticmethod
     def _params():
         prior_x = Normal("x", 0.0, 1.0, label="prior_x")
-        return (prior_x * Normal("y", 2.0, 3.0, label="prior_y")).with_label("params")
+        return (prior_x & Normal("y", 2.0, 3.0, label="prior_y")).with_label("params")
 
     def test_a_record_mean_is_labeled_over_the_law_and_names_its_outputs(
         self, full_provenance_mode
@@ -665,14 +665,14 @@ def _likelihood() -> Any:
 
 def _model() -> Any:
     """The joint ``model`` over ``y`` and ``mu``."""
-    return (_likelihood() * _prior()).with_label("model")
+    return (_likelihood() & _prior()).with_label("model")
 
 
 def _empirical_model() -> Any:
     """``model`` over ``y`` and ``mu`` whose prior is empirical, so conditioning on ``y`` is exact."""
     atoms = jnp.linspace(-2.0, 2.0, 41)
     prior = EmpiricalDistribution(atoms, event_spec=OutputSpec(mu=None), label="prior")
-    return (_likelihood() * prior).with_label("model")
+    return (_likelihood() & prior).with_label("model")
 
 
 def _glm(*inputs: str) -> Any:
@@ -763,8 +763,8 @@ class TestADefaultedInputShowsItsDefault:
         assert str(condition_on(_counts(), {"n0": 10.0})) == "counts(y | K, r; n0)"
 
     def test_a_factor_left_by_conditioning_a_joint_keeps_the_defaulted_input(self):
-        prior = (Normal("K", 300.0, 10.0) * Normal("r", 0.4, 0.1)).with_label("prior")
-        model = _counts() * prior
+        prior = (Normal("K", 300.0, 10.0) & Normal("r", 0.4, 0.1)).with_label("prior")
+        model = _counts() & prior
         assert str(model) == "counts(y | K, r, n0=50.0)·prior(K, r)"
         assert condition_on(model, {"K": 300.0, "r": 0.4}).notation == ("counts(y | n0=50.0; K, r)")
 
@@ -775,7 +775,7 @@ class TestADefaultedInputShowsItsDefault:
     def test_a_relabeled_law_keeps_the_defaulted_input_inside_another_term(self):
         at = condition_on(_counts(), {"K": 300.0, "r": 0.4}).with_label("at_values")
         assert log_prob(at, 1.0).label == "log at_values(y | n0=50.0; K, r)"
-        assert str(at * Normal("z", 0.0, 1.0)) == "at_values(y | n0=50.0; K, r)·Normal(z)"
+        assert str(at & Normal("z", 0.0, 1.0)) == "at_values(y | n0=50.0; K, r)·Normal(z)"
 
     def test_a_value_computed_from_the_law_reads_its_notation(self):
         at = condition_on(_counts(), {"K": 300.0, "r": 0.4})
@@ -931,7 +931,7 @@ class TestTheLabelsOfALiftedFunction:
 
         with workflow_run(seed=2):
             posterior = condition_on(
-                _empirical_model().with_label("oring_model").with_path_names(y="damage", mu="beta"),
+                _empirical_model().with_label("oring_model").rename(y="damage", mu="beta"),
                 {"damage": 0.5},
             )
             damage_prob = challenger_damage_probability(posterior["beta"])
@@ -948,7 +948,7 @@ class TestTheLabelsOfALiftedFunction:
         def f(a: jax.Array, b: jax.Array) -> jax.Array:
             return a + b
 
-        model = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_label("model")
+        model = (Normal("a", 0.0, 1.0) & Normal("b", 0.0, 1.0)).with_label("model")
         with workflow_run(seed=0):
             assert f(model["a"], model["b"]).notation == "f((a, b) ~ model)"
             assert f(model["a"], 2.0).notation == "f(a ~ Normal, 2.0)"

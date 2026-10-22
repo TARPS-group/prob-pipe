@@ -421,7 +421,7 @@ def summarize(
     Examples
     --------
     >>> from probpipe import Gamma, Normal, summarize
-    >>> s = summarize((Normal("mu", 0.0, 2.0) * Gamma("tau", 2.0, 1.0)).with_label("model"))
+    >>> s = summarize(((Normal("mu", 0.0, 2.0) & Gamma("tau", 2.0, 1.0))).with_label("model"))
     >>> s.label
     'summary of model(mu, tau)'
     >>> float(s["sd/mu"])

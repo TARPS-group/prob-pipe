@@ -488,26 +488,26 @@ def _check_marker_claims(instance: Any) -> None:
             )
 
 
-#: The engine behind ``*``, installed by the composition module at import.
-_composition_engine: Callable[[Any, Any], Any] | None = None
+#: The engine behind ``&``, installed by the merge module at import.
+_merge_engine: Callable[[Any, Any], Any] | None = None
 
 
-def _install_composition(engine: Callable[[Any, Any], Any]) -> None:
-    """Install the engine that ``*`` delegates to on both distribution kinds.
+def _install_merge(engine: Callable[[Any, Any], Any]) -> None:
+    """Install the engine that ``&`` delegates to on both distribution kinds.
 
-    Called once, by the composition module at import, so this module never
+    Called once, by the merge module at import, so this module never
     imports the module that imports it.
     """
-    global _composition_engine
-    _composition_engine = engine
+    global _merge_engine
+    _merge_engine = engine
 
 
-#: The law that ``with_path_names`` returns, installed by the views module at import.
+#: The law that ``rename`` returns, installed by the views module at import.
 _renamed_law_factory: Callable[[Any, OutputSpec, Mapping[str, str]], Any] | None = None
 
 
 def _install_renamed_law(factory: Callable[[Any, OutputSpec, Mapping[str, str]], Any]) -> None:
-    """Install the factory of the law whose draws carry the names ``with_path_names`` gives.
+    """Install the factory of the law whose draws carry the names ``rename`` gives.
 
     Called once, by the views module at import, so this module never imports the
     module that imports it.
@@ -538,18 +538,18 @@ def _recorded_copy(copy: Any, law: Any) -> Any:
     return _copy_source_recorder(copy, law, {})
 
 
-#: The field view that indexing returns, installed by the views module at import.
-_field_view_factory: Callable[[Any, Any], Any] | None = None
+#: The coupled marginal that indexing returns, installed by the views module at import.
+_coupled_marginal_factory: Callable[[Any, Any], Any] | None = None
 
 
-def _install_field_view(factory: Callable[[Any, Any], Any]) -> None:
-    """Install the factory of the field view that ``d[path]`` returns.
+def _install_coupled_marginal(factory: Callable[[Any, Any], Any]) -> None:
+    """Install the factory of the coupled marginal that ``d[path]`` returns.
 
     Called once, by the views module at import, so this module never imports the
     module that imports it.
     """
-    global _field_view_factory
-    _field_view_factory = factory
+    global _coupled_marginal_factory
+    _coupled_marginal_factory = factory
 
 
 #: Indexing a ``DistributionBatch`` returns a copy of the stored law under a derived
@@ -558,7 +558,7 @@ def _install_field_view(factory: Callable[[Any, Any], Any]) -> None:
 #: (V.5). Detaching the copy deletes the attribute.
 _ELEMENT_SOURCE = "_element_source"
 
-#: ``with_path_names``, ``with_label``, ``with_dim_names``, and ``with_dim_sizes`` set
+#: ``rename``, ``with_label``, ``with_dim_names``, and ``with_dim_sizes`` set
 #: this attribute of each law they return that does not hold the law it is made from
 #: as its parent. The value is the pair of that law and the renames from its
 #: event spec to the result's, which are the identity for a relabeling and for a
@@ -602,7 +602,7 @@ def _cached_raw(term: Any, build: Callable[[], Any]) -> Any:
     Returns
     -------
     Any
-        The raw form, such as a detached law or a backend object.
+        The raw form, such as a standalone law or a backend object.
     """
     if _is_raw_form(term):
         return term
@@ -637,16 +637,16 @@ def _keeps_fixed_paths(term: Any, source: Any) -> Any:
     return term
 
 
-def _compose_operands(left: Any, right: Any) -> Any:
+def _merge_operands(left: Any, right: Any) -> Any:
     """*left* ``*`` *right* through the installed engine.
 
     The engine returns ``NotImplemented`` for an operand that is neither
     distribution kind, so Python tries the reflected operation and a scalar
     operand can scale.
     """
-    if _composition_engine is None:
-        raise RuntimeError("the composition engine is not installed; import probpipe")
-    return _composition_engine(left, right)
+    if _merge_engine is None:
+        raise RuntimeError("the merge engine is not installed; import probpipe")
+    return _merge_engine(left, right)
 
 
 class _DistributionMeta(_TrackedTermMeta):
@@ -708,7 +708,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     name of its event's output first and an optional ``label=``, which defaults to
     the family's class name, so ``Normal("mu", 0.0, 1.0)`` is labeled
     ``Normal`` over the output ``mu``; any other law's label defaults to
-    ``ℙ``, and a joint that ``*`` composes is labeled by its operands' labels.
+    ``ℙ``, and a joint that ``*`` merges is labeled by its operands' labels.
     Every transform preserves the label; only ``with_label`` replaces it. ``str(d)``
     returns the law's :attr:`notation`, its label followed by its signature, as
     ``prior(mu)``, and the repr reads as a call of the constructor, with
@@ -800,7 +800,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         A law is represented by itself, so its raw form is a copy that shares
         its representation and carries no provenance, no annotations, and no
         reference to a container or a parent, such as a batch it was an element
-        of or a law it is a copy of. A field view returns the raw form of its
+        of or a law it is a copy of. A coupled marginal returns the raw form of its
         parent's marginal at its path instead, and a backend adapter its
         wrapped backend distribution.
 
@@ -1003,12 +1003,10 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         )
         return _recorded_copy(copy, self)
 
-    def with_path_names(
-        self, mapping: Mapping[str, str] | None = None, /, **kwargs: str
-    ) -> Distribution:
+    def rename(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Distribution:
         """Rename or move nodes of the event spec by their paths, ``old -> new``.
 
-        The result is this law with :meth:`OutputSpec.with_path_names` applied to
+        The result is this law with :meth:`OutputSpec.rename` applied to
         its event spec. A path starts with an output's name, and the form is
         kept, so a whole term's output is renamed in place with the term's
         fields under it. The law is unchanged: a draw of the result is a draw of
@@ -1046,9 +1044,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         KeyError
             If a key is not a path of the event spec.
         ValueError
-            As :meth:`OutputSpec.with_path_names` raises it.
+            As :meth:`OutputSpec.rename` raises it.
         """
-        renamed = self.event_spec.with_path_names(mapping, **kwargs)
+        renamed = self.event_spec.rename(mapping, **kwargs)
         renames = {**dict(mapping or {}), **kwargs}
         if _renamed_law_factory is None:
             raise RuntimeError("the renamed law is not installed; import probpipe")
@@ -1057,7 +1055,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     def _renamed_in_family(self, event: _EventRenames) -> Distribution | None:
         """The member of this law's family that holds its values under *event*'s new paths, or None.
 
-        ``with_path_names`` calls this for a rename that changes the path of a
+        ``rename`` calls this for a rename that changes the path of a
         field of a record draw, and returns a law that renames this one's values
         at its boundary when it gives None. A family whose parameters carry the
         event's paths overrides it to return the member that declares
@@ -1086,13 +1084,13 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     __iter__ = None
 
     def __getitem__(self, key: PathsLike) -> Distribution:
-        """The law itself at a whole term's output, or the field view at a path or a list of paths.
+        """The law itself at a whole term's output, or the coupled marginal at a path or a list of paths.
 
         A whole-term law is itself under its output, so ``d[name]`` returns
         ``d``; the output is fixed at construction, so after ``with_label`` the
         law is still addressed by it. Any other event path, an output that is a
         record's field or a path below a whole record's output, gives the
-        ``FieldView`` of the node there, which holds a reference to this law and
+        ``CoupledMarginal`` of the node there, which holds a reference to this law and
         gives the node whole under the path's last name. A list or a tuple of
         paths gives the view over the record that keeps each node at its own
         path, in this law's order, so ``grouped["a", "g/c"]`` draws records
@@ -1108,7 +1106,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Returns
         -------
         Distribution
-            This law itself, or a ``FieldView`` of it.
+            This law itself, or a ``CoupledMarginal`` of it.
 
         Raises
         ------
@@ -1126,22 +1124,22 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         )
         if read_paths == _root_output_name(self.event_spec):
             return self
-        if _field_view_factory is None:
-            raise RuntimeError("the field view is not installed; import probpipe")
-        return _field_view_factory(self, read_paths)
+        if _coupled_marginal_factory is None:
+            raise RuntimeError("the coupled marginal is not installed; import probpipe")
+        return _coupled_marginal_factory(self, read_paths)
 
     def __contains__(self, path: object) -> bool:
         """Whether *path* is a ``str`` and ``self[path]`` gives a law: an event path, or a whole term's output."""
         return path in self.event_spec
 
-    # -- composition ------------------------------------------------------------
+    # -- merge ------------------------------------------------------------
 
-    def __mul__(
+    def __and__(
         self, other: Distribution | ConditionalDistribution
     ) -> FactoredDistribution | FactoredConditionalDistribution:
-        """The joint of this law and *other*, composed conditional-first.
+        """The joint of this law and *other*, merged conditional-first.
 
-        The left operand may condition on what the right produces, so ``lik *
+        The left operand may condition on what the right produces, so ``lik &
         prior`` reads as ``p(y | β) · p(β)``. The result is a
         ``FactoredDistribution`` when no given is left unmet and a
         ``FactoredConditionalDistribution`` otherwise, flattened over the
@@ -1170,7 +1168,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
             If an output is produced twice, the right operand consumes an
             output the left produces, or matched specs do not unify.
         """
-        return _compose_operands(self, other)
+        return _merge_operands(self, other)
 
     # -- keyword-form value construction ------------------------------------
 

@@ -186,7 +186,7 @@ class TestASampleShapeGetsADrawLevel:
         """A law whose draws are a mapping of columns draws the batch its event spec names."""
         from probpipe import NumericRecordBatch
 
-        law = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)
+        law = Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=0.0, scale=1.0)
 
         drawn = sample(law, sample_shape=(4,))
 
@@ -195,7 +195,7 @@ class TestASampleShapeGetsADrawLevel:
         assert drawn.element_spec.term_spec == law.event_spec.term_spec
 
     def test_one_draw_of_a_joint_is_a_record_under_its_declaration(self):
-        law = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)
+        law = Normal("a", loc=0.0, scale=1.0) & Normal("b", loc=0.0, scale=1.0)
 
         drawn = sample(law)
 

@@ -17,7 +17,7 @@ The distributions over functions and over distributions are on [Random functions
 
 ::: probpipe.DistributionBatch
 
-::: probpipe.distributions.FieldView
+::: probpipe.distributions.CoupledMarginal
     options:
       show_root_full_path: true
 
@@ -47,7 +47,7 @@ The distributions over functions and over distributions are on [Random functions
 
 ## Factored distributions
 
-`A * B` composes two laws into a factored joint.
+`A & B` merges two laws into a factored joint.
 
 ::: probpipe.distributions.FactoredDistribution
     options:

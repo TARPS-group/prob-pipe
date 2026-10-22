@@ -1,23 +1,23 @@
-"""The ``*`` operator: composing distributions and kernels into a joint.
+"""The ``&`` operator: merging distributions and kernels into a joint.
 
-``A * B`` composes two operands conditional-first: the left operand may
-condition on what the right produces, so ``lik * prior`` reads as the density
-``p(y | β) · p(β)``. Each operand enters as its flattened factors, so ``A * B *
-C`` is one flat joint, and composition reads only output and input names,
+``A & B`` merges two operands conditional-first: the left operand may
+condition on what the right produces, so ``lik & prior`` reads as the density
+``p(y | β) · p(β)``. Each operand enters as its flattened factors, so ``A & B &
+C`` is one flat joint, and merge reads only output and input names,
 never a label. The result is a ``FactoredDistribution`` when no input is left
 unmet and a ``FactoredConditionalDistribution`` over the unmet inputs
 otherwise; it is unlabeled, so its expression is the product of the operands'
 expressions: its label joins the operands' current labels with ``·`` and it
 displays operand by operand, a labeled operand by its label.
 
-The base classes expose the operator through ``__mul__``, which delegates to the
+The base classes expose the operator through ``__and__``, which delegates to the
 engine this module installs at import.
 """
 
 from __future__ import annotations
 
 from ._conditional import ConditionalDistribution
-from ._distribution import Distribution, _install_composition
+from ._distribution import Distribution, _install_merge
 from ._factored import (
     FactoredConditionalDistribution,
     FactoredDistribution,
@@ -29,10 +29,10 @@ from ._factored import (
 __all__: list[str] = []
 
 
-def _compose(
+def _merge(
     left: Distribution | ConditionalDistribution, right: Distribution | ConditionalDistribution
 ) -> FactoredDistribution | FactoredConditionalDistribution:
-    """The joint ``left * right``, the most specific factored kind of the flat factor graph.
+    """The joint ``left & right``, the most specific factored kind of the flat factor graph.
 
     Parameters
     ----------
@@ -79,4 +79,4 @@ def _compose(
     return joint
 
 
-_install_composition(_compose)
+_install_merge(_merge)

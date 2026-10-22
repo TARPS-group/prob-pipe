@@ -319,16 +319,16 @@ class TestTransformsPreserveNativeLeaves:
             {"s": s},
             label="right",
         )
-        merged = left.merge(right)
+        merged = left & (right)
         assert merged["temps"].raw is da
         assert merged["s"].raw is s
 
-    def test_with_path_names_preserves_native_leaf(self, da):
+    def test_rename_preserves_native_leaf(self, da):
         nr = NumericRecord(
             {"temps": da, "extra": jnp.array(1.0)},
             label="nr",
         )
-        renamed = nr.with_path_names(temps="warmth")
+        renamed = nr.rename(temps="warmth")
         assert renamed["warmth"].raw is da
 
     def test_identity_map_preserves_native_leaf(self, da):
@@ -360,7 +360,7 @@ class TestTransformsPreserveNativeLeaves:
             label="nr",
         )
         nr.without("extra")
-        nr.with_path_names(temps="warmth")
+        nr.rename(temps="warmth")
         assert nr["temps"].raw is da
         assert tuple(nr.children) == ("temps", "extra")
 
@@ -469,7 +469,7 @@ class TestLazyConversion:
             {"lazy": leaf, "x": 1.0},
             label="nr",
         )
-        edited = nr.without("x").with_path_names(lazy="late")
+        edited = nr.without("x").rename(lazy="late")
         assert edited["late"].raw is leaf
         assert leaf.materialisations == 0
 
