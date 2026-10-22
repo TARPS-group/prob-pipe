@@ -359,7 +359,7 @@ def _compare_signature(
                 findings.append(
                     Finding(section, where, f"declares {want.name}={want.default}, has no default")
                 )
-            elif want.default not in (str(have.default), repr(have.default)):
+            elif want.default not in _default_sources(have.default):
                 findings.append(
                     Finding(
                         section,
@@ -368,6 +368,14 @@ def _compare_signature(
                     )
                 )
     return findings
+
+
+def _default_sources(default: Any) -> set[str]:
+    """The ways a declaration may write *default* as source: its ``str`` and ``repr``, and a class's or function's name."""
+    sources = {str(default), repr(default)}
+    if inspect.isclass(default) or inspect.isfunction(default):
+        sources |= {default.__name__, default.__qualname__}
+    return sources
 
 
 def check(
