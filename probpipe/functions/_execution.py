@@ -25,8 +25,9 @@ from typing import Any
 
 try:
     from prefect import flow, task
+    from prefect.cache_policies import NO_CACHE
 except ImportError:
-    task = flow = None
+    task = flow = NO_CACHE = None
 
 from ..core._call_context import _AUTOMATIC_SELECTION, current_call_context
 from ..core._dispatch import Feasibility
@@ -121,21 +122,17 @@ def evaluate_requested_points(
     EvaluationError
         If an evaluation point failed, naming every failed one.
     """
-    if _context._workflow_side_effects_forbidden() or workflow_kind not in _PREFECT_WORKFLOW_KINDS:
-        if not _context._workflow_side_effects_forbidden():
-            _record_execution_contract(stochastic_plan)
-        return _evaluated_outputs(
-            evaluation_points,
-            stacked=stacked,
-            execution_choice=_choice_in_effect(),
-        )
-    evaluation_outcomes = _requested_outcomes(
+    side_effects_forbidden = _context._workflow_side_effects_forbidden()
+    if not side_effects_forbidden:
+        _record_execution_contract(stochastic_plan)
+        if workflow_kind in _PREFECT_WORKFLOW_KINDS:
+            prefect_outcomes = _prefect_outcomes(evaluation_points, workflow_kind, function_label)
+            return _outputs_of(evaluation_points, prefect_outcomes, stacked=stacked)
+    return _evaluated_outputs(
         evaluation_points,
-        workflow_kind=workflow_kind,
-        function_label=function_label,
-        stochastic_plan=stochastic_plan,
+        stacked=stacked,
+        execution_choice=_AUTOMATIC_SELECTION if side_effects_forbidden else None,
     )
-    return _outputs_of(evaluation_points, evaluation_outcomes, stacked=stacked)
 
 
 def evaluate_plain_call(
@@ -173,14 +170,19 @@ def evaluate_plain_call(
         If the evaluation point failed with an exception that did not come
         back from the worker that ran it.
     """
-    names_jax = current_call_context().execution_choice.executor_name == "jax"
-    evaluation_outcomes = _requested_outcomes(
-        evaluation_points,
-        workflow_kind=workflow_kind,
-        function_label=function_label,
-        stochastic_plan=None,
-        execution_choice=_AUTOMATIC_SELECTION if names_jax else None,
-    )
+    side_effects_forbidden = _context._workflow_side_effects_forbidden()
+    if not side_effects_forbidden:
+        _record_execution_contract(None)
+    if not side_effects_forbidden and workflow_kind in _PREFECT_WORKFLOW_KINDS:
+        evaluation_outcomes = _prefect_outcomes(evaluation_points, workflow_kind, function_label)
+    else:
+        names_jax = current_call_context().execution_choice.executor_name == "jax"
+        evaluation_outcomes = _evaluated_outcomes(
+            evaluation_points,
+            execution_choice=(
+                _AUTOMATIC_SELECTION if side_effects_forbidden or names_jax else None
+            ),
+        )
     body_failure = evaluation_outcomes.failures.get(0)
     if body_failure is not None and body_failure.error is not None:
         raise body_failure.error
@@ -243,23 +245,10 @@ def preflight_prefect_route(
         chunks_flow(lambda: None)
 
 
-def _requested_outcomes(
-    evaluation_points: EvaluationPoints,
-    *,
-    workflow_kind: WorkflowKind,
-    function_label: str,
-    stochastic_plan: StochasticPlan | None,
-    execution_choice: Any = None,
+def _prefect_outcomes(
+    evaluation_points: EvaluationPoints, workflow_kind: WorkflowKind, function_label: str
 ) -> EvaluationOutcomes:
-    """The outcomes of a set of evaluation points of the engine, run as :func:`evaluate_requested_points` states.
-
-    *execution_choice*, when given, is followed in place of the running call's.
-    """
-    if _context._workflow_side_effects_forbidden():
-        return _evaluated_outcomes(evaluation_points, execution_choice=_AUTOMATIC_SELECTION)
-    _record_execution_contract(stochastic_plan)
-    if workflow_kind not in _PREFECT_WORKFLOW_KINDS:
-        return _evaluated_outcomes(evaluation_points, execution_choice=execution_choice)
+    """The outcomes of a set of evaluation points that Prefect runs, as :func:`evaluate_requested_points` states."""
     _warn_executor_under_prefect(workflow_kind, function_label)
     prefect_transport = _PrefectTransport(
         workflow_kind,
@@ -267,13 +256,6 @@ def _requested_outcomes(
         maps_with_jax=executor_registry.get_method("jax").check(evaluation_points).feasible,
     )
     return _run_on_executor(evaluation_points, prefect_transport, {})
-
-
-def _choice_in_effect() -> Any:
-    """Automatic selection inside a route probe or a mapped body, and otherwise the running call's choice."""
-    if _context._workflow_side_effects_forbidden():
-        return _AUTOMATIC_SELECTION
-    return None
 
 
 def _record_execution_contract(stochastic_plan: StochasticPlan | None) -> None:
@@ -294,15 +276,18 @@ def _warn_executor_under_prefect(workflow_kind: WorkflowKind, function_label: st
         ("executor under Prefect", function_label)
     ):
         return
-    named = (
-        f"executor {execution_choice.executor_name!r}"
-        if execution_choice.names_executor()
-        else "executor_options"
-    )
+    if execution_choice.names_executor():
+        named_control = f"executor {execution_choice.executor_name!r}"
+        fix = "Remove the executor, or set workflow_kind=WorkflowKind.OFF to run them on it"
+    else:
+        named_control = "executor_options"
+        fix = (
+            "Remove executor_options, or set workflow_kind=WorkflowKind.OFF to run them on "
+            "an executor"
+        )
     warnings.warn(
-        f"{named} on {function_label!r} has no effect: workflow_kind="
-        f"WorkflowKind.{workflow_kind.name} runs its evaluations as Prefect tasks. Remove the "
-        "executor, or set workflow_kind=WorkflowKind.OFF to run them on it",
+        f"{named_control} on {function_label!r} has no effect: workflow_kind="
+        f"WorkflowKind.{workflow_kind.name} runs its evaluations as Prefect tasks. {fix}",
         UserWarning,
         stacklevel=2,
         skip_file_prefixes=_WARNING_SKIP_PREFIXES,
@@ -363,7 +348,10 @@ class _PrefectTransport(EvaluationExecutor):
 
         A mapped set runs as one task, or under ``FLOW`` one flow, and has no
         flow around it; any other set runs as one task per chunk, which the
-        decorated flow submits. The names are those the class states.
+        decorated flow submits. The names are those the class states. No task
+        caches its result: Prefect would pickle each chunk to compute a cache
+        key, which reserves the chunk's evaluation points as if it were sent to
+        another process.
         """
         function_label = self._function_label
         task_runner = config.prefect.resolve_task_runner()
@@ -371,13 +359,16 @@ class _PrefectTransport(EvaluationExecutor):
         if self._maps_with_jax:
             mapped_name = f"{function_label}_vmap"
             if self._workflow_kind is WorkflowKind.TASK:
-                return task(name=mapped_name)(run), None
+                return task(name=mapped_name, cache_policy=NO_CACHE)(run), None
             return flow(name=mapped_name, **runner_options)(run), None
         if self._workflow_kind is WorkflowKind.TASK:
             flow_name, task_name = f"{function_label}_map", function_label
         else:
             flow_name, task_name = function_label, f"{function_label}_run"
-        return task(name=task_name, retries=0)(run), flow(name=flow_name, **runner_options)
+        return (
+            task(name=task_name, retries=0, cache_policy=NO_CACHE)(run),
+            flow(name=flow_name, **runner_options),
+        )
 
     def _mapped_run(self, run_mapped: Any) -> EvaluationOutcomes:
         """*run_mapped* run as one Prefect task, or under ``FLOW`` one flow, named for the map."""
@@ -598,7 +589,7 @@ def in_place_evaluation_point_scope(
     if _context._workflow_side_effects_forbidden():
         yield
         return
-    evaluation_points = issue_evaluation_points([{}], point_segments=(plain_call_point_segment(),))
+    evaluation_points = issue_evaluation_points((plain_call_point_segment(),))
     broker.register_evaluation_points(evaluation_points)
     try:
         with _evaluation_point_scope(
@@ -732,24 +723,24 @@ class _WorkflowEvaluationPointScopes:
         self._num_evaluation_points = num_evaluation_points
         self._point_segment = point_segment
         self._issuance_lock = threading.Lock()
-        self._issued_points_once: tuple[IssuedEvaluationPoint, ...] | None = None
+        self._issued_points_or_none: tuple[IssuedEvaluationPoint, ...] | None = None
         self._attempts_lock = threading.Lock()
+        self._shipping_lock = threading.Lock()
         self._outstanding_attempts: dict[int, EvaluationPointAttempt] = {}
 
     @property
     def _issued_points(self) -> tuple[IssuedEvaluationPoint, ...]:
         """Every evaluation point of the set, issued and registered with the broker on first use."""
         with self._issuance_lock:
-            if self._issued_points_once is None:
-                self._issued_points_once = issue_evaluation_points(
-                    [{}] * self._num_evaluation_points,
-                    point_segments=[
+            if self._issued_points_or_none is None:
+                self._issued_points_or_none = issue_evaluation_points(
+                    [
                         self._point_segment(point_index)
                         for point_index in range(self._num_evaluation_points)
-                    ],
+                    ]
                 )
-                self._parent_broker.register_evaluation_points(self._issued_points_once)
-            return self._issued_points_once
+                self._parent_broker.register_evaluation_points(self._issued_points_or_none)
+            return self._issued_points_or_none
 
     @contextmanager
     def point_scope(self, point_index: int) -> Generator[None, None, None]:
@@ -783,12 +774,15 @@ class _WorkflowEvaluationPointScopes:
         for point_index in point_indices:
             issued_point = self._issued_points[point_index]
             attempt = EvaluationPointAttempt.create(issued_point.frame.token)
-            self._release_outstanding_attempt(point_index)
-            parent_envelope = self._parent_broker.reserve_remote_evaluation_point_attempt(
-                issued_point.frame, attempt
-            )
-            with self._attempts_lock:
-                self._outstanding_attempts[point_index] = attempt
+            # One shipping at a time, so two threads pickling one chunk never
+            # reserve an evaluation point between the other's release and record.
+            with self._shipping_lock:
+                self._release_outstanding_attempt(point_index)
+                parent_envelope = self._parent_broker.reserve_remote_evaluation_point_attempt(
+                    issued_point.frame, attempt
+                )
+                with self._attempts_lock:
+                    self._outstanding_attempts[point_index] = attempt
             reserved_points[point_index] = (issued_point, attempt, parent_envelope)
         return _ShippedEvaluationPointScopes(reserved_points)
 
@@ -819,7 +813,7 @@ class _WorkflowEvaluationPointScopes:
 
     def close(self) -> None:
         """Release every reservation no report answered, and check that every evaluation point joined."""
-        if self._issued_points_once is None:
+        if self._issued_points_or_none is None:
             return
         for point_index in list(self._outstanding_attempts):
             self._release_outstanding_attempt(point_index)
@@ -933,9 +927,9 @@ def _evaluation_point_scopes(
     parent_broker = _evaluation_keys._capture_active_broker()
     if parent_broker is None:
         raise RuntimeError(
-            f"cannot build evaluation points of {origin!r} outside the ProbPipe call that asks "
-            "for them, such as inside a function's body. Ask for the evaluations through a "
-            "ProbPipe call, such as a lifted call"
+            f"cannot build evaluation points of {origin!r} where no ProbPipe call gives them a "
+            "place in the workflow, such as directly in a function's body. Ask for the "
+            "evaluations with evaluate_at_points or through a ProbPipe call, such as a lifted call"
         )
     if point_segment is None:
 
@@ -945,4 +939,4 @@ def _evaluation_point_scopes(
     return _WorkflowEvaluationPointScopes(parent_broker, num_evaluation_points, point_segment)
 
 
-_install_evaluation_point_scopes(_evaluation_point_scopes)
+_install_evaluation_point_scopes(_evaluation_point_scopes, _requester_workflow_scope)

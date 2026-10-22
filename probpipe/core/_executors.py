@@ -62,8 +62,11 @@ from ._evaluation_points import (
     _checked_stacked_output,
     _holds_only_values,
     _InvalidPointOutput,
+    _num_rows,
     _output_path,
     _point_failure,
+    _requester_scope,
+    _stacked_rows,
     _warn_lossy_casts,
 )
 from ._execution_claims import NO_CLAIMS, ExecutionClaims, FalseTraceableClaimError
@@ -206,8 +209,10 @@ def evaluate_at_points(
     and a draw made inside one takes its random key from its place in the
     workflow, so changing the executor changes no result. A ``Function`` that
     claims ``traceable=True`` is mapped by ``jax`` whatever executor the call
-    names. With traced arguments, as inside a function that JAX traces, *fn*
-    is mapped inline with ``jax.vmap``.
+    names. The call takes a place of its own in the workflow, as a nested
+    call does, so it can be made from a route, an inference method, or a
+    function's body. With traced arguments, as inside a function that JAX
+    traces, *fn* is mapped inline with ``jax.vmap``.
 
     Parameters
     ----------
@@ -230,7 +235,8 @@ def evaluate_at_points(
         ``jax`` returns its mapped output whole. The outputs of any other
         executor are stacked leaf by leaf when every leaf of every output is
         numeric and the outputs share one tree structure, and are otherwise
-        returned as a one-dimensional object array that holds each output.
+        returned as a one-dimensional object array that holds each output, as
+        are outputs that are tuples or lists.
         ``False`` by default.
 
     Returns
@@ -249,11 +255,6 @@ def evaluate_at_points(
     ValueError
         If the varying arguments do not have one row per evaluation point, or
         the chosen executor does not take one of its options.
-    RuntimeError
-        If it is called outside the ProbPipe call that asks for the
-        evaluations, such as inside a function's body, where no place in the
-        workflow gives the evaluation points their random keys.
-
     Examples
     --------
     A route of a ProbPipe call evaluates a simulator at 200 parameter values,
@@ -268,16 +269,17 @@ def evaluate_at_points(
         )
     """
     if _holds_tracer((varying, shared)):
-        return _mapped_inline(fn, varying, shared, stacked=stacked)
-    evaluation_points = EvaluationPoints(
-        fn,
-        varying=varying,
-        shared=shared,
-        origin=origin,
-        output_spec=output_spec,
-        claims=_execution_claims_of(fn),
-    )
-    return _evaluated_outputs(evaluation_points, stacked=stacked)
+        return _mapped_inline(fn, varying, shared, origin=origin, stacked=stacked)
+    with _requester_scope():
+        evaluation_points = EvaluationPoints(
+            fn,
+            varying=varying,
+            shared=shared,
+            origin=origin,
+            output_spec=output_spec,
+            claims=_execution_claims_of(fn),
+        )
+        return _evaluated_outputs(evaluation_points, stacked=stacked)
 
 
 def _evaluated_outputs(
@@ -461,8 +463,13 @@ def _mapped_outputs_or_error(evaluation_points: EvaluationPoints) -> Any:
     """
     try:
         stacked_output, lossy_casts = _mapped_outputs(evaluation_points)
-    except _MappingFailure as mapping_failure:
+    except _MappingFailure as raised_failure:
+        mapping_failure = raised_failure
+    else:
+        mapping_failure = None
+    finally:
         evaluation_points._point_scopes.close()
+    if mapping_failure is not None:
         failures = mapping_failure.point_failures(evaluation_points)
         _record_set_run(
             evaluation_points,
@@ -477,7 +484,6 @@ def _mapped_outputs_or_error(evaluation_points: EvaluationPoints) -> Any:
             origin=evaluation_points.origin,
             point_noun=evaluation_points.point_noun,
         ) from mapping_failure.error
-    evaluation_points._point_scopes.close()
     _record_set_run(evaluation_points, "jax", {}, failed_point_indices=(), lossy_casts=lossy_casts)
     return stacked_output
 
@@ -558,8 +564,8 @@ class _JaxExecutor(EvaluationExecutor):
         return _assembled_outcomes(
             0,
             [
-                (jax.tree.map(lambda leaf, row=point_index: leaf[row], stacked_output), lossy_casts)
-                for point_index in range(len(evaluation_points))
+                (point_output, lossy_casts)
+                for point_output in _stacked_rows(stacked_output, len(evaluation_points))
             ],
         )
 
@@ -827,7 +833,7 @@ def _checked_worker_count(max_workers: Any) -> int:
     """
     if max_workers is None:
         return os.cpu_count() or 1
-    return _checked_count(max_workers, "max_workers")
+    return _checked_count(max_workers, "executor_options['max_workers']")
 
 
 def _parallel_chunks(
@@ -1020,19 +1026,21 @@ def _mapped_outputs(
 
 
 def _mapped_inline(
-    fn: Callable[..., Any], varying: Mapping[str, Any], shared: Mapping[str, Any], *, stacked: bool
+    fn: Callable[..., Any],
+    varying: Mapping[str, Any],
+    shared: Mapping[str, Any],
+    *,
+    origin: str,
+    stacked: bool,
 ) -> Any:
     """*fn* mapped over traced varying arguments with ``jax.vmap``, in the trace that holds them."""
+    num_points = _num_rows(varying, origin)
     stacked_output = jax.vmap(lambda varying_arguments: fn(**shared, **varying_arguments))(
         dict(varying)
     )
     if stacked:
         return stacked_output
-    num_points = next(np.shape(leaf)[0] for leaf in jax.tree.leaves(varying) if np.ndim(leaf) > 0)
-    return tuple(
-        jax.tree.map(lambda leaf, row=point_index: leaf[row], stacked_output)
-        for point_index in range(num_points)
-    )
+    return tuple(_stacked_rows(stacked_output, num_points))
 
 
 def _stacked_outputs(outputs: Sequence[Any]) -> Any:
@@ -1040,10 +1048,14 @@ def _stacked_outputs(outputs: Sequence[Any]) -> Any:
 
     When every leaf of every output is numeric and the outputs share one tree
     structure, each leaf is stacked with ``jnp.stack``, as ``jax.vmap`` stacks
-    a mapped output. Otherwise, as for outputs that are laws, arrays of
-    different shapes, or batches, the result is a one-dimensional object array
-    that holds each output.
+    a mapped output. Otherwise, as for outputs that are laws, tuples or lists,
+    arrays of different shapes, or batches, the result is a one-dimensional
+    object array that holds each output.
     """
+    if any(isinstance(output, (list, tuple)) for output in outputs):
+        # A sequence a callable returns is one value, which the requester
+        # reads whole, never a structure to stack position by position.
+        return _held_outputs(outputs)
     flattened_outputs = [jax.tree.flatten(output) for output in outputs]
     tree_definitions = {tree_definition for _, tree_definition in flattened_outputs}
     output_leaves = [leaves for leaves, _ in flattened_outputs]
@@ -1062,6 +1074,11 @@ def _stacked_outputs(outputs: Sequence[Any]) -> Any:
             # Leaves of different shapes, or a container that cannot hold an
             # added axis, such as a batch, whose shape is fixed.
             pass
+    return _held_outputs(outputs)
+
+
+def _held_outputs(outputs: Sequence[Any]) -> np.ndarray:
+    """A one-dimensional object array that holds each of *outputs*, as it is."""
     held_outputs = np.empty(len(outputs), dtype=object)
     for point_index, output in enumerate(outputs):
         held_outputs[point_index] = output

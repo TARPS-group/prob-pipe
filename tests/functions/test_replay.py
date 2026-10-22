@@ -32,7 +32,7 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core._expression import Conditioned
-from probpipe.functions import _replay
+from probpipe.functions import _execution, _replay
 from probpipe.functions._evaluation_keys import (
     EvaluationPointAttempt,
     EvaluationPointToken,
@@ -1276,6 +1276,7 @@ class TestReplayPreflight:
             replayable_identity,
             label="replayable_identity",
             max_evaluations=9,
+            traceable=False,
             executor="sequential",
             output_spec=OutputSpec(replayable_identity=None),
         )
@@ -1283,6 +1284,7 @@ class TestReplayPreflight:
             replayable_identity,
             label="replayable_identity",
             max_evaluations=9,
+            traceable=False,
             executor="thread",
             executor_options={"max_workers": 3},
             output_spec=OutputSpec(replayable_identity=None),
@@ -1399,6 +1401,29 @@ class TestReplayPreflight:
         ):
             pass
 
+    def test_a_call_deriving_keys_under_another_version_is_refused_naming_both(self):
+        original = _lifted_draw()
+        replay_workflow = Function(
+            replayable_identity,
+            label="replayable_identity",
+            executor="sequential",
+            max_evaluations=5,
+            output_spec=OutputSpec(replayable_identity=None),
+        )
+        with (
+            patch.object(_execution, "_RNG_ABI", "ProbPipe-RNG-v2"),
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=(
+                    r"^cannot replay: the recorded call derived its random keys under the random "
+                    r"number generator version 'ProbPipe-RNG-v1', and this call derives them "
+                    r"under 'ProbPipe-RNG-v2'\. Record the call again\.$"
+                ),
+            ),
+            replay_run(original.provenance),
+        ):
+            replay_workflow(value=Normal("value", loc=0.0, scale=1.0))
+
     def test_jax_to_rowwise_route_drift_preserves_values(self):
         original_workflow = Function(
             replayable_identity,
@@ -1411,6 +1436,7 @@ class TestReplayPreflight:
             replayable_identity,
             label="replayable_identity",
             max_evaluations=7,
+            traceable=False,
             executor="sequential",
             output_spec=OutputSpec(replayable_identity=None),
         )

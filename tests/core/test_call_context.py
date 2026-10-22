@@ -357,13 +357,13 @@ class TestCarryingTheContextIntoWorkers:
         carried = []
 
         @function
-        def dispatching(x):
+        def observed(x):
             _note_num_samples_used(5)
             carried.append(current_call_context().evaluation_context())
             return x
 
         with config.notation.using(max_depth=3):
-            dispatching.using(method_options={"budget": {"steps": 3}}, exact_only=True)(1.0)
+            observed.using(method_options={"budget": {"steps": 3}}, exact_only=True)(1.0)
         original_context = carried[0]
         restored_context = pickle.loads(pickle.dumps(original_context))
         assert restored_context.config_blocks == original_context.config_blocks
@@ -371,7 +371,7 @@ class TestCarryingTheContextIntoWorkers:
         assert restored_context.resolved_controls == original_context.resolved_controls
         assert restored_context.resolved_controls["exact_only"] is True
         assert restored_context.call_depth == 1
-        assert restored_context.function_label == "dispatching"
+        assert restored_context.function_label == "observed"
         assert restored_context.num_samples_used.num_samples_values == frozenset()
         with _under_call_context(restored_context):
             assert _resolved_method_options() == {"budget": {"steps": 3}}
@@ -457,12 +457,12 @@ class TestTheSessionSnapshot:
         carried = []
 
         @function
-        def dispatching(x):
+        def observed(x):
             carried.append(current_call_context().evaluation_context())
             return x
 
         config.notation.max_depth = 5
-        dispatching(1.0)
+        observed(1.0)
         restored_context = pickle.loads(pickle.dumps(carried[0]))
         assert restored_context.in_evaluation_point
         assert restored_context.session_config_values == carried[0].session_config_values

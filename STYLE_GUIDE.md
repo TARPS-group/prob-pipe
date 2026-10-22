@@ -168,7 +168,7 @@ Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
 
 `Function` keeps ProbPipe controls separate from wrapped-function
 kwargs. Use `@function(...)` for definition-time controls
-such as `dispatch` and `max_evaluations`, and use
+such as `executor` and `max_evaluations`, and use
 `workflow.using(...)` for a copy with revised controls, such as
 `max_evaluations`, `num_samples`, and `include_inputs`, which every call of
 the copy reads.

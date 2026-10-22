@@ -969,17 +969,17 @@ def mapped_draw_body(
             ref: argument_at_draw(ref, row)
             for ref, row in zip(broadcast_args, lifted_rows, strict=True)
         }
-        out = func(**replace_input_refs(values, replacements))
+        draw_output = func(**replace_input_refs(values, replacements))
         if not _holds_tracer(lifted_rows):
             # One draw evaluated alone returns its result as it is, which the
             # aggregate stacks with the other draws' results.
-            return out
-        if isinstance(out, RecordBatch):
-            return _MappedBatchColumns.of(out)
-        if isinstance(out, NumericArrayBatch):
-            return _MappedBatchStore.of(out)
-        if isinstance(out, Record):
-            held = batch_field(out.spec)
+            return draw_output
+        if isinstance(draw_output, RecordBatch):
+            return _MappedBatchColumns.of(draw_output)
+        if isinstance(draw_output, NumericArrayBatch):
+            return _MappedBatchStore.of(draw_output)
+        if isinstance(draw_output, Record):
+            held = batch_field(draw_output.spec)
             if held is not None:
                 path, levels = held
                 raise UnmappedBatchError(
@@ -987,7 +987,7 @@ def mapped_draw_body(
                     f"the levels {list(levels)}. Return the batch alone, or claim "
                     "traceable=False so the function runs one draw at a time"
                 )
-        return out
+        return draw_output
 
     return one_draw
 

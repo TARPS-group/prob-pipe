@@ -415,6 +415,7 @@ class TestWorkflowRecipeRecording:
         workflow = Function(
             _identity,
             label="_identity",
+            traceable=False,
             executor="thread",
             max_evaluations=5,
             output_spec=OutputSpec(_identity=None),

@@ -413,8 +413,7 @@ class TestAutomaticKeyOwnership:
 
     def test_operation_scope_rejects_unjoined_nested_items(self):
         items = evaluation_keys_mod.issue_evaluation_points(
-            [{}],
-            point_segments=(evaluation_keys_mod.plain_call_point_segment(),),
+            (evaluation_keys_mod.plain_call_point_segment(),)
         )
 
         with (

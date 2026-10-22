@@ -152,14 +152,14 @@ def fake_flow(name=None, **flow_kwargs):
     return decorator
 
 
-def issue_points(calls=({},)):
-    """Issued evaluation points of *calls*: one plain-call point, or one sweep cell per call."""
+def issue_points(num_points=1):
+    """*num_points* issued evaluation points: one plain-call point, or one sweep cell each."""
     point_segments = (
         (execution_mod.plain_call_point_segment(),)
-        if len(calls) == 1
-        else tuple(execution_mod.sweep_cell_point_segment((index,)) for index in range(len(calls)))
+        if num_points == 1
+        else tuple(execution_mod.sweep_cell_point_segment((index,)) for index in range(num_points))
     )
-    return execution_mod.issue_evaluation_points(list(calls), point_segments=point_segments)
+    return execution_mod.issue_evaluation_points(point_segments)
 
 
 def run_at_points(evaluation_points, func):
@@ -178,7 +178,7 @@ def run_at_points(evaluation_points, func):
             with execution_mod._evaluation_point_scope(
                 evaluation_point, parent_frame, parent_broker
             ):
-                outputs.append(func(**evaluation_point.call_arguments()))
+                outputs.append(func())
         return outputs
     finally:
         parent_broker.cancel_unstarted_evaluation_points(evaluation_points)
@@ -283,10 +283,9 @@ def prefect_fakes(monkeypatch):
 
 class TestIssuedEvaluationPoints:
     def test_issued_evaluation_points_are_frozen_tuple_only_and_pickleable(self):
-        evaluation_points = issue_points([{"x": 1}])
+        evaluation_points = issue_points()
 
         assert isinstance(evaluation_points, tuple)
-        assert evaluation_points[0].arguments == (("x", 1),)
         assert evaluation_points[0].frame.point_segment == (
             "evaluation-point",
             "probpipe.evaluation_point/v1",
@@ -299,7 +298,7 @@ class TestIssuedEvaluationPoints:
             evaluation_points[0].index = 9
 
     def test_evaluation_point_registration_failure_is_transactional_and_preserves_cause(self):
-        evaluation_points = issue_points([{"x": 1}, {"x": 2}])
+        evaluation_points = issue_points(2)
         duplicate_token = replace(
             evaluation_points[1],
             frame=replace(evaluation_points[1].frame, token=evaluation_points[0].frame.token),
@@ -361,7 +360,6 @@ class TestEvaluationPointValueValidation:
             pytest.param(
                 lambda: evaluation_keys_mod.IssuedEvaluationPoint(
                     index=True,
-                    arguments=(("x", 1),),
                     frame=make_evaluation_point_frame(),
                 ),
                 TypeError,
@@ -371,27 +369,6 @@ class TestEvaluationPointValueValidation:
             pytest.param(
                 lambda: evaluation_keys_mod.IssuedEvaluationPoint(
                     index=0,
-                    arguments=[("x", 1)],
-                    frame=make_evaluation_point_frame(),
-                ),
-                TypeError,
-                "arguments must be name/value tuples",
-                id="evaluation-point-values",
-            ),
-            pytest.param(
-                lambda: evaluation_keys_mod.IssuedEvaluationPoint(
-                    index=0,
-                    arguments=(("x", 1), ("x", 2)),
-                    frame=make_evaluation_point_frame(),
-                ),
-                ValueError,
-                "duplicate parameter names",
-                id="evaluation-point-duplicate-values",
-            ),
-            pytest.param(
-                lambda: evaluation_keys_mod.IssuedEvaluationPoint(
-                    index=0,
-                    arguments=(("x", 1),),
                     frame=object(),
                 ),
                 TypeError,
@@ -689,15 +666,6 @@ class TestEvaluationPointValueValidation:
                 ValueError,
                 "duplicate effect identity",
                 id="report-duplicate-successful-effect",
-            ),
-            pytest.param(
-                lambda: evaluation_keys_mod.issue_evaluation_points(
-                    [{"x": 1}],
-                    point_segments=(),
-                ),
-                ValueError,
-                "must have equal lengths",
-                id="evaluation-point-count",
             ),
             pytest.param(
                 lambda: evaluation_keys_mod.sweep_cell_point_segment(()),
@@ -1064,7 +1032,7 @@ class TestEvaluationPointRetryClaims:
         assert snapshot is None
 
     def test_parent_cancels_unstarted_items_before_releasing(self):
-        evaluation_points = issue_points([{"value": 1}, {"value": 2}])
+        evaluation_points = issue_points(2)
         started, unstarted = evaluation_points
 
         with workflow_run(seed=17), evaluation_keys_mod._function_stochastic_scope() as parent:
@@ -1914,6 +1882,31 @@ class TestPrefectTransport:
         ]
         assert result.provenance.metadata["dispatch"] == "prefect"
 
+    def test_a_call_naming_only_executor_options_under_prefect_warns_to_remove_them(
+        self, prefect_fakes
+    ):
+        affine = Function(
+            lambda z: 2.0 * z + 1.0,
+            traceable=False,
+            max_evaluations=6,
+            label="affine",
+            output_spec=OutputSpec(affine=None),
+            workflow_kind=WorkflowKind.TASK,
+        ).using(executor_options={"chunk_size": 2})
+
+        with warnings.catch_warnings(record=True) as caught, workflow_run(seed=5):
+            warnings.simplefilter("always")
+            affine(standard_normal())
+
+        executor_warnings = [
+            str(warning.message) for warning in caught if "has no effect" in str(warning.message)
+        ]
+        assert executor_warnings == [
+            "executor_options on 'affine' has no effect: workflow_kind=WorkflowKind.TASK runs "
+            "its evaluations as Prefect tasks. Remove executor_options, or set "
+            "workflow_kind=WorkflowKind.OFF to run them on an executor"
+        ]
+
     @pytest.mark.parametrize("ship_chunks", [False, True], ids=["in-place", "shipped"])
     def test_prefect_outcomes_keep_point_order_when_tasks_run_in_reverse(
         self, ship_chunks, prefect_fakes
@@ -2017,7 +2010,7 @@ class TestPrefectTransport:
 
         with workflow_run(seed=17), requester_call(requester()):
             evaluation_points = points_of(fail_after_claim)
-            with pytest.raises(EvaluationError, match="remote failure"):
+            with pytest.raises(EvaluationError, match="remote failure") as raised:
                 run_on("prefect", evaluation_points)
             snapshot = evaluation_keys_mod._snapshot_active_recipe_state()
             claim_state = (
@@ -2026,6 +2019,7 @@ class TestPrefectTransport:
                 ]
             )
 
+        assert isinstance(raised.value.__cause__, RuntimeError)
         assert snapshot is None
         assert len(claim_state.effect_claims_by_identity) == 1
 

@@ -292,19 +292,26 @@ class _ReplayState:
 
     def validate_execution_contract(self, contract: Any) -> None:
         """Require the current route to satisfy the one route-neutral contract."""
-        if (
-            contract.abi != self.execution_contract_abi
-            or contract.rng_abi != _RNG_ABI
-            or contract.jax_key_abi != self.key_adapter_abi
-            or (
-                self.canonical_plan.get("kind") != "direct_operation"
-                and tuple(contract.descendant_adapter_abis) != self.descendant_adapter_abis
+        recorded_and_current_versions = [
+            ("execution contract", self.execution_contract_abi, contract.abi),
+            ("random number generator", _RNG_ABI, contract.rng_abi),
+            ("key adapter", self.key_adapter_abi, contract.jax_key_abi),
+        ]
+        if self.canonical_plan.get("kind") != "direct_operation":
+            recorded_and_current_versions.append(
+                (
+                    "descendant key adapters",
+                    self.descendant_adapter_abis,
+                    tuple(contract.descendant_adapter_abis),
+                )
             )
-        ):
-            raise ReplayCompatibilityError(
-                "cannot replay: this call cannot derive random keys the way the recorded call "
-                "did. Record the call again."
-            )
+        for version_name, recorded, current in recorded_and_current_versions:
+            if recorded != current:
+                raise ReplayCompatibilityError(
+                    f"cannot replay: the recorded call derived its random keys under the "
+                    f"{version_name} version {recorded!r}, and this call derives them under "
+                    f"{current!r}. Record the call again."
+                )
         execution = _execution.execution_diagnostics(contract)
         if execution not in self.actual_execution:
             self.actual_execution.append(execution)

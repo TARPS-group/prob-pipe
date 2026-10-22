@@ -5,6 +5,7 @@ its call chooses. The executor decides only how the evaluations run, so every
 executor gives the same draws, and ``jax`` agrees with them up to rounding.
 """
 
+import threading
 import warnings
 
 import jax.numpy as jnp
@@ -169,6 +170,52 @@ class TestAgreementAcrossExecutors:
                 np.asarray(opaque.using(executor=executor)(x=1.0)), reference
             )
 
+    @pytest.mark.parametrize("executor", _PYTHON_EXECUTORS)
+    def test_tuple_and_list_returns_are_held_whole_under_every_executor(self, executor):
+        pairs = Function(
+            lambda x: (float(x), 2.0 * float(x)), label="pair", traceable=False, max_evaluations=4
+        )
+        listed = Function(
+            lambda x: [float(x), 2.0 * float(x)], label="listed", traceable=False, max_evaluations=4
+        )
+        law = Normal("x", 0.0, 1.0)
+        for returning in (pairs, listed):
+            with workflow_run(seed=6):
+                reference = returning.using(executor="sequential")(x=law)
+            with workflow_run(seed=6):
+                result = returning.using(executor=executor)(x=law)
+            assert result.num_atoms == 4
+            raw_atoms = [list(atom.raw) for atom in result.atoms]
+            assert raw_atoms == [list(atom.raw) for atom in reference.atoms]
+            assert all(second == 2.0 * first for first, second in raw_atoms)
+
+    @pytest.mark.parametrize(
+        "executor",
+        [
+            "sequential",
+            "thread",
+            pytest.param(
+                "process",
+                marks=pytest.mark.xfail(
+                    strict=True,
+                    reason=(
+                        "a chunk sent to a worker process commits its call's place in the "
+                        "workflow, so a call that draws nothing moves the keys of later draws"
+                    ),
+                ),
+            ),
+        ],
+    )
+    def test_a_call_that_draws_nothing_leaves_later_draws_unchanged(self, executor):
+        sweep = Function(_scaled, label="scaled", traceable=False)
+        grid = NumericArrayBatch(jnp.arange(3.0), "theta", label="grid")
+        with workflow_run(seed=1):
+            reference = np.asarray(sample(Normal("z", 0.0, 1.0)))
+        with workflow_run(seed=1):
+            sweep.using(executor=executor)(x=grid, scale=2.0)
+            after_the_sweep = np.asarray(sample(Normal("z", 0.0, 1.0)))
+        np.testing.assert_array_equal(after_the_sweep, reference)
+
 
 class TestFailures:
     def test_a_failing_draw_of_a_lift_raises_evaluation_error_naming_it(self):
@@ -208,8 +255,15 @@ class TestFailures:
             Function(refuse, label="refuse", executor="thread")(x=1.0)
 
     def test_a_plain_call_that_names_jax_runs_its_body_in_the_calling_thread(self):
-        traceable = Function(lambda x: x + 1.0, label="shifted", executor="jax")
+        threads_that_ran = []
+
+        def shifted(x):
+            threads_that_ran.append(threading.get_ident())
+            return x + 1.0
+
+        traceable = Function(shifted, label="shifted", executor="jax")
         assert float(traceable(x=1.0)) == 2.0
+        assert threads_that_ran == [threading.get_ident()]
 
     def test_naming_jax_for_a_function_that_claims_traceable_false_raises(self):
         opaque = Function(_shift, label="shift", traceable=False, executor="jax")
@@ -221,6 +275,23 @@ class TestFailures:
                     r"executor 'jax' cannot run the evaluation points of 'shift': JAX cannot "
                     r"trace 'shift': it claims traceable=False\. Name another executor"
                 ),
+            ),
+        ):
+            opaque(x=Normal("x", 0.0, 1.0))
+
+    def test_a_worker_count_that_is_not_positive_raises_naming_the_executor_option(self):
+        opaque = Function(
+            _shift,
+            label="shift",
+            traceable=False,
+            executor="thread",
+            executor_options={"max_workers": 0},
+        )
+        with (
+            workflow_run(seed=0),
+            pytest.raises(
+                ValueError,
+                match=r"^executor_options\['max_workers'\] must be a positive integer, got 0$",
             ),
         ):
             opaque(x=Normal("x", 0.0, 1.0))
@@ -296,7 +367,7 @@ class TestWhereASetCanBeBuilt:
     def test_a_set_built_outside_every_call_is_refused(self):
         with pytest.raises(
             RuntimeError,
-            match="cannot build evaluation points of 'total' outside the ProbPipe call that asks",
+            match="cannot build evaluation points of 'total' where no ProbPipe call gives them",
         ):
             EvaluationPoints(lambda x: x, varying={"x": np.arange(3.0)}, origin="total")
 
@@ -305,7 +376,7 @@ class TestWhereASetCanBeBuilt:
         def builds_a_set(x):
             return EvaluationPoints(lambda y: y, varying={"y": np.arange(3.0)}, origin="inner")
 
-        with pytest.raises(RuntimeError, match="such as inside a function's body"):
+        with pytest.raises(RuntimeError, match="such as directly in a function's body"):
             builds_a_set(1.0)
 
     def test_a_traceable_function_making_a_threaded_call_runs_it_inline(self):

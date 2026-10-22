@@ -1979,10 +1979,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   # before: "sequential"; after: "prefect"
   ```
 
-- **`EvaluationPoints` built outside the ProbPipe call that asks for the
-  evaluations raises `RuntimeError`,** as inside a function's body, where no
-  place in the workflow gives the evaluation points their random keys. Ask
-  for the evaluations through a ProbPipe call, such as a lifted call.
+- **`EvaluationPoints` built where no ProbPipe call places its evaluations in
+  the workflow raises `RuntimeError`,** as directly in a function's body,
+  since the place in the workflow gives each evaluation its random keys. Ask
+  for the evaluations with `evaluate_at_points`, which takes a place of its
+  own, or through a ProbPipe call, such as a lifted call.
 
 ### Added
 
@@ -3148,11 +3149,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
 
 - **`evaluate_at_points` asks for the evaluations of a callable at many
-  arguments.** Code inside a ProbPipe call, such as a route of an operation,
-  passes the arguments that vary, stacked on a leading axis, and those every
-  evaluation shares, and receives each evaluation's output, or under
-  `stacked=True` the outputs stacked on a leading axis, from the executor the
-  call chooses.
+  arguments.** Code such as a route of an operation, an inference method, or
+  a function's body passes the arguments that vary, stacked on a leading
+  axis, and those every evaluation shares, and receives each evaluation's
+  output, or under `stacked=True` the outputs stacked on a leading axis, from
+  the executor the call chooses.
 
   ```python
   from probpipe import evaluate_at_points

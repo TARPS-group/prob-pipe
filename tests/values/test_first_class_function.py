@@ -1382,6 +1382,7 @@ class TestSymbolicCalls:
             output_spec=OutputSpec(
                 function=DistributionSpec(OutputSpec(y=NumericArraySpec((), dtype="int32")))
             ),
+            traceable=False,
             executor="sequential",
             max_evaluations=8,
         )

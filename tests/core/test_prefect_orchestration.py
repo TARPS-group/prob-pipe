@@ -647,7 +647,7 @@ def _provenance_mode_code(x: jnp.ndarray) -> jnp.ndarray:
 class TestProvenanceModeInPrefectTasks:
     """A Prefect task runs under the provenance mode of the workflow run that started it.
 
-    A worker that receives the payload pickled is covered in
+    A worker that receives a chunk of evaluation points pickled is covered in
     ``tests/functions/test_parallel.py``.
     """
 

@@ -1021,8 +1021,9 @@ def _probe_checked_call(
     The call probes a function that states nothing when its route maps the
     body, whatever executor it names, since a function JAX can trace is
     always mapped by ``jax``. So ``check`` probes under the same conditions,
-    with the same stand-ins, and stores the outcome where the call reads it. A probe of a nested sweep reads its first cell. A probe that
-    fails stores its outcome and raises nothing, as the call's would.
+    with the same stand-ins, and stores the outcome where the call reads it.
+    A probe of a nested sweep reads its first cell. A probe that fails stores
+    its outcome and raises nothing, as the call's would.
     """
     if (
         broadcast_plan.regime == "none"

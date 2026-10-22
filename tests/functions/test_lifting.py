@@ -659,6 +659,7 @@ class TestGrouping:
     def test_one_distribution_passed_twice_is_one_group(self):
         @function(
             max_evaluations=8,
+            traceable=False,
             executor="sequential",
             output_spec=OutputSpec(difference=None),
         )

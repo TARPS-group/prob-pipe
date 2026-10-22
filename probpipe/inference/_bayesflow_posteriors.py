@@ -580,7 +580,8 @@ def learn_amortized_posterior(
         How the offline simulation is executed. ``"jax"`` (default) vmaps the
         simulator and requires it to be JAX-traceable; ``"sequential"`` runs an
         eager per-draw loop, supporting non-JAX simulators (numpy / external
-        code) at the cost of speed. Mirrors ``Function``'s dispatch names.
+        code) at the cost of speed. The names match the executors ``jax`` and
+        ``sequential``.
     inference_network : bayesflow.networks.InferenceNetwork or None
         Overrides the method default (``CouplingFlow`` / ``FlowMatching`` /
         ``ConsistencyModel``). A ``CouplingFlow`` gives the posterior a density.

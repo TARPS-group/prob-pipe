@@ -1104,7 +1104,7 @@ def evaluate_at_points(fn, /, *, varying: Mapping[str, Any], shared: Mapping[str
     With stacked=True, returns one tree stacked on a leading axis of evaluation points: the jax
     executor's mapped output whole, checked once, leading axis included; any other executor's
     outputs stacked leaf by leaf when every leaf is numeric and they share one tree structure,
-    and otherwise a one-dimensional object array holding each output.
+    and otherwise, tuples and lists included, a one-dimensional object array holding each output.
     Raises EvaluationError naming every failed evaluation point (6.4, rule 1)."""
 ```
 

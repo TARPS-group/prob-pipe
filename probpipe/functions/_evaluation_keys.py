@@ -12,7 +12,7 @@ key is the same whichever thread, task, or retry runs the point.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Generator, Mapping, Sequence
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
@@ -82,42 +82,28 @@ class IssuedEvaluationPoint:
     """One evaluation point that a parent broker issued, frozen for its runs.
 
     An evaluation point is one evaluation of a callable at one set of
-    arguments. :func:`issue_evaluation_points` makes one for each set of
-    arguments of a request, in the request's order, and the parent broker
-    registers each before any runs. The point then runs in place, in a worker
-    thread, or in a Prefect task, once per attempt, and every attempt runs the
-    same arguments under the same frame, so its draws keep their keys across
-    retries. It is immutable and can be pickled. Construction raises
-    ``TypeError`` for a negative or non-integer index, for arguments that are
-    not name and value pairs, or for a frame that is not valid, and
-    ``ValueError`` for a repeated name.
+    arguments. :func:`issue_evaluation_points` makes one for each evaluation
+    point of a set, in point order, and the parent broker registers each
+    before any runs. The point then runs in place, in a worker thread, or in a
+    Prefect task, once per attempt, and every attempt runs under the same
+    frame, so its draws keep their keys across retries. It is immutable and
+    can be pickled. Construction raises ``TypeError`` for a negative or
+    non-integer index or for a frame that is not valid.
 
     Attributes
     ----------
     index : int
-        Its point index: its position within its request, from zero.
-    arguments : tuple of tuple of (str, Any)
-        The keyword arguments of its call, as name and value pairs;
-        :meth:`call_arguments` returns them as a dict.
+        Its point index: its position within its set, from zero.
     frame : EvaluationPointFrame
         Its segment of the occurrence path and its ownership token, which
         name it in the keys of its draws and in its parent's registry.
     """
 
     index: int
-    arguments: tuple[tuple[str, Any], ...]
     frame: EvaluationPointFrame
 
     def __post_init__(self) -> None:
-        _validate_issued_evaluation_point_fields(
-            index=self.index,
-            arguments=self.arguments,
-            frame=self.frame,
-        )
-
-    def call_arguments(self) -> dict[str, Any]:
-        """Materialize the keyword mapping used for execution."""
-        return dict(self.arguments)
+        _validate_issued_evaluation_point_fields(index=self.index, frame=self.frame)
 
 
 @dataclass(frozen=True)
@@ -257,23 +243,18 @@ def lifted_evaluation_point_segment(
 
 
 def issue_evaluation_points(
-    call_arguments: Sequence[Mapping[str, Any]],
-    *,
     point_segments: Sequence[_RandomEventPath],
 ) -> tuple[IssuedEvaluationPoint, ...]:
-    """Freeze ordered call mappings and their preassigned point segments."""
-    if len(call_arguments) != len(point_segments):
-        raise ValueError("call arguments and evaluation point segments must have equal lengths")
+    """One issued evaluation point for each of *point_segments*, in order, each with a new token."""
     return tuple(
         IssuedEvaluationPoint(
             index=index,
-            arguments=tuple(arguments.items()),
             frame=EvaluationPointFrame(
-                point_segment=tuple(point_segments[index]),
+                point_segment=tuple(point_segment),
                 token=EvaluationPointToken.create(),
             ),
         )
-        for index, arguments in enumerate(call_arguments)
+        for index, point_segment in enumerate(point_segments)
     )
 
 
@@ -1693,23 +1674,10 @@ def _validate_evaluation_point_attempt_fields(
         raise TypeError("evaluation point attempt tokens must contain exactly 16 bytes")
 
 
-def _validate_issued_evaluation_point_fields(
-    *,
-    index: object,
-    arguments: object,
-    frame: object,
-) -> None:
-    """Validate one complete evaluation point boundary without materializing kwargs."""
+def _validate_issued_evaluation_point_fields(*, index: object, frame: object) -> None:
+    """Validate the index and frame of one issued evaluation point."""
     if isinstance(index, bool) or not isinstance(index, int) or index < 0:
         raise TypeError("evaluation point indexes must be non-negative integers")
-    if not isinstance(arguments, tuple) or any(
-        not isinstance(entry, tuple) or len(entry) != 2 or not isinstance(entry[0], str)
-        for entry in arguments
-    ):
-        raise TypeError("evaluation point arguments must be name/value tuples")
-    names = tuple(entry[0] for entry in arguments)
-    if len(set(names)) != len(names):
-        raise ValueError("evaluation point arguments contain duplicate parameter names")
     if not isinstance(frame, EvaluationPointFrame):
         raise TypeError("evaluation points require a valid evaluation point frame")
     _validate_evaluation_point_frame_fields(
@@ -1930,61 +1898,6 @@ def _validated_evaluation_point_attempt_snapshot(attempt: object) -> EvaluationP
     return EvaluationPointAttempt(
         evaluation_point_token=EvaluationPointToken(attempt.evaluation_point_token.value),
         attempt_token=attempt.attempt_token,
-    )
-
-
-def _validated_issued_evaluation_point_snapshot(evaluation_point: object) -> IssuedEvaluationPoint:
-    """Deeply reconstruct one transported evaluation point while preserving values."""
-    if not isinstance(evaluation_point, IssuedEvaluationPoint):
-        raise TypeError("transported evaluation points must be IssuedEvaluationPoint values")
-    if not isinstance(evaluation_point.frame, EvaluationPointFrame):
-        raise TypeError("evaluation points require a valid evaluation point frame")
-    return IssuedEvaluationPoint(
-        index=evaluation_point.index,
-        arguments=evaluation_point.arguments,
-        frame=_validated_evaluation_point_frame_snapshot(evaluation_point.frame),
-    )
-
-
-def _validated_evaluation_point_parent_envelope_snapshot(
-    parent: object,
-) -> EvaluationPointParentEnvelope:
-    """Deeply reconstruct one transported parent authority envelope."""
-    if not isinstance(parent, EvaluationPointParentEnvelope):
-        raise TypeError("transported parent authority must be an EvaluationPointParentEnvelope")
-    if not isinstance(parent.frame, EvaluationPointFrame) or not isinstance(
-        parent.attempt,
-        EvaluationPointAttempt,
-    ):
-        raise TypeError("evaluation point parent authority requires a frame and attempt")
-    if parent.replay_expected_effects is not None and (
-        not isinstance(parent.replay_expected_effects, tuple)
-        or any(
-            not isinstance(effect, StochasticEffectClaim)
-            for effect in parent.replay_expected_effects
-        )
-    ):
-        raise TypeError("evaluation point replay expectations must be effect tuples or None")
-    if not isinstance(parent.retry_effects, tuple) or any(
-        not isinstance(effect, StochasticEffectClaim) for effect in parent.retry_effects
-    ):
-        raise TypeError("evaluation point retry effects must be an effect tuple")
-    replay_expected_effects = (
-        None
-        if parent.replay_expected_effects is None
-        else tuple(
-            _validated_effect_claim_snapshot(effect) for effect in parent.replay_expected_effects
-        )
-    )
-    return EvaluationPointParentEnvelope(
-        root_words=parent.root_words,
-        parent_occurrence_path=parent.parent_occurrence_path,
-        frame=_validated_evaluation_point_frame_snapshot(parent.frame),
-        attempt=_validated_evaluation_point_attempt_snapshot(parent.attempt),
-        replay_expected_effects=replay_expected_effects,
-        retry_effects=tuple(
-            _validated_effect_claim_snapshot(effect) for effect in parent.retry_effects
-        ),
     )
 
 

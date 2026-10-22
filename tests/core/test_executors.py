@@ -753,12 +753,28 @@ class TestEvaluateAtPoints:
 
         np.testing.assert_allclose(mapped(jnp.arange(8.0).reshape(4, 2)), [2.0, 10.0, 18.0, 26.0])
 
-    def test_it_is_refused_outside_the_call_that_asks_for_the_evaluations(self):
-        with pytest.raises(RuntimeError, match="outside the ProbPipe call that asks for them"):
-            evaluate_at_points(
-                _opaque_sum,
+    def test_it_takes_a_place_of_its_own_in_a_functions_body(self):
+        def ask_for_simulations(scale):
+            return evaluate_at_points(
+                _simulate_with_a_nested_draw,
                 varying={"x": np.arange(8.0).reshape(4, 2)},
-                shared={"scale": 2.0},
+                shared={"scale": scale},
                 origin="simulate",
                 output_spec=None,
+                stacked=True,
             )
+
+        asking = function(ask_for_simulations, traceable=False)
+        with workflow_run(seed=4):
+            first = np.asarray(asking(2.0))
+        with workflow_run(seed=4):
+            again = np.asarray(asking(2.0))
+        np.testing.assert_array_equal(first, again)
+        assert first.shape == (4, 2)
+
+    def test_tuple_outputs_are_held_whole_when_stacked(self):
+        stacked_outputs, _ = self._evaluate(
+            lambda x, scale: (np.sum(x), scale), output_spec=None, stacked=True
+        )
+        assert stacked_outputs.dtype == object
+        assert stacked_outputs.tolist() == [(1.0, 2.0), (5.0, 2.0), (9.0, 2.0), (13.0, 2.0)]

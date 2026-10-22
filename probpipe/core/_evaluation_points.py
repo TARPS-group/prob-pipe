@@ -133,9 +133,10 @@ class EvaluationPoints:
         If there are no varying arguments, or they do not all have the same
         number of rows.
     RuntimeError
-        If it is built outside the ProbPipe call that asks for the
-        evaluations, such as inside a function's body, where no place in the
-        workflow gives its evaluation points their random keys.
+        If it is built where no ProbPipe call gives its evaluation points a
+        place in the workflow, which gives them their random keys, such as
+        directly in a function's body; ``evaluate_at_points`` takes a place
+        of its own there.
 
     Examples
     --------
@@ -884,15 +885,30 @@ _EvaluationPointScopesFactory = Callable[
 
 _EVALUATION_POINT_SCOPES_FACTORY: _EvaluationPointScopesFactory = _unscoped_evaluation_points
 
+#: Opens a place in the workflow from which code asks for a set of evaluation
+#: points, as a nested call does, so a set built there has a key broker.
+_REQUESTER_SCOPE_FACTORY: Callable[[], AbstractContextManager[None]] = nullcontext
 
-def _install_evaluation_point_scopes(factory: _EvaluationPointScopesFactory) -> None:
+
+def _install_evaluation_point_scopes(
+    factory: _EvaluationPointScopesFactory,
+    requester_scope_factory: Callable[[], AbstractContextManager[None]],
+) -> None:
     """Make *factory* build the workflow scopes of every new set of evaluation points.
 
-    The function engine calls this when it is imported, as it installs its
-    call engine, so ``core`` never imports the workflow scope.
+    *requester_scope_factory* opens the place in the workflow from which
+    ``evaluate_at_points`` asks for its set. The function engine calls this
+    when it is imported, as it installs its call engine, so ``core`` never
+    imports the workflow scope.
     """
-    global _EVALUATION_POINT_SCOPES_FACTORY
+    global _EVALUATION_POINT_SCOPES_FACTORY, _REQUESTER_SCOPE_FACTORY
     _EVALUATION_POINT_SCOPES_FACTORY = factory
+    _REQUESTER_SCOPE_FACTORY = requester_scope_factory
+
+
+def _requester_scope() -> AbstractContextManager[None]:
+    """The place in the workflow from which ``evaluate_at_points`` asks for its set of evaluation points."""
+    return _REQUESTER_SCOPE_FACTORY()
 
 
 def _requested_evaluation_points(
@@ -1250,6 +1266,11 @@ def _output_rows(stacked_output: Any, num_rows: int, origin: str) -> list[Any]:
             f"{_described_row_counts(leaf_row_counts)} for {num_rows} evaluation points. "
             "Return the outputs stacked with one row per evaluation point"
         )
+    return _stacked_rows(stacked_output, num_rows)
+
+
+def _stacked_rows(stacked_output: Any, num_rows: int) -> list[Any]:
+    """The first *num_rows* rows of an output stacked on a leading axis, each with the output's tree."""
     return [
         jax.tree.map(lambda leaf, row_index=row: leaf[row_index], stacked_output)
         for row in range(num_rows)
