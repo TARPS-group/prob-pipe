@@ -57,6 +57,8 @@ def test_distribution_truth_value_permanently_refuses(factory):
 def test_ordinary_records_keep_their_length_based_truth_value():
     assert not RecordSpec({})
     assert bool(Record({"a": "value"}))
+    assert not bool(Record({}, label="empty"))
+    assert bool(Record({"a": 0.0}))
 
 
 def test_order_refusal_uses_the_prescribed_message():

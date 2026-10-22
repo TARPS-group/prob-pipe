@@ -118,9 +118,12 @@ class NumericRecord(Record, Numeric):
     ``list(record.values())``, which returns the ordered list of native
     fields and is supported by any ``Record``.
 
+    Truth depends on the number of top-level fields, as for any record:
+    an empty record is false and every nonempty record is true.
+
     **Single-field records as scalars.** A ``NumericRecord`` with exactly one field
     behaves like a thin wrapper around that field's value: ``float(r)``, ``int(r)``,
-    ``bool(r)``, ``np.asarray(r)``, ``jnp.asarray(r)``, and the ``r.shape`` /
+    ``np.asarray(r)``, ``jnp.asarray(r)``, and the ``r.shape`` /
     ``r.dtype`` / ``r.ndim`` attributes all forward to the sole leaf (only the value
     coercions materialise it). A record with more than one field, or
     whose single child is a nested record — an interior node, not a field —
@@ -500,7 +503,8 @@ class NumericRecord(Record, Numeric):
         return int(self._child_field_as_jax(self._single_numeric_field()))
 
     def __bool__(self) -> bool:
-        return bool(self._child_field_as_jax(self._single_numeric_field()))
+        """Whether this record has any top-level fields, regardless of their values."""
+        return len(self) != 0
 
     # The array conversions present the sole field rather than Numeric's flat
     # vector, an interim implementation detail until a record no longer presents

@@ -82,6 +82,7 @@ In the examples, `x` is a law over `{a, b, c, sigma}`, `ke` a kernel `ke(e | sig
 | Old | New | Step | Silent? |
 |---|---|---|---|
 | `lik * prior` between laws or kernels | `lik & prior`; `*` between laws or kernels raises `TypeError` naming `&` | S3 | no |
+| `bool(Record({"x": 0.0}))` was false; an empty numeric record raised | every record uses length: the former is true, the empty record is false; test `bool(record["x"])` for field truth | S3 | yes |
 | `lik and prior` returned `prior` | `bool()` on a law or kernel raises | S3 | no |
 | `record_a.merge(record_b)` on `NamedTree`, `Record`, `RecordSpec`, `RecordBatch` | `record_a & record_b` | S3 | no |
 | `with_path_names` | `rename` | S3 | no |

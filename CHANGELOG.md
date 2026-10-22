@@ -1993,6 +1993,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Scalar multiplication of Gaussian random functions and record truth values
   retain their existing behavior.
 
+- **Every record uses container truth, including `NumericRecord`.**
+  `bool(Record({"x": 0.0}))` now returns `True`, where scalar conversion
+  returned `False`; `bool(Record({}, label="empty"))` returns `False`, where it raised.
+  Test `bool(record["x"])` when the field's value should decide truth.
+
 ### Added
 
 - **`summarize(d)` collects a law's standard summaries in one record that
