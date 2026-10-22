@@ -4,7 +4,9 @@ Every class, member, field, and function that Part II and sections III.1,
 III.2, III.4, III.5, and III.6 declare is checked against the modules that
 define it today: the class exists and derives from the declared bases, and each
 member takes the declared parameters, in order, with the declared kinds and
-defaults. ``design/package-structure.md`` lists where each module moves.
+defaults. ``design/package-structure.md`` lists where each module moves. The
+linear operator of III.4 is checked here with the value kinds, though its code
+is in ``linalg/``, so that one file covers the sections no package owns alone.
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ from tests._design_conformance import (
     DESIGN_IS_CHECKED_OUT,
     NOT_IMPLEMENTED,
     PendingMembers,
-    declared_name,
+    declaration_cases,
     design_blocks,
     findings_of_member,
     module_resolver,
@@ -88,25 +90,12 @@ _MODULES = (
 )
 
 #: The members that differ from the design today, by finding name, each with
-#: the problem the check reports and the behavior it awaits; the rule is in
-#: ``tests/_design_conformance.py``.
+#: the problem the check reports and the behavior it awaits. The rule is stated
+#: in ``tests/_design_conformance.py``.
 _PENDING: PendingMembers = {
     "InputSpec.rename": (
         NOT_IMPLEMENTED,
         "renaming the inputs of an input spec, input_spec.rename(...), is not implemented",
-    ),
-    "OutputSpec.__init__": (
-        (
-            "declares parameters ['term_spec'], has ['args', 'term']",
-            "declares parameters ['named_output'], has ['args', 'term']",
-        ),
-        "the constructor takes the positional and the keyword form in one signature, "
-        "(*args, **term), where the design declares one overload for each",
-    ),
-    "Numeric.__array__": (
-        "declares parameters [], has ['dtype', 'copy']",
-        "the NumPy conversion takes NumPy's dtype and copy arguments, which the "
-        "declaration leaves out",
     ),
     "Constraint": (
         "does not derive from ABC",
@@ -222,15 +211,8 @@ def _findings(declaration) -> list:
     return design_blocks().check([declaration], _resolve)
 
 
-def _cases() -> list:
-    return [
-        pytest.param(declaration, id=f"{declaration.section}-{declared_name(declaration)}")
-        for declaration in _declarations()
-    ]
-
-
 class TestDeclarationsAreImplemented:
-    @pytest.mark.parametrize("declaration", _cases())
+    @pytest.mark.parametrize("declaration", declaration_cases(_declarations()))
     def test_the_declaration_matches_the_implementation(self, declaration):
         unexpected = unexpected_findings(_findings(declaration), _PENDING)
         assert not unexpected, "; ".join(unexpected)

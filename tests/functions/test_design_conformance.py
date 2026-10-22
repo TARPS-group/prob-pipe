@@ -29,6 +29,7 @@ from tests._design_conformance import (
     DESIGN_IS_CHECKED_OUT,
     NOT_IMPLEMENTED,
     PendingMembers,
+    declaration_cases,
     declared_name,
     design_blocks,
     findings_of_member,
@@ -142,15 +143,8 @@ def _findings(declaration) -> list:
     return design_blocks().check([declaration], _resolve)
 
 
-def _cases() -> list:
-    return [
-        pytest.param(declaration, id=f"{declaration.section}-{declared_name(declaration)}")
-        for declaration in _declarations()
-    ]
-
-
 class TestDeclarationsAreImplemented:
-    @pytest.mark.parametrize("declaration", _cases())
+    @pytest.mark.parametrize("declaration", declaration_cases(_declarations()))
     def test_the_declaration_matches_the_implementation(self, declaration):
         unexpected = unexpected_findings(_findings(declaration), _PENDING)
         assert not unexpected, "; ".join(unexpected)

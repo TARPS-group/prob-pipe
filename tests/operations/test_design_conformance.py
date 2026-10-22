@@ -33,6 +33,7 @@ from probpipe.operations import (
 from tests._design_conformance import (
     DESIGN_IS_CHECKED_OUT,
     PendingMembers,
+    declaration_cases,
     declared_name,
     design_blocks,
     findings_of_member,
@@ -133,14 +134,6 @@ def _findings(declaration) -> list:
     return design_blocks().check([declaration], _resolve)
 
 
-def _cases() -> list:
-    cases = []
-    for declaration in _declarations():
-        name = declared_name(declaration)
-        cases.append(pytest.param(declaration, id=f"{declaration.section}-{name}"))
-    return cases
-
-
 def _route_constructions() -> list:
     """Each ``op.<helper>(...)`` call of VI.0's code blocks, as (operation, helper, call)."""
     if not DESIGN_IS_CHECKED_OUT:
@@ -173,7 +166,7 @@ def _route_constructions() -> list:
 
 
 class TestDeclarationsAreImplemented:
-    @pytest.mark.parametrize("declaration", _cases())
+    @pytest.mark.parametrize("declaration", declaration_cases(_declarations()))
     def test_the_declaration_matches_the_implementation(self, declaration):
         unexpected = unexpected_findings(_findings(declaration), _PENDING)
         assert not unexpected, "; ".join(unexpected)

@@ -22,12 +22,12 @@ from types import ModuleType
 from typing import Any
 
 import pytest
-from _pytest.mark.structures import ParameterSet
 
 __all__ = [
     "DESIGN_IS_CHECKED_OUT",
     "NOT_IMPLEMENTED",
     "PendingMembers",
+    "declaration_cases",
     "declared_name",
     "design_blocks",
     "findings_of_member",
@@ -60,7 +60,7 @@ def unexpected_findings(findings: Iterable[Any], pending: PendingMembers) -> lis
     ]
 
 
-def pending_member_cases(pending: PendingMembers) -> list[ParameterSet]:
+def pending_member_cases(pending: PendingMembers) -> list[Any]:
     """One strict pending case per member *pending* lists, each named by the member.
 
     With none listed, one case skips with a reason that says so, since pytest
@@ -83,6 +83,14 @@ def pending_member_cases(pending: PendingMembers) -> list[ParameterSet]:
             marks=pytest.mark.pending(reason=reason, raises=AssertionError),
         )
         for member_name, (_, reason) in pending.items()
+    ]
+
+
+def declaration_cases(declarations: Iterable[Any]) -> list[Any]:
+    """One case per declaration, each named by its section and the name it declares."""
+    return [
+        pytest.param(declaration, id=f"{declaration.section}-{declared_name(declaration)}")
+        for declaration in declarations
     ]
 
 

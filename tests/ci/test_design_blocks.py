@@ -47,17 +47,52 @@ class TestDefaults:
         assert _check("def make(kernel='GaussianKernel'): ...", make) == []
 
     @pytest.mark.parametrize(
-        ("source", "default"),
+        ("source", "implemented_source", "finding"),
         [
-            pytest.param("def make(kernel=GaussianKernel): ...", 1, id="a-number"),
-            pytest.param("def make(n=3): ...", 4, id="another-number"),
+            pytest.param(
+                "def make(kernel=GaussianKernel): ...",
+                "def make(kernel=1): ...",
+                "make declares kernel=GaussianKernel, has 1",
+                id="a-class-and-a-number",
+            ),
+            pytest.param(
+                "def make(n=3): ...",
+                "def make(n=4): ...",
+                "make declares n=3, has 4",
+                id="two-numbers",
+            ),
         ],
     )
-    def test_a_different_default_is_reported(self, source, default):
-        def make(kernel=default, n=default): ...
+    def test_a_different_default_is_reported(self, source, implemented_source, finding):
+        namespace: dict = {}
+        exec(implemented_source, namespace)
+        assert _check(source, namespace["make"]) == [finding]
 
-        findings = _check(source, make)
-        assert any("declares" in finding for finding in findings), findings
+
+class TestOverloads:
+    _DECLARATION = """
+class Spec:
+    @overload
+    def __init__(self, term_spec, /) -> None: ...
+    @overload
+    def __init__(self, **named_output) -> None: ...
+"""
+
+    def test_an_implementation_that_accepts_every_overload_matches(self):
+        class Spec:
+            def __init__(self, *args, **term): ...
+
+        assert _check(self._DECLARATION, Spec) == []
+
+    def test_an_implementation_that_refuses_an_overload_is_reported(self):
+        class Spec:
+            def __init__(self, term_spec, /): ...
+
+        findings = _check(self._DECLARATION, Spec)
+        assert len(findings) == 1
+        assert findings[0].startswith(
+            "Spec.__init__ does not accept the overload (self, named_output)"
+        )
 
 
 class TestBases:

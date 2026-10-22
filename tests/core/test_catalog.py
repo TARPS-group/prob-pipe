@@ -9,8 +9,9 @@ Covers:
    evaluation rules, the inference methods, and the operations;
 5. a dispatch registry's entries: the fields, selection order, floors,
    overrides, and the registration snapshot;
-6. agreement with the code blocks of design II.7, through
-   ``scripts/design/design_blocks.py``.
+6. the catalog's exports, each declared in design II.7, and the field order of
+   its records, as II.7 declares them; ``tests/core/test_design_conformance.py``
+   checks II.7's signatures.
 """
 
 from __future__ import annotations

@@ -21,6 +21,7 @@ import probpipe.families as families
 from tests._design_conformance import (
     DESIGN_IS_CHECKED_OUT,
     PendingMembers,
+    declaration_cases,
     declared_name,
     design_blocks,
     findings_of_member,
@@ -103,13 +104,6 @@ def _findings(declaration) -> list:
     return design_blocks().check([declaration], _resolver(declaration.section))
 
 
-def _cases() -> list:
-    return [
-        pytest.param(declaration, id=f"{declaration.section}-{declared_name(declaration)}")
-        for declaration in _declarations()
-    ]
-
-
 def _listed_families() -> list[str]:
     """The parametric families VII.1 lists in its prose, which its code block declares by example."""
     text = _CATALOG.read_text()
@@ -129,7 +123,7 @@ def _new_declarations() -> dict[str, str]:
 
 
 class TestDeclarationsAreImplemented:
-    @pytest.mark.parametrize("declaration", _cases())
+    @pytest.mark.parametrize("declaration", declaration_cases(_declarations()))
     def test_the_declaration_matches_the_implementation(self, declaration):
         unexpected = unexpected_findings(_findings(declaration), _PENDING)
         assert not unexpected, "; ".join(unexpected)

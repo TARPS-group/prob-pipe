@@ -66,6 +66,11 @@ class Member:
     def is_property(self) -> bool:
         return "property" in self.decorators
 
+    @property
+    def is_overload(self) -> bool:
+        """Whether the member is one ``@overload`` of a method the class implements once."""
+        return any(decorator.split(".")[-1] == "overload" for decorator in self.decorators)
+
 
 @dataclass(frozen=True)
 class Field:
@@ -371,6 +376,43 @@ def _compare_signature(
     return findings
 
 
+def _check_overload(section: str, owner: str, member: Member, implemented: Any) -> list[Finding]:
+    """Whether *implemented* accepts a call that the overload *member* declares.
+
+    An overload declares one way to call a method that the class implements
+    once, so the implementation is not compared parameter by parameter. It
+    must accept a call that passes each declared parameter as the overload
+    passes it: a positional parameter by position, a keyword parameter by its
+    name, and ``**name`` as one keyword.
+    """
+    where = f"{owner}.{member.name}"
+    try:
+        signature = inspect.signature(implemented)
+    except (TypeError, ValueError):
+        return [Finding(section, where, "has no inspectable signature")]
+    positional_arguments: list[object] = []
+    keyword_arguments: dict[str, object] = {}
+    for parameter in member.parameters:
+        if parameter.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.VAR_POSITIONAL,
+        ):
+            positional_arguments.append(object())
+        elif parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+            keyword_arguments[parameter.name] = object()
+        else:
+            keyword_arguments[f"{parameter.name}_keyword"] = object()
+    try:
+        signature.bind(*positional_arguments, **keyword_arguments)
+    except TypeError as binding_error:
+        declared = ", ".join(parameter.name for parameter in member.parameters)
+        return [
+            Finding(section, where, f"does not accept the overload ({declared}): {binding_error}")
+        ]
+    return []
+
+
 def _default_sources(default: Any) -> set[str]:
     """The ways a declaration may write *default* as source.
 
@@ -452,6 +494,9 @@ def check(
                 target = attribute
                 if isinstance(target, (classmethod, staticmethod)):
                     target = target.__func__
+                if member.is_overload:
+                    findings.extend(_check_overload(decl.section, decl.name, member, target))
+                    continue
                 findings.extend(
                     _compare_signature(decl.section, decl.name, member, target, skip_first=True)
                 )
