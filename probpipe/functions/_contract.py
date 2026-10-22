@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from ..core._record_spec import _RecordOrderMismatch
 from ..core._spec_base import _unify_specs
 from ..core._specs import InputSpec, TermSpec
 from ..core.named_tree import _PATH_SEP
@@ -84,6 +85,8 @@ def _bind_planned_function_inputs(
                 _unify_specs(expected, actual, bindings, path)
             else:
                 expected._bind_dims_from_value(values[name], bindings, path)
+    except _RecordOrderMismatch:
+        raise
     except ValueError as error:
         raise ApplicabilityError(str(error)) from error
     return input_spec.with_dim_sizes(**bindings), bindings

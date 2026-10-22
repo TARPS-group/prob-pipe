@@ -3052,7 +3052,7 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
             If *given* binds part of an input.
         """
         complete, pending, inputs = self._translated(given)
-        remaining = self.given_spec.without(*inputs)
+        remaining = self.given_spec.without(*(name for name in inputs if name in self.given_spec))
         # A binding that leaves no required input evaluates the parent, whose
         # optional inputs left unbound take their defaults.
         evaluate = bool(complete) or not remaining.required

@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 from ..core._execution_claims import Traceability, probe, spec_stand_in
 from ..core._expression import _GENERIC_LAW_SYMBOL, Named, Signature
 from ..core._immutable import transient_memo
-from ..core._record_spec import RecordSpec
+from ..core._record_spec import RecordSpec, _layout_record_mapping
 from ..core._repr import call_repr, format_names, public_class_name, term_repr, type_name
 from ..core._shapes import PathsLike
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
@@ -1648,7 +1648,11 @@ def _value_at_declared_kind(spec: TermSpec, record_label: str, value: Any) -> An
     another kind is passed as it is.
     """
     if isinstance(spec, RecordSpec):
-        return value if isinstance(value, Record) else Record(value, label=record_label)
+        return (
+            value
+            if isinstance(value, Record)
+            else Record(_layout_record_mapping(spec, value), label=record_label)
+        )
     if isinstance(spec, NumericArraySpec):
         return jnp.asarray(value)
     return value

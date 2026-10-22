@@ -31,7 +31,7 @@ from ..core._object_batch import _from_iterable, _is_object_array, _ObjectBatch
 from ..core._opaque import Opaque
 from ..core._opaque_batch import OpaqueBatch
 from ..core._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
-from ..core._record_spec import _reshaped_template
+from ..core._record_spec import _layout_record_mapping, _reshaped_template
 from ..core._repr import type_name
 from ..core._spec_base import _full_array_shape_or_none, _known_type, _unify_specs
 from ..core._specs import NumericArraySpec, OpaqueSpec, OutputSpec, RecordSpec
@@ -1293,7 +1293,7 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
         return value
     if isinstance(value, Mapping) and not isinstance(value, Record):
         # A record-valued route returns the nested mapping of its stacked columns.
-        value = Record({**value}, label=label)
+        value = Record(_layout_record_mapping(spec.element_spec.term_spec, value), label=label)
     if isinstance(value, Record):
         template = value.event_template
         columns = {path: value._raw_at(path) for path in template}

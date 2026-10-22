@@ -54,7 +54,15 @@ inputs; passing the law itself does not describe their types.
 Input list selection retains declaration order and optional flags. Merging
 input specs with `left & right` retains the first type of a shared input after
 checking compatibility. A shared input is optional only when both sides mark it
-optional.
+optional. A Python parameter's default marks its declared input optional;
+declaring an optional input for a parameter with no default is an error.
+
+Record field order is part of a declaration. An existing record or record spec
+in another order does not conform, including inside a nested record. At function
+input and return boundaries, and when binding a kernel's conditioning values,
+a raw mapping may arrive in any order: the body and returned value receive its
+fields in declaration order. This leaves the caller's mapping unchanged.
+`InputSpec.without` raises `KeyError` for a name it does not declare.
 
 ::: probpipe.InputSpec
 

@@ -135,6 +135,11 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
     context can thus be a structured Python object, with structure described by
     the ``RecordSpec``.
 
+    Conformance and unification require the same field order at every record
+    level. A raw mapping may list its keys in another order; function and kernel
+    boundaries lay it out in declaration order before passing it to a body.
+    An existing record in another order is refused with ``ValueError``.
+
     **Terminology.** Used precisely throughout this class:
 
     - **field** — one named object in the collection (here, a value spec),
@@ -385,6 +390,8 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
 
         if isinstance(value, Record):
             children = value.children
+            if tuple(self._tree) != tuple(children):
+                raise _field_mismatch(path, children, self._tree)
         elif isinstance(value, Mapping):
             children = value
         else:
@@ -400,7 +407,7 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
     def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:
         if not isinstance(actual, RecordSpec):
             return False
-        if self._tree.keys() != actual._tree.keys():
+        if tuple(self._tree) != tuple(actual._tree):
             raise _field_mismatch(path, actual._tree, self._tree)
         for name, spec in self._tree.items():
             child_path = f"{path}{_PATH_SEP}{name}" if path else name
@@ -410,7 +417,8 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
     def is_valid(self, value: Any) -> bool:
         """Whether a record or raw mapping satisfies the complete schema.
 
-        Fields must match exactly. Nested structure, kinds, shapes and declared
+        Fields must match exactly, including the order of an existing record.
+        Raw mappings may list keys in any order. Nested structure, kinds, shapes and declared
         dtypes are checked, including agreement of repeated symbolic sizes.
         Structural mismatches return False; unexpected inspection errors propagate.
         """
@@ -701,12 +709,48 @@ def _concretize_record_spec(
     return template._substitute_dims(bindings)
 
 
+class _RecordOrderMismatch(ValueError):
+    """An existing record's field order differs from its declaration."""
+
+
 def _field_mismatch(path: str, actual: Iterable[str], declared: Iterable[str]) -> ValueError:
     """The error for the record at *path*, whose fields *actual* are not the *declared* ones."""
     subject = f"{path} fields" if path else "fields"
+    actual, declared = list(actual), list(declared)
+    if set(actual) == set(declared) and actual != declared:
+        return _RecordOrderMismatch(
+            f"fields {actual} are not in the declared order {declared}; pass a plain mapping, "
+            "which is laid out in the declared order, or build the record in that order"
+        )
     return ValueError(
         f"{subject} do not match the declared fields: {_name_mismatch(actual, declared)}"
     )
+
+
+def _layout_record_mapping(spec: TermSpec, value: Any) -> Any:
+    """Lay out raw mappings in declared record order, leaving built values intact.
+
+    Names and values are validated by the boundary's dimension-binding pass.
+    This pass preserves the identity and metadata of existing records and other
+    terms. Mappings that need reordering are copied recursively, so the caller's
+    dictionaries are never changed. Already ordered mappings retain their identity.
+    """
+    from .record import Record
+
+    if (
+        not isinstance(spec, RecordSpec)
+        or isinstance(value, Record)
+        or not isinstance(value, Mapping)
+    ):
+        return value
+    if spec.children.keys() != value.keys():
+        return value
+    ordered = {
+        name: _layout_record_mapping(child, value[name]) for name, child in spec.children.items()
+    }
+    if tuple(value) == tuple(ordered) and all(ordered[name] is value[name] for name in ordered):
+        return value
+    return ordered
 
 
 def _check_kind_of(around: TermSpec, value: Any, spec: TermSpec, path: str) -> None:

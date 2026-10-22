@@ -125,6 +125,23 @@ def test_constructors_read_record_and_output_specs(source):
     assert function.input_spec == InputSpec(mu=())
 
 
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda spec: Function(lambda mu: mu, input_spec=spec),
+        lambda spec: conditional_distribution(lambda mu: Normal("y", mu, 1.0), given_spec=spec),
+    ],
+)
+def test_optional_inputs_require_parameter_defaults(factory):
+    with pytest.raises(ValueError, match="has no default"):
+        factory(InputSpec(mu=()).with_optional("mu"))
+
+
+def test_function_defaults_mark_inputs_optional():
+    function = Function(lambda mu=1.0: mu, input_spec=InputSpec(mu=()))
+    assert function.input_spec.optional == frozenset({"mu"})
+
+
 @pytest.mark.parametrize("source", [Normal("mu", 0.0, 1.0), Normal("mu", 0.0, 1.0).spec])
 def test_laws_and_their_types_have_the_prescribed_source_message(source):
     with pytest.raises(TypeError) as error:

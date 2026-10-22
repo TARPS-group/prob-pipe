@@ -6,6 +6,7 @@ the label or identity of the value an output spec describes.
 
 from __future__ import annotations
 
+import inspect
 import keyword
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -314,7 +315,31 @@ class InputSpec(Mapping[str, TermSpec]):
         return self._with_inputs(self._inputs, self._optional | frozenset(names))
 
     def without(self, *names: str) -> InputSpec:
-        """The inputs other than *names*, each optional input staying optional."""
+        """The inputs other than *names*, each optional input staying optional.
+
+        Parameters
+        ----------
+        *names : str
+            Existing input names to remove. With none, all inputs are retained.
+
+        Returns
+        -------
+        InputSpec
+            The retained inputs in declaration order, with their optional flags.
+
+        Raises
+        ------
+        KeyError
+            If a name is not an input.
+        TypeError
+            If a name is not a string.
+        ValueError
+            If a name is malformed, repeated, or overlaps another name.
+        """
+        names = _as_path_arguments(names, action="call InputSpec.without() with")
+        unknown = [name for name in names if name not in self._inputs]
+        if unknown:
+            raise KeyError(f"without(): {unknown_names('input', unknown, self._inputs)}")
         return self._with_inputs(
             {name: spec for name, spec in self._inputs.items() if name not in names}, self._optional
         )
@@ -1339,3 +1364,44 @@ def _unify_input_types(
         except ValueError:
             raise first_error from None
     bindings.update(trial)
+
+
+def _inputs_with_defaults(
+    inputs: InputSpec, parameters: Mapping[str, inspect.Parameter], *, function_name: str
+) -> InputSpec:
+    """Mark declared defaults optional and refuse an optional input without a default.
+
+    Parameters
+    ----------
+    inputs : InputSpec
+        The declared inputs, each already matched to a parameter.
+    parameters : Mapping of str to inspect.Parameter
+        The callable's parameters in signature order.
+    function_name : str
+        The callable's name in error messages.
+
+    Returns
+    -------
+    InputSpec
+        The same inputs with defaults marked optional.
+
+    Raises
+    ------
+    ValueError
+        If an input is marked optional but its parameter has no default.
+    """
+    for name in inputs.optional:
+        parameter = parameters.get(name)
+        if parameter is None or parameter.default is inspect.Parameter.empty:
+            raise ValueError(
+                f"optional input {name!r} of {function_name!r} has no default. "
+                "Give the parameter a default or declare the input required"
+            )
+    optional = [
+        name
+        for name, parameter in parameters.items()
+        if name in inputs and parameter.default is not inspect.Parameter.empty
+    ]
+    if frozenset(optional) <= inputs.optional:
+        return inputs
+    return inputs.with_optional(*optional)

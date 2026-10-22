@@ -2519,7 +2519,7 @@ def _bound_factor(
         are bound, the result is a law.
     """
     result = factor._condition_on(bound, **options)
-    remaining = factor.given_spec.without(*bound)
+    remaining = factor.given_spec.without(*(name for name in bound if name in factor.given_spec))
     expected = (
         ConditionalDistributionSpec(remaining, factor.event_spec)
         if remaining.required

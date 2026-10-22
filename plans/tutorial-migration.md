@@ -36,6 +36,12 @@ In the examples, `x` is a law over `{a, b, c, sigma}`, `ke` a kernel `ke(e | sig
 
 | Old | New | Step | Silent? |
 |---|---|---|---|
+| `RecordSpec(x=(), y=())` admitted a built record or record spec ordered `{y, x}` | it raises `ValueError`; use a raw mapping or build the record in declaration order, including nested records | S2b-in | no |
+| a raw mapping at a declared function input or return, or a kernel conditioning input, could keep its own order | it is laid out recursively in declaration order without changing the caller's mapping | S2b-in | yes |
+| `InputSpec(x=()).without("missing")` ignored the unknown input | it raises `KeyError`, naming available inputs | S2b-in | no |
+| an optional input declaration without a Python default was accepted | construction raises `ValueError`; give the parameter a default or declare it required | S2b-in | no |
+| a declared Python parameter with a default could appear required | its input spec marks it optional | S2b-in | yes |
+
 | a tuple of `str` is one nested path: `r["g", "b"]` is `r["g/b"]` | a tuple or list is a list of paths; a nested path is written `"g/b"` | S1 | yes, where each name is also a top-level path |
 | `sample(d)["g"]` raises "use at_path()" | `sample(d)["g"]` is the group | S1 | no |
 | `d["a", "g/b"]` is a law over `{a, b}` | a law over `{a, g: {b}}`, labelled `(a, g/b)` | S1 | yes |

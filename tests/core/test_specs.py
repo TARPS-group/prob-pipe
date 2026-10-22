@@ -1375,20 +1375,15 @@ class TestNestedValueBinding:
                     label="value",
                 )
 
-    def test_field_order_does_not_change_a_match(self, wrap_binding, declared_law):
+    def test_a_law_with_other_field_order_does_not_match(self, wrap_binding, declared_law):
         law = declared_law(RecordSpec(y=(), x=(3,)))
         spec = DistributionSpec(RecordSpec(x=(3,), y=()))
         schema = RecordSpec(law=spec)
-        assert spec.is_valid(law)
+        assert not spec.is_valid(law)
         declared, value = wrap_binding(spec, law)
-        assert declared.bind_dims_from_value(value) == declared
-        assert schema.is_valid(
-            Record(
-                {"law": law},
-                event_template=schema,
-                label="value",
-            )
-        )
+        with pytest.raises(ValueError, match="not in the declared order"):
+            declared.bind_dims_from_value(value)
+        assert not schema.is_valid({"law": law})
 
     def test_fields_sharing_a_dimension_bind_it_once(self, declared_law):
         spec = DistributionSpec(RecordSpec(x=("n",), y=("n",)))
@@ -1494,7 +1489,7 @@ class TestNestedSpecBinding:
         expected = DistributionSpec(
             RecordSpec(x=NumericArraySpec((size,), dtype="float64", support=positive), y=())
         )
-        actual = DistributionSpec(RecordSpec(y=(), x=NumericArraySpec((3,), dtype=dtype)))
+        actual = DistributionSpec(RecordSpec(x=NumericArraySpec((3,), dtype=dtype), y=()))
         declared = wrap_spec(expected)
         bound = declared.bind_dims_from_spec(wrap_spec(actual))
         assert bound == wrap_spec(expected.with_dim_sizes(n=3))
@@ -1507,7 +1502,8 @@ class TestNestedSpecBinding:
         fields = [("x", NumericArraySpec((3,))), ("nested", RecordSpec(y=(4,)))]
         if reverse:
             fields.reverse()
-        with pytest.raises(ValueError, match="already bound"):
+        message = "not in the declared order" if reverse else "already bound"
+        with pytest.raises(ValueError, match=message):
             wrap_spec(expected).bind_dims_from_spec(
                 wrap_spec(DistributionSpec(RecordSpec(dict(fields))))
             )

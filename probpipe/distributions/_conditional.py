@@ -30,7 +30,7 @@ from ..core._immutable import transient_memo
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_default, format_names, public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
-from ..core._specs import InputSpec, OutputSpec, _has_record_outputs
+from ..core._specs import InputSpec, OutputSpec, _has_record_outputs, _inputs_with_defaults
 from ..core.named_tree import _PATH_SEP
 from ..core.provenance import Provenance
 from ..core.record import Record
@@ -96,12 +96,13 @@ def _complete_given_spec(given_spec: Any) -> InputSpec:
     -------
     InputSpec
         *given_spec* itself when it is an ``InputSpec``, and an ``InputSpec`` built
-        from the mapping otherwise.
+        from the source's top-level fields or outputs otherwise.
 
     Raises
     ------
     TypeError
-        If *given_spec* is not a mapping of term specs.
+        If *given_spec* is unsupported, has an unspecified output type, or
+        contains an input type other than a term spec or a tuple shape.
     ValueError
         If it has no inputs, since binding the last input returns a
         ``Distribution``, or an input name is not an identifier.
@@ -346,7 +347,9 @@ class ConditionalDistributionSpec(TermSpec):
     event_spec: OutputSpec
 
     def __init__(
-        self, given_spec: InputSpec | Mapping[str, TermSpec], event_spec: OutputSpec | RecordSpec
+        self,
+        given_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec,
+        event_spec: OutputSpec | RecordSpec,
     ) -> None:
         if isinstance(event_spec, RecordSpec):
             event_spec = OutputSpec(event_spec)
@@ -567,7 +570,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
 
     def __init__(
         self,
-        given_spec: InputSpec | Mapping[str, TermSpec],
+        given_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec,
         event_spec: OutputSpec | TermSpec,
         *,
         label: str | None = None,
@@ -582,7 +585,9 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         self._init_declaration(given_spec, event_spec)
 
     def _init_declaration(
-        self, given_spec: InputSpec | Mapping[str, TermSpec], event_spec: OutputSpec | TermSpec
+        self,
+        given_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec,
+        event_spec: OutputSpec | TermSpec,
     ) -> None:
         """Complete the input spec and the event spec and store them as this kernel's spec.
 
@@ -1204,7 +1209,7 @@ class _FunctionKernel(ConditionalDistribution):
         rest = self._shallow_copy()
         object.__setattr__(rest, "_provenance", None)
         object.__setattr__(rest, "_bound", {**self._bound, **self._arguments(values)})
-        left = self.given_spec.without(*values)
+        left = self.given_spec.without(*(name for name in values if name in self.given_spec))
         object.__setattr__(rest, "_spec", ConditionalDistributionSpec(left, self.event_spec))
         return rest
 
@@ -1431,7 +1436,9 @@ def _evaluate_abstractly(
 
 
 def _inputs_of(
-    label: str, fn: Callable[..., Any], given_spec: InputSpec | Mapping[str, TermSpec] | None
+    label: str,
+    fn: Callable[..., Any],
+    given_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec | None,
 ) -> InputSpec:
     """The inputs of the kernel of *fn*, one per parameter.
 
@@ -1489,6 +1496,7 @@ def _inputs_of(
             f"{' and '.join(parameter_names)}. Pass event_spec.without({', '.join(map(repr, unknown))}) "
             f"or event_spec[{parameter_names!r}]"
         )
+    _inputs_with_defaults(declared_spec, signature.parameters, function_name=label)
     inputs: dict[str, TermSpec] = {}
     optional: list[str] = []
     for parameter in signature.parameters.values():
@@ -1568,7 +1576,7 @@ def _agreed_event_spec(label: str, declared: OutputSpec | TermSpec, law: OutputS
 def _function_kernel(
     label: str | None,
     fn: Any,
-    given_spec: InputSpec | Mapping[str, TermSpec] | None,
+    given_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec | None,
     event_spec: OutputSpec | TermSpec | None,
 ) -> ConditionalDistribution:
     """The kernel of *fn*, labeled *label* or after the function.
@@ -1627,7 +1635,7 @@ def conditional_distribution(
     /,
     *,
     label: str | None = None,
-    given_spec: InputSpec | Mapping[str, TermSpec] | None = None,
+    given_spec: InputSpec | Mapping[str, TermSpec | tuple] | RecordSpec | OutputSpec | None = None,
     event_spec: OutputSpec | TermSpec | None = None,
 ) -> Any:
     """Build a ``ConditionalDistribution`` from a function of its given values that returns a law.
