@@ -923,7 +923,9 @@ def _resolve_execution_choice(
             source="own",
             applies_only_to=None if function_view._options_need_named_executor else function_view,
             named_on=function_view.label,
-            named_executor_use=None if executor_name is None else _NamedExecutorUse(),
+            named_executor_use=_NamedExecutorUse(
+                enclosing=parent_context.execution_choice.named_executor_use
+            ),
         )
     inherited_choice = parent_context.execution_choice
     if inherited_choice.names_executor():

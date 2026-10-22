@@ -115,10 +115,11 @@ class _ExecutionChoice:
         The label of the call that named the executor, which a warning about
         an inherited executor names; ``None`` for automatic selection.
     named_executor_use : _NamedExecutorUse or None
-        What became of the named executor in the call that named it and in
-        every call that inherited it, which the choices those calls inherit
-        share; ``None`` for a choice that names no executor. It takes no part
-        in equality, and a pickled choice arrives without it.
+        What became of the choice in the call that made it and in every call
+        under it, which the choices those calls inherit share; ``None`` for
+        automatic selection, and for a choice bound into a compiled JAX
+        program, which outlives the call. It takes no part in equality, and a
+        pickled choice arrives without it.
     """
 
     executor_name: str | None = None
@@ -133,7 +134,11 @@ class _ExecutionChoice:
         return self.executor_name is not None
 
     def __reduce__(self) -> tuple[Any, ...]:
-        """Pickle the choice with its options as a plain dict, read-only again when unpickled."""
+        """Pickle the choice with its options as a plain dict, read-only again when unpickled.
+
+        The pickled choice leaves ``named_executor_use`` out, since a worker's
+        calls report to their own records.
+        """
         return (
             _unpickled_execution_choice,
             (
@@ -278,22 +283,33 @@ class _EmbeddedCallState:
 
 
 class _NamedExecutorUse:
-    """What became of the executor a call named, in that call and in every call that inherited it.
+    """What became of the executor choice a call made itself, in that call and in every call under it.
 
-    A call that names an executor itself creates one with its choice, and
-    the choices that the calls under it inherit share it, so the naming call
-    can tell, when it ends, whether its executor ran any set of evaluation
-    points. If it ran none, the call warns that the executor ran nothing,
-    unless a warning about the executor was already given, such as a
-    fallback's. The executor dispatcher writes it, and its contents are
-    guarded by a lock.
+    A call that names its executor, or its executor's options, creates one
+    with its choice. The calls that inherit the choice share it, and a call
+    under it that makes a choice of its own links its record to this one, so
+    the naming call can tell, when it ends, whether its executor ran any set
+    of evaluation points. If it ran none, the call warns that the executor
+    ran nothing, unless the call's evaluations ran elsewhere, such as on an
+    executor an inner call named itself, or a warning about the executor was
+    already given, such as a fallback's. The executor dispatcher, the program
+    store, and the host side of an embedded call write it, and its contents
+    are guarded by a lock.
+
+    Parameters
+    ----------
+    enclosing : _NamedExecutorUse or None, optional
+        The record of the nearest enclosing call that made a choice of its
+        own, which learns that this call's evaluations ran elsewhere.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, enclosing: _NamedExecutorUse | None = None) -> None:
         self._lock = threading.Lock()
+        self._enclosing = enclosing
         self._ran_a_set = False
         self._warned = False
         self._jax_compiled_a_set = False
+        self._ran_elsewhere = False
 
     @property
     def ran_a_set(self) -> bool:
@@ -309,14 +325,21 @@ class _NamedExecutorUse:
 
     @property
     def jax_compiled_a_set(self) -> bool:
-        """Whether ``jax`` compiled a set of evaluation points while the choice was in effect."""
+        """Whether ``jax`` compiled user or route code while the choice was in effect."""
         with self._lock:
             return self._jax_compiled_a_set
+
+    @property
+    def ran_elsewhere(self) -> bool:
+        """Whether evaluations under the choice ran on an executor it did not name, or as Prefect tasks."""
+        with self._lock:
+            return self._ran_elsewhere
 
     def note_ran_a_set(self) -> None:
         """Note that the named executor ran a set of evaluation points."""
         with self._lock:
             self._ran_a_set = True
+        self._note_enclosing()
 
     def note_warned(self) -> None:
         """Note that a warning about the named executor was given."""
@@ -324,9 +347,21 @@ class _NamedExecutorUse:
             self._warned = True
 
     def note_jax_compiled_a_set(self) -> None:
-        """Note that ``jax`` compiled a set of evaluation points in place of the named executor."""
+        """Note that ``jax`` compiled user or route code in place of the named executor."""
         with self._lock:
             self._jax_compiled_a_set = True
+        self._note_enclosing()
+
+    def note_ran_elsewhere(self) -> None:
+        """Note that evaluations ran on an executor the choice did not name, or as Prefect tasks."""
+        with self._lock:
+            self._ran_elsewhere = True
+        self._note_enclosing()
+
+    def _note_enclosing(self) -> None:
+        """Tell the enclosing call's record that evaluations under it ran on another choice."""
+        if self._enclosing is not None:
+            self._enclosing.note_ran_elsewhere()
 
 
 @dataclass(frozen=True)

@@ -294,10 +294,13 @@ def _warn_executor_under_prefect(workflow_kind: WorkflowKind, function_label: st
     """Warn, once per call, that the executor a call names runs nothing, since Prefect runs its evaluations."""
     call_context = current_call_context()
     execution_choice = call_context.execution_choice
+    named_executor_use = execution_choice.named_executor_use
     if execution_choice.source != "own":
+        if named_executor_use is not None:
+            named_executor_use.note_ran_elsewhere()
         return
-    if execution_choice.named_executor_use is not None:
-        execution_choice.named_executor_use.note_warned()
+    if named_executor_use is not None:
+        named_executor_use.note_warned()
     evaluation_log = call_context.evaluation_log
     if evaluation_log is not None and not evaluation_log.is_first_warning(
         ("executor under Prefect", function_label)
@@ -324,34 +327,39 @@ def _warn_executor_under_prefect(workflow_kind: WorkflowKind, function_label: st
 def warn_if_named_executor_ran_nothing() -> None:
     """Warn that the executor the running call named ran no set of evaluation points, in it or in any call under it.
 
-    Only a call that named its executor itself warns, when it succeeds. A
-    call made inside a route probe, inside a body that JAX maps, or while JAX
-    stages a program warns nothing, since the call that runs that program
-    reports what its evaluations ran on. Neither does a call whose executor
-    already gave a warning, such as a fallback's. When ``jax`` compiled the
-    call's evaluation points in place of the executor, the warning says so.
+    Only a call that named its executor itself warns, when it succeeds. It
+    does not warn when its evaluations ran elsewhere, such as on an executor
+    an inner call named itself or as Prefect tasks, or when a warning about
+    the executor was already given, such as a fallback's. A call made inside
+    a route probe or inside a body that JAX maps runs under automatic
+    selection, so it does not warn. A call opened while JAX stages a program
+    only stages its evaluations, which run when the program runs, so it does
+    not warn either. When ``jax`` compiled the call's code in place of the
+    executor, the warning says so.
     """
     call_context = current_call_context()
     execution_choice = call_context.execution_choice
     named_executor_use = execution_choice.named_executor_use
+    executor_name = execution_choice.executor_name
     if (
         execution_choice.source != "own"
+        or executor_name is None
         or named_executor_use is None
         or named_executor_use.ran_a_set
+        or named_executor_use.ran_elsewhere
         or named_executor_use.warned
         or _context._workflow_side_effects_forbidden()
         or _jax_tracing_active()
     ):
         return
-    named_executor = execution_choice.executor_name
-    what_ran = (
+    why_nothing_ran = (
         "every callable in the call is traceable and was compiled by jax"
         if named_executor_use.jax_compiled_a_set
         else "the call evaluated no user callable"
     )
     warnings.warn(
-        f"{call_context.function_label} named executor={named_executor!r}, but {what_ran}, "
-        f"so {named_executor!r} ran nothing",
+        f"{call_context.function_label} named executor={executor_name!r}, but "
+        f"{why_nothing_ran}, so {executor_name!r} ran nothing",
         UserWarning,
         stacklevel=2,
         skip_file_prefixes=_WARNING_SKIP_PREFIXES,

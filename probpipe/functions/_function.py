@@ -344,13 +344,14 @@ def _call_function_in_context(
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
 ) -> Any:
+    """Run the call of *function* in its open call context, then warn if an executor it named ran nothing."""
     # A call made while a check probes, as a probe that runs an operation makes
     # one, selects and runs its routes as any call does.
-    token = _call._CHECKING.set(False)
+    checking_flag_reset = _call._CHECKING.set(False)
     try:
         call_result = _run_call(function, args, call_inputs)
     finally:
-        _call._CHECKING.reset(token)
+        _call._CHECKING.reset(checking_flag_reset)
     _execution.warn_if_named_executor_ran_nothing()
     return call_result
 
@@ -1086,8 +1087,9 @@ def _lifted_execution_report(
     """How the lifted call or sweep that ``check`` checks would run its function's evaluation points.
 
     The call asks for one evaluation point per draw, combination, or grid
-    point when the engine's evaluation rule realizes it; a plain call, and a
-    call that another evaluation rule realizes, asks for none. The call
+    point when the engine's evaluation rule realizes it. A plain call, a call
+    that another evaluation rule realizes, and a sweep over no cells ask for
+    none. The call
     probes a function that states nothing when its route maps the body,
     whatever executor it names, since a function JAX can trace is always
     mapped by ``jax``. So ``check`` probes under the same conditions, with the
@@ -1126,10 +1128,19 @@ def _lifted_execution_report(
     """
     if broadcast_plan.regime == "none" or route_name not in _rules._ENGINE_RULES:
         return ExecutionReport()
-    invocation_bindings = _lifted_call_bindings(function, argument_values, broadcast_plan)
     stochastic_plan = _lifted_call_stochastic_plan(
         argument_values, broadcast_plan, resolved_controls, route_name
     )
+    if stochastic_plan is None:
+        num_evaluation_points, point_noun = broadcast_plan.n_sweep, "grid point"
+    else:
+        num_evaluation_points = stochastic_plan.n_evaluations * (
+            len(stochastic_plan.logical_units) if broadcast_plan.regime == "nested" else 1
+        )
+        point_noun = "draw" if stochastic_plan.evaluation_mode == "sampled" else "combination"
+    if num_evaluation_points == 0:
+        return ExecutionReport()
+    invocation_bindings = _lifted_call_bindings(function, argument_values, broadcast_plan)
     evaluate_lifted_point = _lifted_point_evaluator(
         function,
         resolved_controls=resolved_controls,
@@ -1167,13 +1178,6 @@ def _lifted_execution_report(
                 route_cache_key=_route_cache_key(function, resolved_controls, candidates),
             ),
         )
-    if stochastic_plan is None:
-        num_evaluation_points, point_noun = broadcast_plan.n_sweep, "grid point"
-    else:
-        num_evaluation_points = stochastic_plan.n_evaluations * (
-            len(stochastic_plan.logical_units) if broadcast_plan.regime == "nested" else 1
-        )
-        point_noun = "draw" if stochastic_plan.evaluation_mode == "sampled" else "combination"
     described_points = _DescribedEvaluationPoints(
         function,
         num_evaluation_points=num_evaluation_points,
@@ -1947,14 +1951,14 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         values=argument_values,
         lifted_names={ref.parameter_name for ref in lifted_refs},
     )
-    result = (
+    result_spec = (
         function.output_spec.with_dim_sizes(**bindings)
         if function.output_spec is not None
         else None
     )
-    _plan.require_empty_sweep_output(broadcast_plan, result)
+    _plan.require_empty_sweep_output(broadcast_plan, result_spec)
     deferred = ()
-    if result is None or result.term_spec is None:
+    if result_spec is None or result_spec.term_spec is None:
         deferred = ("the result's type is completed from the returned value",)
     lifted = tuple(dict.fromkeys(ref.parameter_name for ref in lifted_refs))
     if waiting:
@@ -1964,11 +1968,11 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         return CallReport(
             routes=(pending,),
             deferred=deferred,
-            result=result,
+            result=result_spec,
             lifted=lifted,
             conversions=MappingProxyType(conversions),
         )
-    info, route = _route_report(
+    route_info, route = _route_report(
         function, argument_values, broadcast_plan, resolved_controls["method"], resolved_controls
     )
     execution = (
@@ -1979,10 +1983,10 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         )
     )
     return CallReport(
-        routes=(info,),
-        selected=None if info.feasible is None else info,
+        routes=(route_info,),
+        selected=None if route_info.feasible is None else route_info,
         deferred=deferred,
-        result=result,
+        result=result_spec,
         lifted=lifted,
         conversions=MappingProxyType(conversions),
         execution=execution,
@@ -2016,13 +2020,13 @@ def _check_routes(
         )
     execution = ExecutionReport()
     if broadcast_plan.regime != "none":
-        info, route = _route_report(
+        route_info, route = _route_report(
             function, argument_values, broadcast_plan, None, resolved_controls
         )
-        if info.feasible is not True:
+        if route_info.feasible is not True:
             return CallReport(
-                routes=(info,),
-                selected=None if info.feasible is None else info,
+                routes=(route_info,),
+                selected=None if route_info.feasible is None else route_info,
                 lifted=lifted,
                 conversions=MappingProxyType(dict(conversions)),
             )
@@ -2030,13 +2034,13 @@ def _check_routes(
             execution = _lifted_execution_report(
                 function, argument_values, broadcast_plan, candidates, resolved_controls, route.name
             )
-    token = _call._CHECKING.set(True)
+    checking_flag_reset = _call._CHECKING.set(True)
     try:
         points_report = _resolution.check_points(
             function, argument_values, resolved_controls, candidates, broadcast_plan
         )
     finally:
-        _call._CHECKING.reset(token)
+        _call._CHECKING.reset(checking_flag_reset)
     _plan.require_empty_sweep_output(broadcast_plan, points_report.result)
     return _resolution.call_report(
         points_report,

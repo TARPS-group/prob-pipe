@@ -7,6 +7,7 @@ provenance records each set of evaluation points it ran, read from its
 evaluation log.
 """
 
+import pickle
 import re
 import threading
 import warnings
@@ -86,10 +87,15 @@ def _refusing_executor_registered(monkeypatch):
 
 def _model_with_an_opaque_kernel():
     """A joint whose kernel calls ``forward``, which runs through an embedded call."""
+    return _model_whose_kernel_calls(forward)
+
+
+def _model_whose_kernel_calls(location):
+    """A joint whose kernel draws ``y`` around ``location(theta)``."""
 
     @conditional_distribution(given_spec={"theta": NumericArraySpec((), "float32")})
     def likelihood(theta):
-        return Normal("y", forward(theta), 1.0)
+        return Normal("y", location(theta), 1.0)
 
     return likelihood & _prior()
 
@@ -174,6 +180,11 @@ class TestCheckReportsEachCallable:
         )
 
         assert evaluation.num_evaluation_points == 3 * _NUM_DRAWS
+
+    def test_a_sweep_over_no_cells_reports_no_set(self):
+        no_cells = NumericArrayBatch(jnp.zeros((0,)), level_names=("cell",), label="no_cells")
+
+        assert forward.using(executor="thread").check(no_cells).execution == ExecutionReport()
 
     def test_a_plain_call_reports_no_set_of_evaluation_points(self):
         assert growth.check(2.0).execution == ExecutionReport()
@@ -295,6 +306,27 @@ class TestAnExecutorThatRanNothingWarns:
         assert any("they run on 'sequential' instead" in message for message in messages)
         assert _ran_nothing_warnings(caught) == []
 
+    @pytest.mark.parametrize("location", [jnp.sin, growth], ids=["jnp", "traceable_function"])
+    def test_an_operation_over_an_all_jax_model_warns_that_jax_compiled_it(self, location):
+        with workflow_run(seed=0), warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            sample.using(executor="thread")(_model_whose_kernel_calls(location), 3)
+
+        assert _ran_nothing_warnings(caught) == [
+            "sample named executor='thread', but every callable in the call is traceable "
+            "and was compiled by jax, so 'thread' ran nothing"
+        ]
+
+    @pytest.mark.parametrize("own_executor", ["thread", "sequential"])
+    def test_a_callable_that_names_its_own_executor_leaves_the_operation_silent(self, own_executor):
+        model = _model_whose_kernel_calls(forward.using(executor=own_executor))
+
+        with workflow_run(seed=0), warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            sample.using(executor="thread")(model, 3)
+
+        assert _ran_nothing_warnings(caught) == []
+
     def test_a_call_opened_while_a_kernel_is_traced_does_not_warn(self):
         @conditional_distribution(given_spec={"theta": NumericArraySpec((), "float32")})
         def likelihood(theta):
@@ -387,3 +419,26 @@ class TestAFailedMapStatesItsErrorOnce:
             f"evaluation of 'failing' failed at {_NUM_DRAWS} of {_NUM_DRAWS} evaluation points: "
             "draw 0: ValueError: r must be positive; draw 1:"
         )
+
+
+class TestTheRecordOfANamedExecutor:
+    def test_a_pickled_choice_arrives_without_its_record(self):
+        from probpipe.core._call_context import _ExecutionChoice, _NamedExecutorUse
+
+        named_choice = _ExecutionChoice(
+            executor_name="thread", source="own", named_executor_use=_NamedExecutorUse()
+        )
+        unpickled_choice = pickle.loads(pickle.dumps(named_choice))
+        assert unpickled_choice == named_choice
+        assert unpickled_choice.named_executor_use is None
+
+    def test_an_inner_choice_tells_the_enclosing_record(self):
+        from probpipe.core._call_context import _NamedExecutorUse
+
+        enclosing_use = _NamedExecutorUse()
+        inner_use = _NamedExecutorUse(enclosing=enclosing_use)
+        inner_use.note_ran_a_set()
+
+        assert inner_use.ran_a_set
+        assert enclosing_use.ran_elsewhere
+        assert not enclosing_use.ran_a_set

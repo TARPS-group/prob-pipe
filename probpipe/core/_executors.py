@@ -854,7 +854,8 @@ def _chosen_executor(
     if selection.refusal is not None:
         raise ResolutionError(
             f"executor {executor_name!r} cannot run the evaluation points of "
-            f"{evaluation_points.origin!r}: {selection.refusal}. Name another executor"
+            f"{evaluation_points.origin!r}: {selection.refusal.description}. "
+            "Name another executor"
         )
     selected_executor = cast(EvaluationExecutor, selection.executor)
     named_executor_use = execution_choice.named_executor_use
@@ -873,10 +874,12 @@ def _chosen_executor(
         if named_executor_use is not None:
             named_executor_use.note_warned()
     elif named_executor_use is not None:
-        if selected_executor.name == executor_name:
+        if executor_name is not None and selected_executor.name == executor_name:
             named_executor_use.note_ran_a_set()
         elif isinstance(selected_executor, _JaxExecutor):
             named_executor_use.note_jax_compiled_a_set()
+        else:
+            named_executor_use.note_ran_elsewhere()
     return selected_executor, dict(selection.executor_options)
 
 
@@ -894,9 +897,10 @@ class _ExecutorSelection:
     rejected : tuple of MethodInfo
         Each executor tried before *executor* that cannot run the set, with
         its reason.
-    refusal : str or None
-        Why the executor named for the set's callable cannot run it, which
-        makes the call raise; ``None`` when an executor runs the set.
+    refusal : MethodInfo or None
+        The report of the executor named for the set's callable, which cannot
+        run it, with the reason, which makes the call raise; ``None`` when an
+        executor runs the set.
     fallback_reason : str or None
         Why the executor named on an enclosing call, or on an operation,
         cannot run the set, which then falls back to automatic selection;
@@ -906,7 +910,7 @@ class _ExecutorSelection:
     executor: EvaluationExecutor | None
     executor_options: Mapping[str, Any] = MappingProxyType({})
     rejected: tuple[MethodInfo, ...] = ()
-    refusal: str | None = None
+    refusal: MethodInfo | None = None
     fallback_reason: str | None = None
 
 
@@ -945,7 +949,7 @@ def _selected_executor(
     jax_feasibility = jax_executor.check(evaluation_points)
     if jax_feasibility.feasible:
         return _ExecutorSelection(jax_executor)
-    rejected = [_rejected_executor_info(jax_executor, jax_feasibility)]
+    rejected = [_executor_info(jax_executor, jax_feasibility)]
     if execution_choice.names_executor():
         named_executor = _requested_executor(cast(str, execution_choice.executor_name))
         _check_executor_reads_options(named_executor, execution_choice.executor_options)
@@ -958,10 +962,12 @@ def _selected_executor(
             )
         if _is_named_for_the_callable(execution_choice):
             return _ExecutorSelection(
-                None, rejected=tuple(rejected), refusal=named_feasibility.description
+                None,
+                rejected=tuple(rejected),
+                refusal=_executor_info(named_executor, named_feasibility),
             )
         if named_executor is not jax_executor:
-            rejected.append(_rejected_executor_info(named_executor, named_feasibility))
+            rejected.append(_executor_info(named_executor, named_feasibility))
         return _ExecutorSelection(
             _automatically_selected_executor(evaluation_points),
             rejected=tuple(rejected),
@@ -975,14 +981,9 @@ def _selected_executor(
     return _ExecutorSelection(selected_executor, dict(automatic_options), tuple(rejected))
 
 
-def _rejected_executor_info(executor: EvaluationExecutor, feasibility: Feasibility) -> MethodInfo:
-    """The report of *executor*, which *feasibility* says cannot run a set of evaluation points."""
-    return MethodInfo(
-        feasible=False,
-        description=feasibility.description,
-        method_name=executor.name,
-        exact=executor.exact,
-    )
+def _executor_info(executor: EvaluationExecutor, feasibility: Feasibility) -> MethodInfo:
+    """The report of *executor*, with its registered name and exactness, whose feasibility is *feasibility*."""
+    return UnaryDispatchRegistry._report(executor_registry._named(executor.name), feasibility)
 
 
 def _evaluation_report(
@@ -1020,19 +1021,11 @@ def _evaluation_report(
         If the selected executor does not take one of its options.
     """
     selection = _selected_executor(evaluation_points, execution_choice)
-    if selection.executor is None:
-        executor_info = MethodInfo(
-            feasible=False,
-            description=cast(str, selection.refusal),
-            method_name=execution_choice.executor_name,
-            exact=True,
-        )
-    else:
-        executor_info = MethodInfo(
-            feasible=True,
-            method_name=selection.executor.name,
-            exact=selection.executor.exact,
-        )
+    executor_info = (
+        cast(MethodInfo, selection.refusal)
+        if selection.executor is None
+        else _executor_info(selection.executor, Feasibility(feasible=True))
+    )
     return EvaluationReport(
         callable_name=evaluation_points.origin,
         num_evaluation_points=len(evaluation_points),
