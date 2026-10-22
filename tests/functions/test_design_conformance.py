@@ -90,13 +90,34 @@ _EXAMPLES = frozenset(
 
 _AWAITS_REPORTING = "check's report of how each callable's evaluation points will run (V.9)"
 
-#: Declarations the implementation does not match yet, with the change each awaits.
-_PENDING: dict[str, str] = {
-    "Function": "III.3 declares [] by paths, output, without, rename, and & on a Function; "
-    "the code has none of them",
-    "CallReport": _AWAITS_REPORTING,
-    "EvaluationReport": _AWAITS_REPORTING,
-    "ExecutionReport": _AWAITS_REPORTING,
+#: The problem the design check reports for a member that does not exist yet.
+_NOT_IMPLEMENTED = "is not implemented"
+
+#: The members the implementation does not match yet, by the name a finding
+#: gives them: the problem the check reports for each, and the behavior it
+#: awaits. Each has a pending case of its own, and any other difference fails,
+#: including another problem with a listed member.
+_PENDING: dict[str, tuple[str, str]] = {
+    "Function.__getitem__": (
+        _NOT_IMPLEMENTED,
+        "the function of the outputs at paths, f[paths], is not implemented",
+    ),
+    "Function.output": (
+        _NOT_IMPLEMENTED,
+        "the function of one output, f.output(name), is not implemented",
+    ),
+    "Function.without": (
+        _NOT_IMPLEMENTED,
+        "a function without some outputs, f.without(*paths), is not implemented",
+    ),
+    "Function.rename": (
+        _NOT_IMPLEMENTED,
+        "renaming a function's inputs and outputs, f.rename(...), is not implemented",
+    ),
+    "Function.__and__": (_NOT_IMPLEMENTED, "merging two functions with & is not implemented"),
+    "CallReport.execution": ("is not declared", _AWAITS_REPORTING),
+    "EvaluationReport": (_NOT_IMPLEMENTED, _AWAITS_REPORTING),
+    "ExecutionReport": (_NOT_IMPLEMENTED, _AWAITS_REPORTING),
 }
 
 #: Public names of the engine that the prose declares rather than a code block.
@@ -135,17 +156,39 @@ def _cases() -> list:
         name = _declared_name(declaration)
         if name in _EXAMPLES:
             continue
-        marks = ()
-        if name in _PENDING:
-            marks = pytest.mark.pending(reason=_PENDING[name], raises=AssertionError)
-        cases.append(pytest.param(declaration, id=f"{declaration.section}-{name}", marks=marks))
+        cases.append(pytest.param(declaration, id=f"{declaration.section}-{name}"))
     return cases
+
+
+def _pending_member_cases() -> list:
+    return [
+        pytest.param(
+            member_name,
+            id=member_name,
+            marks=pytest.mark.pending(reason=reason, raises=AssertionError),
+        )
+        for member_name, (_, reason) in _PENDING.items()
+    ]
 
 
 class TestDeclarationsAreImplemented:
     @pytest.mark.parametrize("declaration", _cases())
     def test_the_declaration_matches_the_implementation(self, declaration):
         findings = _tool().check([declaration], _resolve)
+        unexpected = [
+            f"{f.name} {f.problem}"
+            for f in findings
+            if f.name not in _PENDING or f.problem != _PENDING[f.name][0]
+        ]
+        assert not unexpected, "; ".join(unexpected)
+
+    @pytest.mark.parametrize("member_name", _pending_member_cases())
+    def test_a_pending_member_matches_its_declaration(self, member_name):
+        tool = _tool()
+        declarations = [
+            d for d in tool.declarations(_SECTIONS) if _declared_name(d) not in _EXAMPLES
+        ]
+        findings = [f for f in tool.check(declarations, _resolve) if f.name == member_name]
         assert not findings, "; ".join(f"{f.name} {f.problem}" for f in findings)
 
     def test_the_examples_are_the_only_declarations_skipped(self):

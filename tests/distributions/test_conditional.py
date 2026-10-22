@@ -21,6 +21,7 @@ from probpipe import (
     NumericArraySpec,
     OpaqueSpec,
     OutputSpec,
+    Record,
     RecordSpec,
     TrackedTerm,
     condition_on,
@@ -670,6 +671,48 @@ class TestRename:
     def test_a_rename_the_kernel_cannot_take_raises(self, rename, error):
         with pytest.raises(error):
             rename(_kernel())
+
+    @pytest.mark.parametrize(
+        ("renames", "error", "message"),
+        [
+            pytest.param(
+                {"mu": ("g", "mu")}, TypeError, "a path must be a str, got tuple", id="tuple"
+            ),
+            pytest.param({"mu": "g//mu"}, ValueError, "has an empty name", id="empty-name"),
+            pytest.param({"theta/a": "theta/a/x"}, ValueError, "inside it", id="inside-itself"),
+            pytest.param(
+                {"theta/a": "h", "theta/b": "h/b"}, ValueError, "overlap", id="overlapping-targets"
+            ),
+            pytest.param({"theta/c": "c"}, KeyError, "unknown input path", id="unknown-input-path"),
+        ],
+    )
+    def test_the_paths_of_a_kernels_rename_are_read_as_a_trees_are(self, renames, error, message):
+        kernel = _kernel(given={"mu": SCALAR, "theta": RecordSpec(a=SCALAR, b=_array(2))})
+        with pytest.raises(error, match=message):
+            kernel.rename(renames)
+        if error is not KeyError:
+            tree = Record({"mu": 0.0, "theta": {"a": 0.0, "b": np.zeros(2)}})
+            with pytest.raises(error, match=message):
+                tree.rename(renames)
+
+    def test_a_key_that_is_not_a_string_raises_type_error(self):
+        with pytest.raises(TypeError, match="a path must be a str, got tuple"):
+            _kernel().rename({("mu",): "m"})
+
+    def test_a_bad_event_target_is_read_as_a_path(self):
+        kernel = _kernel(event=OutputSpec(RecordSpec(y=(), z=())))
+        with pytest.raises(ValueError, match="'y//a', since the path 'y//a' has an empty name"):
+            kernel.rename(y="y//a")
+
+    def test_a_key_on_neither_side_names_both_sides(self):
+        with pytest.raises(KeyError, match=r"neither an input nor an output\. Inputs: \['mu'\]"):
+            _kernel().rename(sigma="s")
+
+    def test_rename_takes_its_renames_by_position_and_as_keywords_only(self):
+        kernel = _kernel(given={"renames": SCALAR})
+        renamed = kernel.rename(renames="r")
+        assert list(renamed.given_spec) == ["r"]
+        assert list(kernel.rename({"renames": "r"}).given_spec) == ["r"]
 
 
 class TestNotation:
