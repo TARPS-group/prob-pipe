@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Self
 import jax
 import jax.numpy as jnp
 
-from ..core._specs import _has_record_outputs, _root_output_name, _single_output_name
+from ..core._specs import _has_record_outputs, _root_output_name
 
 if TYPE_CHECKING:
     from ..core.constraints import Constraint
@@ -31,9 +31,9 @@ from ..core._expression import _GENERIC_LAW_SYMBOL, Named, Signature
 from ..core._immutable import transient_memo
 from ..core._record_spec import RecordSpec
 from ..core._repr import call_repr, format_names, public_class_name, term_repr, type_name
-from ..core._shapes import PathsLike, _as_paths, _missing_path
+from ..core._shapes import PathsLike
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
-from ..core._specs import _VALUES_WITHOUT_RECORD, OutputSpec, _output_record
+from ..core._specs import OutputSpec, _paths_error, _read_paths
 from ..core.constraints import _known_equal
 from ..core.named_tree import _PATH_SEP
 from ..core.provenance import Provenance
@@ -246,29 +246,6 @@ def _record_default_expression(term: Any) -> None:
         object.__setattr__(term, "_default_expression", term._expression)
 
 
-def _is_event_path(declaration: OutputSpec, path: Any) -> bool:
-    """Whether *path* is a ``str`` and an event path of a law declared by *declaration*.
-
-    The event paths are the paths of the record of the declaration's
-    outputs, so a whole term's output is one of them. As an interim
-    implementation detail, the one output of an event spec positional over a
-    law also selects the law itself, until such a spec has no outputs.
-    """
-    if not isinstance(path, str):
-        return False
-    try:
-        record = _output_record(declaration)
-    except TypeError:
-        outputs = declaration.outputs
-        return len(outputs) == 1 and path in outputs
-    return path in record
-
-
-def _has_event_paths(declaration: OutputSpec) -> bool:
-    """Whether a law declared by *declaration* has paths: its draws are records."""
-    return isinstance(declaration.term_spec, RecordSpec)
-
-
 def _not_an_event_path(
     declaration: OutputSpec,
     label: str,
@@ -280,24 +257,18 @@ def _not_an_event_path(
     """The error for *path*, which is not an event path of the law *label* declared by *declaration*.
 
     A law over a record lacks that path, which is a ``KeyError`` listing the
-    paths it has, as :func:`~probpipe.core._shapes._missing_path` words it for
-    every term; *requested* is the tuple of paths that held *path*, or ``()``.
-    A law over any other value has no paths to look up, which is a
+    paths it has; *requested* is the tuple of paths that held *path*, or
+    ``()``. A law over any other value has no paths to look up, which is a
     ``TypeError`` whose message completes *action*, by default indexing the
-    law.
+    law. :func:`~probpipe.core._specs._paths_error` words both.
     """
-    if _has_event_paths(declaration):
-        paths = _output_record(declaration)._node_paths()
-        return KeyError(
-            _missing_path(path, owner=repr(label), available=paths, requested=requested)
-        )
-    failed = f"cannot {action or f'index {label!r} by'} {path!r}"
-    values = _VALUES_WITHOUT_RECORD.get(type(declaration.term_spec).__name__)
-    if values is None:
-        return TypeError(f"{failed}, since its draws are single values with no paths")
-    return TypeError(
-        f"{failed}, since its draws are {values}, and indexing into them by path is not "
-        f"supported yet"
+    return _paths_error(
+        declaration,
+        path,
+        owner=repr(label),
+        values="draws",
+        action=action or f"index {label!r} by",
+        requested=requested,
     )
 
 
@@ -311,8 +282,11 @@ def _read_event_paths(
 ) -> str | tuple[str, ...]:
     """*paths*, read as event paths of the law *label* declared by *declaration*.
 
-    One path is returned as it is, and a list of paths in the event's
-    canonical order, whatever order it was given in.
+    A law's paths are those of its event spec, so this is the reader of
+    :meth:`OutputSpec.__getitem__ <probpipe.core._specs.OutputSpec.__getitem__>`,
+    with messages that name the law and its draws. One path is returned as it
+    is, and a list of paths in the event's canonical order, whatever order it
+    was given in.
 
     Parameters
     ----------
@@ -344,16 +318,14 @@ def _read_event_paths(
         If a path is empty or has an empty name, or a list of paths is empty,
         names a path twice, or holds a path inside another.
     """
-    read_paths = _as_paths(paths, action=action)
-    listed = read_paths if isinstance(read_paths, tuple) else (read_paths,)
-    hinted = isinstance(paths, tuple) if tuple_given is None else tuple_given
-    for path in listed:
-        if not _is_event_path(declaration, path):
-            requested = listed if hinted and isinstance(read_paths, tuple) else ()
-            raise _not_an_event_path(declaration, label, path, requested, action=action)
-    if isinstance(read_paths, str):
-        return read_paths
-    return _output_record(declaration)._ordered_paths(read_paths)
+    return _read_paths(
+        declaration,
+        paths,
+        owner=repr(label),
+        values="draws",
+        action=action,
+        tuple_given=tuple_given,
+    )
 
 
 def _no_free_dims(term: Any, unbound: set[str], free: set[str] | frozenset[str]) -> str:
@@ -1152,7 +1124,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         read_paths = _read_event_paths(
             self.event_spec, self.label, key, action=f"index {self.label!r} by"
         )
-        if read_paths == _single_output_name(self.event_spec):
+        if read_paths == _root_output_name(self.event_spec):
             return self
         if _field_view_factory is None:
             raise RuntimeError("the field view is not installed; import probpipe")
@@ -1160,7 +1132,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
     def __contains__(self, path: object) -> bool:
         """Whether *path* is a ``str`` and ``self[path]`` gives a law: an event path, or a whole term's output."""
-        return _is_event_path(self.event_spec, path)
+        return path in self.event_spec
 
     # -- composition ------------------------------------------------------------
 
@@ -1556,7 +1528,7 @@ def _unify_declarations(
         If the form or the name of a whole term's output differs, or the specs do not
         unify in the shared scope *bindings*.
     """
-    wanted, found = _single_output_name(expected), _single_output_name(actual)
+    wanted, found = _root_output_name(expected), _root_output_name(actual)
     if (wanted is None) != (found is None):
         raise ValueError(
             f"{path} declares {_event_form(wanted)}, but the law declares {_event_form(found)}"

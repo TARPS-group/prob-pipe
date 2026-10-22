@@ -44,7 +44,13 @@ from ..core._spec_base import (
     _known_type,
     _unify_specs,
 )
-from ..core._specs import InputSpec, OutputSpec, _has_record_outputs, _single_output_name
+from ..core._specs import (
+    InputSpec,
+    OutputSpec,
+    _has_record_outputs,
+    _merged_output_record,
+    _root_output_name,
+)
 from ..core.named_tree import _PATH_SEP, _unflatten_paths
 from ..core.provenance import Provenance
 from ..core.record import Record
@@ -297,7 +303,7 @@ def _flattened(
         if (
             isinstance(factor, SupportsFactors)
             and isinstance(graph, _FactorGraph)
-            and _single_output_name(factor.event_spec) is None
+            and _root_output_name(factor.event_spec) is None
         ):
             flat.extend(graph.factors)
             for name, size in graph.scope.items():
@@ -387,25 +393,23 @@ def _factor_graph(
     factors, bindings = _flattened(tuple(factors), scope)
     if not factors:
         raise ValueError("a FactoredDistribution needs at least one factor; got none")
-    producers: dict[str, int] = {}
-    output_term_specs: dict[str, TermSpec] = {}
-    for index, factor in enumerate(factors):
+    for factor in factors:
         if not isinstance(factor, (Distribution, ConditionalDistribution)):
             raise TypeError(
                 f"each factor must be a Distribution or a ConditionalDistribution; got "
                 f"{type(factor).__name__}"
             )
-        for output_name, spec in factor.event_spec.outputs.items():
-            if output_name in producers:
-                raise ValueError(
-                    f"the output {output_name!r} is produced by both factor "
-                    f"{producers[output_name]} ({factors[producers[output_name]].label!r}) and "
-                    f"factor {index} ({factor.label!r}); rename it in one of them with "
-                    f"with_path_names({{{output_name!r}: ...}}), or build one of them with "
-                    f"another output, as Normal('{output_name}_2', ...)"
-                )
+    # The merge of the factors' event specs refuses a factor whose draws have no
+    # outputs, and an output of two factors, naming each factor by its position.
+    factor_names = [f"factor {index} ({factor.label!r})" for index, factor in enumerate(factors)]
+    outputs_record = _merged_output_record(
+        [factor.event_spec for factor in factors], owners=factor_names, values="draws"
+    )
+    producers: dict[str, int] = {}
+    for index, factor in enumerate(factors):
+        for output_name in factor.event_spec.outputs:
             producers[output_name] = index
-            output_term_specs[output_name] = spec
+    output_term_specs = outputs_record.children
     edges: list[tuple[int, int, str]] = []
     unmet: dict[str, TermSpec] = {}
     required: set[str] = set()
@@ -450,13 +454,13 @@ def _factor_graph(
             for factor in factors
         )
         unmet = {input_name: spec._substitute_dims(bindings) for input_name, spec in unmet.items()}
+    # The joint's event is the merge of its factors' event specs, read after the
+    # dimension sizes the factors bound are applied.
     event_spec = OutputSpec(
-        RecordSpec(
-            {
-                output_name: spec
-                for factor in factors
-                for output_name, spec in factor.event_spec.outputs.items()
-            }
+        _merged_output_record(
+            [factor.event_spec for factor in factors],
+            owners=factor_names,
+            values="draws",
         )
     )
     return _FactorGraph(
@@ -485,7 +489,7 @@ def _joint_declaration(graph: _FactorGraph, output_name: str | None) -> OutputSp
 
 def _form_keywords(joint: Any) -> dict[str, str]:
     """The constructor keyword that keeps *joint*'s form: its root output's name, if any."""
-    output_name = _single_output_name(joint.event_spec)
+    output_name = _root_output_name(joint.event_spec)
     return {} if output_name is None else {"_output_name": output_name}
 
 
@@ -1226,7 +1230,7 @@ def _requested_paths(joint: Any, paths: str | tuple[str, ...]) -> tuple[str, ...
         If a path is not a string.
     """
     listed_paths = (paths,) if isinstance(paths, str) else tuple(paths)
-    output_name = _single_output_name(joint.event_spec)
+    output_name = _root_output_name(joint.event_spec)
     record = joint._graph.event_spec.term_spec
     inner: list[str] = []
     for requested in listed_paths:
@@ -1255,7 +1259,7 @@ def _is_list_of_the_output(joint: Any, paths: str | tuple[str, ...]) -> bool:
     The marginal there is the joint itself, exposed as the record that holds
     its event under the output.
     """
-    output_name = _single_output_name(joint.event_spec)
+    output_name = _root_output_name(joint.event_spec)
     return output_name is not None and paths == (output_name,)
 
 
@@ -1279,7 +1283,7 @@ def _marginal_guard(self: Any, paths: str | tuple[str, ...]) -> Feasibility:
     integrates out.
     """
     graph: _FactorGraph = self._graph
-    if paths == _single_output_name(self.event_spec) or _is_list_of_the_output(self, paths):
+    if paths == _root_output_name(self.event_spec) or _is_list_of_the_output(self, paths):
         return Feasibility(True)
     try:
         listed_paths = _requested_paths(self, paths)
@@ -1731,7 +1735,7 @@ def _joint_marginal(self: Any, paths: str | tuple[str, ...]) -> Distribution:
     """
     from ._views import _carrying, _exposed_under, _marginal_expression_at
 
-    output_name = _single_output_name(self.event_spec)
+    output_name = _root_output_name(self.event_spec)
     if paths == output_name:
         return self
     if _is_list_of_the_output(self, paths):
@@ -1864,7 +1868,7 @@ def _joint_marginal_capabilities(self: Any, paths: str | tuple[str, ...]) -> fro
     TypeError
         If a path is not a string.
     """
-    if paths == _single_output_name(self.event_spec) or _is_list_of_the_output(self, paths):
+    if paths == _root_output_name(self.event_spec) or _is_list_of_the_output(self, paths):
         return _claims(self)
     graph: _FactorGraph = self._graph
     requests = _requests(graph, _requested_paths(self, paths))

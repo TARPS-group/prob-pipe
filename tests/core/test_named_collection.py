@@ -459,31 +459,16 @@ class TestEditTemplateThreading:
                 )
             )
 
-    def test_deep_merge_combines_subtree(self):
-        m = Record(
-            {"g/x": 1.0},
-            label="r",
-        ).merge(
-            Record(
-                {"g/y": 2.0},
-                label="r",
-            )
-        )
-        assert tuple(m.keys()) == ("g/x", "g/y")
+    def test_a_merge_refuses_a_group_both_records_have(self):
+        # A merge is shallow: two groups of one name are refused, whatever they hold.
+        with pytest.raises(
+            ValueError, match=r"since both have 'g'\. Rename one, or merge the groups"
+        ):
+            Record({"g/x": 1.0}, label="r").merge(Record({"g/y": 2.0}, label="r"))
 
-    def test_deep_merge_regroups_into_earlier_subtree(self):
-        # A later key sharing an earlier subtree's name regroups INTO that
-        # subtree (first-appearance order), ahead of later top-level names.
-        m = Record(
-            {"g/x": 1.0, "h/y": 2.0},
-            label="r",
-        ).merge(
-            Record(
-                {"g/z": 3.0},
-                label="r",
-            )
-        )
-        assert tuple(m.keys()) == ("g/x", "g/z", "h/y")
+    def test_a_merge_places_the_right_record_s_groups_after_the_left_s(self):
+        m = Record({"g/x": 1.0, "h/y": 2.0}, label="r").merge(Record({"k/z": 3.0}, label="r"))
+        assert tuple(m.keys()) == ("g/x", "h/y", "k/z")
 
     def test_replace_to_opaque_demotes_numeric_template(self):
         # An all-numeric Record's template auto-promotes; replacing a field

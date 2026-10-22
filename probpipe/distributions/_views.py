@@ -37,10 +37,10 @@ from ..core._spec_base import NumericSpec, TermSpec
 from ..core._specs import (
     InputSpec,
     OutputSpec,
+    _exposed_kind,
     _has_record_outputs,
     _output_record,
     _root_output_name,
-    _single_output_name,
 )
 from ..core.named_tree import _PATH_SEP, _unflatten_paths
 from ..core.provenance import Provenance
@@ -87,7 +87,6 @@ from ._distribution import (
     _install_copy_source,
     _install_field_view,
     _install_renamed_law,
-    _is_event_path,
     _keeps_fixed_paths,
     _law_repr,
     _no_free_dims,
@@ -160,9 +159,13 @@ def _final_segment(path: str) -> str:
 def _view_declaration(declaration: OutputSpec, paths: str | tuple[str, ...]) -> OutputSpec:
     """The event spec of the view at *paths* of a law declared by *declaration*.
 
-    One path gives the node whole under an output named by its last name.
-    A list of paths gives the positional form over the record that keeps each
-    node at its own path, in the canonical order of *declaration*.
+    It is ``declaration[paths]``: one path to a single value gives the value
+    under an output named by its last name, and a list of paths gives the
+    positional form over the record that keeps each node at its own path, in
+    the canonical order of *declaration*. One path to a group, or to a field
+    that holds a distribution or a batch, still gives the node whole under an
+    output named by its last name, as views did before an output spec was
+    indexed by path.
 
     Parameters
     ----------
@@ -184,8 +187,10 @@ def _view_declaration(declaration: OutputSpec, paths: str | tuple[str, ...]) -> 
         If a path is not a path of *declaration*.
     """
     if isinstance(paths, str):
-        return OutputSpec(**{_final_segment(paths): _node_at(declaration, paths)})
-    return OutputSpec(_output_record(declaration)[paths])
+        node_spec = _node_at(declaration, paths)
+        if _exposed_kind(node_spec) is not None:
+            return OutputSpec(**{_final_segment(paths): node_spec})
+    return declaration[paths]
 
 
 def _draw_segments(declaration: OutputSpec, path: str) -> tuple[str, ...]:
@@ -196,7 +201,7 @@ def _draw_segments(declaration: OutputSpec, path: str) -> tuple[str, ...]:
     name is dropped.
     """
     segments = tuple(path.split(_PATH_SEP))
-    return segments if _single_output_name(declaration) is None else segments[1:]
+    return segments if _root_output_name(declaration) is None else segments[1:]
 
 
 def _coordinate_range(declaration: OutputSpec, path: str) -> range:
@@ -1129,11 +1134,11 @@ class FieldView(Distribution):
         """
         requested = _path_tuple(request)
         for path in requested:
-            if not _is_event_path(self.event_spec, path):
+            if path not in self.event_spec:
                 listed = requested if isinstance(request, tuple) else ()
                 raise _not_an_event_path(self.event_spec, self.label, path, listed)
         if isinstance(self._path, str):
-            output_name = cast(str, _single_output_name(self.event_spec))
+            output_name = cast(str, _root_output_name(self.event_spec))
             parent_paths = tuple(self._path + path[len(output_name) :] for path in requested)
             if isinstance(request, str):
                 # A view renamed by its output names the node otherwise than
@@ -1761,7 +1766,7 @@ def _original_nodes(
     """
     originals = []
     for path in paths:
-        if not _is_event_path(declaration, path):
+        if path not in declaration:
             raise KeyError(path)
         original = event.original(path)
         if original is None:
@@ -1783,7 +1788,7 @@ def _unreached(
 ) -> Feasibility | None:
     """Why *paths*, of the law *owner* declared by *declaration*, miss the parent, or None."""
     for path in paths:
-        if not _is_event_path(declaration, path):
+        if path not in declaration:
             return Feasibility(False, f"{path!r} is not an event path of {owner!r}")
         if event.original(path) is None:
             return Feasibility(False, _regrouped_path(path, owner))
@@ -1798,7 +1803,7 @@ def _exposed_under(law: Distribution, output_name: str) -> Distribution:
     paths of a packaged joint keeps the joint's output above the kept nodes.
     """
     source = law.event_spec
-    whole = _single_output_name(source) is not None
+    whole = _root_output_name(source) is not None
     leaves = {
         leaf: leaf if whole else f"{output_name}{_PATH_SEP}{leaf}" for leaf in _leaf_paths(source)
     }
@@ -1957,7 +1962,7 @@ def _renamed_marginal_capabilities(
     """
     listed_paths = (paths,) if isinstance(paths, str) else tuple(paths)
     for each in listed_paths:
-        if not _is_event_path(self.event_spec, each):
+        if each not in self.event_spec:
             raise KeyError(each)
     if any(self._event.original(each) is None for each in listed_paths):
         return frozenset()
@@ -2349,10 +2354,10 @@ def _renamed_through_factors(
     """
     graph: _FactorGraph = joint._graph
     form_keywords: dict[str, str] = {}
-    output_name = _single_output_name(joint.event_spec)
+    output_name = _root_output_name(joint.event_spec)
     if output_name is not None:
         inner = _within_package(joint, pairs, output_name)
-        target = _single_output_name(event_spec)
+        target = _root_output_name(event_spec)
         if inner is None or target is None:
             return None
         pairs, form_keywords = inner, {"_output_name": target}
@@ -2509,7 +2514,7 @@ def _regrouped(
     in two places, the groups condition on one another in a cycle, or the
     result does not declare the leaves of *event_spec*.
     """
-    if _single_output_name(joint.event_spec) is not None:
+    if _root_output_name(joint.event_spec) is not None:
         return None
     graph: _FactorGraph = joint._graph
     nodes = _gathered(graph, pairs)

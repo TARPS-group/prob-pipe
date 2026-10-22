@@ -568,7 +568,9 @@ class TestTheConditionedDeclaration:
         kernel = _NormalKernel("y", ("mu",))
         result = condition_on.check(kernel, {"mu": 1.5}).result
         assert result == OutputSpec(DistributionSpec(kernel.event_spec))
-        assert list(result.outputs) == ["y"]
+        assert list(result.term_spec.event_spec.outputs) == ["y"]
+        # A law as a value has no outputs of its own.
+        assert list(result.outputs) == []
 
     def test_conditioning_a_produced_field_leaves_the_declaration_to_the_law(
         self, approximate_method

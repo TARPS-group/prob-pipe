@@ -804,7 +804,7 @@ class TestValueLevelEntryPoints:
 
 
 def test_a_merge_names_the_fields_both_sides_have():
-    with pytest.raises(ValueError, match="cannot merge: both have the field 'obs'"):
+    with pytest.raises(ValueError, match=r"since both have 'obs'\. Rename one"):
         Record(
             {"obs": 1.0},
             label="r",

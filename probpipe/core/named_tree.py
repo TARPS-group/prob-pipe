@@ -1013,23 +1013,49 @@ class NamedTree[L]:
         return self._rebuild_node(self._leaves_without(paths), node_name=None)
 
     def _leaves_merged(self, other: Any) -> dict[str, Any]:
-        """Flat leaf-map unioning ``self``'s then *other*'s leaves, keyed by path."""
-        left = dict(self._walk_leaves())
-        right = dict(other._walk_leaves())
-        overlap = set(left) & set(right)
-        if overlap:
-            names = sorted(overlap)
-            shared = f"field {names[0]!r}" if len(names) == 1 else f"fields {names}"
-            raise ValueError(f"cannot merge: both have the {shared}")
-        return {**left, **right}
+        """Flat leaf-map of ``self``'s leaves then *other*'s, keyed by path, for two trees with no top-level name in common.
+
+        Raises
+        ------
+        ValueError
+            If the two trees share a top-level name, a field or a group.
+        """
+        shared = [name for name in self._tree if name in other._tree]
+        if shared:
+            names = repr(shared[0]) if len(shared) == 1 else str(shared)
+            raise ValueError(
+                f"cannot merge the two {type(self).__name__}s, since both have {names}. Rename "
+                f"one, or merge the groups first"
+            )
+        return {**dict(self._walk_leaves()), **dict(other._walk_leaves())}
 
     def merge(self, other: Any) -> Self:
-        """Return the union of two collections, merged by leaf key (deep).
+        """Merge two trees by top-level name: this tree's fields and groups, then *other*'s.
 
-        The merge is by field key: ``{"a/x": ...}`` and ``{"a/y": ...}`` combine
-        under a shared ``a``. A field key present in both, or a field-versus-prefix
-        clash between them, raises ``ValueError``. ``self``'s fields come first,
-        then ``other``'s.
+        The merge is shallow: a top-level name, a field or a group, present in
+        both trees raises, even when the two groups hold different fields. To
+        merge two groups of one name, merge the groups first and put the result
+        under the name.
+
+        Parameters
+        ----------
+        other : NamedTree
+            The tree whose fields and groups are added.
+
+        Returns
+        -------
+        Self
+            Both trees' fields and groups side by side.
+
+        Raises
+        ------
+        ValueError
+            If a top-level name is in both trees.
+
+        Examples
+        --------
+        >>> RecordSpec(a=(3,)).merge(RecordSpec(g=RecordSpec(b=())))
+        NumericRecordSpec(a=(3,), g=NumericRecordSpec(b=()))
         """
         return self._rebuild_node(self._leaves_merged(other), node_name=None)
 

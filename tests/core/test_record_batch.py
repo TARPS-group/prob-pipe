@@ -998,7 +998,9 @@ class TestStructuralTransforms:
             )
 
     def test_merge_refuses_overlapping_fields(self):
-        with pytest.raises(ValueError, match=r"merge\(\) needs batches with distinct fields"):
+        with pytest.raises(
+            ValueError, match=r"cannot merge the two batches of records, since both have \["
+        ):
             nested_batch().merge(nested_batch())
 
     def test_merge_refuses_batches_on_different_levels(self):

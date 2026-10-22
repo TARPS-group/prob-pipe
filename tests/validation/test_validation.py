@@ -590,7 +590,7 @@ class TestErrors:
             predictive_check(_Simulator(), prior, sample_mean, observed_data)
 
     def test_a_law_that_produces_the_observations_raises(self, prior, likelihood):
-        with pytest.raises(ValueError, match="'y' is produced by both"):
+        with pytest.raises(ValueError, match="both have the output 'y'"):
             predictive_check(likelihood, likelihood * prior, sample_mean)
 
     @pytest.mark.parametrize(

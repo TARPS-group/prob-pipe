@@ -46,7 +46,9 @@ class TestMarginal:
     def test_the_declaration_is_the_node_under_the_path_s_final_segment(self):
         result = marginal.check(Marginalizing("law"), "a").result
         assert result == OutputSpec(DistributionSpec(OutputSpec(a=REAL)))
-        assert dict(result.outputs) == {"a": REAL}
+        assert dict(result.term_spec.event_spec.outputs) == {"a": REAL}
+        # A law as a value has no outputs of its own.
+        assert dict(result.outputs) == {}
 
     def test_several_paths_declare_an_exposed_record_of_the_nodes(self):
         result = marginal.check(Marginalizing("law"), ("a", "b")).result

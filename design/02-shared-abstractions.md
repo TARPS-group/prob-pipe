@@ -227,7 +227,7 @@ Naming inputs and outputs, apart from the term's label, is `C5 – Naming for un
 
 ### Notes
 
-- *The record of the outputs, until the outputs of a distribution's spec change.* An output spec in the positional form over a distribution still has the outputs of one draw of that distribution, and over a batch its outputs are typed by the element's fields rather than by the marginal batches. Until both change, the library's one reader of the record of the outputs refuses either spec, as it refuses a distribution's.
+- *The record of the outputs of a batch, until a batch's outputs are typed by their marginal batches.* An output spec in the positional form over a batch of records has its element's outputs, typed by the element's fields rather than by the marginal batches' `BatchSpec`s. Until they are, the library's one reader of the record of the outputs refuses such a spec, as it refuses one over a distribution, which has no outputs.
 - *The keyword form over a record, a distribution, a function, or a batch.* The families of laws over laws, functions, or batches still name their event whole in the keyword form, which then has its name as one output with paths below it, until each wraps the values it is over under its constructor's name (VII.2, VII.5, VII.6). Once none uses it, the keyword form refuses such a spec, as the contract states.
 
 ## II.3 — Numeric values: `Numeric`, `NumericSpec`, `Constraint`

@@ -820,11 +820,12 @@ class RecordBatch(Batch[Record]):
         )
 
     def merge(self, other: Self) -> Self:
-        """Union this batch's elements with *other*'s, field by field.
+        """Merge this batch's elements with *other*'s by top-level name, element by element.
 
         Both batches must span the same axes under the same level names, since
-        the result's elements pair up one for one, and their field sets must not
-        overlap. Each side keeps its own fields' specs.
+        the result's elements pair up one for one. The merge is shallow, as
+        :meth:`Record.merge` states: a top-level name, a field or a group, in
+        both batches raises. Each side keeps its own fields' specs.
 
         Parameters
         ----------
@@ -841,7 +842,8 @@ class RecordBatch(Batch[Record]):
         TypeError
             If *other* is not a batch of records.
         ValueError
-            If the two disagree on their levels or axes, or their fields overlap.
+            If the two disagree on their levels or axes, or a top-level name is
+            in both.
         """
         if not isinstance(other, RecordBatch):
             raise TypeError(
@@ -854,9 +856,13 @@ class RecordBatch(Batch[Record]):
                 f"{format_levels(self.level_names, self.axis_groups)} and "
                 f"{format_levels(other.level_names, other.axis_groups)}"
             )
-        overlap = [path for path in self._columns if path in other._columns]
-        if overlap:
-            raise ValueError(f"merge() needs batches with distinct fields, got {overlap} in both")
+        shared = [name for name in self.event_template.children if name in other.event_template]
+        if shared:
+            names = repr(shared[0]) if len(shared) == 1 else str(shared)
+            raise ValueError(
+                f"cannot merge the two batches of records, since both have {names}. Rename one, "
+                f"or merge the groups first"
+            )
         merged = self.event_template.merge(other.event_template)
         return self._rebuilt({**self._columns, **other._columns}, merged)
 
