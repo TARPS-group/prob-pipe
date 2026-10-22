@@ -35,7 +35,7 @@ from ..core._record_batch import (
     _MappedBatchColumns,
     _stacked_batches,
 )
-from ..core._record_spec import RecordSpec
+from ..core._record_spec import RecordSpec, _layout_record_mapping
 from ..core._spec_base import NumericArraySpec
 from ..core._specs import OutputSpec, _has_record_outputs, _root_output_name
 from ..core.config import WorkflowKind, _checked_count
@@ -961,7 +961,9 @@ def mapped_draw_body(
         if ref in events:
             return _batch_at(row, events[ref], ref.label)
         if ref in record_draws:
-            return Record(row, label=ref.label)
+            # JAX maps a dict with its keys sorted, so the draw is laid out in
+            # the event's order again before it is a record.
+            return Record(_layout_record_mapping(record_draws[ref], row), label=ref.label)
         return row
 
     def one_draw(lifted_rows: tuple[Any, ...]) -> Any:
@@ -970,6 +972,10 @@ def mapped_draw_body(
             for ref, row in zip(broadcast_args, lifted_rows, strict=True)
         }
         draw_output = func(**replace_input_refs(values, replacements))
+        if isinstance(draw_output, Mapping):
+            # JAX maps and stacks a dict with its keys sorted, so a returned
+            # mapping becomes a record first, which keeps the function's order.
+            draw_output = Record(dict(draw_output))
         if not _holds_tracer(lifted_rows):
             # One draw evaluated alone returns its result as it is, which the
             # aggregate stacks with the other draws' results.
