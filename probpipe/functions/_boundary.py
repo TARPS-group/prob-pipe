@@ -289,8 +289,8 @@ def _warn_user_trace(function_name: str) -> None:
             state.warned_about_user_trace = True
     warnings.warn(
         f"{function_name!r} is staged by a user's JAX transformation while executor "
-        f"{choice.executor_name!r} is named. Its opaque code runs under the default context; "
-        "run it through a ProbPipe call to carry the executor into the JAX program",
+        f"{choice.executor_name!r} is named. Its opaque code runs under the default context. "
+        "Run it through a ProbPipe call to carry the executor into the JAX program",
         stacklevel=3,
     )
 

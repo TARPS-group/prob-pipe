@@ -285,7 +285,7 @@ class TestPaths:
             pytest.param(0, "got int", id="position"),
             pytest.param(
                 ("a", 0),
-                r"cannot mix a path and a position in one \[\]",
+                r"since 0 is a position and only a batch takes positions\. Give only paths",
                 id="list-holding-a-position",
             ),
         ],

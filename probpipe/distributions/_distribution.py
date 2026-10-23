@@ -645,7 +645,7 @@ def _merge_operands(left: Any, right: Any) -> Any:
     operand can scale.
     """
     if _merge_engine is None:
-        raise RuntimeError("the merge engine is not installed; import probpipe")
+        raise RuntimeError("the merge engine is not installed. Import probpipe")
     return _merge_engine(left, right)
 
 
@@ -1143,7 +1143,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         if read_paths == _root_output_name(self.event_spec):
             return self
         if _coupled_marginal_factory is None:
-            raise RuntimeError("the coupled marginal is not installed; import probpipe")
+            raise RuntimeError("the coupled marginal is not installed. Import probpipe")
         return _coupled_marginal_factory(self, read_paths)
 
     def __contains__(self, path: object, /) -> bool:

@@ -309,7 +309,7 @@ class MinibatchedDistribution(
     ):
         if not isinstance(prior, SupportsLogProb):
             raise TypeError(
-                f"MinibatchedDistribution: prior must have a log-density (SupportsLogProb); "
+                f"MinibatchedDistribution: prior must have a log-density (SupportsLogProb), "
                 f"got {_described(prior)}"
             )
         if not _reads_observations(likelihood):

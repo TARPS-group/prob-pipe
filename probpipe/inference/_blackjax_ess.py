@@ -255,7 +255,7 @@ def _elliptical_slice(
     gp = _gaussian_prior_params(factors.prior)
     if gp is None:
         raise TypeError(
-            f"cannot run elliptical_slice: the prior must be Gaussian; got {_described(factors.prior)}"
+            f"cannot run elliptical_slice: the prior must be Gaussian, got {_described(factors.prior)}"
         )
     prior_mean, prior_cov = gp
     init_state = get_init_state(factors.prior, init, random_seed=random_seed)

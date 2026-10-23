@@ -588,7 +588,7 @@ class _GLMLikelihood(
             if not _has_record_outputs(event_spec) and tuple(event_spec.outputs) != (output_name,):
                 raise ValueError(
                     f"glm_likelihood has the output {output_name!r}, but its event_spec names "
-                    f"{list(event_spec.outputs)}; name the output once"
+                    f"{list(event_spec.outputs)}. Name the output once"
                 )
             # The declared type's sizes bind on both sides before X is fixed against them.
             sizes = _declared_sizes(event_spec, response)

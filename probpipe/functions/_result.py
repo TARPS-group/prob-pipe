@@ -1041,7 +1041,7 @@ def _stack_rows(
                     if replace(spec, dtype=element_term_spec.dtype) != element_term_spec:
                         raise ValueError(
                             f"{label}: the rows returned arrays with different specs "
-                            f"({element_term_spec!r} and {spec!r}); every row must return the same "
+                            f"({element_term_spec!r} and {spec!r}). Every row must return the same "
                             "shape and support"
                         )
                 # Promote the complete set: pairwise NumPy promotion can depend

@@ -966,7 +966,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             )
         return self._rebuild_root(new_children, RecordSpec(specs))
 
-    def __and__(self, other: Record) -> Record:
+    def __and__(self, other: Any) -> Record:
         """Merge two records by top-level name: this record's fields and groups, then *other*'s.
 
         The merge is shallow, as :meth:`NamedTree.__and__` states: a top-level
@@ -987,14 +987,18 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
         Raises
         ------
+        TypeError
+            If *other* is not a record, through ``NotImplemented``.
         ValueError
-            If a top-level name is in both records; merge the groups first.
+            If a top-level name is in both records. Merge the groups first.
 
         Examples
         --------
         >>> (Record({"a": 1.0}) & (Record({"b": 2.0, "g": {"c": 3.0}}))).keys()
         ('a', 'b', 'g/c')
         """
+        if not isinstance(other, Record):
+            return NotImplemented
         _check_no_shared_top_level_names(self, other, operands=f"the two {type(self).__name__}s")
         new_children: dict[str, Any] = {}
         specs: dict[str, Any] = {}

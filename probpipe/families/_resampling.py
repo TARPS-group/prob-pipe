@@ -216,7 +216,7 @@ def _replicate_level(source: Distribution, level: str | None) -> str:
         return outputs[0]
     raise ValueError(
         f"level is required because the source {source.label!r} has several outputs "
-        f"{outputs}; pass level='<name>' to name the level of each replicate's draws"
+        f"{outputs}. Pass level='<name>' to name the level of each replicate's draws"
     )
 
 
