@@ -36,6 +36,7 @@ import warnings
 from collections import OrderedDict
 from collections.abc import Callable, Hashable
 from dataclasses import dataclass
+from functools import cached_property
 from types import CellType, FunctionType
 from typing import Any
 
@@ -779,16 +780,22 @@ class _ClosureCaptures:
     static_cache_key : Hashable
         Every captured value but the arrays, by value, with each array's place
         and shape and dtype.
-    value_cache_key : Hashable or None
-        The captured arrays by their contents, or ``None`` when one is traced.
     closure_with_arrays : Callable
         A copy of the closure that captures other arrays in their places.
     """
 
     captured_arrays: tuple[Any, ...]
     static_cache_key: Hashable
-    value_cache_key: Hashable | None
     closure_with_arrays: Callable[[tuple[Any, ...]], Callable[..., Any]]
+
+    @cached_property
+    def value_cache_key(self) -> Hashable | None:
+        """The captured arrays by their contents, or ``None`` when one is traced.
+
+        Hashing copies every captured array to the host, so it runs only for a
+        closure whose probe with its captured arrays as data failed.
+        """
+        return _array_contents_cache_key(self.captured_arrays)
 
 
 def _closure_captures(closure: Callable[..., Any]) -> _ClosureCaptures | None:
@@ -833,7 +840,6 @@ def _closure_captures(closure: Callable[..., Any]) -> _ClosureCaptures | None:
     return _ClosureCaptures(
         captured_arrays=captured_arrays,
         static_cache_key=tuple(static_parts),
-        value_cache_key=_array_contents_cache_key(captured_arrays),
         closure_with_arrays=closure_with_arrays,
     )
 

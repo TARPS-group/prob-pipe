@@ -1480,7 +1480,7 @@ def _event_shape(spec: TermSpec, *, path: str, kind: str) -> tuple[int, ...]:
     if symbolic:
         raise ValueError(
             f"{kind}: field {path!r} of element has the unbound symbolic dimension "
-            f"{symbolic[0]!r}; bind it first with element.with_dim_sizes({symbolic[0]}=...)"
+            f"{symbolic[0]!r}. Bind it first with element.with_dim_sizes({symbolic[0]}=...)"
         )
     return shape
 

@@ -5070,6 +5070,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   batch = NumericRecordBatch({"r": jnp.arange(3.0), "m": jnp.ones(3)}, level_names=("draw",))
   difference(batch)  # before: EvaluationError, after: [-1. 0. 1.]
   ```
+- **A call that draws nothing leaves later draws unchanged under the
+  `process` executor.** A sweep or a plain call whose evaluation points ran in
+  worker processes took a place in the workflow even when no point drew, so
+  the seeded draws after it differed from those under `sequential` or
+  `thread`. It now takes its place only when a point draws, as a call run in
+  place does. A report rejected by replay or effect validation commits no
+  occurrence and leaves the later draws unchanged:
+
+  ```python
+  with workflow_run(seed=1):
+      scaled.using(executor="process")(x=grid, scale=2.0)   # draws nothing
+      sample(Normal("z", 0.0, 1.0))
+  # before: a different draw than with executor="sequential"
+  # after:  the same draw under every executor
+  ```
+- **A plain call that names the `thread` or `process` executor runs inside
+  `jax.grad` and `jax.vmap`.** Inside a JAX transformation the call runs its
+  body in the calling thread, as a call that names `jax` does, and warns that
+  the named executor ran nothing because the call ran inside a JAX
+  transformation. Before, it sent the traced arguments to the named executor,
+  so `thread` raised JAX's `UnexpectedTracerError`, and `process` raised
+  `ResolutionError` because the arguments cannot be pickled. Outside a
+  transformation the named executor runs the body.
+  A custom executor's automatic-selection priority cannot override this
+  calling-thread execution.
+- **`&` between a record or a record spec and a value of another family
+  raises `TypeError`.** `Record({"a": 1.0}) & {"z": 1}`, `Record & RecordSpec`,
+  and `RecordSpec & OutputSpec` raised `AttributeError` from inside the merge.
+  They now return `NotImplemented`, so Python raises its `TypeError` for an
+  unsupported operand.
+- **Messages for misused executor options, empty or list-valued evaluation
+  points, and a position on a term without positions say what went wrong.**
+  - An executor that does not read several of `executor_options` names every
+    one, not only the first.
+  - Options given without `executor` go to the executor automatic selection
+    picks, and when it does not read them the message says it was chosen
+    automatically and asks for the executor the options are for.
+  - Evaluation points built from varying arguments with 0 rows say so, where
+    the message said the argument had no leading axis. A Python list of
+    scalars as a varying argument asks for an array, as `jnp.asarray(x)`.
+    Vectorized outputs also distinguish a scalar with no leading axis from
+    an array with 0 rows.
+  - `record[["a", 0]]` on a record, a law, or a spec says that only a batch
+    takes positions, where it suggested indexing a batch.
+  - `EvaluationError` counts one evaluation point in the singular.
+  - A `given` with unknown inputs and one with missing required inputs each
+    get their own message.
+  - The warning for a low `max_evaluations`, and 42 messages the recent work
+    added, join their clauses as sentences instead of with semicolons.
+- **Building a law from functions no longer hashes the arrays its functions
+  capture.** The check that the functions trace hashed every captured array on
+  the host, which only the fallback for a function that reads a captured value
+  needs. A law whose density captures a 1,000,000-element array now builds in
+  about 0.35 ms instead of about 10 ms.
 
 ### Removed
 

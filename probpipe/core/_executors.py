@@ -977,7 +977,7 @@ def _selected_executor(
         execution_choice.executor_options if execution_choice.source == "own" else {}
     )
     selected_executor = _automatically_selected_executor(evaluation_points)
-    _check_executor_reads_options(selected_executor, automatic_options)
+    _check_executor_reads_options(selected_executor, automatic_options, chosen_automatically=True)
     return _ExecutorSelection(selected_executor, dict(automatic_options), tuple(rejected))
 
 
@@ -1073,9 +1073,16 @@ def _executor_option_names(executor: EvaluationExecutor) -> frozenset[str] | Non
 
 
 def _check_executor_reads_options(
-    executor: EvaluationExecutor, executor_options: Mapping[str, Any]
+    executor: EvaluationExecutor,
+    executor_options: Mapping[str, Any],
+    *,
+    chosen_automatically: bool = False,
 ) -> None:
-    """Raise if *executor* does not take one of *executor_options*."""
+    """Raise if *executor* does not take every one of *executor_options*, naming each it does not.
+
+    When automatic selection chose *executor*, the message says so and asks
+    for the executor the options are for.
+    """
     option_names = _executor_option_names(executor)
     if option_names is None:
         return
@@ -1083,10 +1090,18 @@ def _check_executor_reads_options(
     if not unread_options:
         return
     listed_options = ", ".join(sorted(option_names)) if option_names else "none"
-    raise ValueError(
-        f"executor {executor.name!r} does not read the option {unread_options[0]!r}; "
-        f"its options are {listed_options}"
+    unread_listed = " and ".join(repr(option_name) for option_name in unread_options)
+    option_noun = "option" if len(unread_options) == 1 else "options"
+    how_chosen = (
+        ", chosen automatically since the call names no executor," if chosen_automatically else ""
     )
+    message = (
+        f"executor {executor.name!r}{how_chosen} does not read the {option_noun} "
+        f"{unread_listed}. Its options are {listed_options}"
+    )
+    if chosen_automatically:
+        message += ". Name the executor the options are for, such as executor='thread'"
+    raise ValueError(message)
 
 
 # ---------------------------------------------------------------------------

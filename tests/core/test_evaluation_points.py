@@ -74,6 +74,22 @@ class TestBuildingASet:
             "varying argument with one row per evaluation point on its leading axis"
         )
 
+    def test_varying_arguments_with_zero_rows_are_refused_as_empty(self):
+        with pytest.raises(ValueError) as raised:
+            EvaluationPoints(_scaled_sum, varying={"x": np.zeros((0, 3))}, origin="fn")
+        assert str(raised.value) == (
+            "cannot build evaluation points of 'fn' from varying arguments with 0 rows. "
+            "Give each varying argument at least one row on its leading axis"
+        )
+
+    def test_a_list_of_scalars_as_a_varying_argument_is_refused_naming_the_array_form(self):
+        with pytest.raises(ValueError) as raised:
+            EvaluationPoints(_scaled_sum, varying={"x": [1.0, 2.0, 3.0]}, origin="fn")
+        assert str(raised.value) == (
+            "cannot build evaluation points of 'fn' from the list x, whose items are separate "
+            "scalars. Stack its rows as an array, as jnp.asarray(x)"
+        )
+
     def test_a_set_without_varying_arguments_is_refused(self):
         with pytest.raises(ValueError, match="without varying arguments"):
             EvaluationPoints(_scaled_sum, varying={}, origin="fn")
@@ -273,16 +289,26 @@ class TestVectorizedCallables:
         assert set(outcomes.failures) == {0, 1, 2, 3, 4}
         assert {failure.message for failure in outcomes.failures.values()} == {"solver crashed"}
 
-    def test_a_vectorized_output_with_the_wrong_number_of_rows_fails_the_chunk(self):
+    @pytest.mark.parametrize(
+        ("stacked_output", "row_description"),
+        [
+            (jnp.zeros((1, 2)), "has 1 row"),
+            (jnp.asarray(1.0), "has no leading axis"),
+            (jnp.zeros((0, 2)), "has 0 rows"),
+        ],
+    )
+    def test_a_vectorized_output_with_the_wrong_number_of_rows_fails_the_chunk(
+        self, stacked_output, row_description
+    ):
         outcomes = _run(
             _points(
-                lambda x, scale: jnp.zeros((1, 2)),
+                lambda x, scale: stacked_output,
                 claims=ExecutionClaims(traceable=False, vectorized=True),
             )
         )
         assert len(outcomes.failures) == 5
         assert outcomes.failures[0].message == (
-            "'fn' claims vectorized=True but returned an output that has 1 row for 5 "
+            f"'fn' claims vectorized=True but returned an output that {row_description} for 5 "
             "evaluation points. Return the outputs stacked with one row per evaluation point"
         )
 

@@ -359,6 +359,26 @@ class _ReplayState:
         attempt: EvaluationPointAttempt | None,
     ) -> None:
         """Validate and atomically commit claims and their successful subset."""
+        with self._effect_batch_scope(
+            effects, successful_effects=successful_effects, attempt=attempt
+        ):
+            pass
+
+    @contextmanager
+    def _effect_batch_scope(
+        self,
+        effects: tuple[StochasticEffectClaim, ...],
+        *,
+        successful_effects: tuple[StochasticEffectClaim, ...],
+        attempt: EvaluationPointAttempt | None,
+    ) -> Generator[None, None, None]:
+        """Validate the batch and commit its claims when the scope succeeds.
+
+        The claims lock stays held throughout the scope, so another attempt
+        cannot invalidate the prepared claims while the caller commits the
+        parent occurrence. A rejected batch never enters the scope, and an
+        exception in the scope leaves replay claims unchanged.
+        """
         with self.claims_lock:
             claim_mutations = self._prepare_effect_claim_batch_unlocked(
                 effects,
@@ -369,6 +389,7 @@ class _ReplayState:
                 attempt=attempt,
                 pending_claims=claim_mutations,
             )
+            yield
             self._apply_claim_mutations_unlocked(claim_mutations)
             self._apply_success_mutations_unlocked(success_mutations)
 

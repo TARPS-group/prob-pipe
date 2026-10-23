@@ -827,7 +827,7 @@ class TestTheReplicateLevel:
             label="draws",
         )
         source = EmpiricalDistribution(atoms, label="post")
-        with pytest.raises(ValueError, match=r"level is required .* \['x', 'y'\]; pass level="):
+        with pytest.raises(ValueError, match=r"level is required .* \['x', 'y'\]\. Pass level="):
             BootstrapReplicateDistribution("b", source)
         named = BootstrapReplicateDistribution("b", source, level="row")
         assert named.event_spec.term_spec.level_names == ("row",)

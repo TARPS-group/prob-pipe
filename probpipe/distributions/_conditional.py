@@ -113,8 +113,8 @@ def _complete_given_spec(given_spec: Any) -> InputSpec:
     given_spec = _read_given_inputs(given_spec)
     if not len(given_spec):
         raise ValueError(
-            "given_spec is empty, but a ConditionalDistribution needs at least one input; "
-            "use a Distribution for a law with no inputs"
+            "given_spec is empty, but a ConditionalDistribution needs at least one input. "
+            "Use a Distribution for a law with no inputs"
         )
     return given_spec
 
@@ -149,8 +149,8 @@ def _check_disjoint_sides(given_spec: InputSpec, event_spec: OutputSpec, owner: 
     shared = set(given_spec) & set(event_spec.outputs)
     if shared:
         raise ValueError(
-            f"{owner} names {sorted(shared)} both as an input and as an output field; "
-            f"rename one of them"
+            f"{owner} names {sorted(shared)} both as an input and as an output field. "
+            f"Rename one of them"
         )
 
 
@@ -1366,7 +1366,7 @@ def _stand_in(spec: TermSpec, path: str, label: str) -> Any:
             raise TypeError(
                 f"input {path!r} of {label!r} has unbound dimensions "
                 f"{sorted(spec.free_dims)}, but conditional_distribution needs a fixed shape for "
-                f"each required input; give a concrete shape, such as NumericArraySpec((3,))"
+                f"each required input. Give a concrete shape, such as NumericArraySpec((3,))"
             )
         dtype = spec.dtype if spec.dtype is not None else jnp.result_type(float)
         return jax.ShapeDtypeStruct(tuple(spec.shape), dtype)
@@ -1376,7 +1376,7 @@ def _stand_in(spec: TermSpec, path: str, label: str) -> Any:
             for key, child in spec.children.items()
         }
     raise TypeError(
-        f"input {path!r} of {label!r} must be declared as an array or a record of arrays; "
+        f"input {path!r} of {label!r} must be declared as an array or a record of arrays, "
         f"got {type(spec).__name__}"
     )
 
@@ -1543,7 +1543,7 @@ def _inputs_of(
         if parameter.kind is parameter.POSITIONAL_ONLY:
             raise TypeError(
                 f"the parameter {parameter.name!r} of {label!r} is positional-only, but given "
-                f"input values are passed by name; make it a regular parameter"
+                f"input values are passed by name. Make it a regular parameter"
             )
         spec = declared.get(parameter.name, parameter.annotation)
         if parameter.default is not parameter.empty:
@@ -1603,7 +1603,7 @@ def _agreed_event_spec(label: str, declared: OutputSpec | TermSpec, law: OutputS
     ) != tuple(law.outputs):
         raise ValueError(
             f"event_spec of {label!r} declares the outputs {list(declaration.outputs)}, but its "
-            f"function returns a law with the outputs {list(law.outputs)}; make them match"
+            f"function returns a law with the outputs {list(law.outputs)}. Make them match"
         )
     return declaration.with_term_spec(law.term_spec)
 

@@ -281,7 +281,7 @@ def _declarations(
     if named != _root_output_name(output):
         raise ValueError(
             f"event_spec of {output_name!r} names the function output {named!r}, but output_spec "
-            f"names it {_root_output_name(output)!r}; make them match"
+            f"names it {_root_output_name(output)!r}. Make them match"
         )
     return output, event_spec
 

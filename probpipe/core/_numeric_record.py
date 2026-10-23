@@ -503,7 +503,11 @@ class NumericRecord(Record, Numeric):
         return int(self._child_field_as_jax(self._single_numeric_field()))
 
     def __bool__(self) -> bool:
-        """Whether this record has any top-level fields, regardless of their values."""
+        """Whether this record holds any field, at any depth, whatever its values.
+
+        A record whose only top-level name is an empty group holds no field, so
+        it is false, as its length of 0 says.
+        """
         return len(self) != 0
 
     # The array conversions present the sole field rather than Numeric's flat

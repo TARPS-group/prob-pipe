@@ -496,7 +496,7 @@ def _atoms_declaration(
         if output_name is not None:
             raise TypeError(
                 f"{owner} of record atoms takes no output, since the records' fields are its "
-                f"outputs; got output_name={output_name!r}"
+                f"outputs, got output_name={output_name!r}"
             )
         if event_spec is None:
             return atom_spec

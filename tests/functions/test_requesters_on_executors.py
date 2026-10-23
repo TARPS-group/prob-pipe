@@ -8,6 +8,7 @@ executor gives the same draws, and ``jax`` agrees with them up to rounding.
 import threading
 import warnings
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -189,23 +190,7 @@ class TestAgreementAcrossExecutors:
             assert raw_atoms == [list(atom.raw) for atom in reference.atoms]
             assert all(second == 2.0 * first for first, second in raw_atoms)
 
-    @pytest.mark.parametrize(
-        "executor",
-        [
-            "sequential",
-            "thread",
-            pytest.param(
-                "process",
-                marks=pytest.mark.xfail(
-                    strict=True,
-                    reason=(
-                        "a chunk sent to a worker process commits its call's place in the "
-                        "workflow, so a call that draws nothing moves the keys of later draws"
-                    ),
-                ),
-            ),
-        ],
-    )
+    @pytest.mark.parametrize("executor", _PYTHON_EXECUTORS)
     def test_a_call_that_draws_nothing_leaves_later_draws_unchanged(self, executor):
         sweep = Function(_scaled, label="scaled", traceable=False)
         grid = NumericArrayBatch(jnp.arange(3.0), "theta", label="grid")
@@ -214,6 +199,47 @@ class TestAgreementAcrossExecutors:
         with workflow_run(seed=1):
             sweep.using(executor=executor)(x=grid, scale=2.0)
             after_the_sweep = np.asarray(sample(Normal("z", 0.0, 1.0)))
+        np.testing.assert_array_equal(after_the_sweep, reference)
+
+    @pytest.mark.parametrize("executor", _PYTHON_EXECUTORS)
+    def test_a_plain_call_that_draws_nothing_leaves_later_draws_unchanged(self, executor):
+        shifted = Function(_shift, label="shift", traceable=False)
+        with workflow_run(seed=1):
+            reference = np.asarray(sample(Normal("z", 0.0, 1.0)))
+        with workflow_run(seed=1):
+            shifted.using(executor=executor)(x=1.0)
+            after_the_call = np.asarray(sample(Normal("z", 0.0, 1.0)))
+        np.testing.assert_array_equal(after_the_call, reference)
+
+    @pytest.mark.parametrize("executor", _PYTHON_EXECUTORS)
+    def test_a_nested_call_that_draws_nothing_leaves_its_callers_draws_unchanged(self, executor):
+        sweep = Function(_scaled, label="scaled", traceable=False)
+        grid = NumericArrayBatch(jnp.arange(3.0), "theta", label="grid")
+
+        def sweep_then_draw(x):
+            sweep.using(executor=executor)(x=grid, scale=2.0)
+            return np.asarray(sample(Normal("z", 0.0, 1.0))) + x
+
+        def draw(x):
+            return np.asarray(sample(Normal("z", 0.0, 1.0))) + x
+
+        with workflow_run(seed=1):
+            reference = Function(draw, label="outer", traceable=False)(x=0.0)
+        with workflow_run(seed=1):
+            after_the_sweep = Function(sweep_then_draw, label="outer", traceable=False)(x=0.0)
+        np.testing.assert_array_equal(np.asarray(after_the_sweep), np.asarray(reference))
+
+    @pytest.mark.parametrize("executor", _PYTHON_EXECUTORS)
+    def test_a_call_whose_points_draw_gives_later_draws_their_keys(self, executor):
+        nested = Function(_shift_with_a_nested_draw, label="nested", traceable=False)
+        grid = NumericArrayBatch(jnp.arange(3.0), "x", label="grid")
+        with workflow_run(seed=1):
+            reference_cells = np.asarray(nested(x=grid).raw)
+            reference = np.asarray(sample(Normal("z", 0.0, 1.0)))
+        with workflow_run(seed=1):
+            cells = np.asarray(nested.using(executor=executor)(x=grid).raw)
+            after_the_sweep = np.asarray(sample(Normal("z", 0.0, 1.0)))
+        np.testing.assert_array_equal(cells, reference_cells)
         np.testing.assert_array_equal(after_the_sweep, reference)
 
 
@@ -246,6 +272,18 @@ class TestFailures:
         failing = Function(fail_at_two, label="cell", traceable=False)
         with pytest.raises(EvaluationError, match="grid point 2: ValueError: bad cell"):
             failing(x=NumericArrayBatch(jnp.arange(4.0), "x", label="xs"))
+
+    def test_a_sweep_of_one_failing_cell_counts_one_evaluation_point(self):
+        def refuse(x):
+            raise ValueError("bad cell")
+
+        failing = Function(refuse, label="cell", traceable=False)
+        with pytest.raises(EvaluationError) as raised:
+            failing(x=NumericArrayBatch(jnp.arange(1.0), "x", label="xs"))
+        assert str(raised.value) == (
+            "evaluation of 'cell' failed at 1 of 1 evaluation point: "
+            "grid point 0: ValueError: bad cell"
+        )
 
     def test_a_plain_call_raises_the_exception_its_body_raised(self):
         def refuse(x):
@@ -305,6 +343,62 @@ class TestTheChoiceOfExecutor:
                 x=Normal("x", 0.0, 1.0)
             )
         assert result.provenance.metadata["evaluations"][0]["executor"] == "jax"
+
+    @pytest.mark.parametrize("traceable", [True, False])
+    def test_a_plain_call_runs_its_body_on_the_named_executor(self, traceable):
+        threads_that_ran = []
+
+        def shifted(x):
+            threads_that_ran.append(threading.get_ident())
+            return x + 1.0
+
+        on_thread = Function(shifted, label="shifted", traceable=traceable, executor="thread")
+        assert float(on_thread(x=1.0)) == 2.0
+        assert len(threads_that_ran) == 1
+        assert threads_that_ran[0] != threading.get_ident()
+
+    @pytest.mark.parametrize("executor", ["thread", "process"])
+    @pytest.mark.parametrize("traceable", [True, None])
+    def test_a_traceable_plain_call_inside_a_jax_transformation_ignores_the_executor(
+        self, executor, traceable
+    ):
+        doubled = Function(lambda x: 2.0 * x, label="doubled", traceable=traceable)
+        on_executor = doubled.using(executor=executor)
+        assert float(jax.grad(lambda x: on_executor(x=x))(3.0)) == 2.0
+        np.testing.assert_allclose(
+            np.asarray(jax.vmap(lambda x: on_executor(x=x))(jnp.arange(3.0))), [0.0, 2.0, 4.0]
+        )
+        assert float(jax.jit(lambda x: on_executor(x=x))(1.5)) == 3.0
+
+    @pytest.mark.parametrize("executor", ["thread", "process"])
+    def test_a_transformed_plain_call_bypasses_custom_automatic_executors(self, executor):
+        thread_executor = _executors.executor_registry.get_method("thread")
+
+        class AutomaticThreads(EvaluationExecutor):
+            name = "automatic_threads"
+            description = "Run evaluation points on threads by automatic selection."
+            priority = 10
+
+            def check(self, evaluation_points, /):
+                return thread_executor.check(evaluation_points)
+
+            def execute(self, evaluation_points, /):
+                return thread_executor.execute(evaluation_points)
+
+        _executors.executor_registry.register(AutomaticThreads())
+        threads_that_ran = []
+
+        def doubled(x):
+            threads_that_ran.append(threading.get_ident())
+            return 2.0 * x
+
+        on_executor = Function(doubled, traceable=True, executor=executor)
+        assert float(jax.grad(lambda x: on_executor(x=x))(3.0)) == 2.0
+        np.testing.assert_array_equal(
+            np.asarray(jax.vmap(lambda x: on_executor(x=x))(jnp.arange(3.0))), [0.0, 2.0, 4.0]
+        )
+        assert float(jax.jit(lambda x: on_executor(x=x))(1.5)) == 3.0
+        assert threads_that_ran == [threading.get_ident()] * 3
 
     def test_the_removed_controls_raise_naming_the_unknown_control(self):
         with pytest.raises(TypeError, match="unknown Function option 'dispatch'"):

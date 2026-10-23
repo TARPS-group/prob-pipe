@@ -117,7 +117,7 @@ def require_trace_variables(trace: Any, names: Iterable[str]) -> None:
     missing = [name for name in names if name not in available]
     if missing:
         raise ValueError(
-            f"the sampler's trace is missing the parameters {missing}; its posterior "
+            f"the sampler's trace is missing the parameters {missing}. Its posterior "
             f"variables are {available}"
         )
 

@@ -374,7 +374,7 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[InferenceMethod]):
         if len(args) == 2:
             if _observed_target is None:
                 raise TypeError(
-                    "conditioning a model on data requires probpipe.inference; import it"
+                    "conditioning a model on data requires probpipe.inference. Import it"
                 )
             args = (_observed_target(*args),)
         if len(args) == 1 and isinstance(args[0], Distribution):
