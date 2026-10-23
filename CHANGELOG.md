@@ -3255,8 +3255,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Minibatches sampled without replacement retain distinct indices from batches
-  of random candidates. Additional candidates supplement an incomplete batch.
+- **Faster minibatches without replacement.** Sampling retains distinct indices
+  from batches of random candidates. Additional candidates supplement an incomplete batch.
   Batches larger than half the dataset sample the excluded indices and shuffle
   their complement. Smaller batches use space proportional to the batch size.
   Uniform subsets and random ordering are preserved. The same seed can produce

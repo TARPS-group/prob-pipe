@@ -132,7 +132,8 @@ def _draw_indices(
     Candidate arrays have size proportional to the smaller of ``batch_size``
     and ``n - batch_size``. Their sizes depend only on these static dimensions.
     Batches larger than half the population sample the excluded indices, then
-    shuffle their complement. A full batch is a population permutation.
+    shuffle their complement. The complement mask, output and permutation
+    still require O(n) space. A full batch is a population permutation.
     """
     if with_replacement:
         return jax.random.randint(key, shape=(batch_size,), minval=0, maxval=n)
@@ -163,6 +164,15 @@ def _unique_prefix(candidates: Array, size: int, n: int) -> Array:
     return padded[positions]
 
 
+def _candidate_count(n: int, size: int) -> int:
+    """Candidate allocation for static dimensions ``1 <= size <= n // 2``."""
+    # N log(N / (N - size)) estimates the draws needed to collect size values.
+    # The surplus limits retries even near half the population; its maximum
+    # remains proportional to size. Retaining first occurrences makes every
+    # ordered subset equally likely, regardless of this allocation choice.
+    return max(size + 16, ceil(-1.25 * n * log1p(-size / n)))
+
+
 def _sample_unique_indices(key: PRNGKey, n: int, size: int) -> Array:
     """Draw *size* distinct indices in uniform random order using bounded arrays.
 
@@ -172,11 +182,7 @@ def _sample_unique_indices(key: PRNGKey, n: int, size: int) -> Array:
     """
     if size == 1:
         return jax.random.randint(key, (1,), 0, n)
-    # N log(N / (N - size)) estimates the draws needed to collect size values.
-    # The surplus limits retries even near half the population; its maximum
-    # remains proportional to size. Retaining first occurrences makes every
-    # ordered subset equally likely, regardless of this allocation choice.
-    count = max(size + 16, ceil(-1.25 * n * log1p(-size / n)))
+    count = _candidate_count(n, size)
     key, subkey = jax.random.split(key)
     selected = _unique_prefix(jax.random.randint(subkey, (count,), 0, n), size, n)
 

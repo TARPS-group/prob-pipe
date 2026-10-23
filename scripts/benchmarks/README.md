@@ -1,6 +1,9 @@
+> **AI-generated.** An AI assistant drafted this page, and no maintainer has reviewed it yet. Please report errors on the issue tracker.
+
 # Execution benchmarks
 
-These manual benchmarks measure ProbPipe execution costs. Statistical model evaluation is outside their scope.
+These manual benchmarks measure ProbPipe execution costs. Statistical model
+evaluation is outside their scope.
 Run them from a repository checkout with its dependencies installed.
 
 ```bash
@@ -18,7 +21,10 @@ not install dependencies, support Metal, or fall back to CPU when CUDA fails.
 
 `--case` selects an exact name printed by `list`; it and `--group` may repeat.
 `--scenario` selects `same_object`, `new_object`, or `structure_change` and may
-repeat. Omitting it runs all three. The first call establishes the original
+repeat. Omitting it runs all applicable scenarios shown by `list`. Index and
+`vmap64` cases have no `new_object` scenario: it would only measure rebuilding
+a JIT wrapper. Explicitly selecting it records `not_applicable` with a reason
+and no timing data. The first call establishes the original
 structure. Later calls reuse the owner, construct a new owner with changed
 parameter values, or alternate between two sizes with a retained owner for
 each size. Thus structure-change samples include both new and reused shapes;
@@ -38,8 +44,9 @@ operations include the following costs:
 - Workflow context: entry, exit and internal key handling.
 - Inputs: value adjustment within the workload.
 - Outputs: assembling the returned result.
- External key preparation and input
-placement are excluded. Minibatch index calls use prepared keys directly;
+
+External key preparation and input placement are excluded. Minibatch index
+calls use prepared keys directly;
 gradient scans include splitting keys over 25 steps and report the whole scan's
 time, not per-call latency. The original permutation remains an algorithm
 reference, separately named from the current sampler. Full CPU permutation
@@ -48,16 +55,20 @@ scans can be expensive; select cases when investigating a narrower question.
 The quick suite uses one process per case/scenario, two warmups and five
 measured calls. The full suite uses three processes, three warmups and twenty
 measured calls. Override these with `--processes`, `--warmups` and `--repeats`.
-First-call and warmup observations remain in the output. Each process uses the
-same reproducible seed sequence, controlled by `--seed`. Function lifting
+Zero or one warmup is allowed. First-call and warmup observations remain in
+the output.
+Measurements after warmup do not guarantee zero compilation: current RWMH
+records still show compilation events on every subsequent call. Each process
+uses the same reproducible seed sequence, controlled by `--seed`. Function lifting
 covers sequential and JAX executors; inference fixes RWMH proposal settings,
 chain counts and iteration counts with adaptation disabled.
 
-Results default to `.benchmark-results/`, ignored by Git. Use `--output PATH`
-to create another file, or `--output -` for JSONL on stdout. Existing files are
+Results default to `.benchmark-results/` at the repository root, ignored by Git.
+An explicitly supplied relative output path is relative to the calling directory.
+Git metadata is checked before opening the output file; a Git checkout is required.
+Use `--output PATH` to create another file, or `--output -` for JSONL on stdout. Existing files are
 never overwritten. Logs go to stderr. Results are local artifacts: do not
-commit or upload them. Historical measurements are stored under
-`.benchmark-results/legacy/` in the checkout where they were migrated.
+commit or upload them.
 
 Each JSONL row contains:
 
@@ -68,6 +79,8 @@ Each JSONL row contains:
 Each sample identifies its phase and size. It records elapsed milliseconds and
 the compilation-event count. Failures carry
 an error and cause a nonzero exit status; they have no valid timing summary.
+Optional `--timeout SECONDS` limits each worker, including startup and preparation.
+The default is unlimited. A timeout terminates the worker and records an error.
 The existing compilation counter observes JAX's backend compile-duration event.
 It would also count persistent-cache loads, which these runs disable.
 
@@ -76,12 +89,12 @@ machine and dependency versions, then pass the two result files to `compare`.
 The tool does not switch branches. It aligns cases and scenarios, pools process
 repetitions, and reports per-phase medians, quartiles, time ratios (after/before)
 and compilation events per call. Different environments, workload versions,
-seeds, repeat settings or timing policies are marked incompatible. Missing and
-failed cases are reported explicitly. A dirty checkout is recorded; its commit
-alone does not identify the measured code. Timings are observations, not CI
+seeds, repeat settings or timing policies are marked incompatible. Missing, failed and
+inapplicable cases are reported explicitly. A dirty checkout is recorded; its
+commit alone does not identify the measured code. Timings are observations, not CI
 thresholds or claims that one hardware platform is faster than another.
 
-The conditional joint uses response `a` and coefficient `beta`. Its declared
-field order agrees with JAX's dictionary order. The current execution layer can
-reorder record fields during mapped density calls when those orders differ;
-this benchmark does not modify that execution behavior.
+Gradient references are installed around preparation and the entire call loop,
+so patch setup is excluded and the first trace remains inside the first timed call.
+Minibatch workload version 2 records these measurement changes; version 1 JSONL
+remains readable, but is marked incompatible for direct comparison.

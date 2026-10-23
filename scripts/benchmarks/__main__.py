@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
 from scripts.benchmarks.cases import GROUPS, SCENARIOS, catalog
-from scripts.benchmarks.runner import compare, launch, request_for, worker_main
+from scripts.benchmarks.runner import ROOT, compare, git_metadata, launch, request_for, worker_main
 
 
-def main():
+def main() -> int:
     """List, measure, or compare execution workloads."""
     if sys.argv[1:] == ["_worker"]:
         return worker_main()
@@ -29,7 +31,12 @@ def main():
     parser.add_argument("--processes", type=int)
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--output", help="JSONL path, or - for stdout")
+    parser.add_argument(
+        "--timeout", type=float, help="Worker time limit in seconds (default: unlimited)"
+    )
     args = parser.parse_args()
+    if args.timeout is not None and (not math.isfinite(args.timeout) or args.timeout <= 0):
+        parser.error("--timeout must be finite and positive")
     defaults = (2, 5, 1) if args.suite == "quick" else (3, 20, 3)
     for name, default in zip(("warmups", "repeats", "processes"), defaults, strict=True):
         if getattr(args, name) is None:
@@ -55,9 +62,15 @@ def main():
         from dataclasses import asdict
 
         for case in cases:
-            print(json.dumps({"name": case.name, **asdict(case), "scenarios": SCENARIOS}))
+            print(json.dumps({"name": case.name, **asdict(case), "scenarios": case.scenarios}))
         return 0
-    output = args.output or f".benchmark-results/{datetime.now(UTC):%Y%m%dT%H%M%S%fZ}.jsonl"
+    try:
+        git_metadata()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        parser.error(f"Benchmark execution requires a Git checkout: {exc}")
+    output = (
+        args.output or ROOT / ".benchmark-results" / f"{datetime.now(UTC):%Y%m%dT%H%M%S%fZ}.jsonl"
+    )
     if output == "-":
         stream = sys.stdout
     else:
@@ -68,7 +81,7 @@ def main():
     failed = False
     try:
         for case in cases:
-            for scenario in args.scenario or SCENARIOS:
+            for scenario in args.scenario or case.scenarios:
                 for i in range(args.processes):
                     print(
                         f"Running {case.name}: {scenario} ({i + 1}/{args.processes})",
@@ -77,7 +90,7 @@ def main():
                     row = launch(request_for(case, args, scenario, i))
                     stream.write(json.dumps(row, allow_nan=False) + "\n")
                     stream.flush()
-                    failed |= row["status"] != "ok"
+                    failed |= row["status"] == "error"
     finally:
         if stream is not sys.stdout:
             stream.close()
