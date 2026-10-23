@@ -18,7 +18,7 @@ def _shifted(x):
 
 
 def _with_noise(x):
-    return np.asarray(x) + np.asarray(sample(Normal("noise", 0.0, 1.0)))
+    return np.asarray(x) + np.asarray(sample(Normal("noise", np.float32(0), np.float32(1))))
 
 
 @pytest.mark.parametrize("executor", ["sequential", "thread", "process"])
@@ -26,12 +26,12 @@ def test_a_seeded_run_gives_its_pinned_values(executor):
     lift = Function(_shifted, label="shifted", traceable=False, max_evaluations=4)
     sweep = Function(_with_noise, label="with_noise", traceable=False)
     nested = Function(_with_noise, label="with_noise", traceable=False, max_evaluations=3)
-    grid = NumericArrayBatch(jnp.arange(3.0), "x", label="grid")
+    grid = NumericArrayBatch(jnp.arange(3, dtype=jnp.float32), "x", label="grid")
     with workflow_run(seed=0):
-        lifted = lift.using(executor=executor)(x=Normal("x", 0.0, 1.0))
+        lifted = lift.using(executor=executor)(x=Normal("x", np.float32(0), np.float32(1)))
         swept = sweep.using(executor=executor)(x=grid)
-        nested_lift = nested.using(executor=executor)(x=Normal("x", 0.0, 1.0))
-        after_the_calls = sample(Normal("z", 0.0, 1.0))
+        nested_lift = nested.using(executor=executor)(x=Normal("x", np.float32(0), np.float32(1)))
+        after_the_calls = sample(Normal("z", np.float32(0), np.float32(1)))
     # Each value is a float32 that JAX's normal sampler computes, which can
     # differ in its last bit across CPU architectures.
     np.testing.assert_allclose(
