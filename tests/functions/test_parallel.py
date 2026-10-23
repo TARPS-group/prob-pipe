@@ -1310,6 +1310,59 @@ class TestEvaluationPointRetryClaims:
 
 
 class TestRemoteReportTransactions:
+    @pytest.mark.parametrize("rejection", ["replay", "conflicting-success"])
+    def test_a_rejected_report_leaves_the_parent_occurrence_and_later_keys_unchanged(
+        self, rejection
+    ):
+        with workflow_run(seed=17):
+            reference = sample(Normal("z", 0.0, 1.0))
+        replay_state = replay_mod._validate_provenance(reference.provenance)
+        evaluation_points = issue_points()
+        evaluation_point = evaluation_points[0]
+        with workflow_run(seed=17):
+            with evaluation_keys_mod._function_stochastic_scope() as parent:
+                parent.register_evaluation_points(evaluation_points)
+                attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
+                    evaluation_point.frame.token
+                )
+                envelope = parent.reserve_remote_evaluation_point_attempt(
+                    evaluation_point.frame, attempt
+                )
+                effect = make_remote_effect(envelope)
+                report = evaluation_keys_mod.EvaluationPointClaimReport(
+                    frame=evaluation_point.frame,
+                    attempt=attempt,
+                    child_count=1,
+                    effects=(effect,),
+                    successful_effects=(effect,),
+                )
+                if rejection == "replay":
+                    parent._replay_state = replay_state
+                    exception = ReplayCompatibilityError
+                    message = "that matches no draw"
+                else:
+                    parent._effects_by_identity[evaluation_keys_mod._effect_identity(effect)] = (
+                        replace(effect, provider_abi="conflicting-provider/v1")
+                    )
+                    exception = RuntimeError
+                    message = "different effect plan"
+                try:
+                    with pytest.raises(exception, match=message):
+                        parent.accept_remote_claim_report(report)
+                    assert parent._invocation is None
+                    assert parent._frame.ledger.next_ordinal == 0
+                    claim_state = parent._evaluation_point_claims.by_token[
+                        evaluation_point.frame.token
+                    ]
+                    assert claim_state.child_invocations == []
+                    assert claim_state.effect_claims_by_identity == {}
+                finally:
+                    parent._replay_state = None
+                    parent._effects_by_identity.clear()
+                    parent.abort_remote_evaluation_point_attempt(attempt)
+            after_rejection = sample(Normal("z", 0.0, 1.0))
+        np.testing.assert_array_equal(np.asarray(after_rejection), np.asarray(reference))
+
     def test_worker_rejects_a_transported_frame_root_mismatch(self):
         frame = make_evaluation_point_frame()
         attempt = make_evaluation_point_attempt()

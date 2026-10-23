@@ -5061,7 +5061,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   worker processes took a place in the workflow even when no point drew, so
   the seeded draws after it differed from those under `sequential` or
   `thread`. It now takes its place only when a point draws, as a call run in
-  place does:
+  place does. A report rejected by replay or effect validation commits no
+  occurrence and leaves the later draws unchanged:
 
   ```python
   with workflow_run(seed=1):

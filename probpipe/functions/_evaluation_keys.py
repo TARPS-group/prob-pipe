@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Generator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from enum import Enum
@@ -1049,23 +1049,29 @@ class _AutomaticKeyBroker:
                             "a stochastic event identity completed with a different effect plan"
                         )
 
-                if self._replay_state is not None:
-                    self._replay_state._commit_effect_batch(
+                replay_claim_scope = (
+                    self._replay_state._effect_batch_scope(
                         report.effects,
                         successful_effects=report.successful_effects,
                         attempt=report.attempt,
                     )
-                for effect in report.effects:
-                    claim_state.effect_claims_by_identity[_effect_identity(effect)] = effect
-                claim_state.child_invocations.extend(child_invocations)
-                self._effects_by_identity.update(
-                    (_effect_identity(effect), effect) for effect in report.successful_effects
+                    if self._replay_state is not None
+                    else nullcontext()
                 )
-                claim_state.active_attempt = None
-                claim_state.active_transport = None
-                claim_state.active_parent_occurrence_path = None
-                claim_state.active_effect_identities.clear()
-                claim_state.status = _EvaluationPointStatus.JOINED
+                with replay_claim_scope:
+                    if report.effects or child_invocations:
+                        self._ensure_parent_invocation()
+                    for effect in report.effects:
+                        claim_state.effect_claims_by_identity[_effect_identity(effect)] = effect
+                    claim_state.child_invocations.extend(child_invocations)
+                    self._effects_by_identity.update(
+                        (_effect_identity(effect), effect) for effect in report.successful_effects
+                    )
+                    claim_state.active_attempt = None
+                    claim_state.active_transport = None
+                    claim_state.active_parent_occurrence_path = None
+                    claim_state.active_effect_identities.clear()
+                    claim_state.status = _EvaluationPointStatus.JOINED
 
     def _validate_remote_report_unlocked(
         self,
@@ -1098,7 +1104,7 @@ class _AutomaticKeyBroker:
 
         if not report.effects and report.child_count <= len(claim_state.child_invocations):
             return claim_state, ()
-        parent_invocation = self._ensure_parent_invocation()
+        parent_invocation = self._reserved_parent_invocation()
         if parent_invocation.occurrence_path != parent_path:
             raise RuntimeError("remote report lost its reserved parent occurrence authority")
         child_invocations = tuple(
