@@ -151,3 +151,6 @@ pyright-output.txt
 
 # Local execution benchmark measurements
 .benchmark-results/
+
+# Workspaces created by the /design-pipeline Claude skill
+probpipe-design/
