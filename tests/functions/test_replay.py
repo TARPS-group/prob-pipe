@@ -1271,6 +1271,45 @@ class TestReplayPreflight:
         ):
             sample(candidate_root["y"])
 
+    @pytest.mark.parametrize("recording_executor", ["thread", "process"])
+    def test_a_call_recorded_on_another_executor_replays_under_sequential(self, recording_executor):
+        def replayable_on(executor):
+            return Function(
+                replayable_identity,
+                label="replayable_identity",
+                max_evaluations=9,
+                traceable=False,
+                executor=executor,
+                output_spec=OutputSpec(replayable_identity=None),
+            )
+
+        with workflow_run(seed=37):
+            original = replayable_on(recording_executor)(value=Normal("value", loc=0.0, scale=1.0))
+
+        with replay_run(original.provenance):
+            replayed = replayable_on("sequential")(value=Normal("value", loc=0.0, scale=1.0))
+
+        np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
+        assert replayed.provenance.diagnostics["replay"]["execution_drift"] is True
+
+    def test_a_draw_made_on_a_thread_worker_replays_outside_any_call(self):
+        captured = []
+
+        def outer(value):
+            result = sample(Normal("value", loc=value, scale=1.0))
+            captured.append(result)
+            return result
+
+        workflow = Function(outer, label="outer", traceable=False, executor="thread")
+        with workflow_run(seed=17):
+            workflow(value=0.0)
+        nested = captured[0]
+
+        with replay_run(nested.provenance):
+            replayed = sample(Normal("value", loc=0.0, scale=1.0))
+
+        np.testing.assert_array_equal(_sample_value(replayed), _sample_value(nested))
+
     def test_route_drift_is_diagnostic_and_preserves_values(self):
         original_workflow = Function(
             replayable_identity,
