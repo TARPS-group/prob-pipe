@@ -333,6 +333,36 @@ class TestTheChoiceOfExecutor:
         )
         assert float(jax.jit(lambda x: on_executor(x=x))(1.5)) == 3.0
 
+    @pytest.mark.parametrize("executor", ["thread", "process"])
+    def test_a_transformed_plain_call_bypasses_custom_automatic_executors(self, executor):
+        thread_executor = _executors.executor_registry.get_method("thread")
+
+        class AutomaticThreads(EvaluationExecutor):
+            name = "automatic_threads"
+            description = "Run evaluation points on threads by automatic selection."
+            priority = 10
+
+            def check(self, evaluation_points, /):
+                return thread_executor.check(evaluation_points)
+
+            def execute(self, evaluation_points, /):
+                return thread_executor.execute(evaluation_points)
+
+        _executors.executor_registry.register(AutomaticThreads())
+        threads_that_ran = []
+
+        def doubled(x):
+            threads_that_ran.append(threading.get_ident())
+            return 2.0 * x
+
+        on_executor = Function(doubled, traceable=True, executor=executor)
+        assert float(jax.grad(lambda x: on_executor(x=x))(3.0)) == 2.0
+        np.testing.assert_array_equal(
+            np.asarray(jax.vmap(lambda x: on_executor(x=x))(jnp.arange(3.0))), [0.0, 2.0, 4.0]
+        )
+        assert float(jax.jit(lambda x: on_executor(x=x))(1.5)) == 3.0
+        assert threads_that_ran == [threading.get_ident()] * 3
+
     def test_the_removed_controls_raise_naming_the_unknown_control(self):
         with pytest.raises(TypeError, match="unknown Function option 'dispatch'"):
             Function(_shift, label="shift", dispatch="thread")

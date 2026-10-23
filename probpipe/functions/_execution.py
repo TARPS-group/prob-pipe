@@ -188,10 +188,12 @@ def evaluate_plain_call(
         if names_jax and execution_choice.named_executor_use is not None:
             execution_choice.named_executor_use.note_ran_a_set()
         in_calling_thread = side_effects_forbidden or names_jax or _jax_transformation_active()
-        evaluation_outcomes = _evaluated_outcomes(
-            evaluation_points,
-            execution_choice=_AUTOMATIC_SELECTION if in_calling_thread else None,
-        )
+        if in_calling_thread:
+            evaluation_outcomes = _run_on_executor(
+                evaluation_points, executor_registry.get_method("sequential"), {}
+            )
+        else:
+            evaluation_outcomes = _evaluated_outcomes(evaluation_points)
     body_failure = evaluation_outcomes.failures.get(0)
     if body_failure is not None and body_failure.error is not None:
         raise body_failure.error

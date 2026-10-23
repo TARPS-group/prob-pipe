@@ -5064,6 +5064,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so `thread` raised JAX's `UnexpectedTracerError`, and `process` raised
   `ResolutionError` because the arguments cannot be pickled. Outside a
   transformation the named executor runs the body.
+  A custom executor's automatic-selection priority cannot override this
+  calling-thread execution.
 
 ### Removed
 
