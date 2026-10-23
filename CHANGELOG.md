@@ -5105,6 +5105,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     get their own message.
   - The warning for a low `max_evaluations`, and 42 messages the recent work
     added, join their clauses as sentences instead of with semicolons.
+- **Building a law from functions no longer hashes the arrays its functions
+  capture.** The check that the functions trace hashed every captured array on
+  the host, which only the fallback for a function that reads a captured value
+  needs. A law whose density captures a 1,000,000-element array now builds in
+  about 0.35 ms instead of about 10 ms.
 
 ### Removed
 
