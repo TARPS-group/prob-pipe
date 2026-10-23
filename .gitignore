@@ -148,3 +148,6 @@ pyright-output.txt
 .claude/plans/
 .claude/worktrees/
 .claude/settings.local.json
+
+# Local execution benchmark measurements
+.benchmark-results/
