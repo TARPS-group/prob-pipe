@@ -34,6 +34,13 @@ block. Setting or clearing the default inside either running calculation raises
 `RuntimeError`. A failed call keeps the random positions it consumed.
 
 The default belongs to the process, thread, and asyncio task that set it.
+In an IPython notebook, it continues across cells, including cells with top-level
+`await`. Each cell uses the same stream without setting the seed again. Tasks
+created with `asyncio.create_task` do not acquire the cell's permission to use
+that stream. A child task can set its own default or open an explicit scope
+without changing the notebook's default. Clearing the default in a cell also
+clears it for later cells.
+
 A copied context in another owner must set or clear its own default before a
 bare call. Workers dispatched by ProbPipe inherit their calling workflow's
 random authority. `config.reset()` leaves the default intact.

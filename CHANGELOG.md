@@ -4287,6 +4287,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Default workflow streams continue across notebook cells.** IPython cells
+  with top-level `await` and kernels that change tasks between cells keep the
+  configured stream. User-created tasks retain their own ownership checks.
+
 - **An installed PyMC older than 6.2 raises an `ImportError` that names the
   upgrade,** as `PyMC 5.28.5 is installed, but PyMCModel requires PyMC 6.2 or
   later`, where PyMC 5 failed on import with an error about ArviZ. A missing

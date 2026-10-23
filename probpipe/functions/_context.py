@@ -329,7 +329,10 @@ class _WorkflowRun:
         ``config.reset()`` leaves the default scope intact.
 
         The default belongs to the process, thread, and asyncio task that sets
-        it. Using an inherited default in another owner raises
+        it. In an IPython notebook, it continues across cells, including cells
+        with top-level ``await``. Each cell's execution task takes ownership
+        while user-created tasks remain isolated. Using an inherited default
+        in another owner raises
         ``UnmanagedConcurrentWorkflowEntryError``; set or clear a default in
         that context first. ProbPipe evaluation points use the calling
         workflow's random authority. A new thread without a copied context has
@@ -353,13 +356,14 @@ class _WorkflowRun:
         """
         _guard_default_scope_change()
         seed_words = None if seed is None else seed_to_root_words(seed)
-        _DEFAULT_WORKFLOW_STATE.set(_DefaultWorkflowState(_current_workflow_owner(), seed_words))
+        _set_default_workflow_state(_DefaultWorkflowState(_current_workflow_owner(), seed_words))
 
     def clear_default(self) -> None:
         """Remove the current context's default scope, if any.
 
         Subsequent bare calls receive independent anonymous scopes. Clearing
         an inherited default removes it only from the current context.
+        In a notebook cell, clearing also removes the default for later cells.
 
         Raises
         ------
@@ -368,7 +372,7 @@ class _WorkflowRun:
             JAX transformation. Clear the default outside these contexts.
         """
         _guard_default_scope_change()
-        _DEFAULT_WORKFLOW_STATE.set(None)
+        _set_default_workflow_state(None)
 
 
 workflow_run = _WorkflowRun()
@@ -404,6 +408,11 @@ scope, replay, route probe, or caller-owned JAX transformation raises
 scope also raises ``RuntimeError``.
 
 Scopes belong to the process, thread, and asyncio task that opens them.
+In an IPython notebook, the default stream continues across cells, including
+top-level ``await``. Ownership passes to each cell's execution task. Tasks the
+user creates must still set or clear their own default, or open an explicit
+scope. Setting or clearing a default in a child task does not change the
+notebook's default.
 ProbPipe evaluation points carry their parent's random authority to workers.
 A copied default used by another owner raises
 ``UnmanagedConcurrentWorkflowEntryError``; that owner can set or clear its own
@@ -411,6 +420,14 @@ default before calling. A new thread without a copied context has no default.
 An explicit scope copied into another owner also raises on use. Explicit-key
 numerical functions consume none of the workflow's random stream.
 """
+
+
+def _set_default_workflow_state(state: _DefaultWorkflowState | None) -> None:
+    """Install a default and retain a notebook cell's setting for subsequent cells."""
+    from ._notebook_scope import _remember_notebook_default
+
+    _DEFAULT_WORKFLOW_STATE.set(state)
+    _remember_notebook_default(state)
 
 
 def _guard_default_scope_change() -> None:
