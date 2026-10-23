@@ -609,6 +609,7 @@ record/        (core/)
 inference/     (core/, values/, distributions/, functions/, operations/, families/)
 validation/    (core/, distributions/, functions/, operations/)
 diagnostics/   (distributions/, functions/, operations/, validation/)
+testing/       (core/; its checks import probpipe's public names inside each function)
 ```
 
 The private helper modules (`_array_utils.py`, `_dtype.py`, `_weights.py`)

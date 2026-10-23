@@ -638,11 +638,11 @@ def _keeps_fixed_paths(term: Any, source: Any) -> Any:
 
 
 def _merge_operands(left: Any, right: Any) -> Any:
-    """*left* ``*`` *right* through the installed engine.
+    """*left* ``&`` *right* through the installed engine.
 
     The engine returns ``NotImplemented`` for an operand that is neither
-    distribution kind, so Python tries the reflected operation and a scalar
-    operand can scale.
+    distribution kind, so Python tries the reflected operation and then raises
+    ``TypeError``.
     """
     if _merge_engine is None:
         raise RuntimeError("the merge engine is not installed. Import probpipe")
@@ -722,7 +722,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     name of its event's output first and an optional ``label=``, which defaults to
     the family's class name, so ``Normal("mu", 0.0, 1.0)`` is labeled
     ``Normal`` over the output ``mu``; any other law's label defaults to
-    ``ℙ``, and a joint that ``*`` merges is labeled by its operands' labels.
+    ``ℙ``, and a joint that ``&`` merges is labeled by its operands' labels.
     Every transform preserves the label; only ``with_label`` replaces it. ``str(d)``
     returns the law's :attr:`notation`, its label followed by its signature, as
     ``prior(mu)``, and the repr reads as a call of the constructor, with
@@ -745,7 +745,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     event_spec : OutputSpec or RecordSpec
         The output spec of one draw, completed as above.
     label : str, optional
-        The law's label, a non-empty string, ``p`` by default. A subclass's
+        The law's label, a non-empty string, ``ℙ`` by default. A subclass's
         constructor passes the label its caller gave, or its own default.
     _provenance : Provenance, optional
         The provenance of the law that a reconstruction rebuilds. By default the
@@ -1205,7 +1205,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         -------
         FactoredDistribution or FactoredConditionalDistribution
             The joint, or ``NotImplemented`` when *other* is neither
-            distribution kind, so that a scalar operand can scale instead.
+            distribution kind, so that Python raises ``TypeError``.
 
         Raises
         ------
@@ -1213,8 +1213,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
             If an operand's draws are distributions or batches, which have no
             outputs to merge by name, until they are wrapped under a name.
         ValueError
-            If an output is produced twice, the right operand consumes an
-            output the left produces, or matched specs do not unify.
+            If the two operands are coupled, as two marginals of one law are,
+            an output is produced twice, the right operand consumes an output
+            the left produces, or matched specs do not unify.
         """
         return _merge_operands(self, other)
 

@@ -8,7 +8,7 @@ a linear-Gaussian observation is exact.
 
 Provides:
   - ``FactoredMultivariateGaussian`` – the factored joint of jointly Gaussian
-    factors, which ``*`` and ``joint`` derive through the refinement it
+    factors, which ``&`` and ``joint`` derive through the refinement it
     registers at import.
   - ``GaussianRandomFunction`` – the random function whose finite-dimensional
     laws are Gaussian, closed under shifts, scalings, output-side linear maps,
@@ -85,7 +85,7 @@ def _jointly_gaussian(factors: Sequence[Distribution | ConditionalDistribution])
 class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactConditioning):
     """The factored joint whose factors are jointly Gaussian.
 
-    The class registers with the factored joints at import, so ``*``, a joint
+    The class registers with the factored joints at import, so ``&``, a joint
     rebuilt by a transform, a packaged joint that a regrouping rename builds,
     and a conditional joint bound at its givens construct it as the most
     specific class whenever every factor is a ``Normal``, a

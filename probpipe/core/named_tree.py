@@ -485,7 +485,7 @@ class NamedTree[L]:
     overrides the hook. Mappings are never leaves: a mapping value denotes tree
     structure (see :meth:`_check_leaf`).
     Navigation yields views into the same storage; the structure-preserving
-    transforms (:meth:`map`, :meth:`replace`, :meth:`merge`, :meth:`without`,
+    transforms (:meth:`map`, :meth:`replace`, :meth:`__and__`, :meth:`without`,
     :meth:`rename`) return a tree of the same family, rebuilt through
     :meth:`_rebuild_class`.
 

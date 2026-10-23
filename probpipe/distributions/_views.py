@@ -1,4 +1,4 @@
-"""Field coupled marginals and renamed laws: laws that read a parent distribution's values.
+"""Coupled marginals and renamed laws: laws that read a parent distribution's values.
 
 Provides:
   - ``CoupledMarginal`` – the ``Distribution`` that ``d[path]`` returns for a node

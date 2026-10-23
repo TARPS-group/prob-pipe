@@ -147,7 +147,7 @@ and check the tests a change needs.
 - Correctness tests use the **tightest tolerances that pass reliably** —
   a loose tolerance is a review flag, not a convenience.
 - Cover structured cases (multi-field Records, mixed scalar/vector
-  parameters), error paths, and **equivalence across dispatch paths**
+  parameters), error paths, and **equivalence across executors**
   (jax vs sequential) — path divergence has produced real
   silently-wrong-results bugs.
 - Inference code gets a statistical sanity check (parameter estimates and
@@ -450,6 +450,7 @@ probpipe/
 ├── inference/      # Inference methods (BlackJAX, TFP, nutpie, CmdStan, PyMC, pyabc, BayesFlow)
 ├── validation/     # Predictive checks, calibration, and model comparison
 ├── diagnostics/    # Posterior diagnostics, ArviZ interop, and diagnostic views
+├── testing/        # check_executor, the conformance check of a user's executor
 ├── custom_types.py # Array, PRNGKey, ArrayLike type aliases
 └── _array_utils.py, _dtype.py, _weights.py  # Internal helpers
 ```
