@@ -1756,7 +1756,7 @@ class TestThreadExecution:
 
         assert finish_order[-1] == first_draw
         assert sorted(finish_order[:-1]) == sorted(float(draw) for draw in expected[1:, 0])
-        assert result.provenance.metadata["dispatch"] == "thread"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "thread"
         np.testing.assert_array_equal(atom_leaves(result)[0], expected)
 
 
@@ -1793,7 +1793,7 @@ class TestEvaluationsInsideAMappedBody:
         with workflow_run(seed=5):
             result = mapped_calling(named)(standard_normal())
 
-        assert result.provenance.metadata["dispatch"] == "jax"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "jax"
         np.testing.assert_allclose(atom_leaves(result)[0], atom_leaves(expected)[0], rtol=1e-6)
         assert set(threads) == {threading.get_ident()}
         assert FakeMappedTask.created_names == []
@@ -1856,7 +1856,7 @@ class TestPrefectTransport:
         assert result.num_atoms == 6
         # The route is built once before any draw, then again to run.
         assert FakeMappedTask.created_names == created_names * 2
-        assert result.provenance.metadata["dispatch"] == executor_name
+        assert result.provenance.metadata["evaluations"][0]["executor"] == executor_name
 
     def test_a_call_naming_an_executor_under_prefect_warns_once(self, prefect_fakes):
         affine = Function(
@@ -1880,7 +1880,7 @@ class TestPrefectTransport:
             "its evaluations as Prefect tasks. Remove the executor, or set "
             "workflow_kind=WorkflowKind.OFF to run them on it"
         ]
-        assert result.provenance.metadata["dispatch"] == "prefect"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "prefect"
 
     def test_a_call_naming_only_executor_options_under_prefect_warns_to_remove_them(
         self, prefect_fakes

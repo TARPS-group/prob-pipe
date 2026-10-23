@@ -268,6 +268,9 @@ class _ProgramStore:
     ) -> Any:
         """The body named *body_name* at *arguments*, compiled under the static settings in effect.
 
+        A compiled run is recorded on the running call's executor choice, so
+        a call that named an executor learns that ``jax`` ran its code.
+
         Parameters
         ----------
         body_name : Hashable
@@ -328,6 +331,9 @@ class _ProgramStore:
             self._entry(
                 (body_name, static_options, static_settings, trace_cache_key)
             ).apply_trace_notes()
+            named_executor_use = current_call_context().execution_choice.named_executor_use
+            if named_executor_use is not None:
+                named_executor_use.note_jax_compiled_a_set()
         return body_result
 
     def runs_eagerly(self, body_name: Hashable) -> bool:

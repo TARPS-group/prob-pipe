@@ -158,7 +158,7 @@ def maybe_stage(function: Function, values: Mapping[str, Any]) -> tuple[bool, An
         staged_choice=(
             _AUTOMATIC_SELECTION
             if not expects_token and _jax_tracing_active()
-            else context.execution_choice
+            else replace(context.execution_choice, named_executor_use=None)
         ),
     )
 
@@ -220,6 +220,9 @@ def _host_side(
         raise _EmbeddedCallTracingError(_captured_token_message(point.function.label))
     context = _ACTIVE_CALLS.lookup(token)
     if staged_choice != _AUTOMATIC_SELECTION:
+        token_call_use = context.execution_choice.named_executor_use
+        if token_call_use is not None:
+            token_call_use.note_ran_elsewhere()
         context = replace(context, execution_choice=staged_choice)
     if context.execution_choice.applies_only_to is point.function:
         context = replace(
