@@ -124,7 +124,9 @@ model (paper, Stan/PyMC code, simulator) and dataset into a ProbPipe pipeline.
 1. **Loads ProbPipe knowledge** — `build_corpus.py` flattens the README, docs,
    tutorials, user-guide notebooks, API reference (signatures and docstrings
    resolved from source), and design reference into a tiered corpus, which the
-   agent reads in full.
+   agent reads in full, plus a Bayesian workflow checklist and annotated
+   bibliography ([resources](design-pipeline/RESOURCES.md)) drawn from
+   *Bayesian Workflow* and related papers.
 2. **Intake** — asks about the problem, scientific and analysis goals, and
    constraints.
 3. **Materials** — asks for pointers to data and existing models, inspects the
@@ -143,11 +145,16 @@ model (paper, Stan/PyMC code, simulator) and dataset into a ProbPipe pipeline.
 ```
 /design-pipeline
 /design-pipeline estimating disease transmission rates from weekly case counts
+/design-pipeline flu-transmission      # resume a project
 ```
 
-**Behavior:** Keeps session state in `./probpipe-design/<project>/` (brief,
-data and model notes, profile, design doc, pipeline code), so a session can be
-resumed. Reads user-supplied data and code as untrusted input and asks before
+**Behavior:** Remembers across sessions
+([format](design-pipeline/MEMORY-FORMAT.md)): a person memory
+(`~/.probpipe-design/user.md`, or `$PROBPIPE_DESIGN_HOME`) holds the confirmed
+background profile, preferences, environment, and a project index; a project
+memory in each workspace (`./probpipe-design/<project>/`) holds decisions,
+what was ruled out, and where work left off. It asks before creating person
+memory, and returning users skip questions already answered. Reads user-supplied data and code as untrusted input and asks before
 running user code or installing anything.
 
 ---

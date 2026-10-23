@@ -34,8 +34,16 @@ Text or Mermaid diagram of the stages, then one subsection per stage:
 - **Purpose**, **ProbPipe calls**, **inputs → outputs**, **what to look at**
   in the output, and **failure signs**.
 Typical stages: data loading → prior predictive check → (synthetic
-recovery) → conditioning → diagnostics → posterior predictive check →
+recovery / SBC) → conditioning → diagnostics → posterior predictive check →
 downstream quantities → robustness/sensitivity.
+
+## 4a. Model sequence
+The planned progression from the simplest model to the expansions expected,
+and which one this version implements.
+
+## 4b. Workflow checklist
+One line per stage of the RESOURCES.md checklist (A-J): how it's addressed,
+or why it's skipped.
 
 ## 5. Key design decisions
 | Decision | Choice | Alternatives considered | Why |
