@@ -31,11 +31,15 @@ from probpipe import (
     Distribution,
     EmpiricalDistribution,
     Function,
+    Gamma,
+    InputSpec,
     Normal,
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
     NumericRecord,
+    NumericRecordBatch,
+    NumericRecordSpec,
     OutputSpec,
     Record,
     RecordBatch,
@@ -949,3 +953,66 @@ class TestSingletonAlignment:
             np.testing.assert_allclose(
                 leaves[0], [11.0 + 10.0 * index, 13.0 + 10.0 * index], atol=0, rtol=0
             )
+
+
+class TestALiftedRecordKeepsItsDeclaredOrder:
+    """JAX maps a dict with its keys sorted, so a lift lays a record out in its declared order."""
+
+    _RECORD = NumericRecordSpec(
+        r=NumericArraySpec((), "float32"), m=NumericArraySpec((), "float32")
+    )
+
+    @_over_executors("jax", "sequential", "thread", "default")
+    def test_a_draw_of_a_merge_arrives_in_the_events_order(self, controls):
+        prior = Gamma("r", 3.0, 1.0) & Normal("m", 0.0, 1.0)
+        declared = Function(
+            lambda x: x["r"] - x["m"],
+            label="difference",
+            input_spec=InputSpec(x=self._RECORD),
+            **controls,
+        )
+        undeclared = Function(lambda x: x["r"] - x["m"], label="difference", **controls)
+        with workflow_run(seed=0):
+            declared_mean = np.asarray(mean(declared(prior)))
+        with workflow_run(seed=0):
+            undeclared_mean = np.asarray(mean(undeclared(prior)))
+        np.testing.assert_allclose(declared_mean, undeclared_mean, atol=0, rtol=0)
+
+    @_over_executors("jax", "sequential", "thread", "default")
+    def test_a_nested_record_draw_keeps_its_order_at_each_level(self, controls):
+        inner = NumericRecordSpec(z=NumericArraySpec(()), y=NumericArraySpec(()))
+        combine = Function(
+            lambda x: x["b"] + 10 * x["a"]["z"] - 100 * x["a"]["y"],
+            label="combine",
+            input_spec=InputSpec(x=NumericRecordSpec(b=NumericArraySpec(()), a=inner)),
+            **controls,
+        )
+        draws = NumericRecordBatch(
+            {"b": jnp.arange(3.0), "a": {"z": jnp.ones(3), "y": 2 * jnp.ones(3)}},
+            level_names=("draw",),
+        )
+        with workflow_run(seed=0):
+            lifted_mean = mean(combine(EmpiricalDistribution(draws, label="x")))
+        np.testing.assert_allclose(np.asarray(lifted_mean), -189.0, atol=0, rtol=0)
+
+    @_over_executors("jax", "sequential", "thread", "default")
+    def test_a_returned_dict_keeps_the_functions_order(self, controls):
+        prior = Gamma("r", 3.0, 1.0) & Normal("m", 0.0, 1.0)
+        rename = Function(lambda x: {"s": x["r"], "a": x["m"]}, label="renamed", **controls)
+        difference = Function(
+            lambda y: y["s"] - y["a"],
+            label="difference",
+            input_spec=InputSpec(
+                y=NumericRecordSpec(s=NumericArraySpec(()), a=NumericArraySpec(()))
+            ),
+            **controls,
+        )
+        with workflow_run(seed=0):
+            renamed = rename(prior)
+            assert list(renamed.event_spec.term_spec.children) == ["s", "a"]
+            chained_mean = np.asarray(mean(difference(renamed)))
+        with workflow_run(seed=0):
+            direct = Function(lambda x: x["r"] - x["m"], label="difference", **controls)
+            direct_mean = np.asarray(mean(direct(prior)))
+        # Both means average the same draws, up to float32 rounding.
+        np.testing.assert_allclose(chained_mean, direct_mean, atol=0, rtol=1e-6)

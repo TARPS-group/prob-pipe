@@ -12,6 +12,8 @@ opt-in ones, and runs the first that can run the set.
 Provides:
   - :class:`EvaluationExecutor` – the base class of an executor.
   - :data:`executor_registry` – the registry of executors.
+  - :class:`ExecutionReport` and :class:`EvaluationReport` – how a call will
+    run its evaluation points, as ``check`` reports it.
   - :func:`evaluate_at_points` – the one function through which code asks for
     the evaluations of a callable at many arguments.
 """
@@ -26,9 +28,9 @@ import threading
 import warnings
 from abc import abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import cloudpickle
 import jax
@@ -48,6 +50,7 @@ from ._call_context import (
 from ._catalog import registry_catalog
 from ._dispatch import (
     Feasibility,
+    MethodInfo,
     ResolutionError,
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
@@ -55,6 +58,7 @@ from ._dispatch import (
 from ._evaluation_points import (
     EvaluationChunk,
     EvaluationError,
+    EvaluationFailure,
     EvaluationOutcomes,
     EvaluationPoints,
     SharedPayload,
@@ -70,10 +74,17 @@ from ._evaluation_points import (
     _warn_lossy_casts,
 )
 from ._execution_claims import NO_CLAIMS, ExecutionClaims, FalseTraceableClaimError
+from ._repr import call_repr, sequence_repr
 from ._specs import OutputSpec
 from .config import _checked_count
 
-__all__ = ["EvaluationExecutor", "evaluate_at_points", "executor_registry"]
+__all__ = [
+    "EvaluationExecutor",
+    "EvaluationReport",
+    "ExecutionReport",
+    "evaluate_at_points",
+    "executor_registry",
+]
 
 
 class EvaluationExecutor(UnaryDispatchMethod):
@@ -282,6 +293,102 @@ def evaluate_at_points(
         return _evaluated_outputs(evaluation_points, stacked=stacked)
 
 
+@dataclass(frozen=True)
+class EvaluationReport:
+    """How a call will run the evaluation points of one callable, as ``check`` reports it (V.9).
+
+    Attributes
+    ----------
+    callable_name : str
+        The name of the callable.
+    num_evaluation_points : int or None
+        The number of its evaluation points; ``None`` when the code that asks
+        for them decides it while the call runs.
+    traceable : bool
+        Whether JAX can trace the callable for these evaluation points.
+    traceability_source : {"claimed", "probed"}
+        ``"claimed"`` when the callable's ``traceable`` claim says whether it
+        traces, and ``"probed"`` when its stored probe result does.
+    executor : MethodInfo
+        The executor that will run the evaluation points. It is infeasible,
+        with the reason, when the executor named for the callable cannot run
+        them, and the call then raises ``ResolutionError``.
+    rejected : tuple of MethodInfo
+        Each executor tried first that cannot run the evaluation points, with
+        its reason.
+    failure_rule : {"raise", "drop"}
+        What the call does when an evaluation point fails: ``"raise"`` raises
+        ``EvaluationError``, naming every failed evaluation point.
+
+    Examples
+    --------
+    ``check`` of a call lifted over a law, of a function that claims
+    ``traceable=False``, reports its 256 draws running one after another::
+
+        forward.check(prior).execution.evaluations[0]
+        # EvaluationReport(callable_name='forward', num_evaluation_points=256,
+        #                  traceable=False, traceability_source='claimed',
+        #                  executor=MethodInfo(True, method_name='sequential', exact=True),
+        #                  rejected=(MethodInfo(False, method_name='jax', ...),),
+        #                  failure_rule='raise')
+    """
+
+    callable_name: str
+    num_evaluation_points: int | None
+    traceable: bool
+    traceability_source: Literal["claimed", "probed"]
+    executor: MethodInfo
+    rejected: tuple[MethodInfo, ...] = ()
+    failure_rule: Literal["raise", "drop"] = "raise"
+
+    def __repr__(self) -> str:
+        """Every field, as a call of the constructor (II.4)."""
+        return call_repr(
+            "EvaluationReport",
+            keywords=(
+                ("callable_name", repr(self.callable_name)),
+                ("num_evaluation_points", repr(self.num_evaluation_points)),
+                ("traceable", repr(self.traceable)),
+                ("traceability_source", repr(self.traceability_source)),
+                ("executor", repr(self.executor)),
+                ("rejected", sequence_repr(repr(info) for info in self.rejected)),
+                ("failure_rule", repr(self.failure_rule)),
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ExecutionReport:
+    """How a call will run the evaluation points it asks for, as ``check`` reports it (V.9).
+
+    One call may send one callable to ``jax`` and another to a cluster, so
+    the report holds one :class:`EvaluationReport` per callable.
+
+    Attributes
+    ----------
+    evaluations : tuple of EvaluationReport
+        One report per callable whose evaluation points the call evaluates, in
+        the order the call asks for them. A plain call on values evaluates its
+        function once, in no set of evaluation points, and reports none.
+    """
+
+    evaluations: tuple[EvaluationReport, ...] = ()
+
+    def __repr__(self) -> str:
+        """The reports, as a call of the constructor (II.4)."""
+        return call_repr(
+            "ExecutionReport",
+            keywords=(("evaluations", sequence_repr(repr(report) for report in self.evaluations)),),
+        )
+
+    def _runs_more_than_compiled_code(self) -> bool:
+        """Whether a callable is opaque or runs on an executor other than ``jax``, which a ``CallReport``'s repr then shows."""
+        return any(
+            not report.traceable or report.executor.method_name != "jax"
+            for report in self.evaluations
+        )
+
+
 def _evaluated_outputs(
     evaluation_points: EvaluationPoints,
     *,
@@ -335,7 +442,12 @@ def _evaluated_outputs(
     if stacked and isinstance(executor, _JaxExecutor):
         return _mapped_outputs_or_error(evaluation_points)
     evaluation_outcomes = _run_on_executor(evaluation_points, executor, executor_options)
-    return _outputs_of(evaluation_points, evaluation_outcomes, stacked=stacked)
+    return _outputs_of(
+        evaluation_points,
+        evaluation_outcomes,
+        stacked=stacked,
+        evaluated_together_by="jax.vmap" if isinstance(executor, _JaxExecutor) else None,
+    )
 
 
 def _evaluated_outcomes(
@@ -382,25 +494,52 @@ def _chosen_executor_closing_on_error(
 
 
 def _outputs_of(
-    evaluation_points: EvaluationPoints, evaluation_outcomes: EvaluationOutcomes, *, stacked: bool
+    evaluation_points: EvaluationPoints,
+    evaluation_outcomes: EvaluationOutcomes,
+    *,
+    stacked: bool,
+    evaluated_together_by: str | None = None,
 ) -> Any:
     """The outputs in *evaluation_outcomes*, stacked under *stacked*, or the error naming its failures.
 
     A failed evaluation point raises :class:`EvaluationError`, chained to the
-    first failure's error.
+    first failure's error. When *evaluated_together_by*, such as
+    ``"jax.vmap"``, computed every evaluation point together and one error
+    failed them all, the message states that error once.
     """
     if evaluation_outcomes.failures:
         failures = tuple(evaluation_outcomes.failures.values())
         first_error = min(failures, key=lambda failure: failure.point_index).error
-        raise EvaluationError(
-            failures,
-            evaluation_outcomes.outputs,
-            origin=evaluation_points.origin,
-            point_noun=evaluation_points.point_noun,
+        raise _evaluation_error(
+            evaluation_points, failures, evaluation_outcomes.outputs, evaluated_together_by
         ) from first_error
     if stacked:
         return _stacked_outputs(evaluation_outcomes.outputs)
     return evaluation_outcomes.outputs
+
+
+def _evaluation_error(
+    evaluation_points: EvaluationPoints,
+    failures: Sequence[EvaluationFailure],
+    outputs: Sequence[Any],
+    evaluated_together_by: str | None,
+) -> EvaluationError:
+    """The error naming the *failures* of *evaluation_points*, stated once when one error failed them all together."""
+    if (
+        evaluated_together_by is not None
+        and len(failures) == len(outputs) > 1
+        and all(failure.error is failures[0].error is not None for failure in failures)
+    ):
+        return EvaluationError._of_points_evaluated_together(
+            failures,
+            outputs,
+            origin=evaluation_points.origin,
+            point_noun=evaluation_points.point_noun,
+            evaluated_by=evaluated_together_by,
+        )
+    return EvaluationError(
+        failures, outputs, origin=evaluation_points.origin, point_noun=evaluation_points.point_noun
+    )
 
 
 def _run_on_executor(
@@ -478,11 +617,8 @@ def _mapped_outputs_or_error(evaluation_points: EvaluationPoints) -> Any:
             failed_point_indices=tuple(range(len(evaluation_points))),
             lossy_casts=frozenset(),
         )
-        raise EvaluationError(
-            failures,
-            (None,) * len(evaluation_points),
-            origin=evaluation_points.origin,
-            point_noun=evaluation_points.point_noun,
+        raise _evaluation_error(
+            evaluation_points, failures, (None,) * len(evaluation_points), "jax.vmap"
         ) from mapping_failure.error
     _record_set_run(evaluation_points, "jax", {}, failed_point_indices=(), lossy_casts=lossy_casts)
     return stacked_output
@@ -707,40 +843,197 @@ def _chosen_executor(
     execution_choice: _ExecutionChoice,
     evaluation_log: _EvaluationLog | None,
 ) -> tuple[EvaluationExecutor, dict[str, Any]]:
-    """The executor that runs *evaluation_points* under *execution_choice*, with its options."""
-    jax_executor = executor_registry.get_method("jax")
-    if jax_executor.check(evaluation_points).feasible:
-        return jax_executor, {}
-    automatic_options: Mapping[str, Any] = {}
-    if execution_choice.names_executor():
-        executor_name = execution_choice.executor_name
-        named_executor = _requested_executor(cast(str, executor_name))
-        _check_executor_reads_options(named_executor, execution_choice.executor_options)
-        feasibility = named_executor.check(evaluation_points, **execution_choice.executor_options)
-        if feasibility.feasible:
-            return named_executor, dict(execution_choice.executor_options)
-        if _is_named_for_the_callable(execution_choice):
-            raise ResolutionError(
-                f"executor {executor_name!r} cannot run the evaluation points of "
-                f"{evaluation_points.origin!r}: {feasibility.description}. Name another executor"
-            )
-        fallback_executor = _automatically_selected_executor(evaluation_points)
+    """The executor that runs *evaluation_points* under *execution_choice*, with its options.
+
+    It raises when the executor named for the callable cannot run the set,
+    warns once per call when an inherited executor falls back, and notes
+    what became of a named executor on the choice's ``named_executor_use``.
+    """
+    selection = _selected_executor(evaluation_points, execution_choice)
+    executor_name = execution_choice.executor_name
+    if selection.refusal is not None:
+        raise ResolutionError(
+            f"executor {executor_name!r} cannot run the evaluation points of "
+            f"{evaluation_points.origin!r}: {selection.refusal.description}. "
+            "Name another executor"
+        )
+    selected_executor = cast(EvaluationExecutor, selection.executor)
+    named_executor_use = execution_choice.named_executor_use
+    if selection.fallback_reason is not None:
         how_named = "inherited from" if execution_choice.source == "inherited" else "named on"
         warning_key = ("fallback", executor_name, evaluation_points.origin)
         if evaluation_log is None or evaluation_log.is_first_warning(warning_key):
             warnings.warn(
                 f"executor {executor_name!r}, {how_named} {execution_choice.named_on}, cannot "
                 f"run the evaluation points of {evaluation_points.origin!r} "
-                f"({feasibility.description}), so they run on {fallback_executor.name!r} instead",
+                f"({selection.fallback_reason}), so they run on {selected_executor.name!r} "
+                "instead",
                 UserWarning,
                 stacklevel=3,
             )
-        return fallback_executor, {}
-    if execution_choice.source == "own":
-        automatic_options = execution_choice.executor_options
+        if named_executor_use is not None:
+            named_executor_use.note_warned()
+    elif named_executor_use is not None:
+        if executor_name is not None and selected_executor.name == executor_name:
+            named_executor_use.note_ran_a_set()
+        elif isinstance(selected_executor, _JaxExecutor):
+            named_executor_use.note_jax_compiled_a_set()
+        else:
+            named_executor_use.note_ran_elsewhere()
+    return selected_executor, dict(selection.executor_options)
+
+
+@dataclass(frozen=True)
+class _ExecutorSelection:
+    """The executor that runs a set of evaluation points under an executor choice, and what choosing it found.
+
+    Attributes
+    ----------
+    executor : EvaluationExecutor or None
+        The executor that runs the set; ``None`` when the executor named for
+        the set's callable cannot run it.
+    executor_options : Mapping[str, Any]
+        The options *executor* receives.
+    rejected : tuple of MethodInfo
+        Each executor tried before *executor* that cannot run the set, with
+        its reason.
+    refusal : MethodInfo or None
+        The report of the executor named for the set's callable, which cannot
+        run it, with the reason, which makes the call raise; ``None`` when an
+        executor runs the set.
+    fallback_reason : str or None
+        Why the executor named on an enclosing call, or on an operation,
+        cannot run the set, which then falls back to automatic selection;
+        ``None`` when no executor fell back.
+    """
+
+    executor: EvaluationExecutor | None
+    executor_options: Mapping[str, Any] = MappingProxyType({})
+    rejected: tuple[MethodInfo, ...] = ()
+    refusal: MethodInfo | None = None
+    fallback_reason: str | None = None
+
+
+def _selected_executor(
+    evaluation_points: EvaluationPoints, execution_choice: _ExecutionChoice
+) -> _ExecutorSelection:
+    """The executor that runs *evaluation_points* under *execution_choice*, by V.9's rules, with no warning.
+
+    ``jax`` compiles a traceable callable whatever the choice names. Otherwise
+    a named executor runs the set when it can; when it cannot, the set falls
+    back to automatic selection, or, when the executor was named for the
+    set's callable, the selection records the refusal. Options given without
+    an executor go to the executor automatic selection picks.
+
+    Parameters
+    ----------
+    evaluation_points : EvaluationPoints
+        The set of evaluation points.
+    execution_choice : _ExecutionChoice
+        The executor choice to follow.
+
+    Returns
+    -------
+    _ExecutorSelection
+        The selected executor, its options, and the executors rejected first.
+
+    Raises
+    ------
+    ResolutionError
+        If the named executor is not registered, or no executor can run the
+        set.
+    ValueError
+        If the selected executor does not take one of its options.
+    """
+    jax_executor = executor_registry.get_method("jax")
+    jax_feasibility = jax_executor.check(evaluation_points)
+    if jax_feasibility.feasible:
+        return _ExecutorSelection(jax_executor)
+    rejected = [_executor_info(jax_executor, jax_feasibility)]
+    if execution_choice.names_executor():
+        named_executor = _requested_executor(cast(str, execution_choice.executor_name))
+        _check_executor_reads_options(named_executor, execution_choice.executor_options)
+        named_feasibility = named_executor.check(
+            evaluation_points, **execution_choice.executor_options
+        )
+        if named_feasibility.feasible:
+            return _ExecutorSelection(
+                named_executor, dict(execution_choice.executor_options), tuple(rejected)
+            )
+        if _is_named_for_the_callable(execution_choice):
+            return _ExecutorSelection(
+                None,
+                rejected=tuple(rejected),
+                refusal=_executor_info(named_executor, named_feasibility),
+            )
+        if named_executor is not jax_executor:
+            rejected.append(_executor_info(named_executor, named_feasibility))
+        return _ExecutorSelection(
+            _automatically_selected_executor(evaluation_points),
+            rejected=tuple(rejected),
+            fallback_reason=named_feasibility.description,
+        )
+    automatic_options = (
+        execution_choice.executor_options if execution_choice.source == "own" else {}
+    )
     selected_executor = _automatically_selected_executor(evaluation_points)
     _check_executor_reads_options(selected_executor, automatic_options)
-    return selected_executor, dict(automatic_options)
+    return _ExecutorSelection(selected_executor, dict(automatic_options), tuple(rejected))
+
+
+def _executor_info(executor: EvaluationExecutor, feasibility: Feasibility) -> MethodInfo:
+    """The report of *executor*, with its registered name and exactness, whose feasibility is *feasibility*."""
+    return UnaryDispatchRegistry._report(executor_registry._named(executor.name), feasibility)
+
+
+def _evaluation_report(
+    evaluation_points: EvaluationPoints,
+    execution_choice: _ExecutionChoice,
+    *,
+    traceability_source: Literal["claimed", "probed"],
+) -> EvaluationReport:
+    """The report of how *evaluation_points* would run under *execution_choice*, which runs nothing.
+
+    An executor named for the callable that cannot run the set is reported
+    infeasible, with its reason, where the call raises.
+
+    Parameters
+    ----------
+    evaluation_points : EvaluationPoints
+        The set of evaluation points, as ``check`` describes it.
+    execution_choice : _ExecutionChoice
+        The executor choice of the checked call.
+    traceability_source : {"claimed", "probed"}
+        Whether the callable's claim or its stored probe result says whether
+        it traces.
+
+    Returns
+    -------
+    EvaluationReport
+        The callable's report.
+
+    Raises
+    ------
+    ResolutionError
+        If the named executor is not registered, or no executor can run the
+        set.
+    ValueError
+        If the selected executor does not take one of its options.
+    """
+    selection = _selected_executor(evaluation_points, execution_choice)
+    executor_info = (
+        cast(MethodInfo, selection.refusal)
+        if selection.executor is None
+        else _executor_info(selection.executor, Feasibility(feasible=True))
+    )
+    return EvaluationReport(
+        callable_name=evaluation_points.origin,
+        num_evaluation_points=len(evaluation_points),
+        traceable=evaluation_points.traceable,
+        traceability_source=traceability_source,
+        executor=executor_info,
+        rejected=selection.rejected,
+    )
 
 
 def _requested_executor(executor_name: str) -> EvaluationExecutor:

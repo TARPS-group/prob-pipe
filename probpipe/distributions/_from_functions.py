@@ -26,7 +26,7 @@ from ..core._execution_claims import (
     probe_closure,
     spec_stand_in,
 )
-from ..core._record_spec import RecordSpec
+from ..core._record_spec import RecordSpec, _layout_record_mapping
 from ..core._repr import format_value
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
 from ..core._specs import OutputSpec
@@ -310,7 +310,12 @@ def _sampler_declaration(
     if not probe_result.traces:
         # The sampler does not trace; a failure of its own raises at a draw.
         return declaration, False
-    spec = _abstract_spec(probe_result.abstract_output)
+    # JAX traces a dict with its keys sorted, so a record draw is laid out in the
+    # declared order again before its spec is read.
+    abstract_draw = probe_result.abstract_output
+    if declaration.term_spec is not None:
+        abstract_draw = _layout_record_mapping(declaration.term_spec, abstract_draw)
+    spec = _abstract_spec(abstract_draw)
     try:
         return declaration.with_term_spec(spec), True
     except (TypeError, ValueError) as error:

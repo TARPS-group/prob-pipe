@@ -1209,7 +1209,7 @@ class TestSymbolicCalls:
         with workflow_run(seed=11):
             result = wrapped(Normal("x", 0, 1))
 
-        assert result.provenance.metadata["dispatch"] == "jax"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "jax"
         assert list(result.event_spec.outputs) == ["y"]
         assert result.event_spec.term_spec.support == positive
         assert bool(jnp.all(result._rows > 0))

@@ -711,7 +711,10 @@ class TestEvaluateAtPoints:
 
     def test_a_mapped_output_is_checked_once_and_fails_every_evaluation_point(self):
         traceable = function(_traceable_sum, traceable=True)
-        with pytest.raises(EvaluationError, match="failed at 4 of 4 evaluation points") as raised:
+        with pytest.raises(
+            EvaluationError,
+            match=r"failed at all 4 evaluation points, which jax\.vmap evaluates together",
+        ) as raised:
             self._evaluate(
                 traceable,
                 output_spec=OutputSpec(total=NumericArraySpec((3,), "float32")),

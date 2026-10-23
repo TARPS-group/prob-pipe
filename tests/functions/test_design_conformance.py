@@ -92,8 +92,6 @@ _EXAMPLES = frozenset(
     }
 )
 
-_AWAITS_REPORTING = "check's report of how each callable's evaluation points will run (V.9)"
-
 #: The members that differ from the design today, by finding name, each with
 #: the problem the check reports and the behavior it awaits. The rule is stated
 #: in ``tests/_design_conformance.py``.
@@ -115,9 +113,6 @@ _PENDING: PendingMembers = {
         "renaming a function's inputs and outputs, f.rename(...), is not implemented",
     ),
     "Function.__and__": (NOT_IMPLEMENTED, "merging two functions with & is not implemented"),
-    "CallReport.execution": ("is not declared", _AWAITS_REPORTING),
-    "EvaluationReport": (NOT_IMPLEMENTED, _AWAITS_REPORTING),
-    "ExecutionReport": (NOT_IMPLEMENTED, _AWAITS_REPORTING),
 }
 
 #: Public names of the engine that the prose declares rather than a code block.
