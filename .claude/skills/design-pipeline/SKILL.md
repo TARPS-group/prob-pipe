@@ -23,10 +23,10 @@ phase recorded in project memory.
 | Phase | Output |
 |---|---|
 | 0. Load knowledge and memory | Corpus and resources read; memory read; capability map |
-| 1. Problem and goals intake | `brief.md` sections 1-2 |
-| 2. Data and model materials | `brief.md` sections 3-4, data/model notes |
+| 1. Problem and goals intake | `<workspace>/brief.md` sections 1-2 |
+| 2. Data and model materials | `<workspace>/brief.md` sections 3-4, data/model notes |
 | 3. Background assessment | Confirmed profile in person memory |
-| 4. Initial pipeline proposal | `pipeline-design.md` v1, `pipeline.py` v1 |
+| 4. Initial pipeline proposal | `<workspace>/pipeline-design.md` v1, `<workspace>/pipeline.py` v1 |
 | 5. Feedback loop | new design versions until the user is satisfied |
 
 ## Ground rules
@@ -42,10 +42,10 @@ phase recorded in project memory.
   say so plainly and propose a workaround.
 - **Say what ProbPipe can't do.** When a need isn't covered (an unsupported
   likelihood, an inference method that isn't registered, a data type), say so,
-  propose a workaround (a custom `@function`, a custom `Likelihood`, a
-  `StanModel`/`PyMCModel` from `probpipe.modeling`, registering an inference
-  method per `docs/api/extending.md`), and log it under *ProbPipe gaps* in the
-  design doc.
+  propose a workaround (a custom `@function`, a likelihood built with
+  `conditional_distribution`, a `StanModel`/`PyMCModel` from `probpipe`,
+  registering an inference method per `docs/api/extending.md`), and log it
+  under *ProbPipe gaps* in the design doc.
 - **Follow the workflow.** Every design must pass the checklist in
   [RESOURCES.md](./RESOURCES.md) Part 1: each stage addressed, or skipped with
   a recorded reason. Cite only resources listed there or ones you've opened
@@ -87,13 +87,13 @@ locations, rules, and templates are in [MEMORY-FORMAT.md](./MEMORY-FORMAT.md):
 Each project also has a workspace directory, by default
 `./probpipe-design/<short-project-slug>/`:
 
-- `memory.md` — project memory.
-- `brief.md` — problem, goals, data, and existing models (Phases 1-2).
-- `data-notes.md` — what you found inspecting each dataset.
-- `model-notes.md` — models extracted from papers, code, or descriptions.
-- `pipeline-design.md` — the current design, following
+- `<workspace>/memory.md` — project memory.
+- `<workspace>/brief.md` — problem, goals, data, and existing models (Phases 1-2).
+- `<workspace>/data-notes.md` — what you found inspecting each dataset.
+- `<workspace>/model-notes.md` — models extracted from papers, code, or descriptions.
+- `<workspace>/pipeline-design.md` — the current design, following
   [DESIGN-DOC-TEMPLATE.md](./DESIGN-DOC-TEMPLATE.md), with a version history.
-- `pipeline.py` — the runnable skeleton matching the current design version.
+- `<workspace>/pipeline.py` — the runnable skeleton matching the current design version.
 
 ---
 
@@ -107,15 +107,19 @@ foundation for everything else.
    `python3 .claude/skills/design-pipeline/build_corpus.py <scratch>/probpipe-corpus`
    This flattens README, docs, tutorials, user guide notebooks, the API
    reference (with signatures and docstrings resolved from source), and the
-   design reference into tiered files. It prints a `MANIFEST.md`.
+   design reference into tiered files. It prints
+   `<scratch>/probpipe-corpus/MANIFEST.md`.
 2. Read **every** corpus file in manifest order: tiers 1-4 in full, then the
-   design tier. If the context budget is tight, read tier 5 parts 1-2
-   (principles, shared abstractions, term kinds, distributions) in full and
-   skim the rest, coming back to specific sections when needed.
+   design tier. If the context budget is tight, read in full the design tier's
+   copies of `design/README.md` and `design/01-design-principles.md` through
+   `design/04-distributions.md`, and skim the rest, coming back to specific
+   sections when needed. Each source in a corpus file starts at a
+   `# FILE: <path>` line.
 3. Read [RESOURCES.md](./RESOURCES.md) in full: the workflow checklist you
    will apply, and the references you can point the user to.
-4. Read `CONTRACTS.md` for the public-API stability promises. Read
-   `probpipe/__init__.py` for the authoritative list of top-level exports.
+4. Read `CONTRACTS.md`, which says that the docstrings state each contract as
+   implemented and `design/` states the target. Read `probpipe/__init__.py`
+   for the authoritative list of top-level exports.
 5. Check whether ProbPipe is importable here
    (`python3 -c "import probpipe; print(probpipe.__version__)"`, or `uv run`
    from the repo). Note which optional backends are installed. This determines
@@ -123,12 +127,16 @@ foundation for everything else.
    asking.
 6. Build an internal **capability map** (don't show it to the user unless they
    ask). It should cover: core types (`Distribution`, `Record`, `Function`);
-   model classes; likelihoods; distribution families; inference methods with
-   their registry priorities and when each is feasible; diagnostics and
-   predictive checks; validation metrics; propagation through `@function`;
-   bagging and bootstrap; sequential updating; random functions and emulators;
-   amortized and simulation-based inference; orchestration (Prefect/Ray);
-   provenance. For each, note the canonical tutorial or user-guide example
+   joint models merged with `&` from distributions and conditional
+   distributions (`conditional_distribution`, `glm_likelihood`); the
+   program-defined families `StanModel` and `PyMCModel`; distribution
+   families; inference methods with their registry priorities and when each
+   is feasible (`inference_method_registry`, `condition_on.check`);
+   diagnostics and predictive checks; validation metrics; lifting through
+   `@function`; the bootstrap (`BootstrapReplicateDistribution`); sequential
+   updating (`iterate`); random functions and emulators; amortized and
+   simulation-based inference; executors and orchestration (`executor_registry`,
+   Prefect, Ray); provenance and reproducibility (`workflow_run`). For each, note the canonical tutorial or user-guide example
    and which workflow checklist stage it serves.
 7. Read person memory, if it exists, and any project memory it indexes
    under the current directory. Then open the conversation:
@@ -165,7 +173,7 @@ confirm it. If person memory doesn't exist yet, ask now whether you may create
 it, following [MEMORY-FORMAT.md](./MEMORY-FORMAT.md). Create the project
 memory and add the project to the person memory's index.
 
-Write `brief.md` sections 1-2. Then summarize the problem and goals back to
+Write sections 1-2 of `<workspace>/brief.md`. Then summarize the problem and goals back to
 the user in a few sentences and ask them to confirm before moving on.
 
 ## Phase 2 — Data and model materials
@@ -181,14 +189,17 @@ For each dataset you can reach:
 
 - Inspect it yourself. Load small files fully; for large ones, read the
   header and a sample. Use `pandas` if available, the standard library if not.
-- Record in `data-notes.md`: format, size, variables and their types and
+- Record in `<workspace>/data-notes.md`: format, size, variables and their types and
   units, ranges, missingness, obvious grouping or hierarchy (subjects, sites,
   time), censoring or truncation, outliers, and anything that contradicts
   the user's description.
 - Note which variables look like outcomes, covariates, grouping factors, or
   known inputs, and confirm the reading with the user.
-- Propose how the data will map onto ProbPipe objects (`Record`,
-  `NumericRecord`, `RecordBatch`, or raw arrays passed to a likelihood).
+- Propose how the data will map onto ProbPipe objects: observed values as a
+  mapping from the model's output names to arrays, the form `condition_on`
+  takes; covariates as arrays the likelihood holds, as `glm_likelihood` takes
+  `X=`; structured values as a `Record` or `NumericRecord`; and several
+  datasets as a `RecordBatch`.
 
 If data isn't available yet, ask for a description detailed enough to
 simulate synthetic data with the same structure, and say you'll use
@@ -205,12 +216,13 @@ when resources run low"). For each:
   assumptions, and the inference method used. Note page and equation numbers.
 - Code: read it and extract the same. Note whether it can be wrapped directly
   (e.g. an existing Stan or PyMC model via `StanModel`/`PyMCModel`, or a
-  simulator wrapped as a `@function` or generative likelihood).
+  simulator wrapped as a `conditional_distribution` whose function returns a
+  law that samples, such as one built with `distribution(sample=...)`).
 - Informal descriptions: turn them into a candidate mathematical model and
   show it to the user to check.
 
-Record everything in `model-notes.md` and summarize in `brief.md` sections
-3-4. List any mismatch between the data and the models (a variable the model
+Record everything in `<workspace>/model-notes.md` and summarize in sections
+3-4 of `<workspace>/brief.md`. List any mismatch between the data and the models (a variable the model
 needs that the data lacks, for example) as an open question. Update project
 memory.
 
@@ -262,17 +274,21 @@ in this order, because each step constrains the next:
 3. **Generative model.** Describe the data-generating process, including the
    measurement process: parameters, priors (with the justification for each,
    ideally tied to domain knowledge or the user's papers), and the likelihood.
-   Map each part to ProbPipe objects: distribution families,
-   `ProductDistribution` or `SequentialJointDistribution` for priors,
-   `GLMLikelihood` or a custom `Likelihood` for the likelihood, `SimpleModel`
-   or `SimpleGenerativeModel`, or a wrapped `StanModel`/`PyMCModel`.
-4. **Checks before fitting.** Prior predictive checks (`predictive_check`),
+   Map each part to ProbPipe objects: distribution families merged with `&`
+   for independent priors, a `conditional_distribution` for a prior that
+   depends on other parameters, `glm_likelihood` or a
+   `conditional_distribution` for the likelihood, and the merge
+   `likelihood & prior` for the model; or a wrapped `StanModel`/`PyMCModel`.
+4. **Checks before fitting.** Prior predictive checks
+   (`predictive_check(likelihood, prior, statistics)`),
    and validating computation on simulated data: parameter recovery always,
    simulation-based calibration when the model is new or the inference is
    approximate and it's affordable.
 5. **Inference.** `condition_on`, and which method it will pick by default
-   (check the registry and each method's feasibility conditions in the
-   corpus). State whether to keep the default or set `method=`, and why.
+   (`condition_on.check(model, observed)` reports it, and
+   `inference_method_registry.check` reports why a method declines). State
+   whether to keep the default or set `condition_on.using(method=...)`, and
+   why.
    Consider alternatives (gradient-free, variational, amortized or
    simulation-based) when the likelihood is intractable, non-differentiable,
    or too expensive. Plan to fit fast first (subsample, fewer draws).
@@ -281,13 +297,14 @@ in this order, because each step constrains the next:
    with test statistics chosen for this problem, LOO, and the validation
    metrics that apply.
 7. **Downstream quantities.** Propagating posterior uncertainty into the
-   estimands with `@function`, keeping joint draws together (via `select`).
+   estimands with a `@function` called on coupled marginals of the posterior,
+   such as `f(posterior["a"], posterior["b"])`, which the lift draws jointly.
 8. **Robustness and extensions**, as the goals call for them: sensitivity
    analysis, model comparison or stacking, bagged posteriors for
    misspecification, sequential updating for streaming data, emulators for
    expensive simulators, Prefect/Ray for scale.
 
-Then write `pipeline.py`: a runnable skeleton in the style of the tutorials,
+Then write `<workspace>/pipeline.py`: a runnable skeleton in the style of the tutorials,
 loading the user's data (or simulating it), with each pipeline stage as a
 clearly labeled section that matches the design doc. Before showing it:
 
@@ -315,9 +332,9 @@ Repeat until the user says the design is done:
 2. If a point conflicts with something earlier (the goals, the data, a
    recorded decision, a ProbPipe constraint, or the workflow checklist), say
    so and propose a resolution rather than silently picking one.
-3. Revise the design. Bump the version in `pipeline-design.md` and add a
-   changelog entry listing what changed and why. Update `pipeline.py` to
-   match, and re-run it when possible.
+3. Revise the design. Bump the version in `<workspace>/pipeline-design.md`
+   and add a changelog entry listing what changed and why. Update
+   `<workspace>/pipeline.py` to match, and re-run it when possible.
 4. Update memory: decisions and rejected options in project memory; new
    general preferences ("always show me the math") in person memory.
 5. Show what changed: a compact summary, not the whole document again.
@@ -329,7 +346,7 @@ Repeat until the user says the design is done:
 When the user is done or stops for now, update both memory files (where the
 project left off and the agreed next step; the project's status in the
 person memory index). Close with a summary: the design version, the files
-and how to run `pipeline.py`, the open questions and assumptions still to
+and how to run `<workspace>/pipeline.py`, the open questions and assumptions still to
 check, the ProbPipe gaps you hit (offer to draft GitHub issues for them), and
 the suggested next steps (e.g. fit on full data, sensitivity analysis,
 write-up). Tell them they can resume with `/design-pipeline <project>`.

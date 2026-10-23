@@ -1,9 +1,9 @@
 # Pipeline design document template
 
-The `design-pipeline` skill writes `pipeline-design.md` with this structure.
+The `design-pipeline` skill writes `<workspace>/pipeline-design.md` with this structure.
 Leave out sections that don't apply, but keep the numbering stable so
 versions can be compared. Match the depth of explanation to the user's
-`profile.md`.
+background profile in person memory.
 
 ```markdown
 # <Project name>: ProbPipe pipeline design

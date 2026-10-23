@@ -43,15 +43,17 @@ the model, which is normal and should be planned for, not treated as failure.
   through its **prior predictive distribution**, not in isolation.
 - Rescale or standardize parameters so that priors and the sampler both work
   on order-one scales.
-- *ProbPipe:* distribution families, `ProductDistribution`,
-  `SequentialJointDistribution`, constraints and bijectors.
+- *ProbPipe:* distribution families merged with `&`, a
+  `conditional_distribution` for a prior that depends on other parameters,
+  and constraints and bijectors (`positive`, `bijector_for`).
 
 ### C. Prior predictive checks
 
 - Simulate data from the prior and ask the domain expert whether it looks
   possible. Implausible simulations (negative counts, astronomically large
   values) mean the priors or the model structure need work.
-- *ProbPipe:* `predictive_check` on the prior model; `sample`.
+- *ProbPipe:* `predictive_check` with the prior as its law; `sample` of the
+  joint model.
 
 ### D. Validate the computation on simulated data
 
@@ -61,8 +63,9 @@ the model, which is normal and should be planned for, not treated as failure.
   check rank uniformity; use data-dependent test quantities (such as the log
   likelihood) for more sensitivity. Worth doing for new or custom models and
   any approximate inference method; may be too expensive for slow models.
-- *ProbPipe:* generative models (`SimpleGenerativeModel`), `@function`
-  broadcasting over prior draws, `probpipe.validation` metrics.
+- *ProbPipe:* `sample` of the joint model to simulate data, `condition_on`
+  on the simulated data, and `probpipe.validation`
+  (`simulation_based_calibration`, `interval_coverage`).
 
 ### E. Fit and diagnose the computation
 
@@ -79,9 +82,10 @@ the model, which is normal and should be planned for, not treated as failure.
   posterior error bounds.
 - Fit fast first: subsample the data, use fewer draws, or start with a
   simpler model, then scale up.
-- *ProbPipe:* `condition_on` with the inference registry (`method=`),
-  `probpipe.diagnostics` (`add_mcmc_diagnostics`, `add_rhat`, `add_ess`),
-  `posterior.diagnostics`, `posterior.arviz_data`.
+- *ProbPipe:* `condition_on` with the inference registry
+  (`condition_on.using(method=...)`), `probpipe.diagnostics`
+  (`add_mcmc_diagnostics`, `add_rhat`, `add_ess`), `posterior.diagnostics`,
+  and the ArviZ data `posterior.annotations["arviz"]`.
 
 ### F. Check the model against the data
 
@@ -100,8 +104,10 @@ the model, which is normal and should be planned for, not treated as failure.
 - When models may be misspecified, check whether conclusions are stable:
   bagged posteriors (BayesBag) give more reproducible model selection and
   uncertainty that reflects misspecification.
-- *ProbPipe:* broadcasting `condition_on` over models or datasets,
-  `BootstrapReplicateDistribution`, the bagged-posteriors user guide.
+- *ProbPipe:* a sweep of `condition_on` over a `DistributionBatch` of models
+  or a `RecordBatch` of datasets, which returns a `DistributionBatch` of
+  posteriors; `BootstrapReplicateDistribution` for bootstrap replicates of the
+  data (`docs/user_guide/08_conversion_and_updating.ipynb`).
 
 ### H. Understand the fitted model
 
@@ -109,8 +115,10 @@ the model, which is normal and should be planned for, not treated as failure.
   uncertainty, keeping joint draws together.
 - **Sensitivity analysis:** how do conclusions change under alternative
   priors, likelihoods, or data exclusions? Report the ones that matter.
-- *ProbPipe:* `@function` propagation with `select(...)`, broadcasting over
-  prior or hyperparameter settings, `mean`, `quantile`, `expectation`.
+- *ProbPipe:* a `@function` called on coupled marginals of the posterior,
+  such as `f(posterior["a"], posterior["b"])`, which the lift draws jointly; a
+  sweep of `condition_on` over a `DistributionBatch` of models under
+  alternative priors; `mean`, `quantile`, `expectation`.
 
 ### I. Simulators and expensive models
 
@@ -120,15 +128,17 @@ the model, which is normal and should be planned for, not treated as failure.
 - For expensive models: emulators (Gaussian processes) with their own
   uncertainty propagated, and an accounting for model discrepancy.
 - *ProbPipe:* `learn_amortized_posterior`, `learn_amortized_likelihood`,
-  `learn_amortized_ratio`, `GaussianRandomFunction`, the random functions
-  and emulators user guide.
+  `learn_amortized_ratio`, approximate Bayesian computation through
+  `condition_on` (`docs/tutorials/06_simulating.ipynb`), and
+  `GaussianRandomFunction` (`docs/api/random_functions.md`).
 
 ### J. Reproducibility and communication
 
 - Fix random seeds, record software versions, keep every model in the
   sequence, and write down each decision and its reason (the design doc's
   changelog serves this purpose).
-- *ProbPipe:* provenance tracking, workflow RNG scopes.
+- *ProbPipe:* the provenance of each result (`provenance_ancestors`), and
+  workflow scopes for random draws (`workflow_run`, `replay_run`).
 
 ---
 
@@ -206,8 +216,7 @@ new to Bayesian modeling, papers for working and expert users.
 - **Yao, Vehtari, Simpson & Gelman, "Using stacking to average Bayesian
   predictive distributions"** (Bayesian Analysis, 2018), arXiv:1704.02030.
 - **Huggins & Miller, "Reproducible model selection using bagged
-  posteriors"** (Bayesian Analysis, 2023), arXiv:2007.14845. BayesBag, the idea
-  behind ProbPipe's bagged-posteriors user guide.
+  posteriors"** (Bayesian Analysis, 2023), arXiv:2007.14845. BayesBag.
 
 ### Simulators and emulators
 
