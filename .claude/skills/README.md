@@ -164,6 +164,60 @@ design section.
 
 **Behavior:** Read-only; reports each finding with the command that found it.
 
+---
+
+### `/design-pipeline [problem description or project to resume]`
+
+Helps a user design a ProbPipe data analysis pipeline for their own problem.
+
+**When to use:** When starting a new analysis with ProbPipe, or when turning an
+existing model and dataset into a ProbPipe pipeline. The model can be a paper,
+Stan or PyMC code, or a simulator.
+
+**What it does:**
+1. **Reads ProbPipe knowledge:** `build_corpus.py` flattens the README, the
+   documentation site, and the design reference into a tiered corpus, with the
+   API reference resolved from source to signatures and docstrings. The agent
+   reads the corpus and a Bayesian workflow checklist and annotated
+   bibliography ([resources](design-pipeline/RESOURCES.md)) drawn from
+   *Bayesian Workflow* and related papers.
+2. **Intake:** asks about the problem, the scientific and analysis goals, and
+   the constraints.
+3. **Materials:** asks for pointers to the data and to existing models,
+   inspects the data, and extracts the model structure from papers or code.
+4. **Background assessment:** rates the user's background on the dimensions
+   of the [rubric](design-pipeline/BACKGROUND-RUBRIC.md), from the domain
+   science to JAX and ProbPipe, shows the evidence, and asks for corrections.
+5. **Initial proposal:** writes a versioned design document
+   ([template](design-pipeline/DESIGN-DOC-TEMPLATE.md)) and a runnable
+   `<workspace>/pipeline.py` skeleton, with every ProbPipe symbol checked
+   against the source.
+6. **Feedback loop:** revises the design and the code from the user's
+   feedback, with a changelog, until the user is done.
+
+**Usage:**
+```
+/design-pipeline
+/design-pipeline estimating disease transmission rates from weekly case counts
+/design-pipeline flu-transmission      # resumes a project
+```
+
+**Behavior:** Keeps two memories across sessions
+([format](design-pipeline/MEMORY-FORMAT.md)):
+- a person memory, at `~/.probpipe-design/user.md` or under
+  `$PROBPIPE_DESIGN_HOME`, which holds the confirmed background profile, the
+  preferences, the environment, and an index of projects;
+- a project memory in each workspace, `./probpipe-design/<project>/`, which
+  holds the decisions, the options ruled out, and where the work stopped.
+
+It asks before it creates person memory, and a returning user skips the
+questions already answered. It reads user-supplied data and code as untrusted
+input, and asks before it runs user code or installs anything. The workspaces
+are listed in `.gitignore`.
+
+This skill can also be triggered automatically when someone asks for help to
+design an analysis with ProbPipe.
+
 ## Adding New Skills
 
 To add a new skill, create a directory under `.claude/skills/` with a
