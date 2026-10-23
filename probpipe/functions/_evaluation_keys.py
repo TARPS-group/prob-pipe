@@ -379,6 +379,14 @@ class _EvaluationPointAttemptContext:
             child_ordinal=ordinal,
         )
 
+    def planned_child_invocation(self) -> _context._WorkflowInvocation:
+        """The child occurrence ``claim_child_invocation`` would claim next, claiming nothing."""
+        return self.parent_broker._planned_evaluation_point_child(
+            frame=self.frame,
+            attempt=self.attempt,
+            child_ordinal=self.next_child_ordinal,
+        )
+
     def claim_scoped_child_invocation(
         self,
         workflow_frame: _context._WorkflowFrame,
@@ -515,6 +523,7 @@ class _AutomaticKeyBroker:
     occurrence_kind: _OccurrenceKind
     _frame: _context._WorkflowFrame | None = None
     _invocation: _context._WorkflowInvocation | None = None
+    _planned_invocation: _context._WorkflowInvocation | None = None
     _evaluation_point_attempt: _EvaluationPointAttemptContext | None = None
     _evaluation_point_claims: _EvaluationPointClaimRegistry = field(
         default_factory=_EvaluationPointClaimRegistry
@@ -549,10 +558,7 @@ class _AutomaticKeyBroker:
         _context._guard_automatic_key_request()
         _context._guard_caller_jax_trace(plan.operation_kind)
         self.validate_replay_effect_plan(plan)
-        with self._lock:
-            if self._invocation is None:
-                self._invocation = self._claim_own_invocation()
-            invocation = self._invocation
+        invocation = self._ensure_parent_invocation()
         effect = StochasticEffectClaim(
             occurrence_path=invocation.occurrence_path,
             occurrence_kind=self.occurrence_kind,
@@ -980,8 +986,13 @@ class _AutomaticKeyBroker:
         *,
         retry_effects: tuple[StochasticEffectClaim, ...],
     ) -> EvaluationPointParentEnvelope:
-        """Materialize authority for an already-reserved remote attempt."""
-        parent_invocation = self._ensure_parent_invocation()
+        """Materialize authority for an already-reserved remote attempt.
+
+        The envelope carries the call's occurrence as planned, which a report
+        commits only when it names a draw, so an evaluation point that draws
+        nothing leaves the workflow's later keys unchanged, as it does in place.
+        """
+        parent_invocation = self._reserved_parent_invocation()
         from . import _replay
 
         return EvaluationPointParentEnvelope(
@@ -1071,9 +1082,9 @@ class _AutomaticKeyBroker:
                 "a remote evaluation point attempt reported before its parent authorized it"
             )
 
-        prefix = (*parent_path, report.frame.point_segment)
+        point_path = (*parent_path, report.frame.point_segment)
         for effect in (*report.effects, *report.successful_effects):
-            child_ordinal = _evaluation_point_effect_child_ordinal(effect, prefix=prefix)
+            child_ordinal = _evaluation_point_effect_child_ordinal(effect, prefix=point_path)
             if child_ordinal >= report.child_count:
                 raise RuntimeError(
                     "a remote effect child ordinal exceeds the reported child namespace"
@@ -1085,8 +1096,10 @@ class _AutomaticKeyBroker:
                     "a remote stochastic event was retried with a different effect plan"
                 )
 
-        parent_invocation = self._invocation
-        if parent_invocation is None or parent_invocation.occurrence_path != parent_path:
+        if not report.effects and report.child_count <= len(claim_state.child_invocations):
+            return claim_state, ()
+        parent_invocation = self._ensure_parent_invocation()
+        if parent_invocation.occurrence_path != parent_path:
             raise RuntimeError("remote report lost its reserved parent occurrence authority")
         child_invocations = tuple(
             _context._WorkflowInvocation(
@@ -1160,12 +1173,87 @@ class _AutomaticKeyBroker:
             claim_state.child_invocations.append(invocation)
             return invocation
 
+    def _planned_evaluation_point_child(
+        self,
+        *,
+        frame: EvaluationPointFrame,
+        attempt: EvaluationPointAttempt,
+        child_ordinal: int,
+    ) -> _context._WorkflowInvocation:
+        """The child occurrence ``_claim_evaluation_point_child`` would claim, claiming nothing."""
+        with self._evaluation_point_claims.lock:
+            claim_state = self._evaluation_point_claims.by_token.get(frame.token)
+            if (
+                claim_state is None
+                or claim_state.frame.point_segment != frame.point_segment
+                or claim_state.active_attempt != attempt.attempt_token
+            ):
+                raise RuntimeError("evaluation point child plan does not own the active attempt")
+            if child_ordinal < len(claim_state.child_invocations):
+                return claim_state.child_invocations[child_ordinal]
+            parent_invocation = self._reserved_parent_invocation()
+            return _context._WorkflowInvocation(
+                frame=parent_invocation.frame,
+                occurrence_path=(
+                    *parent_invocation.occurrence_path,
+                    frame.point_segment,
+                    ("child", child_ordinal),
+                ),
+            )
+
     def _ensure_parent_invocation(self) -> _context._WorkflowInvocation:
-        """Lazily materialize the containing public Function occurrence."""
+        """Lazily commit the containing public Function occurrence.
+
+        When evaluation points shipped elsewhere hold the occurrence as
+        planned, the commit must give the same occurrence, since their keys
+        derive from it.
+        """
         with self._lock:
             if self._invocation is None:
-                self._invocation = self._claim_own_invocation()
+                invocation = self._claim_own_invocation()
+                if (
+                    self._planned_invocation is not None
+                    and invocation.occurrence_path != self._planned_invocation.occurrence_path
+                ):
+                    raise RuntimeError(
+                        "another occurrence committed in the workflow while evaluation points "
+                        "of this call ran in other processes, so their keys no longer match "
+                        "the call's place in the workflow"
+                    )
+                self._invocation = invocation
             return self._invocation
+
+    def _reserved_parent_invocation(self) -> _context._WorkflowInvocation:
+        """The call's occurrence, committed if a draw committed it, or else as planned."""
+        with self._lock:
+            if self._invocation is not None:
+                return self._invocation
+            if self._planned_invocation is None:
+                self._planned_invocation = self._planned_own_invocation()
+            return self._planned_invocation
+
+    def _planned_own_invocation(self) -> _context._WorkflowInvocation:
+        """The occurrence ``_claim_own_invocation`` would commit, committing nothing."""
+        attempt_context = self._evaluation_point_attempt
+        if attempt_context is not None:
+            point_child_invocation = attempt_context.planned_child_invocation()
+            if self._frame is None or self._frame is attempt_context.workflow_frame:
+                return point_child_invocation
+            scope_path = _context._planned_descendant_path(
+                self._frame,
+                attempt_context.workflow_frame,
+            )
+            return _context._WorkflowInvocation(
+                frame=self._frame,
+                occurrence_path=(
+                    *point_child_invocation.occurrence_path,
+                    *scope_path,
+                    (self.occurrence_kind, self._frame.ledger.peek()),
+                ),
+            )
+        if self._frame is None:
+            raise RuntimeError("automatic-key broker has no workflow frame")
+        return _context._planned_stochastic_invocation_in_frame(self._frame, self.occurrence_kind)
 
     def _claim_own_invocation(self) -> _context._WorkflowInvocation:
         """Commit this broker while preserving a nested run inside an evaluation point."""
@@ -1254,6 +1342,27 @@ class _RemoteEvaluationPointParent:
         )
         self.child_invocations.append(invocation)
         return invocation
+
+    def _planned_evaluation_point_child(
+        self,
+        *,
+        frame: EvaluationPointFrame,
+        attempt: EvaluationPointAttempt,
+        child_ordinal: int,
+    ) -> _context._WorkflowInvocation:
+        """The child occurrence ``_claim_evaluation_point_child`` would claim, claiming nothing."""
+        if frame != self.envelope.frame or attempt != self.attempt:
+            raise RuntimeError("remote evaluation point child does not own its envelope")
+        if child_ordinal < len(self.child_invocations):
+            return self.child_invocations[child_ordinal]
+        return _context._WorkflowInvocation(
+            frame=self.workflow_frame,
+            occurrence_path=(
+                *self.envelope.parent_occurrence_path,
+                frame.point_segment,
+                ("child", child_ordinal),
+            ),
+        )
 
     def claim_evaluation_point_effect(
         self,

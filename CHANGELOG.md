@@ -5048,6 +5048,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   batch = NumericRecordBatch({"r": jnp.arange(3.0), "m": jnp.ones(3)}, level_names=("draw",))
   difference(batch)  # before: EvaluationError, after: [-1. 0. 1.]
   ```
+- **A call that draws nothing leaves later draws unchanged under the
+  `process` executor.** A sweep or a plain call whose evaluation points ran in
+  worker processes took a place in the workflow even when no point drew, so
+  the seeded draws after it differed from those under `sequential` or
+  `thread`. It now takes its place only when a point draws, as a call run in
+  place does:
+
+  ```python
+  with workflow_run(seed=1):
+      scaled.using(executor="process")(x=grid, scale=2.0)   # draws nothing
+      sample(Normal("z", 0.0, 1.0))
+  # before: a different draw than with executor="sequential"
+  # after:  the same draw under every executor
+  ```
 
 ### Removed
 
