@@ -1598,6 +1598,24 @@ class TestReplayEventRegistry:
         assert claim.attempt_tokens == set()
         assert claim.successful_attempt_token is None
 
+    def test_a_failed_parent_commit_leaves_prepared_replay_claims_unchanged(self):
+        replay_state = _replay._validate_provenance(_draw().provenance)
+        effect = replay_state.expected_events[0].effect_claim()
+        attempt = EvaluationPointAttempt.create(EvaluationPointToken.create())
+        with (
+            pytest.raises(RuntimeError, match="parent occurrence"),
+            replay_state._effect_batch_scope(
+                (effect,), successful_effects=(effect,), attempt=attempt
+            ),
+        ):
+            raise RuntimeError("parent occurrence changed")
+        replay_claim = replay_state.claims[replay_state.expected_events[0].encoded_identity]
+        assert replay_claim.evaluation_point_token is None
+        assert replay_claim.attempt_tokens == set()
+        assert replay_claim.successful_attempt_token is None
+        replay_state._commit_effect_batch((effect,), successful_effects=(effect,), attempt=attempt)
+        assert replay_claim.successful_attempt_token == attempt.attempt_token
+
     def test_remote_replay_scope_requires_its_complete_namespace(self):
         state = _replay._validate_provenance(_draw().provenance)
         effect = state.expected_events[0].effect_claim()
