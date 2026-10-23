@@ -2997,6 +2997,7 @@ Each step records its breaking changes under `### Changed (breaking)`, each with
 | A replay recipe records `executor`; the broker's `requested_dispatch` and `requested_workflow_kind` go | an old recipe replayed → replay refuses it and asks for it to be recorded again | E3a | no |
 | The controls `dispatch` and `max_workers` are removed | `f.using(dispatch="thread", max_workers=8)` → `f.using(executor="thread", executor_options={"max_workers": 8})` | E3b | no |
 | A `float64` output spec with 64-bit floats off is refused when the call opens | outputs silently became `float32` → an error that says to set `jax_enable_x64` | E4 | no |
+| A plain `Function` call inside any JAX transformation returns its result's raw form (II.4) | `jax.vmap(lambda x: f(x))(xs)` gave a `NumericArray` → it gives the JAX array; `f(x).raw` inside a transformed function → `f(x)` | E4 | silent |
 | `parallel_chain_map` always uses `vmap` (pending N28) | four chains on four devices ran under `pmap` → `vmap`, unless `method_options={"chain_map": "pmap"}` | E4, if adopted | silent |
 
 ### After the workshop

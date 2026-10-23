@@ -278,8 +278,16 @@ def _call_function(
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
 ) -> Any:
+    """The call of *function* on *args* and *call_inputs*, as JAX sees it inside a transformation.
+
+    Outside every JAX transformation the call runs in its workflow. Inside one, a
+    plain call returns its result's raw form (II.4): inside a staging trace it
+    is staged as an embedded call or runs inline, and under an eager
+    transformation it runs in its workflow. An operation, a broadcast, and a
+    sweep return their terms.
+    """
     if _jax_transformation_active():
-        values = _call.resolve_function_call(
+        argument_values = _call.resolve_function_call(
             function._signature_info,
             args,
             call_inputs,
@@ -287,43 +295,50 @@ def _call_function(
             function_name=function.label,
         )
         inline_plan = _plan.build_broadcast_plan(
-            values=values, signature_info=function._signature_info, roles=function._roles
+            values=argument_values, signature_info=function._signature_info, roles=function._roles
         )
-        staged, result = (
-            _boundary.maybe_stage(function, values)
+        staged, staged_result = (
+            _boundary.maybe_stage(function, argument_values)
             if inline_plan.regime == "none"
             else (False, None)
         )
         if staged:
-            return result
+            return staged_result
         if _jax_tracing_active() and inline_plan.regime == "none":
-            controls = current_call_context().resolved_controls
-            candidates = function._route_candidates(controls, values)
-            if candidates is not None:
+            resolved_controls = current_call_context().resolved_controls
+            route_candidates = function._route_candidates(resolved_controls, argument_values)
+            if route_candidates is not None:
                 _call.admit_arguments(
                     function._signature_info,
-                    values,
+                    argument_values,
                     function_name=function.label,
                     roles=function._roles,
                     lifts=False,
                 )
                 # A law keeps its ProbPipe capabilities here. Its raw backend
                 # object can have weaker guards than the law it represents.
-                return _realized_point(function, values, controls, candidates)
+                return _realized_point(
+                    function, argument_values, resolved_controls, route_candidates
+                )
             _, bindings = _bind_function_inputs(
-                function_name=function.label, input_spec=function.input_spec, values=values
+                function_name=function.label, input_spec=function.input_spec, values=argument_values
             )
-            result = function._invoke_resolved(values, context=_FunctionInvocationContext(bindings))
+            body_result = function._invoke_resolved(
+                argument_values, context=_FunctionInvocationContext(bindings)
+            )
             _validate_function_output(
                 function_name=function.label,
                 output_spec=function.output_spec,
-                result=result,
+                result=body_result,
                 bindings=bindings,
             )
-            return _result.raw_form(result)
+            return _result.raw_form(body_result)
         if (
             inline_plan.regime == "none"
-            and function._route_candidates(current_call_context().resolved_controls, values) is None
+            and function._route_candidates(
+                current_call_context().resolved_controls, argument_values
+            )
+            is None
         ):
             # Under an eager transformation a plain call runs as it does
             # outside one, and its result presents as its raw form (II.4), as
@@ -341,16 +356,18 @@ def _call_in_workflow(
         occurrence_path = None if replay_call is None else replay_call.occurrence_path
         with (
             _context._ephemeral_workflow_run(),
-            _evaluation_keys._function_stochastic_scope(occurrence_path=occurrence_path) as broker,
+            _evaluation_keys._function_stochastic_scope(
+                occurrence_path=occurrence_path
+            ) as key_broker,
         ):
             if (
                 replay_call is not None
                 or _context._active_provenance_mode() is not ProvenanceMode.OFF
             ):
-                anchor = _callable.capture_function_anchor(function)
-                broker.set_callable_anchor(anchor)
+                callable_anchor = _callable.capture_function_anchor(function)
+                key_broker.set_callable_anchor(callable_anchor)
                 if replay_call is not None:
-                    replay_call.validate_callable(anchor)
+                    replay_call.validate_callable(callable_anchor)
             return _call_function_in_context(function, args, call_inputs)
 
 
