@@ -34,6 +34,6 @@ A `workflow_run` keeps the mode in effect when it opens, and changing the mode i
 
 ::: probpipe.ProvenanceMode
 
-A [default workflow scope](workflows.md) fixes provenance mode for each top-level
+A [default workflow scope](workflows.md#probpipe.workflow_run--workflow-run-set-default) fixes provenance mode for each top-level
 call separately. Changing the mode between calls leaves its random stream
 unchanged. Full recording cannot recover history omitted by earlier calls.

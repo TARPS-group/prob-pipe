@@ -335,7 +335,7 @@ class _WorkflowRun:
         in another owner raises
         ``UnmanagedConcurrentWorkflowEntryError``; set or clear a default in
         that context first. ProbPipe evaluation points use the calling
-        workflow's random authority. A new thread without a copied context has
+        workflow's assigned random events. A new thread without a copied context has
         no default scope.
 
         Parameters
@@ -351,7 +351,7 @@ class _WorkflowRun:
         ValueError
             If ``seed`` is outside ``[0, 2**64 - 1]``.
         RuntimeError
-            Inside a call, workflow scope, replay, route probe, or caller-owned
+            Inside a Function call, workflow scope, replay, function check, or caller-owned
             JAX transformation. Set the default outside these contexts.
         """
         _guard_default_scope_change()
@@ -368,7 +368,7 @@ class _WorkflowRun:
         Raises
         ------
         RuntimeError
-            Inside a call, workflow scope, replay, route probe, or caller-owned
+            Inside a Function call, workflow scope, replay, function check, or caller-owned
             JAX transformation. Clear the default outside these contexts.
         """
         _guard_default_scope_change()
@@ -378,47 +378,67 @@ class _WorkflowRun:
 workflow_run = _WorkflowRun()
 """Open explicit workflow scopes and manage the current context's default scope.
 
-``with workflow_run(seed=None):`` opens an explicit scope. An integer seed
-reproduces its draws when the stochastic structure is the same. ``None`` uses
-fresh entropy at the outermost scope and inherits the root in a nested scope.
-A nested scope extends its parent's structural positions, and an explicit
-nested seed replaces the root while retaining that structure. The scope fixes
-provenance mode for its whole block.
+# `workflow_run(seed=None)` {#workflow-run-call}
 
-``workflow_run.set_default(*, seed=None)`` creates or replaces the default
-scope for successive bare calls. Its random positions restart on each setting,
-including when the seed is unchanged. ``None`` starts a continuing anonymous
-stream, reading entropy on its first random event. Each top-level call fixes
-its own provenance mode, which can change between calls without resetting the
-stream. An explicit scope entered between calls or a replay uses its own
-stream, and the default resumes afterwards. Failed calls retain consumed
-positions. Calls with the same stochastic structure use the same keys as
-successive calls in one explicit scope with the same seed.
+Return a synchronous context manager for an explicit workflow scope.
+An integer seed reproduces its random events when the stochastic structure
+is unchanged. At the outermost scope, `None` uses system entropy on the first
+random event. A nested scope inherits the root unless it supplies a seed,
+and extends its parent's structural positions even when it supplies a seed.
+An explicit scope entered between bare calls does not consume the default
+stream. The scope fixes provenance mode for its whole block.
 
-``workflow_run.clear_default()`` removes the default, if set. Bare calls then
-receive independent anonymous scopes. Both management methods return ``None``.
-``config.reset()`` leaves the default scope intact.
+**Parameter:** `seed` is `None` or a non-boolean integer in `[0, 2**64 - 1]`.
+Validation occurs when the context manager is entered. An invalid type raises
+`TypeError`, and an out-of-range integer raises `ValueError`.
+Using an explicit scope copied into another process, thread, or asyncio task
+raises `UnmanagedConcurrentWorkflowEntryError` unless ProbPipe dispatched
+that work through its worker mechanism. Changing provenance mode within an
+active scope raises `RuntimeError`.
 
-Seeds are non-boolean integers in ``[0, 2**64 - 1]`` or ``None``. An invalid
-type raises ``TypeError`` and an out-of-range integer raises ``ValueError``.
-Explicit scopes validate on entry. ``set_default`` validates before replacing
-the current default. Setting or clearing the default inside a call, explicit
-scope, replay, route probe, or caller-owned JAX transformation raises
-``RuntimeError``. Changing provenance mode within an active call or explicit
-scope also raises ``RuntimeError``.
+# `workflow_run.set_default(*, seed=None)` {#workflow-run-set-default}
 
-Scopes belong to the process, thread, and asyncio task that opens them.
-In an IPython notebook, the default stream continues across cells, including
-top-level ``await``. Ownership passes to each cell's execution task. Tasks the
-user creates must still set or clear their own default, or open an explicit
-scope. Setting or clearing a default in a child task does not change the
-notebook's default.
-ProbPipe evaluation points carry their parent's random authority to workers.
-A copied default used by another owner raises
-``UnmanagedConcurrentWorkflowEntryError``; that owner can set or clear its own
-default before calling. A new thread without a copied context has no default.
-An explicit scope copied into another owner also raises on use. Explicit-key
-numerical functions consume none of the workflow's random stream.
+Create or replace the default stream for successive bare calls. Return `None`.
+Setting the default restarts its random positions, including when the seed
+is unchanged. Calls with the same stochastic structure use the same keys as
+successive calls in one explicit scope with the same seed. Explicit scopes
+entered between calls and replay use their own streams. A failed call keeps
+the random positions it consumed. Explicit-key numerical functions consume
+none of the workflow's random stream.
+
+**Parameter:** `seed` is `None` or a non-boolean integer in `[0, 2**64 - 1]`.
+`None` creates a continuing anonymous stream, reading system entropy on its
+first random event. An invalid type raises `TypeError`, and an out-of-range
+integer raises `ValueError`. Validation precedes replacement, so an invalid
+seed leaves the existing default intact.
+
+Each top-level call fixes its provenance mode. The mode can change between
+calls without changing the random stream. Changing it within an active call
+raises `RuntimeError`. `config.reset()` leaves the default intact.
+
+A default belongs to its configuring process, thread, and asyncio task. A new
+thread without a copied context has no default. In an IPython notebook, the
+default continues across cells, including top-level `await`, with ownership
+passing to the task executing each cell. Tasks the user creates remain
+isolated. Using an inherited default from another owner raises
+`UnmanagedConcurrentWorkflowEntryError`. That owner can set or clear its own
+default, or open an explicit scope. A child task's setting does not change
+the notebook's default. ProbPipe workers use the random events assigned by
+their calling workflow.
+
+**Restrictions:** setting the default raises `RuntimeError` during a Function
+call, an explicit workflow scope, or replay. It also raises during a function
+check or a caller-owned JAX transformation, such as `jit`, `vmap`, or `grad`.
+
+# `workflow_run.clear_default()` {#workflow-run-clear-default}
+
+Remove the current context's default stream and return `None`. Subsequent
+bare calls receive independent anonymous scopes. If no default exists, this
+method does nothing. Clearing an inherited default affects only the current
+context. In a notebook cell, clearing also removes the default for later cells.
+
+**Restrictions:** the same contexts that forbid `set_default` also forbid
+`clear_default`, raising `RuntimeError` before changing the default.
 """
 
 
@@ -443,7 +463,7 @@ def _guard_default_scope_change() -> None:
     ):
         raise RuntimeError(
             "cannot change the default workflow scope during a call, workflow_run, "
-            "replay_run, route probe, or JAX transformation. Set or clear the default "
+            "replay_run, function check, or JAX transformation. Set or clear the default "
             "outside the computation."
         )
 

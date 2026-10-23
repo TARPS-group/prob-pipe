@@ -2064,6 +2064,12 @@ class TestPrefectTransport:
         assert len(claim_state.seen_attempts) == 2
         assert FakeMappedTask.map_calls == 2
 
+        # Use the same callable and point layout: only the scope and executor
+        # differ from the retried call above.
+        with workflow_run(seed=17), requester_call(requester()):
+            (reference,) = run_on("sequential", points_of(fail_once_after_claim))
+        assert retried == reference
+
     @pytest.mark.parametrize(
         ("configured", "expected"),
         [

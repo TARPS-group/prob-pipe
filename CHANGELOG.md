@@ -2062,10 +2062,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `workflow_run.set_default(seed=...)` starts a continuing default random stream
-  for bare calls, and `workflow_run.clear_default()` removes it. Explicit scopes
-  and replay use their own streams. Provenance mode can change between default
-  scope calls.
+- **Bare calls can share a default random stream.**
+  `workflow_run.set_default(seed=...)` starts the stream, and
+  `workflow_run.clear_default()` removes it. Explicit scopes and replay use
+  their own streams. Provenance mode can change between calls in the default
+  scope.
 
 - **Input declarations read four sources.** `InputSpec`, a mapping, a
   `RecordSpec`'s top-level fields, or an `OutputSpec`'s outputs can declare a

@@ -86,6 +86,5 @@ A setting whose value cannot be pickled travels as a placeholder, and reading it
 
 ::: probpipe.UnshippableSettingError
 
-A [default workflow scope](workflows.md) fixes provenance mode for each top-level
-call separately. Changing the mode between calls leaves its random stream
-unchanged. Full recording cannot recover history omitted by earlier calls.
+[Workflow scopes](workflows.md#workflow-scopes) determine when provenance mode
+is fixed. Changing recording mode cannot recover history omitted by earlier calls.

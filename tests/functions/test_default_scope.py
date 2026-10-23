@@ -8,6 +8,7 @@ from contextvars import copy_context
 from unittest.mock import patch
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -94,13 +95,23 @@ class TestDefaultScope:
             assert _words() != _words()
             assert entropy.call_count == 3
 
-    @pytest.mark.parametrize("seed", [True, False, -1, 2**64, 1.5, "7"])
-    def test_invalid_seed_preserves_stream(self, seed):
+    @pytest.mark.parametrize(
+        ("seed", "error"),
+        [
+            (True, TypeError),
+            (False, TypeError),
+            (-1, ValueError),
+            (2**64, ValueError),
+            (1.5, TypeError),
+            ("7", TypeError),
+        ],
+    )
+    def test_invalid_seed_preserves_stream(self, seed, error):
         with workflow_run(3):
             expected = [_words(), _words()]
         workflow_run.set_default(seed=3)
         assert _words() == expected[0]
-        with pytest.raises((TypeError, ValueError)):
+        with pytest.raises(error):
             workflow_run.set_default(seed=seed)
         assert _words() == expected[1]
 
@@ -134,19 +145,44 @@ class TestDefaultScope:
         with _context._ephemeral_workflow_run(), pytest.raises(RuntimeError, match="provenance"):
             config.provenance.mode = ProvenanceMode.OFF
         config.provenance.mode = ProvenanceMode.OFF
-        _draw()
+        assert _draw().provenance is None
 
     @pytest.mark.parametrize("method", ["set_default", "clear_default"])
-    def test_mutation_refused_in_calls_scopes_probes_and_jax(self, method):
+    @pytest.mark.parametrize(
+        "entry", ["scope", "probe", "apply", "call", "replay", "jit", "vmap", "grad"]
+    )
+    def test_refused_mutation_preserves_default_stream(self, method, entry):
+        with workflow_run(7):
+            expected = [_words(), _words()]
+        with workflow_run(9):
+            recorded = _draw()
+        workflow_run.set_default(seed=7)
+        assert _words() == expected[0]
         action = getattr(workflow_run, method)
-        with workflow_run(1), pytest.raises(RuntimeError, match="default"):
+
+        def transformed(x):
             action()
-        with _context._workflow_probe(), pytest.raises(RuntimeError, match="default"):
-            action()
+            return x
+
         with pytest.raises(RuntimeError, match="default"):
-            Function(action).apply()
-        with pytest.raises(RuntimeError, match="default"):
-            jax.jit(action)()
+            if entry == "scope":
+                with workflow_run(1):
+                    action()
+            elif entry == "probe":
+                with _context._workflow_probe():
+                    action()
+            elif entry == "apply":
+                Function(action).apply()
+            elif entry == "call":
+                Function(action)()
+            elif entry == "replay":
+                with replay_run(recorded.provenance):
+                    _draw()
+                    action()
+            else:
+                argument = jnp.ones(2) if entry == "vmap" else 1.0
+                getattr(jax, entry)(transformed)(argument)
+        assert _words() == expected[1]
 
     def test_failed_call_keeps_consumed_position_and_closes_its_frame(self):
         with workflow_run(7):
@@ -160,16 +196,37 @@ class TestDefaultScope:
             saved.run(_words)
         assert _words() == expected[1]
 
+    def test_public_failed_call_keeps_consumed_draws(self):
+        seen = []
+
+        def consume_and_fail():
+            seen.append(np.asarray(_draw()))
+            raise ValueError("failed after drawing")
+
+        workflow = Function(consume_and_fail, traceable=False)
+        with workflow_run(7):
+            with pytest.raises(ValueError, match="failed after drawing"):
+                workflow()
+            expected_next = _draw()
+        workflow_run.set_default(seed=7)
+        with pytest.raises(ValueError, match="failed after drawing"):
+            workflow()
+        assert len(seen) == 2
+        np.testing.assert_array_equal(seen[0], seen[1])
+        np.testing.assert_array_equal(_draw(), expected_next)
+
     def test_probe_and_explicit_key_do_not_consume_positions(self):
         with workflow_run(7):
             expected = _words()
         workflow_run.set_default(seed=7)
         with pytest.raises(_context._StochasticProbeSignal), _context._workflow_probe():
             _words()
-        jax.random.normal(jax.random.key(11), (4,))
+        explicit_draw = Function(lambda rng_key: jax.random.normal(rng_key, (4,)))
+        key = jax.random.PRNGKey(11)
+        np.testing.assert_array_equal(explicit_draw(key), jax.random.normal(key, (4,)))
         assert _words() == expected
 
-    @pytest.mark.parametrize("executor", ["sequential", "thread"])
+    @pytest.mark.parametrize("executor", ["sequential", "thread", "process"])
     def test_lifted_and_nested_draws_match_explicit_scope(self, executor):
         workflow = Function(_nested_draw, executor=executor, max_evaluations=5, traceable=False)
         law = Normal("x", loc=0.0, scale=1.0)
@@ -231,3 +288,26 @@ class TestDefaultScope:
                 entropy.assert_not_called()
 
         asyncio.run(parent())
+
+    def test_script_default_is_not_shared_by_asyncio_run_or_to_thread(self):
+        with workflow_run(7):
+            expected = [_draw(), _draw()]
+        workflow_run.set_default(seed=7)
+        np.testing.assert_array_equal(_draw(), expected[0])
+
+        def independent_worker():
+            with workflow_run(7):
+                return _draw()
+
+        async def main():
+            with pytest.raises(UnmanagedConcurrentWorkflowEntryError, match="default"):
+                _draw()
+            with pytest.raises(UnmanagedConcurrentWorkflowEntryError, match="default"):
+                await asyncio.to_thread(_draw)
+            np.testing.assert_array_equal(await asyncio.to_thread(independent_worker), expected[0])
+            workflow_run.set_default(seed=7)
+            np.testing.assert_array_equal(_draw(), expected[0])
+            workflow_run.clear_default()
+
+        asyncio.run(main())
+        np.testing.assert_array_equal(_draw(), expected[1])

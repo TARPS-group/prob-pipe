@@ -8,48 +8,71 @@ This page also documents the orchestration modes, and the settings `config.prefe
 
 ## Workflow scopes
 
-`workflow_run.set_default(seed=...)` starts a continuing random stream for bare calls.
-Setting it again restarts that stream. `clear_default()` restores independent
-anonymous scopes for bare calls. Both methods apply to the current context.
+[Set a default](#probpipe.workflow_run--workflow-run-set-default) once to continue a random stream
+across bare calls in a script or notebook. Setting it again restarts the stream.
+[Clear the default](#probpipe.workflow_run--workflow-run-clear-default) to restore independent anonymous
+scopes for bare calls.
 
 ```python
 from probpipe import Normal, sample, workflow_run
 
 law = Normal("x", loc=0.0, scale=1.0)
-workflow_run.set_default(seed=114514)
+workflow_run.set_default(seed=42)
 first = sample(law)
 second = sample(law)
-with workflow_run(seed=42):
+with workflow_run(seed=7):
     separate = sample(law)
 third = sample(law)
 workflow_run.clear_default()
+print("Default stream draws:", first, second, third)
+print("Independent scope draw:", separate)
 ```
 
-The first, second, and third draws use consecutive positions of the default
-stream. The explicit scope has its own positions. `set_default()` without a
-seed creates one continuing stream rooted in fresh entropy on its first draw.
-A default scope fixes the provenance mode separately for each top-level call,
-so the mode can change between calls. An explicit scope fixes it for the whole
-block. Setting or clearing the default inside either running calculation raises
-`RuntimeError`. A failed call keeps the random positions it consumed.
-
-The default belongs to the process, thread, and asyncio task that set it.
-In an IPython notebook, it continues across cells, including cells with top-level
-`await`. Each cell uses the same stream without setting the seed again. Tasks
-created with `asyncio.create_task` do not acquire the cell's permission to use
-that stream. A child task can set its own default or open an explicit scope
-without changing the notebook's default. Clearing the default in a cell also
-clears it for later cells.
-
-A copied context in another owner must set or clear its own default before a
-bare call. Workers dispatched by ProbPipe inherit their calling workflow's
-random authority. `config.reset()` leaves the default intact.
+The explicit scope leaves the default stream's next position unchanged.
+Notebook cells share the configured stream, including cells with top-level
+`await`. Each bare call fixes its own provenance mode, while an explicit scope
+fixes the mode for its whole block.
 
 ::: probpipe.workflow_run
     options:
       show_attribute_values: false
+      show_root_heading: false
+      heading_level: 3
 
 ::: probpipe.UnmanagedConcurrentWorkflowEntryError
+
+## Async tasks and threads
+
+A notebook's top-level `await` continues in that cell's execution task.
+`asyncio.create_task`, `asyncio.run`, and `asyncio.to_thread` can instead copy
+settings into another task or thread. Bare calls there cannot use an inherited
+default stream: they raise `UnmanagedConcurrentWorkflowEntryError`.
+Set a default inside the new task, clear its inherited default to use fresh
+anonymous scopes, or open an explicit scope inside the worker.
+
+```python
+import asyncio
+from probpipe import Normal, sample, workflow_run
+
+law = Normal("x", loc=0.0, scale=1.0)
+
+def worker():
+    with workflow_run(seed=7):
+        return sample(law)
+
+async def main():
+    workflow_run.set_default(seed=42)
+    try:
+        first = sample(law)
+        separate = await asyncio.to_thread(worker)
+        second = sample(law)
+        print("Task's default stream draws:", first, second)
+        print("Worker's independent draw:", separate)
+    finally:
+        workflow_run.clear_default()
+
+asyncio.run(main())  # In a notebook, use await main() instead.
+```
 
 ## Replay
 
