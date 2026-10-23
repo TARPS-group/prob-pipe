@@ -1,87 +1,92 @@
 # Workflow guidance and resources
 
-Used by the `design-pipeline` skill to make pipelines statistically and
-computationally sound. Part 1 is an operational checklist, distilled mainly
-from *Bayesian Workflow* (Gelman, Vehtari, McElreath et al.), with each step
-mapped to the ProbPipe tools that implement it. Part 2 is an annotated
-bibliography: what each resource is good for and when to point a user to it.
+The `design-pipeline` skill uses this file to make each pipeline statistically
+and computationally sound. Part 1 is an operational checklist, distilled
+mainly from *Bayesian Workflow* by Gelman, Vehtari, McElreath, and coauthors,
+which maps each step to the ProbPipe tools that implement it. Part 2 is an
+annotated bibliography, which says what each resource is good for and when to
+point a user to it.
 
-Apply Part 1 from your own knowledge of these sources; you don't need network
-access. If you can reach the web and need detail beyond what you know (a
-specific diagnostic threshold, say), consult the source. If a link is dead,
-search for the title. Cite only resources from this list, or ones you have
-actually opened in this session.
+Apply Part 1 from your own knowledge of these sources, which needs no network
+access. When you have web access and need detail beyond what you know, such as
+a specific diagnostic threshold, consult the source. When a link is dead,
+search for the title. Cite only the resources of this list and the ones you
+have opened in this session.
 
 ---
 
 ## Part 1 — Workflow checklist
 
-A pipeline design is sound when every stage below has been considered and
-either addressed or consciously skipped with a reason recorded in the design
-doc. The workflow is iterative: problems found late often send you back to
-the model, which is normal and should be planned for, not treated as failure.
+A pipeline design is sound when it addresses each stage of this checklist, or
+skips the stage for a reason recorded in the design document. The workflow is
+iterative, so a problem found late often sends you back to the model. Plan for
+that return.
 
 ### A. Before writing a model
 
-- **Start from the question.** Tie every model component to the estimands. A
-  model that can't express the quantity of interest is the wrong model,
+- **Start from the question.** Tie each part of the model to the estimands. A
+  model that cannot express the quantity of interest is the wrong model,
   however well it fits.
-- **Understand the measurement process.** How was the data collected? Censoring,
-  truncation, selection, measurement error, and missingness all belong in the
-  model, or in an explicit assumption.
+- **Understand the measurement process.** Learn how the data was collected.
+  Censoring, truncation, selection, measurement error, and missingness each
+  belong in the model or in an explicit assumption.
 - **Start simple, then expand.** Begin with the simplest model that addresses
-  the question, then add structure (hierarchy, covariates, nonlinearity) one
-  step at a time, checking at each step. Plan the sequence of models up front.
-  Keep earlier models: they're baselines for comparison and debugging.
+  the question, then add structure, such as hierarchy, covariates, or
+  nonlinearity, one step at a time, and check each step. Plan the sequence of
+  models up front. Keep the earlier models as baselines for comparison and
+  debugging.
 
 ### B. Priors
 
-- Choose priors on interpretable scales, using domain knowledge where it
-  exists. Weakly informative priors (ruling out implausible magnitudes) beat
-  flat priors almost always.
-- The prior only means something in the context of the likelihood: judge it
-  through its **prior predictive distribution**, not in isolation.
-- Rescale or standardize parameters so that priors and the sampler both work
-  on order-one scales.
+- Choose priors on interpretable scales, with domain knowledge where it
+  exists. Weakly informative priors, which rule out implausible magnitudes,
+  are almost always better than flat priors.
+- A prior has meaning only in the context of the likelihood, so judge it
+  through its **prior predictive distribution**.
+- Rescale or standardize the parameters so that the priors and the sampler
+  both work on scales of order one.
 - *ProbPipe:* distribution families merged with `&`, a
   `conditional_distribution` for a prior that depends on other parameters,
   and constraints and bijectors (`positive`, `bijector_for`).
 
 ### C. Prior predictive checks
 
-- Simulate data from the prior and ask the domain expert whether it looks
-  possible. Implausible simulations (negative counts, astronomically large
-  values) mean the priors or the model structure need work.
+- Simulate data from the prior, and ask the domain expert whether it looks
+  possible. Implausible simulations, such as negative counts or astronomically
+  large values, mean that the priors or the model structure need revision.
 - *ProbPipe:* `predictive_check` with the prior as its law; `sample` of the
   joint model.
 
 ### D. Validate the computation on simulated data
 
-- **Parameter recovery:** simulate data from known parameter values, fit, and
-  check the posterior covers them. Cheap, and catches many bugs.
-- **Simulation-based calibration (SBC):** repeat over many prior draws and
-  check rank uniformity; use data-dependent test quantities (such as the log
-  likelihood) for more sensitivity. Worth doing for new or custom models and
-  any approximate inference method; may be too expensive for slow models.
+- **Parameter recovery:** simulate data from known parameter values, fit the
+  model, and check that the posterior covers the values. The check is cheap,
+  and it catches many bugs.
+- **Simulation-based calibration (SBC):** repeat the recovery over many prior
+  draws, and check that the ranks are uniform. Data-dependent test quantities,
+  such as the log likelihood, make the check more sensitive. SBC is worth its
+  cost for a new or custom model and for any approximate inference method, and
+  it can be too expensive for a slow model.
 - *ProbPipe:* `sample` of the joint model to simulate data, `condition_on`
   on the simulated data, and `probpipe.validation`
   (`simulation_based_calibration`, `interval_coverage`).
 
 ### E. Fit and diagnose the computation
 
-- Use the default algorithm (NUTS through `condition_on`) unless there's a
-  reason not to. Run multiple chains.
-- Check R-hat (rank-normalized, target < 1.01), bulk and tail ESS, divergences,
-  and tree depth. Don't interpret a posterior with failing diagnostics.
+- Use the default algorithm of `condition_on`, which is NUTS, unless a reason
+  calls for another. Run several chains.
+- Check the rank-normalized R-hat against a target below 1.01, the bulk and
+  tail ESS, the divergences, and the tree depth. Interpret a posterior only
+  after its diagnostics pass.
 - **Folk theorem:** computational trouble usually signals a model problem.
-  Before tuning the sampler, look for weak identifiability, bad parameterization
-  (try non-centered for hierarchical models), poorly scaled parameters, or a
-  model that disagrees with the data.
-- For approximate methods (VI, amortized or simulation-based inference), check
-  their accuracy: compare with MCMC on a subset, use Pareto-k̂ diagnostics, or
-  posterior error bounds.
-- Fit fast first: subsample the data, use fewer draws, or start with a
-  simpler model, then scale up.
+  Before you tune the sampler, look for weak identifiability, a poor
+  parameterization, poorly scaled parameters, or a model that disagrees with
+  the data. A non-centered parameterization often helps a hierarchical model.
+- Check the accuracy of an approximate method, such as VI or amortized or
+  simulation-based inference, by a comparison with MCMC on a subset, by
+  Pareto-k̂ diagnostics, or by posterior error bounds.
+- Fit fast first: subsample the data, use fewer draws, or start with a simpler
+  model, then scale up.
 - *ProbPipe:* `condition_on` with the inference registry
   (`condition_on.using(method=...)`), `probpipe.diagnostics`
   (`add_mcmc_diagnostics`, `add_rhat`, `add_ess`), `posterior.diagnostics`,
@@ -90,20 +95,21 @@ the model, which is normal and should be planned for, not treated as failure.
 ### F. Check the model against the data
 
 - **Posterior predictive checks:** compare replicated data with the observed
-  data, choosing test statistics that target the scientific question and the
-  model's weakest assumptions, not just the mean. Use graphical checks.
-- **Predictive performance:** PSIS-LOO cross-validation; check the Pareto-k̂
-  diagnostics; use k-fold CV when LOO is unreliable.
+  data. Choose test statistics that target the scientific question and the
+  model's weakest assumptions, beyond the mean, and use graphical checks.
+- **Predictive performance:** estimate it by PSIS-LOO cross-validation, and
+  check its Pareto-k̂ diagnostics. Use k-fold cross-validation when LOO is
+  unreliable.
 - *ProbPipe:* `predictive_check`, `add_ppc`, `add_loo`.
 
 ### G. Compare, expand, and combine models
 
-- Compare models on predictive performance (LOO differences with standard
-  errors), not only on fit. Prefer stacking to selecting a single model when
-  several are comparably good.
-- When models may be misspecified, check whether conclusions are stable:
-  bagged posteriors (BayesBag) give more reproducible model selection and
-  uncertainty that reflects misspecification.
+- Compare models on predictive performance, by LOO differences with their
+  standard errors, as well as on fit. When several models are comparably good,
+  prefer stacking to the selection of one model.
+- When the models may be misspecified, check whether the conclusions are
+  stable. Bagged posteriors, or BayesBag, give a more reproducible model
+  selection and an uncertainty that reflects the misspecification.
 - *ProbPipe:* a sweep of `condition_on` over a `DistributionBatch` of models
   or a `RecordBatch` of datasets, which returns a `DistributionBatch` of
   posteriors; `BootstrapReplicateDistribution` for bootstrap replicates of the
@@ -111,10 +117,11 @@ the model, which is normal and should be planned for, not treated as failure.
 
 ### H. Understand the fitted model
 
-- Propagate the full posterior into the estimands and report their
-  uncertainty, keeping joint draws together.
-- **Sensitivity analysis:** how do conclusions change under alternative
-  priors, likelihoods, or data exclusions? Report the ones that matter.
+- Propagate the full posterior into the estimands with joint draws of the
+  parameters, and report the uncertainty of the estimands.
+- **Sensitivity analysis:** measure how the conclusions change under
+  alternative priors, likelihoods, or data exclusions, and report the changes
+  that matter.
 - *ProbPipe:* a `@function` called on coupled marginals of the posterior,
   such as `f(posterior["a"], posterior["b"])`, which the lift draws jointly; a
   sweep of `condition_on` over a `DistributionBatch` of models under
@@ -122,11 +129,12 @@ the model, which is normal and should be planned for, not treated as failure.
 
 ### I. Simulators and expensive models
 
-- For simulators without tractable likelihoods: simulation-based inference
-  (ABC, neural likelihood/posterior/ratio estimation), always validated with
-  SBC-style coverage checks.
-- For expensive models: emulators (Gaussian processes) with their own
-  uncertainty propagated, and an accounting for model discrepancy.
+- For a simulator without a tractable likelihood, use simulation-based
+  inference, such as ABC or a neural estimate of the likelihood, the
+  posterior, or the likelihood ratio. Validate it with SBC-style coverage
+  checks.
+- For an expensive model, use an emulator, such as a Gaussian process,
+  propagate the emulator's own uncertainty, and account for model discrepancy.
 - *ProbPipe:* `learn_amortized_posterior`, `learn_amortized_likelihood`,
   `learn_amortized_ratio`, approximate Bayesian computation through
   `condition_on` (`docs/tutorials/06_simulating.ipynb`), and
@@ -134,9 +142,9 @@ the model, which is normal and should be planned for, not treated as failure.
 
 ### J. Reproducibility and communication
 
-- Fix random seeds, record software versions, keep every model in the
-  sequence, and write down each decision and its reason (the design doc's
-  changelog serves this purpose).
+- Fix the random seeds, record the software versions, keep every model of the
+  sequence, and record each decision with its reason in the changelog of the
+  design document.
 - *ProbPipe:* the provenance of each result (`provenance_ancestors`), and
   workflow scopes for random draws (`workflow_run`, `replay_run`).
 
@@ -144,45 +152,47 @@ the model, which is normal and should be planned for, not treated as failure.
 
 ## Part 2 — Annotated bibliography
 
-When suggesting reading, match it to the user's profile: textbooks for those
-new to Bayesian modeling, papers for working and expert users.
+Match each suggested reading to the user's profile, with textbooks for a user
+new to Bayesian modeling and papers for a working or expert user.
 
 ### The workflow as a whole
 
 - **Gelman, Vehtari, McElreath, et al., *Bayesian Workflow*** (CRC Press,
-  2026). The book-length treatment of iterative model building, checking,
-  computational troubleshooting, and simulated-data experiments, with worked
-  examples. The primary reference for Part 1.
+  2026). The book treats iterative model building, checking, computational
+  troubleshooting, and simulated-data experiments at length, with worked
+  examples. It is the primary reference for Part 1.
 - **Gelman, Vehtari, Simpson, Margossian, Carpenter, Yao, Kennedy, Gabry,
-  Bürkner & Modrák, "Bayesian Workflow"** (2020), arXiv:2011.01808. The
-  free article that preceded the book; the best single thing to read first.
+  Bürkner & Modrák, "Bayesian Workflow"** (2020), arXiv:2011.01808. This free
+  article preceded the book, and it is the best single thing to read first.
   https://arxiv.org/abs/2011.01808
 - **Betancourt, "Towards a Principled Bayesian Workflow"** (case study,
-  2018–2020). Prior predictive checks, computational calibration, and
-  posterior checks organized around explicit questions about the model.
+  2018–2020). It organizes prior predictive checks, computational calibration,
+  and posterior checks around explicit questions about the model.
   https://betanalpha.github.io/assets/case_studies/principled_bayesian_workflow.html
 - **Schad, Betancourt & Vasishth, "Toward a principled Bayesian workflow in
-  cognitive science"** (Psychological Methods, 2021), arXiv:1904.12765. The
-  same workflow worked through on an applied example; good for scientists.
+  cognitive science"** (Psychological Methods, 2021), arXiv:1904.12765. It
+  works through the same workflow on an applied example, which suits
+  scientists.
 
 ### Textbooks
 
-- **McElreath, *Statistical Rethinking*** (2nd ed., CRC, 2020). Best
-  introduction for scientists new to Bayesian modeling; strong on causal
-  thinking and building models from scientific mechanisms.
+- **McElreath, *Statistical Rethinking*** (2nd ed., CRC, 2020). It is the best
+  introduction for scientists new to Bayesian modeling, and it is strong on
+  causal thinking and on building models from scientific mechanisms.
 - **Gelman, Hill & Vehtari, *Regression and Other Stories*** (Cambridge,
-  2020). Applied regression with a workflow emphasis. Book site with code and
-  examples: https://avehtari.github.io/ROS-Examples/
+  2020). It teaches applied regression with an emphasis on the workflow. The
+  book's site has code and examples: https://avehtari.github.io/ROS-Examples/
 - **Gelman, Carlin, Stern, Dunson, Vehtari & Rubin, *Bayesian Data Analysis***
-  (3rd ed., CRC, 2013). The standard graduate reference; free PDF from the
-  authors. https://sites.stat.columbia.edu/gelman/book/
+  (3rd ed., CRC, 2013). It is the standard graduate reference, with a free PDF
+  from the authors. https://sites.stat.columbia.edu/gelman/book/
 
 ### Priors
 
 - **Gelman, Simpson & Betancourt, "The prior can often only be understood in
   the context of the likelihood"** (Entropy, 2017), arXiv:1708.07487.
-- **Stan prior choice recommendations** (Stan wiki). Practical defaults by
-  model type. https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
+- **Stan prior choice recommendations** (Stan wiki). It gives practical
+  defaults by model type.
+  https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
 
 ### Validating computation
 
@@ -191,23 +201,25 @@ new to Bayesian modeling, papers for working and expert users.
   arXiv:1804.06788.
 - **Modrák et al., "Simulation-based calibration checking for Bayesian
   computation: The choice of test quantities shapes sensitivity"** (Bayesian
-  Analysis, 2023), arXiv:2211.02383. Data-dependent test quantities.
+  Analysis, 2023), arXiv:2211.02383. It introduces data-dependent test
+  quantities.
 - **Vehtari, Gelman, Simpson, Carpenter & Bürkner, "Rank-normalization,
   folding, and localization: An improved R-hat"** (Bayesian Analysis, 2021),
-  arXiv:1903.08008. Current R-hat and ESS.
+  arXiv:1903.08008. It defines the current R-hat and ESS.
 - **Betancourt, "A conceptual introduction to Hamiltonian Monte Carlo"**
-  (2017), arXiv:1701.02434. Why divergences matter and what they mean.
+  (2017), arXiv:1701.02434. It explains why divergences matter and what they
+  mean.
 - **Yao, Vehtari, Simpson & Gelman, "Yes, but did it work?: Evaluating
-  variational inference"** (ICML, 2018), arXiv:1802.02538. PSIS diagnostics
-  for VI.
+  variational inference"** (ICML, 2018), arXiv:1802.02538. It gives PSIS
+  diagnostics for VI.
 - **Huggins, Kasprzak, Campbell & Broderick, "Validated variational inference
   via practical posterior error bounds"** (AISTATS, 2020), arXiv:1910.04102.
 
 ### Model checking, comparison, and robustness
 
 - **Gabry, Simpson, Vehtari, Betancourt & Gelman, "Visualization in Bayesian
-  workflow"** (JRSS A, 2019), arXiv:1709.01449. Graphical prior and posterior
-  predictive checks.
+  workflow"** (JRSS A, 2019), arXiv:1709.01449. It covers graphical prior and
+  posterior predictive checks.
 - **Vehtari, Gelman & Gabry, "Practical Bayesian model evaluation using
   leave-one-out cross-validation and WAIC"** (Statistics and Computing, 2017),
   arXiv:1507.04544.
@@ -216,11 +228,12 @@ new to Bayesian modeling, papers for working and expert users.
 - **Yao, Vehtari, Simpson & Gelman, "Using stacking to average Bayesian
   predictive distributions"** (Bayesian Analysis, 2018), arXiv:1704.02030.
 - **Huggins & Miller, "Reproducible model selection using bagged
-  posteriors"** (Bayesian Analysis, 2023), arXiv:2007.14845. BayesBag.
+  posteriors"** (Bayesian Analysis, 2023), arXiv:2007.14845. It introduces
+  BayesBag.
 
 ### Simulators and emulators
 
 - **Cranmer, Brehmer & Louppe, "The frontier of simulation-based inference"**
   (PNAS, 2020), arXiv:1911.01429.
 - **Kennedy & O'Hagan, "Bayesian calibration of computer models"** (JRSS B,
-  2001). Emulators and model discrepancy.
+  2001). It covers emulators and model discrepancy.

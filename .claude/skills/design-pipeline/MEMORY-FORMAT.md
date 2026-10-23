@@ -1,48 +1,54 @@
 # Memory format
 
 The `design-pipeline` skill keeps two memory files so that it behaves
-consistently across sessions: one about the **person**, shared by all their
-projects, and one per **project**. Memory is what lets a later session skip
-questions already answered, keep the same explanation style, and pick up a
-design where it left off.
+consistently across sessions: one about the **person**, which all their
+projects share, and one for each **project**. With memory, a later session
+skips the questions already answered, keeps the same explanation style, and
+resumes a design where it stopped.
 
 ## Locations
 
 | File | Default path | Scope |
 |---|---|---|
-| Person memory | `$PROBPIPE_DESIGN_HOME/user.md`, else `~/.probpipe-design/user.md` | Everything true of the person regardless of project. |
-| Project memory | `<workspace>/memory.md` (workspace defaults to `./probpipe-design/<project-slug>/`) | Everything specific to one analysis. |
+| Person memory | `$PROBPIPE_DESIGN_HOME/user.md`, else `~/.probpipe-design/user.md` | Everything true of the person in every project. |
+| Project memory | `<workspace>/memory.md`, in the project's workspace directory | Everything specific to one analysis. |
 
-The home directory doesn't survive in ephemeral environments (cloud
-sessions, containers). If you're in one, say so when you first create person
-memory and suggest setting `PROBPIPE_DESIGN_HOME` to a persistent location,
-or keeping a copy in the user's own repository.
+The home directory is lost when an ephemeral environment, such as a cloud
+session or a container, ends. In such an environment, say so when you first
+create person memory, and suggest setting `PROBPIPE_DESIGN_HOME` to a
+persistent location or keeping a copy in the user's own repository.
 
 ## Rules
 
-- **Ask once before creating person memory.** Say where it will live, what
-  goes in it, and that the user can read, edit, or delete it at any time. If
-  they decline, keep person-level facts in project memory only, and don't ask
-  again in this project (record the refusal there).
-- **Record provenance.** Tag every fact with its source and date:
-  `[stated 2026-10-23]` (the user said it), `[confirmed 2026-10-23]` (you
-  proposed it and the user agreed), or `[inferred 2026-10-23]` (your reading
-  of the evidence, not yet confirmed). Never present an inferred fact to the
-  user as settled.
-- **Corrections win.** When the user corrects something, replace the old
-  entry; don't keep both. When they say "forget X", delete it.
-- **Store conclusions, not transcripts.** One line per fact. Keep person
-  memory under about 80 lines and project memory under about 150; merge or
-  prune stale entries when you update.
-- **Don't store** data values or excerpts, credentials, file contents, or
-  sensitive personal information (health, finances, demographics) beyond
-  what the user explicitly asks you to remember. Pointers to data (paths,
-  URLs) are fine.
-- **Write at checkpoints:** after the background assessment is confirmed,
-  at the end of each phase, after every design revision, and before the
-  session ends (or whenever the user signals they're stopping).
-- **Read before you write.** Another session may have changed the file;
-  merge, don't overwrite.
+- **Ask once before you create person memory.** Say where it will be stored,
+  what goes in it, and that the user can read, edit, or delete it at any time.
+  If the user declines, keep person-level facts in project memory only, record
+  the refusal there, and ask no more in this project.
+- **Record the source of each fact.** Tag every fact with its source and date:
+  - `[stated 2026-10-23]`: the user said it;
+  - `[confirmed 2026-10-23]`: you proposed it, and the user agreed;
+  - `[inferred 2026-10-23]`: your reading of the evidence, which the user has
+    not confirmed.
+
+  Present an inferred fact to the user as unconfirmed.
+- **A correction replaces the entry.** When the user corrects a fact, replace
+  the old entry with the corrected one. When they say "forget X", delete the
+  entry.
+- **Store conclusions.** Write one line per fact. Keep person memory under
+  about 80 lines and project memory under about 150, and merge or prune stale
+  entries at each update.
+- **Store pointers to data.** Store file paths and URLs. Leave out data values
+  and excerpts, credentials, and file contents, and leave out sensitive
+  personal information, such as health, finances, or demographics, beyond
+  what the user explicitly asks you to remember.
+- **Write at four checkpoints:**
+  1. after the user confirms the background assessment;
+  2. at the end of each phase;
+  3. after each design revision;
+  4. before the session ends, or whenever the user signals that they are
+     stopping.
+- **Read before you write.** Another session may have changed the file, so
+  merge your changes into it.
 
 ## Person memory template
 
@@ -51,19 +57,19 @@ or keeping a copy in the user's own repository.
 Last updated: <date>
 
 ## About
-- Name / how to address them, role, field, institution — only what they shared.
+- Name or how to address them, role, discipline, institution — only what they shared.
 
 ## Background profile
-| Dimension | Level | Confidence | Basis |
+| Dimension | Rating | Confidence | Basis |
 |---|---|---|---|
-| Domain science (<field>) | Expert | high | [confirmed 2026-10-23] ... |
+| Domain science (<discipline>) | Expert | high | [confirmed 2026-10-23] ... |
 | Probability and statistics | ... | ... | ... |
-(dimensions and levels from BACKGROUND-RUBRIC.md)
+(dimensions and ratings from BACKGROUND-RUBRIC.md)
 
 ## Working preferences
 - Explanation depth, code style, how many questions at once, preferred
   terminology, preferred backends (e.g. "prefers PyMC over Stan"), anything
-  they asked you to do or avoid. Each with provenance.
+  they asked you to do or avoid. Each with its source tag.
 
 ## Environment
 - OS, Python setup (uv/conda/pip), ProbPipe version and installed extras,
@@ -84,7 +90,7 @@ Last updated: <date> · Phase: <current phase> · Design version: <n>
 - Two or three lines: what was last done and the agreed next step.
 
 ## Key facts
-- Problem, estimands, and data in a few lines each (details live in brief.md).
+- Problem, estimands, and data in a few lines each (details are in brief.md).
 
 ## Decisions
 - <date> — <decision> — <why> — [confirmed]/[provisional]
@@ -94,7 +100,7 @@ Last updated: <date> · Phase: <current phase> · Design version: <n>
   survival analysis even though fluent in regression").
 
 ## Tried and ruled out
-- Approaches that failed or were rejected, and why, so they aren't re-proposed.
+- Approaches that failed or were rejected, and why, so that they are not proposed again.
 
 ## Open threads
 - Questions waiting on the user, a colleague, data, or an experiment.
