@@ -247,12 +247,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `with_label` or by the `FactoredDistribution` constructor prints by that
   label, as `model(y, mu)`. A label built from another label parenthesizes a
   product, a draw such as `mu ~ prior`, and a score such as `log prior(mu)`. So
-  a selection of draws from `x * y` is labeled `(x·y)[sample=0:2]`, where it was
+  a selection of draws from `x & y` is labeled `(x·y)[sample=0:2]`, where it was
   `x·y[sample=0:2]`, and the posterior of `lik & prior` given `y` prints as
   `(lik·prior)(mu; y)`. A batch element brackets a batch label of several words,
   as `[my draws][draw=1]`. Labels still join associatively, so
   `(lik & prior) & d` is labeled `lik·prior·d`, and a labeled product enters
-  a further product as one operand, so `model * d` prints as
+  a further product as one operand, so `model & d` prints as
   `model(y, mu)·d(z)`. A marginal over the whole
   events of several factors prints factor by factor, in the order the paths
   name them where a product can take that order, so
@@ -1925,7 +1925,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       y_mean = jax.pure_callback(solver, jax.ShapeDtypeStruct((), jnp.float32), mu)
       return Normal("y", y_mean, 1.0)
 
-  sample(likelihood * Normal("mu", 0.0, 1.0), 3)  # solver raises when it runs
+  sample(likelihood & Normal("mu", 0.0, 1.0), 3)  # solver raises when it runs
   # before: the kernel's function ran again under an eager jax.vmap
   # after: the solver's error propagates, and the kernel's function ran once
   ```
@@ -2084,8 +2084,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its capabilities there, and a call outside every transformation returns a
   term as before.
 
-- **Merging records uses `&`, and four names change with it.** Each rename
-  changes every use, and the old name raises `AttributeError`:
+- **Merging records uses `&`, and related APIs are renamed.** The removed
+  methods raise `AttributeError`, and importing `FieldView` raises `ImportError`:
 
   ```python
   record_a.merge(record_b)            # before, on Record, RecordSpec, and RecordBatch
@@ -2124,7 +2124,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   ```text
   >>> with workflow_run(seed=0):
-  ...     summarize(Normal("mu", 0.0, 2.0) * Poisson("count", 4.0))
+  ...     summarize(Normal("mu", 0.0, 2.0) & Poisson("count", 4.0))
   summary of Normal(mu)·Poisson(count)
            mean  sd  median         q10        q90
     mu       0.  2.      0.  -2.5631032  2.5631022
@@ -2153,7 +2153,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`standard_deviation(d)` returns the standard deviation of a law, the square
   root of its variance in each coordinate.** A record law's standard deviation
   is a record with a field per component, as `mu` and `tau`, so
-  `standard_deviation(Normal("mu", 0.0, 2.0) * Gamma("tau", 2.0, 1.0))` holds
+  `standard_deviation(Normal("mu", 0.0, 2.0) & Gamma("tau", 2.0, 1.0))` holds
   `2.0` and `√2` without mapping `sqrt` over the fields of `variance`. A random
   function's is its pointwise standard deviation function, and the result is
   labeled `√𝕍[(mu, tau) ~ d]`. It is defined as `sqrt(variance(d))`, so it takes
@@ -2220,7 +2220,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `EmpiricalDistribution` over numeric atoms and whose likelihood has a
   conditional log-density: the posterior keeps the prior's atoms, each weighted
   by its prior weight times the likelihood of the given values there, so
-  `condition_on(likelihood * particles, {"y": y})` is a particle filter's update.
+  `condition_on(likelihood & particles, {"y": y})` is a particle filter's update.
   The method is exact, so automatic selection tries it before the approximate
   methods and `exact_only=True` admits it. It evaluates the likelihood at every
   atom in one `jax.vmap` when the likelihood traces.
@@ -2354,7 +2354,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slot when `given_spec` and the annotation do not. In a joint, a factor that
   produces a component of the slot's name meets it, so one kernel serves the
   model with the constant and the model with a prior on it:
-  `counts * prior` uses `n0=50.0`, and `counts * (prior * LogNormal("n0", ...))`
+  `counts & prior` uses `n0=50.0`, and `counts & (prior & LogNormal("n0", ...))`
   infers `n0`. An unmet optional slot leaves the joint unconditional.
   `InputSpec` records the optional slots, as `InputSpec.optional`,
   `InputSpec.required`, `with_optional`, and `without`.
@@ -3270,7 +3270,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can be declared from another distribution's outputs:
 
   ```python
-  x = Normal("a", 0.0, 1.0) * Normal("sigma", 1.0, 1.0)
+  x = Normal("a", 0.0, 1.0) & Normal("sigma", 1.0, 1.0)
   x.event_spec["a"]                            # OutputSpec(a=NumericArraySpec(()))
   x.event_spec.without("sigma") & ke.event_spec   # ke: a kernel ke(e | sigma)
   # OutputSpec(RecordSpec(a=..., e=...))
@@ -3418,7 +3418,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other conditioning applies Bayes' rule, and the posterior is labeled by the
   expression of the law's label and the conditioned paths, as `model | y`. A
   marginal that is the product of some of a joint's factors takes their labels,
-  so `marginal(location * scale, "tau")` is labeled `scale`, and any other
+  so `marginal(location & scale, "tau")` is labeled `scale`, and any other
   marginal keeps the law's label. Both took the law's label before.
 - **Each operand of an operator reads as one unit in the result's label.** A
   label with a space that is not an expression, such as a user's
@@ -3426,7 +3426,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `effect + [other effect]`, since parentheses mark an expression. An
   operand that opens with a unary operator is parenthesized, so `(-x) ** 2` is
   labeled `(-x) ** 2`, since `-x ** 2` reads as `-(x ** 2)`. A joint groups each
-  factor's label the same way, so `likelihood * posterior` for a posterior
+  factor's label the same way, so `likelihood & posterior` for a posterior
   labeled `model | y` is labeled `likelihood·(model | y)`. A batch view of a
   batch whose label is an expression parenthesizes it, as in
   `(model | y)[dataset=0]`.
