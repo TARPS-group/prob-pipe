@@ -1320,12 +1320,12 @@ class TestRemoteReportTransactions:
         evaluation_points = issue_points()
         evaluation_point = evaluation_points[0]
         with workflow_run(seed=17):
-            with evaluation_keys_mod._function_stochastic_scope() as parent:
-                parent.register_evaluation_points(evaluation_points)
+            with evaluation_keys_mod._function_stochastic_scope() as parent_broker:
+                parent_broker.register_evaluation_points(evaluation_points)
                 attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
                     evaluation_point.frame.token
                 )
-                envelope = parent.reserve_remote_evaluation_point_attempt(
+                envelope = parent_broker.reserve_remote_evaluation_point_attempt(
                     evaluation_point.frame, attempt
                 )
                 effect = make_remote_effect(envelope)
@@ -1337,29 +1337,29 @@ class TestRemoteReportTransactions:
                     successful_effects=(effect,),
                 )
                 if rejection == "replay":
-                    parent._replay_state = replay_state
+                    parent_broker._replay_state = replay_state
                     exception = ReplayCompatibilityError
                     message = "that matches no draw"
                 else:
-                    parent._effects_by_identity[evaluation_keys_mod._effect_identity(effect)] = (
-                        replace(effect, provider_abi="conflicting-provider/v1")
-                    )
+                    parent_broker._effects_by_identity[
+                        evaluation_keys_mod._effect_identity(effect)
+                    ] = replace(effect, provider_abi="conflicting-provider/v1")
                     exception = RuntimeError
                     message = "different effect plan"
                 try:
                     with pytest.raises(exception, match=message):
-                        parent.accept_remote_claim_report(report)
-                    assert parent._invocation is None
-                    assert parent._frame.ledger.next_ordinal == 0
-                    claim_state = parent._evaluation_point_claims.by_token[
+                        parent_broker.accept_remote_claim_report(report)
+                    assert parent_broker._invocation is None
+                    assert parent_broker._frame.ledger.next_ordinal == 0
+                    claim_state = parent_broker._evaluation_point_claims.by_token[
                         evaluation_point.frame.token
                     ]
                     assert claim_state.child_invocations == []
                     assert claim_state.effect_claims_by_identity == {}
                 finally:
-                    parent._replay_state = None
-                    parent._effects_by_identity.clear()
-                    parent.abort_remote_evaluation_point_attempt(attempt)
+                    parent_broker._replay_state = None
+                    parent_broker._effects_by_identity.clear()
+                    parent_broker.abort_remote_evaluation_point_attempt(attempt)
             after_rejection = sample(Normal("z", 0.0, 1.0))
         np.testing.assert_array_equal(np.asarray(after_rejection), np.asarray(reference))
 
