@@ -3311,6 +3311,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reorganize the user guide around a short statistics example and task-based reading paths.
+  Clarify distribution lifting, exactness, diagnostic interpretation, and Ray execution,
+  and refresh the notebook outputs.
+
 - **Faster minibatches without replacement.** Sampling retains distinct indices
   from batches of random candidates. Additional candidates supplement an incomplete batch.
   Batches larger than half the dataset sample the excluded indices and shuffle

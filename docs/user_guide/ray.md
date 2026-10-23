@@ -2,126 +2,128 @@
 
 # Ray via Prefect
 
-Current support: **Ray through Prefect-Ray**.
+Use Ray through Prefect when a function has expensive independent evaluations that can run on separate workers.
+Start with [Functions on values and distributions](05_functions_and_lifting.ipynb) to understand how a function applies to distributions and batches.
+The configuration below changes where evaluations run while preserving the mathematical request.
 
-This is not a native Ray backend. ProbPipe does not expose `ray.remote`,
-`ray.put`, Ray actors, placement groups, or Ray resource hints as public
-ProbPipe APIs. Ray is used through Prefect's task runner interface, so existing
-`Function` calls can dispatch mapped tasks to Ray worker processes when
-Prefect orchestration is explicitly enabled.
+## Choose what to distribute
 
-## Execution Model
+ProbPipe runs functions in the current process by default.
+Enable Prefect orchestration explicitly to use a task runner such as `RayTaskRunner`.
+Prefect chooses its evaluation pattern from the callable's traceability:
 
-The current execution path is:
+| Callable | Work submitted with `WorkflowKind.TASK` |
+|---|---|
+| Traceable by JAX | The vectorized computation runs as one Prefect task. |
+| Opaque to JAX | Prefect maps separate evaluation points as tasks through the configured runner. |
 
-1. A `Function` receives distribution-valued or array-valued inputs.
-2. ProbPipe expands the call into mapped work with `Prefect task.map()` inside a
-   lightweight flow.
-3. `probpipe.config.prefect.task_runner` supplies the Prefect task runner.
-4. `RayTaskRunner` submits the mapped tasks to Ray.
-5. Ray runs each task in worker processes and returns the results to Prefect.
+A traceable callable can be compiled and mapped by JAX for its input shapes.
+An opaque callable needs ordinary Python evaluation, such as a call to an external program.
+Prefect owns execution when orchestration is enabled; naming an `executor` then does not select a different task-mapping pattern.
 
-This keeps Ray at the orchestration layer. The probabilistic model, records,
-distributions, inference methods, and public operations stay unchanged.
+Examples of work that can benefit from separate workers include:
 
-Ray via Prefect is a good fit for coarse-grained independent work:
+- expensive parameter sweeps;
+- independent model fits;
+- bootstrap replicates with expensive statistics.
 
-- bagged posteriors
-- bootstrap replicates
-- parameter sweeps
-- multiple independent MCMC fits
-
-It is usually not a good fit for very small operations where scheduling
-overhead dominates, workflows that depend on shared mutable state, or workloads
-that require direct Ray actors, direct object-store control, or fine-grained
-CPU/GPU resource hints.
+Measure the runtime of your workload with and without distribution.
+For short scalar computations, task scheduling can cost more than evaluation.
 
 ## Install
 
-For an installed ProbPipe package:
+Install the `prefect` extra from the source branch used by this documentation, then install Prefect-Ray:
 
 ```bash
-pip install "probpipe[prefect]"
-pip install "prefect[ray]"
+python -m pip install "probpipe-core[prefect] @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
+python -m pip install prefect-ray
 ```
 
-For local development from a checkout:
+For an existing checkout, the first command can instead be:
 
 ```bash
-pip install -e ".[prefect]"
-pip install "prefect[ray]"
+python -m pip install -e ".[prefect]"
 ```
 
-ProbPipe has no `probpipe[ray]` extra, since Ray support enters through
-Prefect-Ray, whose install the two commands above cover.
+[Installation](../get_started/installation.md) explains the Python environment and other optional backends.
+Workers need the packages that the submitted function imports.
+The [Prefect-Ray guide](https://docs.prefect.io/integrations/prefect-ray/index) covers its installation and deployment options.
 
-## Local Setup
+## Start local services
 
-Start a Prefect server and a persistent local Ray head:
+Start a Prefect server in one terminal and leave it running:
 
 ```bash
 prefect server start
-ray start --head
 ```
 
-Then point ProbPipe's Prefect configuration at Ray:
+In another terminal, start a Ray head and configure the Prefect API address:
 
-<!-- docs-test: skip, it needs a Ray cluster -->
+```bash
+ray start --head
+export PREFECT_API_URL="http://127.0.0.1:4200/api"
+```
+
+Run your script or notebook from that environment.
+On Windows, set `PREFECT_API_URL` using your shell's environment-variable syntax.
+
+## Configure and run a mapped function
+
+Set the runner explicitly so its address is part of the configuration you can inspect.
+This example declares an opaque function so the batch's elements are submitted as separate tasks:
+
+<!-- docs-test: skip, this example needs Prefect-Ray and running Prefect and Ray services -->
 ```python
+import jax.numpy as jnp
 from prefect_ray import RayTaskRunner
 
 import probpipe
-from probpipe import WorkflowKind
+from probpipe import NumericArrayBatch, WorkflowKind, function
 
-probpipe.config.prefect.workflow_kind = WorkflowKind.TASK
 probpipe.config.prefect.task_runner = RayTaskRunner(address="auto")
+
+
+@function(traceable=False, workflow_kind=WorkflowKind.TASK)
+def square(x: float) -> float:
+    return float(x) ** 2
+
+
+values = NumericArrayBatch(jnp.arange(4.0), "case", label="values")
+result = square(values)
+print("squared values:", result.raw)
 ```
 
-`WorkflowKind.TASK` is still a Prefect orchestration mode. Provenance records the
-orchestration value as `"task"`, not `"ray"`.
+The squared values are `[0., 1., 4., 9.]`.
+The scalar calculation illustrates task mapping; choose a more expensive function when measuring a benefit from Ray.
 
-## Choosing A Ray Address
+For process-wide orchestration, set `probpipe.config.prefect.workflow_kind = WorkflowKind.TASK`.
+An explicit `workflow_kind` on a function overrides that default.
+When `task_runner` is unset, ProbPipe tries the following runners in order:
 
-Use `RayTaskRunner(address="auto")` for the short-term supported pattern. It
-attaches the Prefect driver process to a Ray raylet on the same machine. With a
-local demo, starting `ray start --head` first gives the driver a persistent Ray
-head to attach to.
+1. `RayTaskRunner()` when `prefect_ray` is importable.
+2. A Dask runner when `prefect_dask` is importable.
+3. Prefect's default runner.
 
-Use `RayTaskRunner(address="ray://<head>:10001")` when the driver runs outside
-the Ray cluster and connects through Ray Client. This is useful for some remote
-setups, but it has stricter environment requirements: the Ray head and workers
-must be able to import the packages that appear in the pickled task graph.
+Installing Prefect-Ray can therefore change the automatically selected runner once orchestration is enabled.
 
-In both modes, the task function, arguments, closed-over state, and return value
-must be serializable. ProbPipe's `Record` family and several composite
-distributions include pickle support for this reason, and the serialization
-tests cover those contracts with no running Ray cluster.
+Provenance records the orchestration mode as `"task"`.
+Ray is the configured execution service; it is not a separate `WorkflowKind`.
 
-## Troubleshooting
+## Connect workers and diagnose failures
 
-If the flow cannot find a Ray cluster, make sure `ray start --head` is running
-before calling the function, or pass the correct remote Ray address.
+`RayTaskRunner(address="auto")` attaches to an existing Ray cluster discovered in the local environment.
+A remote driver can use a Ray Client address such as `ray://<head>:10001` when the cluster supports that connection.
+Follow your cluster's networking and environment configuration for remote deployment.
 
-If workers raise `ModuleNotFoundError`, install the same task dependencies on
-the process running the Ray driver and on the Ray cluster environment.
+The submitted function, its arguments, and its result must be serializable.
+Prefer top-level functions with explicit inputs over closures that capture large mutable objects.
+The Python setup block above is excluded from the ordinary documentation tests because it needs running services.
+ProbPipe's serialization tests exercise records and supported composite distributions without a Ray cluster; they do not verify cluster connectivity.
 
-If a task fails during serialization, simplify what the task receives: prefer
-Records, numeric arrays, distributions with tested pickle support, and
-top-level functions over closures that capture large or non-serializable state.
-
-If the workload is slower under Ray, increase the grain size. Ray via Prefect is
-intended for expensive independent tasks such as bootstrap replicates and MCMC
-fits, not tiny scalar operations.
-
-## Future Directions
-
-The current Ray via Prefect path leaves room for a later native or
-multi-backend execution design. That future design may address:
-
-- native execution backend selection
-- `ray.put` and object-store data locality
-- resource hints for CPU, GPU, memory, or custom resources
-- actors for persistent state
-- Ray Jobs or cluster submission workflows
-
-Those capabilities are not part of the current public API.
+| Symptom | What to check |
+|---|---|
+| Prefect cannot connect | The server is running and `PREFECT_API_URL` points to it. |
+| Ray cannot find a cluster | The Ray head is running and the runner's address matches the deployment. |
+| A worker raises `ModuleNotFoundError` | The driver and workers have the required task dependencies. |
+| Serialization fails | The function and its inputs can be serialized without local process state. |
+| The workload is slower | Each task has enough computation to justify its scheduling and transfer costs. |
