@@ -125,6 +125,7 @@ In the examples, `x` is a law over `{a, b, c, sigma}`, `ke` a kernel `ke(e | sig
 | a kernel in a joint that read `num_samples` while it was traced kept the first call's value | it reads the value of the call that runs it | E3a | yes |
 | `f.using(dispatch="thread", max_workers=8)` | `f.using(executor="thread", executor_options={"max_workers": 8})` | E3b | no |
 | `f.using(dispatch="sequential")` ran a function JAX can trace one draw at a time | `jax` maps it whatever executor is named; `@function(traceable=False)` runs it one draw at a time | E3b | yes, up to the last bit of rounding |
+| `law.provenance.metadata["dispatch"]`, the executor that ran a lifted call | `law.provenance.metadata["evaluations"][0]["executor"]`; each entry also holds the callable, the executor's options, and the number of evaluation points | E3b | no |
 | a `float64` output spec with 64-bit floats off silently gave `float32` | an error that says to set `jax_enable_x64` | E4 | no |
 | an inference method reads `run_seed` and imports `ModelFactors` privately | `InferenceMethod.execute(target, /, *, key, **options)` with an `InferenceTarget`; `ModelFactors` and `make_posterior` are public | E6 | no |
 
@@ -134,3 +135,4 @@ In the examples, `x` is a law over `{a, b, c, sigma}`, `ke` a kernel `ke(e | sig
 |---|---|---|---|
 | an opaque evaluation inside a compiled JAX program could not cross the boundary | a concrete numeric opaque Function runs on the host; a failed evaluation stops the program and raises `EvaluationError` | E4a | no |
 | a `float64` output declaration with 64-bit floats disabled could be stored as `float32` | the call refuses; set `jax_enable_x64=True` before calling, or declare `float32` | E4a | no |
+| `f(x)` for a plain `Function` inside `jax.vmap` or `jax.grad` returned a `NumericArray` holding traced values, so code wrote `f(x).raw` | it returns the raw value, a JAX array or a record's mapping; write `f(x)` | E4 | yes |

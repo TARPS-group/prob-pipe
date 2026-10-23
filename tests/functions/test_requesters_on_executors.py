@@ -113,8 +113,8 @@ class TestAgreementAcrossExecutors:
             mapped = traceable(x=law)
         with workflow_run(seed=5):
             one_at_a_time = opaque.using(executor="thread")(x=law)
-        assert mapped.provenance.metadata["dispatch"] == "jax"
-        assert one_at_a_time.provenance.metadata["dispatch"] == "thread"
+        assert mapped.provenance.metadata["evaluations"][0]["executor"] == "jax"
+        assert one_at_a_time.provenance.metadata["evaluations"][0]["executor"] == "thread"
         np.testing.assert_allclose(
             np.asarray(mapped.atoms), np.asarray(one_at_a_time.atoms), rtol=1e-6
         )
@@ -305,7 +305,7 @@ class TestTheChoiceOfExecutor:
             result = traceable.using(executor="thread", executor_options={"max_workers": 2})(
                 x=Normal("x", 0.0, 1.0)
             )
-        assert result.provenance.metadata["dispatch"] == "jax"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "jax"
 
     @pytest.mark.parametrize("traceable", [True, False])
     def test_a_plain_call_runs_its_body_on_the_named_executor(self, traceable):
@@ -387,7 +387,7 @@ class TestTheChoiceOfExecutor:
             result = opaque(x=Normal("x", 0.0, 1.0))
         assert len([warning for warning in caught if "has no effect" in str(warning.message)]) == 1
         assert set(recorded_names) == {"shift", "shift_map"}
-        assert result.provenance.metadata["dispatch"] == "prefect"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "prefect"
 
 
 class TestWhereASetCanBeBuilt:

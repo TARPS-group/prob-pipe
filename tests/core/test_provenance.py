@@ -364,7 +364,7 @@ class TestBroadcastingProvenance:
         assert isinstance(result.provenance.parents[0], ParentInfo)
         assert result.provenance.parents[0].parent is wf
         assert result.provenance.parents[1].parent is n
-        assert result.provenance.metadata["dispatch"] == "sequential"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "sequential"
         assert result.provenance.metadata["max_evaluations"] == 20
         assert result.provenance.metadata["func"] == "identity"
         assert result.provenance.metadata["broadcast_args"] == ["x"]
@@ -387,7 +387,7 @@ class TestBroadcastingProvenance:
         assert hasattr(result, "atoms")
         assert result.provenance is not None
         assert result.provenance.operation == "broadcast"
-        assert result.provenance.metadata["dispatch"] == "jax"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "jax"
 
     @pytest.mark.parametrize(
         ("executor", "traceable"), [("sequential", False), ("jax", None)], ids=["sequential", "jax"]

@@ -40,6 +40,7 @@ from typing import Any
 
 from ..core._batch import BatchSpec
 from ..core._dispatch import Feasibility, MethodInfo, ResolutionError
+from ..core._executors import ExecutionReport
 from ..core._spec_base import TermSpec
 from ..core._specs import OutputSpec
 from ..values._binding import FunctionInputRef, input_ref_value, replace_input_refs
@@ -468,6 +469,7 @@ def call_report(
     lifted: tuple[str, ...],
     conversions: Mapping[str, Any],
     candidates: Sequence[Any] = (),
+    execution: ExecutionReport | None = None,
 ) -> CallReport:
     """The CallReport of a call from the check of its points.
 
@@ -475,7 +477,9 @@ def call_report(
     for the method its report names, and states the candidate's exactness; a
     report whose exactness is open states the call approximate. The report lists
     the methods of each registry that a route among *candidates* delegates to
-    once, keyed by the names of the routes that delegate to it.
+    once, keyed by the names of the routes that delegate to it. *execution*
+    reports how a lifted call would run its evaluation points; ``None``
+    reports none.
     """
     routes = tuple(
         MethodInfo(
@@ -513,4 +517,5 @@ def call_report(
         lifted=lifted,
         conversions=MappingProxyType(dict(conversions)),
         methods=MappingProxyType(methods),
+        execution=ExecutionReport() if execution is None else execution,
     )

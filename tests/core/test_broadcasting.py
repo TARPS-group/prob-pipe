@@ -579,7 +579,7 @@ class TestExecutorChoice:
         with workflow_run(seed=30):
             result = w(x=g)
         assert isinstance(result, EmpiricalDistribution)
-        assert result.provenance.metadata["dispatch"] == "jax"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "jax"
 
     def test_a_function_jax_cannot_trace_runs_one_draw_at_a_time(self):
         import scipy.special
@@ -597,7 +597,7 @@ class TestExecutorChoice:
         with workflow_run(seed=31):
             result = w(x=g)
         assert isinstance(result, EmpiricalDistribution)
-        assert result.provenance.metadata["dispatch"] == "sequential"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "sequential"
 
     def test_the_jax_executor_refuses_a_function_jax_cannot_trace_with_clear_error(self):
         import scipy.special
@@ -1019,7 +1019,7 @@ class TestExecutorConsistency:
         )
         mapped = self._run("jax", add_them, a=ed1, b=ed2, max_evaluations=20)
         sequential = self._run("sequential", add_them, a=ed1, b=ed2, max_evaluations=20)
-        assert mapped.provenance.metadata["dispatch"] == "jax"
-        assert sequential.provenance.metadata["dispatch"] == "sequential"
+        assert mapped.provenance.metadata["evaluations"][0]["executor"] == "jax"
+        assert sequential.provenance.metadata["evaluations"][0]["executor"] == "sequential"
         np.testing.assert_array_equal(np.asarray(mapped.atoms), np.asarray(sequential.atoms))
         np.testing.assert_array_equal(np.asarray(mapped.weights), np.asarray(sequential.weights))

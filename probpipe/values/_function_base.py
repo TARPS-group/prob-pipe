@@ -34,6 +34,7 @@ from ..core._call_context import (
     _CallContext,
     _ExecutionChoice,
     _jax_settings_snapshot,
+    _NamedExecutorUse,
     _open_call_context,
     _under_call_context,
     current_call_context,
@@ -922,6 +923,9 @@ def _resolve_execution_choice(
             source="own",
             applies_only_to=None if function_view._options_need_named_executor else function_view,
             named_on=function_view.label,
+            named_executor_use=_NamedExecutorUse(
+                enclosing=parent_context.execution_choice.named_executor_use
+            ),
         )
     inherited_choice = parent_context.execution_choice
     if inherited_choice.names_executor():
@@ -1706,8 +1710,8 @@ class Function(TrackedTerm, Annotated):
             the swept levels. Under the ``raw`` control the result is its raw
             form, as its ``raw`` gives it. Inside a JAX transformation, such as
             ``jax.jit``, ``jax.vmap``, or ``jax.grad``, a plain call returns
-            its result's raw form (II.4), while an operation, a broadcast, and
-            a sweep return their terms.
+            its result's raw form (II.4), while an operation and a sweep
+            return their terms.
 
         Raises
         ------

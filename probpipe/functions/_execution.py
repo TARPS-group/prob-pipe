@@ -31,6 +31,7 @@ except ImportError:
 
 from ..core._call_context import (
     _AUTOMATIC_SELECTION,
+    _jax_tracing_active,
     _jax_transformation_active,
     current_call_context,
 )
@@ -68,12 +69,13 @@ from ._plan import StochasticPlan
 __all__ = (
     "evaluate_plain_call",
     "evaluate_requested_points",
-    "executor_that_ran",
     "issue_evaluation_points",
     "lifted_evaluation_point_segment",
     "plain_call_point_segment",
     "preflight_prefect_route",
+    "recorded_evaluations",
     "sweep_cell_point_segment",
+    "warn_if_named_executor_ran_nothing",
 )
 
 #: The orchestration modes in which Prefect runs a call's evaluation points.
@@ -181,7 +183,10 @@ def evaluate_plain_call(
     if not side_effects_forbidden and workflow_kind in _PREFECT_WORKFLOW_KINDS:
         evaluation_outcomes = _prefect_outcomes(evaluation_points, workflow_kind, function_label)
     else:
-        names_jax = current_call_context().execution_choice.executor_name == "jax"
+        execution_choice = current_call_context().execution_choice
+        names_jax = execution_choice.executor_name == "jax"
+        if names_jax and execution_choice.named_executor_use is not None:
+            execution_choice.named_executor_use.note_ran_a_set()
         in_calling_thread = side_effects_forbidden or names_jax or _jax_transformation_active()
         evaluation_outcomes = _evaluated_outcomes(
             evaluation_points,
@@ -194,24 +199,41 @@ def evaluate_plain_call(
     return body_result
 
 
-def executor_that_ran(evaluation_points: EvaluationPoints) -> str | None:
-    """The name of the executor that ran *evaluation_points*, as the call's evaluation log records it.
+def recorded_evaluations(*, origin: str, set_ordinal: int | None = None) -> list[dict[str, Any]]:
+    """The sets of evaluation points of *origin* that the running call ran, as its provenance records them.
 
-    ``None`` for a call that keeps no log, such as a ``check``, or for a set
-    that has not run.
+    Each set is read from the call's evaluation log, in the order it ran.
+
+    Parameters
+    ----------
+    origin : str
+        The callable whose sets are recorded.
+    set_ordinal : int or None, optional
+        The one set to record, by its ordinal among the call's sets of
+        *origin*; ``None`` records every set of *origin*.
+
+    Returns
+    -------
+    list of dict
+        One entry per set: the ``callable``, the ``executor`` that ran it,
+        the ``executor_options`` it received, the ``num_evaluation_points``,
+        and the ``failed_point_indices``. Empty for a call that keeps no log.
     """
     evaluation_log = current_call_context().evaluation_log
     if evaluation_log is None:
-        return None
-    return next(
-        (
-            set_record.executor_name
-            for set_record in reversed(evaluation_log.set_records)
-            if set_record.origin == evaluation_points.origin
-            and set_record.set_ordinal == evaluation_points._set_ordinal
-        ),
-        None,
-    )
+        return []
+    return [
+        {
+            "callable": set_record.origin,
+            "executor": set_record.executor_name,
+            "executor_options": dict(set_record.executor_options),
+            "num_evaluation_points": set_record.num_evaluation_points,
+            "failed_point_indices": list(set_record.failed_point_indices),
+        }
+        for set_record in evaluation_log.set_records
+        if set_record.origin == origin
+        and (set_ordinal is None or set_record.set_ordinal == set_ordinal)
+    ]
 
 
 def preflight_prefect_route(
@@ -273,8 +295,13 @@ def _warn_executor_under_prefect(workflow_kind: WorkflowKind, function_label: st
     """Warn, once per call, that the executor a call names runs nothing, since Prefect runs its evaluations."""
     call_context = current_call_context()
     execution_choice = call_context.execution_choice
+    named_executor_use = execution_choice.named_executor_use
     if execution_choice.source != "own":
+        if named_executor_use is not None:
+            named_executor_use.note_ran_elsewhere()
         return
+    if named_executor_use is not None:
+        named_executor_use.note_warned()
     evaluation_log = call_context.evaluation_log
     if evaluation_log is not None and not evaluation_log.is_first_warning(
         ("executor under Prefect", function_label)
@@ -292,6 +319,48 @@ def _warn_executor_under_prefect(workflow_kind: WorkflowKind, function_label: st
     warnings.warn(
         f"{named_control} on {function_label!r} has no effect: workflow_kind="
         f"WorkflowKind.{workflow_kind.name} runs its evaluations as Prefect tasks. {fix}",
+        UserWarning,
+        stacklevel=2,
+        skip_file_prefixes=_WARNING_SKIP_PREFIXES,
+    )
+
+
+def warn_if_named_executor_ran_nothing() -> None:
+    """Warn that the executor the running call named ran no set of evaluation points, in it or in any call under it.
+
+    Only a call that named its executor itself warns, when it succeeds. It
+    does not warn when its evaluations ran elsewhere, such as on an executor
+    an inner call named itself or as Prefect tasks, or when a warning about
+    the executor was already given, such as a fallback's. A call made inside
+    a route probe or inside a body that JAX maps runs under automatic
+    selection, so it does not warn. A call opened while JAX stages a program
+    only stages its evaluations, which run when the program runs, so it does
+    not warn either. When ``jax`` compiled the call's code in place of the
+    executor, the warning says so.
+    """
+    call_context = current_call_context()
+    execution_choice = call_context.execution_choice
+    named_executor_use = execution_choice.named_executor_use
+    executor_name = execution_choice.executor_name
+    if (
+        execution_choice.source != "own"
+        or executor_name is None
+        or named_executor_use is None
+        or named_executor_use.ran_a_set
+        or named_executor_use.ran_elsewhere
+        or named_executor_use.warned
+        or _context._workflow_side_effects_forbidden()
+        or _jax_tracing_active()
+    ):
+        return
+    why_nothing_ran = (
+        "every callable in the call is traceable and was compiled by jax"
+        if named_executor_use.jax_compiled_a_set
+        else "the call evaluated no user callable"
+    )
+    warnings.warn(
+        f"{call_context.function_label} named executor={executor_name!r}, but "
+        f"{why_nothing_ran}, so {executor_name!r} ran nothing",
         UserWarning,
         stacklevel=2,
         skip_file_prefixes=_WARNING_SKIP_PREFIXES,
