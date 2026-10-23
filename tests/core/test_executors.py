@@ -67,6 +67,10 @@ def _traceable_sum(x, scale):
     return scale * jnp.sum(x)
 
 
+def _traceable_sine_sum(x, scale):
+    return scale * jnp.sum(jnp.sin(0.37 * x))
+
+
 def _simulate_with_a_nested_draw(x, scale):
     noise = np.asarray(sample(Normal("noise", 0.0, 1.0)))
     return scale * np.asarray(x) + noise
@@ -234,7 +238,7 @@ class TestInheritingAnExecutor:
             assert inner.execution_choice.executor_name == "thread"
             assert inner.execution_choice.source == "inherited"
 
-    def test_an_executor_set_on_the_function_wins_and_takes_only_its_own_options(self):
+    def test_options_without_an_executor_make_the_choice_the_functions_own(self):
         outer = requester(executor="thread", executor_options={"max_workers": 2})
         inner = requester(executor_options={"chunk_size": 3})
         with requester_call(outer), requester_call(inner) as inner_context:
@@ -349,9 +353,9 @@ class TestAgreement:
             np.testing.assert_array_equal(output, reference_output)
 
     def test_jax_agrees_with_sequential_within_tolerance(self):
-        jax_outputs, _ = _run_set(_traceable_sum, claims=ExecutionClaims(traceable=True))
+        jax_outputs, _ = _run_set(_traceable_sine_sum, claims=ExecutionClaims(traceable=True))
         sequential_outputs, _ = _run_set(
-            _traceable_sum,
+            _traceable_sine_sum,
             claims=ExecutionClaims(traceable=True),
             requester_controls={"executor": "sequential"},
         )
@@ -442,10 +446,17 @@ class TestTheCallContextInWorkers:
 
     def test_a_process_pool_is_reused_by_calls_under_equal_jax_settings(self):
         controls = {"executor": "process", "executor_options": {"max_workers": 2}}
+        pools_before = dict(_PROCESS_POOLS)
         _run_set(_opaque_sum, requester_controls=controls)
+        new_pool_keys = set(_PROCESS_POOLS) - set(pools_before)
         pools_after_one_call = dict(_PROCESS_POOLS)
         _run_set(_opaque_sum, requester_controls=controls)
-        assert pools_after_one_call == _PROCESS_POOLS
+        assert pools_after_one_call, "the first call stores no process pool"
+        assert len(new_pool_keys) <= 1
+        assert set(_PROCESS_POOLS) == set(pools_after_one_call)
+        assert all(
+            _PROCESS_POOLS[pool_key] is pool for pool_key, pool in pools_after_one_call.items()
+        )
 
 
 class TestFailures:

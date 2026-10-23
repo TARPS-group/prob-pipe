@@ -291,8 +291,15 @@ def test_i15_a_kernels_sides_are_disjoint():
 
 
 def test_i15_a_merges_sides_are_disjoint():
-    model = _lik() & _prior()
-    assert not set(getattr(model, "given_spec", {})) & set(model.event_spec.outputs)
+    scaled = conditional_distribution(
+        lambda mu, sigma: Normal("y", mu, sigma),
+        given_spec={"mu": _REAL, "sigma": _REAL},
+        label="scaled",
+    )
+    model = scaled & Normal("mu", 0.0, 1.0)
+    assert set(model.given_spec) == {"sigma"}
+    assert set(model.event_spec.outputs) == {"y", "mu"}
+    assert not set(model.given_spec) & set(model.event_spec.outputs)
 
 
 @pytest.mark.parametrize(
@@ -342,17 +349,34 @@ def test_i18_rename_takes_the_same_paths():
 
 
 def test_i19_a_merge_is_associative():
-    """I19, which holds for ``&``."""
-    a, b, c = Normal("a", 0.0, 1.0), Normal("b", 1.0, 2.0), Normal("c", 2.0, 3.0)
-    left, right = ((a & b) & c), (a & (b & c))
+    """I19, which holds for ``&``: a chain y | x | w merges to one law however it is grouped."""
+    y_given_x = conditional_distribution(
+        lambda x: Normal("y", x, 1.0), given_spec={"x": _REAL}, label="y_given_x"
+    )
+    x_given_w = conditional_distribution(
+        lambda w: Normal("x", w, 1.0), given_spec={"w": _REAL}, label="x_given_w"
+    )
+    w = Normal("w", 0.0, 1.0)
+    left, right = ((y_given_x & x_given_w) & w), (y_given_x & (x_given_w & w))
     assert left.event_spec == right.event_spec
-    for name in ("a", "b", "c"):
-        np.testing.assert_allclose(variance(left)[name].raw, variance(right)[name].raw)
+    left_draws, right_draws = _sample(left, sample_shape=4000), _sample(right, sample_shape=4000)
+    for name in ("y", "x", "w"):
+        np.testing.assert_array_equal(left_draws[name].raw, right_draws[name].raw)
+    # y - x is the noise of y given x, so its variance is 1; were y drawn apart
+    # from x, it would be the 3 of y's and x's variances added.
+    np.testing.assert_allclose(
+        np.var(np.asarray(left_draws["y"].raw - left_draws["x"].raw)), 1.0, atol=0.15
+    )
 
 
 def test_i20_sampling_commutes_with_merge():
-    merged = Normal("x", 0.0, 1.0) & Normal("y", 0.0, 2.0)
+    """Each factor of a merge draws with its own key, as the factor sampled alone does."""
+    merged = Normal("x", 0.0, 1.0) & Normal("y", 0.0, 1.0)
     assert _sample(merged).keys() == ("x", "y")
+    draws = _sample(merged, sample_shape=4000)
+    x_draws, y_draws = np.asarray(draws["x"].raw), np.asarray(draws["y"].raw)
+    assert not np.array_equal(x_draws, y_draws)
+    assert abs(np.corrcoef(x_draws, y_draws)[0, 1]) < 0.1
 
 
 def test_i21_merge_commutes_with_renaming():

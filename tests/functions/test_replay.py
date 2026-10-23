@@ -1271,6 +1271,45 @@ class TestReplayPreflight:
         ):
             sample(candidate_root["y"])
 
+    @pytest.mark.parametrize("recording_executor", ["thread", "process"])
+    def test_a_call_recorded_on_another_executor_replays_under_sequential(self, recording_executor):
+        def replayable_on(executor):
+            return Function(
+                replayable_identity,
+                label="replayable_identity",
+                max_evaluations=9,
+                traceable=False,
+                executor=executor,
+                output_spec=OutputSpec(replayable_identity=None),
+            )
+
+        with workflow_run(seed=37):
+            original = replayable_on(recording_executor)(value=Normal("value", loc=0.0, scale=1.0))
+
+        with replay_run(original.provenance):
+            replayed = replayable_on("sequential")(value=Normal("value", loc=0.0, scale=1.0))
+
+        np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
+        assert replayed.provenance.diagnostics["replay"]["execution_drift"] is True
+
+    def test_a_draw_made_on_a_thread_worker_replays_outside_any_call(self):
+        captured = []
+
+        def outer(value):
+            result = sample(Normal("value", loc=value, scale=1.0))
+            captured.append(result)
+            return result
+
+        workflow = Function(outer, label="outer", traceable=False, executor="thread")
+        with workflow_run(seed=17):
+            workflow(value=0.0)
+        nested = captured[0]
+
+        with replay_run(nested.provenance):
+            replayed = sample(Normal("value", loc=0.0, scale=1.0))
+
+        np.testing.assert_array_equal(_sample_value(replayed), _sample_value(nested))
+
     def test_route_drift_is_diagnostic_and_preserves_values(self):
         original_workflow = Function(
             replayable_identity,
@@ -1558,6 +1597,24 @@ class TestReplayEventRegistry:
         assert claim.evaluation_point_token is None
         assert claim.attempt_tokens == set()
         assert claim.successful_attempt_token is None
+
+    def test_a_failed_parent_commit_leaves_prepared_replay_claims_unchanged(self):
+        replay_state = _replay._validate_provenance(_draw().provenance)
+        effect = replay_state.expected_events[0].effect_claim()
+        attempt = EvaluationPointAttempt.create(EvaluationPointToken.create())
+        with (
+            pytest.raises(RuntimeError, match="parent occurrence"),
+            replay_state._effect_batch_scope(
+                (effect,), successful_effects=(effect,), attempt=attempt
+            ),
+        ):
+            raise RuntimeError("parent occurrence changed")
+        replay_claim = replay_state.claims[replay_state.expected_events[0].encoded_identity]
+        assert replay_claim.evaluation_point_token is None
+        assert replay_claim.attempt_tokens == set()
+        assert replay_claim.successful_attempt_token is None
+        replay_state._commit_effect_batch((effect,), successful_effects=(effect,), attempt=attempt)
+        assert replay_claim.successful_attempt_token == attempt.attempt_token
 
     def test_remote_replay_scope_requires_its_complete_namespace(self):
         state = _replay._validate_provenance(_draw().provenance)

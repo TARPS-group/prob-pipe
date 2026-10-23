@@ -75,6 +75,11 @@ class _StochasticLedger:
             self.next_ordinal += 1
             return ordinal
 
+    def peek(self) -> int:
+        """The ordinal ``commit`` would return next, committing nothing."""
+        with self.lock:
+            return self.next_ordinal
+
 
 @dataclass(slots=True)
 class _WorkflowFrameState:
@@ -402,26 +407,38 @@ def _commit_stochastic_invocation_in_frame(
     )
 
 
-def _materialize_path(frame: _WorkflowFrame) -> _RandomEventPath:
-    _assert_workflow_frame_open(frame)
-    path_prefix = frame.state.path_prefix
-    if path_prefix is not None:
-        return path_prefix
-    if frame.parent is None:  # pragma: no cover - guarded by frame construction
-        raise RuntimeError("root workflow frame has no occurrence path")
+def _planned_stochastic_invocation_in_frame(
+    frame: _WorkflowFrame,
+    occurrence_kind: Literal["invocation", "operation"],
+) -> _WorkflowInvocation:
+    """The invocation ``_commit_stochastic_invocation_in_frame`` would commit next, committing nothing.
 
-    with frame.state.lock:
-        if frame.state.path_prefix is None:
-            parent_path = _materialize_path(frame.parent)
-            if frame.state.point_segment is not None:
-                frame.state.path_prefix = (
-                    *parent_path,
-                    frame.state.point_segment,
-                )
-            else:
-                scope_ordinal = frame.parent.ledger.commit()
-                frame.state.path_prefix = (*parent_path, ("scope", scope_ordinal))
-        return frame.state.path_prefix
+    The plan equals the committed invocation as long as no other occurrence
+    commits first in *frame*, or in an ancestor whose scope *frame* has not yet
+    materialized.
+    """
+    return _WorkflowInvocation(
+        frame=frame,
+        occurrence_path=(*_planned_path(frame), (occurrence_kind, frame.ledger.peek())),
+    )
+
+
+def _planned_path(frame: _WorkflowFrame) -> _RandomEventPath:
+    """The path ``_materialize_path`` would give *frame*, committing no scope ordinal."""
+    return _workflow_frame_path(frame, commit=False)
+
+
+def _planned_descendant_path(
+    frame: _WorkflowFrame,
+    ancestor: _WorkflowFrame,
+) -> _RandomEventPath:
+    """The path ``_materialize_descendant_path`` would give, committing no scope ordinal."""
+    return _descendant_workflow_path(frame, ancestor, commit=False)
+
+
+def _materialize_path(frame: _WorkflowFrame) -> _RandomEventPath:
+    """The path of *frame*, committing each unmaterialized scope on the way."""
+    return _workflow_frame_path(frame, commit=True)
 
 
 def _materialize_descendant_path(
@@ -429,14 +446,43 @@ def _materialize_descendant_path(
     ancestor: _WorkflowFrame,
 ) -> _RandomEventPath:
     """Return a lazily materialized path relative to one evaluation point ancestor."""
-    cursor = frame
-    while cursor is not ancestor:
-        if cursor.parent is None:
-            raise RuntimeError("workflow frame is not below its evaluation point frame")
-        cursor = cursor.parent
+    return _descendant_workflow_path(frame, ancestor, commit=True)
 
-    ancestor_path = _materialize_path(ancestor)
-    descendant_path = _materialize_path(frame)
+
+def _workflow_frame_path(frame: _WorkflowFrame, *, commit: bool) -> _RandomEventPath:
+    """The committed or planned path of *frame*, using the same scope ordinals."""
+    _assert_workflow_frame_open(frame)
+    path_prefix = frame.state.path_prefix
+    if path_prefix is not None:
+        return path_prefix
+    if frame.parent is None:  # pragma: no cover - guarded by frame construction
+        raise RuntimeError("root workflow frame has no occurrence path")
+    with frame.state.lock:
+        if frame.state.path_prefix is not None:
+            return frame.state.path_prefix
+        parent_path = _workflow_frame_path(frame.parent, commit=commit)
+        point_segment = frame.state.point_segment
+        if point_segment is not None:
+            path_prefix = (*parent_path, point_segment)
+        else:
+            scope_ordinal = frame.parent.ledger.commit() if commit else frame.parent.ledger.peek()
+            path_prefix = (*parent_path, ("scope", scope_ordinal))
+        if commit:
+            frame.state.path_prefix = path_prefix
+        return path_prefix
+
+
+def _descendant_workflow_path(
+    frame: _WorkflowFrame, ancestor: _WorkflowFrame, *, commit: bool
+) -> _RandomEventPath:
+    """The committed or planned path from *ancestor* to its descendant *frame*."""
+    ancestor_frame = frame
+    while ancestor_frame is not ancestor:
+        if ancestor_frame.parent is None:
+            raise RuntimeError("workflow frame is not below its evaluation point frame")
+        ancestor_frame = ancestor_frame.parent
+    ancestor_path = _workflow_frame_path(ancestor, commit=commit)
+    descendant_path = _workflow_frame_path(frame, commit=commit)
     if descendant_path[: len(ancestor_path)] != ancestor_path:
         raise RuntimeError("workflow descendant path does not extend its evaluation point ancestor")
     return descendant_path[len(ancestor_path) :]
