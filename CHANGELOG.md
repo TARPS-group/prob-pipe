@@ -2069,6 +2069,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   # after:  ValueError: cannot call rename() to move 'x' to 'a//b', since the path 'a//b' has an empty name. ...
   ```
 
+- **A lifted call's provenance records its sets of evaluation points under
+  `"evaluations"`, which replaces `"dispatch"`.** Each entry names the
+  callable, the executor that ran it, the options that executor received, the
+  number of evaluation points, and the point indices of any that failed. A
+  sweep's provenance records its sets the same way.
+
+  ```python
+  draws = forward.using(executor="thread", executor_options={"max_workers": 2})(prior)
+  draws.provenance.metadata["dispatch"]                       # before: 'thread'
+  draws.provenance.metadata["evaluations"][0]["executor"]     # after: 'thread'
+  ```
+
 ### Added
 
 - **Input declarations read four sources.** `InputSpec`, a mapping, a
@@ -3261,6 +3273,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `log_prob(d, {"b": 2.0, "a": 1.0})` is arranged in `d`'s event order
   before inferring its spec, as are the other density operations and nested
   record values. Constructed records still have to conform in order.
+
+- **`check` reports how a call will run its evaluation points.**
+  `CallReport.execution` is an `ExecutionReport` holding one
+  `EvaluationReport` per callable a lifted call or a sweep evaluates: the
+  number of evaluation points, whether the callable traces and whether its
+  claim or its probe says so, the executor that will run them, and the
+  executors it rejected with their reasons. The report's repr shows it only
+  when a callable is opaque or runs on an executor other than `jax`.
+
+  ```python
+  forward.using(executor="thread").check(prior).execution.evaluations[0].executor
+  # MethodInfo(True, method_name='thread', exact=True)
+  ```
+
+- **A call that names an executor which runs nothing warns.** For example,
+  `growth.using(executor="thread")(prior)` over a function JAX can trace warns
+  `growth named executor='thread', but every callable in the call is traceable
+  and was compiled by jax, so 'thread' ran nothing`.
+
+- **A failed `jax.vmap` states its error once.** When one exception fails
+  every evaluation point that `jax` maps together, `EvaluationError` reads
+  `evaluation of 'growth' failed at all 8 draws, which jax.vmap evaluates
+  together: ValueError: r must be positive`, and `error.failures` still lists
+  each evaluation point.
 
 ### Changed
 
@@ -4982,6 +5018,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each `config` setting is now documented as static or inert: a static
   setting is part of a compiled JAX program's cache key, and an inert one,
   which changes no computed value, is not.
+
+- **A record keeps its declared field order through a sweep or a lift.** A
+  function that declares a record input received the record's fields in
+  alphabetical order under a `jax` sweep or a lift, and refused it, because
+  JAX maps a dict with its keys sorted. A lifted function that returns a
+  dict, and a law that `distribution(sample=...)` builds from a sampler that
+  returns a dict, had their fields sorted in the same way. Each now keeps the
+  declared order, or the order the function wrote:
+
+  ```python
+  spec = NumericRecordSpec(r=NumericArraySpec(()), m=NumericArraySpec(()))
+
+  @function(input_spec=InputSpec(x=spec))
+  def difference(x):
+      return x["r"] - x["m"]
+
+  batch = NumericRecordBatch({"r": jnp.arange(3.0), "m": jnp.ones(3)}, level_names=("draw",))
+  difference(batch)  # before: EvaluationError, after: [-1. 0. 1.]
+  ```
 
 ### Removed
 

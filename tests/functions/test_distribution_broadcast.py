@@ -368,7 +368,15 @@ class TestExecuteDistributionBroadcast:
         assert all(offset == 2.0 for _x, offset in received)
         assert all(not isinstance(x, Normal) for x, _offset in received)
         assert result.provenance.metadata == {
-            "dispatch": "thread",
+            "evaluations": [
+                {
+                    "callable": "shift",
+                    "executor": "thread",
+                    "executor_options": {"max_workers": 2},
+                    "num_evaluation_points": 5,
+                    "failed_point_indices": [],
+                }
+            ],
             "orchestrate": "off",
             "max_evaluations": 5,
             "func": "shift",
@@ -476,7 +484,7 @@ class TestExecuteDistributionBroadcast:
         )
 
         assert asked == [(_ref("x"),)]
-        assert result.provenance.metadata["dispatch"] == "jax"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "jax"
         assert result.num_atoms == 6
         np.testing.assert_allclose(_drawn(result, "double"), _drawn(result, "x") * 2.0)
 
@@ -1310,7 +1318,7 @@ class TestTheProbeModelsItsExecutorsTransform:
             result = self._run(self._returns_a_batch(), dist)
 
         assert not any("not JAX-traceable" in record.message for record in caplog.records)
-        assert result.provenance.metadata["dispatch"] == "jax"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "jax"
         assert result.atoms.level_names[1:] == ("k",)
         assert result.atoms.batch_shape == (8, 3)
 
@@ -1508,7 +1516,7 @@ class TestTheProbeModelsItsExecutorsTransform:
             mapped = self._run(totals, law)
 
         assert not any("not JAX-traceable" in record.message for record in caplog.records)
-        assert mapped.provenance.metadata["dispatch"] == "jax"
+        assert mapped.provenance.metadata["evaluations"][0]["executor"] == "jax"
         np.testing.assert_allclose(
             np.asarray(mapped.atoms), np.asarray(self._run(sequential, law).atoms)
         )
@@ -1652,7 +1660,7 @@ class TestAnEnumerationRunsInOneMappedCall:
         assert len(calls) == thousand < 5
         assert result.num_atoms == 1000
         assert result.provenance.metadata["route"] == "empirical_enumeration"
-        assert result.provenance.metadata["dispatch"] == "jax"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "jax"
 
     @pytest.mark.parametrize("make", ["_records", "_arrays"])
     def test_the_atoms_and_weights_equal_the_sequential_loops(self, make):
@@ -1757,7 +1765,7 @@ class TestAnEnumerationRunsInOneMappedCall:
 
         assert len(calls) < max_evaluations
         assert result.provenance.metadata["route"] == route
-        assert result.provenance.metadata["dispatch"] == "jax"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "jax"
 
     def test_a_nested_lift_maps_the_enumeration_in_each_cell(self):
         theta = self._arrays(3, jnp.array([0.2, 0.3, 0.5]))
@@ -1832,7 +1840,7 @@ class TestAnEnumerationRunsInOneMappedCall:
         atoms = law._atoms_at(np.arange(3))
         assert len(calls) == 3
         assert all(call is atom for call, atom in zip(calls, atoms, strict=True))
-        assert result.provenance.metadata["dispatch"] == "sequential"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "sequential"
         np.testing.assert_array_equal(np.asarray(result.atoms), np.ones(3))
 
     def test_a_body_that_does_not_trace_enumerates_by_the_loop(self):
@@ -1853,7 +1861,7 @@ class TestAnEnumerationRunsInOneMappedCall:
             output_spec=OutputSpec(f=None),
         )(theta)
 
-        assert result.provenance.metadata["dispatch"] == "sequential"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "sequential"
         np.testing.assert_array_equal(np.asarray(result.atoms), np.asarray(sequential.atoms))
         np.testing.assert_array_equal(np.asarray(result.weights), np.asarray(sequential.weights))
 

@@ -195,13 +195,16 @@ class EvaluationPoints:
         point_noun: str,
         untraceable_reason: str | None = None,
         point_segment: Callable[[int], Any] | None = None,
+        num_evaluation_points: int | None = None,
     ) -> None:
         """Set up the set, as :meth:`__init__` and :func:`_requested_evaluation_points` build it.
 
         *untraceable_reason* says why JAX cannot trace the callable, for the
         message of an executor that refuses the set; *point_segment* gives the
         place in the workflow of the evaluation point at a point index,
-        ``None`` giving each the default place of its set.
+        ``None`` giving each the default place of its set; and
+        *num_evaluation_points* gives the number of evaluation points of a
+        set without varying arguments, ``None`` reading it from *varying*.
         """
         _check_output_float_width(output_spec, origin)
         self.origin = origin
@@ -211,21 +214,33 @@ class EvaluationPoints:
         self._traceable = claims.traceable if claims.traceable is not None else traceable
         self._untraceable_reason = untraceable_reason
         self._varying = MappingProxyType(dict(varying))
-        self._num_evaluation_points = _num_rows(self._varying, origin)
+        self._num_evaluation_points = (
+            _num_rows(self._varying, origin)
+            if num_evaluation_points is None
+            else num_evaluation_points
+        )
         self._shared_payload = SharedPayload(fn, MappingProxyType(dict(shared or {})))
         self._call_context = current_call_context()
         evaluation_log = self._call_context.evaluation_log
         self._set_ordinal, set_position = (
             (0, 0) if evaluation_log is None else evaluation_log.next_set_numbers(origin)
         )
-        self._point_scopes = (
-            _UnscopedEvaluationPoints()
-            if self._call_context.forbids_workflow_randomness
-            else _EVALUATION_POINT_SCOPES_FACTORY(
-                origin, self._num_evaluation_points, set_position, point_segment
-            )
-        )
+        self._point_scopes = self._new_point_scopes(set_position, point_segment)
         self._shipping_feasibility: Feasibility | None = None
+
+    def _new_point_scopes(
+        self, set_position: int, point_segment: Callable[[int], Any] | None
+    ) -> _EvaluationPointScopes:
+        """The workflow scopes of the evaluation points, which give a draw inside one its key.
+
+        An embedded evaluation point may not draw workflow randomness, so its
+        set installs no scopes.
+        """
+        if self._call_context.forbids_workflow_randomness:
+            return _UnscopedEvaluationPoints()
+        return _EVALUATION_POINT_SCOPES_FACTORY(
+            self.origin, self._num_evaluation_points, set_position, point_segment
+        )
 
     def __len__(self) -> int:
         """The number of evaluation points."""
@@ -788,12 +803,7 @@ class EvaluationError(RuntimeError):
         self.failures = tuple(sorted(failures, key=lambda failure: failure.point_index))
         self.outputs = tuple(outputs)
         listed_failures = "; ".join(
-            f"{point_noun} {failure.point_index}: "
-            + (
-                f"{failure.error_type}: {failure.message}"
-                if failure.error_type
-                else failure.message
-            )
+            f"{point_noun} {failure.point_index}: {_failure_cause(failure)}"
             for failure in self.failures[:_LISTED_FAILURES]
         )
         unlisted_count = len(self.failures) - _LISTED_FAILURES
@@ -803,6 +813,35 @@ class EvaluationError(RuntimeError):
             f"evaluation of {origin!r} failed at {len(self.failures)} of {len(self.outputs)} "
             f"evaluation points: {listed_failures}"
         )
+
+    @classmethod
+    def _of_points_evaluated_together(
+        cls,
+        failures: Iterable[EvaluationFailure],
+        outputs: Iterable[Any],
+        *,
+        origin: str,
+        point_noun: str,
+        evaluated_by: str,
+    ) -> EvaluationError:
+        """The error of a set whose every evaluation point *evaluated_by* failed with one exception.
+
+        *evaluated_by* computes the evaluation points together, as
+        ``jax.vmap`` does, so its message states the one failure once.
+        """
+        evaluation_error = cls(failures, outputs, origin=origin, point_noun=point_noun)
+        evaluation_error.args = (
+            f"evaluation of {origin!r} failed at all "
+            f"{count(len(evaluation_error.outputs), point_noun)}, which {evaluated_by} evaluates "
+            "together: "
+            f"{_failure_cause(evaluation_error.failures[0])}",
+        )
+        return evaluation_error
+
+
+def _failure_cause(failure: EvaluationFailure) -> str:
+    """What made *failure*'s evaluation point fail: its error's type and message."""
+    return f"{failure.error_type}: {failure.message}" if failure.error_type else failure.message
 
 
 # ---------------------------------------------------------------------------
@@ -1321,4 +1360,90 @@ def _warn_lossy_casts(
             "or declare the dtype the callable returns",
             UserWarning,
             stacklevel=2,
+        )
+
+
+class _DescribedEvaluationPoints(EvaluationPoints):
+    """The set of evaluation points a requester would ask for, as ``check`` describes it without drawing.
+
+    It holds the callable, the arguments every evaluation point shares,
+    whether JAX can trace the callable, and the number of evaluation points.
+    It holds no varying arguments, which the call draws when it runs. An
+    executor's ``check`` reads it as it reads the set the call builds, and its
+    shipping check pickles what it holds. It never runs, so it has no chunks.
+
+    Parameters
+    ----------
+    fn : callable
+        The callable of each evaluation point.
+    num_evaluation_points : int
+        The number of evaluation points the call would ask for.
+    shared : Mapping of str to Any
+        The arguments every evaluation point would receive unchanged.
+    origin : str
+        The name of the callable, for reports.
+    traceable : bool
+        Whether JAX can trace *fn* over the evaluation points.
+    untraceable_reason : str or None
+        Why JAX cannot trace *fn*, when it cannot.
+    point_noun : str
+        The word for one evaluation point in messages.
+    """
+
+    def __init__(
+        self,
+        fn: Callable[..., Any],
+        /,
+        *,
+        num_evaluation_points: int,
+        shared: Mapping[str, Any],
+        origin: str,
+        traceable: bool,
+        untraceable_reason: str | None,
+        point_noun: str,
+    ) -> None:
+        self._set_up(
+            fn,
+            varying={},
+            shared=shared,
+            origin=origin,
+            output_spec=None,
+            claims=NO_CLAIMS,
+            traceable=traceable,
+            point_noun=point_noun,
+            untraceable_reason=untraceable_reason,
+            num_evaluation_points=num_evaluation_points,
+        )
+
+    def _new_point_scopes(
+        self, set_position: int, point_segment: Callable[[int], Any] | None
+    ) -> _EvaluationPointScopes:
+        """No scopes, since the set never runs."""
+        return _UnscopedEvaluationPoints()
+
+    def chunks(
+        self, *, chunk_size: int | None = None, num_chunks: int | None = None
+    ) -> list[EvaluationChunk]:
+        """Refuse to split the set, which ``check`` describes and never runs.
+
+        Parameters
+        ----------
+        chunk_size : int, optional
+            Ignored.
+        num_chunks : int, optional
+            Ignored.
+
+        Returns
+        -------
+        list of EvaluationChunk
+            Never returns.
+
+        Raises
+        ------
+        RuntimeError
+            Always.
+        """
+        raise RuntimeError(
+            f"the evaluation points of {self.origin!r} that check describes hold no arguments "
+            "and do not run"
         )
