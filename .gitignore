@@ -147,3 +147,6 @@ pyright-output.txt
 # Claude Code session scratch (plans, ephemeral worktrees)
 .claude/plans/
 .claude/worktrees/
+
+# Workspaces created by the /design-pipeline Claude skill
+probpipe-design/

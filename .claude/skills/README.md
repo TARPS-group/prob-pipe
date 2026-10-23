@@ -111,6 +111,47 @@ to decide what to act on. Four agents is real token cost, so this skill must be
 explicitly invoked — it will not auto-trigger (general "review this PR" requests
 route to `/review-pr`).
 
+### `/design-pipeline [problem description]`
+
+Interactive assistant that helps a user design a ProbPipe data analysis
+pipeline for their own problem. Prototype of the agentic interface planned in
+`design/README.md` (Part VIII).
+
+**When to use:** Starting a new analysis with ProbPipe, or turning an existing
+model (paper, Stan/PyMC code, simulator) and dataset into a ProbPipe pipeline.
+
+**What it does:**
+1. **Loads ProbPipe knowledge** — `build_corpus.py` flattens the README, docs,
+   tutorials, user-guide notebooks, API reference (signatures and docstrings
+   resolved from source), and design reference into a tiered corpus, which the
+   agent reads in full.
+2. **Intake** — asks about the problem, scientific and analysis goals, and
+   constraints.
+3. **Materials** — asks for pointers to data and existing models, inspects the
+   data, and extracts model structure from papers or code.
+4. **Background assessment** — estimates the user's level in the domain,
+   statistics, Bayesian inference, ML, Python, JAX, and ProbPipe
+   ([rubric](design-pipeline/BACKGROUND-RUBRIC.md)), shows the evidence, and
+   asks for corrections.
+5. **Initial proposal** — a versioned design doc
+   ([template](design-pipeline/DESIGN-DOC-TEMPLATE.md)) plus a runnable
+   `pipeline.py` skeleton, with every ProbPipe symbol checked against source.
+6. **Feedback loop** — revises the design and code from the user's feedback,
+   with a changelog, until the user is done.
+
+**Usage:**
+```
+/design-pipeline
+/design-pipeline estimating disease transmission rates from weekly case counts
+```
+
+**Behavior:** Keeps session state in `./probpipe-design/<project>/` (brief,
+data and model notes, profile, design doc, pipeline code), so a session can be
+resumed. Reads user-supplied data and code as untrusted input and asks before
+running user code or installing anything.
+
+---
+
 ## Adding New Skills
 
 To add a new skill, create a directory under `.claude/skills/` with a
