@@ -2072,6 +2072,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   draws.provenance.metadata["evaluations"][0]["executor"]     # after: 'thread'
   ```
 
+- **Inside a JAX transformation, a plain `Function` call returns its raw
+  value.** Under `jax.jit`, `jax.vmap`, or `jax.grad`, `f(x)` returns the raw
+  form of its result, such as a JAX array or a record's mapping, where it
+  returned a `NumericArray` or a `NumericRecord` holding traced values. The
+  same code returns something else, and `jax.grad` of a plain call now works:
+
+  ```python
+  jax.vmap(lambda x: f(x))(xs)
+  # before: NumericArray holding the mapped values
+  # after:  the JAX array of the mapped values
+  jax.grad(lambda x: f(x))(1.0)
+  # before: ValueError, since the NumericArray is not a JAX array
+  # after:  the derivative of f at 1.0
+  ```
+
+  Replace `f(x).raw` inside a transformed function with `f(x)`. An operation
+  and a sweep inside a transformation still return their terms, so a law keeps
+  its capabilities there, and a call outside every transformation returns a
+  term as before.
+
 ### Added
 
 - **Input declarations read four sources.** `InputSpec`, a mapping, a

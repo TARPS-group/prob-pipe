@@ -135,3 +135,4 @@ In the examples, `x` is a law over `{a, b, c, sigma}`, `ke` a kernel `ke(e | sig
 |---|---|---|---|
 | an opaque evaluation inside a compiled JAX program could not cross the boundary | a concrete numeric opaque Function runs on the host; a failed evaluation stops the program and raises `EvaluationError` | E4a | no |
 | a `float64` output declaration with 64-bit floats disabled could be stored as `float32` | the call refuses; set `jax_enable_x64=True` before calling, or declare `float32` | E4a | no |
+| `f(x)` for a plain `Function` inside `jax.vmap` or `jax.grad` returned a `NumericArray` holding traced values, so code wrote `f(x).raw` | it returns the raw value, a JAX array or a record's mapping; write `f(x)` | E4 | yes |
