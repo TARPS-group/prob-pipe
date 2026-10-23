@@ -12,6 +12,7 @@ import re
 import threading
 import warnings
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -337,6 +338,20 @@ class TestAnExecutorThatRanNothingWarns:
             sample(likelihood & _prior(), 3)
 
         assert _ran_nothing_warnings(caught) == []
+
+    def test_a_plain_call_inside_a_jax_transformation_warns_that_it_ran_there(self):
+        def doubled(x):
+            return 2.0 * x
+
+        on_thread = function(doubled).using(executor="thread")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            jax.grad(lambda x: on_thread(x=x))(3.0)
+
+        assert _ran_nothing_warnings(caught) == [
+            "doubled named executor='thread', but the call ran inside a JAX transformation, "
+            "which runs its body in the calling thread, so 'thread' ran nothing"
+        ]
 
 
 class TestProvenanceRecordsEachSetOfEvaluationPoints:

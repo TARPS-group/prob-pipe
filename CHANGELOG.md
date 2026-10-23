@@ -5071,6 +5071,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   # before: a different draw than with executor="sequential"
   # after:  the same draw under every executor
   ```
+- **A plain call that names the `thread` or `process` executor runs inside
+  `jax.grad` and `jax.vmap`.** Inside a JAX transformation the call runs its
+  body in the calling thread, as a call that names `jax` does, and warns that
+  the named executor ran nothing because the call ran inside a JAX
+  transformation. Before, it sent the traced arguments to the named executor,
+  so `thread` raised JAX's `UnexpectedTracerError`, and `process` raised
+  `ResolutionError` because the arguments cannot be pickled. Outside a
+  transformation the named executor runs the body.
+  A custom executor's automatic-selection priority cannot override this
+  calling-thread execution.
 
 ### Removed
 
