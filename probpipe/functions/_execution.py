@@ -336,7 +336,7 @@ def warn_if_named_executor_ran_nothing() -> None:
     selection, so it does not warn. A call opened while JAX stages a program
     only stages its evaluations, which run when the program runs, so it does
     not warn either. When ``jax`` compiled the call's code in place of the
-    executor, the warning says so.
+    executor, or the call ran inside a JAX transformation, the warning says so.
     """
     call_context = current_call_context()
     execution_choice = call_context.execution_choice
@@ -353,11 +353,14 @@ def warn_if_named_executor_ran_nothing() -> None:
         or _jax_tracing_active()
     ):
         return
-    why_nothing_ran = (
-        "every callable in the call is traceable and was compiled by jax"
-        if named_executor_use.jax_compiled_a_set
-        else "the call evaluated no user callable"
-    )
+    if named_executor_use.jax_compiled_a_set:
+        why_nothing_ran = "every callable in the call is traceable and was compiled by jax"
+    elif _jax_transformation_active():
+        why_nothing_ran = (
+            "the call ran inside a JAX transformation, which runs its body in the calling thread"
+        )
+    else:
+        why_nothing_ran = "the call evaluated no user callable"
     warnings.warn(
         f"{call_context.function_label} named executor={executor_name!r}, but "
         f"{why_nothing_ran}, so {executor_name!r} ran nothing",
