@@ -762,12 +762,12 @@ class TestOperandKinds:
         assert isinstance(scaled, GaussianRandomFunction)
         assert not isinstance(scaled, SupportsFactors)
 
-    def test_a_law_times_a_random_function_merges(self):
+    def test_a_law_and_a_random_function_merge_with_and(self):
         joint = Normal("z", 0.0, 1.0) & _random_function()
         assert isinstance(joint, FactoredDistribution)
         assert list(joint.event_spec.outputs) == ["z", "f"]
 
-    def test_a_random_function_times_a_law_merges(self):
+    def test_a_random_function_and_a_law_merge_with_and(self):
         joint = _random_function() & Normal("z", 0.0, 1.0)
         assert isinstance(joint, FactoredDistribution)
         assert list(joint.event_spec.outputs) == ["f", "z"]
