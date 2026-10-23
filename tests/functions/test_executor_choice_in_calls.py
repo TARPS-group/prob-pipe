@@ -48,11 +48,11 @@ class TestExecutorChoice:
             with workflow_run(seed=5):
                 result = wrapped(law)
             results[executor] = atom_leaves(result)[0]
-            executors[executor] = result.provenance.metadata["dispatch"]
+            executors[executor] = result.provenance.metadata["evaluations"][0]["executor"]
 
         assert executors == {"jax": "jax", "sequential": "sequential", "thread": "thread"}
         np.testing.assert_allclose(results["jax"], results["sequential"], rtol=1e-6)
-        np.testing.assert_allclose(results["thread"], results["sequential"], rtol=1e-6)
+        np.testing.assert_array_equal(results["thread"], results["sequential"])
 
     def test_a_body_that_does_not_trace_runs_one_draw_at_a_time(self):
         @function(max_evaluations=6, output_spec=OutputSpec(untraceable=None))
@@ -63,9 +63,9 @@ class TestExecutorChoice:
             result = untraceable(standard_normal())
 
         assert result.num_atoms == 6
-        assert result.provenance.metadata["dispatch"] == "sequential"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "sequential"
 
-    def test_the_default_executor_agrees_with_jax(self):
+    def test_the_default_executor_of_a_traceable_function_is_jax(self):
         law = standard_normal()
         with workflow_run(seed=5):
             default = Function(
@@ -82,8 +82,8 @@ class TestExecutorChoice:
                 output_spec=OutputSpec(affine=None),
             ).using(executor="jax")(law)
 
-        assert default.provenance.metadata["dispatch"] == "jax"
-        np.testing.assert_allclose(atom_leaves(default)[0], atom_leaves(jax_executor)[0], rtol=1e-6)
+        assert default.provenance.metadata["evaluations"][0]["executor"] == "jax"
+        np.testing.assert_array_equal(atom_leaves(default)[0], atom_leaves(jax_executor)[0])
 
     def test_jax_maps_an_enumeration_as_the_one_at_a_time_path_evaluates_it(self):
         mapped = Function(
@@ -102,7 +102,7 @@ class TestExecutorChoice:
 
         result = mapped(record_law()["a"])
 
-        assert result.provenance.metadata["dispatch"] == "jax"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "jax"
         np.testing.assert_allclose(
             atom_leaves(result)[0], atom_leaves(sequential(record_law()["a"]))[0], rtol=1e-6
         )

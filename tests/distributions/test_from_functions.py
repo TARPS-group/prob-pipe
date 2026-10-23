@@ -295,6 +295,15 @@ class TestTheDeclarationCheck:
         with pytest.raises(ValueError, match="sample of 'x' returns draws that do not match"):
             jax.jit(build)(1.0)
 
+    def test_a_record_draw_keeps_the_declared_order(self):
+        def draw(key: Any) -> Any:
+            rate_key, location_key = jax.random.split(key)
+            return {"r": jax.random.gamma(rate_key, 3.0), "m": jax.random.normal(location_key)}
+
+        law = distribution(sample=draw, event_spec=RecordSpec(r=POSITIVE, m=REAL), label="x")
+        assert list(law.event_spec.term_spec.children) == ["r", "m"]
+        assert list(sample(law).fields) == ["r", "m"]
+
     def test_a_sampler_that_does_not_trace_keeps_the_declaration_as_given(self):
         law = distribution(sample=_numpy_draw, event_spec=NumericArraySpec((3,)), output_name="x")
         assert law.event_spec.term_spec == NumericArraySpec((3,))

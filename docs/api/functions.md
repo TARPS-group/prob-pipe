@@ -97,6 +97,12 @@ for both ordinary calls and `apply`. Enable it before calling, or declare a
 
 ::: probpipe.CallReport
 
+`check` also reports how the call will run its evaluation points: one report per callable that a lifted call or a sweep evaluates, with the executor that will run them and the executors it rejected.
+
+::: probpipe.ExecutionReport
+
+::: probpipe.EvaluationReport
+
 ::: probpipe.ApplicabilityError
 
 ::: probpipe.ResultKindError

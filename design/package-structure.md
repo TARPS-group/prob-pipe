@@ -43,7 +43,8 @@ probpipe/
 │   ├── _evaluation_points.py  #   EvaluationPoints, EvaluationChunk, SharedPayload, EvaluationOutcomes,
 │   │                          #     EvaluationFailure, EvaluationError (V.9)
 │   ├── _executors.py          #   EvaluationExecutor, executor_registry and its built-in executors,
-│   │                          #     and the dispatcher that runs a set on its call's executor (V.9)
+│   │                          #     the dispatcher that runs a set on its call's executor, and
+│   │                          #     ExecutionReport and EvaluationReport, which check returns (V.9)
 │   └── _config.py             #   library configuration
 ├── values/                    # the value layer (III.1–III.6; LinOp, III.4, is in linalg/)
 │   ├── _numeric_array.py      #   NumericArray (III.1)

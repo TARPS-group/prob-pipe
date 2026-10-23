@@ -2060,6 +2060,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   # after:  ValueError: cannot call rename() to move 'x' to 'a//b', since the path 'a//b' has an empty name. ...
   ```
 
+- **A lifted call's provenance records its sets of evaluation points under
+  `"evaluations"`, which replaces `"dispatch"`.** Each entry names the
+  callable, the executor that ran it, the options that executor received, the
+  number of evaluation points, and the point indices of any that failed. A
+  sweep's provenance records its sets the same way.
+
+  ```python
+  draws = forward.using(executor="thread", executor_options={"max_workers": 2})(prior)
+  draws.provenance.metadata["dispatch"]                       # before: 'thread'
+  draws.provenance.metadata["evaluations"][0]["executor"]     # after: 'thread'
+  ```
+
+- **Inside a JAX transformation, a plain `Function` call returns its raw
+  value.** Under `jax.jit`, `jax.vmap`, or `jax.grad`, `f(x)` returns the raw
+  form of its result, such as a JAX array or a record's mapping, where it
+  returned a `NumericArray` or a `NumericRecord` holding traced values. The
+  same code returns something else, and `jax.grad` of a plain call now works:
+
+  ```python
+  jax.vmap(lambda x: f(x))(xs)
+  # before: NumericArray holding the mapped values
+  # after:  the JAX array of the mapped values
+  jax.grad(lambda x: f(x))(1.0)
+  # before: ValueError, since the NumericArray is not a JAX array
+  # after:  the derivative of f at 1.0
+  ```
+
+  Replace `f(x).raw` inside a transformed function with `f(x)`. An operation
+  and a sweep inside a transformation still return their terms, so a law keeps
+  its capabilities there, and a call outside every transformation returns a
+  term as before.
+
 ### Added
 
 - **Bare calls can share a default random stream.**
@@ -3259,10 +3291,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before inferring its spec, as are the other density operations and nested
   record values. Constructed records still have to conform in order.
 
+- **`check` reports how a call will run its evaluation points.**
+  `CallReport.execution` is an `ExecutionReport` holding one
+  `EvaluationReport` per callable a lifted call or a sweep evaluates: the
+  number of evaluation points, whether the callable traces and whether its
+  claim or its probe says so, the executor that will run them, and the
+  executors it rejected with their reasons. The report's repr shows it only
+  when a callable is opaque or runs on an executor other than `jax`.
+
+  ```python
+  forward.using(executor="thread").check(prior).execution.evaluations[0].executor
+  # MethodInfo(True, method_name='thread', exact=True)
+  ```
+
+- **A call that names an executor which runs nothing warns.** For example,
+  `growth.using(executor="thread")(prior)` over a function JAX can trace warns
+  `growth named executor='thread', but every callable in the call is traceable
+  and was compiled by jax, so 'thread' ran nothing`.
+
+- **A failed `jax.vmap` states its error once.** When one exception fails
+  every evaluation point that `jax` maps together, `EvaluationError` reads
+  `evaluation of 'growth' failed at all 8 draws, which jax.vmap evaluates
+  together: ValueError: r must be positive`, and `error.failures` still lists
+  each evaluation point.
+
 ### Changed
 
-- Minibatches sampled without replacement retain distinct indices from batches
-  of random candidates. Additional candidates supplement an incomplete batch.
+- **Faster minibatches without replacement.** Sampling retains distinct indices
+  from batches of random candidates. Additional candidates supplement an incomplete batch.
   Batches larger than half the dataset sample the excluded indices and shuffle
   their complement. Smaller batches use space proportional to the batch size.
   Uniform subsets and random ordering are preserved. The same seed can produce
@@ -4991,6 +5047,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each `config` setting is now documented as static or inert: a static
   setting is part of a compiled JAX program's cache key, and an inert one,
   which changes no computed value, is not.
+
+- **A record keeps its declared field order through a sweep or a lift.** A
+  function that declares a record input received the record's fields in
+  alphabetical order under a `jax` sweep or a lift, and refused it, because
+  JAX maps a dict with its keys sorted. A lifted function that returns a
+  dict, and a law that `distribution(sample=...)` builds from a sampler that
+  returns a dict, had their fields sorted in the same way. Each now keeps the
+  declared order, or the order the function wrote:
+
+  ```python
+  spec = NumericRecordSpec(r=NumericArraySpec(()), m=NumericArraySpec(()))
+
+  @function(input_spec=InputSpec(x=spec))
+  def difference(x):
+      return x["r"] - x["m"]
+
+  batch = NumericRecordBatch({"r": jnp.arange(3.0), "m": jnp.ones(3)}, level_names=("draw",))
+  difference(batch)  # before: EvaluationError, after: [-1. 0. 1.]
+  ```
+- **A call that draws nothing leaves later draws unchanged under the
+  `process` executor.** A sweep or a plain call whose evaluation points ran in
+  worker processes took a place in the workflow even when no point drew, so
+  the seeded draws after it differed from those under `sequential` or
+  `thread`. It now takes its place only when a point draws, as a call run in
+  place does. A report rejected by replay or effect validation commits no
+  occurrence and leaves the later draws unchanged:
+
+  ```python
+  with workflow_run(seed=1):
+      scaled.using(executor="process")(x=grid, scale=2.0)   # draws nothing
+      sample(Normal("z", 0.0, 1.0))
+  # before: a different draw than with executor="sequential"
+  # after:  the same draw under every executor
+  ```
 
 ### Removed
 

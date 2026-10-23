@@ -16,12 +16,14 @@ from probpipe import (
     DistributionBatch,
     EmpiricalDistribution,
     Function,
+    InputSpec,
     Normal,
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
     NumericRecord,
     NumericRecordBatch,
+    NumericRecordSpec,
     OpaqueBatch,
     OutputSpec,
     Record,
@@ -92,6 +94,14 @@ def _require_not_called(*args, **kwargs):
     raise AssertionError("JAX traceability should not be required")
 
 
+def _executor_that_ran(evaluation_points):
+    """The executor the running call's evaluation log records for *evaluation_points*, or ``None``."""
+    recorded = _execution.recorded_evaluations(
+        origin=evaluation_points.origin, set_ordinal=evaluation_points._set_ordinal
+    )
+    return recorded[0]["executor"] if recorded else None
+
+
 @pytest.fixture
 def sweep_executors(monkeypatch):
     """The executor that ran each set of evaluation points a sweep asks for, recorded as each set runs."""
@@ -100,7 +110,7 @@ def sweep_executors(monkeypatch):
 
     def recording_evaluate_requested_points(evaluation_points, **options):
         outputs = evaluate_requested_points(evaluation_points, **options)
-        executors.append(_execution.executor_that_ran(evaluation_points))
+        executors.append(_executor_that_ran(evaluation_points))
         return outputs
 
     monkeypatch.setattr(_sweep, "evaluate_requested_points", recording_evaluate_requested_points)
@@ -220,7 +230,7 @@ class TestExecuteSweep:
                 function_name="double",
             )
             (evaluation_points,) = requested
-            executor = _execution.executor_that_ran(evaluation_points)
+            executor = _executor_that_ran(evaluation_points)
 
         assert executor == "thread"
         assert len(evaluation_points) == 3
@@ -1442,3 +1452,41 @@ class TestARecordedDtypeIsTheStoredDtype:
         assert specs["sequential"] == specs["thread"] == specs["jax"]
         if output == "array":
             assert specs["jax"] == NumericArraySpec((2,), dtype="float32")
+
+
+class TestARowKeepsTheBatchsFieldOrder:
+    """JAX maps a dict with its keys sorted, so a swept row is laid out in the batch's order."""
+
+    @pytest.mark.parametrize("execution", list(_EXECUTION))
+    def test_a_function_declaring_the_record_receives_its_fields_in_declared_order(self, execution):
+        record_spec = NumericRecordSpec(r=NumericArraySpec(()), m=NumericArraySpec(()))
+        difference = Function(
+            lambda x: x["r"] - x["m"],
+            label="difference",
+            input_spec=InputSpec(x=record_spec),
+            **_EXECUTION[execution],
+        )
+        batch = NumericRecordBatch({"r": jnp.arange(3.0), "m": jnp.ones(3)}, level_names=("draw",))
+        np.testing.assert_allclose(np.asarray(difference(batch)), [-1.0, 0.0, 1.0], atol=0, rtol=0)
+
+    @pytest.mark.parametrize("execution", list(_EXECUTION))
+    def test_a_nested_record_keeps_its_order_at_each_level(self, execution):
+        inner = NumericRecordSpec(z=NumericArraySpec(()), y=NumericArraySpec(()))
+        combine = Function(
+            lambda x: x["b"] + 10 * x["a"]["z"] - 100 * x["a"]["y"],
+            label="combine",
+            input_spec=InputSpec(x=NumericRecordSpec(b=NumericArraySpec(()), a=inner)),
+            **_EXECUTION[execution],
+        )
+        batch = NumericRecordBatch(
+            {"b": jnp.arange(3.0), "a": {"z": jnp.ones(3), "y": 2 * jnp.ones(3)}},
+            level_names=("draw",),
+        )
+        np.testing.assert_allclose(
+            np.asarray(combine(batch)), [-190.0, -189.0, -188.0], atol=0, rtol=0
+        )
+
+    def test_a_row_lists_its_fields_in_the_batchs_order(self):
+        batch = NumericRecordBatch({"r": jnp.arange(3.0), "m": jnp.ones(3)}, level_names=("draw",))
+        row = _sweep._mapped_row(batch, "x", {"m": jnp.ones(()), "r": jnp.zeros(())})
+        assert list(row.fields) == ["r", "m"]

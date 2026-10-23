@@ -112,8 +112,8 @@ class TestAgreementAcrossExecutors:
             mapped = traceable(x=law)
         with workflow_run(seed=5):
             one_at_a_time = opaque.using(executor="thread")(x=law)
-        assert mapped.provenance.metadata["dispatch"] == "jax"
-        assert one_at_a_time.provenance.metadata["dispatch"] == "thread"
+        assert mapped.provenance.metadata["evaluations"][0]["executor"] == "jax"
+        assert one_at_a_time.provenance.metadata["evaluations"][0]["executor"] == "thread"
         np.testing.assert_allclose(
             np.asarray(mapped.atoms), np.asarray(one_at_a_time.atoms), rtol=1e-6
         )
@@ -189,23 +189,7 @@ class TestAgreementAcrossExecutors:
             assert raw_atoms == [list(atom.raw) for atom in reference.atoms]
             assert all(second == 2.0 * first for first, second in raw_atoms)
 
-    @pytest.mark.parametrize(
-        "executor",
-        [
-            "sequential",
-            "thread",
-            pytest.param(
-                "process",
-                marks=pytest.mark.xfail(
-                    strict=True,
-                    reason=(
-                        "a chunk sent to a worker process commits its call's place in the "
-                        "workflow, so a call that draws nothing moves the keys of later draws"
-                    ),
-                ),
-            ),
-        ],
-    )
+    @pytest.mark.parametrize("executor", _PYTHON_EXECUTORS)
     def test_a_call_that_draws_nothing_leaves_later_draws_unchanged(self, executor):
         sweep = Function(_scaled, label="scaled", traceable=False)
         grid = NumericArrayBatch(jnp.arange(3.0), "theta", label="grid")
@@ -214,6 +198,47 @@ class TestAgreementAcrossExecutors:
         with workflow_run(seed=1):
             sweep.using(executor=executor)(x=grid, scale=2.0)
             after_the_sweep = np.asarray(sample(Normal("z", 0.0, 1.0)))
+        np.testing.assert_array_equal(after_the_sweep, reference)
+
+    @pytest.mark.parametrize("executor", _PYTHON_EXECUTORS)
+    def test_a_plain_call_that_draws_nothing_leaves_later_draws_unchanged(self, executor):
+        shifted = Function(_shift, label="shift", traceable=False)
+        with workflow_run(seed=1):
+            reference = np.asarray(sample(Normal("z", 0.0, 1.0)))
+        with workflow_run(seed=1):
+            shifted.using(executor=executor)(x=1.0)
+            after_the_call = np.asarray(sample(Normal("z", 0.0, 1.0)))
+        np.testing.assert_array_equal(after_the_call, reference)
+
+    @pytest.mark.parametrize("executor", _PYTHON_EXECUTORS)
+    def test_a_nested_call_that_draws_nothing_leaves_its_callers_draws_unchanged(self, executor):
+        sweep = Function(_scaled, label="scaled", traceable=False)
+        grid = NumericArrayBatch(jnp.arange(3.0), "theta", label="grid")
+
+        def sweep_then_draw(x):
+            sweep.using(executor=executor)(x=grid, scale=2.0)
+            return np.asarray(sample(Normal("z", 0.0, 1.0))) + x
+
+        def draw(x):
+            return np.asarray(sample(Normal("z", 0.0, 1.0))) + x
+
+        with workflow_run(seed=1):
+            reference = Function(draw, label="outer", traceable=False)(x=0.0)
+        with workflow_run(seed=1):
+            after_the_sweep = Function(sweep_then_draw, label="outer", traceable=False)(x=0.0)
+        np.testing.assert_array_equal(np.asarray(after_the_sweep), np.asarray(reference))
+
+    @pytest.mark.parametrize("executor", _PYTHON_EXECUTORS)
+    def test_a_call_whose_points_draw_gives_later_draws_their_keys(self, executor):
+        nested = Function(_shift_with_a_nested_draw, label="nested", traceable=False)
+        grid = NumericArrayBatch(jnp.arange(3.0), "x", label="grid")
+        with workflow_run(seed=1):
+            reference_cells = np.asarray(nested(x=grid).raw)
+            reference = np.asarray(sample(Normal("z", 0.0, 1.0)))
+        with workflow_run(seed=1):
+            cells = np.asarray(nested.using(executor=executor)(x=grid).raw)
+            after_the_sweep = np.asarray(sample(Normal("z", 0.0, 1.0)))
+        np.testing.assert_array_equal(cells, reference_cells)
         np.testing.assert_array_equal(after_the_sweep, reference)
 
 
@@ -304,7 +329,7 @@ class TestTheChoiceOfExecutor:
             result = traceable.using(executor="thread", executor_options={"max_workers": 2})(
                 x=Normal("x", 0.0, 1.0)
             )
-        assert result.provenance.metadata["dispatch"] == "jax"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "jax"
 
     def test_the_removed_controls_raise_naming_the_unknown_control(self):
         with pytest.raises(TypeError, match="unknown Function option 'dispatch'"):
@@ -360,7 +385,7 @@ class TestTheChoiceOfExecutor:
             result = opaque(x=Normal("x", 0.0, 1.0))
         assert len([warning for warning in caught if "has no effect" in str(warning.message)]) == 1
         assert set(recorded_names) == {"shift", "shift_map"}
-        assert result.provenance.metadata["dispatch"] == "prefect"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "prefect"
 
 
 class TestWhereASetCanBeBuilt:

@@ -1311,6 +1311,59 @@ class TestEvaluationPointRetryClaims:
 
 
 class TestRemoteReportTransactions:
+    @pytest.mark.parametrize("rejection", ["replay", "conflicting-success"])
+    def test_a_rejected_report_leaves_the_parent_occurrence_and_later_keys_unchanged(
+        self, rejection
+    ):
+        with workflow_run(seed=17):
+            reference = sample(Normal("z", 0.0, 1.0))
+        replay_state = replay_mod._validate_provenance(reference.provenance)
+        evaluation_points = issue_points()
+        evaluation_point = evaluation_points[0]
+        with workflow_run(seed=17):
+            with evaluation_keys_mod._function_stochastic_scope() as parent_broker:
+                parent_broker.register_evaluation_points(evaluation_points)
+                attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
+                    evaluation_point.frame.token
+                )
+                envelope = parent_broker.reserve_remote_evaluation_point_attempt(
+                    evaluation_point.frame, attempt
+                )
+                effect = make_remote_effect(envelope)
+                report = evaluation_keys_mod.EvaluationPointClaimReport(
+                    frame=evaluation_point.frame,
+                    attempt=attempt,
+                    child_count=1,
+                    effects=(effect,),
+                    successful_effects=(effect,),
+                )
+                if rejection == "replay":
+                    parent_broker._replay_state = replay_state
+                    exception = ReplayCompatibilityError
+                    message = "that matches no draw"
+                else:
+                    parent_broker._effects_by_identity[
+                        evaluation_keys_mod._effect_identity(effect)
+                    ] = replace(effect, provider_abi="conflicting-provider/v1")
+                    exception = RuntimeError
+                    message = "different effect plan"
+                try:
+                    with pytest.raises(exception, match=message):
+                        parent_broker.accept_remote_claim_report(report)
+                    assert parent_broker._invocation is None
+                    assert parent_broker._frame.ledger.next_ordinal == 0
+                    claim_state = parent_broker._evaluation_point_claims.by_token[
+                        evaluation_point.frame.token
+                    ]
+                    assert claim_state.child_invocations == []
+                    assert claim_state.effect_claims_by_identity == {}
+                finally:
+                    parent_broker._replay_state = None
+                    parent_broker._effects_by_identity.clear()
+                    parent_broker.abort_remote_evaluation_point_attempt(attempt)
+            after_rejection = sample(Normal("z", 0.0, 1.0))
+        np.testing.assert_array_equal(np.asarray(after_rejection), np.asarray(reference))
+
     def test_worker_rejects_a_transported_frame_root_mismatch(self):
         frame = make_evaluation_point_frame()
         attempt = make_evaluation_point_attempt()
@@ -1757,7 +1810,7 @@ class TestThreadExecution:
 
         assert finish_order[-1] == first_draw
         assert sorted(finish_order[:-1]) == sorted(float(draw) for draw in expected[1:, 0])
-        assert result.provenance.metadata["dispatch"] == "thread"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "thread"
         np.testing.assert_array_equal(atom_leaves(result)[0], expected)
 
 
@@ -1794,7 +1847,7 @@ class TestEvaluationsInsideAMappedBody:
         with workflow_run(seed=5):
             result = mapped_calling(named)(standard_normal())
 
-        assert result.provenance.metadata["dispatch"] == "jax"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "jax"
         np.testing.assert_allclose(atom_leaves(result)[0], atom_leaves(expected)[0], rtol=1e-6)
         assert set(threads) == {threading.get_ident()}
         assert FakeMappedTask.created_names == []
@@ -1857,7 +1910,7 @@ class TestPrefectTransport:
         assert result.num_atoms == 6
         # The route is built once before any draw, then again to run.
         assert FakeMappedTask.created_names == created_names * 2
-        assert result.provenance.metadata["dispatch"] == executor_name
+        assert result.provenance.metadata["evaluations"][0]["executor"] == executor_name
 
     def test_a_call_naming_an_executor_under_prefect_warns_once(self, prefect_fakes):
         affine = Function(
@@ -1881,7 +1934,7 @@ class TestPrefectTransport:
             "its evaluations as Prefect tasks. Remove the executor, or set "
             "workflow_kind=WorkflowKind.OFF to run them on it"
         ]
-        assert result.provenance.metadata["dispatch"] == "prefect"
+        assert result.provenance.metadata["evaluations"][0]["executor"] == "prefect"
 
     def test_a_call_naming_only_executor_options_under_prefect_warns_to_remove_them(
         self, prefect_fakes

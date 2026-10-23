@@ -54,8 +54,9 @@ from ..core._call_context import (
     current_call_context,
 )
 from ..core._dispatch import MethodInfo, ResolutionError
-from ..core._evaluation_points import _requested_evaluation_points
+from ..core._evaluation_points import _DescribedEvaluationPoints, _requested_evaluation_points
 from ..core._execution_claims import ProbeResult, probe
+from ..core._executors import ExecutionReport, _evaluation_report
 from ..core._expression import (
     Applied,
     AppliedValue,
@@ -277,8 +278,16 @@ def _call_function(
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
 ) -> Any:
+    """Call *function* on *args* and *call_inputs*, returning a raw form inside a JAX transformation.
+
+    Outside every JAX transformation the call runs in its workflow. Inside one, a
+    plain call returns its result's raw form (II.4): inside a staging trace it
+    is staged as an embedded call or runs inline, and under an eager
+    transformation it runs in its workflow. An operation and a sweep return
+    their terms.
+    """
     if _jax_transformation_active():
-        values = _call.resolve_function_call(
+        argument_values = _call.resolve_function_call(
             function._signature_info,
             args,
             call_inputs,
@@ -286,55 +295,79 @@ def _call_function(
             function_name=function.label,
         )
         inline_plan = _plan.build_broadcast_plan(
-            values=values, signature_info=function._signature_info, roles=function._roles
+            values=argument_values, signature_info=function._signature_info, roles=function._roles
         )
-        staged, result = (
-            _boundary.maybe_stage(function, values)
+        staged, staged_result = (
+            _boundary.maybe_stage(function, argument_values)
             if inline_plan.regime == "none"
             else (False, None)
         )
         if staged:
-            return result
+            return staged_result
         if _jax_tracing_active() and inline_plan.regime == "none":
-            controls = current_call_context().resolved_controls
-            candidates = function._route_candidates(controls, values)
-            if candidates is not None:
+            resolved_controls = current_call_context().resolved_controls
+            route_candidates = function._route_candidates(resolved_controls, argument_values)
+            if route_candidates is not None:
                 _call.admit_arguments(
                     function._signature_info,
-                    values,
+                    argument_values,
                     function_name=function.label,
                     roles=function._roles,
                     lifts=False,
                 )
                 # A law keeps its ProbPipe capabilities here. Its raw backend
                 # object can have weaker guards than the law it represents.
-                return _realized_point(function, values, controls, candidates)
+                return _realized_point(
+                    function, argument_values, resolved_controls, route_candidates
+                )
             _, bindings = _bind_function_inputs(
-                function_name=function.label, input_spec=function.input_spec, values=values
+                function_name=function.label, input_spec=function.input_spec, values=argument_values
             )
-            result = function._invoke_resolved(values, context=_FunctionInvocationContext(bindings))
+            body_result = function._invoke_resolved(
+                argument_values, context=_FunctionInvocationContext(bindings)
+            )
             _validate_function_output(
                 function_name=function.label,
                 output_spec=function.output_spec,
-                result=result,
+                result=body_result,
                 bindings=bindings,
             )
-            return _result.raw_form(result)
+            return _result.raw_form(body_result)
+        if (
+            inline_plan.regime == "none"
+            and function._route_candidates(
+                current_call_context().resolved_controls, argument_values
+            )
+            is None
+        ):
+            # Under an eager transformation a plain call runs as it does
+            # outside one, and its result presents as its raw form (II.4), as
+            # the inline call above returns it inside a staging trace.
+            return _result.raw_form(_call_in_workflow(function, args, call_inputs))
+    return _call_in_workflow(function, args, call_inputs)
+
+
+def _call_in_workflow(
+    function: Function, args: tuple[Any, ...], call_inputs: dict[str, Any]
+) -> Any:
+    """The call of *function* inside its workflow scope, replay scope, and key broker."""
     _context._assert_workflow_admission()
     with _replay._function_replay_scope() as replay_call:
         occurrence_path = None if replay_call is None else replay_call.occurrence_path
         with (
             _context._ephemeral_workflow_run(),
-            _evaluation_keys._function_stochastic_scope(occurrence_path=occurrence_path) as broker,
+            _evaluation_keys._function_stochastic_scope(
+                occurrence_path=occurrence_path
+            ) as key_broker,
         ):
             if (
                 replay_call is not None
                 or _context._active_provenance_mode() is not ProvenanceMode.OFF
             ):
-                anchor = _callable.capture_function_anchor(function)
-                broker.set_callable_anchor(anchor)
+                callable_anchor = _callable.capture_function_anchor(function)
+                key_broker.set_callable_anchor(callable_anchor)
                 if replay_call is not None:
-                    replay_call.validate_callable(anchor)
+                    replay_call.validate_callable(callable_anchor)
             return _call_function_in_context(function, args, call_inputs)
 
 
@@ -343,13 +376,16 @@ def _call_function_in_context(
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
 ) -> Any:
+    """Run the call of *function* in its open call context, then warn if an executor it named ran nothing."""
     # A call made while a check probes, as a probe that runs an operation makes
     # one, selects and runs its routes as any call does.
-    token = _call._CHECKING.set(False)
+    checking_flag_reset = _call._CHECKING.set(False)
     try:
-        return _run_call(function, args, call_inputs)
+        call_result = _run_call(function, args, call_inputs)
     finally:
-        _call._CHECKING.reset(token)
+        _call._CHECKING.reset(checking_flag_reset)
+    _execution.warn_if_named_executor_ran_nothing()
+    return call_result
 
 
 def _result_expression(
@@ -1072,33 +1108,71 @@ def _evaluated_body_point(
     return _labeled_product(result)
 
 
-def _probe_checked_call(
+def _lifted_execution_report(
     function: Function,
     argument_values: Mapping[str, Any],
     broadcast_plan: _plan.BroadcastPlan,
     candidates: tuple[Any, ...] | None,
     resolved_controls: Mapping[str, Any],
     route_name: str | None,
-) -> None:
-    """Probe one evaluation point of the lifted call ``check`` reports, as the call would.
+) -> ExecutionReport:
+    """How the lifted call or sweep that ``check`` checks would run its function's evaluation points.
 
-    The call probes a function that states nothing when its route maps the
-    body, whatever executor it names, since a function JAX can trace is
-    always mapped by ``jax``. So ``check`` probes under the same conditions,
-    with the same stand-ins, and stores the outcome where the call reads it.
-    A probe of a nested sweep reads its first cell. A probe that fails stores
-    its outcome and raises nothing, as the call's would.
+    The call asks for one evaluation point per draw, combination, or grid
+    point when the engine's evaluation rule realizes it. A plain call, a call
+    that another evaluation rule realizes, and a sweep over no cells ask for
+    none. The call
+    probes a function that states nothing when its route maps the body,
+    whatever executor it names, since a function JAX can trace is always
+    mapped by ``jax``. So ``check`` probes under the same conditions, with the
+    same stand-ins, and stores the outcome where the call reads it. A probe of
+    a nested sweep reads its first cell. A probe that fails stores its outcome
+    and raises nothing, as the call's would.
+
+    Parameters
+    ----------
+    function : Function
+        The checked function.
+    argument_values : Mapping of str to Any
+        The call's normalized arguments.
+    broadcast_plan : BroadcastPlan
+        The call's lifting regime.
+    candidates : tuple or None
+        The routes of a Function realized by routes, which realize each
+        evaluation point; ``None`` for a Function whose body does.
+    resolved_controls : Mapping of str to Any
+        The checked call's resolved controls.
+    route_name : str or None
+        The evaluation rule selected for the lifted call.
+
+    Returns
+    -------
+    ExecutionReport
+        The report of the function's evaluation points, or an empty report
+        when the call asks for none.
+
+    Raises
+    ------
+    ResolutionError
+        If the executor the call names is not registered.
+    ValueError
+        If the selected executor does not take one of its options.
     """
-    if (
-        broadcast_plan.regime == "none"
-        or function._execution_claims.traceable is not None
-        or route_name not in _rules._ENGINE_RULES
-    ):
-        return
-    invocation_bindings = _lifted_call_bindings(function, argument_values, broadcast_plan)
+    if broadcast_plan.regime == "none" or route_name not in _rules._ENGINE_RULES:
+        return ExecutionReport()
     stochastic_plan = _lifted_call_stochastic_plan(
         argument_values, broadcast_plan, resolved_controls, route_name
     )
+    if stochastic_plan is None:
+        num_evaluation_points, point_noun = broadcast_plan.n_sweep, "grid point"
+    else:
+        num_evaluation_points = stochastic_plan.n_evaluations * (
+            len(stochastic_plan.logical_units) if broadcast_plan.regime == "nested" else 1
+        )
+        point_noun = "draw" if stochastic_plan.evaluation_mode == "sampled" else "combination"
+    if num_evaluation_points == 0:
+        return ExecutionReport()
+    invocation_bindings = _lifted_call_bindings(function, argument_values, broadcast_plan)
     evaluate_lifted_point = _lifted_point_evaluator(
         function,
         resolved_controls=resolved_controls,
@@ -1114,13 +1188,47 @@ def _probe_checked_call(
         probe_values, lifted_refs = dict(argument_values), list(broadcast_plan.array_args)
     else:
         probe_values, lifted_refs = dict(argument_values), list(broadcast_plan.dist_args)
-    _probe_lifted_point(
+    untraceable_reason = (
+        _sweep.untraceable_sweep_reason(
+            argument_values, list(broadcast_plan.array_args), broadcast_plan
+        )
+        if broadcast_plan.regime == "sweep"
+        else None
+    )
+    if untraceable_reason is not None:
+        traceable = False
+    else:
+        traceable, untraceable_reason = _lifted_point_traceability(
+            function,
+            partial(
+                _probe_lifted_point,
+                function,
+                probe_values,
+                lifted_refs,
+                point_body=evaluate_lifted_point,
+                stochastic_plan=stochastic_plan,
+                route_cache_key=_route_cache_key(function, resolved_controls, candidates),
+            ),
+        )
+    described_points = _DescribedEvaluationPoints(
         function,
-        probe_values,
-        lifted_refs,
-        point_body=evaluate_lifted_point,
-        stochastic_plan=stochastic_plan,
-        route_cache_key=_route_cache_key(function, resolved_controls, candidates),
+        num_evaluation_points=num_evaluation_points,
+        shared=argument_values,
+        origin=function._label,
+        traceable=traceable,
+        untraceable_reason=untraceable_reason,
+        point_noun=point_noun,
+    )
+    return ExecutionReport(
+        (
+            _evaluation_report(
+                described_points,
+                current_call_context().execution_choice,
+                traceability_source=(
+                    "claimed" if function._execution_claims.traceable is not None else "probed"
+                ),
+            ),
+        )
     )
 
 
@@ -1875,14 +1983,14 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         values=argument_values,
         lifted_names={ref.parameter_name for ref in lifted_refs},
     )
-    result = (
+    result_spec = (
         function.output_spec.with_dim_sizes(**bindings)
         if function.output_spec is not None
         else None
     )
-    _plan.require_empty_sweep_output(broadcast_plan, result)
+    _plan.require_empty_sweep_output(broadcast_plan, result_spec)
     deferred = ()
-    if result is None or result.term_spec is None:
+    if result_spec is None or result_spec.term_spec is None:
         deferred = ("the result's type is completed from the returned value",)
     lifted = tuple(dict.fromkeys(ref.parameter_name for ref in lifted_refs))
     if waiting:
@@ -1892,24 +2000,28 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         return CallReport(
             routes=(pending,),
             deferred=deferred,
-            result=result,
+            result=result_spec,
             lifted=lifted,
             conversions=MappingProxyType(conversions),
         )
-    info, route = _route_report(
+    route_info, route = _route_report(
         function, argument_values, broadcast_plan, resolved_controls["method"], resolved_controls
     )
-    if route is not None:
-        _probe_checked_call(
+    execution = (
+        ExecutionReport()
+        if route is None
+        else _lifted_execution_report(
             function, argument_values, broadcast_plan, None, resolved_controls, route.name
         )
+    )
     return CallReport(
-        routes=(info,),
-        selected=None if info.feasible is None else info,
+        routes=(route_info,),
+        selected=None if route_info.feasible is None else route_info,
         deferred=deferred,
-        result=result,
+        result=result_spec,
         lifted=lifted,
         conversions=MappingProxyType(conversions),
+        execution=execution,
     )
 
 
@@ -1938,31 +2050,36 @@ def _check_routes(
         return CallReport(
             routes=(pending,), lifted=lifted, conversions=MappingProxyType(dict(conversions))
         )
+    execution = ExecutionReport()
     if broadcast_plan.regime != "none":
-        info, route = _route_report(
+        route_info, route = _route_report(
             function, argument_values, broadcast_plan, None, resolved_controls
         )
-        if info.feasible is not True:
+        if route_info.feasible is not True:
             return CallReport(
-                routes=(info,),
-                selected=None if info.feasible is None else info,
+                routes=(route_info,),
+                selected=None if route_info.feasible is None else route_info,
                 lifted=lifted,
                 conversions=MappingProxyType(dict(conversions)),
             )
         if route is not None:
-            _probe_checked_call(
+            execution = _lifted_execution_report(
                 function, argument_values, broadcast_plan, candidates, resolved_controls, route.name
             )
-    token = _call._CHECKING.set(True)
+    checking_flag_reset = _call._CHECKING.set(True)
     try:
         points_report = _resolution.check_points(
             function, argument_values, resolved_controls, candidates, broadcast_plan
         )
     finally:
-        _call._CHECKING.reset(token)
+        _call._CHECKING.reset(checking_flag_reset)
     _plan.require_empty_sweep_output(broadcast_plan, points_report.result)
     return _resolution.call_report(
-        points_report, lifted=lifted, conversions=conversions, candidates=candidates
+        points_report,
+        lifted=lifted,
+        conversions=conversions,
+        candidates=candidates,
+        execution=execution,
     )
 
 

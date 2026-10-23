@@ -38,6 +38,7 @@ from probpipe import (
     ResultSchemaError,
     config,
     function,
+    mean,
     workflow_run,
 )
 from probpipe.core.constraints import positive
@@ -612,3 +613,76 @@ class TestResultErrors:
             wrapped(operand)
 
         assert raised.value.__cause__ is error
+
+
+@function
+def _scaled_sine(x):
+    return jnp.sin(x) * 3.0
+
+
+@function
+def _moments(x):
+    return {"value": x, "square": x * x}
+
+
+class TestTheReturnInsideATrace:
+    """Inside a JAX transformation a plain call returns its raw form (II.4), and outside one a term."""
+
+    @pytest.mark.parametrize(
+        ("transform", "transformed_input"),
+        [
+            (jax.jit, jnp.asarray(1.0)),
+            (jax.vmap, jnp.arange(3.0)),
+            (lambda traced_body: jax.vmap(jax.jit(traced_body)), jnp.arange(3.0)),
+        ],
+        ids=["jit", "vmap", "vmap-of-jit"],
+    )
+    def test_a_plain_call_returns_its_raw_value(self, transform, transformed_input):
+        call_outputs = []
+
+        def traced_body(x):
+            call_output = _scaled_sine(x)
+            call_outputs.append(call_output)
+            return call_output
+
+        transformed_output = transform(traced_body)(transformed_input)
+        assert all(isinstance(call_output, jax.core.Tracer) for call_output in call_outputs)
+        np.testing.assert_allclose(transformed_output, 3.0 * jnp.sin(transformed_input), rtol=1e-6)
+
+    def test_a_gradient_differentiates_a_plain_call(self):
+        slope = jax.grad(lambda x: _scaled_sine(x))(1.0)
+        np.testing.assert_allclose(slope, 3.0 * np.cos(1.0), rtol=1e-6)
+
+    def test_a_record_result_returns_its_mapping(self):
+        mapped = jax.vmap(lambda x: _moments(x))(jnp.arange(3.0))
+        assert set(mapped) == {"value", "square"}
+        np.testing.assert_allclose(mapped["square"], jnp.arange(3.0) ** 2)
+
+    def test_a_call_outside_a_trace_returns_a_term(self):
+        assert isinstance(_scaled_sine(1.0), NumericArray)
+
+    def test_an_operation_inside_a_trace_keeps_its_term(self):
+        mean_kinds = []
+
+        def traced_body(loc):
+            law_mean = mean(Normal("x", loc, 1.0))
+            mean_kinds.append(type(law_mean))
+            return law_mean.raw
+
+        with workflow_run(seed=0):
+            means = jax.vmap(traced_body)(jnp.arange(3.0))
+        assert mean_kinds == [NumericArray]
+        np.testing.assert_allclose(means, jnp.arange(3.0))
+
+    def test_a_sweep_inside_a_trace_keeps_its_batch(self):
+        sweep_kinds = []
+
+        def traced_body(shift):
+            swept = _scaled_sine(x=NumericArrayBatch(jnp.arange(3.0) + shift, "x", label="xs"))
+            sweep_kinds.append(type(swept))
+            return swept.raw
+
+        sweeps = jax.vmap(traced_body)(jnp.arange(2.0))
+        assert sweep_kinds == [NumericArrayBatch]
+        expected = 3.0 * jnp.sin(jnp.arange(3.0)[None, :] + jnp.arange(2.0)[:, None])
+        np.testing.assert_allclose(sweeps, expected, rtol=1e-6)

@@ -12,16 +12,19 @@ import statistics
 import subprocess
 import sys
 import time
+from argparse import Namespace
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
-from scripts.benchmarks.cases import Case, arrays, prepare, validate
+from scripts.benchmarks.cases import Case, arrays, measurement_context, prepare, validate
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_VERSION = 1
 
 
-def summary(samples):
+def summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
     """Summarize measured calls while retaining their raw observations."""
     times = sorted(item["milliseconds"] for item in samples)
     quartiles = (
@@ -35,7 +38,9 @@ def summary(samples):
     }
 
 
-def measure(call, synchronize, counter):
+def measure(
+    call: Callable[[], Any], synchronize: Callable[[Any], Any], counter: Callable[..., Any]
+) -> tuple[Any, dict[str, Any]]:
     """Time exactly one invocation and completion, including its compile events."""
     with counter() as events:
         start = time.perf_counter()
@@ -45,16 +50,16 @@ def measure(call, synchronize, counter):
     return result, {"milliseconds": elapsed, "compilation_events": events.count}
 
 
-def git_metadata():
+def git_metadata() -> dict[str, Any]:
     """Identify the checkout without changing its files or refs."""
 
-    def git(*args):
+    def git(*args: str) -> str:
         return subprocess.check_output(["git", *args], cwd=ROOT, text=True).strip()
 
     return {"commit": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain"))}
 
 
-def worker(request):
+def worker(request: dict[str, Any]) -> dict[str, Any]:
     """Measure one workload and scenario in the caller's fresh process."""
     import jax
 
@@ -74,7 +79,7 @@ def worker(request):
         importlib.import_module(module)
     case = Case(**request["case"])
     count = 1 + request["warmups"] + request["repeats"]
-    with jax.default_device(device):
+    with jax.default_device(device), measurement_context(case):
         start = time.perf_counter()
         calls, construction_ms = prepare(case, count, request["scenario"], request["seed"])
         setup_ms = (time.perf_counter() - start) * 1000
@@ -128,18 +133,39 @@ def worker(request):
     }
 
 
-def launch(request):
+def launch(request: dict[str, Any]) -> dict[str, Any]:
     """Run one independent child and turn failures into structured records."""
     record = {"schema_version": SCHEMA_VERSION, **request, **git_metadata()}
+    if "case" in request and request["scenario"] not in Case(**request["case"]).scenarios:
+        return {
+            **record,
+            "status": "not_applicable",
+            "reason": "Index workloads have no reusable owner beyond their JIT wrapper",
+        }
     env = dict(
         os.environ,
         JAX_ENABLE_COMPILATION_CACHE="false",
         JAX_PLATFORMS="cuda" if request["device"] == "cuda" else "cpu",
     )
     command = [sys.executable, "-m", "scripts.benchmarks", "_worker"]
-    process = subprocess.run(
-        command, input=json.dumps(request), text=True, capture_output=True, cwd=ROOT, env=env
-    )
+    try:
+        process = subprocess.run(
+            command,
+            input=json.dumps(request),
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+            env=env,
+            timeout=request.get("timeout"),
+        )
+    except subprocess.TimeoutExpired:
+        # subprocess.run kills and waits for the child before raising.
+        return {
+            **record,
+            "status": "error",
+            "error_type": "timeout",
+            "error": f"Worker exceeded {request['timeout']} seconds",
+        }
     if process.stderr:
         print(process.stderr, file=sys.stderr, end="")
     try:
@@ -152,7 +178,7 @@ def launch(request):
     return record
 
 
-def worker_main():
+def worker_main() -> int:
     """Reserve stdout for a single JSON object, even if libraries print."""
     request = json.load(sys.stdin)
     try:
@@ -164,10 +190,10 @@ def worker_main():
     return int(payload["status"] != "ok")
 
 
-def compare(before, after):
+def compare(before: str | Path, after: str | Path) -> list[dict[str, Any]]:
     """Compare aligned measurements only when their conditions match."""
 
-    def grouped(path):
+    def grouped(path: str | Path) -> dict[str, list[dict[str, Any]]]:
         groups = {}
         with open(path) as stream:
             for line in stream:
@@ -185,6 +211,21 @@ def compare(before, after):
         row = {"case": (a or b)[0]["case"], "scenario": (a or b)[0]["scenario"]}
         if not a or not b:
             results.append({**row, "status": "missing"})
+            continue
+        if any(r["status"] == "not_applicable" for r in a + b):
+            results.append(
+                {
+                    **row,
+                    "status": "not_applicable",
+                    "reasons": sorted(
+                        {
+                            r.get("reason", "Scenario is not applicable")
+                            for r in a + b
+                            if r["status"] == "not_applicable"
+                        }
+                    ),
+                }
+            )
             continue
         if any(r["status"] != "ok" for r in a + b):
             results.append({**row, "status": "error"})
@@ -236,7 +277,8 @@ def compare(before, after):
     return results
 
 
-def request_for(case, args, scenario, process_index):
+def request_for(case: Case, args: Namespace, scenario: str, process_index: int) -> dict[str, Any]:
+    """Serialize one independent measurement request."""
     return {
         "case": asdict(case),
         "scenario": scenario,
@@ -245,4 +287,5 @@ def request_for(case, args, scenario, process_index):
         "repeats": args.repeats,
         "seed": args.seed,
         "process_index": process_index,
+        "timeout": args.timeout,
     }

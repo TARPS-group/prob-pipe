@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass, replace
 from functools import partial
 from time import perf_counter
 from typing import Any
@@ -25,11 +27,28 @@ class Case:
     version: int = 1
 
     @property
-    def name(self):
+    def name(self) -> str:
         return f"{self.group}/{self.operation}/{self.variant}/{self.n}/{self.size}/{self.chains}"
 
+    @property
+    def scenarios(self) -> tuple[str, ...]:
+        """Situations that measure workload behavior rather than wrapper creation."""
+        if self.group == "minibatch" and self.operation in ("indices", "vmap64"):
+            return ("same_object", "structure_change")
+        return SCENARIOS
 
-def catalog(suite="quick"):
+
+def measurement_context(case: Case) -> AbstractContextManager[Any]:
+    """Install the gradient reference before tracing, outside all timed calls."""
+    if case.group == "minibatch" and case.operation in ("gradient", "gradient_scan"):
+        from probpipe.inference._minibatch import _draw_indices
+
+        sampler = _draw_indices if case.variant == "current" else permutation
+        return patch("probpipe.inference._minibatch._draw_indices", sampler)
+    return nullcontext()
+
+
+def catalog(suite: str = "quick") -> list[Case]:
     """List workloads without importing JAX or initializing a device."""
     sizes = (32,) if suite == "quick" else (1, 32, 1024)
     cases = []
@@ -65,13 +84,12 @@ def catalog(suite="quick"):
     cases.append(Case("inference", "rwmh", 100, n=32))
     if suite == "full":
         cases.append(Case("inference", "rwmh", 1000, n=32, chains=2))
-    if suite == "full":
         present = {c.name for c in cases}
         cases.extend(c for c in catalog("quick") if c.name not in present)
-    return cases
+    return [replace(c, version=2) if c.group == "minibatch" else c for c in cases]
 
 
-def permutation(key, n, batch_size, *, with_replacement):
+def permutation(key: Any, n: int, batch_size: int, *, with_replacement: bool) -> Any:
     """The original full-population reference for index generation."""
     import jax
 
@@ -80,7 +98,9 @@ def permutation(key, n, batch_size, *, with_replacement):
     return jax.random.permutation(key, n)[:batch_size]
 
 
-def prepare(case: Case, count: int, scenario: str, seed: int):
+def prepare(
+    case: Case, count: int, scenario: str, seed: int
+) -> tuple[list[tuple[Callable[[], Any], int]], list[float]]:
     """Prepare calls without invoking any measured operation.
 
     The first call always establishes the original structure. Subsequent calls
@@ -96,7 +116,7 @@ def prepare(case: Case, count: int, scenario: str, seed: int):
     jax.block_until_ready(keys)
     construction_ms = []
 
-    def construct(size, shift):
+    def construct(size: int, shift: float) -> Callable[..., Any]:
         start = perf_counter()
         owner = build(case, size, shift)
         construction_ms.append((perf_counter() - start) * 1000)
@@ -127,7 +147,7 @@ def prepare(case: Case, count: int, scenario: str, seed: int):
     return calls, construction_ms
 
 
-def build(case, size, shift):
+def build(case: Case, size: int, shift: float) -> Callable[..., Any]:
     """Construct one owner and its inputs; return a callable that executes it."""
     import jax
     import jax.numpy as jnp
@@ -166,8 +186,8 @@ def build(case, size, shift):
         position = jnp.array([0.3 + shift, -0.2])
         jax.block_until_ready((design, response, position))
 
-        def scan(position, key):
-            def step(state, unused):
+        def scan(position: Any, key: Any) -> Any:
+            def step(state: Any, unused: Any) -> tuple[Any, None]:
                 key, total = state
                 key, subkey = jax.random.split(key)
                 return (key, total + estimator(position, subkey)), None
@@ -176,9 +196,8 @@ def build(case, size, shift):
 
         operation = jax.jit(scan if case.operation == "gradient_scan" else estimator)
 
-        def gradient(key, seed, value):
-            with patch("probpipe.inference._minibatch._draw_indices", sampler):
-                return operation(position + value, key)
+        def gradient(key: Any, seed: int, value: Any) -> Any:
+            return operation(position + value, key)
 
         return gradient
 
@@ -190,7 +209,8 @@ def build(case, size, shift):
             law = Normal("x", shift, 1.0) & Normal("y", 0.0, 1.0)
             values = {"x": jnp.ones(size), "y": jnp.ones(size)}
         else:
-            # Consumer-first field order also matches JAX's dictionary order.
+            # Keep declaration and dictionary order aligned until mapped records
+            # preserve it: https://github.com/TARPS-group/prob-pipe/issues/642
             law = glm_likelihood(
                 "a", GaussianFamily(), X=jnp.ones((1, 1)), dispersion=1.0
             ) & MultivariateNormal("beta", loc=jnp.array([shift]), cov=jnp.eye(1))
@@ -227,7 +247,7 @@ def build(case, size, shift):
     elif case.operation == "direct":
         jax.block_until_ready(argument)
 
-    def execute(key, seed, value):
+    def execute(key: Any, seed: int, value: Any) -> Any:
         with workflow_run(seed=seed):
             if case.group == "function":
                 return fun(x=argument + value) if case.operation == "direct" else fun(x=argument)
@@ -250,11 +270,13 @@ def build(case, size, shift):
     return execute
 
 
+# Function infers its lifting declaration from this unannotated callable.
+# Annotating x as Any would accept distributions directly and disable lifting.
 def _transform(x):
     return x * x + 1.0
 
 
-def arrays(result: Any):
+def arrays(result: Any) -> list[Any]:
     """Extract completed numerical outputs without a second public operation."""
     import jax
 
@@ -263,7 +285,7 @@ def arrays(result: Any):
     return [leaf for leaf in jax.tree.leaves(result) if hasattr(leaf, "dtype")]
 
 
-def validate(case, result, size):
+def validate(case: Case, result: Any, size: int) -> None:
     """Check execution outputs, never statistical quality."""
     import numpy as np
 
