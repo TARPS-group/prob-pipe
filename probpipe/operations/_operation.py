@@ -1450,28 +1450,28 @@ class Operation(Function):
         if derived_route_check is not None:
             if not derived:
                 raise TypeError(
-                    f"{owner} has an empty body, so it cannot take derived_route_check; only an "
+                    f"{owner} has an empty body, so it cannot take derived_route_check. Only an "
                     f"operation whose body returns its formula can"
                 )
             if not callable(derived_route_check):
                 raise TypeError(
-                    f"{owner} needs a callable derived route check; got {derived_route_check!r}"
+                    f"{owner} needs a callable derived route check, got {derived_route_check!r}"
                 )
         if derived_route is not None:
             if not derived:
                 raise TypeError(
-                    f"{owner} has an empty body, so it cannot take derived_route; only an "
+                    f"{owner} has an empty body, so it cannot take derived_route. Only an "
                     f"operation whose body returns its formula can"
                 )
             if derived_route_check is not None:
                 raise TypeError(
-                    f"{owner} cannot take both derived_route and derived_route_check; the "
+                    f"{owner} cannot take both derived_route and derived_route_check. The "
                     f"derived route checks its own feasibility"
                 )
             if not isinstance(derived_route, _DelegatingRoute):
                 raise TypeError(
                     f"{owner} needs a derived route that delegates its exactness to the "
-                    f"routes it runs; got {derived_route!r}"
+                    f"routes it runs, got {derived_route!r}"
                 )
         set_attribute = object.__setattr__
         set_attribute(self, "_result_rule", result)

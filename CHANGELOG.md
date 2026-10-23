@@ -5048,6 +5048,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   batch = NumericRecordBatch({"r": jnp.arange(3.0), "m": jnp.ones(3)}, level_names=("draw",))
   difference(batch)  # before: EvaluationError, after: [-1. 0. 1.]
   ```
+- **`&` between a record or a record spec and a value of another family
+  raises `TypeError`.** `Record({"a": 1.0}) & {"z": 1}`, `Record & RecordSpec`,
+  and `RecordSpec & OutputSpec` raised `AttributeError` from inside the merge.
+  They now return `NotImplemented`, so Python raises its `TypeError` for an
+  unsupported operand.
+- **Messages for misused executor options, empty or list-valued evaluation
+  points, and a position on a term without positions say what went wrong.**
+  - An executor that does not read several of `executor_options` names every
+    one, not only the first.
+  - Options given without `executor` go to the executor automatic selection
+    picks, and when it does not read them the message says it was chosen
+    automatically and asks for the executor the options are for.
+  - Evaluation points built from varying arguments with 0 rows say so, where
+    the message said the argument had no leading axis. A Python list of
+    scalars as a varying argument asks for an array, as `jnp.asarray(x)`.
+  - `record[["a", 0]]` on a record, a law, or a spec says that only a batch
+    takes positions, where it suggested indexing a batch.
+  - `EvaluationError` counts one evaluation point in the singular.
+  - A `given` with unknown inputs and one with missing required inputs each
+    get their own message.
+  - The warning for a low `max_evaluations`, and 42 messages the recent work
+    added, join their clauses as sentences instead of with semicolons.
 
 ### Removed
 

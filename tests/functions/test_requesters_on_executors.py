@@ -247,6 +247,18 @@ class TestFailures:
         with pytest.raises(EvaluationError, match="grid point 2: ValueError: bad cell"):
             failing(x=NumericArrayBatch(jnp.arange(4.0), "x", label="xs"))
 
+    def test_a_sweep_of_one_failing_cell_counts_one_evaluation_point(self):
+        def refuse(x):
+            raise ValueError("bad cell")
+
+        failing = Function(refuse, label="cell", traceable=False)
+        with pytest.raises(EvaluationError) as raised:
+            failing(x=NumericArrayBatch(jnp.arange(1.0), "x", label="xs"))
+        assert str(raised.value) == (
+            "evaluation of 'cell' failed at 1 of 1 evaluation point: "
+            "grid point 0: ValueError: bad cell"
+        )
+
     def test_a_plain_call_raises_the_exception_its_body_raised(self):
         def refuse(x):
             raise KeyError("missing input")

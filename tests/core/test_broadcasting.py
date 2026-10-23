@@ -775,7 +775,7 @@ class TestIncludeInputsArgument:
             pytest.raises(
                 ApplicabilityError,
                 match=r"^include_inputs=True cannot add parameter 'mu' to the output of 'mu', "
-                r"which already has an output with that name; rename the parameter, or pass "
+                r"which already has an output with that name\. Rename the parameter, or pass "
                 r"output_spec=OutputSpec\(output=None\) to hold the output under a name no "
                 r"parameter has$",
             ),

@@ -533,7 +533,7 @@ def _joint_atoms(
             named, held = f"parameters {clash}", "outputs with those names"
         raise ApplicabilityError(
             f"include_inputs=True cannot add {named} to the output of {output_label!r}, which "
-            f"already has {held}; rename the {'parameter' if len(clash) == 1 else 'parameters'}, "
+            f"already has {held}. Rename the {'parameter' if len(clash) == 1 else 'parameters'}, "
             f"or pass output_spec=OutputSpec({_free_output(fields)}=None) to hold the output "
             "under a name no parameter has"
         )
@@ -603,9 +603,8 @@ def _validate_max_evaluations(max_evaluations: int) -> None:
     _checked_count(max_evaluations, "max_evaluations")
     if max_evaluations < MIN_EVALUATIONS:
         warnings.warn(
-            f"max_evaluations={max_evaluations} is too low; "
-            "results may be unreliable. "
-            f"Recommended minimum is {MIN_EVALUATIONS}.",
+            f"max_evaluations={max_evaluations} is below {MIN_EVALUATIONS}, so the result may "
+            f"be unreliable. Pass max_evaluations of at least {MIN_EVALUATIONS}",
             stacklevel=2,
         )
 

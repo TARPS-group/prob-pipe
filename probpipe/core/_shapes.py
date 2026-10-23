@@ -402,6 +402,12 @@ def _as_paths(arg: Any, *, action: str, positions: bool = False) -> str | tuple[
                 f"cannot {action} {arg!r}, since it names no paths. Give at least one path"
             )
         holds_position = any(_is_position(entry) for entry in arg)
+        if holds_position and not positions:
+            position = next(entry for entry in arg if _is_position(entry))
+            raise TypeError(
+                f"cannot {action} {arg!r}, since {position!r} is a position and only a batch "
+                f"takes positions. Give only paths"
+            )
         if holds_position and any(isinstance(entry, str) for entry in arg):
             raise TypeError(
                 f"cannot mix a path and a position in one [], got {arg!r}. Index the position "

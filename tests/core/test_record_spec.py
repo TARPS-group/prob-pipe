@@ -2704,7 +2704,7 @@ class TestAFunctionOutputBindsWhateverItDeclares:
         )
         declared = self._declared(NumericArraySpec(shape=("n",)))
 
-        with pytest.raises(ValueError, match="make the output names match"):
+        with pytest.raises(ValueError, match="Make the output names match"):
             Record(
                 {"f": function},
                 event_template=declared,

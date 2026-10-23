@@ -1061,7 +1061,7 @@ class CoupledMarginal(Distribution):
     def __new__(cls, parent: Distribution, path: PathsLike) -> CoupledMarginal:
         if not isinstance(parent, Distribution):
             raise TypeError(
-                f"CoupledMarginal: parent must be a Distribution; got {type(parent).__name__}"
+                f"CoupledMarginal: parent must be a Distribution, got {type(parent).__name__}"
             )
         path = _read_event_paths(
             parent.event_spec, parent.label, path, action=f"index {parent.label!r} by"
@@ -2979,7 +2979,7 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         ]
         if missing:
             raise ValueError(
-                f"cannot bind part of an input of {self.label!r}: missing {missing}; bind "
+                f"cannot bind part of an input of {self.label!r}: missing {missing}. Bind "
                 f"every field of a structured input together"
             )
         bound = {

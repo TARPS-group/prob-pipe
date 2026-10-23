@@ -1143,6 +1143,8 @@ class NamedTree[L]:
 
         Raises
         ------
+        TypeError
+            If *other* is not a tree of this family, through ``NotImplemented``.
         ValueError
             If a top-level name is in both trees.
 
@@ -1152,6 +1154,8 @@ class NamedTree[L]:
         >>> (RecordSpec(a=(3,)) & (RecordSpec(g=RecordSpec(b=()))))
         NumericRecordSpec(a=(3,), g=NumericRecordSpec(b=()))
         """
+        if not isinstance(other, self._node_type()):
+            return NotImplemented
         return self._rebuild_node(self._leaves_merged(other), node_name=None)
 
     def _resolve_replace_updates(

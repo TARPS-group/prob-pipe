@@ -181,7 +181,7 @@ class FunctionSpec(TermSpec):
             if self.input_spec.keys() != actual.input_spec.keys():
                 raise ValueError(
                     f"{path} has the inputs {list(actual.input_spec)}, but the expected "
-                    f"FunctionSpec has the inputs {list(self.input_spec)}; make the input "
+                    f"FunctionSpec has the inputs {list(self.input_spec)}. Make the input "
                     f"names match"
                 )
             for name, spec in self.input_spec.items():
@@ -196,7 +196,7 @@ class FunctionSpec(TermSpec):
             if expected.outputs.keys() != observed.outputs.keys():
                 raise ValueError(
                     f"{path} has the outputs {list(observed.outputs)}, but the expected "
-                    f"FunctionSpec has the outputs {list(expected.outputs)}; make the output "
+                    f"FunctionSpec has the outputs {list(expected.outputs)}. Make the output "
                     f"names match"
                 )
             if _root_output_name(expected) != _root_output_name(observed):
@@ -695,8 +695,8 @@ def _validate_function_declarations(
         if set(input_spec) != set(parameters):
             raise ValueError(
                 f"Function {function_name!r} declares the inputs {sorted(input_spec)} in "
-                f"input_spec, but its signature has the parameters {sorted(parameters)}; "
-                f"they must match"
+                f"input_spec, but its signature has the parameters {sorted(parameters)}. "
+                f"They must match"
             )
     unexpected = set(construction_bindings).difference(parameters)
     if unexpected and not any(p.kind == p.VAR_KEYWORD for p in parameters.values()):

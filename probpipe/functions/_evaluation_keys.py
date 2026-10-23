@@ -937,8 +937,8 @@ class _AutomaticKeyBroker:
             or claim_state.active_attempt is not None
         ):
             raise RuntimeError(
-                "an evaluation point token already has an active attempt; "
-                "duplicate or concurrent attempts are not allowed"
+                "an evaluation point token already has an active attempt. "
+                "Duplicate or concurrent attempts are not allowed"
             )
         if attempt.attempt_token in claim_state.seen_attempts:
             raise RuntimeError("an evaluation point attempt token cannot be reused")

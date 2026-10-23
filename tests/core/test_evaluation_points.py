@@ -74,6 +74,22 @@ class TestBuildingASet:
             "varying argument with one row per evaluation point on its leading axis"
         )
 
+    def test_varying_arguments_with_zero_rows_are_refused_as_empty(self):
+        with pytest.raises(ValueError) as raised:
+            EvaluationPoints(_scaled_sum, varying={"x": np.zeros((0, 3))}, origin="fn")
+        assert str(raised.value) == (
+            "cannot build evaluation points of 'fn' from varying arguments with 0 rows. "
+            "Give each varying argument at least one row on its leading axis"
+        )
+
+    def test_a_list_of_scalars_as_a_varying_argument_is_refused_naming_the_array_form(self):
+        with pytest.raises(ValueError) as raised:
+            EvaluationPoints(_scaled_sum, varying={"x": [1.0, 2.0, 3.0]}, origin="fn")
+        assert str(raised.value) == (
+            "cannot build evaluation points of 'fn' from the list x, whose items are separate "
+            "scalars. Stack its rows as an array, as jnp.asarray(x)"
+        )
+
     def test_a_set_without_varying_arguments_is_refused(self):
         with pytest.raises(ValueError, match="without varying arguments"):
             EvaluationPoints(_scaled_sum, varying={}, origin="fn")

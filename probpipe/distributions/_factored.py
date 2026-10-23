@@ -1238,12 +1238,12 @@ def _requested_paths(joint: Any, paths: str | tuple[str, ...]) -> tuple[str, ...
             head, _, within = requested.partition(_PATH_SEP)
             if head != output_name or not within:
                 raise KeyError(
-                    f"{requested!r} is not an event path of {joint.label!r}; its paths start "
+                    f"{requested!r} is not an event path of {joint.label!r}. Its paths start "
                     f"with {output_name + _PATH_SEP!r}"
                 )
         if within not in record:
             raise KeyError(
-                f"{requested!r} is not an event path of {joint.label!r}; its fields: "
+                f"{requested!r} is not an event path of {joint.label!r}. Its fields: "
                 f"{list(joint.event_spec.outputs)}"
             )
         inner.append(within)

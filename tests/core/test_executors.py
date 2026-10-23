@@ -150,12 +150,36 @@ class TestNamingAnExecutor:
         ):
             pass
         assert str(raised.value) == (
-            "executor 'thread' does not read the option 'n_jobs'; its options are chunk_size, max_workers"
+            "executor 'thread' does not read the option 'n_jobs'. Its options are chunk_size, max_workers"
+        )
+
+    def test_every_option_the_executor_does_not_read_is_named(self):
+        with (
+            pytest.raises(ValueError) as raised,
+            requester_call(
+                requester(executor="thread", executor_options={"n_jobs": 50, "affinity": 1})
+            ),
+        ):
+            pass
+        assert str(raised.value) == (
+            "executor 'thread' does not read the options 'affinity' and 'n_jobs'. "
+            "Its options are chunk_size, max_workers"
+        )
+
+    def test_options_the_automatically_selected_executor_does_not_read_say_how_it_was_chosen(
+        self,
+    ):
+        with pytest.raises(ValueError) as raised:
+            _run_set(_opaque_sum, requester_controls={"executor_options": {"max_workers": 2}})
+        assert str(raised.value) == (
+            "executor 'sequential', chosen automatically since the call names no executor, "
+            "does not read the option 'max_workers'. Its options are chunk_size. "
+            "Name the executor the options are for, such as executor='thread'"
         )
 
     def test_jax_refuses_a_batch_size_until_compiled_lifting(self):
         with (
-            pytest.raises(ValueError, match="its options are none"),
+            pytest.raises(ValueError, match="Its options are none"),
             requester_call(requester(executor="jax", executor_options={"batch_size": 8})),
         ):
             pass
