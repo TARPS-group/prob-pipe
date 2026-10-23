@@ -439,3 +439,29 @@ class TestWorkflowOccurrences:
             second = _claim_key_words()
 
         assert (first, second) == baseline
+
+
+class TestPlannedWorkflowPaths:
+    def test_planning_nested_scopes_commits_nothing_and_matches_the_later_path(self):
+        with workflow_run(seed=17):
+            root_frame = _context._capture_active_workflow_frame()
+            with workflow_run():
+                parent_frame = _context._capture_active_workflow_frame()
+                with workflow_run():
+                    child_frame = _context._capture_active_workflow_frame()
+                    planned_path = _context._planned_path(child_frame)
+                    assert planned_path == (("scope", 0), ("scope", 0))
+                    assert (
+                        _context._planned_descendant_path(child_frame, root_frame) == planned_path
+                    )
+                    assert root_frame.ledger.next_ordinal == 0
+                    assert parent_frame.ledger.next_ordinal == 0
+                    assert parent_frame.state.path_prefix is None
+                    assert child_frame.state.path_prefix is None
+                    assert (
+                        _context._materialize_descendant_path(child_frame, root_frame)
+                        == planned_path
+                    )
+                    assert root_frame.ledger.next_ordinal == 1
+                    assert parent_frame.ledger.next_ordinal == 1
+                    assert _context._planned_path(child_frame) == planned_path
