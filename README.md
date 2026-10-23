@@ -59,7 +59,7 @@ prior = Normal("beta", jnp.zeros(2), jnp.array([10.0, 1.0]))
 likelihood = glm_likelihood("damage", BernoulliFamily(), X=X)
 
 # The model is the joint distribution of beta and the damage indicators.
-model = (likelihood & prior)
+model = likelihood & prior
 
 # Conditioning the model on the observed damage gives the posterior of beta.
 # The seed makes the sampler's random draws reproducible.
@@ -82,7 +82,7 @@ posterior provenance: route=inference_methods, method=blackjax_nuts, exact=False
 ```
 
 The prior and the likelihood are both ProbPipe objects: a distribution of the coefficients, and a conditional distribution of the data given the coefficients (constructed with `glm_likelihood`).
-Multiplying them with `*` constructs the joint model, and `condition_on` computes the posterior.
+Merging them with `&` constructs the joint model, and `condition_on` computes the posterior.
 The output also tracks how ProbPipe computed each result.
 The prior's mean has a formula, so `mean` computed it exactly.
 The posterior of a logistic regression has none, so `condition_on` generated approximate draws from the posterior using BlackJAX's No-U-Turn Sampler.

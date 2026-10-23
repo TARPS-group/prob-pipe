@@ -143,13 +143,13 @@ def test_i5_paths_chain_on_records_and_batches():
     assert draw.spec["g"]["c"] == draw.spec["g/c"]
 
 
-@pytest.mark.pending(reason="G1a: a view of a group offers the group's parts", raises=KeyError)
+@pytest.mark.pending(reason="a view of a group offers the group's parts", raises=KeyError)
 def test_i5_paths_chain_through_a_law_at_a_group():
     grouped = _grouped()
     assert grouped["g"]["c"].event_spec == grouped["g/c"].event_spec
 
 
-@pytest.mark.pending(reason="G3: paths continue into a field that holds a law", raises=KeyError)
+@pytest.mark.pending(reason="paths continue into a field that holds a law", raises=KeyError)
 def test_i5_paths_chain_through_a_held_law():
     record_with_law = Record({"n": 3.0, "G": _prior()}, label="record_with_law")
     assert record_with_law["G/mu"].event_spec == record_with_law["G"]["mu"].event_spec
@@ -214,7 +214,7 @@ def test_i9_one_path_gives_the_node_and_a_list_a_record_that_holds_it():
     assert x[["x"]].event_spec == OutputSpec(RecordSpec(x=x.event_spec.term_spec))
 
 
-@pytest.mark.pending(reason="S4: a batch stores its elements' output name", raises=TypeError)
+@pytest.mark.pending(reason="a batch stores its elements' output name", raises=TypeError)
 def test_i9_a_batchs_output_at_the_root():
     draws = _sample(Normal("x", 0.0, 1.0), sample_shape=4)
     assert draws[["x"]].element_spec.term_spec.keys() == ("x",)
@@ -250,7 +250,7 @@ def test_i10_on_an_input_spec():
     assert set(inputs[["a"]]) | set(inputs.without("a")) == {"a", "b"}
 
 
-@pytest.mark.pending(reason="G4: law.without", raises=AttributeError)
+@pytest.mark.pending(reason="law.without", raises=AttributeError)
 def test_i10_on_a_law():
     grouped = _grouped()
     assert grouped.without("g/e").event_spec == grouped[["a", "g/c"]].event_spec
@@ -265,20 +265,20 @@ def test_i11_conditioning_removes_what_it_fixes():
     assert condition_on(prior, {"mu": 0.1}).event_spec == prior.event_spec.without("mu")
 
 
-@pytest.mark.pending(reason="G3: the accessor of the term at an output", raises=AttributeError)
+@pytest.mark.pending(reason="the accessor of the term at an output", raises=AttributeError)
 def test_i12_the_term_at_an_output():
     grouped = _grouped()
     assert grouped.output_name("g").event_spec == grouped["g"].event_spec
 
 
-@pytest.mark.pending(reason="G3: [] on a Function", raises=TypeError)
+@pytest.mark.pending(reason="[] on a Function", raises=TypeError)
 def test_i13_indexing_commutes_with_producing():
     emulator = _emulator()
     theta = jnp.asarray(2.0)
     np.testing.assert_allclose(emulator["mean"](theta).raw, emulator(theta)["mean"].raw)
 
 
-@pytest.mark.pending(reason="G3: [] on a Function", raises=TypeError)
+@pytest.mark.pending(reason="[] on a Function", raises=TypeError)
 def test_i14_indexing_keeps_inputs():
     emulator = _emulator()
     assert emulator["mean"].input_spec == emulator.input_spec
@@ -378,19 +378,19 @@ def test_i6_a_view_of_a_group_agrees_with_its_parents_output_spec():
     assert grouped["g"].event_spec == grouped.event_spec["g"]
 
 
-@pytest.mark.pending(reason="G3: lists of paths continue into a held law", raises=KeyError)
+@pytest.mark.pending(reason="lists of paths continue into a held law", raises=KeyError)
 def test_i9_a_list_of_paths_through_a_held_law():
     record_with_law = Record({"n": 3.0, "G": _prior()}, label="record_with_law")
     assert record_with_law[["G/mu"]].keys() == ("G",)
 
 
-@pytest.mark.pending(reason="G5: [] on a kernel", raises=TypeError)
+@pytest.mark.pending(reason="[] on a kernel", raises=TypeError)
 def test_i13_indexing_commutes_with_a_kernel():
     lik = _lik()
     assert lik["y"].event_spec == lik.event_spec
 
 
-@pytest.mark.pending(reason="G3: in follows paths through a held law", raises=AssertionError)
+@pytest.mark.pending(reason="in follows paths through a held law", raises=AssertionError)
 def test_i18_membership_through_a_held_law():
     record_with_law = Record({"n": 3.0, "G": _prior()}, label="record_with_law")
     assert "G/mu" in record_with_law

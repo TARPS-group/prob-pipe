@@ -242,16 +242,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A slot with a default stays given once conditioning binds the others, so
   `condition_on(counts, {"K": k, "r": q})` prints as
   `counts(y | n0=50.0; K, r)`, and a given that binds it moves it after `;`.
-  It returned the repr before. A product that `*` or `joint` builds prints factor by
+  It returned the repr before. A product that `&` or `joint` builds prints factor by
   factor, as `lik(y | mu)·prior(mu)`, and a product given a label by
   `with_label` or by the `FactoredDistribution` constructor prints by that
   label, as `model(y, mu)`. A label built from another label parenthesizes a
   product, a draw such as `mu ~ prior`, and a score such as `log prior(mu)`. So
   a selection of draws from `x * y` is labeled `(x·y)[sample=0:2]`, where it was
-  `x·y[sample=0:2]`, and the posterior of `lik * prior` given `y` prints as
+  `x·y[sample=0:2]`, and the posterior of `lik & prior` given `y` prints as
   `(lik·prior)(mu; y)`. A batch element brackets a batch label of several words,
   as `[my draws][draw=1]`. Labels still join associatively, so
-  `(lik * prior) * d` is labeled `lik·prior·d`, and a labeled product enters
+  `(lik & prior) & d` is labeled `lik·prior·d`, and a labeled product enters
   a further product as one operand, so `model * d` prints as
   `model(y, mu)·d(z)`. A marginal over the whole
   events of several factors prints factor by factor, in the order the paths
@@ -321,7 +321,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fixed. A kernel applied at some of its given slots prints the other slots
   as given, as `glm(y | sigma; beta)`. Fixing the whole events of upstream
   factors still gives the labels of the factors left, so
-  `condition_on(lik * prior, {"mu": 0.5})` is labeled `lik` and prints as
+  `condition_on(lik & prior, {"mu": 0.5})` is labeled `lik` and prints as
   `lik(y; mu)`. The fixed paths are recorded whichever route conditions, an
   inference method's included, and a marginal, a view, and `raw` keep them.
   The repr shows them after the constructor call, as
@@ -342,12 +342,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   swept batch of views. To keep the ProbPipe law, call `marginal(d, p)`.
 - **A field view is labeled as the marginal at its path, and prints as it.** A
   view at the whole event of one factor takes the factor's label, so
-  `model["mu"]` for `model = (lik * prior).with_label("model")` is labeled
+  `model["mu"]` for `model = (lik & prior).with_label("model")` is labeled
   `prior` and prints as `prior(mu)`, where it was labeled `model`. A view of the
   whole events of several factors takes their joined label and prints factor by
   factor, as `model[("b", "a")]` prints as `b(b)·a(a)`. Any other view keeps its
   parent's label, as `model["y"]` prints as `model(y)`, and the repr of every
-  view names `FieldView` and the path. Replace a comparison of such a view's
+  view names `CoupledMarginal` and the path. Replace a comparison of such a view's
   label with its parent's label by one with the factor's label.
 - **`BatchSpec` takes its levels by name.** `BatchSpec(element_spec, **levels)`
   maps each level's name to the shape of its axes, outermost first, as in
@@ -414,12 +414,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A relabeled or dimension-bound copy of a law draws together with the law
   it copies.** A lift draws every law that `with_label`, `with_dim_names`, or
   `with_dim_sizes` returns together with the law it is made from, as it draws a
-  law that `with_path_names` returns. Each method returns the same law under a
+  law that `rename` returns. Each method returns the same law under a
   new label, new dimension names, or bound dimensions. So
   `f(d, d.with_label("e"))` evaluates `f` on one draw of `d` per repetition,
   where it drew two independent values before, and
-  `d.with_path_names(x="y").with_dim_sizes(n=3)` and
-  `d.with_dim_sizes(n=3).with_path_names(x="y")` both draw with `d`. A law read
+  `d.rename(x="y").with_dim_sizes(n=3)` and
+  `d.with_dim_sizes(n=3).rename(x="y")` both draw with `d`. A law read
   from a `Record` field draws with the law the record stores, so
   `f(r["x"], r["x"])` also evaluates `f` on one draw. To draw two independent
   values, construct the law twice.
@@ -563,11 +563,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alone decides the packaging. The form with several keywords, which exposed a
   record of them, raises `TypeError`: replace `OutputSpec(a=a_spec, b=b_spec)`
   with `OutputSpec(RecordSpec(a=a_spec, b=b_spec))`.
-- `with_path_names` addresses a node by its exact path on `Record`,
+- `rename` addresses a node by its exact path on `Record`,
   `RecordSpec`, `RecordBatch`, and every `NamedTree`, so a single name addresses
   a top-level node and a nested node takes its full path. A bare name no longer
   resolves to a nested node: for a nested field `g/mu`, replace
-  `r.with_path_names(mu="loc")` with `r.with_path_names({"g/mu": "loc"})`. A
+  `r.rename(mu="loc")` with `r.rename({"g/mu": "loc"})`. A
   top-level node whose name recurs deeper, which no key could address, is
   renamed by its name.
 - **A `Function` is constructed from its label and its callable, and declares
@@ -1067,7 +1067,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `annotations["arviz"]["posterior"]["params"]` with the leaf's variable.
 - **`predictive_check` takes the kernel of the observations and a law over its
   given slots.** A replication is a draw of the kernel's event from
-  `kernel * law`, so a model `likelihood * prior` is checked with its own
+  `kernel & law`, so a model `likelihood & prior` is checked with its own
   likelihood: the posterior as the law gives a posterior predictive check, and
   the prior gives a prior predictive check. Replace
   `predictive_check(posterior, simulator, test_fn, y, num_observations=n)` with
@@ -1087,7 +1087,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read one set of replications.
 - **`GenerativeLikelihood` is removed from `probpipe.core.protocols`.** The
   observations of a model are a `ConditionalDistribution`, built with
-  `conditional_distribution` and composed with a prior as `likelihood * prior`.
+  `conditional_distribution` and composed with a prior as `likelihood & prior`.
   The certification of a data generator for an omitted key is removed with it.
 
 - **`Function` controls now live outside user call kwargs.**
@@ -1748,7 +1748,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     returning the whole batch. A path and a position in one `[]`, a list of
     positions, a set, and an iterator raise `TypeError`.
   - `without`, `select`, `replace`, `is_field`, and the keys of
-    `with_path_names` take one `str` path per argument, so `without("a", "a")`
+    `rename` take one `str` path per argument, so `without("a", "a")`
     and `without("g", "g/c")` raise `ValueError`, and a tuple raises
     `TypeError`. `is_field` takes one path, `is_field("g/c")`.
   - `in` on a law works, where it raised `TypeError`.
@@ -1876,7 +1876,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as for a function that returns a distribution, has no outputs, and a batch of
   distributions has none either. A distribution whose event is such a spec has
   no paths, so indexing it by the name of the inner distributions' output
-  raises `TypeError`, and merging it with `*` raises `TypeError`, where it built
+  raises `TypeError`, and merging it with `&` raises `TypeError`, where it built
   a joint that failed when sampled. To pass the distributions on by name, wrap
   them under a name, as `OutputSpec(RecordSpec(params=law_spec))`. The same
   calls give other values:
@@ -1896,20 +1896,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
 
   A distribution whose event spec is positional over a `BatchSpec` of records
-  changes the same way: `[]` by the name of its element's one output, and `*`,
+  changes the same way: `[]` by the name of its element's one output, and `&`,
   raise `TypeError`, since a batch's outputs are not yet read as one record.
 
-- **`merge` on records, record specs, and batches of records is shallow.** It
+- **`&` on records, record specs, and batches of records is shallow.** It
   merges by top-level name, so two records that both have a group `g` raise
   `ValueError`, where their groups' fields were combined. Merge the groups
   first, then put the result under `g`:
 
   ```python
-  Record({"g": {"b": 1.0}}).merge(Record({"g": {"c": 2.0}}))
+  Record({"g": {"b": 1.0}}) & Record({"g": {"c": 2.0}})
   # before: the record {g: {b, c}}
   # after:  ValueError: cannot merge the two NumericRecords, since both have 'g'.
   #         Rename one, or merge the groups first
-  Record({"g": Record({"b": 1.0}).merge(Record({"c": 2.0}))})   # the old result
+  Record({"g": Record({"b": 1.0}) & Record({"c": 2.0})})   # the old result
   ```
 
 - **A compiled JAX program that fails while it runs raises its error.** A
@@ -1959,8 +1959,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A lifted call or a sweep whose evaluation fails raises `EvaluationError`.**
   The call runs every draw or grid point, keeps the outputs that succeeded,
   and raises `EvaluationError`, a `RuntimeError` chained to the first
-  failure's exception, whose `failures` name each failed one. A plain call
-  still raises the exception its body raised.
+  failure's exception, whose `failures` name each failed one. An output that
+  does not match the function's output spec fails its evaluation point too,
+  so it raises `EvaluationError` chained to the `ResultSchemaError`, where it
+  raised the `ResultSchemaError` itself. A plain call still raises the
+  exception its body raised.
 
   ```python
   # before
@@ -1980,17 +1983,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a replay record notes the executor the call named, `executor` and
   `executor_options`, in place of `requested_dispatch` and
   `requested_workflow_kind`. Record the call again.
-
-- **A lifted call's `metadata["dispatch"]` names the executor that ran its
-  evaluations:** `"jax"`, `"sequential"`, `"thread"`, `"process"`, a
-  user's executor, or `"prefect"` when Prefect ran them one task per draw.
-  Under Prefect it named the local dispatch mode before. The same call before
-  and after:
-
-  ```python
-  simulate.using(workflow_kind=WorkflowKind.TASK)(prior).provenance.metadata["dispatch"]
-  # before: "sequential"; after: "prefect"
-  ```
 
 - **`EvaluationPoints` built where no ProbPipe call places its evaluations in
   the workflow raises `RuntimeError`,** as directly in a function's body,
@@ -2016,8 +2008,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Merging coupled marginals now raises `ValueError` instead of silently treating
   them as independent: replace `d["a"] & d["b"]` with `d["a", "b"]`
   for their joint law, or `marginal(d, "a") & marginal(d, "b")` for independent laws.
-  Scalar multiplication of Gaussian random functions and record truth values
-  retain their existing behavior.
+  Scalar multiplication of Gaussian random functions is unchanged, and record
+  truth values change as the entry on container truth below states.
 
 - **`&` refuses coupled laws at any depth of either operand.** A merge
   compares the root ancestor of each operand and of every factor inside it,
@@ -2091,6 +2083,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a sweep inside a transformation still return their terms, so a law keeps
   its capabilities there, and a call outside every transformation returns a
   term as before.
+
+- **Merging records uses `&`, and four names change with it.** Each rename
+  changes every use, and the old name raises `AttributeError`:
+
+  ```python
+  record_a.merge(record_b)            # before, on Record, RecordSpec, and RecordBatch
+  record_a & record_b                 # after
+  d.with_path_names(x="y")            # before
+  d.rename(x="y")                     # after
+  from probpipe.distributions import FieldView        # before
+  from probpipe.distributions import CoupledMarginal  # after
+  ```
+
+- **The `joint` operation's route is recorded as `"merge"`, where it was
+  `"compose"`.** The same call records another route name, and a recipe
+  recorded before the change cannot be replayed:
+
+  ```python
+  joint(lik, prior).provenance.metadata["route"]
+  # before: 'compose'
+  # after:  'merge'
+  ```
 
 ### Added
 
@@ -2172,7 +2186,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   law by its own route.** The new route `by_component` computes each component
   whose view has an exact summary by that view's route, and the other
   components together, from one set of draws, so the mean of a dependent
-  joint such as `likelihood * prior` holds the exact means of the prior's root
+  joint such as `likelihood & prior` holds the exact means of the prior's root
   factors. The result is approximate when any component is, and its
   provenance records the route and exactness of each block of components. Under
   `exact_only=True`, the error names the components that have an exact
@@ -2359,7 +2373,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     whose fields become the components, and `OutputSpec(**{c: spec})`
     otherwise.
   - `exposes_record` reports whether the components are a record's fields.
-  - `with_path_names` renames nodes by the declaration's paths, which start
+  - `rename` renames nodes by the declaration's paths, which start
     with a component, so the field `beta` of a whole record under the component
     `parameters` is `parameters/beta`, as it is when the record is exposed. A
     key that is not a path raises `KeyError`, and a whole term's component is
@@ -2534,7 +2548,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The structural transforms re-derive the class from their result, as the record
   transforms do: an edit that removes the last non-numeric field promotes, one that
-  introduces a non-numeric field demotes, and a mixed `merge` therefore gives the
+  introduces a non-numeric field demotes, and a mixed `&` therefore gives the
   same answer whichever way round it is written. An edited field is typed the way
   template inference would type it, so a field of callables stays a function field,
   and `replace` accepts what field access hands back.
@@ -2747,8 +2761,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   common base (previously the private `_NamedTree`). The substrate owns the
   leaf-keyed mapping interface, nested-dict export (`to_nested_dict`) that the
   constructor reads back, and the
-  structural edits `merge` / `without` / `replace`, and gains
-  `with_path_names(old=new, ...)` — rename leaves or whole subtrees by path,
+  structural edits `&` / `without` / `replace`, and gains
+  `rename(old=new, ...)` — rename leaves or whole subtrees by path,
   or by bare name when unique in the tree. Each family declares its leaf type
   (`ValueSpec` for templates; arbitrary values for records), checked at
   construction, and **a `Mapping` is never a leaf**: a dict field value is
@@ -3133,7 +3147,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`Record.to_numeric()` / `NumericRecord.to_native()`** — explicit
   conversion to / from ProbPipe's native JAX-array form, with metadata
   round-trip via the aux registry. Backend metadata survives the structural
-  edits (`without` / `merge` / `replace` / `with_path_names`) for leaves they
+  edits (`without` / `&` / `replace` / `rename`) for leaves they
   leave unchanged, at any nesting depth, and a pickle round-trip (an
   aux-carrying record pickles through its native form, so `to_native` stays
   faithful across `pickle` / Ray transport); a value transform (`map`) or a
@@ -3392,7 +3406,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applied at given slots keeps the kernel's label. Conditioning a joint on the
   whole events of the factors upstream of the rest returns the other factors,
   whose labels joined with `·` label the result, so
-  `condition_on(likelihood * prior, {"mu": 0.5})` is labeled `likelihood`. Any
+  `condition_on(likelihood & prior, {"mu": 0.5})` is labeled `likelihood`. Any
   other conditioning applies Bayes' rule, and the posterior is labeled by the
   expression of the law's label and the conditioned paths, as `model | y`. A
   marginal that is the product of some of a joint's factors takes their labels,
@@ -3733,8 +3747,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   leaf-trafficking surface: `EventTemplate` binds `NamedTree[ValueSpec]` (so
   `template["x"]` type-checks as a `ValueSpec`) while `Record` binds
   `NamedTree[Any]`. The leaf accessors (`[]`, `values`, `items`, `map`) carry
-  `L`, and the structure-preserving transforms (`without` / `merge` /
-  `replace` / `with_path_names` / `map`) return `Self`.
+  `L`, and the structure-preserving transforms (`without` / `&` /
+  `replace` / `rename` / `map`) return `Self`.
   Annotations only — no runtime behavior change.
 
 - **`NumericRecord` stores native-form leaves; conversion is lazy at the
@@ -3793,8 +3807,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keyword and unlabeled forms are removed. `Record(...)` whose fields are all
   numeric (bare arrays and scalars, no backend metadata) returns a
   `NumericRecord`; passing an explicit non-numeric `event_template=` pins a
-  plain `Record`. Structural transforms (`without` / `merge` / `replace` /
-  `with_path_names`) re-derive the numeric axis the same way, and a nested
+  plain `Record`. Structural transforms (`without` / `&` / `replace` /
+  `rename`) re-derive the numeric axis the same way, and a nested
   record stored as a field is renamed to its field key. An operation that
   assembles a record supplies a meaningful, deterministic label derived from
   its inputs (the producing distribution's or model's label, or a domain term
@@ -4472,13 +4486,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `positive_definite`, requires every entry of the event to be real. The
   result keeps its shape, and the check still traces under `jax.jit`.
 - **Renaming an empirical law's paths returns an empirical law.**
-  `with_path_names` on an `EmpiricalDistribution` over records, such as an MCMC
+  `rename` on an `EmpiricalDistribution` over records, such as an MCMC
   posterior, returned a law without `atoms`, `num_atoms`, or `weights`, and its
   repr showed the posterior's atoms under the old names. It now returns an
   `EmpiricalDistribution` with the same label and weights whose atoms carry the
   new paths. A law that renames at its boundary, such as a renamed
-  `KDEDistribution`, reads as `KDEDistribution(...).with_path_names({...})`. A
-  lift draws every law that `with_path_names` returns together with the law it
+  `KDEDistribution`, reads as `KDEDistribution(...).rename({...})`. A
+  lift draws every law that `rename` returns together with the law it
   renames. A factored joint rebuilt under the new paths and a rename of a whole
   term's component used to lift independently of the law they rename, and now
   draw with it too.
