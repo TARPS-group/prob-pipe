@@ -289,16 +289,26 @@ class TestVectorizedCallables:
         assert set(outcomes.failures) == {0, 1, 2, 3, 4}
         assert {failure.message for failure in outcomes.failures.values()} == {"solver crashed"}
 
-    def test_a_vectorized_output_with_the_wrong_number_of_rows_fails_the_chunk(self):
+    @pytest.mark.parametrize(
+        ("output", "description"),
+        [
+            (jnp.zeros((1, 2)), "has 1 row"),
+            (jnp.asarray(1.0), "has no leading axis"),
+            (jnp.zeros((0, 2)), "has 0 rows"),
+        ],
+    )
+    def test_a_vectorized_output_with_the_wrong_number_of_rows_fails_the_chunk(
+        self, output, description
+    ):
         outcomes = _run(
             _points(
-                lambda x, scale: jnp.zeros((1, 2)),
+                lambda x, scale: output,
                 claims=ExecutionClaims(traceable=False, vectorized=True),
             )
         )
         assert len(outcomes.failures) == 5
         assert outcomes.failures[0].message == (
-            "'fn' claims vectorized=True but returned an output that has 1 row for 5 "
+            f"'fn' claims vectorized=True but returned an output that {description} for 5 "
             "evaluation points. Return the outputs stacked with one row per evaluation point"
         )
 

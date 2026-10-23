@@ -5071,6 +5071,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Evaluation points built from varying arguments with 0 rows say so, where
     the message said the argument had no leading axis. A Python list of
     scalars as a varying argument asks for an array, as `jnp.asarray(x)`.
+    Vectorized outputs also distinguish a scalar with no leading axis from
+    an array with 0 rows.
   - `record[["a", 0]]` on a record, a law, or a spec says that only a batch
     takes positions, where it suggested indexing a batch.
   - `EvaluationError` counts one evaluation point in the singular.

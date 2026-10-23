@@ -1326,7 +1326,7 @@ def _stacked_shared_arguments(shared_arguments: Mapping[str, Any], num_rows: int
 def _output_rows(stacked_output: Any, num_rows: int, origin: str) -> list[Any]:
     """The *num_rows* rows of a vectorized callable's stacked output."""
     leaf_row_counts = {
-        np.shape(leaf)[0] if np.ndim(leaf) > 0 else 0 for leaf in jax.tree.leaves(stacked_output)
+        np.shape(leaf)[0] if np.ndim(leaf) > 0 else None for leaf in jax.tree.leaves(stacked_output)
     }
     if leaf_row_counts != {num_rows}:
         raise ValueError(
