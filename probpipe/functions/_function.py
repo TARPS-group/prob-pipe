@@ -278,13 +278,13 @@ def _call_function(
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
 ) -> Any:
-    """The call of *function* on *args* and *call_inputs*, as JAX sees it inside a transformation.
+    """Call *function* on *args* and *call_inputs*, returning a raw form inside a JAX transformation.
 
     Outside every JAX transformation the call runs in its workflow. Inside one, a
     plain call returns its result's raw form (II.4): inside a staging trace it
     is staged as an embedded call or runs inline, and under an eager
-    transformation it runs in its workflow. An operation, a broadcast, and a
-    sweep return their terms.
+    transformation it runs in its workflow. An operation and a sweep return
+    their terms.
     """
     if _jax_transformation_active():
         argument_values = _call.resolve_function_call(

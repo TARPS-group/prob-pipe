@@ -2087,10 +2087,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   # after:  the derivative of f at 1.0
   ```
 
-  Replace `f(x).raw` inside a transformed function with `f(x)`. Operations,
-  broadcasts, and sweeps inside a transformation still return their terms, so
-  a law keeps its capabilities there, and a call outside every transformation
-  returns a term as before.
+  Replace `f(x).raw` inside a transformed function with `f(x)`. An operation
+  and a sweep inside a transformation still return their terms, so a law keeps
+  its capabilities there, and a call outside every transformation returns a
+  term as before.
 
 ### Added
 

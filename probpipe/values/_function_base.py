@@ -1710,8 +1710,8 @@ class Function(TrackedTerm, Annotated):
             the swept levels. Under the ``raw`` control the result is its raw
             form, as its ``raw`` gives it. Inside a JAX transformation, such as
             ``jax.jit``, ``jax.vmap``, or ``jax.grad``, a plain call returns
-            its result's raw form (II.4), while an operation, a broadcast, and
-            a sweep return their terms.
+            its result's raw form (II.4), while an operation and a sweep
+            return their terms.
 
         Raises
         ------
