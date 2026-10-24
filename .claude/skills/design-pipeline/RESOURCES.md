@@ -125,10 +125,10 @@ the real-data fit is interpreted only after it passes.
   posterior variance. Compare the approximation with an MCMC fit to the same
   data, and use a smaller simulated problem of the same structure when the
   full MCMC fit is too slow. A posterior conditioned on a subset of the data
-  is a different posterior, so it serves as no reference. Use the Pareto-k̂
-  diagnostic of PSIS (Yao et al. 2018) or posterior error bounds (Huggins et
-  al. 2020) when the likelihood is tractable, and the checks of stage D
-  otherwise.
+  is a different posterior, so it serves as no reference. When the
+  likelihood is tractable and the approximation has a density, also use the
+  Pareto k̂ that the bullet "Validate a variational fit" defines, or posterior
+  error bounds (Huggins et al. 2020). Otherwise, use the checks of stage D.
 - **Validate a variational fit.** A variational method fits its
   approximation by optimization, so its validation adds three checks to the
   comparison with MCMC:
@@ -155,9 +155,10 @@ the real-data fit is interpreted only after it passes.
   MCMC in three steps:
   1. Reference: fit full-batch NUTS and the stochastic-gradient method to the
      same subsample of the data, or to a simulated dataset of the same
-     structure. Use the step size and the ratio of the batch size to the
-     number of observations that are planned for the full data. Compare the
-     two fits as the bullet "Validate an approximate method before you report
+     structure. Both fits condition on the same data, so the NUTS fit is a
+     reference for the other. Use the step size and the ratio of the batch
+     size to the number of observations that are planned for the full data.
+     Compare the two fits as the bullet "Validate an approximate method before you report
      its results" requires.
   2. Step size: refit at two or three step sizes, and treat a change in the
      estimands as bias.
@@ -241,8 +242,7 @@ the real-data fit is interpreted only after it passes.
 ### I. Simulators, amortized inference, and emulators
 
 - **Choose the method by the problem.** The likelihood, the cost of the
-  model, and the number of datasets decide the method, and the user's
-  background decides only how you explain it:
+  model, and the number of datasets decide the method:
   1. a tractable likelihood whose code can be differentiated: MCMC, by
      stage E;
   2. a simulator without a tractable likelihood: simulation-based inference,
@@ -275,13 +275,13 @@ the real-data fit is interpreted only after it passes.
   3. record the architecture, the numbers of simulations and of epochs, the
      hyperparameters that were tuned, and the wall-clock time in the design
      document.
-- **Calibrate every amortized posterior.** Stage D requires SBC for an
-  amortized method. In addition, compute the coverage of the posterior
-  intervals over held-out simulations at several credibility levels from 50%
-  to 95%, which is the expected-coverage check. Neural posterior estimates
-  are often overconfident, so coverage below the nominal level at any level
-  is a failure. Coverage above the nominal level is conservative, which is
-  acceptable. TODO(source): Hermans, Delaunoy, Rozet, Wehenkel, Begy &
+- **Calibrate every amortized posterior.** Stage D requires SBC and the
+  coverage of the estimands for an amortized method. Compute the coverage
+  over held-out simulations at several credibility levels from 50% to 95%,
+  which is the expected-coverage check. Coverage below the nominal level at
+  any level is a failure, because it means intervals that are too narrow,
+  which is the common failure of neural posterior estimates. Coverage above
+  the nominal level is conservative, which is acceptable. TODO(source): Hermans, Delaunoy, Rozet, Wehenkel, Begy &
   Louppe, "A crisis in simulation-based inference? Beware, your posterior
   approximations can be unfaithful" (Transactions on Machine Learning
   Research, 2022). The coverage of each parameter's interval misses errors in
@@ -315,8 +315,8 @@ the real-data fit is interpreted only after it passes.
   3. Propagation: the likelihood includes the emulator's predictive variance,
      so that the posterior reflects the emulator's error.
   4. Discrepancy: the model includes a term for the difference between the
-     simulator and the real system, because a calibration without it gives
-     biased and overconfident parameter estimates (Kennedy & O'Hagan 2001).
+     simulator and the real system, because a calibration without it can
+     give biased and overconfident parameter estimates (Kennedy & O'Hagan 2001).
      TODO(source): Brynjarsdóttir & O'Hagan, "Learning about physical
      parameters: the importance of model discrepancy" (Inverse Problems,
      2014).
