@@ -31,8 +31,9 @@ ProbPipe branch: dev/overhaul
    update it.
 2. Create a Python environment for ProbPipe at ~/probpipe-env with Python 3.12
    or 3.13, as the page docs/get_started/installation.md of the clone
-   describes, and install the clone into it. With Python 3.12, the commands
-   are these:
+   describes, and install the clone into it. ProbPipe runs on Python 3.12 or
+   later, and the extra bayesflow of these commands needs 3.12 or 3.13. With
+   Python 3.12, the commands are these:
    python3.12 -m venv ~/probpipe-env
    ~/probpipe-env/bin/python -m pip install -e "$HOME/probpipe[pymc,nutpie,pyabc,bayesflow]"
    With Python 3.13, run python3.13 in the first command. If this computer

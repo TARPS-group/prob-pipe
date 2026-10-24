@@ -115,7 +115,8 @@ Every fit, in order, smoke runs and fits to simulated data included.
 ## 11. Getting it running
 - Install: the command from `docs/get_started/installation.md` for the
   backends this design uses, at the commit or branch that the corpus manifest
-  records, and the Python version it needs. pandas installs with ArviZ, which
+  records, and the Python version it needs, which is 3.12 or later, or 3.12
+  or 3.13 for the extra `bayesflow`. pandas installs with ArviZ, which
   every install includes, and matplotlib with the extra `pymc` or `viz`.
 - Open and run: how to run the code locally and on Google Colab, stage by
   stage, with `STAGE` set to `smoke`, `validate`, and then `fit`. For a
