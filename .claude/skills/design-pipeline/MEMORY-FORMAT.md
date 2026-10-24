@@ -35,7 +35,10 @@ repository, check whether git ignores the workspace, with
 `git -C <repository> check-ignore -q <workspace>`. When git does not ignore it,
 tell the user that git would track the memory and the design files, and offer
 two choices: add the workspace to that repository's `.gitignore`, or move the
-workspace outside the repository.
+workspace outside the repository. When the user keeps a workspace that git
+tracks, its project memory holds no facts about the person. Leave out the
+section *Project-specific preferences and background* of its template, and
+keep those facts in person memory.
 
 A workspace holds six files:
 
@@ -54,8 +57,19 @@ A workspace holds six files:
 
 - **Ask once before you create person memory.** Say where it will be stored,
   what goes in it, and that the user can read, edit, or delete it at any time.
-  If the user declines, keep person-level facts in project memory only, record
-  the refusal there, and ask no more in this project.
+  After you create it, tell the user its path. If the user declines, record the
+  refusal in project memory and ask no more in this project. Keep person-level
+  facts in project memory when git does not track the workspace, and only in
+  the conversation when git tracks it.
+- **Keep these facts in these files.** Write the facts of this assistant only
+  to person memory, project memory, and the workspace. Keep them out of your
+  agent's own memory and instruction files, such as `CLAUDE.md`, `AGENTS.md`,
+  or the agent's automatic memory.
+- **Project memory decides for its project.** When person memory and project
+  memory disagree about the current project, follow project memory.
+- **Confirm old and inferred facts.** A fact tagged `[inferred]`, or dated more
+  than about six months ago, is unconfirmed. Confirm it with the user before
+  you rely on it.
 - **Record the source of each fact.** Tag every fact with its source and date:
   - `[stated 2026-10-23]`: the user said it;
   - `[confirmed 2026-10-23]`: you proposed it, and the user agreed;
@@ -65,7 +79,9 @@ A workspace holds six files:
   Present an inferred fact to the user as unconfirmed.
 - **A correction replaces a fact.** When the user corrects a fact, such as a
   rating of the profile or a description of the data, replace the old entry
-  with the corrected one. When they say "forget X", delete the entry.
+  with the corrected one. When they say "forget X", delete the entry. When they
+  say "forget me", delete the person-memory file, tell them its path, and ask
+  whether to delete the project memories that its index lists.
 - **Project decisions are append-only.** Add each decision as a new entry of
   *Decisions*. When a later decision reverses an earlier one, keep the earlier
   entry and mark it `[superseded <date> by <decision>]`. Keep every entry of

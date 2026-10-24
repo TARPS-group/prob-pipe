@@ -34,7 +34,8 @@ assessment calibrates how you work together. Then take two steps:
    JAX".
 2. Save the confirmed profile, with the user's corrections, to person memory.
    Put anything true only of this project, such as "new to survival analysis",
-   in project memory.
+   in project memory, except in a workspace that git tracks, as
+   [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#workspace) says.
 
 The profile can change. When later answers show a different rating, update
 memory and mark the entry `[inferred]`. When the change alters how you work,
