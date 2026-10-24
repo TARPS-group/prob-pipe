@@ -115,8 +115,9 @@ when either check fails, and record the new corpus in project memory.
   [RESOURCES.md](RESOURCES.md) Part 1, and cites resources by the rule at the
   top of that file.
 - **Propose the fast path first when time is short or the user is new.** When
-  the user has a deadline within about a month, or is new to Bayesian
-  modeling, propose a first version of the design that takes seven steps:
+  the user has a deadline within about a month, or their rating in Bayesian
+  modeling is New or Familiar by [BACKGROUND-RUBRIC.md](BACKGROUND-RUBRIC.md),
+  propose a first version of the design that takes seven steps:
   1. a first look at the data, which ends the data step of
      [Phase 2](phases/2-materials.md#data);
   2. the simplest defensible model, or the user's own model when they bring

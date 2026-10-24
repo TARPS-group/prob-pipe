@@ -16,13 +16,15 @@ information, sensitive locations such as the sites of protected species, or
 data under a use agreement. If it does, or the user is unsure, open none of its
 rows. Write a short script that prints only each column's name, type, and
 number of missing values. Ask the user to run it, and work from its output.
+Record only that schema in `<workspace>/data-notes.md`.
 
 For each dataset you can open:
 
 - Inspect it yourself, by the
   [rules for user materials](../INSTRUCTIONS.md#user-materials-and-code). Load
-  a small file in full, and read the header and a sample of a large one. Use
-  `pandas` if it is installed, and the standard library otherwise.
+  a file of a few megabytes or less in full, and read the header and a sample
+  of the rows of a larger one. Use `pandas` if it is installed, and the
+  standard library otherwise.
 - Record these features in `<workspace>/data-notes.md`:
   - the format and the size;
   - the variables, with their types, units, and ranges;
@@ -31,7 +33,7 @@ For each dataset you can open:
   - censoring or truncation;
   - outliers;
   - anything that contradicts the user's description;
-  - for counts and rates, five more features:
+  - for counts and rates, six more features:
     - the true zeros and the values that were not observed, including
       sentinel codes such as -99, blanks, or a 0 that means "not surveyed";
     - whether the table is wide, with one column per time, or long, with one
@@ -40,6 +42,11 @@ For each dataset you can open:
       person-time, which enters the model as an offset;
     - overdispersion, which shows as a variance well above the mean within
       comparable groups;
+    - zero inflation and imperfect detection: more zeros than the count model
+      predicts, as at sites where a species is absent, and counts below the
+      true number, as when observers miss individuals. Repeated visits to a
+      site separate the two, by the occupancy and N-mixture models of
+      Kéry & Royle 2016 in [RESOURCES.md](../RESOURCES.md);
     - whether the missing values are in the outcome, which the likelihood can
       omit when the missingness depends only on observed quantities, or in a
       covariate, which needs a model or an imputation that you discuss with

@@ -42,14 +42,15 @@ Frame a low-confidence rating as a question for the user.
 
 The profile shapes the session by the rows of this table. It decides how much
 you explain, which choices you make for the user, and which you put to them.
-The problem alone decides which inference method you recommend, by
-[RESOURCES.md](RESOURCES.md) stages E and I. Combine the rows of several
+The problem decides the default inference method, by
+[RESOURCES.md](RESOURCES.md) stages E and I, and the profile decides only how
+you present the alternatives. Combine the rows of several
 dimensions, so that a domain expert who is new to Bayesian methods gets deep
 scientific questions and gentle statistical explanations.
 
 | If the user is... | Then... |
 |---|---|
-| New or Familiar in Bayesian modeling | Explain each modeling choice in plain language with a one-line *why*. Pick sensible defaults, such as the priors and the inference method, yourself, and say so. Use MCMC when it is feasible, and propose an approximate inference method only with the validation step that [RESOURCES.md](RESOURCES.md) stage E requires, shown to the user. Introduce diagnostics as "how we know the answer is trustworthy". |
+| New or Familiar in Bayesian modeling | Explain each modeling choice in plain language with a one-line *why*. Pick sensible defaults, such as the priors and the inference method, yourself, and say so. The default method of [RESOURCES.md](RESOURCES.md) stage E is MCMC whenever the problem allows it. Present an approximate inference method only with the validation step that stage E requires, shown to the user. Introduce diagnostics as "how we know the answer is trustworthy". |
 | Working or Expert in Bayesian modeling | Use standard terminology without definitions. Put the real choices to them, such as the priors, the parameterization, the pooling, and the inference method, with their trade-offs. Discuss diagnostics and pathologies directly. |
 | Expert in the domain | Ask detailed questions about mechanism, measurement, and prior knowledge. Ask them to justify the priors and the structure. |
 | New or Familiar in the domain | Ask about the domain more carefully, and flag your own domain assumptions explicitly. Suggest that they check the key assumptions with a colleague. |

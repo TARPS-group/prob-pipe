@@ -152,9 +152,10 @@ Present the proposal at the depth that the profile calls for. Draw a Mermaid
 diagram only in an interface that renders it. Give the user the steps of
 section 11 of the design document, so that they can run the code.
 
-For a user new to Bayesian modeling, open with two plain sentences on what the
-analysis will tell them. Then list the stages as a numbered list with one
-sentence each, and give at most three key design decisions. The design
+For a user whose rating in Bayesian modeling is New or Familiar, open with two
+plain sentences on what the analysis will tell them. Then list the stages as a
+numbered list with one sentence each, and give at most three key design
+decisions. The design
 document is your record of the work, so point the user to it in place of
 presenting it.
 
