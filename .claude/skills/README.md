@@ -172,7 +172,7 @@ Helps a user design a ProbPipe data analysis pipeline for their own problem.
 
 **When to use:** When starting a new analysis with ProbPipe, or when turning an
 existing model and dataset into a ProbPipe pipeline. The model can be a paper,
-Stan or PyMC code, or a simulator.
+a simulator, or code, such as a PyMC, Stan, or JAX model.
 
 **Other agents:** The instructions are written for any agent that can read
 files and run commands. `SKILL.md` is the Claude Code entry point, which maps
@@ -187,8 +187,9 @@ builds the corpus, and reads the instructions.
 - `design-pipeline/phases/0-load.md` to `design-pipeline/phases/5-feedback.md`:
   one file per phase, which the
   agent reads when the phase starts;
-- `CAPABILITIES.md`: each need of a pipeline, with its ProbPipe entry points,
-  its example page, and its workflow stage;
+- `CAPABILITIES.md`: the routes by which a user's model enters ProbPipe, and
+  each need of a pipeline with its ProbPipe entry points, its example page,
+  and its workflow stage;
 - `RESOURCES.md`: the Bayesian workflow checklist and the annotated
   bibliography;
 - `BACKGROUND-RUBRIC.md`, `DESIGN-DOC-TEMPLATE.md`, and `MEMORY-FORMAT.md`: the
