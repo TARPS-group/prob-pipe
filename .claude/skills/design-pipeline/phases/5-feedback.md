@@ -36,12 +36,17 @@ A revision prompted by a fit to the real data can fit the noise of that data,
 and the analysis then overstates its certainty. Every revision of a design, in
 any phase, follows these rules:
 
-1. **Classify each revision** into one of three classes:
+1. **Classify each revision** into one of four classes:
    - *pre-data:* a change made before any fit to the real data;
    - *data-driven:* a change of the model prompted by a fit to the real data,
      a predictive check, or a cross-validation result;
    - *computational:* the same model computed another way, such as a
-     reparameterization or other settings of the sampler.
+     reparameterization or other settings of the sampler;
+   - *added after the fit:* an analysis added after a fit to the real data and
+     prompted by something other than that fit, such as a reviewer's request
+     for another model or a prior sensitivity analysis. It runs beside the
+     main model as a sensitivity analysis, by rule 5, and the main model
+     stays as it is.
 
    A fix of the code after a smoke run implements the design as it stands, so
    it needs no new version.
