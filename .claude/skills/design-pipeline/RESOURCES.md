@@ -216,19 +216,26 @@ the real-data fit is interpreted only after it passes.
   matches the prediction task of the estimands:
   1. new observations of exchangeable units: PSIS-LOO (Vehtari et al.
      2017);
-  2. new groups of a hierarchical model: leave-one-group-out;
+  2. new groups of a hierarchical model: leave-one-group-out. Leaving out a
+     group changes the posterior more than leaving out one observation, so
+     PSIS often gives a high k̂ for a group. Check the k̂ of each group, and
+     refit the model without each group whose k̂ is high, or use grouped
+     k-fold cross-validation;
   3. future values of a time series: leave-future-out or rolling-origin
      cross-validation (Bürkner et al. 2020);
   4. new locations of spatial data: cross-validation that leaves out blocks
      of nearby locations (Roberts et al. 2017).
-- **Pareto k̂:** check the k̂ of each left-out unit. A k̂ above 0.7, or above
-  the threshold min(1 − 1/log₁₀ S, 0.7) for S posterior draws, makes the PSIS
-  estimate for that unit unreliable (Vehtari et al. 2024). For those units,
+- **Pareto k̂:** check the k̂ of each left-out unit. A k̂ above the threshold
+  min(1 − 1/log₁₀ S, 0.7) for S posterior draws makes the PSIS estimate for
+  that unit unreliable (Vehtari et al. 2024). For those units,
   use moment matching, refit the model without them, or use k-fold
   cross-validation.
 - **Calibration:** check the leave-one-out predictive distributions with
-  LOO-PIT, whose values are uniform for a calibrated model (Gabry et al.
-  2019).
+  LOO-PIT, whose values are uniform for a calibrated model of a continuous
+  outcome (Gabry et al. 2019). For a discrete outcome, such as a count, the
+  PIT values are uniform only in the randomized PIT or the nonrandomized PIT
+  for discrete data, so use one of those, or check the counts with a
+  rootogram.
 - **Forecasts:** score a forecast of a time series or of new locations with
   a proper scoring rule, such as the log score or the continuous ranked
   probability score, and check its calibration with the probability integral
