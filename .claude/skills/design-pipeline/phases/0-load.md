@@ -59,8 +59,8 @@ the first questions. Search the rest of the corpus when a question needs it.
    since they decide whether you can run and validate code later.
 6. Once Phase 1 creates the project memory, record in it the corpus directory
    and the commit and version that `<corpus>/MANIFEST.md` names, and record
-   `<python>` beside them, with each warning that step 3 kept out of the
-   reply.
+   `<python>` beside them, with the optional backends of step 5 and each
+   warning that step 3 kept out of the reply.
 
 ## Reading on demand
 

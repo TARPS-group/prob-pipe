@@ -28,10 +28,16 @@ the earlier steps against them:
    - A model of standard statistical structure written for this project
      defaults to PyMC or Stan. Examples are a regression with random effects,
      such as a generalized linear mixed model, and a spatial model with a CAR,
-     ICAR, or BYM prior. Choose the one the user is more comfortable with, by
-     the background profile: Stan for a user of Stan or brms, and PyMC for a
-     user who works in Python or whose computer cannot compile Stan's C++
-     programs.
+     ICAR, or BYM prior. A computer that cannot compile Stan programs rules
+     Stan out, so a user of brms whose compiler fails gets PyMC. Otherwise
+     choose the one the user is more comfortable with, by the background
+     profile: Stan for a user of Stan or brms, and PyMC for a user who works
+     in Python. Stan needs its backend and a C++ toolchain, by the row "A Stan
+     program" of CAPABILITIES.md. When the backends that
+     [Phase 0](0-load.md) recorded lack it, ask before you install it, by
+     rule 8 of the
+     [rules for user materials](../INSTRUCTIONS.md#user-materials-and-code),
+     or choose PyMC.
    - A custom, mechanistic, or simulator-based model, or a model whose code
      is already in JAX, defaults to the route in JAX and ProbPipe's laws.
    - Name the other routes to the user, with what each allows and rules out,
