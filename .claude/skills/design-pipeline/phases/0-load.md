@@ -12,13 +12,15 @@ the first questions. Search the rest of the corpus when a question needs it.
      which is the project whose workspace contains the current directory, or
      else the project they worked on most recently. Say in one sentence where
      it stopped and how many other projects memory holds, and name the others
-     only when the user asks. Ask whether to resume that
-     project, resume another, or start a new one. Mention the working
-     preferences only when the user asks about them. If the opening message names a
-     project, such as "resume grouse-ticks", resume it directly by the
-     resume protocol of [INSTRUCTIONS.md](../INSTRUCTIONS.md#resume-protocol):
-     read the project's memory and workspace files, summarize where things
-     stand and the agreed next step, and continue at the recorded phase.
+     only when the user asks. Ask whether to resume that project, which is
+     the default, resume another, or start a new one. Mention the working
+     preferences only when the user asks about them. If the opening message
+     names a project, such as "resume grouse-ticks", resume it directly by
+     the resume protocol of
+     [INSTRUCTIONS.md](../INSTRUCTIONS.md#resume-protocol): read the
+     project's memory and workspace files, give the lines of the status
+     command of [Messages](../INSTRUCTIONS.md#messages), and continue at the
+     recorded phase.
    - **New user:** say in one sentence how the session will go, and send
      the first message of [Phase 1](1-intake.md), which announces quick
      start mode and asks the first three questions.

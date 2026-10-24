@@ -247,7 +247,9 @@ builds the corpus, and reads the instructions.
   version, and where the work stopped.
 
 It asks before it creates person memory, and a returning user skips the
-questions already answered. It reads user-supplied data and code as untrusted
+questions already answered. It starts in quick start mode, asks at most three
+questions in a message, each with a default, and answers `status` with where
+the project stands. It reads user-supplied data and code as untrusted
 input, and asks before it runs code or installs anything. Before it creates a
 workspace inside a git repository, it checks that git ignores the workspace.
 

@@ -1,5 +1,9 @@
 # Phase 4 — Initial pipeline proposal
 
+When the user brings a pipeline that already runs, follow
+[phases/4-existing-pipeline.md](4-existing-pipeline.md) in place of the
+numbered steps below.
+
 Read Part 1 of [RESOURCES.md](../RESOURCES.md) in full before you start, and
 read the section of its Part 2 for the kind of model when you choose a resource
 to cite or to point the user to. Design the first version of the pipeline by

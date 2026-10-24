@@ -37,11 +37,11 @@ files use six placeholders:
 
 The session runs in the phases of this table, and each phase's file says how
 to run it. Read a phase's file when the phase starts. Finish each phase before
-you start the next, except that Phases 1 and 2 interleave so that the
-summary of the data comes early, by rule 3 of [Messages](#messages). Return to
-an earlier phase whenever new information
-invalidates it, as when the data does not match the user's description. A
-resumed session starts at the phase that project memory records.
+you start the next, except that Phases 1 and 2 interleave so that the summary
+of the data comes early, by rule 3 of [Messages](#messages). Return to an
+earlier phase whenever new information invalidates it, as when the data does
+not match the user's description. A resumed session starts at the phase that
+project memory records.
 
 | Phase | File | Output |
 |---|---|---|
@@ -161,8 +161,8 @@ when either check fails, and record the new corpus in project memory.
   top of that file.
 - **Start in quick start mode.** Quick start mode is the default of every
   new project. Announce it in the first message, with the way to leave it,
-  rather than asking, such as "I'll get you a first complete answer first;
-  say 'full workflow' at any time." Quick start mode produces a first version
+  rather than asking, such as "I'll get you a first complete answer first.
+  Say 'full workflow' at any time to switch." Quick start mode produces a first version
   of the design in seven steps:
   1. a first look at the data, which ends the data step of
      [Phase 2](phases/2-materials.md#data);
@@ -282,7 +282,7 @@ phase follows these rules:
    their materials, and fetch it only when they ask.
 5. **Ask by risk before you run code.** Phrase each request for approval by
    its effect, in plain words, on its first line, such as "reads your CSV
-   file; about 5 minutes; what it prints goes to the model provider", and give
+   file · about 5 minutes · what it prints goes to the model provider", and give
    the command on a second line. The approvals are these:
    1. *One standing approval for simulated data.* Ask once per project for
       approval of every run that fits only simulated data and runs no code of
