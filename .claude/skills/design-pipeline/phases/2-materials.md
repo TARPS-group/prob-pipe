@@ -51,6 +51,13 @@ For each dataset you can open:
   "Hold the data" of
   [CAPABILITIES.md](../CAPABILITIES.md), and present it by the Python rows of the *Adaptation* section of
   [BACKGROUND-RUBRIC.md](../BACKGROUND-RUBRIC.md).
+- Plan the preprocessing as steps of the pipeline that start from the raw files,
+  by the row "Preprocess the data" of [CAPABILITIES.md](../CAPABILITIES.md).
+  ProbPipe then records each step in the provenance of the data, and a rerun
+  reproduces the data from the raw files. This is the default for cleaning,
+  reshaping, and derived variables. When the user keeps a step outside
+  ProbPipe, record where it runs and where its script is kept in the design
+  document.
 
 After the inspection, show the user one quick summary of the data, such as the
 counts by group and time and where values are missing, and ask whether it

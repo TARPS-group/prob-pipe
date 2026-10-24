@@ -19,7 +19,8 @@ explanation to the background profile in person memory.
 ## 2. Data
 - Each dataset: source, size, key variables, how it maps onto ProbPipe
   objects.
-- Preprocessing steps, and why.
+- Preprocessing steps, each a step of the pipeline from the raw files, and why.
+  Any step kept outside ProbPipe, where it runs, and where its script is kept.
 - Known data issues and how the pipeline handles them.
 
 ## 3. Generative model
