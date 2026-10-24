@@ -151,7 +151,7 @@ design section.
 **What it does:**
 - Finds the sections from the diff, or takes them as arguments
 - Runs `scripts/design/design_blocks.py` `list` and `check` on them, and the
-  four conformance tests
+  five conformance tests
 - Runs `scripts/design/ledger.py` and `tests/docs/`
 - Checks those sections against `design/README.md` § Conventions, and runs
   `scripts/design/prose.py` on the changed design files

@@ -10,25 +10,32 @@ parameters, in order, with the declared kinds and defaults.
 from __future__ import annotations
 
 import importlib
-import importlib.util
 import inspect
 import re
-import sys
 from pathlib import Path
 
 import pytest
 
 import probpipe
 import probpipe.families as families
+from tests._design_conformance import (
+    DESIGN_IS_CHECKED_OUT,
+    PendingMembers,
+    declaration_cases,
+    declared_name,
+    design_blocks,
+    findings_of_member,
+    pending_member_cases,
+    unexpected_findings,
+)
 
 _ROOT = Path(__file__).resolve().parents[2]
-_TOOL = _ROOT / "scripts" / "design" / "design_blocks.py"
 _CATALOG = _ROOT / "design" / "07-distribution-catalog.md"
 _STRUCTURE = _ROOT / "design" / "package-structure.md"
 
+
 pytestmark = pytest.mark.skipif(
-    not (_ROOT / "design").is_dir() or not _TOOL.exists(),
-    reason="the design reference is not checked out",
+    not DESIGN_IS_CHECKED_OUT, reason="the design reference is not checked out"
 )
 
 #: The sections of the catalog, in the order the reference gives them.
@@ -53,29 +60,13 @@ _CURRENT_MODULES: dict[str, str] = {}
 #: Declarations of these sections that the distribution layer owns and checks.
 _OTHER_PACKAGES = frozenset({"EmpiricalDistribution"})
 
-#: Declarations the implementation does not match yet, with the change each awaits.
-_PENDING = {
-    "KDEDistribution": "the declaration check compares a class-valued default by the class's name",
-}
+#: The members that differ from the design today, by finding name, each with
+#: the problem the check reports and the behavior it awaits. The rule is stated
+#: in ``tests/_design_conformance.py``.
+_PENDING: PendingMembers = {}
 
 #: New declarations the catalog does not define yet; each has a pending case above.
 _UNBUILT: frozenset[str] = frozenset()
-
-
-def _tool():
-    if "design_blocks" in sys.modules:
-        return sys.modules["design_blocks"]
-    spec = importlib.util.spec_from_file_location("design_blocks", _TOOL)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["design_blocks"] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-def _declared_name(declaration) -> str:
-    member = getattr(declaration, "member", None)
-    return member.name if member is not None else declaration.name
 
 
 def _resolver(section: str):
@@ -97,19 +88,20 @@ def _resolver(section: str):
     return resolve
 
 
-def _cases() -> list:
-    if not _TOOL.exists():
+def _declarations() -> list:
+    """The declarations of the catalog's sections that this package realizes."""
+    if not DESIGN_IS_CHECKED_OUT:
         return []
-    cases = []
-    for declaration in _tool().declarations(_SECTIONS):
-        name = _declared_name(declaration)
-        if name in _OTHER_PACKAGES:
-            continue
-        marks = ()
-        if name in _PENDING:
-            marks = pytest.mark.pending(reason=_PENDING[name], raises=AssertionError)
-        cases.append(pytest.param(declaration, id=f"{declaration.section}-{name}", marks=marks))
-    return cases
+    return [
+        declaration
+        for declaration in design_blocks().declarations(_SECTIONS)
+        if declared_name(declaration) not in _OTHER_PACKAGES
+    ]
+
+
+def _findings(declaration) -> list:
+    """The tool's findings for *declaration*, read in its section's modules."""
+    return design_blocks().check([declaration], _resolver(declaration.section))
 
 
 def _listed_families() -> list[str]:
@@ -123,19 +115,23 @@ def _listed_families() -> list[str]:
 def _new_declarations() -> dict[str, str]:
     """Each declared name that ``families/`` defines, with its section."""
     return {
-        _declared_name(declaration): declaration.section
-        for declaration in _tool().declarations(_SECTIONS)
-        if _declared_name(declaration) not in _CURRENT_MODULES
-        and _declared_name(declaration) not in _OTHER_PACKAGES
-        and _declared_name(declaration) not in _UNBUILT
+        declared_name(declaration): declaration.section
+        for declaration in _declarations()
+        if declared_name(declaration) not in _CURRENT_MODULES
+        and declared_name(declaration) not in _UNBUILT
     }
 
 
 class TestDeclarationsAreImplemented:
-    @pytest.mark.parametrize("declaration", _cases())
+    @pytest.mark.parametrize("declaration", declaration_cases(_declarations()))
     def test_the_declaration_matches_the_implementation(self, declaration):
-        findings = _tool().check([declaration], _resolver(declaration.section))
-        assert not findings, "; ".join(f"{f.name} {f.problem}" for f in findings)
+        unexpected = unexpected_findings(_findings(declaration), _PENDING)
+        assert not unexpected, "; ".join(unexpected)
+
+    @pytest.mark.parametrize("member_name", pending_member_cases(_PENDING))
+    def test_a_pending_member_matches_its_declaration(self, member_name):
+        findings = findings_of_member(member_name, _declarations(), _findings)
+        assert not findings, "; ".join(findings)
 
     def test_each_unbuilt_declaration_is_defined(self):
         programs = importlib.import_module("probpipe.families._programs")
