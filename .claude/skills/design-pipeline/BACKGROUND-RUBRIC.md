@@ -28,15 +28,15 @@ Frame a low-confidence rating as a question for the user.
 
 | Dimension | What it covers | Signals |
 |---|---|---|
-| **Domain science** | The user's discipline: its mechanisms, measurement, conventions, and literature. | Precise terminology; talks about mechanisms and measurement error; cites papers; anticipates confounders. |
-| **Probability and statistics** | Random variables, distributions, likelihood, estimation, uncertainty, regression. | Distinguishes parameters from data, variance from uncertainty; talks about likelihoods, standard errors, intervals. |
-| **Bayesian modeling and inference** | Priors, posteriors, hierarchical models, MCMC and VI, diagnostics, predictive checks. | Mentions priors, pooling, R-hat, divergences, posterior predictive checks; has used Stan, PyMC, or similar. |
-| **ML engineering** | Training neural networks and other predictive models: validation splits, early stopping, hyperparameter tuning, GPUs. | Talks about train/validation splits, overfitting, architectures, learning rates; has used PyTorch, JAX, or scikit-learn. |
-| **Approximate inference** | Variational inference, normalizing flows, simulation-based and amortized inference, Gaussian processes, stochastic-gradient MCMC, and how each one fails. | Mentions the ELBO, NPE or NLE, coverage or SBC of an approximate posterior, kernels and length scales; has used BayesFlow or GPyTorch. |
-| **Scientific computing and simulation** | Simulators, ODE/PDE models, numerical methods, HPC. | Has a simulator; discusses solvers, run times, clusters. |
-| **Python and software** | Python fluency, packages, environments, version control, testing. | Shares or describes code; mentions virtual environments, notebooks, git. |
-| **JAX** | Arrays, `jit`, `vmap`, `grad`, pure functions, PRNG keys. | Mentions JAX or its idioms; writes functional, array-oriented code. |
-| **ProbPipe** | ProbPipe itself. | Has run the tutorials; uses ProbPipe vocabulary, such as `Record` and `condition_on`. |
+| **Domain science** | The user's discipline: its mechanisms, measurement, conventions, and literature. | Uses precise terminology and cites papers. Talks about mechanisms and measurement error, and anticipates confounders. |
+| **Probability and statistics** | Random variables, distributions, likelihood, estimation, uncertainty, regression. | Distinguishes parameters from data and variance from uncertainty. Talks about likelihoods, standard errors, and intervals. |
+| **Bayesian modeling and inference** | Priors, posteriors, hierarchical models, MCMC and VI, diagnostics, predictive checks. | Mentions priors, pooling, R-hat, divergences, or posterior predictive checks. Has used Stan, PyMC, or similar software. |
+| **ML engineering** | Training neural networks and other predictive models: validation splits, early stopping, hyperparameter tuning, GPUs. | Talks about train/validation splits, overfitting, architectures, or learning rates. Has used PyTorch, JAX, or scikit-learn. |
+| **Approximate inference** | Variational inference, normalizing flows, simulation-based and amortized inference, Gaussian processes, stochastic-gradient MCMC, and how each one fails. | Mentions the ELBO, NPE or NLE, coverage or SBC of an approximate posterior, or kernels and length scales. Has used BayesFlow or GPyTorch. |
+| **Scientific computing and simulation** | Simulators, ODE/PDE models, numerical methods, HPC. | Has a simulator, and discusses solvers, run times, or clusters. |
+| **Python and software** | Python fluency, fluency in other languages such as R, packages, environments, version control, testing. | Shares or describes code, and mentions virtual environments, notebooks, or git. Names R packages or writes R model formulas. |
+| **JAX** | Arrays, `jit`, `vmap`, `grad`, pure functions, PRNG keys. | Mentions JAX or its idioms, and writes functional, array-oriented code. |
+| **ProbPipe** | ProbPipe itself. | Has run the tutorials, and uses ProbPipe vocabulary, such as `Record` and `condition_on`. |
 
 ## Adaptation
 
@@ -55,6 +55,7 @@ scientific questions and gentle statistical explanations.
 | New or Familiar in the domain | Ask about the domain more carefully, and flag your own domain assumptions explicitly. Suggest that they check the key assumptions with a colleague. |
 | New or Familiar in Python | Give complete, runnable code, with a comment on each stage and explicit instructions to install and run it. Use plain idioms. Describe the design in words, and name ProbPipe classes only in the code and its comments. |
 | Working or Expert in Python | Show concise code, and skip the setup basics. |
+| Fluent in R | Relate each model to its R formula, such as `glm(count ~ year, family = poisson)` or `lme4::glmer(count ~ year + (1 \| site), family = poisson)`. Give the pandas equivalent of each data step that they would write with dplyr or tidyr. When they prefer, let them prepare the data in R and export a CSV for the pipeline. |
 | New to JAX | Keep JAX-specific details inside ProbPipe calls where possible. When JAX appears, as in `jnp`, the purity of a `@function`, or random seeds, explain it briefly. |
 | Working or Expert in ML engineering | Draw analogies to ML practice where they help, such as held-out validation and early stopping. Put the training choices to them, such as the architecture, the simulation budget, and the stopping rule. |
 | New or Familiar in ML engineering | Choose the training settings of a neural estimator or an emulator yourself, say so, and explain each validation check as a test on simulations or simulator runs that the training did not use. |
