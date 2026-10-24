@@ -13,7 +13,7 @@ Python imports:
 4. each ``method=`` given to ``condition_on.using`` names an inference method
    registered in this environment, when it is a string or a name that the file
    assigns a string once at its top level, such as ``METHOD = "tfp_nuts"``;
-5. no call reaches a top-level export that raises ``NotImplementedError`` on
+5. the file calls no top-level export that raises ``NotImplementedError`` on
    every call, which ``build_corpus.unimplemented_exports`` finds in the
    source of the imported ``probpipe``.
 

@@ -152,7 +152,7 @@ Take these steps before you show the code, and again after each revision:
 1. Run `<python> <assistant>/check_symbols.py <workspace>/pipeline.py`, or the
    same command on the notebook, and fix each problem that it prints. It
    checks that each ProbPipe name resolves, that each call's arguments bind
-   to the signature, and that no call reaches an export that is not
+   to the signature, and that the code calls no export that is not
    implemented. It checks no meaning, so read the docstring of each call whose
    meaning you are unsure of.
 2. If ProbPipe imports here, run the smoke stage by the

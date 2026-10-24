@@ -34,8 +34,12 @@ the first questions. Search the rest of the corpus when a question needs it.
    from source to signatures and docstrings. It writes `<corpus>/INDEX.md`
    and `<corpus>/MANIFEST.md`, which records the branch, the commit, and the
    version of the checkout and lists the headings of each part with their line
-   numbers. Tell the user about each warning it prints, such as an installed
-   `probpipe` whose version differs from the checkout's.
+   numbers. For each warning it prints, tell the user in plain words what it
+   means for their analysis and whether they need to act, such as an
+   installed `probpipe` that comes from outside the checkout. Keep a warning
+   that changes nothing for the analysis out of the reply, such as stale
+   version metadata of a `probpipe` that imports from the checkout, and
+   record it in project memory by step 6.
 4. Read in full `<corpus>/INDEX.md`, each `1-overview` part that the manifest
    lists, and [CAPABILITIES.md](../CAPABILITIES.md). The index lists the
    public exports with their signatures, the inference methods with their
@@ -43,13 +47,20 @@ the first questions. Search the rest of the corpus when a question needs it.
    your agent's read returns fewer lines than a file holds, read the file in
    consecutive line ranges, which for a part start at the lines of the
    headings that `<corpus>/MANIFEST.md` lists.
-5. Check whether ProbPipe imports in that environment, with
-   `<python> -c "import probpipe; print(probpipe.__version__)"`. Note which
-   optional backends of the installation page are installed, since they decide
-   whether you can run and validate code later.
+5. Check whether ProbPipe imports in that environment, and from where, with
+   `<python> -c "import probpipe; print(probpipe.__version__, probpipe.__file__)"`.
+   Run it from the person-memory directory, because `-c` puts the current
+   directory first on the path, and a directory that holds another copy of
+   ProbPipe would import that copy. When the file is outside
+   `<checkout>/probpipe/`, tell the user that the environment runs another
+   copy of ProbPipe, whose API can differ from the corpus. The version comes
+   from the installed metadata, so the commit of step 6 identifies the code.
+   Note which optional backends of the installation page are installed,
+   since they decide whether you can run and validate code later.
 6. Once Phase 1 creates the project memory, record in it the corpus directory
    and the commit and version that `<corpus>/MANIFEST.md` names, and record
-   `<python>` beside them.
+   `<python>` beside them, with each warning that step 3 kept out of the
+   reply.
 
 ## Reading on demand
 
