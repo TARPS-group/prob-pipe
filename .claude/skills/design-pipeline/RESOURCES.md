@@ -350,103 +350,568 @@ the real-data fit is interpreted only after it passes.
 
 ## Part 2 — Annotated bibliography
 
-Match each suggested reading to the user's profile, with textbooks for a user
-new to Bayesian modeling and papers for a working or expert user. For a user
+Each entry starts with its citation key in bold, and Part 1 and the design
+document cite the entry by that key. A key names the first author, both
+authors of a two-author work, or the first author with "et al." for three or
+more, followed by the year. A letter after the year separates two works with
+the same key. "Free" marks a copy of the full text that the authors or the
+publisher host at no cost.
+
+Choose readings by the kind of model and by the user's background. For a user
 new to Bayesian modeling, recommend at most one book and one short applied
-paper, and prefer free sources in a language the user knows.
+paper, from the starting points or from the shelf of the user's field, and
+prefer free sources in a language the user knows. For other users, choose the
+entries of the shelf that matches the model and the hardest part of the
+design.
 
-### Introductions and applied sources for newcomers
+### Starting points for newcomers
 
-- TODO(source): Johnson, Ott & Dogucu, *Bayes Rules! An Introduction to
-  Applied Bayesian Modeling* (CRC, 2022).
-- TODO(source): Martin, Kumar & Lao, *Bayesian Modeling and Computation in
-  Python* (CRC, 2021).
-- TODO(source): Kéry & Royle, *Applied Hierarchical Modeling in Ecology*,
-  vol. 1 (Academic Press, 2016).
-- TODO(source): Hobbs & Hooten, *Bayesian Models: A Statistical Primer for
-  Ecologists* (Princeton, 2015).
-- TODO(source): Grinsztajn, Semenova, Margossian & Riou, "Bayesian workflow
-  for disease transmission modeling in Stan" (Statistics in Medicine, 2021).
+- **Johnson et al. 2022.** Johnson, Ott & Dogucu, *Bayes Rules! An
+  Introduction to Applied Bayesian Modeling* (Chapman & Hall/CRC, 2022).
+  doi:10.1201/9780429288340. Free: https://www.bayesrulesbook.com/. It
+  introduces Bayesian modeling with R at an undergraduate level, so it suits
+  a user who has never fit a Bayesian model.
+- **Martin et al. 2021.** Martin, Kumar & Lao, *Bayesian Modeling and
+  Computation in Python* (Chapman & Hall/CRC, 2021).
+  doi:10.1201/9781003019169. Free: https://bayesiancomputationbook.com/. Its
+  examples use PyMC, TensorFlow Probability, and ArviZ, so it suits a user who
+  works in Python.
+- **McElreath 2020.** McElreath, *Statistical Rethinking: A Bayesian Course
+  with Examples in R and Stan* (2nd ed., Chapman & Hall/CRC, 2020).
+  doi:10.1201/9780429029608. It builds models from scientific mechanisms and
+  causal diagrams, which suits a scientist. Its chapter 15 treats measurement
+  error and missing data.
+- **van de Schoot et al. 2021.** van de Schoot, Depaoli, King, Kramer,
+  Märtens, Tadesse, et al., "Bayesian statistics and modelling," *Nature
+  Reviews Methods Primers* 1:1. doi:10.1038/s43586-020-00001-2. This short
+  primer covers the steps from the prior to the report, and it serves as the
+  one short paper for a newcomer from any field.
 
 ### The workflow as a whole
 
-- **Gelman, Vehtari, McElreath, et al., *Bayesian Workflow*** (CRC Press,
-  2026). The book treats iterative model building, checking, computational
-  troubleshooting, and simulated-data experiments at length, with worked
-  examples. It is the primary reference for Part 1.
-- **Gelman, Vehtari, Simpson, Margossian, Carpenter, Yao, Kennedy, Gabry,
-  Bürkner & Modrák, "Bayesian Workflow"** (2020), arXiv:2011.01808. This free
-  article preceded the book, and it is the best single thing to read first.
-  https://arxiv.org/abs/2011.01808
-- **Betancourt, "Towards a Principled Bayesian Workflow"** (case study,
-  2018–2020). It organizes prior predictive checks, computational calibration,
-  and posterior checks around explicit questions about the model.
-  https://betanalpha.github.io/assets/case_studies/principled_bayesian_workflow.html
-- **Schad, Betancourt & Vasishth, "Toward a principled Bayesian workflow in
-  cognitive science"** (Psychological Methods, 2021), arXiv:1904.12765. It
-  works through the same workflow on an applied example, which suits
-  scientists.
+- **Gelman et al. 2026.** Gelman, Vehtari & McElreath, with Simpson,
+  Margossian, Yao, Kennedy, Gabry, Bürkner, Modrák & Leos Barajas, *Bayesian
+  Workflow* (Chapman & Hall/CRC, 2026). Free:
+  https://avehtari.github.io/Bayesian-Workflow/ (PDF and the code of the case
+  studies). It treats iterative model building, checking, and computational
+  troubleshooting through case studies in R and Stan. It is the primary reference for Part 1.
+- **Gelman et al. 2020a.** Gelman, Vehtari, Simpson, Margossian, Carpenter,
+  Yao, et al., "Bayesian workflow," arXiv:2011.01808. This article is the
+  shorter overview of the workflow that the book expands, and it suits a
+  working user who wants the whole workflow in one paper.
+- **Betancourt 2020.** Betancourt, "Towards a principled Bayesian workflow"
+  (case study, April 2020), listed on the author's index as "Principled Model
+  Building Workflow".
+  https://betanalpha.github.io/assets/case_studies/principled_bayesian_workflow.html.
+  It organizes the workflow around four questions about the model, from the
+  consistency of the prior with domain expertise to the adequacy of the
+  model, and it defines the posterior z-score and contraction of stage D.
+  The page is large and loads slowly. Schad, Betancourt & Vasishth, "Toward a
+  principled Bayesian workflow in cognitive science," *Psychological Methods*
+  26(1):103–126 (2021), doi:10.1037/met0000275, arXiv:1904.12765, applies the
+  same workflow to reading-time data, which suits an applied scientist.
+- **Gelman et al. 2013.** Gelman, Carlin, Stern, Dunson, Vehtari & Rubin,
+  *Bayesian Data Analysis* (3rd ed., Chapman & Hall/CRC, 2013).
+  doi:10.1201/b16018. Free: https://sites.stat.columbia.edu/gelman/book/ (PDF
+  for non-commercial use). It is the standard graduate reference, with
+  chapters on hierarchical models, model checking, and missing data, and it
+  suits a user with a background in statistics.
 
-### Textbooks
+### Priors and elicitation
 
-- **McElreath, *Statistical Rethinking*** (2nd ed., CRC, 2020). It is the best
-  introduction for scientists new to Bayesian modeling, and it is strong on
-  causal thinking and on building models from scientific mechanisms.
-- **Gelman, Hill & Vehtari, *Regression and Other Stories*** (Cambridge,
-  2020). It teaches applied regression with an emphasis on the workflow. The
-  book's site has code and examples: https://avehtari.github.io/ROS-Examples/
-- **Gelman, Carlin, Stern, Dunson, Vehtari & Rubin, *Bayesian Data Analysis***
-  (3rd ed., CRC, 2013). It is the standard graduate reference, with a free PDF
-  from the authors. https://sites.stat.columbia.edu/gelman/book/
+- **Gelman et al. 2017.** Gelman, Simpson & Betancourt, "The prior can often
+  only be understood in the context of the likelihood," *Entropy* 19(10):555.
+  doi:10.3390/e19100555, arXiv:1708.07487. It argues that a prior is judged by
+  the data that it predicts, which is the basis of the prior predictive check
+  of stage C.
+- **Gelman 2006.** Gelman, "Prior distributions for variance parameters in
+  hierarchical models (comment on article by Browne and Draper)," *Bayesian
+  Analysis* 1(3):515–534. doi:10.1214/06-BA117A. It shows that an
+  inverse-gamma(ε, ε) prior on a group-level variance is informative when the
+  variance is small, and it recommends uniform or half-t priors on the
+  standard deviation. Point a user here when they choose the prior of a
+  hierarchical model.
+- **Simpson et al. 2017.** Simpson, Rue, Riebler, Martins & Sørbye,
+  "Penalising model component complexity: A principled, practical approach to
+  constructing priors," *Statistical Science* 32(1):1–28.
+  doi:10.1214/16-STS576. It defines penalized-complexity priors, which shrink
+  a model component toward a simpler base model. R-INLA uses them for the
+  precision and the range of spatial effects.
+- **Mikkola et al. 2024.** Mikkola, Martin, Chandramouli, Hartmann, Abril Pla,
+  Thomas, et al., "Prior knowledge elicitation: The past, present, and
+  future," *Bayesian Analysis* 19(4):1129–1161. doi:10.1214/23-BA1381,
+  arXiv:2112.01380. It reviews methods that turn an expert's judgments into a
+  prior, and it suits a project whose priors come from a domain expert.
+- **Stan wiki 2025.** Stan Development Team, "Prior choice recommendations"
+  (wiki, last edited April 2025).
+  https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations.
+  It gives default priors by model and parameter type. Some entries are dated, such as
+  the older rstanarm defaults and a Cauchy prior that the page itself no
+  longer recommends, so check a choice against Gelman et al. 2026.
 
-### Priors
+### Regression, GLMs, and hierarchical models
 
-- **Gelman, Simpson & Betancourt, "The prior can often only be understood in
-  the context of the likelihood"** (Entropy, 2017), arXiv:1708.07487.
-- **Stan prior choice recommendations** (Stan wiki). It gives practical
-  defaults by model type.
-  https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
+- **Gelman et al. 2020b.** Gelman, Hill & Vehtari, *Regression and Other
+  Stories* (Cambridge University Press, 2020). doi:10.1017/9781139161879.
+  Free: https://avehtari.github.io/ROS-Examples/ (PDF and code). It teaches
+  linear and generalized linear regression with simulation, checking, and
+  causal questions, and it suits a user whose model is a regression.
+- **Gelman & Hill 2007.** Gelman & Hill, *Data Analysis Using Regression and
+  Multilevel/Hierarchical Models* (Cambridge University Press, 2007).
+  doi:10.1017/CBO9780511790942. Its multilevel chapters treat varying
+  intercepts and slopes and multilevel GLMs, which suit a user with grouped
+  data.
+- **Bürkner 2017.** Bürkner, "brms: An R package for Bayesian multilevel
+  models using Stan," *Journal of Statistical Software* 80(1).
+  doi:10.18637/jss.v080.i01. It maps R model formulas to Stan models, which
+  helps an R user state the model that the pipeline will express.
+- **Papaspiliopoulos et al. 2007.** Papaspiliopoulos, Roberts & Sköld, "A
+  general framework for the parametrization of hierarchical models,"
+  *Statistical Science* 22(1):59–73. doi:10.1214/088342307000000014. It
+  explains when the centered or the non-centered parameterization mixes
+  better, which depends on how strongly the data inform each group.
 
-### Validating computation
+### Time series, state-space models, and forecasting
 
-- **Talts, Betancourt, Simpson, Vehtari & Gelman, "Validating Bayesian
-  inference algorithms with simulation-based calibration"** (2018),
-  arXiv:1804.06788.
-- **Modrák et al., "Simulation-based calibration checking for Bayesian
-  computation: The choice of test quantities shapes sensitivity"** (Bayesian
-  Analysis, 2023), arXiv:2211.02383. It introduces data-dependent test
-  quantities.
-- **Vehtari, Gelman, Simpson, Carpenter & Bürkner, "Rank-normalization,
-  folding, and localization: An improved R-hat"** (Bayesian Analysis, 2021),
-  arXiv:1903.08008. It defines the current R-hat and ESS.
-- **Betancourt, "A conceptual introduction to Hamiltonian Monte Carlo"**
-  (2017), arXiv:1701.02434. It explains why divergences matter and what they
-  mean.
-- **Yao, Vehtari, Simpson & Gelman, "Yes, but did it work?: Evaluating
-  variational inference"** (ICML, 2018), arXiv:1802.02538. It gives PSIS
-  diagnostics for VI.
-- **Huggins, Kasprzak, Campbell & Broderick, "Validated variational inference
-  via practical posterior error bounds"** (AISTATS, 2020), arXiv:1910.04102.
+- **West & Harrison 1997.** West & Harrison, *Bayesian Forecasting and
+  Dynamic Models* (2nd ed., Springer, 1997). doi:10.1007/b98971. It is the
+  authoritative treatment of Bayesian dynamic linear models and sequential
+  forecasting.
+- **Durbin & Koopman 2012.** Durbin & Koopman, *Time Series Analysis by State
+  Space Methods* (2nd ed., Oxford University Press, 2012).
+  doi:10.1093/acprof:oso/9780199641178.001.0001. It covers the Kalman filter
+  and smoother, non-Gaussian state-space models, and simulation smoothing.
+- **Särkkä & Svensson 2023.** Särkkä & Svensson, *Bayesian Filtering and
+  Smoothing* (2nd ed., Cambridge University Press, 2023).
+  doi:10.1017/9781108917407. Free:
+  https://users.aalto.fi/~ssarkka/pub/bfs_book_2023_online.pdf (personal
+  use). It derives the Kalman, the nonlinear Gaussian, and the particle
+  filters and smoothers, and it suits a user whose latent states are
+  estimated as the data arrive.
+- **Hyndman & Athanasopoulos 2021.** Hyndman & Athanasopoulos, *Forecasting:
+  Principles and Practice* (3rd ed., OTexts, 2021). Free:
+  https://otexts.com/fpp3/. It is an accessible guide to forecasting models,
+  rolling-origin evaluation, and forecast accuracy. Its methods are
+  classical, so use it for the evaluation design and for baseline forecasts.
+- **Gneiting & Raftery 2007.** Gneiting & Raftery, "Strictly proper scoring
+  rules, prediction, and estimation," *Journal of the American Statistical
+  Association* 102(477):359–378. doi:10.1198/016214506000001437. It defines
+  proper scoring rules, such as the log score and the continuous ranked
+  probability score, which score a predictive distribution as a whole.
+- **Gneiting et al. 2007.** Gneiting, Balabdaoui & Raftery, "Probabilistic
+  forecasts, calibration and sharpness," *Journal of the Royal Statistical
+  Society Series B* 69(2):243–268. doi:10.1111/j.1467-9868.2007.00587.x. It
+  states the goal of maximal sharpness subject to calibration, and it checks
+  calibration with the probability integral transform.
 
-### Model checking, comparison, and robustness
+Hidden Markov models are under mixtures and latent variables, and
+leave-future-out cross-validation is under model checking.
 
-- **Gabry, Simpson, Vehtari, Betancourt & Gelman, "Visualization in Bayesian
-  workflow"** (JRSS A, 2019), arXiv:1709.01449. It covers graphical prior and
-  posterior predictive checks.
-- **Vehtari, Gelman & Gabry, "Practical Bayesian model evaluation using
-  leave-one-out cross-validation and WAIC"** (Statistics and Computing, 2017),
-  arXiv:1507.04544.
-- **Vehtari, Simpson, Gelman, Yao & Gabry, "Pareto smoothed importance
-  sampling"** (JMLR, 2024), arXiv:1507.02646.
-- **Yao, Vehtari, Simpson & Gelman, "Using stacking to average Bayesian
-  predictive distributions"** (Bayesian Analysis, 2018), arXiv:1704.02030.
-- **Huggins & Miller, "Reproducible model selection using bagged
-  posteriors"** (Bayesian Analysis, 2023), arXiv:2007.14845. It introduces
-  BayesBag.
+### Spatial models
 
-### Simulators and emulators
+- **Banerjee et al. 2014.** Banerjee, Carlin & Gelfand, *Hierarchical
+  Modeling and Analysis for Spatial Data* (2nd ed., Chapman & Hall/CRC, 2014).
+  doi:10.1201/b17115. It is the authoritative Bayesian treatment of
+  point-referenced and areal data, including spatial GLMs and spatially
+  varying coefficients.
+- **Moraga 2019.** Moraga, *Geospatial Health Data: Modeling and
+  Visualization with R-INLA and Shiny* (Chapman & Hall/CRC, 2019).
+  doi:10.1201/9780429341823. Free: https://www.paulamoraga.com/book-geospatial/.
+  It fits areal and geostatistical disease models in R-INLA, and it suits an
+  applied user new to spatial models.
+- **Besag et al. 1991.** Besag, York & Mollié, "Bayesian image restoration,
+  with two applications in spatial statistics," *Annals of the Institute of
+  Statistical Mathematics* 43(1):1–20. doi:10.1007/BF00116466. It introduces
+  the BYM model of areal counts, which adds an intrinsic conditional
+  autoregressive (ICAR) effect to an unstructured effect.
+- **Riebler et al. 2016.** Riebler, Sørbye, Simpson & Rue, "An intuitive
+  Bayesian spatial model for disease mapping that accounts for scaling,"
+  *Statistical Methods in Medical Research* 25(4):1145–1165.
+  doi:10.1177/0962280216660421. It reparameterizes the BYM model as BYM2,
+  whose scaled ICAR effect and mixing parameter take interpretable priors.
+- **Morris et al. 2019.** Morris, Wheeler-Martin, Simpson, Mooney, Gelman &
+  DiMaggio, "Bayesian hierarchical spatial models: Implementing the Besag York
+  Mollié model in Stan," *Spatial and Spatio-temporal Epidemiology* 31:100301.
+  doi:10.1016/j.sste.2019.100301. It writes the ICAR and BYM2 log densities as
+  sums over neighboring pairs, which NUTS can use, so it suits a user who
+  brings an areal model.
+- **Rue et al. 2009.** Rue, Martino & Chopin, "Approximate Bayesian inference
+  for latent Gaussian models by using integrated nested Laplace
+  approximations," *Journal of the Royal Statistical Society Series B*
+  71(2):319–392. doi:10.1111/j.1467-9868.2008.00700.x. It defines INLA, the
+  deterministic approximation that R-INLA computes. A user who brings an
+  R-INLA model can compare its fit with an MCMC fit in ProbPipe.
+- **Lindgren et al. 2011.** Lindgren, Rue & Lindström, "An explicit link
+  between Gaussian fields and Gaussian Markov random fields: the stochastic
+  partial differential equation approach," *Journal of the Royal Statistical
+  Society Series B* 73(4):423–498. doi:10.1111/j.1467-9868.2011.00777.x. It
+  represents a Matérn field by a sparse Gaussian Markov random field on a
+  mesh, which makes geostatistical models of many locations tractable.
+- **Datta et al. 2016.** Datta, Banerjee, Finley & Gelfand, "Hierarchical
+  nearest-neighbor Gaussian process models for large geostatistical
+  datasets," *Journal of the American Statistical Association*
+  111(514):800–812. doi:10.1080/01621459.2015.1044091. It defines the
+  nearest-neighbor Gaussian process (NNGP), whose cost grows linearly in the
+  number of locations.
+- **Heaton et al. 2019.** Heaton, Datta, Finley, Furrer, Guinness, Guhaniyogi,
+  et al., "A case study competition among methods for analyzing large spatial
+  data," *Journal of Agricultural, Biological and Environmental Statistics*
+  24(3):398–425. doi:10.1007/s13253-018-00348-w. It compares scalable spatial
+  methods on common datasets, which helps a user choose one for a large
+  dataset.
 
-- **Cranmer, Brehmer & Louppe, "The frontier of simulation-based inference"**
-  (PNAS, 2020), arXiv:1911.01429.
-- **Kennedy & O'Hagan, "Bayesian calibration of computer models"** (JRSS B,
-  2001). It covers emulators and model discrepancy.
+Gaussian processes in general are under emulators, and spatial
+cross-validation is under model checking.
+
+### Spatiotemporal models
+
+- **Cressie & Wikle 2011.** Cressie & Wikle, *Statistics for Spatio-Temporal
+  Data* (Wiley, 2011). ISBN 978-0-471-69274-4. It is the authoritative
+  treatment of descriptive and dynamic spatiotemporal models in a
+  hierarchical framework.
+- **Wikle et al. 2019.** Wikle, Zammit-Mangion & Cressie, *Spatio-Temporal
+  Statistics with R* (Chapman & Hall/CRC, 2019). doi:10.1201/9781351769723.
+  Free: https://spacetimewithr.org/. It is the applied companion of Cressie &
+  Wikle 2011, with R code for descriptive and dynamic models and their
+  evaluation.
+
+### Mixtures, hidden Markov models, and latent variables
+
+- **Frühwirth-Schnatter et al. 2019.** Frühwirth-Schnatter, Celeux & Robert
+  (eds.), *Handbook of Mixture Analysis* (Chapman & Hall/CRC, 2019).
+  doi:10.1201/9780429055911. It covers finite and infinite mixtures, label
+  switching, and the choice of the number of components.
+- **Zucchini et al. 2016.** Zucchini, MacDonald & Langrock, *Hidden Markov
+  Models for Time Series: An Introduction Using R* (2nd ed., Chapman &
+  Hall/CRC, 2016). doi:10.1201/b20790. It computes the likelihood with the
+  forward algorithm, which marginalizes the hidden states as stage E
+  requires, and it checks models with pseudo-residuals.
+- **Stan User's Guide.** Stan Development Team, *Stan User's Guide*, chapter
+  "Latent discrete parameters."
+  https://mc-stan.org/docs/stan-users-guide/latent-discrete.html.
+  It marginalizes change points and other discrete parameters out of a
+  likelihood with log-sum-exp, which lets NUTS fit the model.
+
+### Survival and event-history models
+
+- **Ibrahim et al. 2001.** Ibrahim, Chen & Sinha, *Bayesian Survival
+  Analysis* (Springer, 2001). doi:10.1007/978-1-4757-3447-8. It is the
+  authoritative treatment of Bayesian parametric, semiparametric, and
+  cure-rate models.
+- **Brilleman et al. 2020.** Brilleman, Elci, Novik & Wolfe, "Bayesian
+  survival analysis using the rstanarm R package," arXiv:2002.09633. It fits
+  parametric and spline-based hazard models with censoring, delayed entry, and
+  time-varying effects, and it suits an applied user.
+
+### Missing data and measurement error
+
+- **Little & Rubin 2019.** Little & Rubin, *Statistical Analysis with Missing
+  Data* (3rd ed., Wiley, 2019). doi:10.1002/9781119482260. It defines the
+  mechanisms of missingness and the likelihood-based and Bayesian methods for
+  each. McElreath 2020 and Gelman et al. 2013 give shorter Bayesian
+  treatments.
+- **Carroll et al. 2006.** Carroll, Ruppert, Stefanski & Crainiceanu,
+  *Measurement Error in Nonlinear Models: A Modern Perspective* (2nd ed.,
+  Chapman & Hall/CRC, 2006). doi:10.1201/9781420010138. It treats classical
+  and Berkson error in covariates, with a chapter on Bayesian methods.
+
+### Causal inference
+
+- **Hernán & Robins 2020.** Hernán & Robins, *Causal Inference: What If*
+  (Chapman & Hall/CRC, 2020). Free: https://miguelhernan.org/whatifbook. It
+  defines causal effects by counterfactuals and treats confounding, selection
+  bias, and time-varying treatments, so it suits a user whose estimand is
+  causal.
+- **Oganisian & Roy 2021.** Oganisian & Roy, "A practical introduction to
+  Bayesian estimation of causal effects: Parametric and nonparametric
+  approaches," *Statistics in Medicine* 40(2):518–551. doi:10.1002/sim.8761.
+  It computes the posterior of an average treatment effect from the posterior
+  of an outcome model, which is the propagation of stage H.
+
+### Simulators and simulation-based inference
+
+- **Cranmer et al. 2020.** Cranmer, Brehmer & Louppe, "The frontier of
+  simulation-based inference," *Proceedings of the National Academy of
+  Sciences* 117(48):30055–30062. doi:10.1073/pnas.1912789117,
+  arXiv:1911.01429. It reviews ABC and the neural estimates of the posterior,
+  the likelihood, and the likelihood ratio, and it suits a user who chooses
+  among them.
+- **Sisson et al. 2018.** Sisson, Fan & Beaumont (eds.), *Handbook of
+  Approximate Bayesian Computation* (Chapman & Hall/CRC, 2018).
+  doi:10.1201/9781315117195. It is the authoritative treatment of ABC,
+  including summary statistics and sequential Monte Carlo ABC.
+- **Radev et al. 2022.** Radev, Mertens, Voss, Ardizzone & Köthe, "BayesFlow:
+  Learning complex stochastic models with invertible neural networks," *IEEE
+  Transactions on Neural Networks and Learning Systems* 33(4):1452–1466.
+  doi:10.1109/TNNLS.2020.3042395, arXiv:2003.06281. It defines amortized
+  posterior estimation with a learned summary network, which BayesFlow
+  implements and ProbPipe's amortized posterior uses.
+- **Hermans et al. 2022.** Hermans, Delaunoy, Rozet, Wehenkel, Begy & Louppe,
+  "A trust crisis in simulation-based inference? Your posterior approximations
+  can be unfaithful," *Transactions on Machine Learning Research* (2022).
+  arXiv:2110.06581, https://openreview.net/forum?id=LHAbHkt6Aq. It shows that
+  the common neural and ABC methods can give overconfident posteriors, and it
+  measures this with the expected-coverage check of stage I.
+- **Lemos et al. 2023.** Lemos, Coogan, Hezaveh & Perreault-Levasseur,
+  "Sampling-based accuracy testing of posterior estimators for general
+  inference," *Proceedings of the 40th International Conference on Machine
+  Learning*, PMLR 202:19256–19273. arXiv:2302.03026. It defines TARP, a
+  coverage test of the joint posterior that needs only draws from the
+  estimator.
+- **Schmitt et al. 2024.** Schmitt, Bürkner, Köthe & Radev, "Detecting model
+  misspecification in amortized Bayesian inference with neural networks," in
+  *Pattern Recognition: DAGM GCPR 2023*, Lecture Notes in Computer Science
+  14264:541–557 (Springer, 2024). doi:10.1007/978-3-031-54605-1_35,
+  arXiv:2112.08866. It detects observed data unlike the training simulations
+  by a distance in the space of the learned summary statistics.
+
+ODE and compartmental models are on the epidemiology shelf, with Grinsztajn
+et al. 2021.
+
+### Emulators and calibration of computer models
+
+- **Kennedy & O'Hagan 2001.** Kennedy & O'Hagan, "Bayesian calibration of
+  computer models," *Journal of the Royal Statistical Society Series B*
+  63(3):425–464. doi:10.1111/1467-9868.00294. It defines the calibration of a
+  simulator with a Gaussian-process emulator and a model-discrepancy term.
+- **Brynjarsdóttir & O'Hagan 2014.** Brynjarsdóttir & O'Hagan, "Learning about
+  physical parameters: the importance of model discrepancy," *Inverse
+  Problems* 30(11):114007. doi:10.1088/0266-5611/30/11/114007. It shows that a
+  calibration without a discrepancy term gives biased and overconfident
+  parameters, and that the discrepancy term needs an informative prior to be
+  separated from the parameters.
+- **Bastos & O'Hagan 2009.** Bastos & O'Hagan, "Diagnostics for Gaussian
+  process emulators," *Technometrics* 51(4):425–438.
+  doi:10.1198/TECH.2009.08019. It defines the diagnostics of an emulator on
+  held-out runs, such as the standardized prediction errors and their
+  Mahalanobis distance.
+- **Gramacy 2020.** Gramacy, *Surrogates: Gaussian Process Modeling, Design,
+  and Optimization for the Applied Sciences* (Chapman & Hall/CRC, 2020).
+  doi:10.1201/9780367815493. Free: https://bobby.gramacy.com/surrogates/. It
+  covers space-filling and sequential designs of simulator runs, the fitting
+  of Gaussian processes, and calibration, with R code.
+- **Rasmussen & Williams 2006.** Rasmussen & Williams, *Gaussian Processes for
+  Machine Learning* (MIT Press, 2006). doi:10.7551/mitpress/3206.001.0001.
+  Free: https://gaussianprocess.org/gpml/. It defines Gaussian-process
+  regression, covariance functions, and the fitting of their
+  hyperparameters, which emulators and geostatistical models share.
+
+### Approximate inference and machine-learning models
+
+- **Blei et al. 2017.** Blei, Kucukelbir & McAuliffe, "Variational inference:
+  A review for statisticians," *Journal of the American Statistical
+  Association* 112(518):859–877. doi:10.1080/01621459.2017.1285773,
+  arXiv:1601.00670. It derives the evidence lower bound and mean-field VI, and
+  it explains why mean-field VI underestimates the posterior variance.
+- **Yao et al. 2018a.** Yao, Vehtari, Simpson & Gelman, "Yes, but did it
+  work?: Evaluating variational inference," *Proceedings of the 35th
+  International Conference on Machine Learning*, PMLR 80:5581–5590.
+  arXiv:1802.02538. It defines the Pareto k̂ diagnostic of a variational fit,
+  which stage E uses, and a variational form of SBC.
+- **Huggins et al. 2020.** Huggins, Kasprzak, Campbell & Broderick, "Validated
+  variational inference via practical posterior error bounds," *Proceedings
+  of the 23rd International Conference on Artificial Intelligence and
+  Statistics*, PMLR 108:1792–1802. arXiv:1910.04102. It bounds the error of
+  the means and variances of a variational approximation, and it suits a user
+  who reports VI results without an MCMC reference.
+- **Papamakarios et al. 2021.** Papamakarios, Nalisnick, Rezende, Mohamed &
+  Lakshminarayanan, "Normalizing flows for probabilistic modeling and
+  inference," *Journal of Machine Learning Research* 22(57):1–64.
+  arXiv:1912.02762. https://jmlr.org/papers/v22/19-1028.html.
+  It reviews normalizing flows, the density estimators of amortized inference and of
+  flexible variational families.
+- **Welling & Teh 2011.** Welling & Teh, "Bayesian learning via stochastic
+  gradient Langevin dynamics," *Proceedings of the 28th International
+  Conference on Machine Learning*, 681–688.
+  https://icml.cc/2011/papers/398_icmlpaper.pdf.
+  It defines stochastic-gradient Langevin dynamics.
+- **Nemeth & Fearnhead 2021.** Nemeth & Fearnhead, "Stochastic gradient Markov
+  chain Monte Carlo," *Journal of the American Statistical Association*
+  116(533):433–450. doi:10.1080/01621459.2020.1847120, arXiv:1907.06986. It
+  reviews the stochastic-gradient MCMC methods, their bias at a constant step
+  size, and their diagnostics.
+- **Wilson & Izmailov 2020.** Wilson & Izmailov, "Bayesian deep learning and
+  a probabilistic perspective of generalization," *Advances in Neural
+  Information Processing Systems* 33. arXiv:2002.08791. It treats Bayesian
+  model averaging for neural networks and relates deep ensembles to it, so it
+  suits a user whose model is a neural network.
+- **Murphy 2023.** Murphy, *Probabilistic Machine Learning: Advanced Topics*
+  (MIT Press, 2023). Free: https://probml.github.io/pml-book/book2.html
+  (draft, CC BY-NC-ND). It is a reference for deep generative models,
+  Bayesian neural networks, and approximate inference from the view of
+  machine learning.
+
+### Validating and diagnosing computation
+
+- **Talts et al. 2018.** Talts, Betancourt, Simpson, Vehtari & Gelman,
+  "Validating Bayesian inference algorithms with simulation-based
+  calibration," arXiv:1804.06788. It defines SBC by the uniformity of the
+  ranks of the true parameters among the posterior draws.
+- **Modrák et al. 2025.** Modrák, Moon, Kim, Bürkner, Huurre, Faltejsková,
+  Gelman & Vehtari, "Simulation-based calibration checking for Bayesian
+  computation: The choice of test quantities shapes sensitivity," *Bayesian
+  Analysis* 20(2):461–488 (online 2023). doi:10.1214/23-BA1404,
+  arXiv:2211.02383. It shows that data-dependent test quantities, such as the
+  log likelihood, detect errors that the ranks of the parameters miss.
+- **Säilynoja et al. 2022.** Säilynoja, Bürkner & Vehtari, "Graphical test
+  for discrete uniformity and its applications in goodness-of-fit evaluation
+  and multiple sample comparison," *Statistics and Computing* 32:32.
+  doi:10.1007/s11222-022-10090-6, arXiv:2103.10522. It gives the simultaneous
+  confidence bands of the ECDF plot of SBC ranks and of LOO-PIT values.
+- **Vehtari et al. 2021.** Vehtari, Gelman, Simpson, Carpenter & Bürkner,
+  "Rank-normalization, folding, and localization: An improved R̂ for
+  assessing convergence of MCMC (with discussion)," *Bayesian Analysis*
+  16(2):667–718. doi:10.1214/20-BA1221, arXiv:1903.08008. It defines the
+  rank-normalized split-R̂, the bulk and tail ESS, and their thresholds.
+- **Margossian et al. 2025.** Margossian, Hoffman, Sountsov, Riou-Durand,
+  Vehtari & Gelman, "Nested R̂: Assessing the convergence of Markov chain
+  Monte Carlo when running many short chains," *Bayesian Analysis*
+  20(4):1587–1614. doi:10.1214/24-BA1453, arXiv:2110.13017. It defines the
+  nested R̂, which suits many short chains run in parallel on a GPU.
+- **Betancourt 2017.** Betancourt, "A conceptual introduction to Hamiltonian
+  Monte Carlo," arXiv:1701.02434. It explains the geometry of HMC, and it
+  shows why a divergent transition marks a region that the sampler cannot
+  explore.
+- **Stan diagnostics guide.** Stan Development Team, "How to diagnose and
+  resolve convergence problems."
+  https://mc-stan.org/learn-stan/diagnostics-warnings.html.
+  It explains each warning of a NUTS run, from divergences and tree depth to E-BFMI, R̂, and
+  ESS, with the usual remedies. It suits a practitioner who meets a warning.
+- **Gorham & Mackey 2017.** Gorham & Mackey, "Measuring sample quality with
+  kernels," *Proceedings of the 34th International Conference on Machine
+  Learning*, PMLR 70:1292–1301. arXiv:1703.01717. It defines the kernel Stein
+  discrepancy, which measures how far a set of draws is from the posterior
+  with only the gradient of the log density.
+
+### Model checking, comparison, and cross-validation
+
+- **Gabry et al. 2019.** Gabry, Simpson, Vehtari, Betancourt & Gelman,
+  "Visualization in Bayesian workflow," *Journal of the Royal Statistical
+  Society Series A* 182(2):389–402. doi:10.1111/rssa.12378, arXiv:1709.01449.
+  It gives the graphical prior and posterior predictive checks and the
+  LOO-PIT check.
+- **Vehtari et al. 2017; Vehtari et al. 2024.** Vehtari, Gelman & Gabry,
+  "Practical Bayesian model evaluation using leave-one-out cross-validation
+  and WAIC," *Statistics and Computing* 27(5):1413–1432.
+  doi:10.1007/s11222-016-9696-4, arXiv:1507.04544. Vehtari, Simpson, Gelman,
+  Yao & Gabry, "Pareto smoothed importance sampling," *Journal of Machine
+  Learning Research* 25(72):1–58 (2024), arXiv:1507.02646. The first defines
+  PSIS-LOO and its use in model comparison. The second defines the Pareto k̂
+  and its threshold, which depends on the number of draws.
+- **Vehtari CV-FAQ.** Vehtari, "Cross-validation FAQ."
+  https://users.aalto.fi/~ave/CV-FAQ.html.
+  It answers the practical questions of LOO, such as when LOO is unreliable and how to read the standard error
+  of an elpd difference, and it suits a working user.
+- **Sivula et al. 2020.** Sivula, Magnusson, Matamoros & Vehtari, "Uncertainty
+  in Bayesian leave-one-out cross-validation based model comparison,"
+  arXiv:2008.10296 (version 6, 2025). It shows when the standard error of an
+  elpd difference is too small, which is the basis of the cases of stage G.
+- **Bürkner et al. 2020.** Bürkner, Gabry & Vehtari, "Approximate
+  leave-future-out cross-validation for Bayesian time series models,"
+  *Journal of Statistical Computation and Simulation* 90(14):2499–2523.
+  doi:10.1080/00949655.2020.1783262, arXiv:1902.06281. It approximates
+  leave-future-out cross-validation with PSIS, so a time-series model is
+  refitted only when the k̂ is too high.
+- **Roberts et al. 2017.** Roberts, Bahn, Ciuti, Boyce, Elith,
+  Guillera-Arroita, et al., "Cross-validation strategies for data with
+  temporal, spatial, hierarchical, or phylogenetic structure," *Ecography*
+  40(8):913–929. doi:10.1111/ecog.02881. It shows that random folds
+  overestimate predictive performance on dependent data, and it recommends
+  blocked folds.
+- **Yao et al. 2018b.** Yao, Vehtari, Simpson & Gelman, "Using stacking to
+  average Bayesian predictive distributions (with discussion)," *Bayesian
+  Analysis* 13(3):917–1007. doi:10.1214/17-BA1091, arXiv:1704.02030. It
+  weights the predictive distributions of several models by their LOO
+  performance.
+- **Huggins & Miller 2023; Huggins & Miller 2024.** Huggins & Miller,
+  "Reproducible model selection using bagged posteriors," *Bayesian Analysis*
+  18(1):79–104. doi:10.1214/21-BA1301, arXiv:2007.14845. Huggins & Miller,
+  "Reproducible parameter inference using bagged posteriors," *Electronic
+  Journal of Statistics* 18(1):1549–1585 (2024). doi:10.1214/24-EJS2237. The
+  first introduces BayesBag for stable model selection under misspecification.
+  The second shows that the bagged posterior of a parameter gives an
+  uncertainty that reflects the misspecification.
+- **Kallioinen et al. 2024.** Kallioinen, Paananen, Bürkner & Vehtari,
+  "Detecting and diagnosing prior and likelihood sensitivity with
+  power-scaling," *Statistics and Computing* 34:57.
+  doi:10.1007/s11222-023-10366-5, arXiv:2107.14054. It measures how the
+  posterior changes when the prior or the likelihood is raised to a power,
+  from the draws of one fit, which gives the sensitivity analysis of stage H
+  without refitting.
+
+### Reporting
+
+- **Kruschke 2021.** Kruschke, "Bayesian analysis reporting guidelines,"
+  *Nature Human Behaviour* 5(10):1282–1291. doi:10.1038/s41562-021-01177-7
+  (open access). It lists what a report of a Bayesian analysis states, from
+  the model and the priors to the diagnostics and the sensitivity analysis,
+  and it is the checklist of the reporting section of a pipeline.
+
+### Software that ProbPipe works with
+
+Cite each of these in a report whose results depend on it.
+
+- **Kumar et al. 2019.** Kumar, Carroll, Hartikainen & Martin, "ArviZ a
+  unified library for exploratory analysis of Bayesian models in Python,"
+  *Journal of Open Source Software* 4(33):1143. doi:10.21105/joss.01143. ProbPipe
+  computes the R̂, the ESS, and PSIS-LOO through ArviZ.
+- **Cabezas et al. 2024.** Cabezas, Corenflos, Lao & Louf, "BlackJAX:
+  Composable Bayesian inference in JAX," arXiv:2402.10797. BlackJAX runs the
+  default gradient-based MCMC of ProbPipe.
+- **Abril-Pla et al. 2023.** Abril-Pla, Andreani, Carroll, Dong, Fonnesbeck,
+  Kochurov, et al., "PyMC: a modern, and comprehensive probabilistic
+  programming framework in Python," *PeerJ Computer Science* 9:e1516.
+  doi:10.7717/peerj-cs.1516. Cite it for a model that a user brings in PyMC.
+- **Carpenter et al. 2017.** Carpenter, Gelman, Hoffman, Lee, Goodrich,
+  Betancourt, et al., "Stan: A probabilistic programming language," *Journal
+  of Statistical Software* 76(1). doi:10.18637/jss.v076.i01. Cite it for a
+  model that a user brings in Stan.
+- **Radev et al. 2023.** Radev, Schmitt, Schumacher, Elsemüller, Pratz,
+  Schälte, et al., "BayesFlow: Amortized Bayesian workflows with neural
+  networks," *Journal of Open Source Software* 8(89):5702.
+  doi:10.21105/joss.05702. BayesFlow trains the neural estimators of ProbPipe's
+  amortized inference.
+
+### Shelves by field
+
+Ecology:
+
+- **Kéry & Royle 2016.** Kéry & Royle, *Applied Hierarchical Modeling in
+  Ecology: Analysis of Distribution, Abundance and Species Richness in R and
+  BUGS*, vol. 1 (Academic Press, 2016). doi:10.1016/C2013-0-19160-X. It
+  builds occupancy and abundance models that separate the ecological process
+  from imperfect detection, and it suits an ecologist with survey data.
+- **Hobbs & Hooten 2025.** Hobbs & Hooten, *Bayesian Models: A Statistical
+  Primer for Ecologists* (2nd ed., Princeton University Press, 2025). ISBN
+  978-0-691-25012-0. It teaches model building from probability and
+  likelihood to hierarchical models with little code, and it is the one book
+  for an ecologist new to Bayesian modeling.
+- **Hooten & Hobbs 2015.** Hooten & Hobbs, "A guide to Bayesian model
+  selection for ecologists," *Ecological Monographs* 85(1):3–28.
+  doi:10.1890/14-0661.1. It explains predictive model comparison,
+  cross-validation, and regularization for ecologists, and it serves as their
+  short applied paper.
+- **Dietze 2017.** Dietze, *Ecological Forecasting* (Princeton University
+  Press, 2017). doi:10.1515/9781400885459. It treats state-space models, data
+  fusion, and the propagation and partitioning of forecast uncertainty for
+  ecological systems.
+
+Epidemiology and public health:
+
+- **Grinsztajn et al. 2021.** Grinsztajn, Semenova, Margossian & Riou,
+  "Bayesian workflow for disease transmission modeling in Stan," *Statistics
+  in Medicine* 40(27):6209–6234. doi:10.1002/sim.9164, arXiv:2006.02985. It
+  fits ODE compartmental models, from a simple SIR model to a model of
+  SARS-CoV-2, and uses simulations to check the model and the priors. It
+  suits any user whose model is a system of ODEs.
+- **Gelman & Carpenter 2020.** Gelman & Carpenter, "Bayesian analysis of tests
+  with unknown specificity and sensitivity," *Journal of the Royal Statistical
+  Society Series C* 69(5):1269–1283. doi:10.1111/rssc.12435. It estimates a
+  prevalence from a survey with an imperfect test, with hierarchical priors on
+  the test's accuracy and poststratification, and it is a short applied
+  example of measurement error.
+- Also on other shelves: Moraga 2019 and Morris et al. 2019 for disease
+  mapping, and Hernán & Robins 2020 for causal questions.
+
+Cognitive science: Schad, Betancourt & Vasishth 2021, in the entry Betancourt
+2020.
