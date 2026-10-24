@@ -50,6 +50,7 @@ resumed session starts at the phase that project memory records.
 | 2. Data and model materials | [phases/2-materials.md](phases/2-materials.md) | `<workspace>/notes/brief.md` sections 3-4, data and model notes |
 | 3. Working preferences | [phases/3-background.md](phases/3-background.md) | Working preferences in person memory, confirmed in the first line of the proposal |
 | 4. Initial pipeline proposal | [phases/4-proposal.md](phases/4-proposal.md) | `<workspace>/notes/pipeline-design.md` v1, and `<workspace>/pipeline.py` or `<workspace>/pipeline.ipynb` v1 |
+| 4, for a pipeline the user brings | [phases/4-existing-pipeline.md](phases/4-existing-pipeline.md), with the code sections of phases/4-proposal.md | The same files, after a reproduction check of the original results |
 | 5. Feedback loop | [phases/5-feedback.md](phases/5-feedback.md) | New design versions until the user is satisfied |
 
 The other files of the assistant directory are these:
@@ -300,8 +301,10 @@ phase follows these rules:
         [Phase 2](phases/2-materials.md#data) asks for with its question on
         sensitive data;
       - the first fit to the real data, which is the first run of the fit
-        stage. The consent covers the fit stage of later design versions,
-        which you announce as item 1 says;
+        stage, or the reproduction check of
+        [phases/4-existing-pipeline.md](phases/4-existing-pipeline.md). The
+        consent covers the fit stage of later design versions, which you
+        announce as item 1 says;
       - each run of code that the user supplied, which you read in full
         before you ask;
       - each install, by rule 8.
@@ -324,8 +327,10 @@ phase follows these rules:
    [phases/4-proposal.md](phases/4-proposal.md#write-the-code) defines: the
    smoke stage first, the validate stage after a smoke run succeeds, and the
    fit stage only after the validate stage, whose grades the gate of the fit
-   stage checks. Give the expected runtime of each stage from the compute plan
-   of the design document.
+   stage checks. The reproduction check of an existing pipeline fits the real
+   data before any validation, because it repeats an analysis that the user
+   has already run and reports no new answer. Give the expected runtime of
+   each stage from the compute plan of the design document.
 7. **Bound every run.** Run each command with a timeout, about ten minutes for
    a smoke run. Run a fit that can take longer in the background, with its
    output written to the log file `<workspace>/runs/<stage>.log`, or give the user the command

@@ -5,6 +5,7 @@
 ProbPipe ships a design assistant, which is a set of instructions for an AI coding agent.
 The agent interviews you about your scientific problem, your data, and your existing models.
 A model can come as code, such as a PyMC, Stan, or JAX model, as a simulator, or as a description in words.
+A pipeline that you already run is reproduced in ProbPipe first, and the assistant then adds ProbPipe's checks to it one at a time.
 It then designs a ProbPipe pipeline with you and revises it from your feedback.
 The result is a design document and a runnable pipeline script or notebook in a project directory of yours.
 

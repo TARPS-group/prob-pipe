@@ -115,7 +115,9 @@ Each kind of material needs one more step:
   and what that route allows downstream. Code in a language with no route,
   such as R, enters as wrapped code or as the draws it computes, by the same
   file. A brms model enters as the Stan program that `brms::stancode()`
-  writes.
+  writes. When the code is a whole pipeline that runs, and the user wants to
+  bring it into ProbPipe or to migrate it, Phase 4 follows
+  [phases/4-existing-pipeline.md](4-existing-pipeline.md).
 - **Informal descriptions:** turn each one into a candidate mathematical model,
   and show it to the user to check.
 

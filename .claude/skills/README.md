@@ -185,7 +185,9 @@ builds the corpus, and reads the instructions.
 - `design-pipeline/INSTRUCTIONS.md`: the role, the ground rules, the table of
   phases, and the resume protocol;
 - `design-pipeline/phases/0-load.md` to `design-pipeline/phases/5-feedback.md`:
-  one file per phase, which the agent reads when the phase starts;
+  one file per phase, which the agent reads when the phase starts, and
+  `design-pipeline/phases/4-existing-pipeline.md`, which takes the place of
+  the proposal's steps for a pipeline that the user already runs;
 - `design-pipeline/CAPABILITIES.md`: the routes by which a user's model enters
   ProbPipe, and each need of a pipeline with its ProbPipe entry points, its
   example page, and its workflow stage;
@@ -219,10 +221,12 @@ builds the corpus, and reads the instructions.
    confirms the preferences in one line of the proposal.
 5. **Initial proposal:** writes a versioned design document
    ([template](design-pipeline/DESIGN-DOC-TEMPLATE.md)) and a runnable
-   `<workspace>/pipeline.py` or `<workspace>/pipeline.ipynb`, checks it with `check_symbols.py`, and runs it in stages
-   after the user agrees: small budgets under `STAGE=smoke`, then the
-   validation on simulated data, and the fit to the real data only after the
-   validation passes.
+   `<workspace>/pipeline.py` or `<workspace>/pipeline.ipynb`, checks it with
+   `check_symbols.py`, and runs it in stages: small budgets under
+   `STAGE=smoke`, then the validation on simulated data, and the fit to the
+   real data only after the validation passes. For a pipeline that the user
+   already runs, it first reproduces the pipeline's results through ProbPipe,
+   and then adds ProbPipe's checks one at a time.
 6. **Feedback loop:** revises the design and the code from the user's
    feedback, with a changelog, until the user is done.
 

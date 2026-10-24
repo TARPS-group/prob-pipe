@@ -48,7 +48,8 @@ Text or Mermaid diagram of the stages, then one subsection per stage:
 - **Purpose**, **ProbPipe calls**, **inputs → outputs**, **what to look at**
   in the output, and **failure signs**.
 The conditioning stage also records the inference method planned, the
-method that ran, and the stage of that run (smoke, validate, or fit).
+method that ran, and the stage of that run (smoke, validate, fit, or
+reproduce).
 Typical stages: data loading → prior predictive check → validation on
 realistic simulated data → conditioning → diagnostics → posterior predictive
 check → downstream quantities → robustness/sensitivity.
@@ -89,6 +90,12 @@ does not connect to.
 | Component | Route of CAPABILITIES.md | The user's case it covers | Test and its fit-log entry |
 |---|---|---|---|
 
+## 4f. Reproduction of the original pipeline
+For a pipeline the user brought, by phases/4-existing-pipeline.md: the
+comparison of the original results with ProbPipe's, before any change.
+| Estimand | Original: median [2.5%, 97.5%] | ProbPipe: median [2.5%, 97.5%] | Bound of agreement (3 × combined MCSE) | Agree? |
+|---|---|---|---|---|
+
 ## 5. Key design decisions
 Each decision, including each override of a check by the user.
 | Decision | Choice | Alternatives considered | Why |
@@ -120,7 +127,7 @@ Tools that ProbPipe does not connect to, each with the interface of section
 
 ## 10. Fit log
 Every fit, in order, smoke runs and fits to simulated data included.
-| Date | Design version | Model | Data (real or simulated) | Stage (smoke, validate, or fit) | Method and settings (chains, draws, seed) | Diagnostics | Checks passed and failed | Outcome, such as the grade of a validation |
+| Date | Design version | Model | Data (real or simulated) | Stage (smoke, validate, fit, or reproduce) | Method and settings (chains, draws, seed) | Diagnostics | Checks passed and failed | Outcome, such as the grade of a validation |
 |---|---|---|---|---|---|---|---|---|
 
 ## 11. Getting it running
