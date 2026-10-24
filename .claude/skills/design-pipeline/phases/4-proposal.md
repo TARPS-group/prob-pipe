@@ -89,8 +89,14 @@ RESOURCES.md stage E. Each return is a revision, which follows the
 Write the pipeline as a runnable skeleton in the style of the tutorials, in the
 form the user works in: the notebook `<workspace>/pipeline.ipynb` for a user
 who works in notebooks, and `<workspace>/pipeline.py` otherwise. A notebook
-starts with an install cell in the style of the tutorials' Colab cell, which
-installs ProbPipe when the notebook runs on Google Colab. The pipeline loads
+starts with an install cell in the style of the tutorials' Colab cell. On
+Google Colab, the cell installs ProbPipe at the commit that
+`<corpus>/MANIFEST.md` records, or at its branch when that commit is not on
+GitHub, so that Colab runs the code that `check_symbols.py` checked. The cell
+then asks the user to upload the data file with `google.colab.files.upload()`,
+and the pipeline reads each data file by a path relative to the notebook. The
+notebook's metadata names the kernel `probpipe`, which
+[Check and run the code](#check-and-run-the-code) registers. The pipeline loads
 the user's data or simulates it, and each pipeline stage is a labeled section
 that matches the design document. Each stage shows a figure where one helps,
 such as the prior predictive draws or the posterior predictive check, with a
@@ -113,7 +119,19 @@ Take these steps before you show the code, and again after each revision:
    unsure of.
 2. If ProbPipe imports here, run the pipeline with `SMOKE=1` by the
    [rules for running code](../INSTRUCTIONS.md#user-materials-and-code), and
-   fix what breaks. Otherwise, say that the code has not been run.
+   fix what breaks. Otherwise, say that the code has not been run. The
+   commands are these:
+   - a script: `SMOKE=1 <python> <workspace>/pipeline.py`;
+   - a notebook:
+     `SMOKE=1 <python> -m jupyter nbconvert --to notebook --execute <workspace>/pipeline.ipynb --ExecutePreprocessor.kernel_name=probpipe`,
+     which writes the executed copy `<workspace>/pipeline.nbconvert.ipynb`.
+
+   The kernel `probpipe` runs `<python>`. Before the first notebook run, list
+   the kernels with `<python> -m jupyter kernelspec list`, because the
+   registration replaces a kernel of the same name. Then register the kernel
+   with `<python> -m ipykernel install --user --name probpipe`, after the user
+   approves. When nbconvert or ipykernel does not import, ask before you
+   install it.
 3. Record the inference method that ran, as the row "Condition on the data" of
    CAPABILITIES.md says to read it, in the design document and in project
    memory. When it differs from the method you planned, say so, and revise the

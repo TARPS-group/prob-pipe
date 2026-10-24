@@ -100,9 +100,11 @@ Every fit, in order, smoke runs and fits to simulated data included.
 
 ## 11. Getting it running
 - Install: the command from `docs/get_started/installation.md` for the
-  backends this design uses, and the Python version it needs.
+  backends this design uses, at the commit or branch that the corpus manifest
+  records, and the Python version it needs.
 - Open and run: how to run the code locally and on Google Colab, first with
-  `SMOKE=1` and then in full.
+  `SMOKE=1` and then in full. For a notebook, the `nbconvert` command and the
+  kernel `probpipe` that it runs, and on Colab, the upload of the data file.
 - Expected runtime of each stage, from section 4c.
 - What a successful run prints and shows.
 - Where the code was validated, and whether that environment differs from the
