@@ -108,6 +108,27 @@ when either check fails, and record the new corpus in project memory.
   2. a missing interface: a tool that ProbPipe does not connect to, such as a
      Gaussian-process package, a neural-network library, or a domain
      simulator.
+- **Offer to build an interface to a missing component.** When the design
+  needs a component that ProbPipe does not connect to, such as a neural
+  network fitted with an external library, a domain solver, or a specialized
+  sampler, offer the user three options:
+  1. you write a small interface through which the component enters the
+     pipeline, by a route of the row "Meet a need ProbPipe does not cover" of
+     CAPABILITIES.md;
+  2. the component runs outside ProbPipe, and its outputs enter the pipeline,
+     such as its draws as an empirical law;
+  3. a component that ProbPipe already connects to takes its place.
+
+  Aim to keep these integrations as simple as possible, rather than aiming to
+  cover many possible future needs, which require significantly more
+  complexity and/or could reduce reliability. An interface therefore covers
+  the user's case only, and it takes the first route of that row that serves
+  the case. Check it with `check_symbols.py`, and test it on the user's case
+  in a smoke run, by the steps of
+  [Check and run the code](phases/4-proposal.md#check-and-run-the-code).
+  Record it in section 4e of the design document, and
+  record the component as a missing interface by the ground rule "Say what
+  ProbPipe cannot do", so that the user can report it.
 - **Propose defaults, and name the choices.** For a choice of method or
   design, such as the route of the model, the inference method, or the
   cross-validation scheme, propose a reasonable default and tell the user the

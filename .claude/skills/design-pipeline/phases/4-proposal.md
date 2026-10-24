@@ -75,6 +75,11 @@ the earlier steps against them:
     - emulators for expensive simulators;
     - Prefect or Ray for scale.
 
+When a step needs a component that ProbPipe does not connect to, such as a
+Gaussian-process package or a domain simulator, offer the options of the
+ground rule "Offer to build an interface to a missing component" of
+[INSTRUCTIONS.md](../INSTRUCTIONS.md#ground-rules).
+
 In the quick start mode of the [ground rules](../INSTRUCTIONS.md#ground-rules), step
 8 is one posterior predictive check, and the cross-validation of step 8 and all
 of step 10 are deferred.

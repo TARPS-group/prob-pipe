@@ -72,6 +72,12 @@ validation (RESOURCES.md stage I):
 - **Calibration evidence:** SBC, coverage at each credibility level, or the
   standardized errors of held-out runs, with the fit-log entry of each.
 
+## 4e. Interfaces built
+One line per interface that the design adds for a component that ProbPipe
+does not connect to.
+| Component | Route of CAPABILITIES.md | The user's case it covers | Test and its fit-log entry |
+|---|---|---|---|
+
 ## 5. Key design decisions
 Each decision, including each override of a check by the user.
 | Decision | Choice | Alternatives considered | Why |
@@ -92,7 +98,8 @@ Foundational capabilities that ProbPipe lacks.
 |---|---|---|---|
 
 ### 8b. Missing interfaces
-Tools that ProbPipe does not connect to.
+Tools that ProbPipe does not connect to, each with the interface of section
+4e or the other workaround used.
 | Tool | Need | Workaround used | Worth a GitHub issue? |
 |---|---|---|---|
 
