@@ -129,6 +129,49 @@ the real-data fit is interpreted only after it passes.
   diagnostic of PSIS (Yao et al. 2018) or posterior error bounds (Huggins et
   al. 2020) when the likelihood is tractable, and the checks of stage D
   otherwise.
+- **Validate a variational fit.** A variational method fits its
+  approximation by optimization, so its validation adds three checks to the
+  comparison with MCMC:
+  1. Restarts: run the optimization from several initializations or seeds.
+     Restarts that end at different objective values or different estimands
+     mark a local optimum or an optimization that has not converged.
+  2. Convergence: the trace of the objective over the iterations is flat at
+     the end of the optimization.
+  3. Pareto k̂: weight each draw of the approximation by the ratio of the
+     unnormalized posterior density to the density of the approximation, and
+     compute the k̂ of PSIS from these weights (Yao et al. 2018). A k̂ above
+     0.7 means that importance sampling cannot correct the approximation, so
+     report neither its intervals nor its tail quantities.
+- **Many observations.** Stochastic-gradient MCMC, such as stochastic-gradient
+  Langevin dynamics, estimates the gradient of the log density from a random
+  subset of the observations at each step, so each step costs a fraction of a
+  full-data gradient. TODO(source): Welling & Teh, "Bayesian learning via
+  stochastic gradient Langevin dynamics" (ICML, 2011). With a constant step
+  size and no Metropolis–Hastings correction, its draws are biased, and the
+  bias grows with the step size. R-hat and ESS measure how well the chain
+  mixes around its own stationary distribution, which differs from the
+  posterior by that bias. Use full-batch NUTS when the data fit in memory and
+  a full-data gradient is affordable. Otherwise, validate stochastic-gradient
+  MCMC in three steps:
+  1. Reference: fit full-batch NUTS and the stochastic-gradient method to the
+     same subsample of the data, or to a simulated dataset of the same
+     structure. Use the step size and the ratio of the batch size to the
+     number of observations that are planned for the full data. Compare the
+     two fits as the bullet "Validate an approximate method before you report
+     its results" requires.
+  2. Step size: refit at two or three step sizes, and treat a change in the
+     estimands as bias.
+  3. Kernel Stein discrepancy: compute it for the draws of each full-data
+     fit. It needs only the gradient of the log posterior density at the
+     draws, and a smaller value means draws closer to the posterior. It has
+     no absolute scale, so compare its values across the step sizes.
+     TODO(source): Gorham & Mackey, "Measuring sample quality with kernels"
+     (ICML, 2017).
+- **Numerical precision:** run MCMC in double precision when the log density
+  sums many terms or the posterior is poorly scaled, because single
+  precision then loses the accuracy that the gradient and the acceptance step
+  need. The row "Condition on the data" of
+  [CAPABILITIES.md](CAPABILITIES.md) says how to set the precision.
 - Fit fast first: subsample the data, use fewer draws, or start with a simpler
   model, then scale up.
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage E.
@@ -195,14 +238,93 @@ the real-data fit is interpreted only after it passes.
   that matter.
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage H.
 
-### I. Simulators and expensive models
+### I. Simulators, amortized inference, and emulators
 
-- For a simulator without a tractable likelihood, use simulation-based
-  inference, such as ABC or a neural estimate of the likelihood, the
-  posterior, or the likelihood ratio. Validate it by stage D, which requires
-  SBC for an amortized method.
-- For an expensive model, use an emulator, such as a Gaussian process,
-  propagate the emulator's own uncertainty, and account for model discrepancy.
+- **Choose the method by the problem.** The likelihood, the cost of the
+  model, and the number of datasets decide the method, and the user's
+  background decides only how you explain it:
+  1. a tractable likelihood whose code can be differentiated: MCMC, by
+     stage E;
+  2. a simulator without a tractable likelihood: simulation-based inference,
+     which is ABC or a neural estimate of the posterior, the likelihood, or
+     the likelihood-to-evidence ratio (Cranmer, Brehmer & Louppe 2020);
+  3. many datasets of one size, analyzed with one model: neural posterior
+     estimation, whose trained network gives the posterior of each new
+     dataset at the cost of one network evaluation;
+  4. datasets of varying size whose observations are conditionally
+     independent: a neural estimate of the likelihood or of the
+     likelihood-to-evidence ratio of one observation, followed by MCMC on
+     each dataset, with the restriction of stage F on a learned ratio;
+  5. an expensive deterministic simulator: a Gaussian-process emulator
+     trained on a design of simulator runs.
+- **Budget the simulations first.** The budget bounds the method, because ABC
+  spends its simulations on each dataset and a neural estimator spends them
+  once, in training. Record four quantities before you choose:
+  1. the cost of one simulator call, and whether calls can be vectorized over
+     parameter values;
+  2. the total simulation budget, in calls and in wall-clock time;
+  3. the dimensions of the parameters and of the data;
+  4. the summary statistics, which are chosen from domain knowledge or
+     learned by a summary network when the data have many dimensions.
+- **Train a neural estimator with held-out simulations:**
+  1. hold out a set of validation simulations, and stop training when the
+     loss on them stops decreasing;
+  2. fix the seed of each training run, and train an ensemble of several
+     networks with different seeds when the budget allows, since the
+     disagreement between them measures the estimation error of one network;
+  3. record the architecture, the numbers of simulations and of epochs, the
+     hyperparameters that were tuned, and the wall-clock time in the design
+     document.
+- **Calibrate every amortized posterior.** Stage D requires SBC for an
+  amortized method. In addition, compute the coverage of the posterior
+  intervals over held-out simulations at several credibility levels from 50%
+  to 95%, which is the expected-coverage check. Neural posterior estimates
+  are often overconfident, so coverage below the nominal level at any level
+  is a failure. Coverage above the nominal level is conservative, which is
+  acceptable. TODO(source): Hermans, Delaunoy, Rozet, Wehenkel, Begy &
+  Louppe, "A crisis in simulation-based inference? Beware, your posterior
+  approximations can be unfaithful" (Transactions on Machine Learning
+  Research, 2022). The coverage of each parameter's interval misses errors in
+  the joint posterior, which the TARP test checks. TODO(source): Lemos,
+  Coogan, Hezaveh & Perreault-Levasseur, "Sampling-based accuracy testing of
+  posterior estimators for general inference" (ICML, 2023). When a reference
+  posterior exists, such as an MCMC fit of a tractable version of the model,
+  compare the two by the validation of approximate methods in stage E.
+- **Check that the observed data resemble the simulations.** Compare the
+  summary statistics of the observed data with their prior predictive
+  distribution, by stage C. An observed summary far in the tail of the
+  simulations means that the simulator does not produce data like the
+  observed data. An amortized estimator evaluated there extrapolates beyond
+  its training data, so revise the simulator or the prior before you
+  interpret its posterior. TODO(source): Schmitt, Bürkner, Köthe & Radev,
+  "Detecting model misspecification in amortized Bayesian inference with
+  neural networks" (DAGM German Conference on Pattern Recognition, 2023).
+- **Validate an emulator on held-out simulator runs.** TODO(source):
+  Rasmussen & Williams, *Gaussian Processes for Machine Learning* (MIT Press,
+  2006). The emulator is valid for inference when it passes five checks:
+  1. Training design: the inputs of the training runs fill the region of the
+     parameter space that the prior supports, as a Latin hypercube does, and
+     sequential runs add inputs where the emulator's predictive variance is
+     large. TODO(source): Gramacy, *Surrogates: Gaussian Process Modeling,
+     Design, and Optimization for the Applied Sciences* (CRC, 2020).
+  2. Held-out runs: the standardized error of each held-out run, which is the
+     emulator's prediction error over its predictive standard deviation, is
+     approximately standard normal. Many standardized errors beyond ±2 mean
+     that the emulator is overconfident. TODO(source): Bastos & O'Hagan,
+     "Diagnostics for Gaussian process emulators" (Technometrics, 2009).
+  3. Propagation: the likelihood includes the emulator's predictive variance,
+     so that the posterior reflects the emulator's error.
+  4. Discrepancy: the model includes a term for the difference between the
+     simulator and the real system, because a calibration without it gives
+     biased and overconfident parameter estimates (Kennedy & O'Hagan 2001).
+     TODO(source): Brynjarsdóttir & O'Hagan, "Learning about physical
+     parameters: the importance of model discrepancy" (Inverse Problems,
+     2014).
+  5. Precision: the Gaussian process is computed in double precision,
+     because its covariance matrix is often ill-conditioned and its Cholesky
+     factor fails or loses accuracy in single precision. The row "Emulate an
+     expensive model" of [CAPABILITIES.md](CAPABILITIES.md) says how to set
+     the precision.
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage I.
 
 ### J. Reproducibility and communication
