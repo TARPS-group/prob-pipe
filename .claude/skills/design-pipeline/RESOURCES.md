@@ -56,6 +56,10 @@ model. Plan for that return.
 - Simulate data from the prior, and ask the domain expert whether it looks
   possible. Implausible simulations, such as negative counts or astronomically
   large values, mean that the priors or the model structure need revision.
+- Show the expert one or two summaries in the units of the data, so that they
+  judge the simulations by what they know. An example is the share of
+  simulated datasets whose largest value exceeds the largest value they would
+  believe, beside the range of a typical value.
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage C.
 
 ### D. Validate the computation on realistic simulated data
