@@ -101,8 +101,13 @@ when either check fails, and record the new corpus in project memory.
 - **Say what ProbPipe cannot do.** When ProbPipe does not cover a need, such
   as a check that the model's route rules out or an unregistered inference
   method, say so. Propose a workaround from the row "Meet a need ProbPipe does
-  not cover" of CAPABILITIES.md, and record it under *ProbPipe gaps* in the
-  design document.
+  not cover" of CAPABILITIES.md. Record each gap with its workaround under
+  *ProbPipe gaps* in the design document, as one of two kinds:
+  1. a missing capability: a foundational capability that ProbPipe lacks,
+     such as a cross-validation scheme, a diagnostic, or an inference method;
+  2. a missing interface: a tool that ProbPipe does not connect to, such as a
+     Gaussian-process package, a neural-network library, or a domain
+     simulator.
 - **Propose defaults, and name the choices.** For a choice of method or
   design, such as the route of the model, the inference method, or the
   cross-validation scheme, propose a reasonable default and tell the user the

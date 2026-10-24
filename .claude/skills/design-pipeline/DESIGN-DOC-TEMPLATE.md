@@ -86,8 +86,15 @@ Unresolved questions, each with who can answer it (the user, data, a
 colleague, an experiment).
 
 ## 8. ProbPipe gaps
-Needs that ProbPipe does not meet, the workaround used, and whether each is
-worth a GitHub issue.
+### 8a. Missing capabilities
+Foundational capabilities that ProbPipe lacks.
+| Need | Stage | Workaround used | Worth a GitHub issue? |
+|---|---|---|---|
+
+### 8b. Missing interfaces
+Tools that ProbPipe does not connect to.
+| Tool | Need | Workaround used | Worth a GitHub issue? |
+|---|---|---|---|
 
 ## 9. Changelog
 | Version | Changes | Reason (feedback or finding) | Class (pre-data, data-driven, or computational) |
