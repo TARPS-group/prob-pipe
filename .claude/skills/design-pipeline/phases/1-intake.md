@@ -44,6 +44,10 @@ Cover these topics:
   - how many datasets the model will analyze;
   - the hardware, such as a GPU, and the wall-clock time available.
 
+When the project starts, ask whether to use quick start mode, by the
+[ground rules](../INSTRUCTIONS.md#ground-rules), and recommend it. Ask it
+with the first group of questions.
+
 Once you can name the project, propose a workspace directory by
 [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#workspace), and confirm it with the
 user. If person memory does not exist yet, ask now whether you may create it,

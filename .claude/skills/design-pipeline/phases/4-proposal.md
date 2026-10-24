@@ -75,7 +75,7 @@ the earlier steps against them:
     - emulators for expensive simulators;
     - Prefect or Ray for scale.
 
-On the fast path of the [ground rules](../INSTRUCTIONS.md#ground-rules), step
+In the quick start mode of the [ground rules](../INSTRUCTIONS.md#ground-rules), step
 8 is one posterior predictive check, and the cross-validation of step 8 and all
 of step 10 are deferred.
 

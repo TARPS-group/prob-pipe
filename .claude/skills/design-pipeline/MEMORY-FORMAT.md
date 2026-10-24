@@ -174,7 +174,7 @@ Last updated: <date>
 
 ```markdown
 # Project memory: <project name>
-Last updated: <date> · Phase: <current phase> · Design version: <n>
+Last updated: <date> · Phase: <current phase> · Design version: <n> · Mode: <quick start or full workflow>
 Corpus: <corpus directory> · commit <commit> · ProbPipe <version>
 Python: <python>
 

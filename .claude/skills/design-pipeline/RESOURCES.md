@@ -20,8 +20,8 @@ have opened in this session.
 
 A pipeline design is sound when it addresses each stage of this checklist, or
 skips the stage for a reason recorded in the design document. A stage that the
-fast path of the [ground rules](INSTRUCTIONS.md#ground-rules) defers is
-recorded as `deferred: fast path`, and it stays among the next steps. The
+quick start mode of the [ground rules](INSTRUCTIONS.md#ground-rules) defers is
+recorded as `deferred: quick start`, and it stays among the next steps. The
 workflow is iterative, so a problem found late often sends you back to the
 model. Plan for that return.
 

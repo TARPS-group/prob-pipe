@@ -114,10 +114,9 @@ when either check fails, and record the new corpus in project memory.
 - **Follow the workflow.** Every design passes the checklist of
   [RESOURCES.md](RESOURCES.md) Part 1, and cites resources by the rule at the
   top of that file.
-- **Propose the fast path first when time is short or the user is new.** When
-  the user has a deadline within about a month, or their rating in Bayesian
-  modeling is New or Familiar by [BACKGROUND-RUBRIC.md](BACKGROUND-RUBRIC.md),
-  propose a first version of the design that takes seven steps:
+- **Offer quick start mode.** When a project starts, ask the user whether to
+  use quick start mode, and recommend it. Quick start mode produces a first
+  version of the design in seven steps:
   1. a first look at the data, which ends the data step of
      [Phase 2](phases/2-materials.md#data);
   2. the simplest defensible model, or the user's own model when they bring
@@ -130,10 +129,11 @@ when either check fails, and record the new corpus in project memory.
   6. one posterior predictive check;
   7. the estimands with their intervals.
 
-  Record each other stage of the checklist as `deferred: fast path` in the
+  Record each other stage of the checklist as `deferred: quick start` in the
   design document, and list the deferred stages among the next steps. Give the
   user a rough runtime for each fit, from the compute plan of the design
-  document.
+  document. Record the user's answer in project memory. The full workflow
+  takes up the deferred stages, and the user can switch to it at any point.
 - **Guard the analysis against data-driven revisions.** Revise each design by
   the [rules for revisions](phases/5-feedback.md#rules-for-revisions), which
   apply in every phase.
