@@ -165,7 +165,8 @@ when either check fails, and record the new corpus in project memory.
   3. a prior predictive check;
   4. the validation on realistic simulated data of
      [RESOURCES.md](RESOURCES.md) stage D, with the number of simulated
-     datasets scaled to the time available;
+     datasets scaled to the time available, and graded by step 6 of that
+     stage for the quick start mode;
   5. a fit with its diagnostics;
   6. one posterior predictive check;
   7. the estimands with their intervals.
@@ -238,7 +239,10 @@ phase follows these rules:
    their approval. This covers each run of `<workspace>/pipeline.py` or
    `<workspace>/pipeline.ipynb`, and of code the user supplied, which you read
    in full before you ask. One approval can cover the stages of one design
-   version, because the fit stage runs only after the validation passes.
+   version, because the fit stage runs only after the validation passes. It
+   also covers the reruns of the validate stage under the remedies of
+   [phases/4-proposal.md](phases/4-proposal.md), which run only on simulated
+   data.
 
    One approval also covers the probe scripts of a project, which check how
    ProbPipe behaves while you write the code, such as the form of a

@@ -92,13 +92,24 @@ step 2 plans the baseline and the elaboration that the mode names, and step 8
 is one posterior predictive check of each model. The mode decides which other
 stages to defer, such as the cross-validation of step 8 and step 10.
 
-When the diagnostics of step 7 or the checks of step 8 fail in a run of the
-validate or the fit stage, return to step 3 and revise the model before you
-tune the algorithm, by the folk theorem of RESOURCES.md stage E. Each return is
-a revision, which follows the
-[rules for revisions](5-feedback.md#rules-for-revisions). Only those stages
-decide a return, because the budgets of a smoke run are too small to judge the
-diagnostics and the checks.
+When the diagnostics of step 7 fail in a run of the validate stage, take the
+remedies of the bullet "Remedy divergences in this order" of RESOURCES.md
+stage E yourself, in order, before you report the grade *failed*. Write each
+remedy into the pipeline as a computational revision, and rerun the validate
+stage by rule 5 of the
+[rules for user materials](../INSTRUCTIONS.md#user-materials-and-code). A
+remedy that is a setting, such as the target acceptance rate, can apply to the
+failed fits alone, as a sweep over their datasets, and the fit to the real
+data then uses it. Report each remedy you tried with its result, and grade the
+validation by RESOURCES.md stage D after the last one.
+
+When the checks of step 8 fail, or the diagnostics of a fit to the real data
+fail, return to step 3 and revise the model before you tune the algorithm, by
+the folk theorem of RESOURCES.md stage E. Each remedy and each return is a
+revision, which follows the
+[rules for revisions](5-feedback.md#rules-for-revisions). Only the validate
+and the fit stage decide a revision, because the budgets of a smoke run are
+too small to judge the diagnostics and the checks.
 
 ## Write the code
 

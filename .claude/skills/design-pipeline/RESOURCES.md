@@ -66,7 +66,8 @@ model. Plan for that return.
 
 Validate the computation on simulated data with a known ground truth before
 you trust a fit to the real data. Every design includes this validation, and
-the real-data fit is interpreted only after it passes.
+the real-data fit is interpreted only after the validation's grade, by step 6,
+is *passed* or *passed with notes*.
 
 1. **Simulate at the real design.** Simulate datasets from the model with the
    actual covariates, sample sizes, grouping structure, and missingness
@@ -76,23 +77,24 @@ the real-data fit is interpreted only after it passes.
    inference method and the settings planned for the real data, and record
    the settings.
 3. **Diagnose each fit.** Record the divergences and the R-hat of each fit by
-   the criteria of stage E. A divergence or a failed diagnostic in any fit
-   fails the validation. Coverage averages over the fits, so it can look
-   nominal while many fits are broken.
+   the criteria of stage E. Coverage averages over the fits, so it can look
+   nominal while many fits are broken, and the grade of step 6 therefore
+   judges each fit.
 4. **Check coverage over the prior draws and recovery at the chosen values.**
    Bayesian intervals are calibrated on average over the prior, so the
    coverage check uses the datasets simulated from prior draws. Across them,
    the posterior intervals of each estimand cover its true value at about
-   their nominal rate. At each value that the user chose, check recovery
-   instead. For each parameter, compute the posterior z-score, which is the
-   posterior mean minus the true value over the posterior standard
-   deviation, and the posterior contraction, which is one minus the ratio of
-   the posterior variance to the prior variance. A large z-score marks bias,
-   and a contraction near zero marks a parameter that the data does not
-   inform. Betancourt (2020) describes both. Also check that a wide interval,
-   such as the 95% interval, holds the true value. A posterior at a chosen
-   value shrinks toward the prior, so expect a moderate z-score in the
-   direction of the prior mean.
+   their nominal rate. With n datasets, the coverage at the level p has the
+   Monte Carlo standard error √(p(1 − p)/n). At each value that the user
+   chose, check recovery instead. For each parameter, compute the posterior
+   z-score, which is the posterior mean minus the true value over the
+   posterior standard deviation, and the posterior contraction, which is one
+   minus the ratio of the posterior variance to the prior variance. A large
+   z-score marks bias, and a contraction near zero marks a parameter that the
+   data does not inform. Betancourt (2020) describes both. Also check that a
+   wide interval, such as the 95% interval, holds the true value. A posterior
+   at a chosen value shrinks toward the prior, so expect a moderate z-score in
+   the direction of the prior mean.
 5. **Run SBC when the model or the method calls for it.** Run
    simulation-based calibration (Talts et al. 2018) for a custom likelihood and
    for any approximate method. Run it always for an amortized method, because
@@ -105,6 +107,45 @@ the real-data fit is interpreted only after it passes.
    than the real fit, such as fewer chains or shorter runs, because the fits
    of steps 2 and 3 use the real settings. Record the settings of SBC beside
    its result. When you skip SBC, record the reason in the design document.
+6. **Grade the validation.** Grade the validation of each model after the
+   remedies of the bullet "Remedy divergences in this order" of stage E, by
+   the criteria below. Their bounds are defaults. A project that sets other
+   bounds records them as a decision with its reason, as a project does that
+   counts every note as a failure.
+   1. *Passed:* every fit passes the criteria of stage E with no divergence,
+      the coverage of each estimand at each level is within two Monte Carlo
+      standard errors of the level, and each posterior z-score at a chosen
+      value lies within ±2.
+   2. *Passed with notes:* no criterion of *failed* holds, and some result
+      misses *passed*. Each note names its result. Examples are these:
+      - a few fits, at most 5% of them and at least one, whose divergences or
+        whose diagnostics just past their thresholds, such as an R-hat up to
+        1.05 or a bulk ESS of at least 50 per chain, disappear when those
+        fits are rerun with a remedy, which the fit to the real data then
+        uses;
+      - a coverage between two and three standard errors below its level, or
+        more than two above it, which marks intervals wider than they need to
+        be;
+      - a z-score between 2 and 3 in absolute value;
+      - a contraction below 0.1, which marks an estimand that the data barely
+        inform.
+   3. *Failed:* divergences or failed diagnostics that the remedies leave, or
+      that occur in more fits; a coverage more than three standard errors
+      below its level; a z-score beyond ±3; or an SBC rank ECDF that leaves
+      its simultaneous band.
+
+   Report each grade with one sentence, in the user's terms, on what it means
+   for the answers:
+   - *passed:* "The method recovered known answers from data like yours, so
+     its intervals can be trusted.";
+   - *passed with notes:* the same sentence, with the caveat of each note;
+   - *failed:* "The method did not reliably recover known answers from data
+     like yours, so its estimates cannot be trusted yet."
+
+   In the quick start mode, the validation simulates few datasets, so its
+   coverage has a wide Monte Carlo band. Its grade then rests on the
+   diagnostics of each fit and the recovery at the chosen values, and its
+   coverage is reported without a grade.
 
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage D.
 
@@ -148,17 +189,23 @@ the real-data fit is interpreted only after it passes.
   Before you tune the sampler, look for weak identifiability, a poor
   parameterization, poorly scaled parameters, or a model that disagrees with
   the data.
-- **Remedy divergences in this order.** When a fit has divergent
-  transitions, in the validation of stage D or on the real data, take two
-  steps:
-  1. Revise the model, by the folk theorem: reparameterize it, such as in the
-     non-centered form of the next bullet, or narrow a prior that allows
-     implausible values, which the prior predictive check of stage C shows.
-  2. Then raise the target acceptance rate of the step-size adaptation, such
-     as from 0.8 to 0.95, and rerun the validation with that setting. A
-     higher target adapts a smaller step size, so each draw takes longer. A
-     method that exposes this setting can record fewer sample statistics, so
-     record each criterion above that its runs cannot check.
+- **Remedy divergences in this order.** When a fit has divergent transitions
+  or fails another criterion above, in the validation of stage D or on the
+  real data, try these remedies in order, and rerun the fits after each
+  one:
+  1. Reparameterize the model, by the folk theorem, such as in the
+     non-centered form of the next bullet.
+  2. Raise the target acceptance rate of the step-size adaptation, such as
+     from 0.8 to 0.95. A higher target adapts a smaller step size, so each
+     draw takes longer. The row "Condition on the data" of
+     [CAPABILITIES.md](CAPABILITIES.md) names the methods that take this
+     setting.
+  3. Lengthen the warmup, such as from 500 to 2000 iterations, so that the
+     adaptation of the step size and the mass matrix settles.
+
+  Each remedy computes the same model another way. When the prior predictive
+  check of stage C shows implausible values, a narrower prior is the
+  alternative to remedy 1. It changes the model, so the user decides it.
 - **Parameterize a hierarchical model by how well the data inform its
   groups.** For a normal hierarchical model with few groups, or with groups
   that the data inform weakly, the default is the non-centered
@@ -365,19 +412,17 @@ the real-data fit is interpreted only after it passes.
      hyperparameters that were tuned, and the wall-clock time in the design
      document.
 - **Calibrate every amortized posterior.** Stage D requires SBC and the
-  coverage of the estimands for an amortized method. Compute the coverage
-  over held-out simulations at several credibility levels from 50% to 95%,
-  which is the expected-coverage check. With n held-out simulations, the
-  estimated coverage at the level p has the Monte Carlo standard error
-  √(p(1 − p)/n), so report the band p ± 2√(p(1 − p)/n) beside each coverage.
-  Coverage below the band at any level is a failure, because it means
-  intervals that are too narrow, which is the common failure of neural
-  posterior estimates. Coverage above the nominal level is conservative,
-  which is acceptable (Hermans et al. 2022). The coverage of each parameter's
-  interval misses errors in the joint posterior, which the TARP test checks
-  (Lemos et al. 2023). When a reference posterior exists, such as an MCMC fit
-  of a tractable version of the model, compare the two by the validation of
-  approximate methods in stage E.
+  coverage of the estimands for an amortized method. Compute the coverage over
+  held-out simulations at several credibility levels from 50% to 95%, which is
+  the expected-coverage check, and grade it by step 6 of stage D, with n the
+  number of held-out simulations. Report the band p ± 2√(p(1 − p)/n) beside
+  each coverage. Coverage below the band means intervals that are too narrow,
+  which is the common failure of neural posterior estimates, and coverage
+  above it is conservative (Hermans et al. 2022). The coverage of each
+  parameter's interval misses errors in the joint posterior, which the TARP
+  test checks (Lemos et al. 2023). When a reference posterior exists, such as
+  an MCMC fit of a tractable version of the model, compare the two by the
+  validation of approximate methods in stage E.
 - **Check that the observed data resemble the simulations.** Compare the
   summary statistics of the observed data with their prior predictive
   distribution, by stage C. An observed summary far in the tail of the
