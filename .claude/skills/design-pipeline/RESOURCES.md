@@ -138,19 +138,52 @@ the real-data fit is interpreted only after it passes.
 - **Posterior predictive checks:** compare replicated data with the observed
   data. Choose test statistics that target the scientific question and the
   model's weakest assumptions, beyond the mean, and use graphical checks.
-- **Predictive performance:** estimate it by PSIS-LOO cross-validation, and
-  check its Pareto-k̂ diagnostics. Use k-fold cross-validation when LOO is
-  unreliable.
+- **Predictive performance:** estimate it by the cross-validation scheme that
+  matches the prediction task of the estimands:
+  1. new observations of exchangeable units: PSIS-LOO (Vehtari, Gelman &
+     Gabry 2017);
+  2. new groups of a hierarchical model: leave-one-group-out;
+  3. future values of a time series: leave-future-out or rolling-origin
+     cross-validation. TODO(source): Bürkner, Gabry & Vehtari, "Approximate
+     leave-future-out cross-validation for Bayesian time series models"
+     (Journal of Statistical Computation and Simulation, 2020);
+  4. new locations of spatial data: cross-validation that leaves out blocks
+     of nearby locations. TODO(source): Roberts et al., "Cross-validation
+     strategies for data with temporal, spatial, hierarchical, or phylogenetic
+     structure" (Ecography, 2017).
+- **Pareto k̂:** check the k̂ of each left-out unit. A k̂ above 0.7, or above
+  the threshold min(1 − 1/log₁₀ S, 0.7) for S posterior draws, makes the PSIS
+  estimate for that unit unreliable (Vehtari et al. 2024). For those units,
+  use moment matching, refit the model without them, or use k-fold
+  cross-validation.
+- **Calibration:** check the leave-one-out predictive distributions with
+  LOO-PIT, whose values are uniform for a calibrated model (Gabry et al.
+  2019).
+- **Valid likelihoods only:** LOO, WAIC, and model comparison use the
+  normalized pointwise log likelihood. A likelihood known only up to a
+  constant that does not depend on the parameters, such as a learned
+  likelihood-to-evidence ratio, therefore gives no valid value for them.
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage F.
 
 ### G. Compare, expand, and combine models
 
-- Compare models on predictive performance, by LOO differences with their
-  standard errors, as well as on fit. When several models are comparably good,
-  prefer stacking to the selection of one model.
+- Compare models on predictive performance, by the differences of their
+  expected log predictive density (elpd) with standard errors, as well as on
+  fit. The standard error of a difference is unreliable in three cases: the
+  difference is below about 4, the number of observations is small, or the
+  models are clearly misspecified. TODO(source): Sivula, Magnusson, Matamoros
+  & Vehtari, "Uncertainty in Bayesian leave-one-out cross-validation based
+  model comparison" (arXiv:2008.10296).
+- Stacking weights the predictive distributions of several models (Yao et al.
+  2018). When several models predict comparably well, prefer stacking for
+  prediction to the selection of one model. Stacking combines predictive
+  distributions only, because a parameter can mean different things in
+  different models.
 - When the models may be misspecified, check whether the conclusions are
   stable. Bagged posteriors, or BayesBag, give a more reproducible model
-  selection and an uncertainty that reflects the misspecification.
+  selection and an uncertainty that reflects the misspecification. The
+  bootstrap of BayesBag assumes exchangeable units, so resample whole groups
+  or blocks when the data are grouped or dependent.
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage G.
 
 ### H. Understand the fitted model
