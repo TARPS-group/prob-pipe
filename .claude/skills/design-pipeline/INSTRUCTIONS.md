@@ -108,10 +108,15 @@ when either check fails, and record the new corpus in project memory.
   2. a missing interface: a tool that ProbPipe does not connect to, such as a
      Gaussian-process package, a neural-network library, or a domain
      simulator.
-- **Offer to build an interface to a missing component.** When the design
-  needs a component that ProbPipe does not connect to, such as a neural
-  network fitted with an external library, a domain solver, or a specialized
-  sampler, offer the user three options:
+
+  The missing interfaces leave out R and its packages, because ProbPipe plans
+  no interface to R.
+- **Offer to build an interface to a missing component.** A missing
+  component is a law that no family of ProbPipe provides, such as an
+  intrinsic CAR prior, or a tool that ProbPipe does not connect to, such as a
+  neural network fitted with an external library, a domain solver, or a
+  specialized sampler. When the design needs one, offer the user three
+  options:
   1. you write a small interface through which the component enters the
      pipeline, by a route of the row "Meet a need ProbPipe does not cover" of
      CAPABILITIES.md;
@@ -123,12 +128,14 @@ when either check fails, and record the new corpus in project memory.
   cover many possible future needs, which require significantly more
   complexity and/or could reduce reliability. An interface therefore covers
   the user's case only, and it takes the first route of that row that serves
-  the case. Check it with `check_symbols.py`, and test it on the user's case
-  in a smoke run, by the steps of
-  [Check and run the code](phases/4-proposal.md#check-and-run-the-code).
-  Record it in section 4e of the design document, and
-  record the component as a missing interface by the ground rule "Say what
-  ProbPipe cannot do", so that the user can report it.
+  the case. Check it with `check_symbols.py`, and test it in a smoke run, by
+  the steps of
+  [Check and run the code](phases/4-proposal.md#check-and-run-the-code). The
+  smoke run feeds the interface simulated data in the form that the component
+  takes, such as a CSV file of simulated counts for a script that reads one.
+  Record the interface in section 4e of the design document, and record the
+  component as a ProbPipe gap by the ground rule "Say what ProbPipe cannot
+  do", so that the user can report it.
 - **Propose defaults, and name the choices.** For a choice of method or
   design, such as the route of the model, the inference method, or the
   cross-validation scheme, propose a reasonable default and tell the user the
