@@ -15,7 +15,7 @@ Before you open any dataset, ask whether it contains personal or health
 information, sensitive locations such as the sites of protected species, or
 data under a use agreement, and remind the user that your model provider
 receives each value you read. Aggregated statistics that identify no person,
-such as published case counts per district, are not personal data. Ask
+such as published case counts per district, count as non-personal data. Ask
 whether a small-cell rule applies to them, such as a rule that suppresses
 counts below five, and follow it in what you show and record. If the dataset
 holds sensitive data, or the user is unsure, open none of its rows. Write a
@@ -101,7 +101,8 @@ Each kind of material needs one more step:
   [CAPABILITIES.md](../CAPABILITIES.md) by which it enters ProbPipe as it is,
   and what that route allows downstream. Code in a language with no route,
   such as R, enters as wrapped code or as the draws it computes, by the same
-  file.
+  file. A brms model enters as the Stan program that `brms::stancode()`
+  writes.
 - **Informal descriptions:** turn each one into a candidate mathematical model,
   and show it to the user to check.
 

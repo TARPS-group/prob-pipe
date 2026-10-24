@@ -112,9 +112,6 @@ when either check fails, and record the new corpus in project memory.
   2. a missing interface: a tool that ProbPipe does not connect to, such as a
      Gaussian-process package, a neural-network library, or a domain
      simulator.
-
-  The missing interfaces leave out R and its packages, because ProbPipe plans
-  no interface to R.
 - **Offer to build an interface to a missing component.** A missing
   component is a law that no family of ProbPipe provides, such as an
   intrinsic CAR prior, or a tool that ProbPipe does not connect to, such as a
@@ -137,9 +134,11 @@ when either check fails, and record the new corpus in project memory.
   [Check and run the code](phases/4-proposal.md#check-and-run-the-code). The
   smoke run feeds the interface simulated data in the form that the component
   takes, such as a CSV file of simulated counts for a script that reads one.
-  Record the interface in section 4e of the design document, and record the
+  Record the interface in section 4e of the design document. Record the
   component as a ProbPipe gap by the ground rule "Say what ProbPipe cannot
-  do", so that the user can report it.
+  do", so that the user can report it, unless it is an R tool. When a user
+  asks for an R tool, say that ProbPipe plans no interface to R, and offer a
+  wrapper for their case or the draws it computes.
 - **Propose defaults, and name the choices.** For a choice of method or
   design, such as the route of the model, the inference method, or the
   cross-validation scheme, propose a reasonable default and tell the user the
