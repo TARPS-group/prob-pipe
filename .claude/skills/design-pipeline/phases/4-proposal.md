@@ -34,8 +34,12 @@ the next:
    declines, by the row "Condition on the data". State whether to keep the
    default or to name another method, and why. Consider an alternative, such
    as a gradient-free, variational, or amortized method, when the likelihood
-   is intractable, non-differentiable, or too expensive. Plan the validation
-   that stage E requires for an approximate method.
+   is intractable, non-differentiable, or too expensive. For many
+   observations, choose by the bullet "Many observations" of stage E, and for
+   a simulator or an expensive model, by stage I, from the scale that
+   [Phase 1](1-intake.md) records. Plan the validation that stage E requires
+   for an approximate method, and the validation that stage I requires for
+   an amortized method or an emulator.
 7. **Computational diagnostics.** Plan the diagnostics of RESOURCES.md stage
    E, by the row "Diagnose MCMC", and what to do when each one fails.
 8. **Model criticism.** Plan three kinds of check:

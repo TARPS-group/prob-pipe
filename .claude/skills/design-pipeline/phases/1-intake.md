@@ -1,6 +1,6 @@
 # Phase 1 — Problem and goals intake
 
-Learn what the user wants to achieve, in their own terms. Cover four topics:
+Learn what the user wants to achieve, in their own terms. Cover these topics:
 
 - **The problem:** the system, phenomenon, or decision the analysis is about,
   and the question the user wants answered.
@@ -21,6 +21,15 @@ Learn what the user wants to achieve, in their own terms. Cover four topics:
   pipeline.
   Skip what person memory already records, such as the user's compute
   environment.
+- **Scale,** when the data are large or the model is a simulator. These
+  quantities choose the inference method by
+  [RESOURCES.md](../RESOURCES.md) stages E and I:
+  - the size of the data, in observations, variables, and bytes;
+  - the cost of one simulator call, whether the simulator is stochastic, and
+    whether its calls can be vectorized over parameter values;
+  - the simulation budget;
+  - how many datasets the model will analyze;
+  - the hardware, such as a GPU, and the wall-clock time available.
 
 Once you can name the project, propose a workspace directory by
 [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#workspace), and confirm it with the
