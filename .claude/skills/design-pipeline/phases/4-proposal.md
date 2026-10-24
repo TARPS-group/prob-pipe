@@ -155,7 +155,8 @@ Write the code close to the mathematics, and in batches:
    panels of a figure.
 3. Keep the auxiliary code in two modules beside the pipeline, which the
    pipeline imports. `<workspace>/report.py` holds the helpers that print,
-   plot, and write results. `<workspace>/sim_data.py` draws the simulated
+   plot, and write results, and it formats each interval by rule 4 of
+   [Messages](../INSTRUCTIONS.md#messages). `<workspace>/sim_data.py` draws the simulated
    data at the real design from the model that the pipeline passes to it, and
    masks it to the real pattern of missing values. The model, the inference,
    and the checks stay in the pipeline itself.
@@ -187,7 +188,11 @@ editing that default.
    - the grade of each model, with its sentence;
    - the table of the validation.
 
-   No other stage writes the file.
+   No other stage writes the file. Each cell of the validation ends by
+   printing its verdict in one line of plain words, which is the grade of
+   RESOURCES.md stage D with its sentence, such as "Validation passed: the
+   method recovered known answers from data like yours, so its intervals can
+   be trusted."
 3. `STAGE=fit` runs the fit to the real data and the sections after it. Its
    gate is the cell right after the data step. The gate reads
    `<workspace>/runs/validation.json` and checks its stage, its design version, and

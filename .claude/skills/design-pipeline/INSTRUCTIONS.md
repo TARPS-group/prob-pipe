@@ -37,7 +37,9 @@ files use six placeholders:
 
 The session runs in the phases of this table, and each phase's file says how
 to run it. Read a phase's file when the phase starts. Finish each phase before
-you start the next, and return to an earlier phase whenever new information
+you start the next, except that Phases 1 and 2 interleave so that the
+summary of the data comes early, by rule 3 of [Messages](#messages). Return to
+an earlier phase whenever new information
 invalidates it, as when the data does not match the user's description. A
 resumed session starts at the phase that project memory records.
 
@@ -153,9 +155,11 @@ when either check fails, and record the new corpus in project memory.
 - **Follow the workflow.** Every design passes the checklist of
   [RESOURCES.md](RESOURCES.md) Part 1, and cites resources by the rule at the
   top of that file.
-- **Offer quick start mode.** When a project starts, ask the user whether to
-  use quick start mode, and recommend it. Quick start mode produces a first
-  version of the design in seven steps:
+- **Start in quick start mode.** Quick start mode is the default of every
+  new project. Announce it in the first message, with the way to leave it,
+  rather than asking, such as "I'll get you a first complete answer first;
+  say 'full workflow' at any time." Quick start mode produces a first version
+  of the design in seven steps:
   1. a first look at the data, which ends the data step of
      [Phase 2](phases/2-materials.md#data);
   2. a baseline model, which is the simplest defensible model, and then, when
@@ -181,18 +185,12 @@ when either check fails, and record the new corpus in project memory.
   that answers a concern the user names, such as a prior sensitivity analysis
   for a user who worries about the influence of the priors. Give the user a
   rough runtime for each fit, from the compute plan of the design document,
-  which a probe script or the first smoke run calibrates. Record the user's
-  answer in project memory. The full workflow takes up the deferred stages,
-  and the user can switch to it at any point.
+  which a probe script or the first smoke run calibrates. Record the mode in
+  project memory. The full workflow takes up the deferred stages, and the
+  user switches to it by saying so at any point.
 - **Guard the analysis against data-driven revisions.** Revise each design by
   the [rules for revisions](phases/5-feedback.md#rules-for-revisions), which
   apply in every phase.
-- **Ask in groups, and say why.** Group related questions into one message of
-  at most about five, and say why you ask each one. Accept "I don't know", and
-  record it as an open question. Ask a question with a few discrete answers,
-  such as the choice of a route for the model, as a multiple-choice question
-  if your tool supports it, otherwise in plain text. Ask an open-ended question
-  in plain conversation.
 - **Ask only what memory does not answer.** Check memory before you ask
   anything about the person or the project. Confirm a remembered fact only
   when [MEMORY-FORMAT.md](MEMORY-FORMAT.md#rules) counts it as unconfirmed, or
@@ -207,6 +205,42 @@ when either check fails, and record the new corpus in project memory.
   work. Update them at each checkpoint that
   [MEMORY-FORMAT.md](MEMORY-FORMAT.md) lists, so that a later session or the
   user can resume from them.
+
+## Messages
+
+Every message to the user follows these rules:
+
+1. **Open with a progress line.** Start each message with one line that
+   places it among the five steps that the user sees, such as
+   "Step 2 of 5 · your data". The steps are these:
+   1. your question: Phases 0 and 1;
+   2. your data: Phase 2;
+   3. the plan: Phases 3 and 4, up to the smoke run;
+   4. checks and fit: the validate and the fit stage;
+   5. answers and revisions: Phase 5.
+2. **Ask at most three questions.** Order the questions of a message by
+   importance. Give each one the reason you ask it, in a few words, and the
+   default you will use if the user skips it. When a reply answers some of
+   them, take the default of each one it skips, say so in one line, and ask
+   that question again only when its default turns out wrong. Accept "I don't
+   know", and record it as an open question. Ask a question with a few
+   discrete answers, such as the choice of a route for the model, as a
+   multiple-choice question if your tool supports it, otherwise in plain
+   text. Ask an open-ended question in plain conversation.
+3. **Show a result within about three messages.** By your second or third
+   message, show the user a result from their own materials, such as the
+   summary of the data of [Phase 2](phases/2-materials.md#data), so ask for
+   the data among the first questions.
+4. **Write each interval in one form:** "median [2.5%, 97.5%] units", such as
+   "1.42 [1.10, 1.81] per 10 percentage points", in messages, in the output
+   of the pipeline, and in the design document. An estimand that names
+   another level, such as a 90% prediction interval, keeps the form with its
+   own quantiles and states its level once.
+5. **Hedge each claim about what other people accept.** Present a claim
+   about what reviewers, editors, or a field accept as common practice, with
+   its source when you have one, and say that a given reviewer may ask for
+   more, such as "many reviewers accept priors that a prior predictive check
+   supports, though yours may ask for a sensitivity analysis".
 
 ## User materials and code
 

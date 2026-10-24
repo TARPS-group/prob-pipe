@@ -19,8 +19,9 @@ the first questions. Search the rest of the corpus when a question needs it.
      resume protocol of [INSTRUCTIONS.md](../INSTRUCTIONS.md#resume-protocol):
      read the project's memory and workspace files, summarize where things
      stand and the agreed next step, and continue at the recorded phase.
-   - **New user:** say how the session will go, and ask the first group of
-     questions of [Phase 1](1-intake.md).
+   - **New user:** say in one sentence how the session will go, and send
+     the first message of [Phase 1](1-intake.md), which announces quick
+     start mode and asks the first three questions.
 3. Build the corpus while the user answers. If your agent can run commands
    after its reply in the same turn, build it then, and otherwise build it at
    the start of your next turn. Run the script with `<python>`, so that its

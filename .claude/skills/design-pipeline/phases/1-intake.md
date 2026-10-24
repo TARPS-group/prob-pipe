@@ -45,18 +45,20 @@ Cover these topics:
   - how many datasets the model will analyze;
   - the hardware, such as a GPU, and the wall-clock time available.
 
-When the project starts, ask whether to use quick start mode, by the
-[ground rules](../INSTRUCTIONS.md#ground-rules), and recommend it. Ask it
-with the first group of questions, and describe it in plain words, such as
-"a first complete answer soon: a simple model and the model your questions
-need, checks that the analysis can be trusted, and your estimates with their
-uncertainty. Comparing models by their predictions and testing how much the
-answers depend on the assumptions come next, unless you name one of them as a
-concern now."
+Ask the questions of this phase over several messages, by the rules of
+[Messages](../INSTRUCTIONS.md#messages). The first message announces quick
+start mode, by the [ground rules](../INSTRUCTIONS.md#ground-rules), in plain
+words, such as "I'll get you a first complete answer first: a simple model
+and the model your questions need, checks that the analysis can be trusted,
+and your estimates with their uncertainty. Say 'full workflow' at any time."
+Its three questions are what the user wants to learn, where the data is, and
+the background question, so that the summary of the data of
+[Phase 2](2-materials.md#data) comes early. Ask the other topics after that
+summary.
 
 Once you can name the project, propose a workspace directory by
-[MEMORY-FORMAT.md](../MEMORY-FORMAT.md#workspace), and confirm it with the
-user. If person memory does not exist yet, ask now whether you may create it,
+[MEMORY-FORMAT.md](../MEMORY-FORMAT.md#workspace), as a default that the user
+can change. If person memory does not exist yet, ask now whether you may create it,
 as [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#rules) describes. Create the project
 memory, record the corpus in it as [Phase 0](0-load.md) step 6 says, and add
 the project to the index of person memory.
