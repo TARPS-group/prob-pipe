@@ -1,0 +1,81 @@
+"""Automatic mathematical symbols and literal aliases have separate contracts."""
+
+import jax.numpy as jnp
+import numpy as np
+import pytest
+
+from probpipe import (
+    EmpiricalDistribution,
+    Function,
+    Normal,
+    NumericArraySpec,
+    OutputSpec,
+    conditional_distribution,
+    cov,
+    expectation,
+    mean,
+    quantile,
+    standard_deviation,
+    variance,
+    workflow_run,
+)
+from probpipe.core._fingerprint import fingerprint
+
+
+class TestUnicodeNotation:
+    @pytest.mark.parametrize(
+        "operation,symbol,output_name",
+        [
+            (mean, "𝔼", "mu"),
+            (variance, "𝕍", "mu"),
+            (standard_deviation, "√𝕍", "mu"),
+            (cov, "ℂ", "cov"),
+            (quantile, "ℚ", "mu"),
+        ],
+    )
+    def test_summary_symbols_preserve_ascii_outputs(self, operation, symbol, output_name):
+        law = Normal("mu", 0.0, 1.0, label="prior")
+        args = (law, 0.5) if operation is quantile else (law,)
+        result = operation(*args)
+        assert result.label == f"{symbol}[mu ~ prior]"
+        assert tuple(operation.check(*args).result.outputs) == (output_name,)
+        if operation is quantile:
+            plural = quantile(law, jnp.array([0.1, 0.9]))
+            assert plural.level_names == ("quantile",)
+
+    def test_anonymous_defaults_and_literal_names(self):
+        anonymous = Function(lambda x: x + 1)
+        assert anonymous.notation == "𝒻(x)"
+        assert (
+            expectation(Normal("mu", 0, 1, label="prior"), lambda x: x).label == "𝔼[𝒻(mu ~ prior)]"
+        )
+        kernel = conditional_distribution(
+            lambda mu: Normal("y", mu, 1), given_spec={"mu": NumericArraySpec(())}
+        )
+        assert kernel.notation == "ℙ(y | mu)"
+        assert EmpiricalDistribution(jnp.arange(3.0), output_name="mu").notation == "ℙ(mu)"
+
+        def f(x):
+            return x + 1
+
+        assert Function(f).notation == "f(x)"
+        for label in ("p", "f", "E", "Q", "Var", "SD", "Cov"):
+            assert anonymous.with_label(label).label == label
+            assert Function(lambda x: x, label=label).label == label
+            assert Function(lambda x: x, output_label=label)(1).label == label
+            assert Normal("mu", 0, 1, label=label).label == label
+
+    def test_anonymous_display_is_independent_of_schema_and_random_stream(self):
+        automatic = Function(lambda x: x + 1, max_evaluations=5)
+        fn = automatic.raw
+        ascii_alias = Function(fn, label="f", max_evaluations=5)
+        assert fingerprint(automatic) == fingerprint(ascii_alias)
+        with workflow_run(seed=42):
+            first = automatic(Normal("mu", 0, 1))
+        with workflow_run(seed=42):
+            second = ascii_alias(Normal("mu", 0, 1))
+        assert tuple(first.event_spec.outputs) == ("f",)
+        assert tuple(second.event_spec.outputs) == ("f",)
+        np.testing.assert_array_equal(first.atoms.raw, second.atoms.raw)
+        typed = Function(fn, output_spec=NumericArraySpec(()))
+        assert typed.output_spec == OutputSpec(f=NumericArraySpec(()))

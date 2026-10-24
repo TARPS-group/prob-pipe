@@ -1,0 +1,92 @@
+"""Shared wording for error and warning messages.
+
+``STYLE_GUIDE.md`` §9.3 owns the rules for messages. These helpers give one
+wording to the checks that recur across the package, so the same mistake reads
+the same way wherever it is raised.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+
+__all__ = ["count", "label_given_first", "unknown_names"]
+
+
+def count(n: int, noun: str, plural: str | None = None) -> str:
+    """*n* followed by *noun*, pluralized unless *n* is one.
+
+    Parameters
+    ----------
+    n : int
+        The number to show.
+    noun : str
+        The singular noun, such as ``"axis"``.
+    plural : str or None
+        The plural noun, such as ``"axes"``; ``noun + "s"`` when omitted.
+
+    Returns
+    -------
+    str
+        Such as ``"1 axis"`` or ``"2 axes"``.
+    """
+    return f"{n} {noun if n == 1 else plural or noun + 's'}"
+
+
+def unknown_names(
+    noun: str, unknown: Iterable[str], available: Iterable[str], plural: str | None = None
+) -> str:
+    """The message for a lookup that names something that does not exist.
+
+    Parameters
+    ----------
+    noun : str
+        What the names name, singular, such as ``"level"`` or ``"field"``.
+    unknown : iterable of str
+        The names that were asked for and do not exist, in the order to show.
+    available : iterable of str
+        The names that do exist, in the order to show.
+    plural : str or None
+        The plural of *noun*; ``noun + "s"`` when omitted.
+
+    Returns
+    -------
+    str
+        Such as ``"unknown level 'test'; available levels: ['quantile']"``.
+    """
+    plural = plural or noun + "s"
+    names, have = list(unknown), list(available)
+    head = f"unknown {noun} {names[0]!r}" if len(names) == 1 else f"unknown {plural} {names}"
+    tail = f"available {plural}: {have}" if have else f"there are no {plural}"
+    return f"{head}; {tail}"
+
+
+def label_given_first(owner: str, first: str, value: str, *, then: tuple[str, ...] = ()) -> str:
+    """The message that *owner* got the string *value* where its first argument *first* goes.
+
+    A constructor that once took its label first takes *first* there now and
+    the label as the keyword ``label``, so a string there is a label passed in
+    the earlier form.
+
+    Parameters
+    ----------
+    owner : str
+        The constructor, such as ``"NumericArray"``.
+    first : str
+        The name of its first parameter, such as ``"value"``.
+    value : str
+        The string the caller passed there.
+    then : tuple of str
+        The names of the positional parameters after *first*, which the
+        rewritten call shows, such as ``("level_names",)``.
+
+    Returns
+    -------
+    str
+        Such as ``"NumericArray got the string 'x' as its value; pass the label
+        by keyword: NumericArray(value, label='x')"``.
+    """
+    arguments = ", ".join((first, *then))
+    return (
+        f"{owner} got the string {value!r} as its {first}; pass the label by keyword: "
+        f"{owner}({arguments}, label={value!r})"
+    )

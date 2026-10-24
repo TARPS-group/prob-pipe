@@ -1,0 +1,288 @@
+"""Planning, step 5 of the stack (design V.6).
+
+Planning unifies the available specs and computes the result's
+output spec as far as they determine it, deferring what only the return can
+settle:
+
+- a bare output spec: completes to ``OutputSpec.default``;
+- an unspecified output type: is filled per call, and the output spec keeps it;
+- a lift: plans a distribution over the output spec;
+- ``include_inputs``: returns the joint law of the lifted inputs and the output.
+"""
+
+from __future__ import annotations
+
+import jax.numpy as jnp
+import pytest
+
+from probpipe import (
+    ApplicabilityError,
+    DistributionBatch,
+    DistributionSpec,
+    EmpiricalDistribution,
+    Function,
+    InputSpec,
+    NumericArrayBatch,
+    NumericArraySpec,
+    OutputSpec,
+    RecordSpec,
+    function,
+    mean,
+    workflow_run,
+)
+from probpipe.core._specs import _has_record_outputs
+from probpipe.core.constraints import positive
+
+from ._design_helpers import error_of, one_field_law, standard_normal
+
+_RATE = OutputSpec(rate=NumericArraySpec(("obs",), jnp.float32, positive))
+
+
+def _rate_function() -> Function:
+    @function(output_spec=_RATE)
+    def rate(x):
+        return jnp.exp(x)
+
+    return rate
+
+
+def _lifted_rate() -> Function:
+    @function(output_spec=_RATE, max_evaluations=6, executor="sequential")
+    def rate(x, z):
+        return jnp.exp(x + z)
+
+    return rate
+
+
+class TestTheDeclaredOutput:
+    def test_a_bare_term_spec_completes_to_the_default_declaration(self):
+        spec = NumericArraySpec(())
+        wrapped = Function(
+            lambda x: x,
+            output_label="value",
+            output_spec=OutputSpec.default(spec, output_name="value"),
+            label="f",
+        )
+
+        assert wrapped.output_spec == OutputSpec.default(spec, output_name="value")
+
+    def test_a_bare_record_spec_exposes_its_fields(self):
+        spec = RecordSpec(a=NumericArraySpec(()))
+        wrapped = Function(
+            lambda x: {"a": x},
+            output_spec=spec,
+            label="f",
+        )
+
+        assert _has_record_outputs(wrapped.output_spec)
+        assert set(wrapped.output_spec.outputs) == {"a"}
+
+    def test_a_type_hole_is_filled_per_call_and_the_declaration_keeps_it(self):
+        wrapped = Function(
+            lambda x: x,
+            output_spec=OutputSpec(mean=None),
+            label="f",
+        )
+
+        first = wrapped(jnp.ones(2))
+        second = wrapped(jnp.ones(3))
+
+        assert first.shape == (2,) and second.shape == (3,)
+        assert wrapped.output_spec.term_spec is None
+
+    def test_output_only_dimensions_bind_from_the_returned_term_on_each_call(self):
+        rate = _rate_function()
+
+        assert rate(jnp.zeros(4)).spec.shape == (4,)
+        assert rate(jnp.zeros(2)).spec.shape == (2,)
+
+    def test_the_declaration_carries_the_support_inference_would_not(self):
+        assert _rate_function()(jnp.zeros(3)).spec.support is positive
+
+
+class TestTheResultOfALift:
+    def test_a_lift_keeps_the_declared_outputs(self):
+        with workflow_run(seed=0):
+            result = _lifted_rate()(jnp.zeros(4), standard_normal())
+
+        assert set(result.event_spec.outputs) == {"rate"}
+
+    def test_a_lift_plans_a_distribution_over_the_output_declaration(self):
+        with workflow_run(seed=0):
+            result = _lifted_rate()(jnp.zeros(4), standard_normal())
+
+        assert not _has_record_outputs(result.event_spec)
+        assert isinstance(result.event_spec.term_spec, NumericArraySpec)
+        assert result.event_spec.term_spec.support is positive
+
+    def test_an_undeclared_array_return_lifts_to_a_whole_term_under_output_name(self):
+        @function(max_evaluations=6, executor="sequential", output_spec=OutputSpec(square=None))
+        def square(x):
+            return x * x
+
+        with workflow_run(seed=0):
+            result = square(standard_normal())
+
+        assert set(result.event_spec.outputs) == {"square"}
+        assert not _has_record_outputs(result.event_spec)
+
+    def test_the_sampling_lift_constructs_an_empirical_approximation(self):
+        @function(max_evaluations=6, executor="sequential", output_spec=OutputSpec(square=None))
+        def square(x):
+            return x * x
+
+        with workflow_run(seed=0):
+            result = square(standard_normal())
+
+        assert isinstance(result, EmpiricalDistribution)
+
+    def test_an_empty_sweep_without_a_declaration_is_refused(self):
+        @function(executor="sequential")
+        def double(x):
+            return 2.0 * x
+
+        empty = NumericArrayBatch(
+            jnp.zeros((0,)),
+            "row",
+            element=NumericArraySpec(()),
+            label="rows",
+        )
+
+        assert error_of(lambda: double(empty)) is not None
+
+
+#: Each executor of an empty sweep, with the claim that makes it the one that
+#: would run: JAX maps a traceable function whatever executor is named, so the
+#: one-at-a-time executors take ``traceable=False``, and None selects automatically.
+_EXECUTORS = [
+    pytest.param("sequential", False, id="sequential"),
+    pytest.param("thread", False, id="thread"),
+    pytest.param(None, None, id="automatic"),
+    pytest.param("jax", None, id="jax"),
+]
+
+
+class TestEmptySweepPlanning:
+    @pytest.mark.parametrize("executor, traceable", _EXECUTORS)
+    @pytest.mark.parametrize(
+        "declaration",
+        [None, OutputSpec(value=None), NumericArraySpec(("n",)), RecordSpec(x=("n",))],
+        ids=["undeclared", "unspecified-type", "unbound-array", "unbound-record"],
+    )
+    @pytest.mark.parametrize("check", [False, True], ids=["execute", "check"])
+    def test_an_incomplete_declaration_is_refused_without_running_the_body(
+        self, executor, traceable, declaration, check
+    ):
+        @function(executor=executor, traceable=traceable, output_spec=declaration)
+        def unexpected(x):
+            raise AssertionError("An empty sweep must not evaluate the body")
+
+        empty = NumericArrayBatch(jnp.zeros((0,)), "row", label="rows")
+        call = unexpected.check if check else unexpected
+        with pytest.raises(ValueError, match="empty sweep requires a concrete output_spec"):
+            call(empty)
+
+    @pytest.mark.parametrize("executor, traceable", _EXECUTORS)
+    def test_input_dimensions_complete_an_empty_sweeps_output(self, executor, traceable):
+        @function(
+            executor=executor,
+            traceable=traceable,
+            input_spec=InputSpec(x=NumericArraySpec(("n",))),
+            output_spec=NumericArraySpec(("n",)),
+        )
+        def unexpected(x):
+            raise AssertionError("An empty sweep must not evaluate the body")
+
+        empty = NumericArrayBatch(jnp.zeros((0, 2)), "row", label="rows")
+        assert unexpected.check(empty).result.term_spec.shape == (2,)
+        result = unexpected(empty)
+        assert isinstance(result, NumericArrayBatch)
+        assert result.batch_shape == (0,)
+        assert result.element_spec.term_spec.shape == (2,)
+        assert result.raw.shape == (0, 2)
+
+    def test_an_operation_derives_the_empty_sweeps_declaration(self):
+        import numpy as np
+
+        empty = DistributionBatch(
+            np.empty((0,), dtype=object),
+            "row",
+            element=DistributionSpec(OutputSpec(x=NumericArraySpec(()))),
+            label="laws",
+        )
+        assert mean.check(empty).result.term_spec.shape == ()
+        result = mean(empty)
+        assert isinstance(result, NumericArrayBatch)
+        assert result.batch_shape == (0,)
+        assert result.element_spec.term_spec.shape == ()
+
+
+class TestIncludingTheInputs:
+    def _predict(self) -> Function:
+        @function(
+            output_label="prediction",
+            output_spec=OutputSpec(mean=None),
+            include_inputs=True,
+            max_evaluations=6,
+            executor="sequential",
+        )
+        def predict(theta, x):
+            return x * theta
+
+        return predict
+
+    def test_plain_inputs_contribute_no_fields(self):
+        with workflow_run(seed=0):
+            result = self._predict()(theta=standard_normal(), x=jnp.ones(3))
+
+        assert "x" not in result.event_spec.outputs
+        assert result.label == "prediction"
+
+    def test_the_joint_is_an_empirical_law(self):
+        with workflow_run(seed=0):
+            result = self._predict()(theta=standard_normal(), x=jnp.ones(3))
+
+        assert isinstance(result, EmpiricalDistribution)
+
+    def test_each_lifted_parameter_and_each_exposed_output_is_a_field(self):
+        with workflow_run(seed=0):
+            result = self._predict()(theta=standard_normal(), x=jnp.ones(3))
+
+        assert set(result.event_spec.outputs) == {"theta", "mean"}
+
+    def test_a_one_field_record_draw_remains_nested(self):
+        @function(
+            include_inputs=True,
+            max_evaluations=6,
+            executor="sequential",
+            output_spec=OutputSpec(weigh=None),
+        )
+        def weigh(theta):
+            return 0.0
+
+        with workflow_run(seed=0):
+            result = weigh(theta=one_field_law())
+
+        theta = result.event_spec.outputs["theta"]
+        assert isinstance(theta, RecordSpec) and set(theta) == {"beta"}
+
+    def test_a_parameter_named_like_an_output_raises(self):
+        @function(include_inputs=True, max_evaluations=6, executor="sequential")
+        def x(x):
+            return x
+
+        with workflow_run(seed=0):
+            error = error_of(lambda: x(standard_normal()))
+
+        assert isinstance(error, (ApplicabilityError, ValueError))
+
+
+class TestFailures:
+    def test_arguments_that_do_not_unify_raise_applicability_error(self):
+        wrapped = Function(
+            lambda x, y: x + y,
+            input_spec={"x": NumericArraySpec(("n",)), "y": NumericArraySpec(("n",))},
+            label="add",
+        )
+
+        assert isinstance(error_of(lambda: wrapped(jnp.ones(3), jnp.ones(4))), ApplicabilityError)

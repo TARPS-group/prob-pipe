@@ -1,3 +1,5 @@
+> **AI-generated.** An AI assistant drafted this page, and no maintainer has reviewed it yet. Please report errors on the issue tracker.
+
 # Citing ProbPipe
 
 If you use ProbPipe in your research, we would appreciate a citation.

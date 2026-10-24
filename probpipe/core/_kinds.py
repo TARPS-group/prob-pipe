@@ -24,6 +24,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from ._batch import BatchSpec
+from ._record_spec import RecordSpec
+
 __all__ = [
     "batch_class_for_spec",
     "register_kind",
@@ -43,6 +46,17 @@ def register_kind(
     Called at the bottom of the module defining the classes, so the table is
     populated by importing the kind rather than by a central list that a new
     kind has to be added to.
+
+    Parameters
+    ----------
+    spec_type : type
+        The ``TermSpec`` subclass that identifies the kind. Its subclasses inherit
+        the registration unless they register their own.
+    term_class : type or None
+        The tracked class of a value of the kind, or ``None`` when it has none.
+    batch_class : type or None
+        The batch class of a collection of the kind's values, or ``None`` when it
+        has none.
 
     Raises
     ------
@@ -76,8 +90,15 @@ def _lookup(spec: Any, side: int) -> type | None:
     """Resolve *spec*'s registered class, honouring subclass registrations.
 
     The exact type first, then the MRO, so a spec subclass inherits its base's
-    kind unless it registers its own.
+    kind unless it registers its own. A batch spec resolves to its element
+    kind's batch form, since a batch of batches has that same form.
     """
+    if isinstance(spec, BatchSpec):
+        if isinstance(spec.element_spec.term_spec, RecordSpec):
+            from ._record_batch import _batch_class_for
+
+            return _batch_class_for(spec.element_spec.term_spec)
+        return _lookup(spec.element_spec.term_spec, 1)
     for candidate in type(spec).__mro__:
         entry = _KINDS.get(candidate)
         if entry is not None and entry[side] is not None:

@@ -8,6 +8,8 @@ Also included are more specialized operations like `mah_dist_squared()`
 that are not in one-to-one correspondence with `LinOp` methods.
 """
 
+from __future__ import annotations
+
 from typing import Any
 
 import jax.numpy as jnp
@@ -79,8 +81,7 @@ def trace_Ainv_B(A: LinOpLike, B: LinOpLike) -> float:
     B._check_square()
     if A.shape[1] != B.shape[0]:
         raise LinAlgError(
-            f"trace_Ainv_B requires A and B to be square and of equal dimension.\n"
-            f"Got A and B with shapes {A.shape} and {B.shape}, respectively."
+            f"trace_Ainv_B() requires A and B of the same size, got shapes {A.shape} and {B.shape}"
         )
 
     return trace(solve(A, to_dense(B)))
@@ -125,12 +126,12 @@ def mah_dist_squared(x: ArrayLike, A: LinOpLike, y: ArrayLike | None = None) -> 
     A = _as_linear_operator(A)
     A._check_square()
     d = A.shape[0]
-    X = _ensure_matrix(x, as_row_matrix=True, num_cols=d)
+    X = _ensure_matrix(x, name="x", as_row_matrix=True, num_cols=d)
     if y is not None:
-        Y = _ensure_matrix(y, as_row_matrix=True, num_cols=d)
+        Y = _ensure_matrix(y, name="y", as_row_matrix=True, num_cols=d)
         if Y.shape[0] not in (1, X.shape[0]):
             raise ValueError(
-                "y must have same batch dimension `n` as x, or have batch dimension one."
+                f"y must have 1 row or as many rows as x ({X.shape[0]}), got {Y.shape[0]}"
             )
         X = X - Y
 

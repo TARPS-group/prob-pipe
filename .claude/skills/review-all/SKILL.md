@@ -62,8 +62,8 @@ Merge the four reports into ONE — do not concatenate.
    flagged it and how load-bearing it is): **Must fix** / **Should fix** /
    **Minor / polish**.
 3. **Attribute** each finding to the lens(es) that raised it; keep `file:line`.
-4. **Surface disagreements** explicitly, with a reconciliation grounded in
-   `STYLE_GUIDE.md` / `CONTRIBUTING.md`.
+4. **Surface disagreements** explicitly, with a reconciliation grounded in the
+   document that `AGENTS.md` names as the owner of the rule in question.
 5. **Keep a "Verified correct" section** carrying forward what the bug-hunt and
    test-audit lenses checked and found sound.
 6. **End with a recommendation** — what you would do, in order — and offer to
