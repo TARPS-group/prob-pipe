@@ -3329,6 +3329,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   together: ValueError: r must be positive`, and `error.failures` still lists
   each evaluation point.
 
+- **An AI assistant designs a ProbPipe pipeline with you.** The design
+  assistant interviews a scientist about their question, data, and existing
+  models, then proposes, validates on realistic simulated data, and fits a
+  pipeline, recording each decision in a design document. Any agent that can
+  run shell commands follows it through the prompt in
+  `docs/get_started/design_assistant.md`. In Claude Code it is the skill
+  `/design-pipeline`. Its instructions are in `.claude/skills/design-pipeline/`.
+
 ### Changed
 
 - **Faster minibatches without replacement.** Sampling retains distinct indices
