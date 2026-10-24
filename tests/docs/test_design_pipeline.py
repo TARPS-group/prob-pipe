@@ -148,6 +148,24 @@ class TestCheckSymbols:
     def test_each_documentation_notebook_parses(self, notebook):
         ast.parse(check_symbols.read_source(notebook).code)
 
+    def test_a_method_named_by_a_top_level_string_is_checked(self, tmp_path, capsys):
+        script = tmp_path / "pipeline.py"
+        script.write_text(
+            'import probpipe as pp\nMETHOD = "nuts"\npp.condition_on.using(method=METHOD)\n'
+        )
+        assert check_symbols.main([str(script)]) == 1
+        assert "no inference method `nuts`" in capsys.readouterr().out
+
+    def test_a_call_of_an_unimplemented_export_is_reported(self, tmp_path, capsys, monkeypatch):
+        probpipe = importlib.import_module("probpipe")
+        monkeypatch.setattr(
+            check_symbols, "_unimplemented", lambda: {id(probpipe.Normal): "Normal"}
+        )
+        script = tmp_path / "pipeline.py"
+        script.write_text("from probpipe import Normal\nNormal('x', 0.0, 1.0)\n")
+        assert check_symbols.main([str(script)]) == 1
+        assert "`Normal` is not implemented" in capsys.readouterr().out
+
     def test_a_reassigned_name_is_not_checked(self, tmp_path):
         script = tmp_path / "pipeline.py"
         script.write_text("from probpipe import Normal\nNormal = dict\nNormal(anything=1)\n")
@@ -204,6 +222,29 @@ class TestBuildCorpus:
         ]
         assert missing == []
         assert "could not resolve" not in index.split("## Subpackage names")[0]
+
+    def test_an_export_that_only_raises_not_implemented_error_is_found(self, tmp_path):
+        package = tmp_path / "probpipe"
+        package.mkdir()
+        (package / "__init__.py").write_text(
+            "from ._ops import called, done, raises, routed\n"
+            "__all__ = ['called', 'done', 'raises', 'routed']\n"
+        )
+        (package / "_ops.py").write_text(
+            "def _stub():\n    raise NotImplementedError('later')\n\n"
+            'def raises():\n    """Doc."""\n    raise NotImplementedError\n\n'
+            "def called(x):\n    return _stub()\n\n"
+            "def done(x):\n    return x\n\n"
+            "def routed(x):\n    pass\n\n"
+            "routed.register_route(_stub)\n"
+        )
+        assert build_corpus.unimplemented_exports(tmp_path) == ["called", "raises", "routed"]
+
+    def test_the_index_marks_each_unimplemented_export(self):
+        facts = {"version": "0", "branch": "b", "commit": "c" * 40, "built": "today"}
+        index = build_corpus.build_index(ROOT, facts, build_corpus.nav_pages(ROOT), {})
+        for name in build_corpus.unimplemented_exports(ROOT):
+            assert re.search(rf"^- `{name}\b[^\n]*`: \*\*not implemented\*\*", index, re.M)
 
     def test_a_lazily_exported_class_resolves_to_its_definition(self):
         signature, _ = build_corpus.summarize_symbol(ROOT, "probpipe.PyMCModel")

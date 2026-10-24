@@ -95,7 +95,9 @@ when either check fails, and record the new corpus in project memory.
 - **The code decides what exists.** `design/` describes the *target state*,
   which is sometimes ahead of the implementation. Read it only to resolve a
   term, starting from `design/glossary.md`, and take only the code as proof
-  that something exists. When a user's need falls in a gap that the design
+  that something exists. An export that `<corpus>/INDEX.md` marks **not
+  implemented** raises `NotImplementedError` on every call, so use none of
+  them. When a user's need falls in a gap that the design
   describes and the code does not yet implement, say so and propose a
   workaround.
 - **Say what ProbPipe cannot do.** When ProbPipe does not cover a need, such

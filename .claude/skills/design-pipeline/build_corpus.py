@@ -17,7 +17,8 @@ installed. It builds the corpus in four steps:
    lines and ``PART_CHARS`` characters, which an agent reads in a few line
    ranges that start at the headings ``MANIFEST.md`` lists;
 4. it writes ``INDEX.md``, which lists the public exports with their
-   signatures, the inference methods with their priorities, and the contents
+   signatures, marks each export that raises ``NotImplementedError`` on every
+   call, and lists the inference methods with their priorities and the contents
    of the user guide and the tutorials, and ``MANIFEST.md``, which records the
    checkout's branch, commit, and version and the headings of each part file.
 
@@ -629,6 +630,56 @@ def _all_names(repo: Path, module: str) -> list[str]:
     return names
 
 
+def _only_raises_not_implemented(node: ast.AST) -> bool:
+    """Whether the body of the function *node*, after its docstring, is one ``raise NotImplementedError``."""
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    body = node.body[1:] if ast.get_docstring(node) is not None else node.body
+    if len(body) != 1 or not isinstance(body[0], ast.Raise) or body[0].exc is None:
+        return False
+    error = body[0].exc.func if isinstance(body[0].exc, ast.Call) else body[0].exc
+    return isinstance(error, ast.Name) and error.id == "NotImplementedError"
+
+
+def unimplemented_exports(repo: Path) -> list[str]:
+    """The top-level exports of ``probpipe`` whose every call raises ``NotImplementedError``.
+
+    An exported function is unimplemented when its body is one ``raise
+    NotImplementedError``, when its body calls a function of its module whose
+    body is one, as ``mixture`` does, or when each route that its module
+    registers for it, as ``inverse.register_route(...)`` does, names such a
+    function.
+    """
+    found_names = []
+    for name in _all_names(repo, "probpipe"):
+        found = _find(repo, "probpipe", name)
+        if found is None or not isinstance(found[0], (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        node, module = found
+        path = _module_file(repo, module)
+        tree = _parse(path) if path else None
+        if tree is None:
+            continue
+        stubs = {item.name for item in tree.body if _only_raises_not_implemented(item)}
+        called = {n.id for item in node.body for n in ast.walk(item) if isinstance(n, ast.Name)}
+        routes = [
+            {n.id for n in ast.walk(item) if isinstance(n, ast.Name)}
+            for item in tree.body
+            if isinstance(item, ast.Expr)
+            and isinstance(item.value, ast.Call)
+            and isinstance(item.value.func, ast.Attribute)
+            and isinstance(item.value.func.value, ast.Name)
+            and item.value.func.value.id == node.name
+        ]
+        if (
+            _only_raises_not_implemented(node)
+            or called & stubs
+            or (routes and all(route & stubs for route in routes))
+        ):
+            found_names.append(name)
+    return found_names
+
+
 def docs_subpackage_names(repo: Path, paths: list[Path]) -> dict[str, list[str]]:
     """The names that the documentation imports from, or documents in, each subpackage."""
     found: dict[str, list[str]] = {}
@@ -740,11 +791,17 @@ def build_index(
         "",
         "## Top-level exports of `probpipe`",
         "",
+        "An export marked **not implemented** raises `NotImplementedError` on every call, "
+        "so a pipeline uses none of them.",
+        "",
     ]
+    unimplemented = set(unimplemented_exports(repo))
     for name in _all_names(repo, "probpipe"):
         signature, summary = summarize_symbol(repo, f"probpipe.{name}")
+        mark = "**not implemented**: " if name in unimplemented else ""
         out.append(
-            f"- `{_clip(signature, SIGNATURE_CHARS)}`: {_clip(_plain(summary), SUMMARY_CHARS)}"
+            f"- `{_clip(signature, SIGNATURE_CHARS)}`: "
+            f"{mark}{_clip(_plain(summary), SUMMARY_CHARS)}"
         )
     out += ["", "## Subpackage names that the documentation uses", ""]
     for module, names in docs_subpackage_names(repo, pages).items():

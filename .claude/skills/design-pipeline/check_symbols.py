@@ -2,7 +2,7 @@
 
 The ``design-pipeline`` assistant runs this script on each version of a user's
 ``pipeline.py``, or of a notebook, before it shows the code. The script parses
-each file with ``ast`` and checks four things against the ``probpipe`` that this
+each file with ``ast`` and checks five things against the ``probpipe`` that this
 Python imports:
 
 1. each ``import probpipe...`` and ``from probpipe... import ...`` resolves;
@@ -10,12 +10,17 @@ Python imports:
    ``pp.condition_on.using``, resolves;
 3. the arguments of each call of a ProbPipe callable bind to its signature,
    which ``inspect.signature`` reports;
-4. each literal ``method=`` given to ``condition_on.using`` names an inference
-   method registered in this environment.
+4. each ``method=`` given to ``condition_on.using`` names an inference method
+   registered in this environment, when it is a string or a name that the file
+   assigns a string once at its top level, such as ``METHOD = "tfp_nuts"``;
+5. no call reaches a top-level export that raises ``NotImplementedError`` on
+   every call, which ``build_corpus.unimplemented_exports`` finds in the
+   source of the imported ``probpipe``.
 
 A name that the file assigns again, for example by ``Normal = ...``, is not
 checked, because the script cannot tell which value a later use reads. The
-script needs only the standard library and ``probpipe``.
+script needs only the standard library, ``probpipe``, and ``build_corpus.py``
+beside it.
 
 Usage::
 
@@ -35,8 +40,13 @@ import inspect
 import json
 import sys
 from dataclasses import dataclass, field
+from functools import cache
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import build_corpus
 
 _UNRESOLVED = object()
 
@@ -131,6 +141,21 @@ def _registered_methods() -> list[str] | None:
     return list(registry.list_methods())
 
 
+@cache
+def _unimplemented() -> dict[int, str]:
+    """The exports of the imported ``probpipe`` that raise ``NotImplementedError``, by object id."""
+    probpipe = resolve("probpipe")
+    if probpipe is _UNRESOLVED:
+        return {}
+    source = Path(probpipe.__file__).resolve().parents[1]
+    found = {}
+    for name in build_corpus.unimplemented_exports(source):
+        target = resolve(f"probpipe.{name}")
+        if target is not _UNRESOLVED:
+            found[id(target)] = name
+    return found
+
+
 class Checker(ast.NodeVisitor):
     """Collects the problems of one source file."""
 
@@ -141,6 +166,7 @@ class Checker(ast.NodeVisitor):
         self.calls_checked = 0
         self.bound: dict[str, str] = {}
         self.reassigned = self._reassigned(tree)
+        self.strings = self._top_level_strings(tree)
         for node in ast.walk(tree):
             for child in ast.iter_child_nodes(node):
                 child.parent = node  # type: ignore[attr-defined]
@@ -157,6 +183,24 @@ class Checker(ast.NodeVisitor):
             elif isinstance(node, ast.arg):
                 names.add(node.arg)
         return names
+
+    @staticmethod
+    def _top_level_strings(tree: ast.Module) -> dict[str, str]:
+        """The names that *tree* binds once, at its top level, to a string."""
+        stores: dict[str, int] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                stores[node.id] = stores.get(node.id, 0) + 1
+        return {
+            node.targets[0].id: node.value.value
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and stores.get(node.targets[0].id) == 1
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        }
 
     def report(self, node: ast.AST, message: str) -> None:
         self.problems.append(f"{self.source.where(getattr(node, 'lineno', 0))}: {message}")
@@ -224,6 +268,12 @@ class Checker(ast.NodeVisitor):
         if target is not _UNRESOLVED and callable(target):
             self.calls_checked += 1
             self._check_arguments(node, dotted, target)
+            if id(target) in _unimplemented():
+                self.report(
+                    node,
+                    f"`{ast.unparse(node.func)}` is not implemented: every call raises "
+                    "NotImplementedError",
+                )
             if dotted.endswith("condition_on.using"):
                 self._check_method(node)
         self.generic_visit(node)
@@ -255,13 +305,19 @@ class Checker(ast.NodeVisitor):
 
     def _check_method(self, node: ast.Call) -> None:
         for keyword in node.keywords:
-            if keyword.arg != "method" or not isinstance(keyword.value, ast.Constant):
+            if keyword.arg != "method":
+                continue
+            if isinstance(keyword.value, ast.Constant):
+                method = keyword.value.value
+            elif isinstance(keyword.value, ast.Name) and keyword.value.id in self.strings:
+                method = self.strings[keyword.value.id]
+            else:
                 continue
             methods = _registered_methods()
-            if methods is not None and keyword.value.value not in methods:
+            if methods is not None and method not in methods:
                 self.report(
                     node,
-                    f"no inference method `{keyword.value.value}` is registered in this "
+                    f"no inference method `{method}` is registered in this "
                     f"environment; the registered methods are {', '.join(methods)}",
                 )
 
