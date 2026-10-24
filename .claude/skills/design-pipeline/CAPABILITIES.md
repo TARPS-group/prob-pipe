@@ -55,8 +55,42 @@ The built-in families, `glm_likelihood`, and the hierarchical example of the use
 |---|---|---|---|---|
 | Draw from a law reproducibly | `sample`, `workflow_run` | `docs/user_guide/09_how_results_are_computed.ipynb`, section "Reproducible draws" | C. Prior predictive checks, J. Reproducibility and communication | `workflow_run(seed=...)` opens a random execution scope that the workflow owns, so a seed fixes the draws inside it. |
 | Run a prior predictive check | `predictive_check`, `sample` | `docs/tutorials/02_fitting.ipynb`, section "8. A predictive check" | C. Prior predictive checks | `predictive_check(likelihood, prior, statistics)` takes the prior as its law, and `sample` of the joint model draws simulated data. A statistic is any function of a dataset that returns a scalar. |
-| Validate the computation on realistic simulated data | `sample`, `condition_on`, `condition_on.using`, `probpipe.validation.simulation_based_calibration`, `probpipe.validation.interval_coverage` | `docs/user_guide/07_checking_results.ipynb`, section "Simulation-based calibration" | D. Validate the computation on realistic simulated data | `sample` of the joint model simulates parameters and data together, at the real covariates that the likelihood holds, and the code masks each simulated dataset to the missingness pattern of the real data. `condition_on.using(method=name)` fits each simulated dataset with the planned method. `interval_coverage(draws, truth)` reports whether each central interval of one posterior covers the true value, so its average over the simulated datasets estimates the coverage. It takes an array of draws, so it also scores the draws of an estimand against the estimand's true value. `simulation_based_calibration(model, observed=..., num_simulations=..., num_posterior_draws=..., method=...)` ranks each parameter among its posterior draws, and its `posterior=` argument takes an amortized posterior, which it evaluates without a fit. Its `method_options=` sets the settings of the replications, such as fewer chains than the real fit. The `SBCResult` that it returns reports no divergences of each replication, which is a ProbPipe gap, so diagnose the validation fits of RESOURCES.md stage D with "Diagnose MCMC". It ranks parameters only, so a data-dependent test quantity, the posterior z-score, and the posterior contraction are computed in the pipeline's own code and recorded as a ProbPipe gap. A model without a sampler, such as a `StanModel`, simulates by a second route, as "Bring any model" says. |
+| Validate the computation on realistic simulated data | `sample`, `condition_on`, `condition_on.using`, `RecordBatch`, `DistributionBatch`, `summarize`, `quantile`, `probpipe.validation.simulation_based_calibration`, `probpipe.validation.interval_coverage` | `docs/user_guide/07_checking_results.ipynb`, section "Simulation-based calibration" | D. Validate the computation on realistic simulated data | The recipe below this table runs the validation of RESOURCES.md stage D in batches. One `sample` of the joint model draws every simulated dataset with the parameters that generated it, at the real covariates that the likelihood holds, and `<workspace>/sim_data.py` masks each dataset to the pattern of missing values of the real data. One `condition_on` over the `RecordBatch` of the datasets fits each of them with the planned method, an MCMC method such as `blackjax_nuts` or `nutpie_nuts` included, and returns a `DistributionBatch` with one posterior per dataset on the level `sim`. `summarize` of that batch gives the R-hat and the ESS of each fit, and `quantile` and the summary's `mean` and `sd` give the coverage, the z-scores, and the contraction as array operations over the fits. `summarize` reports no divergences, so the recipe reads them from the sampler statistics of each posterior, which is a ProbPipe gap. `interval_coverage(draws, truth)` reports whether each central interval of one posterior covers the true value, and it takes the draws of an estimand as an array. `simulation_based_calibration(model, observed=..., num_simulations=..., num_posterior_draws=..., method=...)` ranks each parameter among its posterior draws, and its `posterior=` argument takes an amortized posterior, which it evaluates without a fit. Its `method_options=` sets the settings of the replications, such as fewer chains than the real fit. The `SBCResult` that it returns reports no divergences of each replication, which is a ProbPipe gap, so diagnose the validation fits by the recipe. It ranks parameters only, so a data-dependent test quantity is computed in the pipeline's own code and recorded as a ProbPipe gap. A model without a sampler, such as a `StanModel`, draws its datasets by a second route, as "Bring any model" says, and `RecordBatch({"y": draws}, "sim")` holds them, with `draws` of shape `(n, ...)`. |
 | Calibrate an amortized posterior | `probpipe.validation.interval_coverage`, `probpipe.validation.simulation_based_calibration`, `sample`, `condition_on` | `docs/tutorials/06_simulating.ipynb`, section "5. Checking the amortized posterior" | I. Simulators, amortized inference, and emulators | `sample(model, sample_shape=(n,))` simulates held-out parameters and data, and `condition_on` evaluates the amortized posterior at each simulated dataset. `interval_coverage(draws, truth, levels=(0.5, 0.8, 0.9, 0.95))` reports whether each central interval holds the true value, so its average over the simulations at each level is the expected-coverage check of RESOURCES.md stage I. ProbPipe has no coverage of highest-posterior-density regions, no TARP test, and no classifier two-sample test, which are ProbPipe gaps. |
+
+The batched recipe of the validation, for a joint model `model` whose parameters are the fields `parameters` and whose data is the field `"y"`, with `n` simulated datasets:
+
+```python
+# All the simulated datasets in one draw. The level is renamed so that a later
+# sample of the posteriors, which adds a level "sample", keeps distinct levels.
+with workflow_run(seed=1):
+    sims = sample(model, sample_shape=(n,)).with_level_names(sample="sim")
+datasets = sims.without(*parameters)  # a RecordBatch of the data alone
+truth = sims.without("y").to_vector()  # (sim, coordinate)
+
+# One sweep: a DistributionBatch with one posterior per dataset.
+with workflow_run(seed=2):
+    posteriors = condition_on.using(method=method, method_options=options)(model, datasets)
+
+# The diagnostics of each fit.
+summary = summarize(posteriors)
+rhat = summary["r_hat"].to_vector()  # (sim, coordinate)
+ess_bulk = summary["ess_bulk"].to_vector()
+divergences = np.array(
+    [int(p.annotations["arviz"]["sample_stats"]["diverging"].sum()) for p in posteriors]
+)
+
+# Coverage, z-scores, and contraction as array operations over the fits.
+bounds = quantile(posteriors, jnp.array([0.05, 0.95])).to_vector()  # (sim, 2, coordinate)
+coverage = ((bounds[:, 0] <= truth) & (truth <= bounds[:, 1])).mean(axis=0)
+z_score = (summary["mean"].to_vector() - truth) / summary["sd"].to_vector()
+with workflow_run(seed=3):
+    prior_variance = sample(model, sample_shape=(4000,)).without("y").to_vector().var(axis=0)
+contraction = 1 - summary["sd"].to_vector() ** 2 / prior_variance
+```
+
+The recipe orders the coordinates of `truth` and of each summary by the fields of the parameters, so the arrays align.
+The fits that a remedy of RESOURCES.md stage E reruns are one sweep over their datasets, `RecordBatch({"y": datasets["y"].raw[divergences > 0]}, "sim")`.
 
 ## Inference
 

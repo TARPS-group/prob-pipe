@@ -131,6 +131,25 @@ that matches the design document. Each stage shows a figure where one helps,
 such as the prior predictive draws or the posterior predictive check, with a
 one-sentence comment on how to read it.
 
+Write the code close to the mathematics, and in batches:
+
+1. Write the model as its generative equations, with the notation of the
+   design document as the variable names, such as `mu`, `tau`, and `z` for
+   μ, τ, and z_j.
+2. Batch each repeated computation. Draw all the simulated datasets of the
+   validation in one batched draw, fit them in one sweep, and compute the
+   coverage, the z-scores, and the summaries as array operations, by the
+   batched recipe of the row "Validate the computation on realistic simulated
+   data" of [CAPABILITIES.md](../CAPABILITIES.md). Use a Python loop only to
+   present results, such as to print the rows of a table or to draw the
+   panels of a figure.
+3. Keep the auxiliary code in two modules beside the pipeline, which the
+   pipeline imports. `<workspace>/report.py` holds the helpers that print,
+   plot, and write results. `<workspace>/sim_data.py` draws the simulated
+   data at the real design from the model that the pipeline passes to it, and
+   masks it to the real pattern of missing values. The model, the inference,
+   and the checks stay in the pipeline itself.
+
 The code runs in three stages, which the environment variable `STAGE`
 selects:
 
@@ -163,10 +182,11 @@ Take these steps before you show the code, and again after each revision:
 
 1. Run `<python> <assistant>/check_symbols.py <workspace>/pipeline.py`, or the
    same command on the notebook, and fix each problem that it prints. It
-   checks that each ProbPipe name resolves, that each call's arguments bind
-   to the signature, and that the code calls no export that is not
-   implemented. It checks no meaning, so read the docstring of each call whose
-   meaning you are unsure of.
+   checks the file and each module beside it that the file imports, such as
+   `<workspace>/report.py`. It checks that each ProbPipe name resolves, that
+   each call's arguments bind to the signature, and that the code calls no
+   export that is not implemented. It checks no meaning, so read the docstring
+   of each call whose meaning you are unsure of.
 2. If ProbPipe imports here, run the smoke stage by the
    [rules for running code](../INSTRUCTIONS.md#user-materials-and-code), and
    fix what breaks. Otherwise, say that the code has not been run. The

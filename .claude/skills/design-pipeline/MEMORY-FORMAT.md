@@ -52,6 +52,10 @@ A workspace holds these files:
   [DESIGN-DOC-TEMPLATE.md](DESIGN-DOC-TEMPLATE.md), with a version history.
 - `<workspace>/pipeline.py`: the runnable skeleton of the current design
   version, or the notebook `<workspace>/pipeline.ipynb` in its place.
+- `<workspace>/report.py` and `<workspace>/sim_data.py`: the modules of
+  printing and plotting helpers and of simulated data, which the pipeline
+  imports, by
+  [phases/4-proposal.md](phases/4-proposal.md#write-the-code).
 - `<workspace>/pipeline.<stage>.ipynb`: the executed copy of the notebook
   from the last run of each stage, which
   [phases/4-proposal.md](phases/4-proposal.md#check-and-run-the-code)
