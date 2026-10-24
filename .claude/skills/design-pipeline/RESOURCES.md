@@ -9,8 +9,9 @@ annotated bibliography, which says what each resource is good for and when to
 point a user to it.
 
 Apply Part 1 from your own knowledge of these sources, which needs no network
-access. When you have web access and need detail beyond what you know, such as
-a specific diagnostic threshold, consult the source. When a link is dead,
+access. Part 1 states the thresholds of the diagnostics. When you have web
+access and need detail beyond what you know, such as the derivation of a
+diagnostic, consult the source. When a link is dead,
 search for the title. Cite only the resources of this list and the ones you
 have opened in this session.
 
@@ -70,10 +71,26 @@ that return.
 ### E. Fit and diagnose the computation
 
 - Use the default algorithm of `condition_on`, which is NUTS, unless a reason
-  calls for another. Run several chains.
-- Check the rank-normalized R-hat against a target below 1.01, the bulk and
-  tail ESS, the divergences, and the tree depth. Interpret a posterior only
-  after its diagnostics pass.
+  calls for another.
+- **Diagnose each MCMC run** by these criteria, and interpret a posterior only
+  after it passes them. Vehtari et al. (2021) define the R-hat and the ESS.
+  1. Chains: run at least four, from dispersed initial values, so that
+     separate modes show up as disagreeing chains.
+  2. R-hat: the rank-normalized split-R-hat is below 1.01 for every parameter
+     and every estimand. For many short chains, use the nested R-hat instead.
+     TODO(source): Margossian, Hoffman, Sountsov, Riou-Durand, Vehtari &
+     Gelman, "Nested R-hat: assessing the convergence of Markov chain Monte
+     Carlo when running many short chains" (Bayesian Analysis, 2024).
+  3. ESS: the bulk ESS and the tail ESS exceed 100 per chain.
+  4. MCSE: the Monte Carlo standard error of each estimand is small against
+     the precision that the question needs.
+  5. Divergences: each divergent transition after warmup needs investigation,
+     because it marks a region that the sampler cannot explore reliably.
+  6. E-BFMI: a value below about 0.3 signals that the momentum resampling
+     explores the energy distribution poorly.
+  7. Tree depth: trajectories that stop at the maximum tree depth make a run
+     inefficient, and a higher maximum or a reparameterization reduces the
+     cost. The posterior stays valid when the other criteria pass.
 - **Folk theorem:** computational trouble usually signals a model problem.
   Before you tune the sampler, look for weak identifiability, a poor
   parameterization, poorly scaled parameters, or a model that disagrees with
