@@ -139,7 +139,11 @@ notebook on its own Python kernel. The pipeline loads
 the user's data or simulates it, and each pipeline stage is a labeled section
 that matches the design document. Each stage shows a figure where one helps,
 such as the prior predictive draws or the posterior predictive check, with a
-one-sentence comment on how to read it.
+one-sentence comment on how to read it. The notebook's first text cell, or a
+comment at the top of a script, says where to change each choice, such as
+"the priors are in section 3, Priors, and the number of draws of each stage is
+in the first code cell", so that the user can find, defend, and edit each
+choice in code they did not write.
 
 Write the code close to the mathematics, and in batches:
 

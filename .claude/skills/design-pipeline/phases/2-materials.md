@@ -74,9 +74,20 @@ For each dataset you can open:
   ProbPipe, record where it runs and where its script is kept in the design
   document.
 
-After the inspection, show the user one quick summary of the data, such as the
-counts by group and time and where values are missing, and ask whether it
-matches what they expected.
+After the inspection, show the user one quick summary of the structure of
+the data, such as the counts of observations by group and time and where
+values are missing, and ask whether it matches what they expected.
+
+Before you show a summary of the outcome, such as its mean or its largest
+value, ask the user for the plausible range of the outcome and for one or two
+realistic values of the quantities they want to learn, such as "about ten
+times fewer ticks at 530 m than at 400 m". These answers set the priors and
+the chosen values of the validation of [RESOURCES.md](../RESOURCES.md) stage
+D, and they rest on the user's knowledge alone while the user has not seen the
+summary. When the user asks for the summary of the outcome first, or has
+already studied the data, record each value they give as "elicited after the
+data summary" in the justification of the prior that it sets, in section 3 of
+the design document.
 
 If the data is not available yet, ask for a description detailed enough to
 simulate synthetic data of the same structure. Tell the user that the pipeline

@@ -115,7 +115,7 @@ Tools that ProbPipe does not connect to, each with the interface of section
 |---|---|---|---|
 
 ## 9. Changelog
-| Version | Changes | Reason (feedback or finding) | Class (pre-data, data-driven, computational, or added after the fit) |
+| Version | Changes | Reason (feedback or finding) | Class (before any fit to your data, data-driven, computational, or added after the fit) |
 |---|---|---|---|
 
 ## 10. Fit log

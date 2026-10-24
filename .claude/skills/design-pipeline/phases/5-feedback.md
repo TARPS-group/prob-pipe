@@ -38,7 +38,8 @@ and the analysis then overstates its certainty. Every revision of a design, in
 any phase, follows these rules:
 
 1. **Classify each revision** into one of four classes:
-   - *pre-data:* a change made before any fit to the real data;
+   - *before any fit to your data:* a change made before any fit to the real
+     data;
    - *data-driven:* a change of the model prompted by a fit to the real data,
      a predictive check, or a cross-validation result;
    - *computational:* the same model computed another way, such as a
