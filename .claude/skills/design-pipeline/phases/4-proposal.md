@@ -25,13 +25,17 @@ the earlier steps against them:
    CAPABILITIES.md by which the model enters ProbPipe:
    - The default is the route of the code the user already has, such as their
      PyMC model, Stan program, or simulator.
-   - A model written for this project defaults to the route in JAX and
-     ProbPipe's laws, which ProbPipe's gradient methods and predictive checks
-     apply to. When no tutorial or user-guide example shows its structure,
-     PyMC or Stan is an alternative whose own documentation shows it, and the
-     missing example is a ProbPipe gap.
-   - Tell the user what each candidate route allows and rules out, from its
-     last column, when the routes differ for this model.
+   - A model of standard statistical structure written for this project
+     defaults to PyMC or Stan. Examples are a regression with random effects,
+     such as a generalized linear mixed model, and a spatial model with a CAR,
+     ICAR, or BYM prior. Choose the
+     one the user is more comfortable with, by the background profile: Stan
+     for a user of Stan or brms, and PyMC for a user who works in Python or
+     whose computer cannot compile Stan's C++ programs.
+   - A custom, mechanistic, or simulator-based model, or a model whose code
+     is already in JAX, defaults to the route in JAX and ProbPipe's laws.
+   - Name the other routes to the user, with what each allows and rules out,
+     from the last column of its row.
 
    Map each part to ProbPipe objects by the rows of CAPABILITIES.md for stages
    A and B, and record in the design document each check that the chosen
