@@ -235,15 +235,14 @@ the real-data fit is interpreted only after it passes.
 
 ### F. Check the model against the data
 
-- **Posterior predictive checks:** compare replicated data with the observed
-  data. Choose test statistics that target the scientific question and the
+- **Predictive checks:** compare replicated data with the observed data.
+  Choose test statistics that target the scientific question and the
   model's weakest assumptions, beyond the mean, and use graphical checks.
-- **Calibrated checks:** a posterior predictive check uses the data both to
-  fit the model and to check it, so its p-values are conservative. The
-  posterior predictive check is the default. When the user needs a check
-  whose p-values are calibrated, the alternatives include the LOO-PIT of the
-  bullet "Calibration" and a split predictive check, which conditions the
-  model on a training part of the data and checks its predictions of the
+  The posterior predictive check is the default. It uses the data both to
+  fit the model and to check it, so its p-values are conservative. When the
+  user needs calibrated p-values, the alternatives include the LOO-PIT of
+  the bullet "Calibration" and a split predictive check, which conditions
+  the model on a training part of the data and checks its predictions of the
   held-out part (Li & Huggins 2026). A single split has more power with
   little data or a substantial misspecification. Divided split predictive
   checks have more power as the data grow or when the misspecification is
@@ -381,7 +380,11 @@ the real-data fit is interpreted only after it passes.
      approximately standard normal. Many standardized errors beyond ±2 mean
      that the emulator is overconfident (Bastos & O'Hagan 2009).
   3. Propagation: the likelihood includes the emulator's predictive variance,
-     so that the posterior reflects the emulator's error.
+     so that the posterior reflects the emulator's error. Roberts et al.
+     2026a review how surrogate uncertainty is propagated and how active
+     learning chooses new simulator runs. Roberts et al. 2026b compare
+     approximations of the posterior under an uncertain surrogate and show
+     where the expected unnormalized posterior breaks down.
   4. Discrepancy: a calibration that ignores the difference between the
      simulator and the real system can give biased and overconfident
      parameter estimates (Kennedy & O'Hagan 2001). The default is a
@@ -752,6 +755,20 @@ et al. 2021.
   doi:10.1201/9780367815493. Free: https://bobby.gramacy.com/surrogates/. It
   covers space-filling and sequential designs of simulator runs, the fitting
   of Gaussian processes, and calibration, with R code.
+- **Roberts et al. 2026a.** Roberts, Dietze & Huggins, "Surrogate-based
+  Bayesian inference: Uncertainty quantification and active learning"
+  (2026). arXiv:2603.13646. It reviews the use of surrogates, also called
+  emulators, in Bayesian inference, with attention to propagating the
+  surrogate's uncertainty and to choosing new simulator runs by active
+  learning. Point a user here for an overview before building an emulator.
+- **Roberts et al. 2026b.** Roberts, Dietze & Huggins, "Propagating
+  surrogate uncertainty in Bayesian inverse problems" (2026).
+  arXiv:2601.03532. It proposes the expected posterior as the baseline for a
+  posterior that accounts for the surrogate's uncertainty, shows that the
+  expected unnormalized posterior can break down when that uncertainty is
+  far from uniform, and gives an MCMC algorithm for Gaussian-process
+  surrogates. Point a user here when an emulator replaces an expensive
+  likelihood or forward model.
 - **Rasmussen & Williams 2006.** Rasmussen & Williams, *Gaussian Processes for
   Machine Learning* (MIT Press, 2006). doi:10.7551/mitpress/3206.001.0001.
   Free: https://gaussianprocess.org/gpml/. It defines Gaussian-process
