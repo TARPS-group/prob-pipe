@@ -227,13 +227,14 @@ class TestBuildCorpus:
         package = tmp_path / "probpipe"
         package.mkdir()
         (package / "__init__.py").write_text(
-            "from ._ops import called, done, raises, routed\n"
-            "__all__ = ['called', 'done', 'raises', 'routed']\n"
+            "from ._ops import branched, called, done, raises, routed\n"
+            "__all__ = ['branched', 'called', 'done', 'raises', 'routed']\n"
         )
         (package / "_ops.py").write_text(
             "def _stub():\n    raise NotImplementedError('later')\n\n"
             'def raises():\n    """Doc."""\n    raise NotImplementedError\n\n'
             "def called(x):\n    return _stub()\n\n"
+            "def branched(x):\n    if x:\n        return _stub()\n    return x\n\n"
             "def done(x):\n    return x\n\n"
             "def routed(x):\n    pass\n\n"
             "routed.register_route(_stub)\n"

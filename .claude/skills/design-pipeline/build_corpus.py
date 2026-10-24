@@ -641,14 +641,41 @@ def _only_raises_not_implemented(node: ast.AST) -> bool:
     return isinstance(error, ast.Name) and error.id == "NotImplementedError"
 
 
+def _unconditional_calls(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """The names that the function *node* calls on every run.
+
+    A call counts when it is in a simple statement of the function's own body,
+    outside a branch, a loop, a nested function, a lambda, a conditional
+    expression, a boolean operator, and a comprehension.
+    """
+    comprehensions = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+    skipped = (ast.Lambda, ast.IfExp, ast.BoolOp, *comprehensions)
+    names: set[str] = set()
+    pending: list[ast.AST] = [item for item in node.body if _is_simple(item)]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, skipped):
+            continue
+        if isinstance(current, ast.Call) and isinstance(current.func, ast.Name):
+            names.add(current.func.id)
+        pending.extend(ast.iter_child_nodes(current))
+    return names
+
+
+def _is_simple(statement: ast.stmt) -> bool:
+    """Whether *statement* holds no other statement, as an assignment or a ``return`` does."""
+    return not any(isinstance(child, ast.stmt) for child in ast.iter_child_nodes(statement))
+
+
 def unimplemented_exports(repo: Path) -> list[str]:
     """The top-level exports of ``probpipe`` whose every call raises ``NotImplementedError``.
 
     An exported function is unimplemented when its body is one ``raise
-    NotImplementedError``, when its body calls a function of its module whose
-    body is one, as ``mixture`` does, or when each route that its module
-    registers for it, as ``inverse.register_route(...)`` does, names such a
-    function.
+    NotImplementedError``, when a simple statement of its body calls a
+    function of its module whose body is one, as ``mixture`` does, or when
+    each route that its module registers for it, as
+    ``inverse.register_route(...)`` does, names such a function. A call under
+    a branch, such as ``if``, can be skipped, so it does not count.
     """
     found_names = []
     for name in _all_names(repo, "probpipe"):
@@ -661,7 +688,7 @@ def unimplemented_exports(repo: Path) -> list[str]:
         if tree is None:
             continue
         stubs = {item.name for item in tree.body if _only_raises_not_implemented(item)}
-        called = {n.id for item in node.body for n in ast.walk(item) if isinstance(n, ast.Name)}
+        called = _unconditional_calls(node)
         routes = [
             {n.id for n in ast.walk(item) if isinstance(n, ast.Name)}
             for item in tree.body
