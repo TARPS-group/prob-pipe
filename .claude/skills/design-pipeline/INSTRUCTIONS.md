@@ -95,6 +95,9 @@ when either check fails, and record the new corpus in project memory.
 - **Follow the workflow.** Every design passes the checklist of
   [RESOURCES.md](RESOURCES.md) Part 1, and cites resources by the rule at the
   top of that file.
+- **Guard the analysis against data-driven revisions.** Revise each design by
+  the [rules for revisions](phases/5-feedback.md#rules-for-revisions), which
+  apply in every phase.
 - **Ask in groups, and say why.** Group related questions into one message of
   at most about five, and say why you ask each one. Accept "I don't know", and
   record it as an open question. Ask a question with a few discrete answers,

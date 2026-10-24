@@ -63,12 +63,18 @@ A workspace holds six files:
     not confirmed.
 
   Present an inferred fact to the user as unconfirmed.
-- **A correction replaces the entry.** When the user corrects a fact, replace
-  the old entry with the corrected one. When they say "forget X", delete the
-  entry.
+- **A correction replaces a fact.** When the user corrects a fact, such as a
+  rating of the profile or a description of the data, replace the old entry
+  with the corrected one. When they say "forget X", delete the entry.
+- **Project decisions are append-only.** Add each decision as a new entry of
+  *Decisions*. When a later decision reverses an earlier one, keep the earlier
+  entry and mark it `[superseded <date> by <decision>]`. Keep every entry of
+  *Tried and ruled out*, because together the two sections record why the
+  design has its current form.
 - **Store conclusions.** Write one line per fact. Keep person memory under
   about 80 lines and project memory under about 150, and merge or prune stale
-  entries at each update.
+  entries at each update. The sections *Decisions*
+  and *Tried and ruled out* are exempt from the limit and from pruning.
 - **Store pointers to data.** Store file paths and URLs. Never store
   credentials, data values or excerpts, or file contents. Store sensitive
   personal information, such as health, finances, or demographics, only when
@@ -126,7 +132,8 @@ Corpus: <corpus directory> · commit <commit> · ProbPipe <version>
 - Problem, estimands, and data in a few lines each (details are in brief.md).
 
 ## Decisions
-- <date> — <decision> — <why> — [confirmed]/[provisional]
+- <date> — <decision> — <why> — [confirmed]/[provisional]/[override]
+- <date> — <decision> — <why> — [confirmed] [superseded <date> by <decision>]
 
 ## Project-specific preferences and background
 - Anything that differs from person memory for this project (e.g. "new to

@@ -48,6 +48,7 @@ One line per stage of the RESOURCES.md checklist (A-J): how it is addressed,
 or why it is skipped.
 
 ## 5. Key design decisions
+Each decision, including each override of a check by the user.
 | Decision | Choice | Alternatives considered | Why |
 |---|---|---|---|
 
@@ -64,6 +65,11 @@ Needs that ProbPipe does not meet, the workaround used, and whether each is
 worth a GitHub issue.
 
 ## 9. Changelog
-| Version | Changes | Reason (feedback or finding) |
-|---|---|---|
+| Version | Changes | Reason (feedback or finding) | Pre-data or data-driven |
+|---|---|---|---|
+
+## 10. Fit log
+Every fit, in order, smoke runs and fits to simulated data included.
+| Date | Design version | Model | Data (real, simulated, or smoke) | Method and settings (chains, draws, seed) | Diagnostics | Checks passed and failed | Outcome |
+|---|---|---|---|---|---|---|---|
 ```
