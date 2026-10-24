@@ -20,34 +20,45 @@ the next:
    part to ProbPipe objects by the rows of CAPABILITIES.md for stages A and B:
    the independent priors, a prior that depends on other parameters, the
    likelihood, and the joint model, or a wrapped Stan or PyMC model.
-4. **Checks before fitting.** Plan the prior predictive checks, by the rows
+4. **Fast first fits.** Plan the first fits to be fast, as RESOURCES.md
+   stage E advises: the first model of the sequence, run in the smoke mode
+   that [Write the code](#write-the-code) defines. A smoke run shows that the
+   code runs, and step 4 of [Check and run the code](#check-and-run-the-code)
+   says how to label its results.
+5. **Checks before fitting.** Plan the prior predictive checks, by the rows
    for stage C, and the validation on realistic simulated data that
    RESOURCES.md stage D defines, by the rows for stage D. Plan to run the
    validation before the fit to the real data.
-5. **Inference.** Plan the conditioning on the data, and find the method that
-   it selects by default and the reason each other method declines, by the
-   row "Condition on the data". State whether to keep the default or to name
-   another method, and why. Consider an alternative, such as a gradient-free,
-   variational, or amortized method, when the likelihood is intractable,
-   non-differentiable, or too expensive. Plan to fit fast first, on a
-   subsample or with fewer draws.
-6. **Diagnostics and criticism.** Plan four kinds of check:
-   - computational diagnostics, such as R-hat, ESS, and divergences, and what
-     to do when they fail;
+6. **Inference.** Choose the method by RESOURCES.md stage E. Find the method
+   that the conditioning selects by default and the reason each other method
+   declines, by the row "Condition on the data". State whether to keep the
+   default or to name another method, and why. Consider an alternative, such
+   as a gradient-free, variational, or amortized method, when the likelihood
+   is intractable, non-differentiable, or too expensive. Plan the validation
+   that stage E requires for an approximate method.
+7. **Computational diagnostics.** Plan the diagnostics of RESOURCES.md stage
+   E, by the row "Diagnose MCMC", and what to do when each one fails.
+8. **Model criticism.** Plan three kinds of check:
    - posterior predictive checks, with test statistics chosen for this
      problem;
-   - LOO;
+   - the cross-validation scheme that matches the prediction task, by
+     RESOURCES.md stage F;
    - the validation metrics that apply.
-7. **Downstream quantities.** Plan how posterior uncertainty propagates into
+9. **Downstream quantities.** Plan how posterior uncertainty propagates into
    the estimands, by the row "Compute downstream quantities": a function
    called on coupled marginals of the posterior, which draws them jointly.
-8. **Robustness and extensions.** Plan those that the goals call for:
-   - sensitivity analysis;
-   - model comparison or stacking;
-   - bagged posteriors for misspecification;
-   - sequential updating for streaming data;
-   - emulators for expensive simulators;
-   - Prefect or Ray for scale.
+10. **Robustness and extensions.** Plan those that the goals call for:
+    - sensitivity analysis;
+    - model comparison or stacking;
+    - bagged posteriors for misspecification;
+    - sequential updating for streaming data;
+    - emulators for expensive simulators;
+    - Prefect or Ray for scale.
+
+When the diagnostics of step 7 or the checks of step 8 fail, return to step 3
+and revise the model before you tune the algorithm, by the folk theorem of
+RESOURCES.md stage E. Each return is a revision, which follows the
+[rules for revisions](5-feedback.md#rules-for-revisions).
 
 ## Write the code
 
@@ -79,7 +90,7 @@ Take these steps before you show the code, and again after each revision:
    memory. When it differs from the method you planned, say so, and revise the
    plan or name the method.
 4. Label each result of a smoke run "smoke run, not for inference" wherever
-   you show it or record it.
+   you show it or record it, the fit log of the design document included.
 
 ## Present the proposal
 

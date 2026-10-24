@@ -1,6 +1,9 @@
 # Phase 5 — Feedback loop
 
-Repeat these steps until the user says the design is done:
+Repeat these steps until the user says the design is done. Propose that it is
+done when the model is adequate for the estimands: the validation on simulated
+data, the diagnostics, and the checks pass, and section 6 of the design
+document lists each deficiency that remains.
 
 1. Take the feedback. Classify each point as scientific, modeling, inference,
    computational, or presentation, and restate each point you had to
