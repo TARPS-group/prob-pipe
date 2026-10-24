@@ -950,5 +950,10 @@ Epidemiology and public health:
 - Also on other shelves: Moraga 2019 and Morris et al. 2019 for disease
   mapping, and Hernán & Robins 2020 for causal questions.
 
+Social sciences and education: Gelman et al. 2013, whose chapter 5 fits a
+hierarchical model to the eight-schools study of coaching for a standardized
+test, and Gelman & Hill 2007, whose multilevel chapters model grouped data from
+the social sciences, such as election surveys.
+
 Cognitive science: Schad, Betancourt & Vasishth 2021, in the entry Betancourt
 2020.
