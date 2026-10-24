@@ -22,14 +22,16 @@ The user's opening message describes their problem, or it names a project to
 resume. The *assistant directory* is the directory of this file, which is
 `.claude/skills/design-pipeline/` in a ProbPipe checkout. Each link in these
 files is relative to the file that holds it. The commands and paths of these
-files use five placeholders:
+files use six placeholders:
 
 - `<assistant>`: the assistant directory;
 - `<checkout>`: the root of the ProbPipe checkout;
 - `<python>`: the Python of the environment where ProbPipe is installed, such
   as `~/probpipe-env/bin/python`, which project memory records;
 - `<corpus>`: the corpus directory, which `build_corpus.py` writes;
-- `<workspace>`: the project's workspace directory.
+- `<workspace>`: the project's workspace directory;
+- `<kernel>`: the project's Jupyter kernel, which runs `<python>` and which
+  project memory records.
 
 ## Phases
 
@@ -157,9 +159,9 @@ when either check fails, and record the new corpus in project memory.
   2. a baseline model, which is the simplest defensible model, and then the
      elaboration that the estimands need, such as an overdispersion term or a
      spatial effect that a question asks about. The user's own model, when
-     they bring one, is the elaboration. An estimand
-     that compares the two models, such as "does overdispersion change the
-     conclusions?", then has an answer;
+     they bring one, is the elaboration. An estimand that compares the two
+     models, such as "does overdispersion change the conclusions?", then has
+     an answer;
   3. a prior predictive check;
   4. the validation on realistic simulated data of
      [RESOURCES.md](RESOURCES.md) stage D, with the number of simulated

@@ -28,10 +28,10 @@ the earlier steps against them:
    - A model of standard statistical structure written for this project
      defaults to PyMC or Stan. Examples are a regression with random effects,
      such as a generalized linear mixed model, and a spatial model with a CAR,
-     ICAR, or BYM prior. Choose the
-     one the user is more comfortable with, by the background profile: Stan
-     for a user of Stan or brms, and PyMC for a user who works in Python or
-     whose computer cannot compile Stan's C++ programs.
+     ICAR, or BYM prior. Choose the one the user is more comfortable with, by
+     the background profile: Stan for a user of Stan or brms, and PyMC for a
+     user who works in Python or whose computer cannot compile Stan's C++
+     programs.
    - A custom, mechanistic, or simulator-based model, or a model whose code
      is already in JAX, defaults to the route in JAX and ProbPipe's laws.
    - Name the other routes to the user, with what each allows and rules out,
@@ -124,11 +124,11 @@ The code runs in three stages, which the environment variable `STAGE`
 selects:
 
 1. `STAGE=smoke` is the default and runs every section at small budgets,
-   such as a few draws, chains, or training epochs. It fits data simulated from the
-   model at the structure of the real data, such as its sizes, its groups,
-   and its pattern of missing values, in place of the real data. The smoke
-   runs then fit no real data, and the code fixes that they need stay out of
-   the record of revisions. A smoke run on a subsample of the real data is an
+   such as a few draws, chains, or training epochs. It fits data simulated
+   from the model at the structure of the real data, such as its sizes, its
+   groups, and its pattern of missing values, in place of the real data, so
+   the code fixes that the smoke runs need stay out of the record of
+   revisions. A smoke run on a subsample of the real data is an
    option that the user approves, and never for data that
    [Phase 2](2-materials.md#data) found sensitive.
 2. `STAGE=validate` runs the sections before the fit to the real data at
@@ -141,9 +141,10 @@ selects:
 
 Every stage runs the data step first. A notebook sets the stage and the
 budgets in its first code cell after the install cell, so a user who runs it
-in Jupyter or on Colab sets the stage there. Each stage writes its results, such as the diagnostics
-and the estimates, to files in the workspace as it computes them, so a run
-that a failed step stops keeps the results computed before it.
+in Jupyter or on Colab sets the stage there. Each stage writes its results,
+such as the diagnostics and the estimates, to files in the workspace as it
+computes them, so a run that a failed step stops keeps the results computed
+before it.
 
 ## Check and run the code
 
@@ -171,9 +172,8 @@ Take these steps before you show the code, and again after each revision:
    without `--allow-errors`, because that flag runs each cell after a failed
    one, the fit after a failed check of the validation included.
 
-   The kernel `<kernel>` runs `<python>`, and its name is
-   `probpipe-<project-slug>`, which project memory records. Before the first
-   notebook run, list the kernels with `<python> -m jupyter kernelspec list`,
+   Name the kernel `<kernel>` of the project `probpipe-<project-slug>`, and
+   record it in project memory. Before the first notebook run, list the kernels with `<python> -m jupyter kernelspec list`,
    and choose another name when that one is taken. Then register the kernel
    with `<python> -m ipykernel install --user --name <kernel>`, after the user
    approves, and add `--env PYTHONPATH <checkout>` when ProbPipe imports
