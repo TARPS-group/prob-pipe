@@ -1,9 +1,10 @@
 # Workflow guidance and resources
 
-The `design-pipeline` skill uses this file to make each pipeline statistically
-and computationally sound. Part 1 is an operational checklist, distilled
-mainly from *Bayesian Workflow* by Gelman, Vehtari, McElreath, and coauthors,
-which maps each step to the ProbPipe tools that implement it. Part 2 is an
+The design-pipeline assistant uses this file to make each pipeline
+statistically and computationally sound. Part 1 is an operational checklist,
+distilled mainly from *Bayesian Workflow* by Gelman, Vehtari, McElreath, and
+coauthors, and [CAPABILITIES.md](CAPABILITIES.md) names the ProbPipe tools for
+each of its stages. Part 2 is an
 annotated bibliography, which says what each resource is good for and when to
 point a user to it.
 
@@ -45,17 +46,14 @@ that return.
   through its **prior predictive distribution**.
 - Rescale or standardize the parameters so that the priors and the sampler
   both work on scales of order one.
-- *ProbPipe:* distribution families merged with `&`, a
-  `conditional_distribution` for a prior that depends on other parameters,
-  and constraints and bijectors (`positive`, `bijector_for`).
+- *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage B.
 
 ### C. Prior predictive checks
 
 - Simulate data from the prior, and ask the domain expert whether it looks
   possible. Implausible simulations, such as negative counts or astronomically
   large values, mean that the priors or the model structure need revision.
-- *ProbPipe:* `predictive_check` with the prior as its law; `sample` of the
-  joint model.
+- *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage C.
 
 ### D. Validate the computation on simulated data
 
@@ -67,9 +65,7 @@ that return.
   such as the log likelihood, make the check more sensitive. SBC is worth its
   cost for a new or custom model and for any approximate inference method, and
   it can be too expensive for a slow model.
-- *ProbPipe:* `sample` of the joint model to simulate data, `condition_on`
-  on the simulated data, and `probpipe.validation`
-  (`simulation_based_calibration`, `interval_coverage`).
+- *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage D.
 
 ### E. Fit and diagnose the computation
 
@@ -87,10 +83,7 @@ that return.
   Pareto-k̂ diagnostics, or by posterior error bounds.
 - Fit fast first: subsample the data, use fewer draws, or start with a simpler
   model, then scale up.
-- *ProbPipe:* `condition_on` with the inference registry
-  (`condition_on.using(method=...)`), `probpipe.diagnostics`
-  (`add_mcmc_diagnostics`, `add_rhat`, `add_ess`), `posterior.diagnostics`,
-  and the ArviZ data `posterior.annotations["arviz"]`.
+- *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage E.
 
 ### F. Check the model against the data
 
@@ -100,7 +93,7 @@ that return.
 - **Predictive performance:** estimate it by PSIS-LOO cross-validation, and
   check its Pareto-k̂ diagnostics. Use k-fold cross-validation when LOO is
   unreliable.
-- *ProbPipe:* `predictive_check`, `add_ppc`, `add_loo`.
+- *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage F.
 
 ### G. Compare, expand, and combine models
 
@@ -110,10 +103,7 @@ that return.
 - When the models may be misspecified, check whether the conclusions are
   stable. Bagged posteriors, or BayesBag, give a more reproducible model
   selection and an uncertainty that reflects the misspecification.
-- *ProbPipe:* a sweep of `condition_on` over a `DistributionBatch` of models
-  or a `RecordBatch` of datasets, which returns a `DistributionBatch` of
-  posteriors; `BootstrapReplicateDistribution` for bootstrap replicates of the
-  data (`docs/user_guide/08_conversion_and_updating.ipynb`).
+- *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage G.
 
 ### H. Understand the fitted model
 
@@ -122,10 +112,7 @@ that return.
 - **Sensitivity analysis:** measure how the conclusions change under
   alternative priors, likelihoods, or data exclusions, and report the changes
   that matter.
-- *ProbPipe:* a `@function` called on coupled marginals of the posterior,
-  such as `f(posterior["a"], posterior["b"])`, which the lift draws jointly; a
-  sweep of `condition_on` over a `DistributionBatch` of models under
-  alternative priors; `mean`, `quantile`, `expectation`.
+- *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage H.
 
 ### I. Simulators and expensive models
 
@@ -135,18 +122,14 @@ that return.
   checks.
 - For an expensive model, use an emulator, such as a Gaussian process,
   propagate the emulator's own uncertainty, and account for model discrepancy.
-- *ProbPipe:* `learn_amortized_posterior`, `learn_amortized_likelihood`,
-  `learn_amortized_ratio`, approximate Bayesian computation through
-  `condition_on` (`docs/tutorials/06_simulating.ipynb`), and
-  `GaussianRandomFunction` (`docs/api/random_functions.md`).
+- *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage I.
 
 ### J. Reproducibility and communication
 
 - Fix the random seeds, record the software versions, keep every model of the
   sequence, and record each decision with its reason in the changelog of the
   design document.
-- *ProbPipe:* the provenance of each result (`provenance_ancestors`), and
-  workflow scopes for random draws (`workflow_run`, `replay_run`).
+- *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage J.
 
 ---
 
