@@ -105,9 +105,8 @@ the install cell.
 
 Take these steps before you show the code, and again after each revision:
 
-1. Run `python <assistant>/check_symbols.py <workspace>/pipeline.py`, or the
-   same command on the notebook, with the Python of the ProbPipe environment,
-   and fix each problem that it prints. It
+1. Run `<python> <assistant>/check_symbols.py <workspace>/pipeline.py`, or the
+   same command on the notebook, and fix each problem that it prints. It
    checks that each ProbPipe name resolves and that each call's arguments bind
    to the signature, so read the docstring of each call whose meaning you are
    unsure of.

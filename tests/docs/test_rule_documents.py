@@ -76,6 +76,7 @@ EXTERNAL_NAMES = frozenset(
         "Glob",
         "Grep",
         "Read",
+        "WebFetch",
         "Write",
     }
 )

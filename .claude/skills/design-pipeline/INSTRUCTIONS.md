@@ -11,8 +11,10 @@ commands, and talk with the user. They name each capability they need, and
 your agent's own tools provide it:
 
 - read a file, or a range of its lines;
+- write a file, or change part of one;
 - search the corpus or the source for a word or a pattern;
 - run a command with a timeout;
+- fetch a URL, when your agent has network access;
 - ask the user a multiple-choice question if your tool supports it, otherwise
   ask in plain text.
 
@@ -20,10 +22,12 @@ The user's opening message describes their problem, or it names a project to
 resume. The *assistant directory* is the directory of this file, which is
 `.claude/skills/design-pipeline/` in a ProbPipe checkout. Each link in these
 files is relative to the file that holds it. The commands and paths of these
-files use four placeholders:
+files use five placeholders:
 
 - `<assistant>`: the assistant directory;
 - `<checkout>`: the root of the ProbPipe checkout;
+- `<python>`: the Python of the environment where ProbPipe is installed, such
+  as `~/probpipe-env/bin/python`, which project memory records;
 - `<corpus>`: the corpus directory, which `build_corpus.py` writes;
 - `<workspace>`: the project's workspace directory.
 
@@ -37,7 +41,7 @@ resumed session starts at the phase that project memory records.
 
 | Phase | File | Output |
 |---|---|---|
-| 0. Load knowledge and memory | [phases/0-load.md](phases/0-load.md) | First reply sent; corpus built; index, overview, and capabilities read; memory read |
+| 0. Load knowledge and memory | [phases/0-load.md](phases/0-load.md) | The first reply, the built corpus, and the files that the phase reads |
 | 1. Problem and goals intake | [phases/1-intake.md](phases/1-intake.md) | `<workspace>/brief.md` sections 1-2 |
 | 2. Data and model materials | [phases/2-materials.md](phases/2-materials.md) | `<workspace>/brief.md` sections 3-4, data and model notes |
 | 3. Background assessment | [phases/3-background.md](phases/3-background.md) | Confirmed profile in person memory |
@@ -65,13 +69,18 @@ The other files of the assistant directory are these:
 ## Resume protocol
 
 If you are unsure where the session stands, as after the context was
-compacted, re-read the project's memory.md, the current phase file, and
-CAPABILITIES.md before you reply. Search the corpus again for each fact that
-you need from it.
+compacted, re-read this file, Part 1 of [RESOURCES.md](RESOURCES.md), the
+project's memory.md, the current phase file, and CAPABILITIES.md before you
+reply. Search the corpus again for each fact that you need from it.
 
-When you resume a project, also check that the corpus directory that project
-memory records still exists, and that `<corpus>/MANIFEST.md` names the
-commit of the checkout. Rebuild the corpus as [phases/0-load.md](phases/0-load.md) describes
+When you resume a project, keep the checkout at the commit that project memory
+records. When `git -C <checkout> rev-parse HEAD` prints another commit, tell
+the user, and check out the recorded commit with
+`git -C <checkout> checkout <commit>` after they approve. Update the checkout
+only when the user asks for it, and then record the new commit in project
+memory. Also check that the corpus directory that project memory records
+still exists, and that `<corpus>/MANIFEST.md` names the commit of the
+checkout. Rebuild the corpus as [phases/0-load.md](phases/0-load.md) describes
 when either check fails, and record the new corpus in project memory.
 
 ## Ground rules
@@ -165,8 +174,8 @@ phase follows these rules:
    files (`.rds`, `.RData`) read through rpy2.
 3. **Parse in isolated mode.** Write each script that parses the user's files
    in the workspace, pass each file's path to it as an argument, and run it
-   with the Python of the ProbPipe environment in isolated mode:
-   `python -I <script> <file>`. Isolated mode keeps the environment's own
+   in isolated mode: `<python> -I <script> <file>`. Isolated mode keeps the
+   environment's own
    packages, such as a pandas installed in its virtual environment, and leaves
    out the directories of the script and the data, the user site-packages, and
    `PYTHONPATH`. When a package that the script needs does not import in

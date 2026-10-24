@@ -23,10 +23,9 @@ it.
      [Phase 1](1-intake.md).
 3. Build the corpus while the user answers. If your agent can run commands
    after its reply in the same turn, build it then, and otherwise build it at
-   the start of your next turn. Run the script with the Python of the
-   environment where ProbPipe is installed, so that its version check describes
-   that environment:
-   `python <assistant>/build_corpus.py --repo <checkout> [<corpus>]`
+   the start of your next turn. Run the script with `<python>`, so that its
+   version check describes the environment where ProbPipe is installed:
+   `<python> <assistant>/build_corpus.py --repo <checkout> [<corpus>]`
    The corpus directory defaults to the directory `corpus` under the
    person-memory directory. When `<corpus>/MANIFEST.md` already names the
    commit of the checkout, which `git -C <checkout> rev-parse HEAD` prints, use
@@ -42,11 +41,12 @@ it.
    public exports with their signatures, the inference methods with their
    priorities, and the contents of the tutorials and the user guide.
 5. Check whether ProbPipe imports in that environment, with
-   `python -c "import probpipe; print(probpipe.__version__)"`. Note which
+   `<python> -c "import probpipe; print(probpipe.__version__)"`. Note which
    optional backends of the installation page are installed, since they decide
    whether you can run and validate code later.
 6. Once Phase 1 creates the project memory, record in it the corpus directory
-   and the commit and version that `<corpus>/MANIFEST.md` names.
+   and the commit and version that `<corpus>/MANIFEST.md` names, and record
+   `<python>` beside them.
 
 ## Reading on demand
 

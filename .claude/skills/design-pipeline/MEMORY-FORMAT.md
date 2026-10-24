@@ -140,6 +140,7 @@ Last updated: <date>
 # Project memory: <project name>
 Last updated: <date> · Phase: <current phase> · Design version: <n>
 Corpus: <corpus directory> · commit <commit> · ProbPipe <version>
+Python: <python>
 
 ## Where we left off
 - Two or three lines: what was last done and the agreed next step.

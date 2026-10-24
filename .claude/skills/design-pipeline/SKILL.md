@@ -15,17 +15,26 @@ The user's opening message is `$ARGUMENTS` when it is non-empty: a description
 of their problem, or the name of a project to resume. When it is empty, the
 user's next message is the opening message.
 
+Re-read INSTRUCTIONS.md whenever the context is compacted.
+
 The checkout is the root of this session's repository, which is the
-`<checkout>` of the instructions. The instructions name capabilities, and these
-Claude Code tools provide them:
+`<checkout>` of the instructions, and `<python>` is the Python of the
+environment where ProbPipe is installed in it, such as the `.venv` of the
+checkout. The instructions name capabilities, and these Claude Code tools
+provide them:
 
 | Capability | Tool |
 |---|---|
 | Read a file, or a range of its lines | `Read` |
+| Write a file, or change part of one | `Write` and `Edit` |
 | Search the corpus or the source | `Grep` |
 | Run a command with a timeout | `Bash`, with its timeout |
-| Write or change a file | `Write` and `Edit` |
+| Fetch a URL | `WebFetch` |
 | Ask a multiple-choice question | `AskUserQuestion` |
 
 Build the corpus in the default directory that `build_corpus.py` uses, so that
 a later session finds it.
+
+The repository's contributor files, such as `AGENTS.md`, `CONTRACTS.md`, and
+`STYLE_GUIDE.md`, govern changes to ProbPipe itself. INSTRUCTIONS.md governs
+this session's design, code, and messages for the user.
