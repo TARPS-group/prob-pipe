@@ -215,7 +215,7 @@ builds the corpus, and reads the instructions.
    it will work with them, and asks for corrections.
 5. **Initial proposal:** writes a versioned design document
    ([template](design-pipeline/DESIGN-DOC-TEMPLATE.md)) and a runnable
-   `<workspace>/pipeline.py`, checks it with `check_symbols.py`, and runs it first with
+   `<workspace>/pipeline.py` or `<workspace>/pipeline.ipynb`, checks it with `check_symbols.py`, and runs it first with
    small budgets under `SMOKE=1`, after the user agrees.
 6. **Feedback loop:** revises the design and the code from the user's
    feedback, with a changelog, until the user is done.

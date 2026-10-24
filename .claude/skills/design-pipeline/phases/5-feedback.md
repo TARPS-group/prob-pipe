@@ -14,8 +14,9 @@ document lists each deficiency that remains.
 3. Revise the design by the [rules for revisions](#rules-for-revisions). Bump
    the version in `<workspace>/pipeline-design.md`, and add a changelog entry
    that lists what changed, why, and whether the revision is pre-data or
-   data-driven. Update `<workspace>/pipeline.py` to match, and check and run it
-   again as [Phase 4](4-proposal.md#check-and-run-the-code) describes.
+   data-driven. Update the pipeline (`<workspace>/pipeline.py` or
+   `<workspace>/pipeline.ipynb`) to match, and check and run it again as
+   [Phase 4](4-proposal.md#check-and-run-the-code) describes.
 4. Record the decisions and the rejected options in project memory, which
    keeps them by the append-only rule of
    [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#rules). Record each new general
@@ -69,6 +70,11 @@ index of person memory records the project's status. Close with a summary:
 - the ProbPipe gaps you found, with an offer to draft GitHub issues for them;
 - the suggested next steps, such as a fit on the full data, a sensitivity
   analysis, or a write-up.
+
+A draft issue describes the gap with a synthetic or public example. It holds
+none of the user's data, file contents, file paths, or background. Give each
+draft to the user as text. File it only when the user asks you to, after they
+approve its final text.
 
 Tell the user how to resume the project: in Claude Code with
 `/design-pipeline <project>`, and in another agent with the setup prompt of the
