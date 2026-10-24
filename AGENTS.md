@@ -73,7 +73,7 @@ An agent that does not load skills can read a skill's `SKILL.md` and follow its 
 - `review-all`: four independent reviews of a PR, merged into one report;
 - `audit-tests`: an audit of the test suite;
 - `criticize-design` and `criticize-with-docs`: an interview that stress-tests a design;
-- `design-pipeline`: an interview that designs a ProbPipe analysis pipeline for a user's problem.
+- `design-pipeline`: an interview that designs a ProbPipe analysis pipeline for a user's problem, whose agent-neutral instructions are `.claude/skills/design-pipeline/INSTRUCTIONS.md`.
 
 These checks run without being asked:
 

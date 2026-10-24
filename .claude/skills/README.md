@@ -174,24 +174,49 @@ Helps a user design a ProbPipe data analysis pipeline for their own problem.
 existing model and dataset into a ProbPipe pipeline. The model can be a paper,
 Stan or PyMC code, or a simulator.
 
+**Other agents:** The instructions are written for any agent that can read
+files and run commands. `SKILL.md` is the Claude Code entry point, which maps
+the slash command's argument and the agent's tools to the agent-neutral
+instructions. Another agent starts from the prompt of
+`docs/get_started/design_assistant.md`, which clones ProbPipe, installs it,
+builds the corpus, and reads the instructions.
+
+**Files of `design-pipeline/`:**
+- `INSTRUCTIONS.md`: the role, the ground rules, the table of phases, and the
+  resume protocol;
+- `design-pipeline/phases/0-load.md` to `design-pipeline/phases/5-feedback.md`:
+  one file per phase, which the
+  agent reads when the phase starts;
+- `CAPABILITIES.md`: each need of a pipeline, with its ProbPipe entry points,
+  its example page, and its workflow stage;
+- `RESOURCES.md`: the Bayesian workflow checklist and the annotated
+  bibliography;
+- `BACKGROUND-RUBRIC.md`, `DESIGN-DOC-TEMPLATE.md`, and `MEMORY-FORMAT.md`: the
+  background rubric, the design-document template, and the memory and
+  workspace format;
+- `build_corpus.py`: flattens the README, the documentation site, and the
+  design reference into part files that one read returns whole, and writes an
+  index of the exports and inference methods and a manifest of the checkout's
+  version beside them;
+- `check_symbols.py`: checks the ProbPipe names and call arguments of a
+  pipeline script or notebook against the installed package.
+
 **What it does:**
-1. **Reads ProbPipe knowledge:** `build_corpus.py` flattens the README, the
-   documentation site, and the design reference into a tiered corpus, with the
-   API reference resolved from source to signatures and docstrings. The agent
-   reads the corpus and a Bayesian workflow checklist and annotated
-   bibliography ([resources](design-pipeline/RESOURCES.md)) drawn from
-   *Bayesian Workflow* and related papers.
+1. **Loads knowledge on demand:** replies first, builds the corpus, reads the
+   index of exports and inference methods, the overview tier, and
+   `CAPABILITIES.md`, and searches the rest of the corpus when a question
+   needs it.
 2. **Intake:** asks about the problem, the scientific and analysis goals, and
    the constraints.
 3. **Materials:** asks for pointers to the data and to existing models,
    inspects the data, and extracts the model structure from papers or code.
-4. **Background assessment:** rates the user's background on the dimensions
-   of the [rubric](design-pipeline/BACKGROUND-RUBRIC.md), from the domain
-   science to JAX and ProbPipe, shows the evidence, and asks for corrections.
+4. **Background assessment:** estimates the user's background on the
+   dimensions of the [rubric](design-pipeline/BACKGROUND-RUBRIC.md), says how
+   it will work with them, and asks for corrections.
 5. **Initial proposal:** writes a versioned design document
    ([template](design-pipeline/DESIGN-DOC-TEMPLATE.md)) and a runnable
-   `<workspace>/pipeline.py` skeleton, with every ProbPipe symbol checked
-   against the source.
+   `<workspace>/pipeline.py`, checks it with `check_symbols.py`, and runs it first with
+   small budgets under `SMOKE=1`, after the user agrees.
 6. **Feedback loop:** revises the design and the code from the user's
    feedback, with a changelog, until the user is done.
 
@@ -207,16 +232,16 @@ Stan or PyMC code, or a simulator.
 - a person memory, at `~/.probpipe-design/user.md` or under
   `$PROBPIPE_DESIGN_HOME`, which holds the confirmed background profile, the
   preferences, the environment, and an index of projects;
-- a project memory in each workspace, `./probpipe-design/<project>/`, which
-  holds the decisions, the options ruled out, and where the work stopped.
+- a project memory in each workspace, `~/probpipe-projects/<project>/` by
+  default, which holds the decisions, the options ruled out, the corpus
+  version, and where the work stopped.
 
 It asks before it creates person memory, and a returning user skips the
 questions already answered. It reads user-supplied data and code as untrusted
-input, and asks before it runs user code or installs anything. The workspaces
-are listed in `.gitignore`.
+input, and asks before it runs code or installs anything. Before it creates a
+workspace inside a git repository, it checks that git ignores the workspace.
 
-This skill can also be triggered automatically when someone asks for help to
-design an analysis with ProbPipe.
+This skill must be explicitly invoked — it will not auto-trigger.
 
 ## Adding New Skills
 
