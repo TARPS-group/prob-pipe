@@ -23,11 +23,13 @@ explanation to the background profile in person memory.
 - Known data issues and how the pipeline handles them.
 
 ## 3. Generative model
-- Model in math (parameters, priors, likelihood), with the meaning of each
-  parameter.
+- Model in math (parameters, priors, and the likelihood or the simulator),
+  with the meaning of each parameter.
 - Justification for each prior (domain knowledge, a cited paper, or a
   weakly informative default, said so explicitly).
-- ProbPipe mapping: which classes implement each piece.
+- ProbPipe mapping: the route of CAPABILITIES.md "Bring any model" by which
+  the model enters, the ProbPipe objects of each piece, and the checks that
+  the route rules out.
 
 ## 4. Pipeline stages
 Text or Mermaid diagram of the stages, then one subsection per stage:

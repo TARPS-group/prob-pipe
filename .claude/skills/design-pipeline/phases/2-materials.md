@@ -46,9 +46,10 @@ For each dataset you can open:
       the user.
 - Note which variables look like outcomes, covariates, grouping variables, or
   known constants, and confirm that reading with the user.
-- Propose how the data maps onto ProbPipe objects, by the row "Hold the
-  observed data and the covariates" of [CAPABILITIES.md](../CAPABILITIES.md),
-  and present it by the Python rows of the *Adaptation* section of
+- Propose how the data maps onto ProbPipe objects in the form the user keeps
+  it, such as tables, images, or the outputs of another pipeline, by the row
+  "Hold the data" of
+  [CAPABILITIES.md](../CAPABILITIES.md), and present it by the Python rows of the *Adaptation* section of
   [BACKGROUND-RUBRIC.md](../BACKGROUND-RUBRIC.md).
 
 After the inspection, show the user one quick summary of the data, such as the
@@ -63,22 +64,24 @@ runs on synthetic data until the real data arrives.
 
 Ask for any existing models in any form, such as papers, code, or informal
 descriptions like "growth slows when resources run low". The code can be in any
-language, such as Stan, PyMC, or R, or it can be a simulator. From each model,
-extract six things:
+language, such as PyMC, Stan, or JAX, or it can be a simulator. From each
+model, extract six things:
 
 1. the structure;
 2. the parameters and their meaning;
 3. the priors or the parameter ranges;
-4. the likelihood or the noise model;
+4. the likelihood, the noise model, or the random draws of a simulator;
 5. the assumptions;
 6. the inference method used.
 
 Each kind of material needs one more step:
 
 - **Papers**, as PDFs or URLs: note the page and equation numbers.
-- **Code:** read it, and note whether it can be wrapped directly, by the rows
-  "Use an existing Stan or PyMC model" and "Wrap a simulator" of
-  [CAPABILITIES.md](../CAPABILITIES.md).
+- **Code:** read it, and note the route of the section "Bring any model" of
+  [CAPABILITIES.md](../CAPABILITIES.md) by which it enters ProbPipe as it is,
+  and what that route allows downstream. Code in a language with no route,
+  such as R, enters as wrapped code or as the draws it computes, by the same
+  file.
 - **Informal descriptions:** turn each one into a candidate mathematical model,
   and show it to the user to check.
 

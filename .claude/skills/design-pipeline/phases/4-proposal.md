@@ -6,24 +6,33 @@ first version of the pipeline by
 of RESOURCES.md Part 1. Follow the decisions and preferences in memory, and
 propose nothing that memory records as ruled out. The ProbPipe calls for each
 step are in the rows of [CAPABILITIES.md](../CAPABILITIES.md) for the step's
-checklist stage. Take the steps in this order, because each step constrains
-the next:
+checklist stage. Take the steps in this order by default, because each step
+constrains the next. When the user's materials already settle a later step,
+such as an established model or a required method, start from them and check
+the earlier steps against them:
 
 1. **Estimands.** Restate the scientific goals as the specific quantities to
    estimate or predict, with their uncertainty.
-2. **Model sequence.** Plan a sequence that starts from the simplest model
-   that addresses the question and lists the expansions you expect to need.
-   Design version 1 in detail around the first model or two.
+2. **Model sequence.** Plan the sequence of models of RESOURCES.md stage A,
+   and design version 1 in detail around the first model or two.
 3. **Generative model.** Describe the data-generating process, including the
-   measurement process: the parameters, the priors, and the likelihood. Justify
-   each prior, ideally from domain knowledge or the user's papers. Map each
-   part to ProbPipe objects by the rows of CAPABILITIES.md for stages A and B:
-   the independent priors, a prior that depends on other parameters, the
-   likelihood, and the joint model, or a wrapped Stan or PyMC model. When the
-   model needs a structure that no row of CAPABILITIES.md and no tutorial or
-   user-guide example covers, prefer a wrapped PyMC or Stan model, by the row
-   "Use an existing Stan or PyMC model", and record the gap in the design
-   document.
+   measurement process: the parameters, the priors, and the likelihood or the
+   simulator. Justify each prior, ideally from domain knowledge or the user's
+   papers. Then choose the route of the section "Bring any model" of
+   CAPABILITIES.md by which the model enters ProbPipe:
+   - The default is the route of the code the user already has, such as their
+     PyMC model, Stan program, or simulator.
+   - A model written for this project defaults to the route in JAX and
+     ProbPipe's laws, which ProbPipe's gradient methods and predictive checks
+     apply to. When no tutorial or user-guide example shows its structure,
+     PyMC or Stan is an alternative whose own documentation shows it, and the
+     missing example is a ProbPipe gap.
+   - Tell the user what each candidate route allows and rules out, from its
+     last column, when the routes differ for this model.
+
+   Map each part to ProbPipe objects by the rows of CAPABILITIES.md for stages
+   A and B, and record in the design document each check that the chosen
+   route rules out.
 4. **Fast first fits.** Plan the first fits to be fast, as RESOURCES.md
    stage E advises: the first model of the sequence, run in the smoke mode
    that [Write the code](#write-the-code) defines. A smoke run shows that the
@@ -36,7 +45,8 @@ the next:
 6. **Inference.** Choose the method by RESOURCES.md stage E. Find the method
    that the conditioning selects by default and the reason each other method
    declines, by the row "Condition on the data". State whether to keep the
-   default or to name another method, and why. Consider an alternative, such
+   default or to name another method that applies, and why, and tell the user
+   which alternatives they have. Consider an alternative, such
    as a gradient-free, variational, or amortized method, when the likelihood
    is intractable, non-differentiable, or too expensive. For many
    observations, choose by the bullet "Many observations" of stage E, and for
@@ -45,7 +55,8 @@ the next:
    for an approximate method, and the validation that stage I requires for
    an amortized method or an emulator.
 7. **Computational diagnostics.** Plan the diagnostics of RESOURCES.md stage
-   E, by the row "Diagnose MCMC", and what to do when each one fails.
+   E, by the rows of CAPABILITIES.md for stage E, such as "Diagnose MCMC" for
+   an MCMC fit, and what to do when each one fails.
 8. **Model criticism.** Plan three kinds of check:
    - posterior predictive checks, with test statistics chosen for this
      problem;
@@ -53,8 +64,8 @@ the next:
      RESOURCES.md stage F;
    - the validation metrics that apply.
 9. **Downstream quantities.** Plan how posterior uncertainty propagates into
-   the estimands, by the row "Compute downstream quantities": a function
-   called on coupled marginals of the posterior, which draws them jointly.
+   the estimands and into the user's own downstream code, such as a
+   prediction or a decision rule, by the row "Compute downstream quantities".
 10. **Robustness and extensions.** Plan those that the goals call for:
     - sensitivity analysis;
     - model comparison or stacking;

@@ -46,8 +46,9 @@ resumed session starts at the phase that project memory records.
 
 The other files of the assistant directory are these:
 
-- [CAPABILITIES.md](CAPABILITIES.md): each need of a pipeline, with its ProbPipe
-  entry points, its example page, and its workflow stage;
+- [CAPABILITIES.md](CAPABILITIES.md): the routes by which a user's model enters
+  ProbPipe, and each need of a pipeline with its ProbPipe entry points, its
+  example page, and its workflow stage;
 - [RESOURCES.md](RESOURCES.md): the workflow checklist and the annotated
   bibliography;
 - [BACKGROUND-RUBRIC.md](BACKGROUND-RUBRIC.md): the dimensions and ratings of
@@ -89,9 +90,18 @@ when either check fails, and record the new corpus in project memory.
   describes and the code does not yet implement, say so and propose a
   workaround.
 - **Say what ProbPipe cannot do.** When ProbPipe does not cover a need, such
-  as an unsupported likelihood, an unregistered inference method, or a data
-  type, say so. Propose a workaround from the last row of CAPABILITIES.md, and
-  record it under *ProbPipe gaps* in the design document.
+  as a check that the model's route rules out or an unregistered inference
+  method, say so. Propose a workaround from the row "Meet a need ProbPipe does
+  not cover" of CAPABILITIES.md, and record it under *ProbPipe gaps* in the
+  design document.
+- **Propose defaults, and name the choices.** For a choice of method or
+  design, such as the route of the model, the inference method, or the
+  cross-validation scheme, propose a reasonable default and tell the user the
+  alternatives that apply and when each one fits, at the depth that the
+  background profile calls for. Keep firm the rules that
+  protect the validity of the results: the validation on realistic simulated
+  data, the [rules for revisions](phases/5-feedback.md#rules-for-revisions),
+  and the [rules for user materials](#user-materials-and-code).
 - **Follow the workflow.** Every design passes the checklist of
   [RESOURCES.md](RESOURCES.md) Part 1, and cites resources by the rule at the
   top of that file.
@@ -100,7 +110,8 @@ when either check fails, and record the new corpus in project memory.
   modeling, propose a first version of the design that takes seven steps:
   1. a first look at the data, which ends the data step of
      [Phase 2](phases/2-materials.md#data);
-  2. the simplest defensible model;
+  2. the simplest defensible model, or the user's own model when they bring
+     one;
   3. a prior predictive check;
   4. the validation on realistic simulated data of
      [RESOURCES.md](RESOURCES.md) stage D, with the number of simulated
