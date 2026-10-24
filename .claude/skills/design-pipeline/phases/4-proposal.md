@@ -176,7 +176,7 @@ editing that default.
 2. `STAGE=validate` runs the sections before the fit to the real data at
    their full budgets, such as the prior predictive check and the validation
    on realistic simulated data, and grades the validation of each model by
-   RESOURCES.md stage D. It deletes `<workspace>/validation.json` when it
+   RESOURCES.md stage D. It deletes `<workspace>/runs/validation.json` when it
    starts and writes it when the validation ends, with these entries:
    - `stage`, which is `"validate"`;
    - the design version;
@@ -190,7 +190,7 @@ editing that default.
    No other stage writes the file.
 3. `STAGE=fit` runs the fit to the real data and the sections after it. Its
    gate is the cell right after the data step. The gate reads
-   `<workspace>/validation.json` and checks its stage, its design version, and
+   `<workspace>/runs/validation.json` and checks its stage, its design version, and
    its hash against the current code. It stops with an error when a check
    fails or when no model passed. Otherwise it binds the observed values, and
    it lists the models to fit, which are those whose grade is *passed* or
@@ -199,12 +199,17 @@ editing that default.
    `--allow-errors`. On Colab, the session's files hold no copy of the
    notebook, so the gate there skips the hash and says so. Colab also deletes
    the files of `/content` when its runtime resets, so run the validate and
-   the fit stage in one session, or upload the `<workspace>/validation.json`
+   the fit stage in one session, or upload the `<workspace>/runs/validation.json`
    from a validate run of the same design version.
 
 Every stage runs the data step first. Each stage writes its results, such as
-the diagnostics and the estimates, to files in the workspace as it computes
-them, so a run that a failed step stops keeps the results computed before it.
+the diagnostics and the estimates, as it computes them, so a run that a
+failed step stops keeps the results computed before it. The smoke and the
+validate stage write to `<workspace>/runs/smoke/` and
+`<workspace>/runs/validate/`, and only the fit stage writes to
+`<workspace>/outputs/`, so a result of a smoke run never takes the file name of
+a deliverable. [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#workspace) describes the
+layout of the workspace.
 
 When the validation of a model fails and the user still wants its answers,
 they can ask for provisional results. Offer them only on that request. Record
@@ -235,8 +240,9 @@ Take these steps before you show the code, and again after each revision:
    commands of a stage are these, shown for the validate stage:
    - a script: `STAGE=validate <python> <workspace>/pipeline.py`;
    - a notebook:
-     `STAGE=validate <python> -m nbconvert --to notebook --execute <workspace>/pipeline.ipynb --ExecutePreprocessor.kernel_name=<kernel> --output pipeline.validate`,
-     which writes the executed copy `<workspace>/pipeline.validate.ipynb`.
+     `STAGE=validate <python> -m nbconvert --to notebook --execute <workspace>/pipeline.ipynb --ExecutePreprocessor.kernel_name=<kernel> --output pipeline.validate --output-dir <workspace>/runs`,
+     which writes the executed copy `<workspace>/runs/pipeline.validate.ipynb`
+     and runs the notebook from the workspace, so its relative paths hold.
 
    For another stage, replace `validate` with the stage. Run the smoke and
    the validate stage of a notebook with `--allow-errors`, so that one run

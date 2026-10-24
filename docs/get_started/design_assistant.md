@@ -69,7 +69,8 @@ The agent then keeps ProbPipe at the commit that the project's memory records, u
 
 The assistant keeps a memory of you, which holds your background, your preferences, your environment, and a list of your projects.
 It asks before it creates this memory, and it stores it in `~/.probpipe-design/user.md`, or under the directory that the environment variable `PROBPIPE_DESIGN_HOME` names.
-Each project's directory holds the project's memory, its notes on the data and the models, the design document, and the pipeline.
+Each project's directory holds the pipeline, the project's memory, and a short guide, `START-HERE.md`.
+Its directory `notes/` holds the notes and the design document, `outputs/` holds the current results, and `runs/` holds the trial runs and the checks.
 The memory files are Markdown, so you can read, edit, or delete them at any time.
 The memory records the paths of your data files, and none of their values.
 Ask the assistant to forget you, and it deletes the memory of you.

@@ -44,10 +44,10 @@ resumed session starts at the phase that project memory records.
 | Phase | File | Output |
 |---|---|---|
 | 0. Load knowledge and memory | [phases/0-load.md](phases/0-load.md) | The first reply, the built corpus, and the files that the phase reads |
-| 1. Problem and goals intake | [phases/1-intake.md](phases/1-intake.md) | `<workspace>/brief.md` sections 1-2 |
-| 2. Data and model materials | [phases/2-materials.md](phases/2-materials.md) | `<workspace>/brief.md` sections 3-4, data and model notes |
+| 1. Problem and goals intake | [phases/1-intake.md](phases/1-intake.md) | `<workspace>/notes/brief.md` sections 1-2 |
+| 2. Data and model materials | [phases/2-materials.md](phases/2-materials.md) | `<workspace>/notes/brief.md` sections 3-4, data and model notes |
 | 3. Background assessment | [phases/3-background.md](phases/3-background.md) | Confirmed profile in person memory |
-| 4. Initial pipeline proposal | [phases/4-proposal.md](phases/4-proposal.md) | `<workspace>/pipeline-design.md` v1, and `<workspace>/pipeline.py` or `<workspace>/pipeline.ipynb` v1 |
+| 4. Initial pipeline proposal | [phases/4-proposal.md](phases/4-proposal.md) | `<workspace>/notes/pipeline-design.md` v1, and `<workspace>/pipeline.py` or `<workspace>/pipeline.ipynb` v1 |
 | 5. Feedback loop | [phases/5-feedback.md](phases/5-feedback.md) | New design versions until the user is satisfied |
 
 The other files of the assistant directory are these:
@@ -221,8 +221,8 @@ phase follows these rules:
    (`.pt`, `.pth`), NumPy files loaded with `allow_pickle=True`, and R data
    files (`.rds`, `.RData`) read through rpy2.
 3. **Inspect in isolated mode.** Write each script that inspects the user's
-   files, such as the script of [Phase 2](phases/2-materials.md#data), in the
-   workspace, pass each file's path to it as an argument, and run it in
+   files, such as the script of [Phase 2](phases/2-materials.md#data), in
+   `<workspace>/runs/`, pass each file's path to it as an argument, and run it in
    isolated mode: `<python> -I <script> <file>`. Isolated mode keeps the
    environment's own packages, such as a pandas installed in its virtual
    environment, and leaves out the directories of the script and the data,
@@ -252,10 +252,10 @@ phase follows these rules:
    One approval also covers the probe scripts of a project, which check how
    ProbPipe behaves while you write the code, such as the form of a
    function's result or whether a method accepts a model. A probe is a short
-   script in `<workspace>/probes/` that imports ProbPipe, runs on synthetic
+   script in `<workspace>/runs/probes/` that imports ProbPipe, runs on synthetic
    values, and reads none of the user's files. Ask for this approval once,
    with an example, and list each probe with what it found in
-   `<workspace>/probes/log.md`. A probe that would read the user's data
+   `<workspace>/runs/probes/log.md`. A probe that would read the user's data
    needs its own approval.
 6. **Run in stages.** Run each design version in the stages that
    [phases/4-proposal.md](phases/4-proposal.md#write-the-code) defines: the
@@ -265,7 +265,7 @@ phase follows these rules:
    of the design document.
 7. **Bound every run.** Run each command with a timeout, about ten minutes for
    a smoke run. Run a fit that can take longer in the background, with its
-   output written to a log file in the workspace, or give the user the command
+   output written to the log file `<workspace>/runs/<stage>.log`, or give the user the command
    to run themselves. Read the log to follow the run.
 8. **Ask before you install a package.**
 

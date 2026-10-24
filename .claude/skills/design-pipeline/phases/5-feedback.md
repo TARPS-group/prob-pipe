@@ -12,7 +12,7 @@ document lists each deficiency that remains.
    recorded decision, or a ProbPipe constraint, say so, and propose a
    resolution for the user to confirm.
 3. Revise the design by the [rules for revisions](#rules-for-revisions). Bump
-   the version in `<workspace>/pipeline-design.md`, and add a changelog entry
+   the version in `<workspace>/notes/pipeline-design.md`, and add a changelog entry
    that lists what changed, why, and the class of the revision. Update the
    pipeline (`<workspace>/pipeline.py` or `<workspace>/pipeline.ipynb`) to
    match, and check and run it again as

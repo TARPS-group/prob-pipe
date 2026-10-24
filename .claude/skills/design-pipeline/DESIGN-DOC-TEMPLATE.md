@@ -1,6 +1,6 @@
 # Pipeline design document template
 
-The design-pipeline assistant writes `<workspace>/pipeline-design.md` with this
+The design-pipeline assistant writes `<workspace>/notes/pipeline-design.md` with this
 structure. Leave out each section that does not apply, and keep the numbers of
 the other sections, so that versions can be compared. Match the depth of
 explanation to the background profile in person memory.

@@ -21,7 +21,7 @@ counts below five, and follow it in what you show and record. If the dataset
 holds sensitive data, or the user is unsure, open none of its rows. Write a
 short script that prints only each column's name, type, and number of missing
 values. Ask the user to run it, and work from its output.
-Record only that schema in `<workspace>/data-notes.md`.
+Record only that schema in `<workspace>/notes/data-notes.md`.
 
 For each dataset you can open:
 
@@ -30,7 +30,7 @@ For each dataset you can open:
   a file of a few megabytes or less in full, and read the header and a sample
   of the rows of a larger one. Use `pandas` if it is installed, and the
   standard library otherwise.
-- Record these features in `<workspace>/data-notes.md`:
+- Record these features in `<workspace>/notes/data-notes.md`:
   - the format and the size;
   - the variables, with their types, units, and ranges;
   - missingness;
@@ -106,7 +106,7 @@ Each kind of material needs one more step:
 - **Informal descriptions:** turn each one into a candidate mathematical model,
   and show it to the user to check.
 
-Record each model in `<workspace>/model-notes.md`, and summarize the models in
-sections 3-4 of `<workspace>/brief.md`. List each mismatch between the data and
+Record each model in `<workspace>/notes/model-notes.md`, and summarize the models in
+sections 3-4 of `<workspace>/notes/brief.md`. List each mismatch between the data and
 the models as an open question, such as a variable that a model needs and the
 data lacks. Update project memory.

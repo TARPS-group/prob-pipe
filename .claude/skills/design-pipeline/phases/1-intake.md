@@ -60,6 +60,6 @@ as [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#rules) describes. Create the project
 memory, record the corpus in it as [Phase 0](0-load.md) step 6 says, and add
 the project to the index of person memory.
 
-Write sections 1-2 of `<workspace>/brief.md`. Then summarize the problem and
+Write sections 1-2 of `<workspace>/notes/brief.md`. Then summarize the problem and
 the goals for the user in a few sentences, and ask them to confirm the summary
 before you continue.

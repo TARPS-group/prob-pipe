@@ -40,33 +40,49 @@ tracks, its project memory holds no facts about the person. Leave out the
 section *Project-specific preferences and background* of its template, and
 keep those facts in person memory.
 
-A workspace holds these files:
+A workspace holds the pipeline at its top level, beside three directories
+that separate the notes, the deliverables, and the record of the runs:
 
+- `<workspace>/START-HERE.md`: a short guide for the user, by the
+  [start-here template](#start-here-template), which you write when you
+  create the workspace.
 - `<workspace>/memory.md`: the project memory.
-- `<workspace>/brief.md`: the problem, the goals, the data, and the existing
-  models, written in Phases 1 and 2 by the [brief template](#brief-template).
-- `<workspace>/data-notes.md`: what you found when you inspected each dataset.
-- `<workspace>/model-notes.md`: the models extracted from papers, code, or
-  descriptions.
-- `<workspace>/pipeline-design.md`: the current design, which follows
-  [DESIGN-DOC-TEMPLATE.md](DESIGN-DOC-TEMPLATE.md), with a version history.
-- `<workspace>/pipeline.py`: the runnable skeleton of the current design
-  version, or the notebook `<workspace>/pipeline.ipynb` in its place.
+- `<workspace>/pipeline.ipynb`, or the script `<workspace>/pipeline.py` in its
+  place: the runnable pipeline of the current design version.
 - `<workspace>/report.py` and `<workspace>/sim_data.py`: the modules of
   printing and plotting helpers and of simulated data, which the pipeline
-  imports, by
+  imports from beside it, by
   [phases/4-proposal.md](phases/4-proposal.md#write-the-code).
-- `<workspace>/pipeline.<stage>.ipynb`: the executed copy of the notebook
-  from the last run of each stage, which
-  [phases/4-proposal.md](phases/4-proposal.md#check-and-run-the-code)
-  describes.
-- `<workspace>/validation.json`: the grades and the table of the validation
-  on realistic simulated data, which only the validate stage writes and the
-  gate of the fit stage checks.
-- The scripts that inspect the user's files, the log file of each run in the
-  background, and the probe scripts with their log in `<workspace>/probes/`,
-  by rules 3, 5, and 7 of the
-  [rules for user materials](INSTRUCTIONS.md#user-materials-and-code).
+- `<workspace>/notes/`: the notes of the design.
+  - `<workspace>/notes/brief.md`: the problem, the goals, the data, and the
+    existing models, written in Phases 1 and 2 by the
+    [brief template](#brief-template).
+  - `<workspace>/notes/data-notes.md`: what you found when you inspected each
+    dataset.
+  - `<workspace>/notes/model-notes.md`: the models extracted from papers,
+    code, or descriptions.
+  - `<workspace>/notes/pipeline-design.md`: the current design, which follows
+    [DESIGN-DOC-TEMPLATE.md](DESIGN-DOC-TEMPLATE.md), with a version history.
+- `<workspace>/outputs/`: the deliverables of the current design version, which
+  only the fit stage writes, such as the tables, the figures, and the
+  posterior draws. Before the fit stage of a new design version runs, move the
+  outputs of the earlier version to `<workspace>/runs/archive/v<n>/`, where n
+  is the earlier version.
+- `<workspace>/runs/`: the record of the runs.
+  - `<workspace>/runs/pipeline.<stage>.ipynb`: the executed copy of the
+    notebook from the last run of each stage, which
+    [phases/4-proposal.md](phases/4-proposal.md#check-and-run-the-code)
+    describes.
+  - `<workspace>/runs/smoke/` and `<workspace>/runs/validate/`: the results
+    that the smoke and the validate stage write.
+  - `<workspace>/runs/validation.json`: the grades and the table of the
+    validation on realistic simulated data, which only the validate stage
+    writes and the gate of the fit stage checks.
+  - `<workspace>/runs/<stage>.log`: the log of a run in the background.
+  - `<workspace>/runs/archive/`: the outputs of the earlier design versions.
+  - The scripts that inspect the user's files, and the probe scripts with
+    their log in `<workspace>/runs/probes/`, by rules 3 and 5 of the
+    [rules for user materials](INSTRUCTIONS.md#user-materials-and-code).
 
 ## Rules
 
@@ -155,7 +171,7 @@ Last updated: <date>
 
 ## Brief template
 
-Phase 1 writes sections 1 and 2 of `<workspace>/brief.md`, and Phase 2 writes
+Phase 1 writes sections 1 and 2 of `<workspace>/notes/brief.md`, and Phase 2 writes
 sections 3 and 4.
 
 ```markdown
@@ -176,6 +192,21 @@ Last updated: <date>
 ## 4. Existing models
 - Each model: its form and source, and a summary from model-notes.md.
 - Each mismatch between the data and the models, as an open question.
+```
+
+## Start-here template
+
+`<workspace>/START-HERE.md` tells a user who opens the workspace where to look.
+Keep it under about ten lines.
+
+```markdown
+# <Project name>
+- The design and its results: notes/pipeline-design.md.
+- How to run the pipeline: section 11 of notes/pipeline-design.md.
+- outputs/: the current results. runs/: the trial runs, the checks, and the
+  results of earlier versions. notes/: the brief, the notes on your data and
+  models, and the design document.
+- To continue with the assistant, start it with the name of this project.
 ```
 
 ## Project memory template
