@@ -45,7 +45,7 @@ and which one this version implements.
 
 ## 4b. Workflow checklist
 One line per stage of the RESOURCES.md checklist (A-J): how it is addressed,
-or why it is skipped.
+why it is skipped, or `deferred: fast path`.
 
 ## 4c. Compute plan
 - Hardware: CPU or GPU, memory, and the wall-clock time available.

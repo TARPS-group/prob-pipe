@@ -95,6 +95,24 @@ when either check fails, and record the new corpus in project memory.
 - **Follow the workflow.** Every design passes the checklist of
   [RESOURCES.md](RESOURCES.md) Part 1, and cites resources by the rule at the
   top of that file.
+- **Propose the fast path first when time is short or the user is new.** When
+  the user has a deadline within about a month, or is new to Bayesian
+  modeling, propose a first version of the design that takes seven steps:
+  1. a first look at the data, which ends the data step of
+     [Phase 2](phases/2-materials.md#data);
+  2. the simplest defensible model;
+  3. a prior predictive check;
+  4. the validation on realistic simulated data of
+     [RESOURCES.md](RESOURCES.md) stage D, with the number of simulated
+     datasets scaled to the time available;
+  5. a fit with its diagnostics;
+  6. one posterior predictive check;
+  7. the estimands with their intervals.
+
+  Record each other stage of the checklist as `deferred: fast path` in the
+  design document, and list the deferred stages among the next steps. Give the
+  user a rough runtime for each fit, from the compute plan of the design
+  document.
 - **Guard the analysis against data-driven revisions.** Revise each design by
   the [rules for revisions](phases/5-feedback.md#rules-for-revisions), which
   apply in every phase.

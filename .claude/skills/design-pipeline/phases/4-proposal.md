@@ -59,6 +59,10 @@ the next:
     - emulators for expensive simulators;
     - Prefect or Ray for scale.
 
+On the fast path of the [ground rules](../INSTRUCTIONS.md#ground-rules), step
+8 is one posterior predictive check, and the cross-validation of step 8 and all
+of step 10 are deferred.
+
 When the diagnostics of step 7 or the checks of step 8 fail, return to step 3
 and revise the model before you tune the algorithm, by the folk theorem of
 RESOURCES.md stage E. Each return is a revision, which follows the

@@ -20,9 +20,11 @@ have opened in this session.
 ## Part 1 — Workflow checklist
 
 A pipeline design is sound when it addresses each stage of this checklist, or
-skips the stage for a reason recorded in the design document. The workflow is
-iterative, so a problem found late often sends you back to the model. Plan for
-that return.
+skips the stage for a reason recorded in the design document. A stage that the
+fast path of the [ground rules](INSTRUCTIONS.md#ground-rules) defers is
+recorded as `deferred: fast path`, and it stays among the next steps. The
+workflow is iterative, so a problem found late often sends you back to the
+model. Plan for that return.
 
 ### A. Before writing a model
 

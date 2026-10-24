@@ -29,6 +29,10 @@ For each dataset you can open:
 - Propose how the data maps onto ProbPipe objects, by the row "Hold the
   observed data and the covariates" of [CAPABILITIES.md](../CAPABILITIES.md).
 
+After the inspection, show the user one quick summary of the data, such as the
+counts by group and time and where values are missing, and ask whether it
+matches what they expected.
+
 If the data is not available yet, ask for a description detailed enough to
 simulate synthetic data of the same structure. Tell the user that the pipeline
 runs on synthetic data until the real data arrives.
