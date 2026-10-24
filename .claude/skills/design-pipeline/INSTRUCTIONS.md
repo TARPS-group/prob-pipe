@@ -239,10 +239,14 @@ phase follows these rules:
    their approval. This covers each run of `<workspace>/pipeline.py` or
    `<workspace>/pipeline.ipynb`, and of code the user supplied, which you read
    in full before you ask. One approval can cover the stages of one design
-   version, because the fit stage runs only after the validation passes. It
-   also covers the reruns of the validate stage under the remedies of
+   version, because the stages run the code the user approved. It also
+   covers the reruns of the validate stage under the remedies of
    [phases/4-proposal.md](phases/4-proposal.md), which run only on simulated
-   data.
+   data. For data that [Phase 2](phases/2-materials.md#data) found
+   sensitive, the user runs the validate and the fit stage by default. The
+   alternative is that you run them with the user's approval of each run and
+   read only their aggregate outputs, such as the diagnostics and the
+   estimates.
 
    One approval also covers the probe scripts of a project, which check how
    ProbPipe behaves while you write the code, such as the form of a
@@ -255,7 +259,8 @@ phase follows these rules:
 6. **Run in stages.** Run each design version in the stages that
    [phases/4-proposal.md](phases/4-proposal.md#write-the-code) defines: the
    smoke stage first, the validate stage after a smoke run succeeds, and the
-   fit stage only after the validation passes. Give the expected runtime of
+   fit stage only after the validate stage, whose grades the gate of the fit
+   stage checks. Give the expected runtime of
    each stage from the compute plan of the design document.
 7. **Bound every run.** Run each command with a timeout, about ten minutes for
    a smoke run. Run a fit that can take longer in the background, with its

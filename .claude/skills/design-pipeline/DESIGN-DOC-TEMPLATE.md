@@ -109,7 +109,7 @@ Tools that ProbPipe does not connect to, each with the interface of section
 
 ## 10. Fit log
 Every fit, in order, smoke runs and fits to simulated data included.
-| Date | Design version | Model | Data (real or simulated) | Stage (smoke, validate, or fit) | Method and settings (chains, draws, seed) | Diagnostics | Checks passed and failed | Outcome |
+| Date | Design version | Model | Data (real or simulated) | Stage (smoke, validate, or fit) | Method and settings (chains, draws, seed) | Diagnostics | Checks passed and failed | Outcome, such as the grade of a validation |
 |---|---|---|---|---|---|---|---|---|
 
 ## 11. Getting it running
@@ -129,7 +129,8 @@ Every fit, in order, smoke runs and fits to simulated data included.
 
 ## 12. Reporting
 - A draft methods paragraph: the model, the priors, the software and its
-  versions, the inference method and its settings, and the diagnostics.
+  versions, the inference method and its settings, the diagnostics, and the
+  grade of the validation, or its failure for provisional results.
 - A table of the priors, each with its justification from section 3.
 - The figures to include, each with what it shows.
 - How to cite ProbPipe, from `docs/cite.md`.

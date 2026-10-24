@@ -60,8 +60,9 @@ A workspace holds these files:
   from the last run of each stage, which
   [phases/4-proposal.md](phases/4-proposal.md#check-and-run-the-code)
   describes.
-- `<workspace>/validation.json`: the table and the verdict of the validation
-  on realistic simulated data, which the fit stage reads.
+- `<workspace>/validation.json`: the grades and the table of the validation
+  on realistic simulated data, which only the validate stage writes and the
+  gate of the fit stage checks.
 - The scripts that inspect the user's files, the log file of each run in the
   background, and the probe scripts with their log in `<workspace>/probes/`,
   by rules 3, 5, and 7 of the

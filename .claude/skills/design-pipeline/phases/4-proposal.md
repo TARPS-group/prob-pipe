@@ -123,9 +123,12 @@ GitHub, so that Colab runs the code that `check_symbols.py` checked.
 `git -C <checkout> branch -r --contains <commit>` lists the branches on GitHub
 that hold the commit, as of the last `git fetch`. The cell
 then asks the user to upload the data file with `google.colab.files.upload()`,
-and the pipeline reads each data file by a path relative to the notebook. The
-notebook's metadata names the project's kernel, which
-[Check and run the code](#check-and-run-the-code) registers. The pipeline loads
+and the pipeline reads each data file by a path relative to the notebook. A
+script reads each file by a path relative to `Path(__file__).parent`, so that
+it runs from any directory. The notebook's metadata names the project's
+kernel, which [Check and run the code](#check-and-run-the-code) registers,
+with the language `python`, so that Colab, which lacks that kernel, runs the
+notebook on its own Python kernel. The pipeline loads
 the user's data or simulates it, and each pipeline stage is a labeled section
 that matches the design document. Each stage shows a figure where one helps,
 such as the prior predictive draws or the posterior predictive check, with a
@@ -150,31 +153,63 @@ Write the code close to the mathematics, and in batches:
    masks it to the real pattern of missing values. The model, the inference,
    and the checks stay in the pipeline itself.
 
-The code runs in three stages, which the environment variable `STAGE`
-selects:
+The code runs in three stages. The first code cell after the install cell,
+or the top of a script, reads the stage with
+`STAGE = os.environ.get("STAGE", "smoke")` and sets the budgets of each stage,
+so a user who runs the notebook in Jupyter or on Colab sets the stage by
+editing that default.
 
-1. `STAGE=smoke` is the default and runs every section at small budgets,
-   such as a few draws, chains, or training epochs. It fits data simulated
-   from the model at the structure of the real data, such as its sizes, its
-   groups, and its pattern of missing values, in place of the real data, so
-   the code fixes that the smoke runs need stay out of the record of
-   revisions. A smoke run on a subsample of the real data is an
-   option that the user approves, and never for data that
-   [Phase 2](2-materials.md#data) found sensitive.
+1. `STAGE=smoke` runs every section at small budgets, such as a few draws,
+   chains, or training epochs. It fits data simulated from the model at the
+   structure of the real data, such as its sizes, its groups, and its
+   pattern of missing values, in place of the real data, so the code fixes
+   that the smoke runs need stay out of the record of revisions. A smoke run
+   on a subsample of the real data is an option that the user approves, and
+   never for data that [Phase 2](2-materials.md#data) found sensitive.
 2. `STAGE=validate` runs the sections before the fit to the real data at
    their full budgets, such as the prior predictive check and the validation
-   on realistic simulated data. The validation writes its table, its verdict,
-   and the design version to `<workspace>/validation.json`.
-3. `STAGE=fit` runs the fit to the real data and the sections after it. Its
-   first step reads `<workspace>/validation.json` and stops with an error
-   unless the validation of the current design version passed.
+   on realistic simulated data, and grades the validation of each model by
+   RESOURCES.md stage D. It deletes `<workspace>/validation.json` when it
+   starts and writes it when the validation ends, with these entries:
+   - `stage`, which is `"validate"`;
+   - the design version;
+   - a hash of the code: the source of the code cells of the notebook, or of
+     the script, and of each module beside it that it imports, with each line
+     that reads `os.environ` left out, so that setting the stage keeps the
+     hash;
+   - the grade of each model, with its sentence;
+   - the table of the validation.
 
-Every stage runs the data step first. A notebook sets the stage and the
-budgets in its first code cell after the install cell, so a user who runs it
-in Jupyter or on Colab sets the stage there. Each stage writes its results,
-such as the diagnostics and the estimates, to files in the workspace as it
-computes them, so a run that a failed step stops keeps the results computed
-before it.
+   No other stage writes the file.
+3. `STAGE=fit` runs the fit to the real data and the sections after it. Its
+   gate is the cell right after the data step. The gate reads
+   `<workspace>/validation.json` and checks its stage, its design version, and
+   its hash against the current code. It stops with an error when a check
+   fails or when no model passed. Otherwise it binds the observed values, and
+   it lists the models to fit, which are those whose grade is *passed* or
+   *passed with notes*. Only the gate binds the observed values, after its
+   checks, so a run whose gate fails fits nothing, even under nbconvert's
+   `--allow-errors`. On Colab, the session's files hold no copy of the
+   notebook, so the gate there skips the hash and says so. Colab also deletes
+   the files of `/content` when its runtime resets, so run the validate and
+   the fit stage in one session, or upload the `<workspace>/validation.json`
+   from a validate run of the same design version.
+
+Every stage runs the data step first. Each stage writes its results, such as
+the diagnostics and the estimates, to files in the workspace as it computes
+them, so a run that a failed step stops keeps the results computed before it.
+
+When the validation of a model fails and the user still wants its answers,
+they can ask for provisional results. Offer them only on that request. Record
+the request as a decision with the user's reason, by rule 4 of the [rules for
+revisions](5-feedback.md#rules-for-revisions). The first code cell reads the
+reason with `ALLOW_UNVALIDATED = os.environ.get("ALLOW_UNVALIDATED", "")`, and
+the user sets the variable or edits that default. When it holds a reason, the
+gate also fits each model whose grade is *failed*, and each output of such a
+model carries the label "PROVISIONAL: validation failed": each printed answer,
+each figure title, each column name or file name of a CSV file, and each
+estimate in the design document. The methods paragraph of the design document
+states the failure.
 
 ## Check and run the code
 
@@ -196,17 +231,19 @@ Take these steps before you show the code, and again after each revision:
      `STAGE=validate <python> -m nbconvert --to notebook --execute <workspace>/pipeline.ipynb --ExecutePreprocessor.kernel_name=<kernel> --output pipeline.validate`,
      which writes the executed copy `<workspace>/pipeline.validate.ipynb`.
 
-   nbconvert writes no executed copy of a run that a failed cell stops. The
-   smoke and validate stages fit no real data, so to read the error of a
-   failed run of one of them, rerun it with `--allow-errors` and search its
-   executed copy for the outputs whose type is `error`. Run the fit stage
-   without `--allow-errors`, because that flag runs each cell after a failed
-   one, the fit after a failed check of the validation included.
+   For another stage, replace `validate` with the stage. Run the smoke and
+   the validate stage of a notebook with `--allow-errors`, so that one run
+   shows each failing cell. With that flag, nbconvert exits with status 0 and
+   prints no traceback, so search the executed copy for the outputs whose type
+   is `error`. Run the fit stage without the flag. A failed cell then stops
+   the run, and nbconvert exits with a nonzero status, prints the cell's
+   traceback to standard error, and writes no executed copy.
 
-   Name the kernel `<kernel>` of the project `probpipe-<project-slug>`, and
-   record it in project memory. Before the first notebook run, list the kernels with `<python> -m jupyter kernelspec list`,
-   and choose another name when that one is taken. Then register the kernel
-   with `<python> -m ipykernel install --user --name <kernel>`, after the user
+   The project's kernel `<kernel>` is named `probpipe-<short-project-slug>`.
+   Record its name in project memory. Before the first notebook run, list the
+   kernels with `<python> -m jupyter_client.kernelspecapp list`, and choose
+   another name when that one is taken. Then register the kernel with
+   `<python> -m ipykernel install --user --name <kernel>`, after the user
    approves, and add `--env PYTHONPATH <checkout>` when ProbPipe imports
    through `PYTHONPATH`. When nbconvert or ipykernel does not import, ask
    before you install it.
