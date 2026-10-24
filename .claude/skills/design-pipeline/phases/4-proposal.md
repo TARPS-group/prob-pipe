@@ -256,8 +256,9 @@ Take these steps before you show the code, and again after each revision:
    Record its name in project memory. Before the first notebook run, list the
    kernels with `<python> -m jupyter_client.kernelspecapp list`, and choose
    another name when that one is taken. Then register the kernel with
-   `<python> -m ipykernel install --user --name <kernel>`, after the user
-   approves, and add `--env PYTHONPATH <checkout>` when ProbPipe imports
+   `<python> -m ipykernel install --user --name <kernel>`, which is an install
+   by rule 8 of the
+   [rules for user materials](../INSTRUCTIONS.md#user-materials-and-code), and add `--env PYTHONPATH <checkout>` when ProbPipe imports
    through `PYTHONPATH`. When nbconvert or ipykernel does not import, ask
    before you install it.
 3. Record the inference method that ran, as the row "Condition on the data" of

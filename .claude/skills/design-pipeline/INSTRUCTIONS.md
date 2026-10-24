@@ -233,30 +233,47 @@ phase follows these rules:
 4. **Fetch only the URLs that the user gives you,** and the URLs of
    [RESOURCES.md](RESOURCES.md). Show the user each other URL that you find in
    their materials, and fetch it only when they ask.
-5. **Ask before you run code.** The user's approval of the setup covers the
-   commands of [phases/0-load.md](phases/0-load.md) and each run of
-   `check_symbols.py`, which imports ProbPipe and no code of the user's. Before
-   any other run, show the user the command and what it does, and wait for
-   their approval. This covers each run of `<workspace>/pipeline.py` or
-   `<workspace>/pipeline.ipynb`, and of code the user supplied, which you read
-   in full before you ask. One approval can cover the stages of one design
-   version, because the stages run the code the user approved. It also
-   covers the reruns of the validate stage under the remedies of
-   [phases/4-proposal.md](phases/4-proposal.md), which run only on simulated
-   data. For data that [Phase 2](phases/2-materials.md#data) found
-   sensitive, the user runs the validate and the fit stage by default. The
-   alternative is that you run them with the user's approval of each run and
-   read only their aggregate outputs, such as the diagnostics and the
-   estimates.
+5. **Ask by risk before you run code.** Phrase each request for approval by
+   its effect, in plain words, on its first line, such as "reads your CSV
+   file; about 5 minutes; what it prints goes to the model provider", and give
+   the command on a second line. The approvals are these:
+   1. *One standing approval for simulated data.* Ask once per project for
+      approval of every run that fits only simulated data and runs no code of
+      the user's: the smoke and the validate stage, the reruns of the
+      validate stage under the remedies of
+      [phases/4-proposal.md](phases/4-proposal.md), the probe scripts, and
+      `check_symbols.py`, which imports ProbPipe and no code of the user's.
+      The smoke and the validate stage read the structure of the real data,
+      such as its sizes and its covariates, which the user's consent to read
+      the file covers. Before each such run, say what it does and how long it
+      takes, and start it without waiting. The setup's approval covers the
+      commands of [phases/0-load.md](phases/0-load.md).
+   2. *Separate consent.* Ask, and wait for an explicit yes, before each of
+      these:
+      - the first reading of each file of the user's, which
+        [Phase 2](phases/2-materials.md#data) asks for with its question on
+        sensitive data;
+      - the first fit to the real data, which is the first run of the fit
+        stage. The consent covers the fit stage of later design versions,
+        which you announce as item 1 says;
+      - each run of code that the user supplied, which you read in full
+        before you ask;
+      - each install, by rule 8.
+   3. *Sensitive data.* For data that [Phase 2](phases/2-materials.md#data)
+      found sensitive, the user runs each stage that fits the real data or
+      validates at its structure, which are the validate and the fit stage,
+      and pastes back only the aggregate summary that it prints, such as the
+      diagnostics and the estimates. The alternative is that you run each such
+      stage with the user's consent to that run, and read only its aggregate
+      output.
 
-   One approval also covers the probe scripts of a project, which check how
+   A probe is a short script in `<workspace>/runs/probes/` that checks how
    ProbPipe behaves while you write the code, such as the form of a
-   function's result or whether a method accepts a model. A probe is a short
-   script in `<workspace>/runs/probes/` that imports ProbPipe, runs on synthetic
-   values, and reads none of the user's files. Ask for this approval once,
-   with an example, and list each probe with what it found in
-   `<workspace>/runs/probes/log.md`. A probe that would read the user's data
-   needs its own approval.
+   function's result or whether a method accepts a model. It imports
+   ProbPipe, runs on synthetic values, and reads none of the user's files.
+   Show an example probe when you ask for the standing approval, and list each
+   probe with what it found in `<workspace>/runs/probes/log.md`. A probe that
+   would read the user's data needs separate consent.
 6. **Run in stages.** Run each design version in the stages that
    [phases/4-proposal.md](phases/4-proposal.md#write-the-code) defines: the
    smoke stage first, the validate stage after a smoke run succeeds, and the
@@ -267,7 +284,9 @@ phase follows these rules:
    a smoke run. Run a fit that can take longer in the background, with its
    output written to the log file `<workspace>/runs/<stage>.log`, or give the user the command
    to run themselves. Read the log to follow the run.
-8. **Ask before you install a package.**
+8. **Ask before you install anything,** such as a package, CmdStan, or a
+   Jupyter kernel, by rule 5. The setup prompt's install of ProbPipe is the
+   one install that needs no further consent.
 
 ## Memory and workspace
 

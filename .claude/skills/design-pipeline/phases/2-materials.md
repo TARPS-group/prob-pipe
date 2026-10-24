@@ -11,10 +11,12 @@ cannot be shared. Also ask how the data was collected:
 - known biases;
 - the mechanisms of missingness.
 
-Before you open any dataset, ask whether it contains personal or health
+Before you open any dataset, ask for consent to read it, by rule 5 of the
+[rules for user materials](../INSTRUCTIONS.md#user-materials-and-code), such
+as "reads your CSV file; a few seconds; each value it prints goes to the model
+provider". In the same message, ask whether it contains personal or health
 information, sensitive locations such as the sites of protected species, or
-data under a use agreement, and remind the user that your model provider
-receives each value you read. Aggregated statistics that identify no person,
+data under a use agreement. Aggregated statistics that identify no person,
 such as published case counts per district, count as non-personal data. Ask
 whether a small-cell rule applies to them, such as a rule that suppresses
 counts below five, and follow it in what you show and record. If the dataset
