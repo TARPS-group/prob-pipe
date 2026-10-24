@@ -58,8 +58,9 @@ A workspace holds these files:
   describes.
 - `<workspace>/validation.json`: the table and the verdict of the validation
   on realistic simulated data, which the fit stage reads.
-- The scripts that parse the user's files, and the log file of each run in
-  the background, by rules 3 and 7 of the
+- The scripts that inspect the user's files, the log file of each run in the
+  background, and the probe scripts with their log in `<workspace>/probes/`,
+  by rules 3, 5, and 7 of the
   [rules for user materials](INSTRUCTIONS.md#user-materials-and-code).
 
 ## Rules

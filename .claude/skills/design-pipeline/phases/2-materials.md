@@ -13,9 +13,14 @@ cannot be shared. Also ask how the data was collected:
 
 Before you open any dataset, ask whether it contains personal or health
 information, sensitive locations such as the sites of protected species, or
-data under a use agreement. If it does, or the user is unsure, open none of its
-rows. Write a short script that prints only each column's name, type, and
-number of missing values. Ask the user to run it, and work from its output.
+data under a use agreement, and remind the user that your model provider
+receives each value you read. Aggregated statistics that identify no person,
+such as published case counts per district, are not personal data. Ask
+whether a small-cell rule applies to them, such as a rule that suppresses
+counts below five, and follow it in what you show and record. If the dataset
+holds sensitive data, or the user is unsure, open none of its rows. Write a
+short script that prints only each column's name, type, and number of missing
+values. Ask the user to run it, and work from its output.
 Record only that schema in `<workspace>/data-notes.md`.
 
 For each dataset you can open:
@@ -56,8 +61,9 @@ For each dataset you can open:
 - Propose how the data maps onto ProbPipe objects in the form the user keeps
   it, such as tables, images, or the outputs of another pipeline, by the row
   "Hold the data" of
-  [CAPABILITIES.md](../CAPABILITIES.md), and present it by the Python rows of the *Adaptation* section of
-  [BACKGROUND-RUBRIC.md](../BACKGROUND-RUBRIC.md).
+  [CAPABILITIES.md](../CAPABILITIES.md). Present it by the Python rows of the
+  *Adaptation* section of [BACKGROUND-RUBRIC.md](../BACKGROUND-RUBRIC.md) for
+  the answer to the background question of [Phase 1](1-intake.md).
 - Plan the preprocessing as steps of the pipeline that start from the raw files,
   by the row "Preprocess the data" of [CAPABILITIES.md](../CAPABILITIES.md).
   ProbPipe then records each step in the provenance of the data, and a rerun

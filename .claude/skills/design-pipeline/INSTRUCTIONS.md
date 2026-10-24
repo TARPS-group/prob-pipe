@@ -214,14 +214,16 @@ phase follows these rules:
    pickle files (`.pkl`, `.pickle`), `.joblib` files, PyTorch checkpoints
    (`.pt`, `.pth`), NumPy files loaded with `allow_pickle=True`, and R data
    files (`.rds`, `.RData`) read through rpy2.
-3. **Parse in isolated mode.** Write each script that parses the user's files
-   in the workspace, pass each file's path to it as an argument, and run it
-   in isolated mode: `<python> -I <script> <file>`. Isolated mode keeps the
-   environment's own
-   packages, such as a pandas installed in its virtual environment, and leaves
-   out the directories of the script and the data, the user site-packages, and
-   `PYTHONPATH`. When a package that the script needs does not import in
-   isolated mode, tell the user where it is installed.
+3. **Inspect in isolated mode.** Write each script that inspects the user's
+   files, such as the script of [Phase 2](phases/2-materials.md#data), in the
+   workspace, pass each file's path to it as an argument, and run it in
+   isolated mode: `<python> -I <script> <file>`. Isolated mode keeps the
+   environment's own packages, such as a pandas installed in its virtual
+   environment, and leaves out the directories of the script and the data,
+   the user site-packages, and `PYTHONPATH`. When a package that the script
+   needs does not import in isolated mode, tell the user where it is
+   installed. The pipeline itself reads the raw files in the environment of
+   its interpreter or kernel, and rule 5 covers its runs.
 4. **Fetch only the URLs that the user gives you,** and the URLs of
    [RESOURCES.md](RESOURCES.md). Show the user each other URL that you find in
    their materials, and fetch it only when they ask.
@@ -233,6 +235,15 @@ phase follows these rules:
    `<workspace>/pipeline.ipynb`, and of code the user supplied, which you read
    in full before you ask. One approval can cover the stages of one design
    version, because the fit stage runs only after the validation passes.
+
+   One approval also covers the probe scripts of a project, which check how
+   ProbPipe behaves while you write the code, such as the form of a
+   function's result or whether a method accepts a model. A probe is a short
+   script in `<workspace>/probes/` that imports ProbPipe, runs on synthetic
+   values, and reads none of the user's files. Ask for this approval once,
+   with an example, and list each probe with what it found in
+   `<workspace>/probes/log.md`. A probe that would read the user's data
+   needs its own approval.
 6. **Run in stages.** Run each design version in the stages that
    [phases/4-proposal.md](phases/4-proposal.md#write-the-code) defines: the
    smoke stage first, the validate stage after a smoke run succeeds, and the
