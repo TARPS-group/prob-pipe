@@ -37,7 +37,7 @@ Text or Mermaid diagram of the stages, then one subsection per stage:
 - **Purpose**, **ProbPipe calls**, **inputs → outputs**, **what to look at**
   in the output, and **failure signs**.
 The conditioning stage also records the inference method planned, the
-method that ran, and whether that run was a smoke run.
+method that ran, and the stage of that run (smoke, validate, or fit).
 Typical stages: data loading → prior predictive check → validation on
 realistic simulated data → conditioning → diagnostics → posterior predictive
 check → downstream quantities → robustness/sensitivity.
@@ -56,7 +56,7 @@ why it is skipped, or `deferred: quick start`.
 - Estimated cost of each stage of section 4, such as the simulations,
   the training, the fits, and the validation on simulated data.
 - Smoke and full settings of each stage:
-| Stage | Smoke setting (SMOKE=1) | Full setting |
+| Stage | Smoke setting (STAGE=smoke) | Full setting (STAGE=validate or fit) |
 |---|---|---|
 
 ## 4d. Learned components
@@ -109,16 +109,18 @@ Tools that ProbPipe does not connect to, each with the interface of section
 
 ## 10. Fit log
 Every fit, in order, smoke runs and fits to simulated data included.
-| Date | Design version | Model | Data (real or simulated) | Run mode (smoke or full) | Method and settings (chains, draws, seed) | Diagnostics | Checks passed and failed | Outcome |
+| Date | Design version | Model | Data (real or simulated) | Stage (smoke, validate, or fit) | Method and settings (chains, draws, seed) | Diagnostics | Checks passed and failed | Outcome |
 |---|---|---|---|---|---|---|---|---|
 
 ## 11. Getting it running
 - Install: the command from `docs/get_started/installation.md` for the
   backends this design uses, at the commit or branch that the corpus manifest
   records, and the Python version it needs.
-- Open and run: how to run the code locally and on Google Colab, first with
-  `SMOKE=1` and then in full. For a notebook, the `nbconvert` command and the
-  kernel `probpipe` that it runs, and on Colab, the upload of the data file.
+- Open and run: how to run the code locally and on Google Colab, stage by
+  stage, with `STAGE` set to `smoke`, `validate`, and then `fit`. For a
+  notebook, the `nbconvert` command of each stage and the project's kernel
+  that it runs, the first code cell that sets the stage in Jupyter or on
+  Colab, and on Colab, the upload of the data file.
 - Expected runtime of each stage, from section 4c.
 - What a successful run prints and shows.
 - Where the code was validated, and whether that environment differs from the

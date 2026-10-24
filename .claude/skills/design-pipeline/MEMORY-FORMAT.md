@@ -52,10 +52,12 @@ A workspace holds these files:
   [DESIGN-DOC-TEMPLATE.md](DESIGN-DOC-TEMPLATE.md), with a version history.
 - `<workspace>/pipeline.py`: the runnable skeleton of the current design
   version, or the notebook `<workspace>/pipeline.ipynb` in its place.
-- `<workspace>/pipeline.nbconvert.ipynb`: the executed copy of the notebook
-  from its last run, which
+- `<workspace>/pipeline.<stage>.ipynb`: the executed copy of the notebook
+  from the last run of each stage, which
   [phases/4-proposal.md](phases/4-proposal.md#check-and-run-the-code)
   describes.
+- `<workspace>/validation.json`: the table and the verdict of the validation
+  on realistic simulated data, which the fit stage reads.
 - The scripts that parse the user's files, and the log file of each run in
   the background, by rules 3 and 7 of the
   [rules for user materials](INSTRUCTIONS.md#user-materials-and-code).
@@ -176,7 +178,7 @@ Last updated: <date>
 # Project memory: <project name>
 Last updated: <date> · Phase: <current phase> · Design version: <n> · Mode: <quick start or full workflow>
 Corpus: <corpus directory> · commit <commit> · ProbPipe <version>
-Python: <python>
+Python: <python> · Kernel: <kernel>
 
 ## Where we left off
 - Two or three lines: what was last done and the agreed next step.

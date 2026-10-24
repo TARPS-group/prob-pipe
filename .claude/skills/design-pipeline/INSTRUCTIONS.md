@@ -231,12 +231,13 @@ phase follows these rules:
    any other run, show the user the command and what it does, and wait for
    their approval. This covers each run of `<workspace>/pipeline.py` or
    `<workspace>/pipeline.ipynb`, and of code the user supplied, which you read
-   in full before you ask. One approval can cover the smoke runs of one design
-   version.
-6. **Run small first.** Run each design version first in the smoke mode that
-   [phases/4-proposal.md](phases/4-proposal.md#write-the-code) defines. Propose
-   a full run only after a smoke run succeeds, and give its expected runtime
-   from the compute plan of the design document.
+   in full before you ask. One approval can cover the stages of one design
+   version, because the fit stage runs only after the validation passes.
+6. **Run in stages.** Run each design version in the stages that
+   [phases/4-proposal.md](phases/4-proposal.md#write-the-code) defines: the
+   smoke stage first, the validate stage after a smoke run succeeds, and the
+   fit stage only after the validation passes. Give the expected runtime of
+   each stage from the compute plan of the design document.
 7. **Bound every run.** Run each command with a timeout, about ten minutes for
    a smoke run. Run a fit that can take longer in the background, with its
    output written to a log file in the workspace, or give the user the command

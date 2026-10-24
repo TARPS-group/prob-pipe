@@ -216,8 +216,10 @@ builds the corpus, and reads the instructions.
    it will work with them, and asks for corrections.
 5. **Initial proposal:** writes a versioned design document
    ([template](design-pipeline/DESIGN-DOC-TEMPLATE.md)) and a runnable
-   `<workspace>/pipeline.py` or `<workspace>/pipeline.ipynb`, checks it with `check_symbols.py`, and runs it first with
-   small budgets under `SMOKE=1`, after the user agrees.
+   `<workspace>/pipeline.py` or `<workspace>/pipeline.ipynb`, checks it with `check_symbols.py`, and runs it in stages
+   after the user agrees: small budgets under `STAGE=smoke`, then the
+   validation on simulated data, and the fit to the real data only after the
+   validation passes.
 6. **Feedback loop:** revises the design and the code from the user's
    feedback, with a changelog, until the user is done.
 

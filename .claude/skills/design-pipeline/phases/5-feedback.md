@@ -23,9 +23,9 @@ document lists each deficiency that remains.
    preference, such as "always show me the math", in person memory.
 5. Show a compact summary of what changed. Raise again each open question
    that is still unresolved.
-6. When the user has run the pipeline on the real data, offer to read its
-   outputs with them: what the diagnostics say, what each estimate and
-   interval means for the science, and what the checks found.
+6. When the fit stage has run on the real data, run by you or by the user,
+   read its outputs with them: what the diagnostics say, what each estimate
+   and interval means for the science, and what the checks found.
 7. Ask what to do next, and suggest the most valuable next step, such as "run
    the prior predictive check on your real covariates" or "decide between
    partial and complete pooling".
