@@ -100,9 +100,9 @@ Take these steps before you show the code, and again after each revision:
    checks that each ProbPipe name resolves and that each call's arguments bind
    to the signature, so read the docstring of each call whose meaning you are
    unsure of.
-2. If ProbPipe imports here, ask the user whether you may run the pipeline.
-   Run it first with `SMOKE=1` and a timeout, such as ten minutes, and fix
-   what breaks. Otherwise, say that the code has not been run.
+2. If ProbPipe imports here, run the pipeline with `SMOKE=1` by the
+   [rules for running code](../INSTRUCTIONS.md#user-materials-and-code), and
+   fix what breaks. Otherwise, say that the code has not been run.
 3. Record the inference method that ran, as the row "Condition on the data" of
    CAPABILITIES.md says to read it, in the design document and in project
    memory. When it differs from the method you planned, say so, and revise the

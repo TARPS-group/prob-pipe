@@ -8,9 +8,11 @@ it.
    [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#locations) gives, if it exists. If
    the opening message names a project, read that project's memory too.
 2. Reply to the user first, in one or two sentences:
-   - **Returning user:** greet them by name if you know it. Say in one
-     sentence which project they worked on most recently, where it stopped,
-     and how many other projects memory holds. Ask whether to resume that
+   - **Returning user:** greet them by name if you know it. Name one project,
+     which is the project whose workspace contains the current directory, or
+     else the project they worked on most recently. Say in one sentence where
+     it stopped and how many other projects memory holds, and name the others
+     only when the user asks. Ask whether to resume that
      project, resume another, or start a new one. Mention the background
      profile only when the user asks about it. If the opening message names a
      project, resume it directly by the
@@ -43,7 +45,6 @@ it.
    `python -c "import probpipe; print(probpipe.__version__)"`. Note which
    optional backends of the installation page are installed, since they decide
    whether you can run and validate code later.
-   Ask before you install anything.
 6. Once Phase 1 creates the project memory, record in it the corpus directory
    and the commit and version that `<corpus>/MANIFEST.md` names.
 

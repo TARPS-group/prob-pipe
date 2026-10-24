@@ -19,9 +19,10 @@ number of missing values. Ask the user to run it, and work from its output.
 
 For each dataset you can open:
 
-- Inspect it yourself. Load a small file in full, and read the header and a
-  sample of a large one. Use `pandas` if it is installed, and the standard
-  library otherwise.
+- Inspect it yourself, by the
+  [rules for user materials](../INSTRUCTIONS.md#user-materials-and-code). Load
+  a small file in full, and read the header and a sample of a large one. Use
+  `pandas` if it is installed, and the standard library otherwise.
 - Record these features in `<workspace>/data-notes.md`:
   - the format and the size;
   - the variables, with their types, units, and ranges;
