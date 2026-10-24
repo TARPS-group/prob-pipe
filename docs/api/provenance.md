@@ -33,3 +33,7 @@ Replay from a provenance record is on [Workflows and reproducibility](workflows.
 A `workflow_run` keeps the mode in effect when it opens, and changing the mode inside the run raises `RuntimeError`.
 
 ::: probpipe.ProvenanceMode
+
+A [default workflow scope](workflows.md#probpipe.workflow_run--workflow-run-set-default) fixes provenance mode for each top-level
+call separately. Changing the mode between calls leaves its random stream
+unchanged. Full recording cannot recover history omitted by earlier calls.

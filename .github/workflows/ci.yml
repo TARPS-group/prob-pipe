@@ -260,7 +260,7 @@ jobs:
             # packaging lockstep.
             for f in $CHANGED_ALL; do
               case "$f" in
-                design/*|scripts/design/*)
+                design/*|scripts/design/*|tests/_design_conformance.py)
                   TEST_TARGETS="$TEST_TARGETS $(git ls-files 'tests/*/test_design_conformance.py' | xargs) tests/docs tests/ci" ;;
                 scripts/docs/*|docs/*|README.md|mkdocs.yml|mkdocs_hooks.py)
                   TEST_TARGETS="$TEST_TARGETS tests/docs" ;;

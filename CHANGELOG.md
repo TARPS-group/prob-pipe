@@ -2108,6 +2108,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Bare calls can share a default random stream.**
+  `workflow_run.set_default(seed=...)` starts the stream, and
+  `workflow_run.clear_default()` removes it. Explicit scopes and replay use
+  their own streams. Provenance mode can change between calls in the default
+  scope.
+
 - **Input declarations read four sources.** `InputSpec`, a mapping, a
   `RecordSpec`'s top-level fields, or an `OutputSpec`'s outputs can declare a
   function's `input_spec` or a kernel's `given_spec`. Tuple shapes are shorthand
@@ -4351,6 +4357,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names the classes being removed.
 
 ### Fixed
+
+- **Default workflow streams continue across notebook cells.** IPython cells
+  with top-level `await` and kernels that change tasks between cells keep the
+  configured stream. User-created tasks retain their own ownership checks.
 
 - **An installed PyMC older than 6.2 raises an `ImportError` that names the
   upgrade,** as `PyMC 5.28.5 is installed, but PyMCModel requires PyMC 6.2 or

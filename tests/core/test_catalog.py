@@ -9,19 +9,17 @@ Covers:
    evaluation rules, the inference methods, and the operations;
 5. a dispatch registry's entries: the fields, selection order, floors,
    overrides, and the registration snapshot;
-6. agreement with the code blocks of design II.7, through
-   ``scripts/design/design_blocks.py``.
+6. the catalog's exports, each declared in design II.7, and the field order of
+   its records, as II.7 declares them; ``tests/core/test_design_conformance.py``
+   checks II.7's signatures.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import re
-import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import fields
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -32,7 +30,7 @@ from probpipe import (
     operation_registry,
     register_bijector,
 )
-from probpipe.core import _catalog, _dispatch
+from probpipe.core import _catalog
 from probpipe.core._catalog import (
     EntrySummary,
     RegistryCatalog,
@@ -45,6 +43,7 @@ from probpipe.core._dispatch import (
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
+from tests._design_conformance import DESIGN_IS_CHECKED_OUT, declared_name, design_blocks
 
 # ---------------------------------------------------------------------------
 # Stubs
@@ -847,60 +846,25 @@ class TestDispatchRegistryEntrySummaries:
 # Agreement with design II.7
 # ---------------------------------------------------------------------------
 
-_ROOT = Path(__file__).resolve().parents[2]
-_TOOL = _ROOT / "scripts" / "design" / "design_blocks.py"
-
-#: The modules a name II.7 declares is looked up in, first match winning.
-_MODULES = (_catalog, _dispatch)
-
-
-def _tool():
-    if "design_blocks" in sys.modules:
-        return sys.modules["design_blocks"]
-    spec = importlib.util.spec_from_file_location("design_blocks", _TOOL)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["design_blocks"] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-def _resolve(name: str) -> Any:
-    for module in _MODULES:
-        if hasattr(module, name):
-            return getattr(module, name)
-    return None
-
 
 def _declarations() -> list:
-    return _tool().declarations(("II.7",)) if _TOOL.exists() else []
+    """The declarations of II.7, which ``tests/core/test_design_conformance.py`` checks against the code."""
+    return list(design_blocks().declarations(("II.7",))) if DESIGN_IS_CHECKED_OUT else []
 
 
-def _declared_name(declaration: Any) -> str:
-    member = getattr(declaration, "member", None)
-    return member.name if member is not None else declaration.name
-
-
-@pytest.mark.skipif(
-    not (_ROOT / "design").is_dir() or not _TOOL.exists(),
-    reason="the design reference is not checked out",
-)
+@pytest.mark.skipif(not DESIGN_IS_CHECKED_OUT, reason="the design reference is not checked out")
 class TestDesignAgreement:
-    @pytest.mark.parametrize(
-        "declaration",
-        [pytest.param(d, id=f"{d.section}-{_declared_name(d)}") for d in _declarations()],
-    )
-    def test_the_declaration_matches_the_implementation(self, declaration: Any) -> None:
-        findings = _tool().check([declaration], _resolve)
-        assert not findings, "; ".join(f"{f.name} {f.problem}" for f in findings)
-
     def test_every_public_name_of_the_catalog_is_declared(self) -> None:
-        declared = {_declared_name(d) for d in _declarations()}
+        declared = {declared_name(declaration) for declaration in _declarations()}
         assert set(_catalog.__all__) <= declared, set(_catalog.__all__) - declared
 
     @pytest.mark.parametrize("record_cls", [EntrySummary, RegistryInfo])
     def test_record_fields_match_in_order(self, record_cls: type) -> None:
-        [declaration] = [d for d in _declarations() if _declared_name(d) == record_cls.__name__]
+        [declaration] = [
+            declaration
+            for declaration in _declarations()
+            if declared_name(declaration) == record_cls.__name__
+        ]
         declared = [(f.name, f.annotation.replace(" ", "")) for f in declaration.fields]
         implemented = [(f.name, str(f.type).replace(" ", "")) for f in fields(record_cls)]
         assert declared == implemented
