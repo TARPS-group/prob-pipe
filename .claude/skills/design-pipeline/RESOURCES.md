@@ -144,6 +144,17 @@ the real-data fit is interpreted only after it passes.
   Before you tune the sampler, look for weak identifiability, a poor
   parameterization, poorly scaled parameters, or a model that disagrees with
   the data.
+- **Remedy divergences in this order.** When a fit has divergent
+  transitions, in the validation of stage D or on the real data, take two
+  steps:
+  1. Revise the model, by the folk theorem: reparameterize it, such as in the
+     non-centered form of the next bullet, or narrow a prior that allows
+     implausible values, which the prior predictive check of stage C shows.
+  2. Then raise the target acceptance rate of the step-size adaptation, such
+     as from 0.8 to 0.95, and rerun the validation with that setting. A
+     higher target adapts a smaller step size, so each draw takes longer. A
+     method that exposes this setting can record fewer sample statistics, so
+     record each criterion above that its runs cannot check.
 - **Parameterize a hierarchical model by how well the data inform its
   groups.** For a normal hierarchical model with few groups, or with groups
   that the data inform weakly, the default is the non-centered
