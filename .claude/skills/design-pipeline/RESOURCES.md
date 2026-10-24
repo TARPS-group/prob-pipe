@@ -56,22 +56,46 @@ that return.
   large values, mean that the priors or the model structure need revision.
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage C.
 
-### D. Validate the computation on simulated data
+### D. Validate the computation on realistic simulated data
 
-- **Parameter recovery:** simulate data from known parameter values, fit the
-  model, and check that the posterior covers the values. The check is cheap,
-  and it catches many bugs.
-- **Simulation-based calibration (SBC):** repeat the recovery over many prior
-  draws, and check that the ranks are uniform. Data-dependent test quantities,
-  such as the log likelihood, make the check more sensitive. SBC is worth its
-  cost for a new or custom model and for any approximate inference method, and
-  it can be too expensive for a slow model.
+Validate the computation on simulated data with a known ground truth before
+you trust a fit to the real data. Every design includes this validation, and
+the real-data fit is interpreted only after it passes.
+
+1. **Simulate at the real design.** Simulate datasets from the model with the
+   actual covariates, sample sizes, grouping structure, and missingness
+   pattern of the real data. Take the parameter values from several draws of
+   the prior, and add values that the user judges realistic.
+2. **Fit with the planned method.** Fit each simulated dataset with the
+   inference method and the settings planned for the real data.
+3. **Check recovery and coverage of the estimands.** Across the simulated
+   datasets, the posterior intervals of each estimand cover its true value at
+   about their nominal rate. For each parameter, compute the posterior z-score,
+   which is the posterior mean minus the true value over the posterior
+   standard deviation, and the posterior contraction, which is one minus the
+   ratio of the posterior variance to the prior variance. A large z-score marks
+   bias, and a contraction near zero marks a parameter that the data does not
+   inform. Betancourt's case study "Towards a Principled Bayesian Workflow"
+   describes both.
+4. **Run SBC when the model or the method calls for it.** Run
+   simulation-based calibration (Talts et al. 2018) for a custom likelihood and
+   for any approximate method. Run it always for an amortized method, because
+   its posterior at each simulated dataset costs one network evaluation. Scale
+   the number of replications to the budget, since even 100 to 200
+   replications reveal gross errors. Data-dependent test quantities, such as
+   the log likelihood, make the check more sensitive (Modrák et al. 2023).
+   When you skip SBC, record the reason in the design document.
+
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage D.
 
 ### E. Fit and diagnose the computation
 
-- Use the default algorithm of `condition_on`, which is NUTS, unless a reason
-  calls for another.
+- **Choose the method by the model.** Prefer NUTS when its conditions hold:
+  continuous parameters and a differentiable log density. Marginalize discrete
+  latent variables, such as mixture labels, change points, or the states of a
+  hidden Markov model, out of the likelihood, so that NUTS applies. When a
+  discrete variable cannot be marginalized, say so, and choose a method that
+  samples it.
 - **Diagnose each MCMC run** by these criteria, and interpret a posterior only
   after it passes them. Vehtari et al. (2021) define the R-hat and the ESS.
   1. Chains: run at least four, from dispersed initial values, so that
@@ -95,9 +119,16 @@ that return.
   Before you tune the sampler, look for weak identifiability, a poor
   parameterization, poorly scaled parameters, or a model that disagrees with
   the data. A non-centered parameterization often helps a hierarchical model.
-- Check the accuracy of an approximate method, such as VI or amortized or
-  simulation-based inference, by a comparison with MCMC on a subset, by
-  Pareto-k̂ diagnostics, or by posterior error bounds.
+- **Validate an approximate method before you report its results.** An
+  approximate method, such as VI, amortized inference, or ABC, is validated in
+  a step that the user sees. Mean-field VI typically underestimates the
+  posterior variance. Compare the approximation with an MCMC fit to the same
+  data, and use a smaller simulated problem of the same structure when the
+  full MCMC fit is too slow. A posterior conditioned on a subset of the data
+  is a different posterior, so it serves as no reference. Use the Pareto-k̂
+  diagnostic of PSIS (Yao et al. 2018) or posterior error bounds (Huggins et
+  al. 2020) when the likelihood is tractable, and the checks of stage D
+  otherwise.
 - Fit fast first: subsample the data, use fewer draws, or start with a simpler
   model, then scale up.
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage E.
@@ -135,8 +166,8 @@ that return.
 
 - For a simulator without a tractable likelihood, use simulation-based
   inference, such as ABC or a neural estimate of the likelihood, the
-  posterior, or the likelihood ratio. Validate it with SBC-style coverage
-  checks.
+  posterior, or the likelihood ratio. Validate it by stage D, which requires
+  SBC for an amortized method.
 - For an expensive model, use an emulator, such as a Gaussian process,
   propagate the emulator's own uncertainty, and account for model discrepancy.
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage I.

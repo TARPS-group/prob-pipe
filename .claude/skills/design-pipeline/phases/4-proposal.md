@@ -20,11 +20,10 @@ the next:
    part to ProbPipe objects by the rows of CAPABILITIES.md for stages A and B:
    the independent priors, a prior that depends on other parameters, the
    likelihood, and the joint model, or a wrapped Stan or PyMC model.
-4. **Checks before fitting.** Plan the prior predictive checks and the
-   validation of the computation on simulated data, by the rows for stages C
-   and D. Recover the parameters always, and run simulation-based calibration
-   when the model is new or the inference is approximate, and the cost is
-   affordable.
+4. **Checks before fitting.** Plan the prior predictive checks, by the rows
+   for stage C, and the validation on realistic simulated data that
+   RESOURCES.md stage D defines, by the rows for stage D. Plan to run the
+   validation before the fit to the real data.
 5. **Inference.** Plan the conditioning on the data, and find the method that
    it selects by default and the reason each other method declines, by the
    row "Condition on the data". State whether to keep the default or to name

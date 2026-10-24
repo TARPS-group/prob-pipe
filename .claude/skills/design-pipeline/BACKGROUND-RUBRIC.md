@@ -45,7 +45,7 @@ deep scientific questions and gentle statistical explanations.
 
 | If the user is... | Then... |
 |---|---|
-| New or Familiar in Bayesian modeling | Explain each modeling choice in plain language with a one-line *why*. Pick sensible defaults, such as the priors and the inference method, yourself, and say so. Introduce diagnostics as "how we know the answer is trustworthy". |
+| New or Familiar in Bayesian modeling | Explain each modeling choice in plain language with a one-line *why*. Pick sensible defaults, such as the priors and the inference method, yourself, and say so. Use MCMC when it is feasible, and propose an approximate inference method only with the validation step that [RESOURCES.md](RESOURCES.md) stage E requires, shown to the user. Introduce diagnostics as "how we know the answer is trustworthy". |
 | Working or Expert in Bayesian modeling | Use standard terminology without definitions. Put the real choices to them, such as the priors, the parameterization, the pooling, and the inference method, with their trade-offs. Discuss diagnostics and pathologies directly. |
 | Expert in the domain | Ask detailed questions about mechanism, measurement, and prior knowledge. Ask them to justify the priors and the structure. |
 | New or Familiar in the domain | Ask about the domain more carefully, and flag your own domain assumptions explicitly. Suggest that they check the key assumptions with a colleague. |

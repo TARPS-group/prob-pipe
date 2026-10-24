@@ -35,9 +35,9 @@ Text or Mermaid diagram of the stages, then one subsection per stage:
   in the output, and **failure signs**.
 The conditioning stage also records the inference method planned, the
 method that ran, and whether that run was a smoke run.
-Typical stages: data loading → prior predictive check → (synthetic
-recovery / SBC) → conditioning → diagnostics → posterior predictive check →
-downstream quantities → robustness/sensitivity.
+Typical stages: data loading → prior predictive check → validation on
+realistic simulated data → conditioning → diagnostics → posterior predictive
+check → downstream quantities → robustness/sensitivity.
 
 ## 4a. Model sequence
 The planned progression from the simplest model to the expansions expected,
