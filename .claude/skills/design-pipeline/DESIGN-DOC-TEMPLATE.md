@@ -47,6 +47,28 @@ and which one this version implements.
 One line per stage of the RESOURCES.md checklist (A-J): how it is addressed,
 or why it is skipped.
 
+## 4c. Compute plan
+- Hardware: CPU or GPU, memory, and the wall-clock time available.
+- Precision: single or double, and why (RESOURCES.md stages E and I).
+- Estimated cost of each stage of section 4, such as the simulations,
+  the training, the fits, and the validation on simulated data.
+- Smoke and full settings of each stage:
+| Stage | Smoke setting (SMOKE=1) | Full setting |
+|---|---|---|
+
+## 4d. Learned components
+One subsection per neural estimator or emulator, with its training and
+validation (RESOURCES.md stage I):
+- **Training budget and data:** the number of simulations or simulator runs,
+  and the training design.
+- **Validation split and stopping rule:** the held-out simulations or runs,
+  and when training stops.
+- **Architecture and hyperparameters:** the network or the kernel, which
+  hyperparameters were tuned, and how.
+- **Ensemble size and seeds.**
+- **Calibration evidence:** SBC, coverage at each credibility level, or the
+  standardized errors of held-out runs, with the fit-log entry of each.
+
 ## 5. Key design decisions
 Each decision, including each override of a check by the user.
 | Decision | Choice | Alternatives considered | Why |
