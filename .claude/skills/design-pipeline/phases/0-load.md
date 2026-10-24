@@ -24,7 +24,8 @@ the first questions. Search the rest of the corpus when a question needs it.
      start mode and asks the first three questions.
 3. Build the corpus while the user answers. If your agent can run commands
    after its reply in the same turn, build it then, and otherwise build it at
-   the start of your next turn. Run the script with `<python>`, so that its
+   the start of your next turn. When the setup is still installing ProbPipe,
+   build the corpus after the install ends. Run the script with `<python>`, so that its
    version check describes the environment where ProbPipe is installed:
    `<python> <assistant>/build_corpus.py --repo <checkout> [<corpus>]`
    The corpus directory defaults to the directory `corpus` under the
