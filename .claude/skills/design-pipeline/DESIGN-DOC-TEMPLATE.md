@@ -1,6 +1,6 @@
 # Pipeline design document template
 
-The `design-pipeline` skill writes `<workspace>/pipeline-design.md` with this
+The design-pipeline assistant writes `<workspace>/pipeline-design.md` with this
 structure. Leave out each section that does not apply, and keep the numbers of
 the other sections, so that versions can be compared. Match the depth of
 explanation to the background profile in person memory.
@@ -33,6 +33,8 @@ explanation to the background profile in person memory.
 Text or Mermaid diagram of the stages, then one subsection per stage:
 - **Purpose**, **ProbPipe calls**, **inputs → outputs**, **what to look at**
   in the output, and **failure signs**.
+The conditioning stage also records the inference method planned, the
+method that ran, and whether that run was a smoke run.
 Typical stages: data loading → prior predictive check → (synthetic
 recovery / SBC) → conditioning → diagnostics → posterior predictive check →
 downstream quantities → robustness/sensitivity.

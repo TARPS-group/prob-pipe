@@ -1,6 +1,6 @@
 # Background assessment rubric
 
-Phase 3 of the `design-pipeline` skill rates the user's background with this
+Phase 3 of the design-pipeline assistant rates the user's background with this
 rubric. Rate each dimension that matters for the user's problem, and always
 rate domain science, probability and statistics, and Python and software.
 Leave out a dimension that does not apply, such as scientific computing and

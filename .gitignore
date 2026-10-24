@@ -152,5 +152,6 @@ pyright-output.txt
 # Local execution benchmark measurements
 .benchmark-results/
 
-# Workspaces created by the /design-pipeline Claude skill
+# Workspaces of the design-pipeline assistant, when a user keeps one in the checkout
 probpipe-design/
+probpipe-projects/

@@ -1,6 +1,6 @@
 # Memory format
 
-The `design-pipeline` skill keeps two memory files so that it behaves
+The design-pipeline assistant keeps two memory files so that it behaves
 consistently across sessions: one about the **person**, which all their
 projects share, and one for each **project**. With memory, a later session
 skips the questions already answered, keeps the same explanation style, and
@@ -13,10 +13,42 @@ resumes a design where it stopped.
 | Person memory | `$PROBPIPE_DESIGN_HOME/user.md`, else `~/.probpipe-design/user.md` | Everything true of the person in every project. |
 | Project memory | `<workspace>/memory.md`, in the project's workspace directory | Everything specific to one analysis. |
 
+The person-memory directory also holds the corpus, in its directory `corpus`,
+which `build_corpus.py` writes there by default.
+
 The home directory is lost when an ephemeral environment, such as a cloud
 session or a container, ends. In such an environment, say so when you first
 create person memory, and suggest setting `PROBPIPE_DESIGN_HOME` to a
 persistent location or keeping a copy in the user's own repository.
+
+## Workspace
+
+A project's workspace directory holds the project memory and the files of the
+design. Its default is `~/probpipe-projects/<short-project-slug>/`, and a user
+who has a project directory of their own can keep it there instead, such as
+`<their project>/probpipe-design/`. A workspace is outside the ProbPipe
+checkout unless the user asks for it there.
+
+Before you create a workspace, check whether its directory is inside a git
+repository, with `git -C <directory> rev-parse --show-toplevel`. Inside a
+repository, check whether git ignores the workspace, with
+`git -C <repository> check-ignore -q <workspace>`. When git does not ignore it,
+tell the user that git would track the memory and the design files, and offer
+two choices: add the workspace to that repository's `.gitignore`, or move the
+workspace outside the repository.
+
+A workspace holds six files:
+
+- `<workspace>/memory.md`: the project memory.
+- `<workspace>/brief.md`: the problem, the goals, the data, and the existing
+  models, written in Phases 1 and 2.
+- `<workspace>/data-notes.md`: what you found when you inspected each dataset.
+- `<workspace>/model-notes.md`: the models extracted from papers, code, or
+  descriptions.
+- `<workspace>/pipeline-design.md`: the current design, which follows
+  [DESIGN-DOC-TEMPLATE.md](DESIGN-DOC-TEMPLATE.md), with a version history.
+- `<workspace>/pipeline.py`: the runnable skeleton of the current design
+  version, or a notebook in its place.
 
 ## Rules
 
@@ -37,10 +69,10 @@ persistent location or keeping a copy in the user's own repository.
 - **Store conclusions.** Write one line per fact. Keep person memory under
   about 80 lines and project memory under about 150, and merge or prune stale
   entries at each update.
-- **Store pointers to data.** Store file paths and URLs. Leave out data values
-  and excerpts, credentials, and file contents, and leave out sensitive
-  personal information, such as health, finances, or demographics, beyond
-  what the user explicitly asks you to remember.
+- **Store pointers to data.** Store file paths and URLs. Never store
+  credentials, data values or excerpts, or file contents. Store sensitive
+  personal information, such as health, finances, or demographics, only when
+  the user explicitly asks you to remember it.
 - **Write at four checkpoints:**
   1. after the user confirms the background assessment;
   2. at the end of each phase;
@@ -85,6 +117,7 @@ Last updated: <date>
 ```markdown
 # Project memory: <project name>
 Last updated: <date> · Phase: <current phase> · Design version: <n>
+Corpus: <corpus directory> · commit <commit> · ProbPipe <version>
 
 ## Where we left off
 - Two or three lines: what was last done and the agreed next step.
