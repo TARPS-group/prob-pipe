@@ -25,10 +25,12 @@ import check_symbols
 
 
 def _capability_rows() -> list[list[str]]:
-    """The cells of each body row of the table of ``CAPABILITIES.md``."""
+    """The cells of each body row of the tables of ``CAPABILITIES.md``."""
+    lines = (ASSISTANT / "CAPABILITIES.md").read_text().splitlines()
     rows = []
-    for line in (ASSISTANT / "CAPABILITIES.md").read_text().splitlines():
-        if line.startswith("| ") and not line.startswith(("| Need ", "|---")):
+    for line, following in zip(lines, [*lines[1:], ""], strict=True):
+        is_header = following.startswith("|---")
+        if line.startswith("| ") and not is_header:
             rows.append([cell.strip() for cell in line.strip("|").split(" | ")])
     return rows
 
