@@ -40,11 +40,11 @@ tracks, its project memory holds no facts about the person. Leave out the
 section *Project-specific preferences and background* of its template, and
 keep those facts in person memory.
 
-A workspace holds six files:
+A workspace holds these files:
 
 - `<workspace>/memory.md`: the project memory.
 - `<workspace>/brief.md`: the problem, the goals, the data, and the existing
-  models, written in Phases 1 and 2.
+  models, written in Phases 1 and 2 by the [brief template](#brief-template).
 - `<workspace>/data-notes.md`: what you found when you inspected each dataset.
 - `<workspace>/model-notes.md`: the models extracted from papers, code, or
   descriptions.
@@ -52,6 +52,13 @@ A workspace holds six files:
   [DESIGN-DOC-TEMPLATE.md](DESIGN-DOC-TEMPLATE.md), with a version history.
 - `<workspace>/pipeline.py`: the runnable skeleton of the current design
   version, or the notebook `<workspace>/pipeline.ipynb` in its place.
+- `<workspace>/pipeline.nbconvert.ipynb`: the executed copy of the notebook
+  from its last run, which
+  [phases/4-proposal.md](phases/4-proposal.md#check-and-run-the-code)
+  describes.
+- The scripts that parse the user's files, and the log file of each run in
+  the background, by rules 3 and 7 of the
+  [rules for user materials](INSTRUCTIONS.md#user-materials-and-code).
 
 ## Rules
 
@@ -79,9 +86,13 @@ A workspace holds six files:
   Present an inferred fact to the user as unconfirmed.
 - **A correction replaces a fact.** When the user corrects a fact, such as a
   rating of the profile or a description of the data, replace the old entry
-  with the corrected one. When they say "forget X", delete the entry. When they
-  say "forget me", delete the person-memory file, tell them its path, and ask
-  whether to delete the project memories that its index lists.
+  with the corrected one. When they say "forget X", delete the facts about the
+  person that X names, from person memory and from the section
+  *Project-specific preferences and background* of project memory. A project's
+  decisions stay by the next rule until the user asks to delete that project's
+  memory. When they say "forget me", delete the person-memory file, tell them
+  its path, and ask whether to delete the project memories that its index
+  lists.
 - **Project decisions are append-only.** Add each decision as a new entry of
   *Decisions*. When a later decision reverses an earlier one, keep the earlier
   entry and mark it `[superseded <date> by <decision>]`. Keep every entry of
@@ -132,6 +143,31 @@ Last updated: <date>
 ## Projects
 | Slug | Workspace | One-line summary | Status | Last session |
 |---|---|---|---|---|
+```
+
+## Brief template
+
+Phase 1 writes sections 1 and 2 of `<workspace>/brief.md`, and Phase 2 writes
+sections 3 and 4.
+
+```markdown
+# Brief: <project name>
+Last updated: <date>
+
+## 1. Problem
+- The system, phenomenon, or decision, and the question to answer.
+
+## 2. Goals and constraints
+- The scientific or applied goals, the kinds of analysis, and the estimands.
+- Deadlines, compute, required software and reporting standards, and scale.
+
+## 3. Data
+- Each dataset: a pointer to it, how it was collected, and a summary from
+  data-notes.md.
+
+## 4. Existing models
+- Each model: its form and source, and a summary from model-notes.md.
+- Each mismatch between the data and the models, as an open question.
 ```
 
 ## Project memory template
