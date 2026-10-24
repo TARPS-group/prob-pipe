@@ -360,6 +360,34 @@ def _find(repo: Path, module: str, name: str, depth: int = 0) -> tuple[ast.AST, 
                         submodule_tree = _parse(submodule_file)
                         return (submodule_tree, submodule) if submodule_tree else None
                     return _find(repo, source, alias.name, depth + 1)
+    return _find_lazy(repo, module, tree, name, depth)
+
+
+def _find_lazy(
+    repo: Path, module: str, tree: ast.Module, name: str, depth: int
+) -> tuple[ast.AST, str] | None:
+    """Locate ``name`` through the module ``__getattr__`` of *module* that names it.
+
+    A package that exports a name lazily, as ``probpipe`` exports ``PyMCModel``,
+    imports a module inside its ``__getattr__`` and returns the attribute of that
+    name, so the name is looked up in each module that the function imports.
+    """
+    is_package = (_module_file(repo, module) or Path()).name == "__init__.py"
+    for node in tree.body:
+        if not (isinstance(node, ast.FunctionDef) and node.name == "__getattr__"):
+            continue
+        names = {c.value for c in ast.walk(node) if isinstance(c, ast.Constant)}
+        if name not in names:
+            continue
+        for statement in ast.walk(node):
+            if not isinstance(statement, ast.ImportFrom):
+                continue
+            source = _absolute(module, statement, is_package)
+            for alias in statement.names:
+                imported = f"{source}.{alias.name}"
+                target = imported if _module_file(repo, imported) else source
+                if found := _find(repo, target, name, depth + 1):
+                    return found
     return None
 
 
@@ -787,13 +815,21 @@ def main() -> None:
     else:
         version, location = installed
         environment = f"`probpipe` {version} imports from `{location}`."
-        if version != facts["version"]:
+        from_checkout = Path(location).resolve().is_relative_to(repo)
+        if version != facts["version"] and from_checkout:
+            warn(
+                f"probpipe imports from the checkout, and its installed metadata names "
+                f"version {version} while the checkout's pyproject.toml names version "
+                f"{facts['version']}. The metadata is stale, and installing the checkout "
+                "again with pip install -e refreshes it"
+            )
+        elif version != facts["version"]:
             warn(
                 f"the installed probpipe is version {version}, and the checkout is "
-                f"version {facts['version']}; install the checkout into this "
+                f"version {facts['version']}. Install the checkout into this "
                 "environment so that the code matches the corpus"
             )
-        if not Path(location).resolve().is_relative_to(repo):
+        if not from_checkout:
             warn(f"the installed probpipe comes from {location}, outside the checkout {repo}")
 
     pages = nav_pages(repo)

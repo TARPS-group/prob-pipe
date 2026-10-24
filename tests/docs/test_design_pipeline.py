@@ -203,3 +203,8 @@ class TestBuildCorpus:
             if not re.search(rf"^- `(class )?{name}\b", index, re.M)
         ]
         assert missing == []
+        assert "could not resolve" not in index.split("## Subpackage names")[0]
+
+    def test_a_lazily_exported_class_resolves_to_its_definition(self):
+        signature, _ = build_corpus.summarize_symbol(ROOT, "probpipe.PyMCModel")
+        assert signature.startswith("class PyMCModel(")
