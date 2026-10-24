@@ -79,7 +79,7 @@ exercise, then presents a structured report organized by severity (critical,
 gaps, recommended, minor). No changes are made until the user approves specific
 suggestions.
 
-This skill must be explicitly invoked — it will not auto-trigger.
+This skill runs only when its slash command invokes it.
 
 ---
 
@@ -110,9 +110,9 @@ enough to want an adversarial second, third, and fourth opinion. For a quick loo
 ```
 
 **Behavior:** Read-only. Presents the consolidated report and waits for the user
-to decide what to act on. Four agents is real token cost, so this skill must be
-explicitly invoked — it will not auto-trigger (general "review this PR" requests
-route to `/review-pr`).
+to decide what to act on. Four agents cost many tokens, so this skill runs only
+when its slash command invokes it, and a general "review this PR" request routes
+to `/review-pr`.
 
 ---
 
@@ -182,25 +182,25 @@ instructions. Another agent starts from the prompt of
 builds the corpus, and reads the instructions.
 
 **Files of `design-pipeline/`:**
-- `INSTRUCTIONS.md`: the role, the ground rules, the table of phases, and the
-  resume protocol;
+- `design-pipeline/INSTRUCTIONS.md`: the role, the ground rules, the table of
+  phases, and the resume protocol;
 - `design-pipeline/phases/0-load.md` to `design-pipeline/phases/5-feedback.md`:
-  one file per phase, which the
-  agent reads when the phase starts;
-- `CAPABILITIES.md`: the routes by which a user's model enters ProbPipe, and
-  each need of a pipeline with its ProbPipe entry points, its example page,
-  and its workflow stage;
-- `RESOURCES.md`: the Bayesian workflow checklist and the annotated
-  bibliography;
-- `BACKGROUND-RUBRIC.md`, `DESIGN-DOC-TEMPLATE.md`, and `MEMORY-FORMAT.md`: the
-  background rubric, the design-document template, and the memory and
-  workspace format;
-- `build_corpus.py`: flattens the README, the documentation site, and the
-  design reference into part files that one read returns whole, and writes an
-  index of the exports and inference methods and a manifest of the checkout's
-  version beside them;
-- `check_symbols.py`: checks the ProbPipe names and call arguments of a
-  pipeline script or notebook against the installed package.
+  one file per phase, which the agent reads when the phase starts;
+- `design-pipeline/CAPABILITIES.md`: the routes by which a user's model enters
+  ProbPipe, and each need of a pipeline with its ProbPipe entry points, its
+  example page, and its workflow stage;
+- `design-pipeline/RESOURCES.md`: the Bayesian workflow checklist and the
+  annotated bibliography;
+- `design-pipeline/BACKGROUND-RUBRIC.md`,
+  `design-pipeline/DESIGN-DOC-TEMPLATE.md`, and
+  `design-pipeline/MEMORY-FORMAT.md`: the background rubric, the
+  design-document template, and the memory and workspace format;
+- `design-pipeline/build_corpus.py`: flattens the README, the documentation
+  site, and the design reference into part files of bounded length, and
+  writes beside them an index of the exports and inference methods and a
+  manifest of the checkout's version and of the line of each heading;
+- `design-pipeline/check_symbols.py`: checks the ProbPipe names and call
+  arguments of a pipeline script or notebook against the installed package.
 
 **What it does:**
 1. **Loads knowledge on demand:** replies first, builds the corpus, reads the
@@ -242,7 +242,7 @@ questions already answered. It reads user-supplied data and code as untrusted
 input, and asks before it runs code or installs anything. Before it creates a
 workspace inside a git repository, it checks that git ignores the workspace.
 
-This skill must be explicitly invoked — it will not auto-trigger.
+This skill runs only when its slash command invokes it.
 
 ## Adding New Skills
 
