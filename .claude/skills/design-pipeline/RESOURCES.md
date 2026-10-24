@@ -209,6 +209,21 @@ the real-data fit is interpreted only after it passes.
   that it finds is a lower bound for the full data. The step sizes of step 2
   and the kernel Stein discrepancy of step 3, both computed on the full data,
   are the evidence about the full-data fit.
+
+  The default way to tune the step size and the batch size is the comparison
+  of step 2. Large-sample analyses of stochastic-gradient algorithms are
+  among the alternatives, because they predict what a tuning gives before a
+  long run. Negrea et al. (2022) show that the average of the iterates at a
+  large constant step size is robust to the choice of the tuning parameters,
+  and that its covariance approaches the covariance of the sampling
+  distribution of the maximum likelihood estimator. Their
+  Bernstein–von Mises-like theorem guides the tuning, generalized posteriors
+  that are robust to misspecification included. Wang et al. (2026) predict
+  the stationary covariance, the covariance of the iterate average, and the
+  integrated autocorrelation time of stochastic-gradient Langevin dynamics and
+  stochastic-gradient descent, with and without momentum, when the batch
+  size is large or the model is misspecified. A tuning chosen by either
+  analysis passes the three steps above.
 - **Numerical precision:** run MCMC in double precision when the log density
   sums many terms or the posterior is poorly scaled, because single
   precision then loses the accuracy that the gradient and the acceptance step
@@ -223,6 +238,16 @@ the real-data fit is interpreted only after it passes.
 - **Posterior predictive checks:** compare replicated data with the observed
   data. Choose test statistics that target the scientific question and the
   model's weakest assumptions, beyond the mean, and use graphical checks.
+- **Calibrated checks:** a posterior predictive check uses the data both to
+  fit the model and to check it, so its p-values are conservative. The
+  posterior predictive check is the default. When the user needs a check
+  whose p-values are calibrated, the alternatives include the LOO-PIT of the
+  bullet "Calibration" and a split predictive check, which conditions the
+  model on a training part of the data and checks its predictions of the
+  held-out part (Li & Huggins 2026). A single split has more power with
+  little data or a substantial misspecification. Divided split predictive
+  checks have more power as the data grow or when the misspecification is
+  subtle.
 - **Predictive performance:** estimate it by the cross-validation scheme that
   matches the prediction task of the estimands:
   1. new observations of exchangeable units: PSIS-LOO (Vehtari et al.
@@ -767,6 +792,22 @@ et al. 2021.
   116(533):433–450. doi:10.1080/01621459.2020.1847120, arXiv:1907.06986. It
   reviews the stochastic-gradient MCMC methods, their bias at a constant step
   size, and their diagnostics.
+- **Negrea et al. 2022.** Negrea, Yang, Feng, Roy & Huggins, "Tuning
+  stochastic gradient algorithms for statistical inference via large-sample
+  asymptotics," arXiv:2207.12395. Its first version is titled "Statistical
+  inference with stochastic gradient algorithms." It analyzes
+  stochastic-gradient algorithms for optimization and sampling as the step
+  size and the number of observations grow together, and it gives the
+  iterate-averaging result and the tuning guidance of stage E. It suits a
+  user who tunes a stochastic-gradient method for statistical inference,
+  generalized posteriors included.
+- **Wang et al. 2026.** Wang, Ding & Huggins, "Accurate large-sample
+  uncertainty quantification using stochastic gradient Markov chain Monte
+  Carlo," *Proceedings of the 43rd International Conference on Machine
+  Learning*, PMLR 306. arXiv:2606.00293. It gives the discrete-time
+  approximations of stage E, with non-asymptotic bounds on their error. It
+  suits a user who tunes stochastic-gradient MCMC for accurate uncertainty
+  when the batch size is large or the model is misspecified.
 - **Wilson & Izmailov 2020.** Wilson & Izmailov, "Bayesian deep learning and
   a probabilistic perspective of generalization," *Advances in Neural
   Information Processing Systems* 33. arXiv:2002.08791. It treats Bayesian
@@ -827,6 +868,15 @@ et al. 2021.
   Society Series A* 182(2):389–402. doi:10.1111/rssa.12378, arXiv:1709.01449.
   It gives the graphical prior and posterior predictive checks and the
   LOO-PIT check.
+- **Li & Huggins 2026.** Li & Huggins, "Calibrated model criticism using split
+  predictive checks," *Journal of the American Statistical Association*
+  (2026). doi:10.1080/01621459.2026.2649585, arXiv:2203.15897. It defines
+  single and divided split predictive checks, which split the data into a
+  training part and a held-out part, and it develops their asymptotic theory.
+  It shows that these checks are calibrated where posterior predictive checks
+  are conservative, and when each of the two variants has more power. It
+  suits a user who reads the p-value of a check as evidence against the
+  model.
 - **Vehtari et al. 2017; Vehtari et al. 2024.** Vehtari, Gelman & Gabry,
   "Practical Bayesian model evaluation using leave-one-out cross-validation
   and WAIC," *Statistics and Computing* 27(5):1413–1432.
