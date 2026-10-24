@@ -8,10 +8,12 @@ it.
    [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#locations) gives, if it exists. If
    the opening message names a project, read that project's memory too.
 2. Reply to the user first, in one or two sentences:
-   - **Returning user:** greet them by name if you know it, and say in one
-     sentence what you remember: their background in brief, their projects,
-     and where each stopped. Ask whether to resume a project or to start a new
-     one. If the opening message names a project, resume it directly by the
+   - **Returning user:** greet them by name if you know it. Say in one
+     sentence which project they worked on most recently, where it stopped,
+     and how many other projects memory holds. Ask whether to resume that
+     project, resume another, or start a new one. Mention the background
+     profile only when the user asks about it. If the opening message names a
+     project, resume it directly by the
      resume protocol of [INSTRUCTIONS.md](../INSTRUCTIONS.md#resume-protocol):
      read the project's memory and workspace files, summarize where things
      stand and the agreed next step, and continue at the recorded phase.
