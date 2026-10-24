@@ -14,9 +14,8 @@ cannot be shared. Also ask how the data was collected:
 Before you open any dataset, ask whether it contains personal or health
 information, sensitive locations such as the sites of protected species, or
 data under a use agreement. If it does, or the user is unsure, open none of its
-rows. Write a short script that prints only the column names, the types, the
-counts, and the missingness of each column, ask the user to run it, and work
-from its output.
+rows. Write a short script that prints only each column's name, type, and
+number of missing values. Ask the user to run it, and work from its output.
 
 For each dataset you can open:
 

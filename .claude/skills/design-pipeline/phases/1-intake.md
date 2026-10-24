@@ -8,8 +8,8 @@ to be about them?" in place of naming estimands. Ask about the collection of
 the data in the user's terms, such as "were some sites not surveyed in some
 years?". Among the first questions, ask one about the user's background, such
 as "Have you fitted a Bayesian model before, and do you usually work in
-Python, R, or something else?". Pitch Phases 1 and 2 by the answer and by the
-*Adaptation* section of [BACKGROUND-RUBRIC.md](../BACKGROUND-RUBRIC.md).
+Python, R, or something else?". Choose the vocabulary of Phases 1 and 2 by the
+answer and by the *Adaptation* section of [BACKGROUND-RUBRIC.md](../BACKGROUND-RUBRIC.md).
 
 Cover these topics:
 

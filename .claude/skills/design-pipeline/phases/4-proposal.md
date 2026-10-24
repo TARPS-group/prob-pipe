@@ -75,7 +75,7 @@ RESOURCES.md stage E. Each return is a revision, which follows the
 ## Write the code
 
 Write the pipeline as a runnable skeleton in the style of the tutorials, in the
-form the user works in: a notebook, `<workspace>/pipeline.ipynb`, for a user
+form the user works in: the notebook `<workspace>/pipeline.ipynb` for a user
 who works in notebooks, and `<workspace>/pipeline.py` otherwise. A notebook
 starts with an install cell in the style of the tutorials' Colab cell, which
 installs ProbPipe when the notebook runs on Google Colab. The pipeline loads
