@@ -205,12 +205,13 @@ Keep it under about ten lines.
 
 ```markdown
 # <Project name>
-- The design and its results: notes/pipeline-design.md.
+- Your answers and their status: section 0 of notes/pipeline-design.md.
 - How to run the pipeline: section 11 of notes/pipeline-design.md.
 - outputs/: the current results. runs/: the trial runs, the checks, and the
   results of earlier versions. notes/: the brief, the notes on your data and
   models, and the design document.
-- To continue with the assistant, start it with the name of this project.
+- To continue with the assistant, start it with "resume <short-project-slug>".
+  Type "status" at any time to see where the project stands.
 ```
 
 ## Project memory template
@@ -222,7 +223,10 @@ Corpus: <corpus directory> · commit <commit> · ProbPipe <version>
 Python: <python> · Kernel: <kernel>
 
 ## Where we left off
-- Two or three lines: what was last done and the agreed next step.
+- Step <k> of 5 (<name of the step>) · Design version <n>
+- Last run: <stage>, <date>, <verdict, such as "validation passed with notes">
+- Waiting on you: <what only the user can do, or "nothing">
+- Next: <the agreed next step>
 
 ## Key facts
 - Problem, estimands, and data in a few lines each (details are in brief.md).

@@ -230,7 +230,7 @@ builds the corpus, and reads the instructions.
 ```
 /design-pipeline
 /design-pipeline estimating disease transmission rates from weekly case counts
-/design-pipeline flu-transmission      # resumes a project
+/design-pipeline resume flu-transmission      # resumes a project
 ```
 
 **Behavior:** Keeps two memories across sessions

@@ -15,7 +15,7 @@ the first questions. Search the rest of the corpus when a question needs it.
      only when the user asks. Ask whether to resume that
      project, resume another, or start a new one. Mention the working
      preferences only when the user asks about them. If the opening message names a
-     project, resume it directly by the
+     project, such as "resume grouse-ticks", resume it directly by the
      resume protocol of [INSTRUCTIONS.md](../INSTRUCTIONS.md#resume-protocol):
      read the project's memory and workspace files, summarize where things
      stand and the agreed next step, and continue at the recorded phase.

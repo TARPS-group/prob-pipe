@@ -24,8 +24,9 @@ document lists each deficiency that remains.
 5. Show a compact summary of what changed. Raise again each open question
    that is still unresolved.
 6. When the fit stage has run on the real data, run by you or by the user,
-   read its outputs with them: what the diagnostics say, what each estimate
-   and interval means for the science, and what the checks found.
+   write section 0 of the design document from its outputs, and read them
+   with the user: what the diagnostics say, what each estimate and interval
+   means for the science, and what the checks found.
 7. Ask what to do next, and suggest the most valuable next step, such as "run
    the prior predictive check on your real covariates" or "decide between
    partial and complete pooling".
@@ -88,5 +89,6 @@ draft to the user as text. File it only when the user asks you to, after they
 approve its final text.
 
 Tell the user how to resume the project: in Claude Code with
-`/design-pipeline <project>`, and in another agent with the setup prompt of the
-ProbPipe documentation page "Design assistant", followed by the project's name.
+`/design-pipeline resume <short-project-slug>`, and in another agent with the
+setup prompt of the ProbPipe documentation page "Design assistant", whose last
+line is then "resume <short-project-slug>".

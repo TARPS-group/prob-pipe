@@ -62,7 +62,7 @@ My first message: <describe your problem, or name a project to resume>
 
 The setup takes about twenty minutes, and most of it is the install.
 An agent that runs in a sandbox, such as Codex, asks for network access and for writes outside its working directory, so approve those requests for steps 1 and 2, for the corpus build of the assistant's first phase, and for the directories of memory, which are `~/.probpipe-design` and the project's directory.
-To resume a project in a later session, paste the same prompt and name the project in the last line.
+To resume a project in a later session, paste the same prompt with `resume <project>` as the last line, and type `status` at any time to see where the project stands.
 The agent then keeps ProbPipe at the commit that the project's memory records, unless you ask it to update ProbPipe.
 
 ## What the assistant keeps

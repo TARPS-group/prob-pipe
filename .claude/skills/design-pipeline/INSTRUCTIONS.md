@@ -80,8 +80,11 @@ reply. Search the corpus again for each fact that you need from it.
 
 When you resume a project, keep the checkout at the commit that project memory
 records. When `git -C <checkout> rev-parse HEAD` prints another commit, tell
-the user, and check out the recorded commit with
-`git -C <checkout> checkout <commit>` after they approve. Update the checkout
+the user what the difference means for them, such as "ProbPipe here has
+changed since this project last ran. I'll switch back to the version the
+project used, so that your results stay the same.", with the command
+`git -C <checkout> checkout <commit>` on a second line, and run it after they
+approve. Update the checkout
 only when the user asks for it, and then record the new commit in project
 memory. Also check that the corpus directory that project memory records
 still exists, and that `<corpus>/MANIFEST.md` names the commit of the
@@ -241,6 +244,12 @@ Every message to the user follows these rules:
    its source when you have one, and say that a given reviewer may ask for
    more, such as "many reviewers accept priors that a prior predictive check
    supports, though yours may ask for a sensitivity analysis".
+6. **Answer "status" at any time.** When the user or a workshop presenter
+   types "status", reply with the lines of *Where we left off* in project
+   memory: the step of rule 1 and the design version, the last run with its
+   stage, its date, and its verdict, what waits on the user, and the agreed
+   next step. Keep those lines current at each checkpoint of
+   [MEMORY-FORMAT.md](MEMORY-FORMAT.md#rules).
 
 ## User materials and code
 

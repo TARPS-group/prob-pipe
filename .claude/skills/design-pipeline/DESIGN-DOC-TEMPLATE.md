@@ -10,6 +10,17 @@ explanation to the working preferences in person memory.
 
 **Version:** <n> · **Date:** <date> · **Status:** draft | agreed
 
+## 0. Answers and status
+One row per question of the user, in the user's words and units, written from
+the last run of the fit stage. A result of a smoke or a validate run has no
+row.
+| Question | Estimate | Interval: median [2.5%, 97.5%] units | Status | Caveats | Date | Design version |
+|---|---|---|---|---|---|---|
+The status of a row is the grade of the validation of its model: passed,
+passed with notes, or "PROVISIONAL: validation failed" for the provisional
+results of phases/4-proposal.md. The caveats name each note of the grade and
+each check of the fit that failed.
+
 ## 1. Goals and estimands
 - Scientific goal, in the user's words.
 - Estimands: the quantities to estimate or predict, with units and the form
@@ -129,9 +140,11 @@ Every fit, in order, smoke runs and fits to simulated data included.
   user's.
 
 ## 12. Reporting
-- A draft methods paragraph: the model, the priors, the software and its
-  versions, the inference method and its settings, the diagnostics, and the
-  grade of the validation, or its failure for provisional results.
+- A draft methods paragraph, written only from the rows of the fit log whose
+  checks passed: the model, the priors, the software and its versions, the
+  inference method and its settings, the diagnostics, and the grade of the
+  validation. It states each check that failed and each provisional
+  result.
 - A table of the priors, each with its justification from section 3.
 - The figures to include, each with what it shows.
 - How to cite ProbPipe, from `docs/cite.md`.
