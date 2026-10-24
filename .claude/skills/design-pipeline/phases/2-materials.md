@@ -27,7 +27,9 @@ For each dataset you can open:
 - Note which variables look like outcomes, covariates, grouping variables, or
   known constants, and confirm that reading with the user.
 - Propose how the data maps onto ProbPipe objects, by the row "Hold the
-  observed data and the covariates" of [CAPABILITIES.md](../CAPABILITIES.md).
+  observed data and the covariates" of [CAPABILITIES.md](../CAPABILITIES.md),
+  and present it by the Python rows of the *Adaptation* section of
+  [BACKGROUND-RUBRIC.md](../BACKGROUND-RUBRIC.md).
 
 After the inspection, show the user one quick summary of the data, such as the
 counts by group and time and where values are missing, and ask whether it

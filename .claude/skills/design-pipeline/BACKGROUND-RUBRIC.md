@@ -53,7 +53,7 @@ scientific questions and gentle statistical explanations.
 | Working or Expert in Bayesian modeling | Use standard terminology without definitions. Put the real choices to them, such as the priors, the parameterization, the pooling, and the inference method, with their trade-offs. Discuss diagnostics and pathologies directly. |
 | Expert in the domain | Ask detailed questions about mechanism, measurement, and prior knowledge. Ask them to justify the priors and the structure. |
 | New or Familiar in the domain | Ask about the domain more carefully, and flag your own domain assumptions explicitly. Suggest that they check the key assumptions with a colleague. |
-| New or Familiar in Python | Give complete, runnable code, with a comment on each stage and explicit instructions to install and run it. Use plain idioms. |
+| New or Familiar in Python | Give complete, runnable code, with a comment on each stage and explicit instructions to install and run it. Use plain idioms. Describe the design in words, and name ProbPipe classes only in the code and its comments. |
 | Working or Expert in Python | Show concise code, and skip the setup basics. |
 | New to JAX | Keep JAX-specific details inside ProbPipe calls where possible. When JAX appears, as in `jnp`, the purity of a `@function`, or random seeds, explain it briefly. |
 | Working or Expert in ML engineering | Draw analogies to ML practice where they help, such as held-out validation and early stopping. Put the training choices to them, such as the architecture, the simulation budget, and the stopping rule. |
