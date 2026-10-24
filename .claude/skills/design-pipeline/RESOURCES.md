@@ -173,7 +173,12 @@ the real-data fit is interpreted only after it passes.
      unnormalized posterior density to the density of the approximation, and
      compute the k̂ of PSIS from these weights (Yao et al. 2018a). A k̂ above
      0.7 means that importance sampling cannot correct the approximation, so
-     report neither its intervals nor its tail quantities.
+     report neither its intervals nor its tail quantities. With many
+     parameters, the k̂ of a useful approximation is often above 0.7 too, so
+     a high k̂ there leaves the accuracy of the approximation undecided. Then
+     compare the approximation with an MCMC fit to a smaller problem of the
+     same structure, by the bullet "Validate an approximate method before you
+     report its results".
 - **Many observations.** Stochastic-gradient MCMC, such as stochastic-gradient
   Langevin dynamics, estimates the gradient of the log density from a random
   subset of the observations at each step, so each step costs a fraction of a
@@ -198,6 +203,12 @@ the real-data fit is interpreted only after it passes.
      draws, and a smaller value means draws closer to the posterior. It has
      no absolute scale, so compare its values across the step sizes
      (Gorham & Mackey 2017).
+
+  The reference of step 1 checks the method on a smaller problem, and the
+  error of the method can grow with the number of observations, so the error
+  that it finds is a lower bound for the full data. The step sizes of step 2
+  and the kernel Stein discrepancy of step 3, both computed on the full data,
+  are the evidence about the full-data fit.
 - **Numerical precision:** run MCMC in double precision when the log density
   sums many terms or the posterior is poorly scaled, because single
   precision then loses the accuracy that the gradient and the acceptance step
@@ -285,9 +296,11 @@ the real-data fit is interpreted only after it passes.
   2. a simulator without a tractable likelihood: simulation-based inference,
      which is ABC or a neural estimate of the posterior, the likelihood, or
      the likelihood-to-evidence ratio (Cranmer et al. 2020);
-  3. many datasets of one size, analyzed with one model: neural posterior
-     estimation, whose trained network gives the posterior of each new
-     dataset at the cost of one network evaluation (Radev et al. 2022);
+  3. many datasets analyzed with one model: neural posterior estimation,
+     whose trained network gives the posterior of each new dataset at the
+     cost of one network evaluation (Radev et al. 2022). A summary network
+     lets it take datasets of varying size, and ProbPipe's learners take no
+     summary network, so in ProbPipe the datasets share one size;
   4. datasets of varying size whose observations are conditionally
      independent: a neural estimate of the likelihood or of the
      likelihood-to-evidence ratio of one observation, followed by MCMC on
@@ -315,14 +328,17 @@ the real-data fit is interpreted only after it passes.
 - **Calibrate every amortized posterior.** Stage D requires SBC and the
   coverage of the estimands for an amortized method. Compute the coverage
   over held-out simulations at several credibility levels from 50% to 95%,
-  which is the expected-coverage check. Coverage below the nominal level at
-  any level is a failure, because it means intervals that are too narrow,
-  which is the common failure of neural posterior estimates. Coverage above
-  the nominal level is conservative, which is acceptable (Hermans et al.
-  2022). The coverage of each parameter's interval misses errors in
-  the joint posterior, which the TARP test checks (Lemos et al. 2023). When a reference
-  posterior exists, such as an MCMC fit of a tractable version of the model,
-  compare the two by the validation of approximate methods in stage E.
+  which is the expected-coverage check. With n held-out simulations, the
+  estimated coverage at the level p has the Monte Carlo standard error
+  √(p(1 − p)/n), so report the band p ± 2√(p(1 − p)/n) beside each coverage.
+  Coverage below the band at any level is a failure, because it means
+  intervals that are too narrow, which is the common failure of neural
+  posterior estimates. Coverage above the nominal level is conservative,
+  which is acceptable (Hermans et al. 2022). The coverage of each parameter's
+  interval misses errors in the joint posterior, which the TARP test checks
+  (Lemos et al. 2023). When a reference posterior exists, such as an MCMC fit
+  of a tractable version of the model, compare the two by the validation of
+  approximate methods in stage E.
 - **Check that the observed data resemble the simulations.** Compare the
   summary statistics of the observed data with their prior predictive
   distribution, by stage C. An observed summary far in the tail of the
@@ -341,10 +357,16 @@ the real-data fit is interpreted only after it passes.
      that the emulator is overconfident (Bastos & O'Hagan 2009).
   3. Propagation: the likelihood includes the emulator's predictive variance,
      so that the posterior reflects the emulator's error.
-  4. Discrepancy: the model includes a term for the difference between the
-     simulator and the real system, because a calibration without it can
-     give biased and overconfident parameter estimates (Kennedy & O'Hagan
-     2001; Brynjarsdóttir & O'Hagan 2014).
+  4. Discrepancy: a calibration that ignores the difference between the
+     simulator and the real system can give biased and overconfident
+     parameter estimates (Kennedy & O'Hagan 2001). The default is a
+     discrepancy term in the model with an informative prior, from the
+     user's knowledge of where the simulator falls short, because a
+     discrepancy with a vague prior cannot be separated from the parameters
+     (Brynjarsdóttir & O'Hagan 2014). When no such knowledge exists, the
+     alternative is a model without a discrepancy term. Its estimands are
+     then conditional on the simulator, and a sensitivity analysis refits
+     the model with a discrepancy term to show how much they change.
   5. Precision: the Gaussian process is computed in double precision,
      because its covariance matrix is often ill-conditioned and its Cholesky
      factor fails or loses accuracy in single precision. The row "Emulate an
