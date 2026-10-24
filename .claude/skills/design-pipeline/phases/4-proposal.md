@@ -13,7 +13,9 @@ such as an established model or a required method, start from them and check
 the earlier steps against them:
 
 1. **Estimands.** Restate the scientific goals as the specific quantities to
-   estimate or predict, with their uncertainty.
+   estimate or predict, with their uncertainty. Mark each estimand that
+   compares two models, such as whether overdispersion changes a conclusion,
+   because step 2 then plans both models.
 2. **Model sequence.** Plan the sequence of models of RESOURCES.md stage A,
    and design version 1 in detail around the first model or two.
 3. **Generative model.** Describe the data-generating process, including the
@@ -80,9 +82,10 @@ Gaussian-process package or a domain simulator, offer the options of the
 ground rule "Offer to build an interface to a missing component" of
 [INSTRUCTIONS.md](../INSTRUCTIONS.md#ground-rules).
 
-In the quick start mode of the [ground rules](../INSTRUCTIONS.md#ground-rules), step
-8 is one posterior predictive check, and the cross-validation of step 8 and all
-of step 10 are deferred.
+In the quick start mode of the [ground rules](../INSTRUCTIONS.md#ground-rules),
+step 2 plans the baseline and the elaboration that the mode names, and step 8
+is one posterior predictive check of each model. The mode decides which other
+stages to defer, such as the cross-validation of step 8 and step 10.
 
 When the diagnostics of step 7 or the checks of step 8 fail in a full run,
 return to step 3 and revise the model before you tune the algorithm, by the

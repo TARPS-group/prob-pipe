@@ -46,7 +46,12 @@ Cover these topics:
 
 When the project starts, ask whether to use quick start mode, by the
 [ground rules](../INSTRUCTIONS.md#ground-rules), and recommend it. Ask it
-with the first group of questions.
+with the first group of questions, and describe it in plain words, such as
+"a first complete answer soon: a simple model and the model your questions
+need, checks that the analysis can be trusted, and your estimates with their
+uncertainty. Comparing models by their predictions and testing how much the
+answers depend on the assumptions come next, unless you name one of them as a
+concern now."
 
 Once you can name the project, propose a workspace directory by
 [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#workspace), and confirm it with the

@@ -145,8 +145,12 @@ when either check fails, and record the new corpus in project memory.
   version of the design in seven steps:
   1. a first look at the data, which ends the data step of
      [Phase 2](phases/2-materials.md#data);
-  2. the simplest defensible model, or the user's own model when they bring
-     one;
+  2. a baseline model, which is the simplest defensible model, and then the
+     elaboration that the estimands need, such as an overdispersion term or a
+     spatial effect that a question asks about. The user's own model, when
+     they bring one, is the elaboration. An estimand
+     that compares the two models, such as "does overdispersion change the
+     conclusions?", then has an answer;
   3. a prior predictive check;
   4. the validation on realistic simulated data of
      [RESOURCES.md](RESOURCES.md) stage D, with the number of simulated
@@ -155,11 +159,15 @@ when either check fails, and record the new corpus in project memory.
   6. one posterior predictive check;
   7. the estimands with their intervals.
 
-  Record each other stage of the checklist as `deferred: quick start` in the
-  design document, and list the deferred stages among the next steps. Give the
-  user a rough runtime for each fit, from the compute plan of the design
-  document. Record the user's answer in project memory. The full workflow
-  takes up the deferred stages, and the user can switch to it at any point.
+  Steps 3 to 6 apply to each model of step 2. Record each other stage of the
+  checklist as `deferred: quick start` in the design document, and list the
+  deferred stages among the next steps. Quick start keeps a stage that answers
+  a concern the user names, such as a prior sensitivity analysis for a user
+  who worries about the influence of the priors. Give the user a rough
+  runtime for each fit, from the compute plan of the design document, which
+  a probe script or the first smoke run calibrates. Record the user's answer
+  in project memory. The full workflow takes up the deferred stages, and the
+  user can switch to it at any point.
 - **Guard the analysis against data-driven revisions.** Revise each design by
   the [rules for revisions](phases/5-feedback.md#rules-for-revisions), which
   apply in every phase.
