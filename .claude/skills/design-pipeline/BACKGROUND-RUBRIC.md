@@ -31,7 +31,8 @@ Frame a low-confidence rating as a question for the user.
 | **Domain science** | The user's discipline: its mechanisms, measurement, conventions, and literature. | Precise terminology; talks about mechanisms and measurement error; cites papers; anticipates confounders. |
 | **Probability and statistics** | Random variables, distributions, likelihood, estimation, uncertainty, regression. | Distinguishes parameters from data, variance from uncertainty; talks about likelihoods, standard errors, intervals. |
 | **Bayesian modeling and inference** | Priors, posteriors, hierarchical models, MCMC and VI, diagnostics, predictive checks. | Mentions priors, pooling, R-hat, divergences, posterior predictive checks; has used Stan, PyMC, or similar. |
-| **Machine learning** | Predictive modeling, neural networks, training and validation, amortized or simulation-based inference. | Talks about train/test splits, overfitting, architectures; has used PyTorch, JAX, or scikit-learn. |
+| **ML engineering** | Training neural networks and other predictive models: validation splits, early stopping, hyperparameter tuning, GPUs. | Talks about train/validation splits, overfitting, architectures, learning rates; has used PyTorch, JAX, or scikit-learn. |
+| **Approximate inference** | Variational inference, normalizing flows, simulation-based and amortized inference, Gaussian processes, stochastic-gradient MCMC, and how each one fails. | Mentions the ELBO, NPE or NLE, coverage or SBC of an approximate posterior, kernels and length scales; has used BayesFlow or GPyTorch. |
 | **Scientific computing and simulation** | Simulators, ODE/PDE models, numerical methods, HPC. | Has a simulator; discusses solvers, run times, clusters. |
 | **Python and software** | Python fluency, packages, environments, version control, testing. | Shares or describes code; mentions virtual environments, notebooks, git. |
 | **JAX** | Arrays, `jit`, `vmap`, `grad`, pure functions, PRNG keys. | Mentions JAX or its idioms; writes functional, array-oriented code. |
@@ -39,9 +40,12 @@ Frame a low-confidence rating as a question for the user.
 
 ## Adaptation
 
-The profile shapes the session by the rows of this table. Combine the rows of
-several dimensions, so that a domain expert who is new to Bayesian methods gets
-deep scientific questions and gentle statistical explanations.
+The profile shapes the session by the rows of this table. It decides how much
+you explain, which choices you make for the user, and which you put to them.
+The problem alone decides which inference method you recommend, by
+[RESOURCES.md](RESOURCES.md) stages E and I. Combine the rows of several
+dimensions, so that a domain expert who is new to Bayesian methods gets deep
+scientific questions and gentle statistical explanations.
 
 | If the user is... | Then... |
 |---|---|
@@ -52,5 +56,8 @@ deep scientific questions and gentle statistical explanations.
 | New or Familiar in Python | Give complete, runnable code, with a comment on each stage and explicit instructions to install and run it. Use plain idioms. |
 | Working or Expert in Python | Show concise code, and skip the setup basics. |
 | New to JAX | Keep JAX-specific details inside ProbPipe calls where possible. When JAX appears, as in `jnp`, the purity of a `@function`, or random seeds, explain it briefly. |
-| Working or Expert in ML | Draw analogies to ML practice where they help, as for amortized inference and validation. Consider options from ML, such as emulators and neural SBI, when they fit. |
+| Working or Expert in ML engineering | Draw analogies to ML practice where they help, such as held-out validation and early stopping. Put the training choices to them, such as the architecture, the simulation budget, and the stopping rule. |
+| New or Familiar in ML engineering | Choose the training settings of a neural estimator or an emulator yourself, say so, and explain each validation check as a test on simulations or simulator runs that the training did not use. |
+| Working or Expert in approximate inference | Discuss the failure modes of the approximation directly, such as overconfidence and variance underestimation, and put to them the choices that the problem leaves open, such as the approximating family or the number of simulations, with their trade-offs. |
+| New or Familiar in approximate inference | Explain why an approximate method needs its own validation, and show each check of RESOURCES.md stages E and I as part of the result. |
 | New to ProbPipe | Point to the specific tutorial or user-guide section for each ProbPipe concept you use. |
