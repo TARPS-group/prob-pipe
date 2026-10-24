@@ -11,6 +11,13 @@ cannot be shared. Also ask how the data was collected:
 - known biases;
 - the mechanisms of missingness.
 
+Before you open any dataset, ask whether it contains personal or health
+information, sensitive locations such as the sites of protected species, or
+data under a use agreement. If it does, or the user is unsure, open none of its
+rows. Write a short script that prints only the column names, the types, the
+counts, and the missingness of each column, ask the user to run it, and work
+from its output.
+
 For each dataset you can open:
 
 - Inspect it yourself. Load a small file in full, and read the header and a
@@ -23,7 +30,20 @@ For each dataset you can open:
   - grouping or hierarchy, such as subjects, sites, or time;
   - censoring or truncation;
   - outliers;
-  - anything that contradicts the user's description.
+  - anything that contradicts the user's description;
+  - for counts and rates, five more features:
+    - the true zeros and the values that were not observed, including
+      sentinel codes such as -99, blanks, or a 0 that means "not surveyed";
+    - whether the table is wide, with one column per time, or long, with one
+      row per observation;
+    - the exposure or effort of each count, such as survey effort, area, or
+      person-time, which enters the model as an offset;
+    - overdispersion, which shows as a variance well above the mean within
+      comparable groups;
+    - whether the missing values are in the outcome, which the likelihood can
+      omit when the missingness depends only on observed quantities, or in a
+      covariate, which needs a model or an imputation that you discuss with
+      the user.
 - Note which variables look like outcomes, covariates, grouping variables, or
   known constants, and confirm that reading with the user.
 - Propose how the data maps onto ProbPipe objects, by the row "Hold the

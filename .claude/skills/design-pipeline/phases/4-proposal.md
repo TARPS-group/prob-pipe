@@ -19,7 +19,11 @@ the next:
    each prior, ideally from domain knowledge or the user's papers. Map each
    part to ProbPipe objects by the rows of CAPABILITIES.md for stages A and B:
    the independent priors, a prior that depends on other parameters, the
-   likelihood, and the joint model, or a wrapped Stan or PyMC model.
+   likelihood, and the joint model, or a wrapped Stan or PyMC model. When the
+   model needs a structure that no row of CAPABILITIES.md and no tutorial or
+   user-guide example covers, prefer a wrapped PyMC or Stan model, by the row
+   "Use an existing Stan or PyMC model", and record the gap in the design
+   document.
 4. **Fast first fits.** Plan the first fits to be fast, as RESOURCES.md
    stage E advises: the first model of the sequence, run in the smoke mode
    that [Write the code](#write-the-code) defines. A smoke run shows that the
