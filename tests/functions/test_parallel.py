@@ -13,6 +13,7 @@ import pickle
 import threading
 import warnings
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from dataclasses import FrozenInstanceError, replace
 from threading import Barrier, Event
 from types import SimpleNamespace
@@ -2076,9 +2077,10 @@ class TestPrefectTransport:
         assert snapshot is None
         assert len(claim_state.effect_claims_by_identity) == 1
 
+    @pytest.mark.parametrize("default_scope", [False, True], ids=["explicit", "default"])
     @pytest.mark.parametrize("ship_chunks", [False, True], ids=["in-place", "shipped"])
     def test_prefect_retry_reuses_evaluation_point_token_and_key(
-        self, ship_chunks, prefect_fakes, monkeypatch
+        self, default_scope, ship_chunks, prefect_fakes, monkeypatch
     ):
         monkeypatch.setattr(execution_mod, "_prefect_retry_policy", lambda: (1, ()))
         FakeMappedTask.ship_chunks = ship_chunks
@@ -2092,7 +2094,14 @@ class TestPrefectTransport:
                 raise RuntimeError("retry me")
             return words
 
-        with workflow_run(seed=17), requester_call(requester()):
+        with ExitStack() as stack:
+            if default_scope:
+                workflow_run.set_default(seed=17)
+                stack.callback(workflow_run.clear_default)
+                stack.enter_context(context_mod._ephemeral_workflow_run())
+            else:
+                stack.enter_context(workflow_run(seed=17))
+            stack.enter_context(requester_call(requester()))
             evaluation_points = points_of(fail_once_after_claim)
             (retried,) = run_on("prefect", evaluation_points)
             snapshot = evaluation_keys_mod._snapshot_active_recipe_state()
@@ -2107,6 +2116,12 @@ class TestPrefectTransport:
         assert len(snapshot.effects) == 1
         assert len(claim_state.seen_attempts) == 2
         assert FakeMappedTask.map_calls == 2
+
+        # Use the same callable and point layout: only the scope and executor
+        # differ from the retried call above.
+        with workflow_run(seed=17), requester_call(requester()):
+            (reference,) = run_on("sequential", points_of(fail_once_after_claim))
+        assert retried == reference
 
     @pytest.mark.parametrize(
         ("configured", "expected"),
