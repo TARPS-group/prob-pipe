@@ -341,7 +341,22 @@ the real-data fit is interpreted only after it passes.
 ## Part 2 — Annotated bibliography
 
 Match each suggested reading to the user's profile, with textbooks for a user
-new to Bayesian modeling and papers for a working or expert user.
+new to Bayesian modeling and papers for a working or expert user. For a user
+new to Bayesian modeling, recommend at most one book and one short applied
+paper, and prefer free sources in a language the user knows.
+
+### Introductions and applied sources for newcomers
+
+- TODO(source): Johnson, Ott & Dogucu, *Bayes Rules! An Introduction to
+  Applied Bayesian Modeling* (CRC, 2022).
+- TODO(source): Martin, Kumar & Lao, *Bayesian Modeling and Computation in
+  Python* (CRC, 2021).
+- TODO(source): Kéry & Royle, *Applied Hierarchical Modeling in Ecology*,
+  vol. 1 (Academic Press, 2016).
+- TODO(source): Hobbs & Hooten, *Bayesian Models: A Statistical Primer for
+  Ecologists* (Princeton, 2015).
+- TODO(source): Grinsztajn, Semenova, Margossian & Riou, "Bayesian workflow
+  for disease transmission modeling in Stan" (Statistics in Medicine, 2021).
 
 ### The workflow as a whole
 
