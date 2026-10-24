@@ -17,10 +17,11 @@ Python imports:
    every call, which ``build_corpus.unimplemented_exports`` finds in the
    source of the imported ``probpipe``.
 
-A name that the file assigns again, for example by ``Normal = ...``, is not
-checked, because the script cannot tell which value a later use reads. The
-script needs only the standard library, ``probpipe``, and ``build_corpus.py``
-beside it.
+The script also checks each module beside a file that the file imports, such
+as ``report.py`` for a notebook that runs ``import report``. A name that the
+file assigns again, for example by ``Normal = ...``, is not checked, because
+the script cannot tell which value a later use reads. The script needs only
+the standard library, ``probpipe``, and ``build_corpus.py`` beside it.
 
 Usage::
 
@@ -322,6 +323,20 @@ class Checker(ast.NodeVisitor):
                 )
 
 
+def local_modules(path: Path) -> list[Path]:
+    """The modules beside *path* that it imports, such as ``report.py`` for ``import report``."""
+    tree = ast.parse(read_source(path).code, filename=str(path))
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+            names.add(node.module.split(".")[0])
+    return sorted(
+        path.parent / f"{name}.py" for name in names if (path.parent / f"{name}.py").is_file()
+    )
+
+
 def check(path: Path) -> tuple[list[str], int, int]:
     """The problems of the file *path*, and the counts of names and calls checked."""
     source = read_source(path)
@@ -342,8 +357,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"check_symbols.py: probpipe does not import: {error}", file=sys.stderr)
         return 2
     status, names, calls = 0, 0, 0
-    for path in args.files:
+    paths = list(args.files)
+    for path in paths:
         try:
+            paths.extend(module for module in local_modules(path) if module not in paths)
             problems, file_names, file_calls = check(path)
         except (OSError, SyntaxError, ValueError) as error:
             print(f"check_symbols.py: cannot check {path}: {error}", file=sys.stderr)

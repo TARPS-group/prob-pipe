@@ -166,6 +166,17 @@ class TestCheckSymbols:
         assert check_symbols.main([str(script)]) == 1
         assert "`Normal` is not implemented" in capsys.readouterr().out
 
+    def test_a_module_beside_the_file_that_it_imports_is_checked(self, tmp_path, capsys):
+        (tmp_path / "report.py").write_text("from probpipe import sampel\n")
+        (tmp_path / "unused.py").write_text("from probpipe import sampel\n")
+        cells = [{"cell_type": "code", "source": "import report\nfrom report import show\n"}]
+        notebook = tmp_path / "pipeline.ipynb"
+        notebook.write_text(json.dumps({"cells": cells}))
+        assert check_symbols.main([str(notebook)]) == 1
+        out = capsys.readouterr().out
+        assert out.count("`from probpipe import sampel` fails") == 1
+        assert "report.py:1:" in out
+
     def test_a_reassigned_name_is_not_checked(self, tmp_path):
         script = tmp_path / "pipeline.py"
         script.write_text("from probpipe import Normal\nNormal = dict\nNormal(anything=1)\n")
