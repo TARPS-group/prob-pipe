@@ -70,15 +70,21 @@ RESOURCES.md stage E. Each return is a revision, which follows the
 
 ## Write the code
 
-Write `<workspace>/pipeline.py` as a runnable skeleton in the style of the
-tutorials, or a notebook when the user works in notebooks. It loads the user's
-data or simulates it, and each pipeline stage is a labeled section that matches
-the design document.
+Write the pipeline as a runnable skeleton in the style of the tutorials, in the
+form the user works in: a notebook, `<workspace>/pipeline.ipynb`, for a user
+who works in notebooks, and `<workspace>/pipeline.py` otherwise. A notebook
+starts with an install cell in the style of the tutorials' Colab cell, which
+installs ProbPipe when the notebook runs on Google Colab. The pipeline loads
+the user's data or simulates it, and each pipeline stage is a labeled section
+that matches the design document. Each stage shows a figure where one helps,
+such as the prior predictive draws or the posterior predictive check, with a
+one-sentence comment on how to read it.
 
 The code has a smoke mode for fast trial runs. It reads the environment
 variable `SMOKE`, and when `SMOKE=1` it uses small budgets: a few draws,
 chains, simulations, and training epochs, and a subsample of the data. A
-notebook sets the budgets in its first code cell from the same variable.
+notebook sets the budgets from the same variable in its first code cell after
+the install cell.
 
 ## Check and run the code
 
@@ -102,10 +108,19 @@ Take these steps before you show the code, and again after each revision:
 
 ## Present the proposal
 
-Present the proposal at the depth that the profile calls for. Lead with a
-short overview, which is a stage diagram in text or Mermaid with one sentence
-per stage. Then give the key design decisions, each with the alternative you
-considered and the reason for your choice. List the assumptions that the user
+Present the proposal at the depth that the profile calls for. Draw a Mermaid
+diagram only in an interface that renders it. Give the user the steps of
+section 11 of the design document, so that they can run the code.
+
+For a user new to Bayesian modeling, open with two plain sentences on what the
+analysis will tell them. Then list the stages as a numbered list with one
+sentence each, and give at most three key design decisions. The design
+document is your record of the work, so point the user to it in place of
+presenting it.
+
+For other users, lead with a short overview, which is a stage diagram with one
+sentence per stage. Then give the key design decisions, each with the
+alternative you considered and the reason for your choice. List the assumptions that the user
 should check, and the open questions. Point to the files for the full detail,
 and to one or two resources of [RESOURCES.md](../RESOURCES.md) that suit the
 user's background and the hardest part of the design. End with targeted

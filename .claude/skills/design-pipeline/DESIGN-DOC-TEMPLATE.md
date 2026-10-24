@@ -94,4 +94,21 @@ worth a GitHub issue.
 Every fit, in order, smoke runs and fits to simulated data included.
 | Date | Design version | Model | Data (real, simulated, or smoke) | Method and settings (chains, draws, seed) | Diagnostics | Checks passed and failed | Outcome |
 |---|---|---|---|---|---|---|---|
+
+## 11. Getting it running
+- Install: the command from `docs/get_started/installation.md` for the
+  backends this design uses, and the Python version it needs.
+- Open and run: how to run the code locally and on Google Colab, first with
+  `SMOKE=1` and then in full.
+- Expected runtime of each stage, from section 4c.
+- What a successful run prints and shows.
+- Where the code was validated, and whether that environment differs from the
+  user's.
+
+## 12. Reporting
+- A draft methods paragraph: the model, the priors, the software and its
+  versions, the inference method and its settings, and the diagnostics.
+- A table of the priors, each with its justification from section 3.
+- The figures to include, each with what it shows.
+- How to cite ProbPipe, from `docs/cite.md`.
 ```

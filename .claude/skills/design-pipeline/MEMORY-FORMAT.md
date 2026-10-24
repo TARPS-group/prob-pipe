@@ -48,7 +48,7 @@ A workspace holds six files:
 - `<workspace>/pipeline-design.md`: the current design, which follows
   [DESIGN-DOC-TEMPLATE.md](DESIGN-DOC-TEMPLATE.md), with a version history.
 - `<workspace>/pipeline.py`: the runnable skeleton of the current design
-  version, or a notebook in its place.
+  version, or the notebook `<workspace>/pipeline.ipynb` in its place.
 
 ## Rules
 

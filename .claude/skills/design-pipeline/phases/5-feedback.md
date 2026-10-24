@@ -22,7 +22,10 @@ document lists each deficiency that remains.
    preference, such as "always show me the math", in person memory.
 5. Show a compact summary of what changed. Raise again each open question
    that is still unresolved.
-6. Ask what to do next, and suggest the most valuable next step, such as "run
+6. When the user has run the pipeline on the real data, offer to read its
+   outputs with them: what the diagnostics say, what each estimate and
+   interval means for the science, and what the checks found.
+7. Ask what to do next, and suggest the most valuable next step, such as "run
    the prior predictive check on your real covariates" or "decide between
    partial and complete pooling".
 
@@ -60,8 +63,8 @@ index of person memory records the project's status. Close with a summary:
 - the design version;
 - every model fit, from the fit log of the design document, with the outcome
   of each fit;
-- the files, and how to run `<workspace>/pipeline.py`, in smoke mode and in
-  full;
+- the files, and how to run the pipeline, from section 11 of the design
+  document;
 - the open questions and the assumptions still to check;
 - the ProbPipe gaps you found, with an offer to draft GitHub issues for them;
 - the suggested next steps, such as a fit on the full data, a sensitivity
