@@ -34,11 +34,12 @@ model. Plan for that return.
 - **Understand the measurement process.** Learn how the data was collected.
   Censoring, truncation, selection, measurement error, and missingness each
   belong in the model or in an explicit assumption.
-- **Start simple, then expand.** Begin with the simplest model that addresses
-  the question, then add structure, such as hierarchy, covariates, or
-  nonlinearity, one step at a time, and check each step. Plan the sequence of
-  models up front. Keep the earlier models as baselines for comparison and
-  debugging.
+- **Start simple, then expand.** The default is to begin with the simplest
+  model that addresses the question, then add structure, such as hierarchy,
+  covariates, or nonlinearity, one step at a time, and check each step. A user
+  who brings an established model can start from it instead, with a simpler
+  model fitted beside it as a baseline. Plan the sequence of models up front.
+  Keep the earlier models as baselines for comparison and debugging.
 
 ### B. Priors
 
@@ -92,14 +93,23 @@ the real-data fit is interpreted only after it passes.
 
 ### E. Fit and diagnose the computation
 
-- **Choose the method by the model.** Prefer NUTS when its conditions hold:
-  continuous parameters and a differentiable log density. Marginalize discrete
-  latent variables, such as mixture labels, change points, or the states of a
-  hidden Markov model, out of the likelihood, so that NUTS applies. When a
-  discrete variable cannot be marginalized, say so, and choose a method that
-  samples it.
+- **Choose the method by the model.** The default is NUTS when its conditions
+  hold: continuous parameters and a differentiable log density. The
+  alternatives fit other models:
+  1. a density without a gradient: a gradient-free method, such as
+     random-walk Metropolis;
+  2. a fit too slow for MCMC: an approximate method, validated as the bullets
+     below require;
+  3. a model without a tractable likelihood: the methods of stage I.
+
+  Discrete latent variables, such as mixture labels, change points, or the
+  states of a hidden Markov model, can be marginalized out of the likelihood
+  so that NUTS applies. When a discrete variable cannot be marginalized, say
+  so, and choose a method that samples it.
 - **Diagnose each MCMC run** by these criteria, and interpret a posterior only
   after it passes them. Vehtari et al. (2021) define the R-hat and the ESS.
+  The thresholds are the conventional defaults. A project that sets another
+  threshold records it as a decision with its reason.
   1. Chains: run at least four, from dispersed initial values, so that
      separate modes show up as disagreeing chains.
   2. R-hat: the rank-normalized split-R-hat is below 1.01 for every parameter
