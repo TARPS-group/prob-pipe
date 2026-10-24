@@ -30,9 +30,9 @@ the earlier steps against them:
      such as a generalized linear mixed model, and a spatial model with a CAR,
      ICAR, or BYM prior. A computer that cannot compile Stan programs rules
      Stan out, so a user of brms whose compiler fails gets PyMC. Otherwise
-     choose the one the user is more comfortable with, by the background
-     profile: Stan for a user of Stan or brms, and PyMC for a user who works
-     in Python. Stan needs its backend and a C++ toolchain, by the row "A Stan
+     choose the one the user is more comfortable with, by the working
+     preferences and the experience in person memory: Stan for a user who
+     works in Stan or brms, and PyMC for a user who works in Python. Stan needs its backend and a C++ toolchain, by the row "A Stan
      program" of CAPABILITIES.md. When the backends that
      [Phase 0](0-load.md) recorded lack it, ask before you install it, by
      rule 8 of the
@@ -270,12 +270,14 @@ Take these steps before you show the code, and again after each revision:
 
 ## Present the proposal
 
-Present the proposal at the depth that the profile calls for. Draw a Mermaid
-diagram only in an interface that renders it. Give the user the steps of
+Open the proposal's message with the one line of
+[Phase 3](3-background.md) that confirms the working preferences. Present the
+proposal at the depth that the preferences call for. Draw a Mermaid diagram
+only in an interface that renders it. Give the user the steps of
 section 11 of the design document, so that they can run the code.
 
-For a user whose rating in Bayesian modeling is New or Familiar, open with two
-plain sentences on what the analysis will tell them. Then list the stages as a
+For a user whose preferences ask for Bayesian choices in plain words, open
+with two plain sentences on what the analysis will tell them. Then list the stages as a
 numbered list with one sentence each, and give at most three key design
 decisions. The design
 document is your record of the work, so point the user to it in place of

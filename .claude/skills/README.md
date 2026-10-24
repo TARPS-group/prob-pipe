@@ -213,9 +213,10 @@ builds the corpus, and reads the instructions.
    the constraints.
 3. **Materials:** asks for pointers to the data and to existing models,
    inspects the data, and extracts the model structure from papers or code.
-4. **Background assessment:** estimates the user's background on the
-   dimensions of the [rubric](design-pipeline/BACKGROUND-RUBRIC.md), says how
-   it will work with them, and asks for corrections.
+4. **Working preferences:** proposes how it will work with the user, such as
+   how much it explains, from what the user says of their experience on the
+   dimensions of the [rubric](design-pipeline/BACKGROUND-RUBRIC.md), and
+   confirms the preferences in one line of the proposal.
 5. **Initial proposal:** writes a versioned design document
    ([template](design-pipeline/DESIGN-DOC-TEMPLATE.md)) and a runnable
    `<workspace>/pipeline.py` or `<workspace>/pipeline.ipynb`, checks it with `check_symbols.py`, and runs it in stages
@@ -235,8 +236,8 @@ builds the corpus, and reads the instructions.
 **Behavior:** Keeps two memories across sessions
 ([format](design-pipeline/MEMORY-FORMAT.md)):
 - a person memory, at `~/.probpipe-design/user.md` or under
-  `$PROBPIPE_DESIGN_HOME`, which holds the confirmed background profile, the
-  preferences, the environment, and an index of projects;
+  `$PROBPIPE_DESIGN_HOME`, which holds the working preferences, the experience
+  that the user stated, the environment, and an index of projects;
 - a project memory in each workspace, `~/probpipe-projects/<project>/` by
   default, which holds the decisions, the options ruled out, the corpus
   version, and where the work stopped.

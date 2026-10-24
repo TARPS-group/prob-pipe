@@ -67,7 +67,7 @@ The agent then keeps ProbPipe at the commit that the project's memory records, u
 
 ## What the assistant keeps
 
-The assistant keeps a memory of you, which holds your background, your preferences, your environment, and a list of your projects.
+The assistant keeps a memory of you, which holds how you like to work, such as how much it explains, the experience you told it about, your computer setup, and a list of your projects.
 It asks before it creates this memory, and it stores it in `~/.probpipe-design/user.md`, or under the directory that the environment variable `PROBPIPE_DESIGN_HOME` names.
 Each project's directory holds the pipeline, the project's memory, and a short guide, `START-HERE.md`.
 Its directory `notes/` holds the notes and the design document, `outputs/` holds the current results, and `runs/` holds the trial runs and the checks.

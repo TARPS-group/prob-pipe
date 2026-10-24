@@ -2,14 +2,15 @@
 
 Learn what the user wants to achieve, in their own terms.
 
-Until [Phase 3](3-background.md) confirms the user's background, use plain
+Until [Phase 3](3-background.md) chooses the working preferences, use plain
 words. Ask "what quantities do you want to estimate, and how sure do you need
 to be about them?" in place of naming estimands. Ask about the collection of
 the data in the user's terms, such as "were some sites not surveyed in some
 years?". Among the first questions, ask one about the user's background, such
 as "Have you fitted a Bayesian model before, and do you usually work in
 Python, R, or something else?". Choose the vocabulary of Phases 1 and 2 by the
-answer and by the *Adaptation* section of [BACKGROUND-RUBRIC.md](../BACKGROUND-RUBRIC.md).
+answer and by the table of preferences of
+[BACKGROUND-RUBRIC.md](../BACKGROUND-RUBRIC.md#preferences).
 
 Cover these topics:
 

@@ -13,8 +13,8 @@ the first questions. Search the rest of the corpus when a question needs it.
      else the project they worked on most recently. Say in one sentence where
      it stopped and how many other projects memory holds, and name the others
      only when the user asks. Ask whether to resume that
-     project, resume another, or start a new one. Mention the background
-     profile only when the user asks about it. If the opening message names a
+     project, resume another, or start a new one. Mention the working
+     preferences only when the user asks about them. If the opening message names a
      project, resume it directly by the
      resume protocol of [INSTRUCTIONS.md](../INSTRUCTIONS.md#resume-protocol):
      read the project's memory and workspace files, summarize where things

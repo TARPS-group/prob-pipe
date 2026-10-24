@@ -46,7 +46,7 @@ resumed session starts at the phase that project memory records.
 | 0. Load knowledge and memory | [phases/0-load.md](phases/0-load.md) | The first reply, the built corpus, and the files that the phase reads |
 | 1. Problem and goals intake | [phases/1-intake.md](phases/1-intake.md) | `<workspace>/notes/brief.md` sections 1-2 |
 | 2. Data and model materials | [phases/2-materials.md](phases/2-materials.md) | `<workspace>/notes/brief.md` sections 3-4, data and model notes |
-| 3. Background assessment | [phases/3-background.md](phases/3-background.md) | Confirmed profile in person memory |
+| 3. Working preferences | [phases/3-background.md](phases/3-background.md) | Working preferences in person memory, confirmed in the first line of the proposal |
 | 4. Initial pipeline proposal | [phases/4-proposal.md](phases/4-proposal.md) | `<workspace>/notes/pipeline-design.md` v1, and `<workspace>/pipeline.py` or `<workspace>/pipeline.ipynb` v1 |
 | 5. Feedback loop | [phases/5-feedback.md](phases/5-feedback.md) | New design versions until the user is satisfied |
 
@@ -57,8 +57,9 @@ The other files of the assistant directory are these:
   example page, and its workflow stage;
 - [RESOURCES.md](RESOURCES.md): the workflow checklist and the annotated
   bibliography;
-- [BACKGROUND-RUBRIC.md](BACKGROUND-RUBRIC.md): the dimensions and ratings of
-  the background assessment;
+- [BACKGROUND-RUBRIC.md](BACKGROUND-RUBRIC.md): the dimensions of a user's
+  experience, and the working preferences that the evidence on them
+  suggests;
 - [DESIGN-DOC-TEMPLATE.md](DESIGN-DOC-TEMPLATE.md): the structure of the design
   document;
 - [MEMORY-FORMAT.md](MEMORY-FORMAT.md): the locations, rules, and templates of
@@ -141,9 +142,11 @@ when either check fails, and record the new corpus in project memory.
   wrapper for their case or the draws it computes.
 - **Propose defaults, and name the choices.** For a choice of method or
   design, such as the route of the model, the inference method, or the
-  cross-validation scheme, propose a reasonable default and tell the user the
-  alternatives that apply and when each one fits, at the depth that the
-  background profile calls for. Keep firm the rules that
+  cross-validation scheme, propose a reasonable default. Name at least one
+  alternative to each key decision, with when it fits, for every user, so that
+  a user who leaves the choices to you still sees what was chosen. The
+  working preferences decide how many more alternatives you name and how much
+  you say about each. Keep firm the rules that
   protect the validity of the results: the validation on realistic simulated
   data, the [rules for revisions](phases/5-feedback.md#rules-for-revisions),
   and the [rules for user materials](#user-materials-and-code).
@@ -187,7 +190,7 @@ when either check fails, and record the new corpus in project memory.
 - **Ask in groups, and say why.** Group related questions into one message of
   at most about five, and say why you ask each one. Accept "I don't know", and
   record it as an open question. Ask a question with a few discrete answers,
-  such as the confirmation of a profile rating, as a multiple-choice question
+  such as the choice of a route for the model, as a multiple-choice question
   if your tool supports it, otherwise in plain text. Ask an open-ended question
   in plain conversation.
 - **Ask only what memory does not answer.** Check memory before you ask

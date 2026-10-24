@@ -109,7 +109,7 @@ that separate the notes, the deliverables, and the record of the runs:
 
   Present an inferred fact to the user as unconfirmed.
 - **A correction replaces a fact.** When the user corrects a fact, such as a
-  rating of the profile or a description of the data, replace the old entry
+  working preference or a description of the data, replace the old entry
   with the corrected one. When they say "forget X", delete the facts about the
   person that X names, from person memory and from the section
   *Project-specific preferences and background* of project memory. A project's
@@ -131,7 +131,8 @@ that separate the notes, the deliverables, and the record of the runs:
   personal information, such as health, finances, or demographics, only when
   the user explicitly asks you to remember it.
 - **Write at four checkpoints:**
-  1. after the user confirms the background assessment;
+  1. after you choose the working preferences of Phase 3, and after the user
+     confirms or corrects them;
   2. at the end of each phase;
   3. after each design revision;
   4. before the session ends, or whenever the user signals that they are
@@ -148,17 +149,20 @@ Last updated: <date>
 ## About
 - Name or how to address them, role, discipline, institution — only what they shared.
 
-## Background profile
-| Dimension | Rating | Confidence | Basis |
-|---|---|---|---|
-| Domain science (<discipline>) | Expert | high | [confirmed 2026-10-23] ... |
-| Probability and statistics | ... | ... | ... |
-(dimensions and ratings from BACKGROUND-RUBRIC.md)
-
 ## Working preferences
-- Explanation depth, code style, how many questions at once, preferred
-  terminology, preferred backends (e.g. "prefers PyMC over Stan"), anything
-  they asked you to do or avoid. Each with its source tag.
+One line per preference, phrased as an instruction the user could give,
+from BACKGROUND-RUBRIC.md, each with its source tag. Examples:
+- Explain each Bayesian choice briefly, in plain words. [confirmed 2026-10-24]
+- Relate each model to its glmmTMB formula. [stated 2026-10-24]
+- Choose the priors and the sampler yourself, and say what you chose. [confirmed 2026-10-24]
+- Give me a complete notebook that runs top to bottom. [inferred 2026-10-24]
+- Anything else they asked you to do or avoid, such as "show me the math briefly".
+
+## Experience
+Facts about their experience that they stated or confirmed, in their words. Examples:
+- Fits glm, glmer, and glmmTMB models in R routinely. [stated 2026-10-24]
+- One Bayesian course, with JAGS; knows R-hat. [stated 2026-10-24]
+- Runs notebooks and reads pandas; does not write Python. [stated 2026-10-24]
 
 ## Environment
 - OS, Python setup (uv/conda/pip), ProbPipe version and installed extras,
@@ -228,8 +232,8 @@ Python: <python> · Kernel: <kernel>
 - <date> — <decision> — <why> — [confirmed] [superseded <date> by <decision>]
 
 ## Project-specific preferences and background
-- Anything that differs from person memory for this project (e.g. "new to
-  survival analysis even though fluent in regression").
+- Preferences or experience that hold only for this project, such as "explain
+  survival models from the start".
 
 ## Tried and ruled out
 - Approaches that failed or were rejected, and why, so that they are not proposed again.

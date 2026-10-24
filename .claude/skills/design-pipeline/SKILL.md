@@ -1,6 +1,6 @@
 ---
 name: design-pipeline
-description: Guide a user from a scientific or applied problem to a ProbPipe data analysis pipeline. The assistant searches the ProbPipe documentation and Bayesian workflow guidance, interviews the user about their problem, data, and models, confirms their background, and proposes and revises a pipeline with them, remembering the person and their projects across sessions. Use when someone wants help to design, plan, build, or resume an analysis with ProbPipe.
+description: Guide a user from a scientific or applied problem to a ProbPipe data analysis pipeline. The assistant searches the ProbPipe documentation and Bayesian workflow guidance, interviews the user about their problem, data, and models, agrees with them how to work together, and proposes and revises a pipeline with them, remembering the person and their projects across sessions. Use when someone wants help to design, plan, build, or resume an analysis with ProbPipe.
 argument-hint: [problem description or project to resume]
 disable-model-invocation: true
 ---

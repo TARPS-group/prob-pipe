@@ -63,9 +63,9 @@ For each dataset you can open:
 - Propose how the data maps onto ProbPipe objects in the form the user keeps
   it, such as tables, images, or the outputs of another pipeline, by the row
   "Hold the data" of
-  [CAPABILITIES.md](../CAPABILITIES.md). Present it by the Python rows of the
-  *Adaptation* section of [BACKGROUND-RUBRIC.md](../BACKGROUND-RUBRIC.md) for
-  the answer to the background question of [Phase 1](1-intake.md).
+  [CAPABILITIES.md](../CAPABILITIES.md). Present it by the rows on Python of the
+  [table of preferences](../BACKGROUND-RUBRIC.md#preferences) that the answer
+  to the background question of [Phase 1](1-intake.md) suggests.
 - Plan the preprocessing as steps of the pipeline that start from the raw files,
   by the row "Preprocess the data" of [CAPABILITIES.md](../CAPABILITIES.md).
   ProbPipe then records each step in the provenance of the data, and a rerun
