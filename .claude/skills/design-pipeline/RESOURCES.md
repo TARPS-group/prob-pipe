@@ -69,16 +69,27 @@ the real-data fit is interpreted only after it passes.
    pattern of the real data. Take the parameter values from several draws of
    the prior, and add values that the user judges realistic.
 2. **Fit with the planned method.** Fit each simulated dataset with the
-   inference method and the settings planned for the real data.
-3. **Check recovery and coverage of the estimands.** Across the simulated
-   datasets, the posterior intervals of each estimand cover its true value at
-   about their nominal rate. For each parameter, compute the posterior z-score,
-   which is the posterior mean minus the true value over the posterior
-   standard deviation, and the posterior contraction, which is one minus the
-   ratio of the posterior variance to the prior variance. A large z-score marks
-   bias, and a contraction near zero marks a parameter that the data does not
-   inform. Betancourt (2020) describes both.
-4. **Run SBC when the model or the method calls for it.** Run
+   inference method and the settings planned for the real data, and record
+   the settings.
+3. **Diagnose each fit.** Record the divergences and the R-hat of each fit by
+   the criteria of stage E. A divergence or a failed diagnostic in any fit
+   fails the validation. Coverage averages over the fits, so it can look
+   nominal while many fits are broken.
+4. **Check coverage over the prior draws and recovery at the chosen values.**
+   Bayesian intervals are calibrated on average over the prior, so the
+   coverage check uses the datasets simulated from prior draws. Across them,
+   the posterior intervals of each estimand cover its true value at about
+   their nominal rate. At each value that the user chose, check recovery
+   instead. For each parameter, compute the posterior z-score, which is the
+   posterior mean minus the true value over the posterior standard
+   deviation, and the posterior contraction, which is one minus the ratio of
+   the posterior variance to the prior variance. A large z-score marks bias,
+   and a contraction near zero marks a parameter that the data does not
+   inform. Betancourt (2020) describes both. Also check that a wide interval,
+   such as the 95% interval, holds the true value. A posterior at a chosen
+   value shrinks toward the prior, so expect a moderate z-score in the
+   direction of the prior mean.
+5. **Run SBC when the model or the method calls for it.** Run
    simulation-based calibration (Talts et al. 2018) for a custom likelihood and
    for any approximate method. Run it always for an amortized method, because
    its posterior at each simulated dataset costs one network evaluation. Scale
@@ -86,8 +97,10 @@ the real-data fit is interpreted only after it passes.
    replications reveal gross errors. Data-dependent test quantities, such as
    the log likelihood, make the check more sensitive (Modrák et al. 2025).
    Read the ranks from an ECDF plot with simultaneous confidence bands
-   (Säilynoja et al. 2022).
-   When you skip SBC, record the reason in the design document.
+   (Säilynoja et al. 2022). The replications of SBC can use cheaper settings
+   than the real fit, such as fewer chains or shorter runs, because the fits
+   of steps 2 and 3 use the real settings. Record the settings of SBC beside
+   its result. When you skip SBC, record the reason in the design document.
 
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage D.
 
@@ -111,7 +124,8 @@ the real-data fit is interpreted only after it passes.
   The thresholds are the conventional defaults. A project that sets another
   threshold records it as a decision with its reason.
   1. Chains: run at least four, from dispersed initial values, so that
-     separate modes show up as disagreeing chains.
+     separate modes show up as disagreeing chains. The replications of SBC in
+     stage D can run fewer.
   2. R-hat: the rank-normalized split-R-hat is below 1.01 for every parameter
      and every estimand. For many short chains, use the nested R-hat instead
      (Margossian et al. 2025).
@@ -129,8 +143,14 @@ the real-data fit is interpreted only after it passes.
 - **Folk theorem:** computational trouble usually signals a model problem.
   Before you tune the sampler, look for weak identifiability, a poor
   parameterization, poorly scaled parameters, or a model that disagrees with
-  the data. A non-centered parameterization often helps a hierarchical model
-  (Papaspiliopoulos et al. 2007).
+  the data.
+- **Parameterize a hierarchical model by how well the data inform its
+  groups.** For a normal hierarchical model with few groups, or with groups
+  that the data inform weakly, the default is the non-centered
+  parameterization, which writes each group effect as the population mean
+  plus the population scale times a standard normal variable. When the data
+  inform every group well, the centered parameterization is the alternative,
+  because it then samples better (Papaspiliopoulos et al. 2007).
 - **Validate an approximate method before you report its results.** An
   approximate method, such as VI, amortized inference, or ABC, is validated in
   a step that the user sees. Mean-field VI typically underestimates the
