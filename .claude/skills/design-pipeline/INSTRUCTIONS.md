@@ -99,7 +99,7 @@ when either check fails, and record the new corpus in project memory.
   term, starting from `design/glossary.md`, and take only the code as proof
   that something exists. An export that `<corpus>/INDEX.md` marks **not
   implemented** raises `NotImplementedError` on every call, so use none of
-  them. When a user's need falls in a gap that the design
+  these exports. When a user's need falls in a gap that the design
   describes and the code does not yet implement, say so and propose a
   workaround.
 - **Say what ProbPipe cannot do.** When ProbPipe does not cover a need, such
@@ -155,30 +155,32 @@ when either check fails, and record the new corpus in project memory.
   version of the design in seven steps:
   1. a first look at the data, which ends the data step of
      [Phase 2](phases/2-materials.md#data);
-  2. a baseline model, which is the simplest defensible model, and then the
-     elaboration that the estimands need, such as an overdispersion term or a
-     spatial effect that a question asks about. The user's own model, when
+  2. a baseline model, which is the simplest defensible model, and then, when
+     the estimands need one, an elaboration, such as an overdispersion term or
+     a spatial effect that a question asks about. The user's own model, when
      they bring one, is the elaboration. An estimand that compares the two
      models, such as "does overdispersion change the conclusions?", then has
      an answer;
   3. a prior predictive check;
   4. the validation on realistic simulated data of
      [RESOURCES.md](RESOURCES.md) stage D, with the number of simulated
-     datasets scaled to the time available, and graded by step 6 of that
-     stage for the quick start mode;
+     datasets scaled to the time available, and graded as step 6 of that
+     stage grades a validation in quick start mode;
   5. a fit with its diagnostics;
   6. one posterior predictive check;
   7. the estimands with their intervals.
 
   Steps 3 to 6 apply to each model of step 2. Record each other stage of the
   checklist as `deferred: quick start` in the design document, and list the
-  deferred stages among the next steps. Quick start keeps a stage that answers
-  a concern the user names, such as a prior sensitivity analysis for a user
-  who worries about the influence of the priors. Give the user a rough
-  runtime for each fit, from the compute plan of the design document, which
-  a probe script or the first smoke run calibrates. Record the user's answer
-  in project memory. The full workflow takes up the deferred stages, and the
-  user can switch to it at any point.
+  deferred stages among the next steps. Quick start keeps a stage that an
+  estimand needs, such as the cross-validation of an estimand that compares
+  models by their predictions, like a difference of LOO. It also keeps a stage
+  that answers a concern the user names, such as a prior sensitivity analysis
+  for a user who worries about the influence of the priors. Give the user a
+  rough runtime for each fit, from the compute plan of the design document,
+  which a probe script or the first smoke run calibrates. Record the user's
+  answer in project memory. The full workflow takes up the deferred stages,
+  and the user can switch to it at any point.
 - **Guard the analysis against data-driven revisions.** Revise each design by
   the [rules for revisions](phases/5-feedback.md#rules-for-revisions), which
   apply in every phase.
@@ -259,8 +261,8 @@ phase follows these rules:
    [phases/4-proposal.md](phases/4-proposal.md#write-the-code) defines: the
    smoke stage first, the validate stage after a smoke run succeeds, and the
    fit stage only after the validate stage, whose grades the gate of the fit
-   stage checks. Give the expected runtime of
-   each stage from the compute plan of the design document.
+   stage checks. Give the expected runtime of each stage from the compute plan
+   of the design document.
 7. **Bound every run.** Run each command with a timeout, about ten minutes for
    a smoke run. Run a fit that can take longer in the background, with its
    output written to a log file in the workspace, or give the user the command

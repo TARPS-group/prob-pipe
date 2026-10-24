@@ -95,8 +95,9 @@ ground rule "Offer to build an interface to a missing component" of
 
 In the quick start mode of the [ground rules](../INSTRUCTIONS.md#ground-rules),
 step 2 plans the baseline and the elaboration that the mode names, and step 8
-is one posterior predictive check of each model. The mode decides which other
-stages to defer, such as the cross-validation of step 8 and step 10.
+is one posterior predictive check of each model and the cross-validation that
+the mode keeps for an estimand. The mode decides which other stages to defer,
+such as step 10.
 
 When the diagnostics of step 7 fail in a run of the validate stage, take the
 remedies of the bullet "Remedy divergences in this order" of RESOURCES.md

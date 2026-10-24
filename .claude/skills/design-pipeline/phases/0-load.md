@@ -48,15 +48,15 @@ the first questions. Search the rest of the corpus when a question needs it.
    consecutive line ranges, which for a part start at the lines of the
    headings that `<corpus>/MANIFEST.md` lists.
 5. Check whether ProbPipe imports in that environment, and from where, with
-   `<python> -c "import probpipe; print(probpipe.__version__, probpipe.__file__)"`.
-   Run it from the person-memory directory, because `-c` puts the current
-   directory first on the path, and a directory that holds another copy of
-   ProbPipe would import that copy. When the file is outside
-   `<checkout>/probpipe/`, tell the user that the environment runs another
-   copy of ProbPipe, whose API can differ from the corpus. The version comes
-   from the installed metadata, so the commit of step 6 identifies the code.
-   Note which optional backends of the installation page are installed,
-   since they decide whether you can run and validate code later.
+   `<python> -P -c "import probpipe; print(probpipe.__version__, probpipe.__file__)"`.
+   The flag `-P` leaves the current directory off the path, so a directory
+   that holds another copy of ProbPipe does not import that copy. When the
+   file is outside `<checkout>/probpipe/`, tell the user that the environment
+   runs another copy of ProbPipe, whose API can differ from the corpus. The
+   version comes from the installed metadata, so the commit of step 6
+   identifies the code. Note which optional backends of the installation page
+   are installed, since they decide whether you can run and validate code
+   later.
 6. Once Phase 1 creates the project memory, record in it the corpus directory
    and the commit and version that `<corpus>/MANIFEST.md` names, and record
    `<python>` beside them, with the optional backends of step 5 and each

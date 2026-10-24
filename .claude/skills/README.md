@@ -200,7 +200,9 @@ builds the corpus, and reads the instructions.
   writes beside them an index of the exports and inference methods and a
   manifest of the checkout's version and of the line of each heading;
 - `design-pipeline/check_symbols.py`: checks the ProbPipe names and call
-  arguments of a pipeline script or notebook against the installed package.
+  arguments of a pipeline script or notebook, and of the modules beside it
+  that it imports, against the installed package, and reports each call of
+  an export that is not implemented.
 
 **What it does:**
 1. **Loads knowledge on demand:** replies first, builds the corpus, reads the

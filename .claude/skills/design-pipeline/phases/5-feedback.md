@@ -45,8 +45,8 @@ any phase, follows these rules:
    - *added after the fit:* an analysis added after a fit to the real data and
      prompted by something other than that fit, such as a reviewer's request
      for another model or a prior sensitivity analysis. It runs beside the
-     main model as a sensitivity analysis, by rule 5, and the main model
-     stays as it is.
+     main model as a sensitivity analysis, and the main model stays as it
+     is.
 
    A fix of the code after a smoke run implements the design as it stands, so
    it needs no new version.
