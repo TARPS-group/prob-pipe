@@ -2,8 +2,7 @@
 
 The design-pipeline assistant uses this file to make each pipeline
 statistically and computationally sound. Part 1 is an operational checklist,
-distilled mainly from *Bayesian Workflow* by Gelman, Vehtari, McElreath, and
-coauthors, and [CAPABILITIES.md](CAPABILITIES.md) names the ProbPipe tools for
+distilled mainly from *Bayesian Workflow* (Gelman et al. 2026), and [CAPABILITIES.md](CAPABILITIES.md) names the ProbPipe tools for
 each of its stages. Part 2 is an
 annotated bibliography, which says what each resource is good for and when to
 point a user to it.
@@ -12,7 +11,7 @@ Apply Part 1 from your own knowledge of these sources, which needs no network
 access. Part 1 states the thresholds of the diagnostics. When you have web
 access and need detail beyond what you know, such as the derivation of a
 diagnostic, consult the source. When a link is dead,
-search for the title. Cite only the resources of this list and the ones you
+search for the title. Cite only the resources of Part 2 and the ones you
 have opened in this session.
 
 ---
@@ -47,7 +46,7 @@ model. Plan for that return.
   exists. Weakly informative priors, which rule out implausible magnitudes,
   are almost always better than flat priors.
 - A prior has meaning only in the context of the likelihood, so judge it
-  through its **prior predictive distribution**.
+  through its **prior predictive distribution** (Gelman et al. 2017).
 - Rescale or standardize the parameters so that the priors and the sampler
   both work on scales of order one.
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage B.
@@ -78,15 +77,16 @@ the real-data fit is interpreted only after it passes.
    standard deviation, and the posterior contraction, which is one minus the
    ratio of the posterior variance to the prior variance. A large z-score marks
    bias, and a contraction near zero marks a parameter that the data does not
-   inform. Betancourt's case study "Towards a Principled Bayesian Workflow"
-   describes both.
+   inform. Betancourt (2020) describes both.
 4. **Run SBC when the model or the method calls for it.** Run
    simulation-based calibration (Talts et al. 2018) for a custom likelihood and
    for any approximate method. Run it always for an amortized method, because
    its posterior at each simulated dataset costs one network evaluation. Scale
    the number of replications to the budget, since even 100 to 200
    replications reveal gross errors. Data-dependent test quantities, such as
-   the log likelihood, make the check more sensitive (Modrák et al. 2023).
+   the log likelihood, make the check more sensitive (Modrák et al. 2025).
+   Read the ranks from an ECDF plot with simultaneous confidence bands
+   (Säilynoja et al. 2022).
    When you skip SBC, record the reason in the design document.
 
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage D.
@@ -104,7 +104,7 @@ the real-data fit is interpreted only after it passes.
 
   Discrete latent variables, such as mixture labels, change points, or the
   states of a hidden Markov model, can be marginalized out of the likelihood
-  so that NUTS applies. When a discrete variable cannot be marginalized, say
+  so that NUTS applies (Stan User's Guide; Zucchini et al. 2016). When a discrete variable cannot be marginalized, say
   so, and choose a method that samples it.
 - **Diagnose each MCMC run** by these criteria, and interpret a posterior only
   after it passes them. Vehtari et al. (2021) define the R-hat and the ESS.
@@ -113,15 +113,14 @@ the real-data fit is interpreted only after it passes.
   1. Chains: run at least four, from dispersed initial values, so that
      separate modes show up as disagreeing chains.
   2. R-hat: the rank-normalized split-R-hat is below 1.01 for every parameter
-     and every estimand. For many short chains, use the nested R-hat instead.
-     TODO(source): Margossian, Hoffman, Sountsov, Riou-Durand, Vehtari &
-     Gelman, "Nested R-hat: assessing the convergence of Markov chain Monte
-     Carlo when running many short chains" (Bayesian Analysis, 2024).
+     and every estimand. For many short chains, use the nested R-hat instead
+     (Margossian et al. 2025).
   3. ESS: the bulk ESS and the tail ESS exceed 100 per chain.
   4. MCSE: the Monte Carlo standard error of each estimand is small against
      the precision that the question needs.
   5. Divergences: each divergent transition after warmup needs investigation,
-     because it marks a region that the sampler cannot explore reliably.
+     because it marks a region that the sampler cannot explore reliably
+     (Betancourt 2017).
   6. E-BFMI: a value below about 0.3 signals that the momentum resampling
      explores the energy distribution poorly.
   7. Tree depth: trajectories that stop at the maximum tree depth make a run
@@ -130,7 +129,8 @@ the real-data fit is interpreted only after it passes.
 - **Folk theorem:** computational trouble usually signals a model problem.
   Before you tune the sampler, look for weak identifiability, a poor
   parameterization, poorly scaled parameters, or a model that disagrees with
-  the data. A non-centered parameterization often helps a hierarchical model.
+  the data. A non-centered parameterization often helps a hierarchical model
+  (Papaspiliopoulos et al. 2007).
 - **Validate an approximate method before you report its results.** An
   approximate method, such as VI, amortized inference, or ABC, is validated in
   a step that the user sees. Mean-field VI typically underestimates the
@@ -151,16 +151,15 @@ the real-data fit is interpreted only after it passes.
      the end of the optimization.
   3. Pareto k̂: weight each draw of the approximation by the ratio of the
      unnormalized posterior density to the density of the approximation, and
-     compute the k̂ of PSIS from these weights (Yao et al. 2018). A k̂ above
+     compute the k̂ of PSIS from these weights (Yao et al. 2018a). A k̂ above
      0.7 means that importance sampling cannot correct the approximation, so
      report neither its intervals nor its tail quantities.
 - **Many observations.** Stochastic-gradient MCMC, such as stochastic-gradient
   Langevin dynamics, estimates the gradient of the log density from a random
   subset of the observations at each step, so each step costs a fraction of a
-  full-data gradient. TODO(source): Welling & Teh, "Bayesian learning via
-  stochastic gradient Langevin dynamics" (ICML, 2011). With a constant step
-  size and no Metropolis–Hastings correction, its draws are biased, and the
-  bias grows with the step size. R-hat and ESS measure how well the chain
+  full-data gradient (Welling & Teh 2011). With a constant step size and no
+  Metropolis–Hastings correction, its draws are biased, and the bias grows
+  with the step size (Nemeth & Fearnhead 2021). R-hat and ESS measure how well the chain
   mixes around its own stationary distribution, which differs from the
   posterior by that bias. Use full-batch NUTS when the data fit in memory and
   a full-data gradient is affordable. Otherwise, validate stochastic-gradient
@@ -177,9 +176,8 @@ the real-data fit is interpreted only after it passes.
   3. Kernel Stein discrepancy: compute it for the draws of each full-data
      fit. It needs only the gradient of the log posterior density at the
      draws, and a smaller value means draws closer to the posterior. It has
-     no absolute scale, so compare its values across the step sizes.
-     TODO(source): Gorham & Mackey, "Measuring sample quality with kernels"
-     (ICML, 2017).
+     no absolute scale, so compare its values across the step sizes
+     (Gorham & Mackey 2017).
 - **Numerical precision:** run MCMC in double precision when the log density
   sums many terms or the posterior is poorly scaled, because single
   precision then loses the accuracy that the gradient and the acceptance step
@@ -196,17 +194,13 @@ the real-data fit is interpreted only after it passes.
   model's weakest assumptions, beyond the mean, and use graphical checks.
 - **Predictive performance:** estimate it by the cross-validation scheme that
   matches the prediction task of the estimands:
-  1. new observations of exchangeable units: PSIS-LOO (Vehtari, Gelman &
-     Gabry 2017);
+  1. new observations of exchangeable units: PSIS-LOO (Vehtari et al.
+     2017);
   2. new groups of a hierarchical model: leave-one-group-out;
   3. future values of a time series: leave-future-out or rolling-origin
-     cross-validation. TODO(source): Bürkner, Gabry & Vehtari, "Approximate
-     leave-future-out cross-validation for Bayesian time series models"
-     (Journal of Statistical Computation and Simulation, 2020);
+     cross-validation (Bürkner et al. 2020);
   4. new locations of spatial data: cross-validation that leaves out blocks
-     of nearby locations. TODO(source): Roberts et al., "Cross-validation
-     strategies for data with temporal, spatial, hierarchical, or phylogenetic
-     structure" (Ecography, 2017).
+     of nearby locations (Roberts et al. 2017).
 - **Pareto k̂:** check the k̂ of each left-out unit. A k̂ above 0.7, or above
   the threshold min(1 − 1/log₁₀ S, 0.7) for S posterior draws, makes the PSIS
   estimate for that unit unreliable (Vehtari et al. 2024). For those units,
@@ -215,6 +209,10 @@ the real-data fit is interpreted only after it passes.
 - **Calibration:** check the leave-one-out predictive distributions with
   LOO-PIT, whose values are uniform for a calibrated model (Gabry et al.
   2019).
+- **Forecasts:** score a forecast of a time series or of new locations with
+  a proper scoring rule, such as the log score or the continuous ranked
+  probability score, and check its calibration with the probability integral
+  transform (Gneiting & Raftery 2007; Gneiting et al. 2007).
 - **Valid likelihoods only:** LOO, WAIC, and model comparison use the
   normalized pointwise log likelihood. A likelihood known only up to a
   constant that does not depend on the parameters, such as a learned
@@ -227,17 +225,16 @@ the real-data fit is interpreted only after it passes.
   expected log predictive density (elpd) with standard errors, as well as on
   fit. The standard error of a difference is unreliable in three cases: the
   difference is below about 4, the number of observations is small, or the
-  models are clearly misspecified. TODO(source): Sivula, Magnusson, Matamoros
-  & Vehtari, "Uncertainty in Bayesian leave-one-out cross-validation based
-  model comparison" (arXiv:2008.10296).
+  models are clearly misspecified (Sivula et al. 2020).
 - Stacking weights the predictive distributions of several models (Yao et al.
-  2018). When several models predict comparably well, prefer stacking for
+  2018b). When several models predict comparably well, prefer stacking for
   prediction to the selection of one model. Stacking combines predictive
   distributions only, because a parameter can mean different things in
   different models.
 - When the models may be misspecified, check whether the conclusions are
   stable. Bagged posteriors, or BayesBag, give a more reproducible model
-  selection and an uncertainty that reflects the misspecification. The
+  selection and an uncertainty that reflects the misspecification (Huggins &
+  Miller 2023; Huggins & Miller 2024). The
   bootstrap of BayesBag assumes exchangeable units, so resample whole groups
   or blocks when the data are grouped or dependent.
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage G.
@@ -248,7 +245,8 @@ the real-data fit is interpreted only after it passes.
   parameters, and report the uncertainty of the estimands.
 - **Sensitivity analysis:** measure how the conclusions change under
   alternative priors, likelihoods, or data exclusions, and report the changes
-  that matter.
+  that matter. Power-scaling the prior and the likelihood measures this
+  sensitivity from the draws of one fit (Kallioinen et al. 2024).
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage H.
 
 ### I. Simulators, amortized inference, and emulators
@@ -259,16 +257,16 @@ the real-data fit is interpreted only after it passes.
      stage E;
   2. a simulator without a tractable likelihood: simulation-based inference,
      which is ABC or a neural estimate of the posterior, the likelihood, or
-     the likelihood-to-evidence ratio (Cranmer, Brehmer & Louppe 2020);
+     the likelihood-to-evidence ratio (Cranmer et al. 2020);
   3. many datasets of one size, analyzed with one model: neural posterior
      estimation, whose trained network gives the posterior of each new
-     dataset at the cost of one network evaluation;
+     dataset at the cost of one network evaluation (Radev et al. 2022);
   4. datasets of varying size whose observations are conditionally
      independent: a neural estimate of the likelihood or of the
      likelihood-to-evidence ratio of one observation, followed by MCMC on
      each dataset, with the restriction of stage F on a learned ratio;
   5. an expensive deterministic simulator: a Gaussian-process emulator
-     trained on a design of simulator runs.
+     (Rasmussen & Williams 2006) trained on a design of simulator runs.
 - **Budget the simulations first.** The budget bounds the method, because ABC
   spends its simulations on each dataset and a neural estimator spends them
   once, in training. Record four quantities before you choose:
@@ -293,13 +291,9 @@ the real-data fit is interpreted only after it passes.
   which is the expected-coverage check. Coverage below the nominal level at
   any level is a failure, because it means intervals that are too narrow,
   which is the common failure of neural posterior estimates. Coverage above
-  the nominal level is conservative, which is acceptable. TODO(source): Hermans, Delaunoy, Rozet, Wehenkel, Begy &
-  Louppe, "A crisis in simulation-based inference? Beware, your posterior
-  approximations can be unfaithful" (Transactions on Machine Learning
-  Research, 2022). The coverage of each parameter's interval misses errors in
-  the joint posterior, which the TARP test checks. TODO(source): Lemos,
-  Coogan, Hezaveh & Perreault-Levasseur, "Sampling-based accuracy testing of
-  posterior estimators for general inference" (ICML, 2023). When a reference
+  the nominal level is conservative, which is acceptable (Hermans et al.
+  2022). The coverage of each parameter's interval misses errors in
+  the joint posterior, which the TARP test checks (Lemos et al. 2023). When a reference
   posterior exists, such as an MCMC fit of a tractable version of the model,
   compare the two by the validation of approximate methods in stage E.
 - **Check that the observed data resemble the simulations.** Compare the
@@ -308,30 +302,22 @@ the real-data fit is interpreted only after it passes.
   simulations means that the simulator does not produce data like the
   observed data. An amortized estimator evaluated there extrapolates beyond
   its training data, so revise the simulator or the prior before you
-  interpret its posterior. TODO(source): Schmitt, Bürkner, Köthe & Radev,
-  "Detecting model misspecification in amortized Bayesian inference with
-  neural networks" (DAGM German Conference on Pattern Recognition, 2023).
-- **Validate an emulator on held-out simulator runs.** TODO(source):
-  Rasmussen & Williams, *Gaussian Processes for Machine Learning* (MIT Press,
-  2006). The emulator is valid for inference when it passes five checks:
+  interpret its posterior (Schmitt et al. 2024).
+- **Validate an emulator on held-out simulator runs.** The emulator is valid for inference when it passes five checks:
   1. Training design: the inputs of the training runs fill the region of the
      parameter space that the prior supports, as a Latin hypercube does, and
      sequential runs add inputs where the emulator's predictive variance is
-     large. TODO(source): Gramacy, *Surrogates: Gaussian Process Modeling,
-     Design, and Optimization for the Applied Sciences* (CRC, 2020).
+     large (Gramacy 2020).
   2. Held-out runs: the standardized error of each held-out run, which is the
      emulator's prediction error over its predictive standard deviation, is
      approximately standard normal. Many standardized errors beyond ±2 mean
-     that the emulator is overconfident. TODO(source): Bastos & O'Hagan,
-     "Diagnostics for Gaussian process emulators" (Technometrics, 2009).
+     that the emulator is overconfident (Bastos & O'Hagan 2009).
   3. Propagation: the likelihood includes the emulator's predictive variance,
      so that the posterior reflects the emulator's error.
   4. Discrepancy: the model includes a term for the difference between the
      simulator and the real system, because a calibration without it can
-     give biased and overconfident parameter estimates (Kennedy & O'Hagan 2001).
-     TODO(source): Brynjarsdóttir & O'Hagan, "Learning about physical
-     parameters: the importance of model discrepancy" (Inverse Problems,
-     2014).
+     give biased and overconfident parameter estimates (Kennedy & O'Hagan
+     2001; Brynjarsdóttir & O'Hagan 2014).
   5. Precision: the Gaussian process is computed in double precision,
      because its covariance matrix is often ill-conditioned and its Cholesky
      factor fails or loses accuracy in single precision. The row "Emulate an
@@ -344,6 +330,8 @@ the real-data fit is interpreted only after it passes.
 - Fix the random seeds, record the software versions, keep every model of the
   sequence, and record each decision with its reason in the changelog of the
   design document.
+- Report the analysis with the items of the Bayesian analysis reporting
+  guidelines (Kruschke 2021).
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage J.
 
 ---
