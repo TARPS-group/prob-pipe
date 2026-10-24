@@ -79,10 +79,12 @@ On the fast path of the [ground rules](../INSTRUCTIONS.md#ground-rules), step
 8 is one posterior predictive check, and the cross-validation of step 8 and all
 of step 10 are deferred.
 
-When the diagnostics of step 7 or the checks of step 8 fail, return to step 3
-and revise the model before you tune the algorithm, by the folk theorem of
-RESOURCES.md stage E. Each return is a revision, which follows the
-[rules for revisions](5-feedback.md#rules-for-revisions).
+When the diagnostics of step 7 or the checks of step 8 fail in a full run,
+return to step 3 and revise the model before you tune the algorithm, by the
+folk theorem of RESOURCES.md stage E. Each return is a revision, which follows
+the [rules for revisions](5-feedback.md#rules-for-revisions). Only a full run
+decides a return, because the budgets of a smoke run are too small to judge
+the diagnostics and the checks.
 
 ## Write the code
 
@@ -103,10 +105,15 @@ such as the prior predictive draws or the posterior predictive check, with a
 one-sentence comment on how to read it.
 
 The code has a smoke mode for fast trial runs. It reads the environment
-variable `SMOKE`, and when `SMOKE=1` it uses small budgets: a few draws,
-chains, simulations, and training epochs, and a subsample of the data. A
-notebook sets the budgets from the same variable in its first code cell after
-the install cell.
+variable `SMOKE`, and when `SMOKE=1` it uses small budgets, such as a few
+draws, chains, or training epochs. By default, a smoke run fits data simulated
+from the model at the structure of the real data, such as its sizes, its
+groups, and its pattern of missing values, in place of the real data. The real
+data then stays out of the session, and the code fixes that the smoke runs
+need stay out of the record of revisions. A smoke run on a subsample of the
+real data is an option that the user approves, and never for data that
+[Phase 2](2-materials.md#data) found sensitive. A notebook sets the budgets
+from the same variable in its first code cell after the install cell.
 
 ## Check and run the code
 

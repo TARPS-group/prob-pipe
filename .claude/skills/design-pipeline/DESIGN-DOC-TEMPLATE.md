@@ -90,13 +90,13 @@ Needs that ProbPipe does not meet, the workaround used, and whether each is
 worth a GitHub issue.
 
 ## 9. Changelog
-| Version | Changes | Reason (feedback or finding) | Pre-data or data-driven |
+| Version | Changes | Reason (feedback or finding) | Class (pre-data, data-driven, or computational) |
 |---|---|---|---|
 
 ## 10. Fit log
 Every fit, in order, smoke runs and fits to simulated data included.
-| Date | Design version | Model | Data (real, simulated, or smoke) | Method and settings (chains, draws, seed) | Diagnostics | Checks passed and failed | Outcome |
-|---|---|---|---|---|---|---|---|
+| Date | Design version | Model | Data (real or simulated) | Run mode (smoke or full) | Method and settings (chains, draws, seed) | Diagnostics | Checks passed and failed | Outcome |
+|---|---|---|---|---|---|---|---|---|
 
 ## 11. Getting it running
 - Install: the command from `docs/get_started/installation.md` for the

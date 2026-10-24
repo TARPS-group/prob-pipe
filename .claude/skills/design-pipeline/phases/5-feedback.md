@@ -13,9 +13,9 @@ document lists each deficiency that remains.
    resolution for the user to confirm.
 3. Revise the design by the [rules for revisions](#rules-for-revisions). Bump
    the version in `<workspace>/pipeline-design.md`, and add a changelog entry
-   that lists what changed, why, and whether the revision is pre-data or
-   data-driven. Update the pipeline (`<workspace>/pipeline.py` or
-   `<workspace>/pipeline.ipynb`) to match, and check and run it again as
+   that lists what changed, why, and the class of the revision. Update the
+   pipeline (`<workspace>/pipeline.py` or `<workspace>/pipeline.ipynb`) to
+   match, and check and run it again as
    [Phase 4](4-proposal.md#check-and-run-the-code) describes.
 4. Record the decisions and the rejected options in project memory, which
    keeps them by the append-only rule of
@@ -36,9 +36,15 @@ A revision prompted by a fit to the real data can fit the noise of that data,
 and the analysis then overstates its certainty. Every revision of a design, in
 any phase, follows these rules:
 
-1. **Classify each revision.** A *pre-data* revision is made before any fit to
-   the real data. A *data-driven* revision is prompted by a fit, a predictive
-   check, or a cross-validation result.
+1. **Classify each revision** into one of three classes:
+   - *pre-data:* a change made before any fit to the real data;
+   - *data-driven:* a change of the model prompted by a fit to the real data,
+     a predictive check, or a cross-validation result;
+   - *computational:* the same model computed another way, such as a
+     reparameterization or other settings of the sampler.
+
+   A fix of the code after a smoke run implements the design as it stands, so
+   it needs no new version.
 2. **Keep each prior independent of its own posterior.** When the user asks to
    change a prior after seeing the posterior it produced, say that the change
    uses the data twice, and propose a sensitivity analysis over both priors
