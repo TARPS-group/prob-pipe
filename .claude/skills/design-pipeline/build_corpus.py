@@ -14,8 +14,8 @@ installed. It builds the corpus in four steps:
    directive of an API page statically, with ``ast``, to the symbol's
    signature and docstring;
 3. it writes the result as tiered part files, each at most ``PART_LINES``
-   lines and ``PART_CHARS`` characters, so that one read of a file returns all
-   of it;
+   lines and ``PART_CHARS`` characters, which an agent reads in a few line
+   ranges that start at the headings ``MANIFEST.md`` lists;
 4. it writes ``INDEX.md``, which lists the public exports with their
    signatures, the inference methods with their priorities, and the contents
    of the user guide and the tutorials, and ``MANIFEST.md``, which records the

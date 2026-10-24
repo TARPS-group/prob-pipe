@@ -1,13 +1,13 @@
 # Phase 0 — Load knowledge and memory
 
-Reply to the user before you read the documentation, and read only what the
-first questions need. The rest of the corpus is searched when a question needs
-it.
+Reply to the user before you read the documentation. Before the reply, read
+only the memory of step 1 and [phases/1-intake.md](1-intake.md), which holds
+the first questions. Search the rest of the corpus when a question needs it.
 
 1. Read person memory, at the location that
    [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#locations) gives, if it exists. If
    the opening message names a project, read that project's memory too.
-2. Reply to the user first, in one or two sentences:
+2. Reply to the user first, in a short paragraph:
    - **Returning user:** greet them by name if you know it. Name one project,
      which is the project whose workspace contains the current directory, or
      else the project they worked on most recently. Say in one sentence where
@@ -19,8 +19,8 @@ it.
      resume protocol of [INSTRUCTIONS.md](../INSTRUCTIONS.md#resume-protocol):
      read the project's memory and workspace files, summarize where things
      stand and the agreed next step, and continue at the recorded phase.
-   - **New user:** say how the session will go, and ask the first questions of
-     [Phase 1](1-intake.md).
+   - **New user:** say how the session will go, and ask the first group of
+     questions of [Phase 1](1-intake.md).
 3. Build the corpus while the user answers. If your agent can run commands
    after its reply in the same turn, build it then, and otherwise build it at
    the start of your next turn. Run the script with `<python>`, so that its
@@ -39,7 +39,10 @@ it.
 4. Read in full `<corpus>/INDEX.md`, each `1-overview` part that the manifest
    lists, and [CAPABILITIES.md](../CAPABILITIES.md). The index lists the
    public exports with their signatures, the inference methods with their
-   priorities, and the contents of the tutorials and the user guide.
+   priorities, and the contents of the tutorials and the user guide. When
+   your agent's read returns fewer lines than a file holds, read the file in
+   consecutive line ranges, which for a part start at the lines of the
+   headings that `<corpus>/MANIFEST.md` lists.
 5. Check whether ProbPipe imports in that environment, with
    `<python> -c "import probpipe; print(probpipe.__version__)"`. Note which
    optional backends of the installation page are installed, since they decide

@@ -1,7 +1,8 @@
 # Phase 4 — Initial pipeline proposal
 
-Read [RESOURCES.md](../RESOURCES.md) in full before you start. Design the
-first version of the pipeline by
+Read Part 1 of [RESOURCES.md](../RESOURCES.md) in full before you start, and
+read the section of its Part 2 for the kind of model when you choose a resource
+to cite or to point the user to. Design the first version of the pipeline by
 [DESIGN-DOC-TEMPLATE.md](../DESIGN-DOC-TEMPLATE.md) and the workflow checklist
 of RESOURCES.md Part 1. Follow the decisions and preferences in memory, and
 propose nothing that memory records as ruled out. The ProbPipe calls for each
