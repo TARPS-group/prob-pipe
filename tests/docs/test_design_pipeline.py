@@ -8,6 +8,7 @@ the documentation into part files and an index.
 
 from __future__ import annotations
 
+import ast
 import importlib
 import json
 import re
@@ -133,6 +134,19 @@ class TestCheckSymbols:
         notebook.write_text(json.dumps({"cells": cells}))
         assert check_symbols.main([str(notebook)]) == 1
         assert "pipeline.ipynb[cell 3]:1:" in capsys.readouterr().out
+
+    def test_a_magic_that_is_the_only_statement_of_a_block_parses(self, tmp_path, capsys):
+        source = "IN_COLAB = False\nif IN_COLAB:\n    %pip install --quiet \\\n        probpipe\n"
+        notebook = tmp_path / "pipeline.ipynb"
+        notebook.write_text(json.dumps({"cells": [{"cell_type": "code", "source": source}]}))
+        assert check_symbols.main([str(notebook)]) == 0
+        assert "no problems" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        "notebook", sorted(ROOT.glob("docs/**/*.ipynb")), ids=lambda path: path.name
+    )
+    def test_each_documentation_notebook_parses(self, notebook):
+        ast.parse(check_symbols.read_source(notebook).code)
 
     def test_a_reassigned_name_is_not_checked(self, tmp_path):
         script = tmp_path / "pipeline.py"

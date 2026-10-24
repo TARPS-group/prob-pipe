@@ -57,7 +57,13 @@ class Source:
 
 
 def read_source(path: Path) -> Source:
-    """The code of the script or notebook *path*, with IPython magics blanked."""
+    """The code of the script or notebook *path*, with each IPython magic replaced by ``pass``.
+
+    A magic line becomes ``pass`` at its indentation, so that a block whose only
+    statement is a magic, such as ``%pip install`` under ``if IN_COLAB:``, still
+    parses. The lines that continue a magic after a trailing backslash become
+    blank.
+    """
     if path.suffix != ".ipynb":
         code = path.read_text()
         return Source(path, code, [f"{path}:{n}" for n in range(1, code.count("\n") + 2)])
@@ -67,9 +73,16 @@ def read_source(path: Path) -> Source:
     for index, cell in enumerate(cells, start=1):
         if cell.get("cell_type") != "code":
             continue
+        continued = False
         for number, line in enumerate("".join(cell.get("source", "")).splitlines(), start=1):
-            magic = line.lstrip().startswith(("%", "!"))
-            lines.append("" if magic else line)
+            stripped = line.lstrip()
+            if continued:
+                lines.append("")
+            elif stripped.startswith(("%", "!")):
+                lines.append(line[: len(line) - len(stripped)] + "pass")
+            else:
+                lines.append(line)
+            continued = (continued or stripped.startswith(("%", "!"))) and line.endswith("\\")
             labels.append(f"{path}[cell {index}]:{number}")
     return Source(path, "\n".join(lines) + "\n", labels)
 
