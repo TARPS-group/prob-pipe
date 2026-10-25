@@ -3354,21 +3354,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   together: ValueError: r must be positive`, and `error.failures` still lists
   each evaluation point.
 
-- **Every NUTS method takes `target_accept_prob` and `max_tree_depth`.**
-  `blackjax_nuts`, `nutpie_nuts`, `pymc_nuts`, `cmdstan_nuts`, and `tfp_nuts`
-  pass the target acceptance rate of the step-size adaptation and the maximum
-  depth of the NUTS tree to their backends, as `target_acceptance_rate` and
-  `max_num_doublings` to BlackJAX, `target_accept` and `maxdepth` to nutpie,
-  `target_accept` and `max_treedepth` to PyMC, `adapt_delta` and
-  `max_treedepth` to CmdStan, and `target_accept_prob` and `max_tree_depth` to
-  TFP. An unset option keeps the backend's default, which is 0.8 and 10, and
-  0.75 for `tfp_nuts`'s target, so a seeded call draws what it drew before. A
-  target outside the open interval from 0 to 1 and a depth below 1 raise
-  `ValueError`, and a value of another type raises `TypeError`. Each method's
-  sample statistics hold the depth each draw's tree reached as ArviZ's
-  `tree_depth` and mark each draw at the maximum depth as
-  `reached_max_treedepth`, and `tfp_nuts` records each draw's leapfrog steps as
-  `num_integration_steps`:
+- **`blackjax_nuts` takes `target_accept_prob` and `max_tree_depth`.** It
+  passes the target acceptance rate of the step-size adaptation to BlackJAX's
+  window adaptation as `target_acceptance_rate`, and the maximum depth of the
+  NUTS tree to its NUTS kernel as `max_num_doublings`. An unset option keeps
+  BlackJAX's default of 0.8 and 10, which `blackjax_nuts` used before. A target outside the open interval from 0 to 1 and a depth below 1
+  raise `ValueError`, and a value of another type raises `TypeError`:
 
   ```python
   posterior = condition_on.using(
@@ -3389,20 +3380,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   posterior = condition_on.using(
       method="blackjax_hmc", method_options={"init": "per_chain"}
   )(model, observed)
-  ```
-
-- **`add_mcmc_diagnostics` computes the E-BFMI of each chain and counts the
-  draws at the maximum tree depth.** It reads `energy` and
-  `reached_max_treedepth` from the run's sample statistics, warns for a chain
-  whose E-BFMI is below `e_bfmi_threshold`, 0.3 unless set, and warns when any
-  draw reached the maximum depth. `posterior.diagnostics.mcmc.e_bfmi` and
-  `n_at_max_tree_depth` read the results, and `summary_table()` shows them with
-  the number of divergent transitions. A run that records neither statistic,
-  such as the energy of `tfp_nuts`, reads as `NotComputed`:
-
-  ```python
-  add_mcmc_diagnostics(posterior)
-  print(posterior.diagnostics.mcmc.e_bfmi, posterior.diagnostics.mcmc.n_at_max_tree_depth)
   ```
 
 ### Changed
@@ -5215,6 +5192,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trajectory length of `blackjax_hmc`, and `blackjax_nuts` accepted and ignored
   it, so a call that passes it to `blackjax_nuts` now raises the `TypeError` of
   an unknown method option.
+
+- **`summary_table()` reports divergences and a missing R-hat as not passed.**
+  A run with a divergent transition, or with an R-hat that is NaN or not
+  computed, as for chains that never move, ends the table with a line such as
+  `✗  Not passed: 400 divergent transitions and R-hat not computed for theta.`
+  instead of `✓  All available diagnostics passed.`
 
 ### Removed
 
