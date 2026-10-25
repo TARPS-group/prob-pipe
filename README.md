@@ -153,10 +153,10 @@ Its provenance shows it was generated using this sampling approach and that it i
 
 ## Installation
 
-ProbPipe requires Python 3.12 or later. It is not yet on PyPI, so it installs from GitHub, and until a release the documentation describes the `dev/overhaul` branch:
+ProbPipe requires Python 3.12 or later. It is not yet on PyPI, so it installs from GitHub, and until a release the documentation describes the `main` branch:
 
 ```bash
-pip install "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
+pip install "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@main"
 ```
 
 The [installation page](https://tarps-group.github.io/prob-pipe/get_started/installation/) provides guidance for installing ProbPipe directly using uv or with Google Colab.
