@@ -176,6 +176,11 @@ Write the code close to the mathematics, and in batches:
    data at the real design from the model that the pipeline passes to it, and
    masks it to the real pattern of missing values. The model, the inference,
    and the checks stay in the pipeline itself.
+4. End the pipeline with its reporting section, which starts at the line
+   `# --- reporting ---`. It reads the results of the fit and prints, plots,
+   or writes them, such as a summary table or an alert threshold computed
+   from the posterior draws. The data steps, the model, the priors, and the
+   inference settings stay above that line.
 
 The code runs in three stages. The first code cell after the install cell,
 or the top of a script, reads the stage with
@@ -197,10 +202,13 @@ editing that default.
    starts and writes it when the validation ends, with these entries:
    - `stage`, which is `"validate"`;
    - the design version;
-   - a hash of the code: the source of the code cells of the notebook, or of
-     the script, and of each module beside it that it imports, with each line
-     that reads `os.environ` left out, so that setting the stage keeps the
-     hash;
+   - a hash of the code that the validation depends on: the source of the
+     code cells of the notebook, or of the script, up to the line
+     `# --- reporting ---`, and of each module beside it that it imports
+     other than `<workspace>/report.py`, with each line that reads
+     `os.environ` left out. A change to the data steps, the model, the
+     priors, or the inference therefore changes the hash, and a change to
+     the reporting, or to the stage that the environment sets, keeps it;
    - the grade of each model, with its sentence;
    - the table of the validation.
 
