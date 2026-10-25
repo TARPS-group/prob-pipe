@@ -22,7 +22,7 @@ You need [Git](https://git-scm.com/downloads) and Python 3.12 or 3.13.
 On macOS or Linux, run these commands in a terminal:
 
 ```bash
-git clone --branch dev/overhaul https://github.com/TARPS-group/prob-pipe.git ~/probpipe
+git clone --branch main https://github.com/TARPS-group/prob-pipe.git ~/probpipe
 python3.12 -m venv ~/probpipe-env
 ~/probpipe-env/bin/python -m pip install -e "$HOME/probpipe[pymc,nutpie]"
 ```
@@ -30,7 +30,7 @@ python3.12 -m venv ~/probpipe-env
 On Windows, run these commands in PowerShell, where `py` is the Python launcher that the installer from python.org adds:
 
 ```powershell
-git clone --branch dev/overhaul https://github.com/TARPS-group/prob-pipe.git "$HOME\probpipe"
+git clone --branch main https://github.com/TARPS-group/prob-pipe.git "$HOME\probpipe"
 py -3.12 -m venv "$HOME\probpipe-env"
 & "$HOME\probpipe-env\Scripts\python.exe" -m pip install -e "$HOME\probpipe[pymc,nutpie]"
 ```
@@ -51,12 +51,12 @@ On Windows, run `& "$HOME\probpipe-env\Scripts\python.exe"` in place of `~/probp
 
 Paste this prompt into a new session of your agent, and replace the last line with a description of your problem.
 The line `ProbPipe branch:` names the branch of ProbPipe that the agent installs, and you can change it to try another branch.
-It names `dev/overhaul`, and the release tag of the workshop replaces it once that tag is cut.
+It names `main`, which is the version that this documentation describes.
 
 ```text
 Set up the ProbPipe design assistant, then run it for me.
 
-ProbPipe branch: dev/overhaul
+ProbPipe branch: main
 
 1. If ~/probpipe does not exist, clone
    https://github.com/TARPS-group/prob-pipe.git at the branch above into it.
