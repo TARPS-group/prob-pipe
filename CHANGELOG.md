@@ -2106,6 +2106,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   # after:  'merge'
   ```
 
+- **`blackjax_nuts` and `tfp_nuts` start each chain from its own draw of the
+  prior.** Before, every chain started from one draw. This is a silent change:
+  the same seeded call runs and draws differently, and R-hat can now detect a
+  chain that stayed in the mode it started in. The call below shows where each
+  chain starts, in a run without warmup whose tiny step keeps each chain at
+  its start:
+
+  ```python
+  prior = Normal("theta", jnp.zeros(3), jnp.ones(3))
+  likelihood = conditional_distribution(
+      lambda theta: Poisson("y", jnp.exp(theta)), label="likelihood", given_spec=prior.event_spec
+  )
+  options = {"num_warmup": 0, "num_results": 1, "num_chains": 4, "step_size": 1e-6}
+  with workflow_run(seed=0):
+      posterior = condition_on.using(method="blackjax_nuts", method_options=options)(
+          likelihood & prior, {"y": jnp.array([1.0, 4.0, 2.0])}
+      )
+  # before: every chain starts at [0.41, 0.55, 1.49]
+  # after: the chains start at [-0.92, 0.23, 0.24], [0.33, 0.89, 0.11],
+  #        [-0.58, -0.66, 0.04], and [0.34, -0.56, 1.05]
+  ```
+
+  Pass one state as `init` to start every chain from it, as
+  `method_options={"init": jnp.array([0.4, 0.55, 1.5])}`.
+
 ### Added
 
 - **Bare calls can share a default random stream.**
@@ -3336,6 +3361,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run shell commands follows it through the prompt in
   `docs/get_started/design_assistant.md`. In Claude Code it is the skill
   `/design-pipeline`. Its instructions are in `.claude/skills/design-pipeline/`.
+
+- **`blackjax_nuts` takes `target_accept_prob` and `max_tree_depth`.** It
+  passes the target acceptance rate of the step-size adaptation to BlackJAX's
+  window adaptation as `target_acceptance_rate`, and the maximum depth of the
+  NUTS tree to its NUTS kernel as `max_num_doublings`. An unset option keeps
+  BlackJAX's default of 0.8 and 10, which `blackjax_nuts` used before. A target outside the open interval from 0 to 1 and a depth below 1
+  raise `ValueError`, and a value of another type raises `TypeError`:
+
+  ```python
+  posterior = condition_on.using(
+      method="blackjax_nuts",
+      method_options={"target_accept_prob": 0.95, "max_tree_depth": 12},
+  )(model, observed)
+  ```
+
+- **`init` gives each chain its own starting point.** For `blackjax_nuts`,
+  `blackjax_hmc`, and `tfp_nuts`, an array with a leading axis of length
+  `num_chains` gives each chain its row, and `init="per_chain"` starts each
+  chain from its own draw of the default initial state, which is a draw of the
+  prior when the prior can be sampled. `blackjax_nuts` and `tfp_nuts` start
+  each chain from its own draw by default, and `blackjax_hmc` keeps one shared
+  start unless `init` says otherwise:
+
+  ```python
+  posterior = condition_on.using(
+      method="blackjax_hmc", method_options={"init": "per_chain"}
+  )(model, observed)
+  ```
 
 ### Changed
 
@@ -5142,6 +5195,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the host, which only the fallback for a function that reads a captured value
   needs. A law whose density captures a 1,000,000-element array now builds in
   about 0.35 ms instead of about 10 ms.
+
+- **`blackjax_nuts` refuses `num_integration_steps`.** The option sets the mean
+  trajectory length of `blackjax_hmc`, and `blackjax_nuts` accepted and ignored
+  it, so a call that passes it to `blackjax_nuts` now raises the `TypeError` of
+  an unknown method option.
+
+- **`summary_table()` reports divergences and a missing R-hat as not passed.**
+  A run with a divergent transition, or with an R-hat that is NaN or not
+  computed, as for chains that never move, ends the table with a line such as
+  `✗  Not passed: 400 divergent transitions and R-hat not computed for theta.`
+  instead of `✓  All available diagnostics passed.`
 
 ### Removed
 
