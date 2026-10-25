@@ -3,9 +3,9 @@
 This file is a template for the design-pipeline assistant. Copy it to
 `<workspace>/pipeline.py`, copy `pipeline_support.py`, `report.py`, and
 `sim_data.py` beside it, and replace the example model, a normal regression of
-crop yield on rainfall and temperature, with the model of the design document. The comments explain the
-reason for each part of the structure, and the rules they cite are those of
-the assistant's files. In the user's copy, replace this docstring with the
+crop yield on rainfall and temperature, with the model of the design document.
+The comments explain the reason for each part of the structure, and the rules
+they cite are those of the assistant's files. In the user's copy, replace this docstring with the
 guide to where each choice is changed, by phases/4-proposal.md
 "Write the code", and drop the citations of the assistant's files.
 
