@@ -22,8 +22,8 @@ the proposal" of phases/4-proposal.md apply to it, and so do the
 
    Note for each part the route of the section "Bring any model" of
    [CAPABILITIES.md](../CAPABILITIES.md) by which it enters ProbPipe.
-2. **Offer integration or migration.** Put the two to the user as a choice,
-   with their trade-offs:
+2. **Offer integration, migration, or a verified re-implementation.** Put
+   the options to the user as a choice, with their trade-offs:
    1. *Integrate the pipeline as it stands.* The model enters by its route,
       such as `PyMCModel` for a PyMC model or `StanModel` for a Stan program,
       the other code runs as `function` steps that call it, and draws that it
@@ -35,9 +35,32 @@ the proposal" of phases/4-proposal.md apply to it, and so do the
       the inference with `condition_on`, and repeat the reproduction check of
       step 3 after each part. It takes more work, and it gives every check of
       the workflow and the provenance of each step.
+   3. *Re-implement the model in JAX and verify it against the original.*
+      This option serves a user who wants gradients or speed from a model
+      whose code JAX cannot trace, such as an R function or a compiled
+      simulator. Wrapped as it stands, such a model has no gradient. Only a
+      gradient-free method such as `blackjax_rwmh` then fits it, and such a
+      method mixes slowly with many correlated parameters. Transcribe the
+      model line by line into JAX, integrate the rest of the pipeline by
+      option 1, and keep the original model as the reference. Before any
+      fit, a deterministic agreement check runs the original and the
+      transcription on the same inputs and compares their outputs and their
+      log densities at many parameter sets, with a tolerance stated before
+      the check, such as a relative difference of 1e-8 in double precision.
+      The sets include these:
+      - draws over all the parameters, the fixed ones included;
+      - each parameter at the bounds of its prior's support;
+      - values on both sides of each threshold in the code, such as a
+        dry-soil switch or the day of a phenology switch.
 
-   Recommend integration, unless the user asks to migrate or needs a check
-   that the route of integration rules out. Record the choice as a decision.
+      A log-density difference that is one constant at every set, such as
+      one from another log-gamma routine, leaves the posterior unchanged.
+      Record the check in section 4f of the design document.
+
+   Recommend integration by default. Recommend migration when the user asks
+   for it or needs a check that the route of integration rules out, and
+   recommend option 3 when the user wants gradients or speed from a model
+   that JAX cannot trace. Record the choice as a decision.
    Keep each interface as simple as the ground rule "Offer to build an
    interface to a missing component" of
    [INSTRUCTIONS.md](../INSTRUCTIONS.md#ground-rules) requires.
@@ -45,7 +68,7 @@ the proposal" of phases/4-proposal.md apply to it, and so do the
    A pipeline in R takes the options that the ground rule gives for an R
    tool, because ProbPipe plans no interface to R:
    - re-implement the model by a route, such as a brms model as its Stan
-     program;
+     program, or a model written in R by option 3;
    - wrap the user's case, such as an R script that runs as a `function`
      step;
    - bring in the draws that the R pipeline computes.
@@ -61,6 +84,10 @@ the proposal" of phases/4-proposal.md apply to it, and so do the
       integrated or migrated pipeline on the same data, with the same priors,
       and with the same inference method and settings where ProbPipe has the
       method, and it writes its results to `<workspace>/runs/reproduce/`.
+      When ProbPipe has no counterpart of the original's method, such as a
+      differential-evolution sampler, fit with the default method of
+      [RESOURCES.md](../RESOURCES.md) stage E, and compare the two posteriors
+      by substep 3, which judges the draws of any method.
       Check it and run it by the steps of
       [Check and run the code](4-proposal.md#check-and-run-the-code), with a
       smoke run on simulated data first. Its run on the real data is the first

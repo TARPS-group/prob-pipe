@@ -121,7 +121,9 @@ Each kind of material needs one more step:
   [CAPABILITIES.md](../CAPABILITIES.md) by which it enters ProbPipe as it is,
   and what that route allows downstream. Code in a language with no route,
   such as R, enters as wrapped code or as the draws it computes, by the same
-  file. A brms model enters as the Stan program that `brms::stancode()`
+  file, or as a re-implementation in JAX that is verified against it, by
+  option 3 of step 2 of
+  [phases/4-existing-pipeline.md](4-existing-pipeline.md). A brms model enters as the Stan program that `brms::stancode()`
   writes. When the code is a whole pipeline that runs, and the user wants to
   bring it into ProbPipe or to migrate it, Phase 4 follows
   [phases/4-existing-pipeline.md](4-existing-pipeline.md).

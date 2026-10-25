@@ -92,10 +92,14 @@ does not connect to.
 
 ## 4f. Reproduction of the original pipeline
 For a pipeline the user brought, by phases/4-existing-pipeline.md: the
-comparison of the original results with ProbPipe's, before any change. A
-row is a parameter, with its three quantiles, or a pair of parameters, with
-its correlation r. Below the table, give the number M of z-scores, the bounds
-b₂(M) and b₃(M), and the mean, the standard deviation, and the largest |z|.
+comparison of the original results with ProbPipe's, before any change. For a
+model re-implemented by option 3 of its step 2, the deterministic agreement
+check comes first, with each kind of parameter set and its count, the largest
+difference of the outputs and of the log density, and the tolerance. In the
+table of the reproduction, a row is a parameter, with its three quantiles, or
+a pair of parameters, with its correlation r. Below the table, give the number
+M of z-scores, the bounds b₂(M) and b₃(M), and the mean, the standard
+deviation, and the largest |z|.
 | Estimand | Original: median [2.5%, 97.5%], or r | ProbPipe: median [2.5%, 97.5%], or r | z of 2.5% / 50% / 97.5%, or of r | Agree? |
 |---|---|---|---|---|
 
