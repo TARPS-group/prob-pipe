@@ -13,7 +13,11 @@ phases/4-proposal.md "Write the code":
    as "smoke run, not for inference" or "PROVISIONAL: not validated", and its
    name to what it prints and to each figure, which `save_figure()` stamps
    with them. `output_path()` names each file after the model, prefixed
-   "PROVISIONAL_" for a provisional result.
+   "PROVISIONAL_" for a provisional result. A table or file of several models
+   has a status column with each model's label, and it is prefixed
+   "PROVISIONAL_" when any of them is provisional. A fit that changes the
+   validated model's prior, method, or data carries the label of
+   `refit_label()` of `pipeline_support.py` in the status column of its row.
 2. Each interval has the form "median [2.5%, 97.5%] units" of `interval()`,
    at the `QUANTILES` of `pipeline_support.py`.
 3. Each figure is saved with a CSV file of the numbers it plots, and each
@@ -34,7 +38,7 @@ matplotlib.use("Agg")  # write figures to files, with no window
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from pipeline_support import QUANTILES, divergences_of, write_json
+from pipeline_support import QUANTILES, divergences_of, refit_label, write_json
 
 from probpipe import quantile
 
@@ -128,7 +132,9 @@ def show_scenarios(name: str, table: pd.DataFrame, settings) -> None:
 
 
 def show_prior_sensitivity(name: str, table: pd.DataFrame, settings) -> None:
-    """Print and save the change per degree Celsius under each prior scale."""
+    """Print and save the change per degree Celsius under each prior scale, with each fit's status."""
+    differences = [f"priors {scale:g}× wider" if scale != 1 else "" for scale in table.index]
+    table = with_status(settings, name, table, "Sensitivity", differences)
     heading = "change per degree Celsius by prior scale"
     print_and_save_table(settings, name, table, "prior_sensitivity.csv", heading)
 
@@ -159,22 +165,24 @@ def show_routes(name: str, routes: dict, settings) -> None:
 def show_algorithms(name: str, comparison: dict, settings) -> None:
     """Print and save the method that condition_on selects, and each method's results."""
     print_labeled(settings, name, f"condition_on selects {comparison['selected_method']}")
+    method = settings.methods[name]
+    table = comparison["table"]
+    differences = [f"{m} in place of {method}" if m != method else "" for m in table.index]
+    table = with_status(settings, name, table, "Comparison", differences)
     heading = "each method's posterior means, largest R-hat, and divergences"
-    print_and_save_table(settings, name, comparison["table"], "algorithms.csv", heading)
+    print_and_save_table(settings, name, table, "algorithms.csv", heading)
 
 
 # --- OPTIONAL: several datasets --------------------------------------------------
 
 
 def show_by_year(name: str, table: pd.DataFrame, settings) -> None:
-    """Print and save the change per degree Celsius in each year, labeled not validated.
-
-    The validation covered the pooled fit alone, so a model whose pooled fit
-    carries no label is labeled "PROVISIONAL: not validated" here.
-    """
-    label = output_label(settings, name) or "PROVISIONAL: not validated"
-    table.to_csv(settings.out_dir / f"{file_prefix(label)}{name}_by_year.csv")
-    print(f"{label}: {name}: change per degree Celsius by year:\n{table.round(3)}")
+    """Print and save the change per degree Celsius in each year, with each fit's status."""
+    table = with_status(
+        settings, name, table, "Per-year", [f"{year} alone" for year in table.index]
+    )
+    heading = "change per degree Celsius by year"
+    print_and_save_table(settings, name, table, "by_year.csv", heading)
 
 
 # --- OPTIONAL: compare models ----------------------------------------------------
@@ -187,8 +195,10 @@ def show_model_comparison(fits: dict, settings) -> None:
         p_low = float(np.asarray(result["answers"]["p_low_yield_dry_hot"]))
         rows[name] = result["p_values"] | {"p_low_yield_dry_hot": p_low}
     table = pd.DataFrame(rows).T
-    table.to_csv(settings.out_dir / "model_comparison.csv")
-    print_labeled(settings, None, f"the models side by side:\n{table.round(3)}")
+    table["status"] = [status(output_label(settings, name)) for name in table.index]
+    label = combined_label(settings, fits)
+    table.to_csv(settings.out_dir / f"{file_prefix(label)}model_comparison.csv")
+    print_labeled(settings, None, f"the models side by side:\n{table.round(3)}", label=label)
 
 
 # --- OPTIONAL: held-out subset ---------------------------------------------------
@@ -197,7 +207,12 @@ def show_model_comparison(fits: dict, settings) -> None:
 def show_heldout_scores(scores: dict, settings) -> None:
     """Print and save the mean CRPS of each model on the held-out subset."""
     mean_crps = {name: score["mean_crps"] for name, score in scores.items()}
-    write_json(settings.out_dir / "heldout_scores.json", mean_crps)
+    saved = {
+        name: {"mean_crps": value, "status": status(output_label(settings, name))}
+        for name, value in mean_crps.items()
+    }
+    label = combined_label(settings, scores)
+    write_json(settings.out_dir / f"{file_prefix(label)}heldout_scores.json", saved)
     for name, value in mean_crps.items():
         print_labeled(
             settings, name, f"mean CRPS on the held-out year: {value:.3f} t/ha (lower is better)"
@@ -231,8 +246,25 @@ def output_label(settings, name: str | None) -> str:
     return settings.models_to_fit.get(name, settings.stage_label)
 
 
+def status(label: str) -> str:
+    """The status that a saved table records for outputs with `label`: the label, or "validated"."""
+    return label or "validated"
+
+
+def combined_label(settings, names) -> str:
+    """The label of an output of several models: a provisional label of any of them, else the stage's."""
+    labels = [output_label(settings, name) for name in names]
+    return next((label for label in labels if file_prefix(label)), settings.stage_label)
+
+
 def file_prefix(label: str) -> str:
     return "PROVISIONAL_" if label.startswith("PROVISIONAL") else ""
+
+
+def with_status(settings, name: str, table: pd.DataFrame, kind: str, differences) -> pd.DataFrame:
+    """`table` with the status of each row's fit, of `kind` and its difference from the model."""
+    labels = [refit_label(settings, name, kind, difference) for difference in differences]
+    return table.assign(status=[status(label) for label in labels])
 
 
 def output_path(settings, name: str, file: str) -> Path:
@@ -240,17 +272,23 @@ def output_path(settings, name: str, file: str) -> Path:
     return settings.out_dir / f"{file_prefix(output_label(settings, name))}{name}_{file}"
 
 
-def print_labeled(settings, name: str | None, *parts: str) -> None:
-    """Print `parts` after the label of the model's outputs and its name, if any."""
-    label = output_label(settings, name)
+def print_labeled(settings, name: str | None, *parts: str, label: str | None = None) -> None:
+    """Print `parts` after the label of the model's outputs, or `label`, and its name, if any."""
+    label = output_label(settings, name) if label is None else label
     print(*([f"{label}:"] if label else []), *([f"{name}:"] if name else []), *parts)
 
 
 def print_and_save_table(
     settings, name: str, table: pd.DataFrame, file: str, heading: str, digits: int = 3
 ) -> None:
-    table.to_csv(output_path(settings, name, file))
+    """Print `table` under `heading` after the model's label, and save it with a status column.
+
+    A table of fits that differ in status, which `with_status()` made, prints its status column.
+    """
     print_labeled(settings, name, f"{heading}:\n{table.round(digits).to_string()}")
+    if "status" not in table:
+        table = table.assign(status=status(output_label(settings, name)))
+    table.to_csv(output_path(settings, name, file))
 
 
 def save_figure(fig, data: pd.DataFrame, settings, name: str, stem: str) -> None:

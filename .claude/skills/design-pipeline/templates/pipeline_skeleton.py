@@ -154,7 +154,7 @@ BUDGETS = {
 def main():
     """Run the pipeline of design version DESIGN_VERSION in the stage that STAGE names."""
     settings = resolve_stage(
-        BUDGETS, models=list(MODELS), design_version=DESIGN_VERSION, seed=SEED, validated=VALIDATED
+        BUDGETS, models=MODELS, design_version=DESIGN_VERSION, seed=SEED, validated=VALIDATED
     )
     record_run(settings)
     # Each report.show_* call prints the result of a step and saves it under the
@@ -199,7 +199,7 @@ def run_model(name: str, model: dict, data: dict, settings) -> dict:
     """Fit one model to the response of the stage, and run the steps after the fit."""
     likelihood, joint = model["likelihood"], model["joint"]
     y_t_per_ha = response_for_stage(data, joint, settings)
-    remedy = name in settings.models_with_remedy  # the validation needed it, so the fit uses it
+    remedy = name in settings.models_with_remedy  # the validation needed it, so every fit uses it
     posterior = fit(joint, {RESPONSE: y_t_per_ha}, settings, MODELS[name], remedy)
     report.show_diagnostics(name, posterior, settings)
     p_values = posterior_predictive_p_values(likelihood, posterior, y_t_per_ha)
@@ -216,7 +216,7 @@ def run_model(name: str, model: dict, data: dict, settings) -> dict:
     report.show_external_comparison(name, external, settings)  # OPTIONAL: external result
     routes = computation_routes(posterior, answers)  # OPTIONAL: provenance
     report.show_routes(name, routes, settings)  # OPTIONAL: provenance
-    methods = compare_algorithms(joint, y_t_per_ha, settings)  # OPTIONAL: compare algorithms
+    methods = compare_algorithms(name, joint, y_t_per_ha, settings)  # OPTIONAL: compare algorithms
     report.show_algorithms(name, methods, settings)  # OPTIONAL: compare algorithms
     by_year = fit_by_year(name, data, y_t_per_ha, settings)  # OPTIONAL: several datasets
     report.show_by_year(name, by_year, settings)  # OPTIONAL: several datasets
@@ -527,10 +527,10 @@ def response_for_stage(data, joint, settings) -> jnp.ndarray:
 # --- What the validation depends on ----------------------------------------------
 # The gate accepts a validation whose hash matches the hash of these functions
 # and settings, with the grading code of pipeline_support.py. A change to any of
-# them, the data file included, makes a passed validation stale, and a change
-# to a step after the fit, such as an answer, a check, or a comparison, keeps
-# it. Add each function that the data step, a model, the simulation, or the fit
-# of a design calls.
+# them, the data file and the held-out split included, makes a passed
+# validation stale, and a change to a step after the fit, such as an answer, a
+# check, or a comparison, keeps it. Add each function that the data step, the
+# split, a model, the simulation, or the fit of a design calls.
 
 VALIDATED = (
     # the data file, whose covariates and size the simulated datasets share, and the data step
@@ -541,16 +541,21 @@ VALIDATED = (
     fahrenheit_to_celsius,
     standardize,
     MISSING_CODE,
+    # the split, which decides the rows of the fitted data
+    select_rows,
+    hold_out,  # OPTIONAL: held-out subset
+    HOLDOUT_YEAR,  # OPTIONAL: held-out subset
     # the models
     design_matrix,
     build_model,
     RESPONSE,
-    # the simulation of datasets, and the fit with its methods and budgets
+    # the simulation of datasets, and the fit with its methods, its budgets, and the remedies
+    # of the validation and of the fit to the real data
     sim_data.simulate,
     fit,
     MODELS,
     BUDGETS["validate"],
-    {method: BUDGETS["fit"]["options"][method] for method in MODELS.values()},
+    {k: {m: BUDGETS["fit"][k].get(m) for m in MODELS.values()} for k in ("options", "remedy")},
     # the validation itself
     validate,
     posterior_summaries,
@@ -653,7 +658,8 @@ def answers_by_scenario(posterior, data, settings) -> pd.DataFrame:
 # --- OPTIONAL: prior sensitivity -------------------------------------------------
 # A refit under priors three times as wide, in one sweep with the default
 # priors, by RESOURCES.md stage H. Keep it when the user asks how much the
-# priors matter.
+# priors matter. The validation checked the default priors, so
+# report.show_prior_sensitivity() labels the wider priors' fit a sensitivity fit.
 
 PRIOR_SCALES = [1.0, 3.0]
 
@@ -668,6 +674,7 @@ def prior_sensitivity(name: str, data, y_t_per_ha, settings) -> pd.DataFrame:
         RecordBatch(observed, "prior_scale"),
         settings,
         MODELS[name],
+        remedy=name in settings.models_with_remedy,
     )
     change_per_c = per_degree_c(quantile(posteriors, QUANTILES)["beta"], data["temp_sd_c"])
     index = pd.Index(PRIOR_SCALES, name="prior_scale")
@@ -703,17 +710,21 @@ def computation_routes(posterior, answers: dict) -> dict:
 
 # --- OPTIONAL: compare algorithms ------------------------------------------------
 # The model fitted by each method of COMPARED_METHODS, with the means, the
-# largest R-hat, and the divergences side by side, by RESOURCES.md stage E. condition_on.check names
-# the method that a call would select, before any computation. Keep it when the
-# choice of method is in question.
+# largest R-hat, and the divergences side by side, by RESOURCES.md stage E.
+# condition_on.check names the method that a call would select, before any
+# computation. Keep it when the choice of method is in question. The
+# validation checked the model's own method, so report.show_algorithms()
+# labels the fit of each other method a comparison fit.
 
 
-def compare_algorithms(joint, y_t_per_ha, settings) -> dict:
+def compare_algorithms(name: str, joint, y_t_per_ha, settings) -> dict:
     """The method that condition_on selects, and each method's means, R-hat, and divergences."""
     observed = {RESPONSE: y_t_per_ha}
     rows = {}
     for method in COMPARED_METHODS:  # each method runs its own algorithm
-        posterior = fit(joint, observed, settings, method)
+        # The budgets define a remedy for the methods of the validation alone.
+        remedy = name in settings.models_with_remedy and method in settings.budget["remedy"]
+        posterior = fit(joint, observed, settings, method, remedy)
         summary = summarize(posterior)
         r_hat = float(np.max(summary["r_hat"].to_vector()))
         means = np.asarray(summary["mean"].to_vector(), dtype=float)
@@ -728,7 +739,7 @@ def compare_algorithms(joint, y_t_per_ha, settings) -> dict:
 # --- OPTIONAL: several datasets ----------------------------------------------------
 # The model fitted to each year on its own, as one batched sweep over a batch
 # of models, one per year at its own weather. The validation covered the pooled
-# design, so report.show_by_year() labels these fits not validated. Keep it
+# design, so report.show_by_year() labels these fits per-year fits. Keep it
 # when the design reports an answer per site, group, or year.
 
 
@@ -742,9 +753,8 @@ def fit_by_year(name: str, data, y_t_per_ha, settings) -> pd.DataFrame:
     # One joint model per year, since each holds the weather of its year.
     joints = [build_model(name, select_rows(data, year_rows))["joint"] for year_rows in rows]
     observed = {RESPONSE: jnp.asarray(y_t_per_ha)[rows]}  # (year, field)
-    posteriors = fit(
-        DistributionBatch(joints, "year"), RecordBatch(observed, "year"), settings, MODELS[name]
-    )
+    batch = DistributionBatch(joints, "year"), RecordBatch(observed, "year")
+    posteriors = fit(*batch, settings, MODELS[name], name in settings.models_with_remedy)
     change_per_c = per_degree_c(quantile(posteriors, QUANTILES)["beta"], data["temp_sd_c"])
     index = pd.Index(years, name="year")
     return pd.DataFrame(np.asarray(change_per_c), index=index, columns=QUANTILE_COLUMNS)

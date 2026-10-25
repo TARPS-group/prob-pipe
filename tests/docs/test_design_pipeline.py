@@ -306,23 +306,28 @@ class TestPipelineSkeleton:
         assert f"{label}: student_t: change in yield per degree Celsius:" in result.stdout
         assert (tmp_path / "results" / "PROVISIONAL_normal_answers.json").exists()
 
+    @staticmethod
+    def _code_hash(workspace: Path) -> str:
+        """The hash of what the validation of the example in *workspace* depends on."""
+        pythonpath = os.pathsep.join(filter(None, [str(ROOT), os.environ.get("PYTHONPATH")]))
+        code = (
+            "import pipeline_skeleton as p, pipeline_support as s; print(s.code_hash(p.VALIDATED))"
+        )
+        env = os.environ | {"PYTHONPATH": pythonpath}
+        result = subprocess.run(
+            [sys.executable, "-c", code], cwd=workspace, env=env, capture_output=True, text=True
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip().splitlines()[-1]
+
     def test_the_hash_covers_the_code_that_the_validation_depends_on(self, tmp_path):
         pytest.importorskip("matplotlib")
         for path in TEMPLATES.iterdir():
             if path.is_file():
                 shutil.copy(path, tmp_path)
-        pythonpath = os.pathsep.join(filter(None, [str(ROOT), os.environ.get("PYTHONPATH")]))
-        code = (
-            "import pipeline_skeleton as p, pipeline_support as s; print(s.code_hash(p.VALIDATED))"
-        )
 
         def code_hash() -> str:
-            env = os.environ | {"PYTHONPATH": pythonpath}
-            result = subprocess.run(
-                [sys.executable, "-c", code], cwd=tmp_path, env=env, capture_output=True, text=True
-            )
-            assert result.returncode == 0, result.stderr
-            return result.stdout.strip().splitlines()[-1]
+            return self._code_hash(tmp_path)
 
         script = tmp_path / "pipeline_skeleton.py"
         source = script.read_text()
@@ -339,6 +344,108 @@ class TestPipelineSkeleton:
         rows = data_file.read_text().splitlines()
         data_file.write_text("\n".join([*rows, rows[-1]]) + "\n")
         assert code_hash() != first
+
+    def test_the_hash_covers_the_split_and_the_settings_of_the_fit(self, tmp_path):
+        pytest.importorskip("matplotlib")
+        for path in TEMPLATES.iterdir():
+            if path.is_file():
+                shutil.copy(path, tmp_path)
+        script = tmp_path / "pipeline_skeleton.py"
+        source = script.read_text()
+        first = self._code_hash(tmp_path)
+        script.write_text(source.replace("HOLDOUT_YEAR = 2024", "HOLDOUT_YEAR = 2023"))
+        assert self._code_hash(tmp_path) != first
+        split = "def hold_out("
+        start = source.index(split)
+        body = source.index("\n", source.index('"""', source.index('"""', start) + 3)) + 1
+        script.write_text(source[:body] + "    # edited\n" + source[body:])
+        assert self._code_hash(tmp_path) != first
+        remedy = '"remedy": {"blackjax_nuts": FULL | REMEDY}'
+        head, _, tail = source.rpartition(remedy)  # the remedy of the fit stage
+        script.write_text(
+            head + '"remedy": {"blackjax_nuts": FULL | {"max_num_doublings": 12}}' + tail
+        )
+        assert self._code_hash(tmp_path) != first
+
+    def test_comparison_fits_and_combined_outputs_carry_each_models_status(self, tmp_path):
+        """A fit at the smoke budgets after a validation that passed one model with the remedy.
+
+        The model ``normal`` passed with the remedy, and ``student_t`` was not
+        validated, so it is fitted provisionally.
+        """
+        for path in TEMPLATES.iterdir():
+            if path.is_file():
+                shutil.copy(path, tmp_path)
+        script = tmp_path / "pipeline_skeleton.py"
+        source = script.read_text().replace(
+            "\n\ndef main(", '\nBUDGETS["fit"] = BUDGETS["smoke"]\n\n\ndef main(', 1
+        )
+        script.write_text(source)
+        validation = {
+            "stage": "validate",
+            "design_version": 1,
+            "code_hash": self._code_hash(tmp_path),
+            "models": {"normal": {"grade": "passed", "remedy": True}},
+        }
+        (tmp_path / "checks").mkdir()
+        (tmp_path / "checks" / "validation.json").write_text(json.dumps(validation))
+        # Each call of fit() is recorded with the model of the run_model() call that made it.
+        (tmp_path / "driver.py").write_text(
+            "import json, sys\n"
+            "import pipeline_skeleton as p\n"
+            "calls, fit = [], p.fit\n"
+            "def recording_fit(joint, observed, settings, method, remedy=False):\n"
+            "    frame = sys._getframe(1)\n"
+            "    while frame is not None and frame.f_code.co_name != 'run_model':\n"
+            "        frame = frame.f_back\n"
+            "    model = frame.f_locals['name'] if frame is not None else None\n"
+            "    calls.append([model, method, remedy])\n"
+            "    return fit(joint, observed, settings, method, remedy)\n"
+            "p.fit = recording_fit\n"
+            "p.main()\n"
+            "print('FIT CALLS', json.dumps(calls))\n"
+        )
+        pythonpath = os.pathsep.join(filter(None, [str(ROOT), os.environ.get("PYTHONPATH")]))
+        env = os.environ | {
+            "STAGE": "fit",
+            "ALLOW_UNVALIDATED": "the user declined the validation of student_t",
+            "PYTHONPATH": pythonpath,
+        }
+        result = subprocess.run(
+            [sys.executable, str(tmp_path / "driver.py")],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        assert result.returncode == 0, result.stderr
+        out = tmp_path / "results"
+        comparison = (out / "PROVISIONAL_model_comparison.csv").read_text()
+        assert "status" in comparison.splitlines()[0]
+        assert "PROVISIONAL: not validated" in comparison
+        scores = json.loads((out / "PROVISIONAL_heldout_scores.json").read_text())
+        assert scores["student_t"]["status"] == "PROVISIONAL: not validated"
+        assert scores["normal"]["status"] == "validated"
+        assert "status" in (out / "normal_calibration.csv").read_text().splitlines()[0]
+        for file, label in (
+            ("normal_prior_sensitivity.csv", "Sensitivity fit, priors 3× wider"),
+            ("normal_algorithms.csv", "Comparison fit, tfp_nuts in place of blackjax_nuts"),
+            ("normal_by_year.csv", "Per-year fit, 2023 alone"),
+        ):
+            label += ", not checked on simulated data"
+            assert label in (out / file).read_text(), file
+            assert label in result.stdout, label
+        sensitivity = (out / "PROVISIONAL_student_t_prior_sensitivity.csv").read_text()
+        assert "PROVISIONAL: not validated" in sensitivity
+        calls = json.loads(result.stdout.split("FIT CALLS", 1)[1])
+        normal_nuts = [
+            remedy
+            for model, method, remedy in calls
+            if (model, method) == ("normal", "blackjax_nuts")
+        ]
+        assert len(normal_nuts) > 1 and all(normal_nuts), calls
+        assert not any(remedy for model, _, remedy in calls if model == "student_t"), calls
 
 
 class TestValidationGrade:
@@ -373,6 +480,18 @@ class TestValidationGrade:
 
     def test_a_bias_beyond_the_failing_bound_fails(self, support):
         assert self._grade(support, np.full((20, 2), 1.5), np.full(2, 0.9))["grade"] == "failed"
+
+    def test_nonfinite_statistics_fail(self, support):
+        names = ["c0", "c1"]
+        z, coverage, contraction = np.zeros((20, 2)), np.full(2, 0.9), np.full(2, 0.5)
+        z_nan = z.copy()
+        z_nan[4, 1] = np.nan
+        result = support.grade_validation(z_nan, coverage, contraction, names, True, 0, True)
+        assert result["grade"] == "failed"
+        assert any("finite" in note for note in result["notes"])
+        contraction_inf = np.array([0.5, np.inf])
+        result = support.grade_validation(z, coverage, contraction_inf, names, True, 0, True)
+        assert result["grade"] == "failed"
 
     def test_only_a_few_fits_just_past_the_criteria_are_rerun(self, support):
         diagnostics = {

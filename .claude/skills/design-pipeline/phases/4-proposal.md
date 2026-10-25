@@ -252,8 +252,9 @@ Colab edits.
    - `stage`, which is `"validate"`;
    - the design version;
    - the hash of what the validation depends on: the data file, the data
-     step, the model definitions, the simulation of datasets, the fit
-     function with its methods and budgets, and the grading code of stage D. The pipeline
+     step, the held-out split, the model definitions, the simulation of
+     datasets, the fit function with the methods, budgets, and remedies of the
+     validation and of the fit, and the grading code of stage D. The pipeline
      declares these in `VALIDATED`, and a step after the fit, such as an
      answer, a check, or a comparison, and `report.py` leave the hash
      unchanged;
@@ -296,7 +297,16 @@ one of two labels:
 
 The label appears in each printed answer, each figure title, each file name
 in `<workspace>/results/`, and each estimate in the design document, and the
-methods paragraph of the design document states the status.
+methods paragraph of the design document states the status. A table or file
+of several models has a status column with each model's label, and its name
+takes the prefix `PROVISIONAL_` when any of the models is provisional.
+
+A fit that changes the prior, the method, or the data of a validated model,
+such as a prior-sensitivity refit, a comparison of algorithms, or a fit per
+year, uses the remedy when the validated fit did, and `refit_label()` labels it
+by its kind and its difference, as in "Sensitivity fit, priors 3× wider, not
+checked on simulated data", because the validation checked one prior and one
+likelihood fitted by one method at the real design.
 
 Every run resolves the stage and then runs the data step. Each stage writes
 its results, such as the diagnostics and the estimates, as it computes them,

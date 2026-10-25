@@ -18,14 +18,15 @@ code":
 3. The gate of the fit stage reads `checks/validation.json`, which
    `record_validation()` writes. A validation of the current code matches
    its stage, its design version, and the hash of what the validation
-   depends on: the data file, the data step, the model definitions, the
-   simulation of datasets, the fit function with its methods and budgets, and
-   the grading code of stage D. The pipeline declares these in `VALIDATED`, and
+   depends on: the data file, the data step, the held-out split, the model
+   definitions, the simulation of datasets, the fit function with its methods,
+   budgets, and remedies, and the grading code of stage D. The pipeline declares these in `VALIDATED`, and
    `code_hash()` adds `GRADING`. A step after the fit, such as an answer, a
    check, or a comparison, and `report.py` leave the hash unchanged. A model
    without a passed validation of the current code is fitted only when the
    user gave a reason for provisional results, and its outputs carry the
-   label of its status.
+   label of its status. `refit_label()` labels a fit that changes the
+   validated model's prior, method, or data.
 4. `record_run()` writes the provenance and the Python environment into the
    output folder, so each result can be traced to the code that computed it.
 5. `fits_to_rerun()` and `grade_validation()` implement RESOURCES.md stage D
@@ -54,6 +55,9 @@ HERE = Path(__file__).resolve().parent
 OUT_DIRS = {"smoke": "checks/smoke", "validate": "checks/validate", "fit": "results"}
 VALIDATION_FILE = HERE / "checks" / "validation.json"
 SMOKE_LABEL = "smoke run, not for inference"
+# The label of a fit that differs from the model that the validation checked, by its kind and
+# the difference, such as "Per-year fit, 2023 alone, not checked on simulated data".
+REFIT_LABEL = "{kind} fit, {difference}, not checked on simulated data"
 # The quantiles of every reported interval, "median [2.5%, 97.5%]" by rule 4 of
 # the assistant's Messages, and the names of their columns in each table.
 QUANTILES = np.array([0.025, 0.5, 0.975])
@@ -70,6 +74,7 @@ class Settings:
 
     stage: str
     budget: dict  # the budgets of the stage, such as the settings of the sampler
+    methods: dict[str, str]  # each model's inference method, which its validation covers
     checks_code: bool  # the checks of the pipeline's own code, in the smoke stage
     checks_priors: bool  # the prior predictive check
     validates: bool  # the validation on realistic simulated data
@@ -82,15 +87,21 @@ class Settings:
 
 
 def resolve_stage(
-    budgets: dict[str, dict], *, models: list[str], design_version: int, seed: int, validated: tuple
+    budgets: dict[str, dict],
+    *,
+    models: dict[str, str],
+    design_version: int,
+    seed: int,
+    validated: tuple,
 ) -> Settings:
     """The settings of the stage, after the gate of the fit stage has passed.
 
     The environment variable STAGE names the stage, smoke by default.
     HOLD_SIMULATED_FITS holds the date of the user's hold on fits to simulated
     data, and ALLOW_UNVALIDATED the user's reason for provisional results.
-    Each is empty when it does not apply. `validated` holds the functions and
-    settings that the validation depends on, whose hash `code_hash()` computes.
+    Each is empty when it does not apply. `models` maps each model's name to
+    its inference method. `validated` holds the functions and settings that
+    the validation depends on, whose hash `code_hash()` computes.
     """
     stage = os.environ.get("STAGE", "smoke")
     hold = os.environ.get("HOLD_SIMULATED_FITS", "")
@@ -119,6 +130,7 @@ def resolve_stage(
     return Settings(
         stage=stage,
         budget=budgets[stage],
+        methods=dict(models),
         checks_code=stage == "smoke",
         checks_priors=stage == "validate" or (stage == "smoke" and not hold),
         validates=stage == "validate",
@@ -132,7 +144,7 @@ def resolve_stage(
 
 
 def gate(
-    record: dict, models: list[str], allow_unvalidated: str
+    record: dict, models: dict[str, str], allow_unvalidated: str
 ) -> tuple[dict[str, str], frozenset[str]]:
     """The models that may be fit with the label of each, and those that need the remedy."""
     grades = validation_grades(record)
@@ -153,6 +165,22 @@ def gate(
         )
     remedied = frozenset(name for name in models_to_fit if grades.get(name, {}).get("remedy"))
     return models_to_fit, remedied
+
+
+def refit_label(settings: Settings, name: str, kind: str, difference: str) -> str:
+    """The label of a fit of the model `name` that differs from it by `difference`.
+
+    The validation checks one model, one prior and one likelihood, fitted by
+    one method at the real design. A fit that changes the prior, the method, or
+    the data, such as a fit under wider priors, by another method, or to one
+    year, is checked by its diagnostics alone, and its label says so. A smoke
+    run and a provisional fit keep their own label, and an empty `difference`
+    is the checked model, which keeps the model's label.
+    """
+    label = settings.models_to_fit.get(name, settings.stage_label)
+    if label or not difference:
+        return label
+    return REFIT_LABEL.format(kind=kind, difference=difference)
 
 
 def validation_grades(record: dict) -> dict:
@@ -273,17 +301,29 @@ def grade_validation(
     says whether every fit meets the criteria of stage E, after the rerun of
     the `n_rerun` fits that `fits_to_rerun()` chose. Beside the grade, each
     z-score beyond 3 is listed with its dataset, with the count that chance
-    gives an exact method, so that no mean hides a large miss.
+    gives an exact method, so that no mean hides a large miss. A statistic
+    that is NaN or infinite fails the grade.
     """
+    misses = {
+        "z_beyond_3": [(names[j], int(i)) for i, j in np.argwhere(np.abs(z) > 3)],
+        "z_beyond_3_by_chance": FAIL_TAIL * z.size,
+    }
+    statistics = {"z-scores": z, "coverages": coverage, "contractions": contraction}
+    nonfinite = [
+        f"some {k} are not finite" for k, v in statistics.items() if not np.isfinite(v).all()
+    ]
+    # A comparison with NaN is false, so a NaN would pass each bound below.
+    if nonfinite:
+        return {
+            "grade": "failed",
+            "sentence": GRADE_SENTENCES["failed"],
+            "notes": nonfinite,
+        } | misses
     n = z.shape[0]
     results = {"bias": z.mean(axis=0) * np.sqrt(n), "single misses": z}
     if not quick_start:  # quick start reports the coverage without a grade
         standard_error = np.sqrt(COVERAGE_LEVEL * (1 - COVERAGE_LEVEL) / n)
         results["coverage"] = (coverage - COVERAGE_LEVEL) / standard_error
-    misses = {
-        "z_beyond_3": [(names[j], int(i)) for i, j in np.argwhere(np.abs(z) > 3)],
-        "z_beyond_3_by_chance": FAIL_TAIL * z.size,
-    }
     # The coverage fails only below its level, and the other results on either side.
     worst = {k: -v.min() if k == "coverage" else np.abs(v).max() for k, v in results.items()}
     if not all_fits_pass or any(
