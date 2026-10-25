@@ -29,10 +29,18 @@ the earlier steps against them:
    CAPABILITIES.md by which the model enters ProbPipe:
    - The default is the route of the code the user already has, such as their
      PyMC model, Stan program, or simulator.
-   - A model of standard statistical structure written for this project
-     defaults to PyMC or Stan. Examples are a regression with random effects,
-     such as a generalized linear mixed model, and a spatial model with a CAR,
-     ICAR, or BYM prior. A computer that cannot compile Stan programs rules
+   - A model written for this project that `glm_likelihood` expresses
+     defaults to it, by the row "Use the
+     built-in generalized linear model" of CAPABILITIES.md. Such a model is a
+     regression on fixed covariates with a normal, Bernoulli, or Poisson
+     response and an invertible link. ProbPipe's predictive checks, LOO, and
+     stochastic-gradient MCMC apply to it directly, whereas the PyMC and Stan
+     routes compute the first two in the pipeline's own code.
+   - A model of standard statistical structure beyond `glm_likelihood`
+     written for this project defaults to PyMC or Stan. Examples are a
+     regression with random effects, such as a generalized linear mixed
+     model, a count model with an exposure offset or a negative binomial
+     response, and a spatial model with a CAR, ICAR, or BYM prior. A computer that cannot compile Stan programs rules
      Stan out, so a user of brms whose compiler fails gets PyMC. Otherwise
      choose the one the user is more comfortable with, by the working
      preferences and the experience in person memory: Stan for a user who
