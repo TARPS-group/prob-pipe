@@ -3,7 +3,8 @@
 The assistant is in ``.claude/skills/design-pipeline/``. Its ``CAPABILITIES.md``
 names ProbPipe entry points and example sections, ``check_symbols.py`` checks a
 pipeline's ProbPipe names and call arguments, and ``build_corpus.py`` flattens
-the documentation into part files and an index.
+the documentation into part files and an index. The skeleton of a pipeline in
+``templates/`` passes the symbol check and runs its smoke stage end to end.
 """
 
 from __future__ import annotations
@@ -11,7 +12,10 @@ from __future__ import annotations
 import ast
 import importlib
 import json
+import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -19,6 +23,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSISTANT = ROOT / ".claude" / "skills" / "design-pipeline"
+TEMPLATES = ASSISTANT / "templates"
 sys.path.insert(0, str(ASSISTANT))
 
 import build_corpus
@@ -213,6 +218,46 @@ class TestCheckSymbols:
         script = tmp_path / "pipeline.py"
         script.write_text("def broken(:\n")
         assert check_symbols.main([str(script)]) == 2
+
+
+class TestPipelineSkeleton:
+    def test_the_skeleton_passes_the_symbol_check(self, capsys):
+        assert check_symbols.main([str(TEMPLATES / "pipeline_skeleton.py")]) == 0
+        assert "no problems" in capsys.readouterr().out
+
+    @staticmethod
+    def _run(workspace: Path, stage: str) -> subprocess.CompletedProcess:
+        """Run the skeleton copied to *workspace* in *stage*, from another directory."""
+        pytest.importorskip("matplotlib")
+        pytest.importorskip("pandas")
+        for path in TEMPLATES.iterdir():
+            if path.is_file():
+                shutil.copy(path, workspace)
+        pythonpath = os.pathsep.join(filter(None, [str(ROOT), os.environ.get("PYTHONPATH")]))
+        env = os.environ | {"STAGE": stage, "PYTHONPATH": pythonpath}
+        return subprocess.run(
+            [sys.executable, str(workspace / "pipeline_skeleton.py")],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+
+    def test_the_smoke_stage_runs_every_step(self, tmp_path):
+        result = self._run(tmp_path, "smoke")
+        assert result.returncode == 0, result.stderr
+        assert "smoke run, not for inference: change in yield per degree Celsius:" in result.stdout
+        out = tmp_path / "runs" / "smoke"
+        for name in ("answers.json", "prior_predictive.png", "prior_predictive.csv"):
+            assert (out / name).exists(), name
+        assert json.loads((out / "provenance.json").read_text())["seed"] == 20261025
+
+    def test_the_fit_stage_stops_at_the_gate_without_a_validation(self, tmp_path):
+        result = self._run(tmp_path, "fit")
+        assert result.returncode != 0
+        assert "Gate: no validation found" in result.stderr
+        assert not (tmp_path / "outputs" / "answers.json").exists()
 
 
 class TestBuildCorpus:
