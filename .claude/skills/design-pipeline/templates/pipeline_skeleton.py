@@ -104,6 +104,12 @@ BASELINE = next(iter(MODELS))
 # year. The threshold is an arbitrary example, which the user sets.
 LOW_YIELD_T_PER_HA = 4.0
 DRY_HOT = {"rain_in": 15.0, "temp_f": 76.0}
+# The plausible range of one field's yield, and of the spread of the yields of
+# one dataset, which the user names. The prior predictive check counts the
+# simulated values outside them, by RESOURCES.md stage B, and the spread catches
+# nearly constant datasets as well as wild ones.
+PLAUSIBLE_YIELD_T_PER_HA = (0.0, 20.0)
+PLAUSIBLE_SPREAD_T_PER_HA = (0.2, 5.0)
 HOLDOUT_YEAR = 2024  # OPTIONAL: held-out subset
 EXTERNAL_FILE = HERE / "external_quantiles.csv"  # OPTIONAL: external result
 COMPARED_METHODS = ("blackjax_nuts", "tfp_nuts", "blackjax_rwmh")  # OPTIONAL: compare algorithms
@@ -181,7 +187,8 @@ def check_before_fit(name: str, model: dict, settings) -> None:
     """The prior predictive check and the validation of one model, in the stages that run them."""
     if settings.checks_priors:
         y_prior_t_per_ha = prior_predictive_yields(model["joint"], settings)
-        report.show_prior_predictive(name, y_prior_t_per_ha, settings)
+        prior_check = prior_predictive_shares(y_prior_t_per_ha)
+        report.show_prior_predictive(name, y_prior_t_per_ha, prior_check, settings)
     if settings.validates:
         validation = validate(model["joint"], MODELS[name], settings)
         record_validation(name, validation, settings)  # the grade that the gate of the fit reads
@@ -329,14 +336,14 @@ def build_model(name: str, data, prior_scale: float = 1.0) -> dict:
 
     yield_i ~ Normal(X_i beta, sigma) for "normal", and
     yield_i ~ StudentT(nu, X_i beta, sigma) for "student_t", with
-    X_i = [1, rain_i, temp_i] in standard deviations. beta_0 ~ Normal(5, 2.5)
-    puts the mean yield between 0 and 10 t/ha, each slope ~ Normal(0, 1) allows
+    X_i = [1, rain_i, temp_i] in standard deviations. beta_0 ~ Normal(6, 1.5)
+    puts the mean yield between about 3 and 9 t/ha, each slope ~ Normal(0, 1) allows
     a change of up to about 2 t/ha per standard deviation of the weather,
     sigma ~ HalfNormal(1), and nu ~ Gamma(2, 0.1) has its mean at 20, where
     the errors are close to normal. `prior_scale` widens every prior scale.
     """
     X = design_matrix(data)
-    prior = Normal("beta", jnp.array([5.0, 0.0, 0.0]), prior_scale * jnp.array([2.5, 1.0, 1.0]))
+    prior = Normal("beta", jnp.array([6.0, 0.0, 0.0]), prior_scale * jnp.array([1.5, 1.0, 1.0]))
     prior = prior & HalfNormal("sigma", prior_scale * 1.0)
     if name == "normal":
 
@@ -363,7 +370,7 @@ def build_model(name: str, data, prior_scale: float = 1.0) -> dict:
 #
 #     def build_pymc(y_t_per_ha=None):
 #         with pymc.Model() as m:
-#             beta = pymc.Normal("beta", [5.0, 0.0, 0.0], [2.5, 1.0, 1.0])
+#             beta = pymc.Normal("beta", [6.0, 0.0, 0.0], [1.5, 1.0, 1.0])
 #             sigma = pymc.HalfNormal("sigma", 1.0)
 #             pymc.Normal(RESPONSE, X @ beta, sigma, observed=y_t_per_ha)
 #         return m
@@ -398,8 +405,8 @@ def check_code(data, model: dict) -> None:
     )
     n_draws = 400
     _, theta = sim_data.simulate(model["joint"], n_draws, RESPONSE)
-    standard_error = 2.5 / np.sqrt(n_draws)  # of the mean of draws of beta_0 ~ Normal(5, 2.5)
-    assert abs(theta[:, 0].mean() - 5.0) < 4 * standard_error, "the draws of beta_0 are off"
+    standard_error = 1.5 / np.sqrt(n_draws)  # of the mean of draws of beta_0 ~ Normal(6, 1.5)
+    assert abs(theta[:, 0].mean() - 6.0) < 4 * standard_error, "the draws of beta_0 are off"
 
 
 # --- Step 3: the prior predictive check --------------------------------------
@@ -411,6 +418,21 @@ def prior_predictive_yields(joint, settings) -> np.ndarray:
     """Yields simulated from the prior predictive distribution, of shape (draw, field), in t/ha."""
     draws = sample(joint, sample_shape=(settings.budget["n_prior_draws"],))
     return np.asarray(draws[RESPONSE].raw)
+
+
+def prior_predictive_shares(y_prior_t_per_ha: np.ndarray) -> dict:
+    """The shares of simulated yields and of simulated datasets outside their plausible ranges.
+
+    The priors pass RESOURCES.md stage B when at most 5% of the yields and at
+    most 10% of the datasets lie outside.
+    """
+    low, high = PLAUSIBLE_YIELD_T_PER_HA
+    yields_outside = (y_prior_t_per_ha < low) | (y_prior_t_per_ha > high)
+    spread_t_per_ha = y_prior_t_per_ha.std(axis=1)
+    low_spread, high_spread = PLAUSIBLE_SPREAD_T_PER_HA
+    datasets_outside = (spread_t_per_ha < low_spread) | (spread_t_per_ha > high_spread)
+    shares = {"yields": float(yields_outside.mean()), "datasets": float(datasets_outside.mean())}
+    return shares | {"passes": shares["yields"] <= 0.05 and shares["datasets"] <= 0.10}
 
 
 # --- Step 4: validate the computation on simulated data ----------------------

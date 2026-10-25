@@ -45,8 +45,15 @@ def show_stage(settings) -> None:
     print(f"results in {settings.out_dir}")
 
 
-def show_prior_predictive(name: str, y_prior_t_per_ha: np.ndarray, settings) -> None:
-    """Print and plot the mean yield of each dataset simulated from the prior predictive."""
+def show_prior_predictive(name: str, y_prior_t_per_ha: np.ndarray, shares: dict, settings) -> None:
+    """Print the shares outside the plausible ranges, and plot the mean yield of each dataset."""
+    verdict = "passes" if shares["passes"] else "fails, so tighten the priors"
+    print_labeled(
+        settings,
+        name,
+        f"prior predictive check {verdict}: {shares['yields']:.1%} of the simulated yields and "
+        f"{shares['datasets']:.1%} of the simulated datasets lie outside their plausible ranges",
+    )
     mean_yield_per_dataset = y_prior_t_per_ha.mean(axis=1)  # computed for this figure alone
     summary = interval(np.quantile(mean_yield_per_dataset, QUANTILES), "t/ha")
     print_labeled(settings, name, "prior predictive mean yield:", summary)

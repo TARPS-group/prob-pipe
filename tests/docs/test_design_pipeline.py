@@ -267,7 +267,7 @@ class TestPipelineSkeleton:
         assert result.returncode == 0, result.stderr
         label = "smoke run, not for inference"
         assert f"{label}: normal: change in yield per degree Celsius:" in result.stdout
-        out = tmp_path / "runs" / "smoke"
+        out = tmp_path / "checks" / "smoke"
         for name in (
             "normal_answers.json",
             "student_t_prior_predictive.png",
@@ -284,19 +284,19 @@ class TestPipelineSkeleton:
         assert result.returncode == 0, result.stderr
         assert "OPTIONAL:" not in (tmp_path / "pipeline_skeleton.py").read_text().split('"""')[2]
         assert check_symbols.main([str(tmp_path / "pipeline_skeleton.py")]) == 0
-        assert not (tmp_path / "runs" / "smoke" / "model_comparison.csv").exists()
+        assert not (tmp_path / "checks" / "smoke" / "model_comparison.csv").exists()
 
     def test_a_hold_leaves_the_smoke_stage_without_a_fit(self, tmp_path):
         result = self._run(tmp_path, "smoke", pared=True, HOLD_SIMULATED_FITS="2026-10-25")
         assert result.returncode == 0, result.stderr
-        assert (tmp_path / "runs" / "smoke" / "provenance.json").exists()
-        assert not (tmp_path / "runs" / "smoke" / "normal_answers.json").exists()
+        assert (tmp_path / "checks" / "smoke" / "provenance.json").exists()
+        assert not (tmp_path / "checks" / "smoke" / "normal_answers.json").exists()
 
     def test_the_fit_stage_stops_at_the_gate_without_a_validation(self, tmp_path):
         result = self._run(tmp_path, "fit", pared=True)
         assert result.returncode != 0
         assert "Gate: no model may be fit" in result.stderr
-        assert not (tmp_path / "outputs" / "normal_answers.json").exists()
+        assert not (tmp_path / "results" / "normal_answers.json").exists()
 
     def test_a_fit_without_a_validation_is_labeled_provisional(self, tmp_path):
         reason = "the user declined the validation"
@@ -304,7 +304,7 @@ class TestPipelineSkeleton:
         assert result.returncode == 0, result.stderr
         label = "PROVISIONAL: not validated"
         assert f"{label}: student_t: change in yield per degree Celsius:" in result.stdout
-        assert (tmp_path / "outputs" / "PROVISIONAL_normal_answers.json").exists()
+        assert (tmp_path / "results" / "PROVISIONAL_normal_answers.json").exists()
 
     def test_the_hash_covers_the_code_that_the_validation_depends_on(self, tmp_path):
         pytest.importorskip("matplotlib")
@@ -331,8 +331,8 @@ class TestPipelineSkeleton:
         script.write_text(source.replace(step_after_fit, step_after_fit + "    # edited\n"))
         (tmp_path / "report.py").write_text((tmp_path / "report.py").read_text() + "# edited\n")
         assert code_hash() == first
-        prior = "prior_scale * jnp.array([2.5, 1.0, 1.0])"
-        script.write_text(source.replace(prior, "prior_scale * jnp.array([2.5, 1.0, 2.0])"))
+        prior = "prior_scale * jnp.array([1.5, 1.0, 1.0])"
+        script.write_text(source.replace(prior, "prior_scale * jnp.array([1.5, 1.0, 2.0])"))
         assert code_hash() != first
         script.write_text(source)
         data_file = tmp_path / "example_data.csv"
