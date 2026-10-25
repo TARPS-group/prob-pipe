@@ -49,6 +49,16 @@ model. Plan for that return.
   through its **prior predictive distribution** (Gelman et al. 2017).
 - Rescale or standardize the parameters so that the priors and the sampler
   both work on scales of order one.
+- **Default priors when the user cannot give numbers.** Standardize each
+  covariate, and choose weakly informative priors, such as normal priors of
+  scale one on the scale of the linear predictor. Then judge them by the
+  prior predictive check of stage C. A simulated value is implausible when it
+  lies beyond a bound that the user can name, such as a physical limit or the
+  largest value on record, or else beyond ten times the range of the observed
+  outcome. Tighten the scales of the priors until at most 10% of the
+  simulated datasets hold an implausible value, which is the default share.
+  Record in section 3 of the design document that this check set the priors,
+  with the bound and the share.
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage B.
 
 ### C. Prior predictive checks

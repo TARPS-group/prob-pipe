@@ -25,7 +25,8 @@ the earlier steps against them:
 3. **Generative model.** Describe the data-generating process, including the
    measurement process: the parameters, the priors, and the likelihood or the
    simulator. Justify each prior, ideally from domain knowledge or the user's
-   papers. Then choose the route of the section "Bring any model" of
+   papers, and otherwise by the default priors of RESOURCES.md stage B. Then
+   choose the route of the section "Bring any model" of
    CAPABILITIES.md by which the model enters ProbPipe:
    - The default is the route of the code the user already has, such as their
      PyMC model, Stan program, or simulator.

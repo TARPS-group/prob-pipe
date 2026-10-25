@@ -87,7 +87,10 @@ D, and they rest on the user's knowledge alone while the user has not seen the
 summary. When the user asks for the summary of the outcome first, or has
 already studied the data, record each value they give as "elicited after the
 data summary" in the justification of the prior that it sets, in section 3 of
-the design document.
+the design document. When the user cannot give these numbers, ask for a bound
+on the outcome that they can name, such as a physical limit or the largest
+value on record, and set the priors by the default of
+[RESOURCES.md](../RESOURCES.md) stage B.
 
 If the data is not available yet, ask for a description detailed enough to
 simulate synthetic data of the same structure. Tell the user that the pipeline
