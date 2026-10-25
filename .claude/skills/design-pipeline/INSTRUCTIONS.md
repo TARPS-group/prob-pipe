@@ -98,7 +98,10 @@ when either check fails, and record the new corpus in project memory.
   argument, or method name in a proposal or in code, find it in CAPABILITIES.md
   or in `<corpus>/INDEX.md`. Then search the corpus or the `probpipe/`
   source of the checkout for its docstring, and read it. Prefer patterns you
-  have seen in the tutorials and the user guide. Run `check_symbols.py` on
+  have seen in the tutorials and the user guide. A tutorial can lag the
+  current API, so replace a tutorial pattern that fails `check_symbols.py` or
+  raises on the current API by the user guide's pattern, and follow
+  CAPABILITIES.md where it differs from a tutorial. Run `check_symbols.py` on
   each version of the code, as [phases/4-proposal.md](phases/4-proposal.md)
   describes.
 - **The code decides what exists.** `design/` describes the *target state*,
