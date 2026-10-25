@@ -98,8 +98,7 @@ the proposal" of phases/4-proposal.md apply to it, and so do the
       Check it and run it by the steps of
       [Check and run the code](4-proposal.md#check-and-run-the-code), with a
       smoke run on simulated data first. Its run on the real data is the first
-      fit to the real data, which needs the user's consent by rule 5, and
-      which rule 6 allows before the validation.
+      fit to the real data, which rule 6 allows before the validation.
    3. Compare the estimands. For each one, compute the median and the 2.5% and
       97.5% quantiles of the draws of each run, and compute the correlation of
       each pair of parameters. The error of each value is approximately the

@@ -51,16 +51,19 @@ model. Plan for that return.
   both work on scales of order one.
 - **Default priors when the user cannot give numbers.** Standardize each
   covariate, and choose weakly informative priors, such as normal priors of
-  scale one on the scale of the linear predictor. Then judge them by the
-  prior predictive check of stage C. A simulated value is implausible when it
-  lies beyond a bound that the user can name, such as a physical limit or the
-  largest value on record, or else beyond ten times the range of the observed
+  scale one on the scale of the linear predictor. A prior centered on no
+  effect shrinks the estimate toward no effect, by an amount that the prior
+  sensitivity analysis shows, so describe it to the user in those terms.
+  Judge the priors by the prior predictive check of stage C. A simulated
+  value is implausible when it lies beyond a bound that the user names, such
+  as a physical limit, or else beyond ten times the range of the observed
   outcome. Tighten the scales of the priors until at most 5% of the simulated
   observations are implausible, which is the default share. The share of
   datasets that hold an implausible value grows with their size, so judge
-  whole datasets only by a summary whose plausible range the user names for
-  data of this size, such as the largest of the n observations, with at most
-  10% of the datasets outside that range.
+  whole datasets by summaries that check both tails, such as the smallest and
+  the largest of the n observations, or their spread, each with a plausible
+  range that the user names for data of this size, and with at most 10% of
+  the datasets outside any range.
   Record in section 3 of the design document that this check set the priors,
   with the bound and the share.
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage B.
@@ -68,20 +71,24 @@ model. Plan for that return.
 ### C. Prior predictive checks
 
 - Simulate data from the prior, and ask the domain expert whether it looks
-  possible. Implausible simulations, such as negative counts or astronomically
-  large values, mean that the priors or the model structure need revision.
-- Show the expert one or two summaries in the units of the data, so that they
-  judge the simulations by what they know. An example is the share of
-  simulated observations beyond the largest value they would believe, beside
-  the range of a typical value.
+  possible. Implausible simulations, such as negative counts, astronomically
+  large values, or nearly constant datasets, mean that the priors or the model
+  structure need revision.
+- Show the expert one or two summaries in the units of the data, such as
+  those of stage B, so that they judge the simulations by what they know.
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage C.
 
 ### D. Validate the computation on realistic simulated data
 
-Validate the computation on simulated data with a known ground truth before
-you trust a fit to the real data. Every design includes this validation, and
-the answers of a real-data fit count as validated only after the validation's
-grade, by step 6, is *passed* or *passed with notes*.
+Validate the computation against a known ground truth before you trust a fit
+to the real data. Every design includes this validation, and the answers of a
+real-data fit count as validated only after the validation's grade, by step
+6, is *passed* or *passed with notes*. The ground truth is simulated data, by
+the steps below, or the reference draws of a comparison of inference methods
+on posteriors that come with them, such as those of posteriordb. Such a
+comparison scores each method against the draws by the bullet "Validate an
+approximate method before you report its results" of stage E, and its
+pipeline has no validate stage and no gate.
 
 1. **Simulate at the real design.** Simulate datasets from the model with the
    actual covariates, sample sizes, grouping structure, and missingness
@@ -282,13 +289,14 @@ grade, by step 6, is *passed* or *passed with notes*.
   real data, try these remedies in order, and rerun the fits after each
   one:
   1. Reparameterize the model, by the folk theorem, such as in the
-     non-centered form of the next bullet.
+     non-centered form of the next bullet or in the form that the row "Fit a
+     law whose support depends on its parameters" of
+     [CAPABILITIES.md](CAPABILITIES.md) gives.
   2. Raise the target acceptance rate of the step-size adaptation, such as
      from 0.8 to 0.95. A higher target adapts a smaller step size, so each
      draw takes longer. The row "Condition on the data" of
      [CAPABILITIES.md](CAPABILITIES.md) names the methods that take this
-     setting. For a method that takes none, go on to remedy 3, or offer the
-     interface of that row.
+     setting, and for another method, go on to remedy 3.
   3. Lengthen the warmup, such as from 500 to 2000 iterations, so that the
      adaptation of the step size and the mass matrix settles.
 
@@ -389,6 +397,9 @@ grade, by step 6, is *passed* or *passed with notes*.
 - **Predictive checks:** compare replicated data with the observed data.
   Choose test statistics that target the scientific question and the
   model's weakest assumptions, beyond the mean, and use graphical checks.
+  When the likelihood censors, truncates, or drops values, compute each
+  statistic the same way on the observed and the replicated data, such as
+  with censored values set to their threshold, and say so.
   The posterior predictive check is the default. It uses the data both to
   fit the model and to check it, so its p-values are conservative. When the
   user needs calibrated p-values, the alternatives include the LOO-PIT of
