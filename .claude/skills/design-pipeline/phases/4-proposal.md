@@ -140,17 +140,46 @@ way they work, and the script `<workspace>/pipeline.py` for one who names
 scripts. When the user's answers name neither, ask in one line.
 
 Start from the worked example `<assistant>/templates/pipeline_skeleton.py`
-and its modules `pipeline_support.py`, `report.py`, and `sim_data.py`. Its
-comments give the reason for each part, and they say when to keep each block
-tagged `# OPTIONAL: <name>`. Pare it down in four steps:
+and its modules `pipeline_support.py`, `report.py`, and `sim_data.py`. Each
+block tagged `# OPTIONAL: <name>` has a one-line comment that says what it
+computes. Keep a block when the design calls for it:
+
+| Block | Keep it when |
+|---|---|
+| compare models | the design compares models |
+| held-out subset | the data allow a held-out period, region, or random split, chosen before any elaboration and scored once after it ends, by the [rules for revisions](5-feedback.md#rules-for-revisions) |
+| calibration | the answer is the probability of an event, and the held-out subset is kept |
+| plug-in forecast | the answer is a probability or a decision, so the answer at the posterior mean shows what the propagated uncertainty changes |
+| scenarios | the user compares conditions |
+| prior sensitivity | the user asks how much the priors matter, by RESOURCES.md stage H |
+| external result | the user must reconcile the answer with another tool's or an earlier run's |
+| provenance | the user reports how each result was computed, as in a methods section |
+| compare algorithms | the choice of inference method is in question, by RESOURCES.md stage E |
+| several datasets | the design reports an answer per site, group, or year |
+| bring in a model from another package | the model is written in PyMC, Stan, or the user's code, by the row "Bring any model" of CAPABILITIES.md |
+| large data | the data have many observations, by RESOURCES.md stage E "Many observations", or need many independent fits, by the row "Run a pipeline at scale" of CAPABILITIES.md |
+
+Pare the example down in four steps:
 
 1. Copy the example and its modules to the workspace.
 2. Keep each optional block that the design document calls for, and delete
    the others: each line that ends in the tag, and each section from its
    tagged header to the next `# ---` header, in the pipeline and in
    `report.py`.
-3. Replace the example's data, models, and estimands with those of the
-   design.
+3. Replace the example's data, models, estimands, and `show_*` functions with
+   those of the design:
+   - the docstring of the script says where each choice of the design is
+     made, as the example's does;
+   - the data step checks the columns, types, ranges, and codes of missing
+     values that the data notes give;
+   - `VALIDATED` lists each function and setting that the data step, the
+     split, a model, the simulation, or the fit calls;
+   - the validation recovers the parameters at prior draws, and a design with
+     parameter values that the user judges realistic adds the recovery at
+     those values by the same recipe;
+   - `check_code()` adds the agreement check of
+     [phases/4-existing-pipeline.md](4-existing-pipeline.md) for a model
+     re-implemented from the user's code.
 4. Run `check_symbols.py` by [Check and run the code](#check-and-run-the-code),
    and delete what only a deleted block used, such as an import.
 
@@ -168,7 +197,9 @@ metadata names the project's kernel, which
 [Check and run the code](#check-and-run-the-code) registers, with the language
 `python`, so that Colab runs the notebook on its own Python kernel. Each step
 of the pipeline matches a subsection of section 4 of the design document, and
-shows a figure where one helps, with a one-sentence comment on how to read it.
+shows a figure where one helps, with a one-sentence caption on how to read it,
+which `save_figure()` of `report.py` writes under the figure. A step without a
+figure prints that sentence after its result.
 The notebook's first text cell, or the docstring of a script, says where to
 change each choice, such as "the priors are in `build_model()`", so that the
 user can find, defend, and edit each choice in code they did not write.
@@ -252,8 +283,9 @@ Colab edits.
    - `stage`, which is `"validate"`;
    - the design version;
    - the hash of what the validation depends on: the data file, the data
-     step, the model definitions, the simulation of datasets, the fit
-     function with its methods and budgets, and the grading code of stage D. The pipeline
+     step, the held-out split, the model definitions, the simulation of
+     datasets, the fit function with the methods, budgets, and remedies of the
+     validation and of the fit, and the grading code of stage D. The pipeline
      declares these in `VALIDATED`, and a step after the fit, such as an
      answer, a check, or a comparison, and `report.py` leave the hash
      unchanged;
@@ -296,7 +328,16 @@ one of two labels:
 
 The label appears in each printed answer, each figure title, each file name
 in `<workspace>/results/`, and each estimate in the design document, and the
-methods paragraph of the design document states the status.
+methods paragraph of the design document states the status. A table or file
+of several models has a status column with each model's label, and its name
+takes the prefix `PROVISIONAL_` when any of the models is provisional.
+
+A fit that changes the prior, the method, or the data of a validated model,
+such as a prior-sensitivity refit, a comparison of algorithms, or a fit per
+year, uses the remedy when the validated fit did, and `refit_label()` labels it
+by its kind and its difference, as in "Sensitivity fit, priors 3× wider, not
+checked on simulated data", because the validation checked one prior and one
+likelihood fitted by one method at the real design.
 
 Every run resolves the stage and then runs the data step. Each stage writes
 its results, such as the diagnostics and the estimates, as it computes them,
