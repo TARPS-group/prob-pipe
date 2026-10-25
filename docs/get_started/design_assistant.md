@@ -96,9 +96,7 @@ I want to know how the number of satellites changes with width, and whether
 some females attract none at all.
 ```
 
-## If something goes wrong
-
-> **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.
+## Troubleshooting
 
 | Problem | What to do |
 |---|---|
