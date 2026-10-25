@@ -59,10 +59,11 @@ the proposal" of phases/4-proposal.md apply to it, and so do the
       one from another log-gamma routine, leaves the posterior unchanged.
       Record the check in section 4f of the design document.
 
-   Recommend integration by default. Recommend migration when the user asks
-   for it or needs a check that the route of integration rules out, and
-   recommend option 3 when the user wants gradients or speed from a model
-   that JAX cannot trace. Record the choice as a decision.
+   Recommend integration by default, and lead with what it gives. Recommend
+   migration when the user asks for it or needs a check that the route of
+   integration rules out, and option 3 when the user needs gradients, or
+   speed beyond the runtime that the original's own log shows. Record the
+   choice as a decision.
    Keep each interface as simple as the ground rule "Offer to build an
    interface to a missing component" of
    [INSTRUCTIONS.md](../INSTRUCTIONS.md#ground-rules) requires.
@@ -86,6 +87,10 @@ the proposal" of phases/4-proposal.md apply to it, and so do the
       integrated or migrated pipeline on the same data, with the same priors,
       and with the same inference method and settings where ProbPipe has the
       method, and it writes its results to `<workspace>/runs/reproduce/`.
+      The reproduction of an integrated pipeline is two runs of the original
+      code. A run with its seed shows that the saved outputs come from this code when
+      the two are identical, and a run with a second seed is the comparison
+      of substep 3. Say which of the two each result shows.
       When ProbPipe has no counterpart of the original's method, such as a
       differential-evolution sampler, fit with the default method of
       [RESOURCES.md](../RESOURCES.md) stage E, and compare the two posteriors
