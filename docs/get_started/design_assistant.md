@@ -39,7 +39,7 @@ With Python 3.13, write `3.13` in place of `3.12`.
 A computer with neither version can use [uv](https://docs.astral.sh/uv/getting-started/installation/), which downloads Python 3.12: replace the second and third commands with `uv venv --python 3.12 ~/probpipe-env` and `uv pip install --python ~/probpipe-env/bin/python -e "$HOME/probpipe[pymc,nutpie]"`, or on Windows with the same commands on the paths `"$HOME\probpipe-env"` and `"$HOME\probpipe-env\Scripts\python.exe"`.
 The install takes about fifteen minutes.
 
-This one-line check prints a line that ends in `is ready`, such as `ProbPipe 0.2.0.dev0 is ready`, when the environment works:
+This one-line check prints a line that ends in `is ready`, such as `ProbPipe 0.2.0.dev0 is ready`, when the environment works, and the version number in it can differ:
 
 ```bash
 ~/probpipe-env/bin/python -c "import probpipe, pymc, nutpie; print('ProbPipe', probpipe.__version__, 'is ready')"
@@ -91,7 +91,7 @@ My first message: <describe your problem, or "resume <project>">
 ```
 
 When ProbPipe is installed before the session, the setup takes about a minute.
-An agent that runs in a sandbox, such as Codex, asks for network access and for writes outside its working directory, so approve those requests for steps 1 and 3, for the corpus build of the assistant's first phase, and for the directories of memory, which are `~/.probpipe-design` and the project's directory.
+An agent that runs in a sandbox, such as Codex, asks for network access and for writes outside its working directory, so approve those requests for steps 1 and 3, for the corpus build of the assistant's first phase in `~/.cache/probpipe-design`, and for the directories of memory, which are `~/.probpipe-design` and the project's directory.
 To resume a project in a later session, paste the same prompt with `resume <project>` as the last line, and type `status` at any time to see where the project stands.
 The agent then keeps ProbPipe at the commit that the project's memory records, unless you ask it to update ProbPipe.
 

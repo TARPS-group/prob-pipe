@@ -34,8 +34,7 @@ needs it.
    still installing ProbPipe, build the corpus after the install ends. Run the script with `<python>`, so that its
    version check describes the environment where ProbPipe is installed:
    `<python> <assistant>/build_corpus.py --repo <checkout> [<corpus>]`
-   The corpus directory defaults to the directory `corpus` under the
-   person-memory directory. When `<corpus>/MANIFEST.md` already names the
+   The corpus directory defaults to `~/.cache/probpipe-design/corpus`. When `<corpus>/MANIFEST.md` already names the
    commit of the checkout, which `git -C <checkout> rev-parse HEAD` prints, use
    that corpus instead. The script flattens the README, the documentation site, and the
    design reference into tiered part files, with the API reference resolved

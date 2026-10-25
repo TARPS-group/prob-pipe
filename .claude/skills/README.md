@@ -206,9 +206,9 @@ builds the corpus, and reads the instructions.
   that it imports, against the installed package, and reports each call of
   an export that is not implemented, each `*` between two laws, and each
   attribute that an `OutputSpec` lacks;
-- `design-pipeline/templates/`: the skeleton of a pipeline script, with its
-  printing and simulation modules and an example data file, which the
-  assistant copies and adapts.
+- `design-pipeline/templates/`: a worked example of a pipeline script, with
+  its support, printing, and simulation modules and its example data, which
+  the assistant copies and pares down to a design.
 
 **What it does:**
 1. **Loads knowledge on demand:** replies first, builds the corpus, reads the

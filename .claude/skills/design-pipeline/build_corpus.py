@@ -34,8 +34,8 @@ Usage::
 
     python3 build_corpus.py [--repo PATH] [OUT_DIR]
 
-``OUT_DIR`` defaults to ``corpus/`` under ``$PROBPIPE_DESIGN_HOME``, else under
-``~/.probpipe-design``.
+``OUT_DIR`` defaults to ``~/.cache/probpipe-design/corpus``, a cache that holds
+nothing about the user, so building it needs no consent to keep a memory.
 """
 
 from __future__ import annotations
@@ -92,8 +92,8 @@ TIERS = (
     Tier(
         "1-overview",
         "Overview and orientation",
-        "What ProbPipe is, a short example, installation, the quickstart, citation, and help.",
-        ("README.md", "docs/index.md", "docs/get_started/", "docs/cite.md", "docs/help.md"),
+        "What ProbPipe is, a short example, and the quickstart.",
+        ("README.md", "docs/index.md", "docs/get_started/quickstart.ipynb"),
     ),
     Tier(
         "2-tutorials",
@@ -133,6 +133,17 @@ TIERS = (
             "design/07-distribution-catalog.md",
             "design/glossary.md",
             "design/package-structure.md",
+        ),
+    ),
+    Tier(
+        "6-setup",
+        "Setup, citation, and help",
+        "Installation, the design assistant's setup page, citation, and help.",
+        (
+            "docs/get_started/installation.md",
+            "docs/get_started/design_assistant.md",
+            "docs/cite.md",
+            "docs/help.md",
         ),
     ),
 )
@@ -874,9 +885,8 @@ def build_index(
 
 
 def default_out_dir() -> Path:
-    """The corpus directory under ``$PROBPIPE_DESIGN_HOME``, else under ``~/.probpipe-design``."""
-    home = os.environ.get("PROBPIPE_DESIGN_HOME")
-    return (Path(home).expanduser() if home else Path.home() / ".probpipe-design") / "corpus"
+    """The corpus directory in the cache directory of the user's home."""
+    return Path.home() / ".cache" / "probpipe-design" / "corpus"
 
 
 def main() -> None:

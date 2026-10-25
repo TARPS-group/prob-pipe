@@ -13,8 +13,8 @@ resumes a design where it stopped.
 | Person memory | `$PROBPIPE_DESIGN_HOME/user.md`, else `~/.probpipe-design/user.md` | Everything true of the person in every project. |
 | Project memory | `<workspace>/memory.md`, in the project's workspace directory | Everything specific to one analysis. |
 
-The person-memory directory also holds the corpus, in its directory `corpus`,
-which `build_corpus.py` writes there by default.
+The corpus of ProbPipe's documentation is a cache, outside the memory
+directory, in `~/.cache/probpipe-design/corpus` by default.
 
 The home directory is lost when an ephemeral environment, such as a cloud
 session or a container, ends. In such an environment, say so when you first
