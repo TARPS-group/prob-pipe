@@ -30,7 +30,10 @@ Confirm the preferences in one line at the top of the proposal of
 [Phase 4](4-proposal.md#present-the-proposal), rather than in a message of
 their own, such as "I'll pitch this as: Bayesian choices in plain words, each
 model beside its glmer formula, and a notebook you run top to bottom. Correct
-me if that's wrong." Record them in two steps:
+me if that's wrong." On the path of
+[phases/4-existing-pipeline.md](4-existing-pipeline.md), the line opens the
+message of its step 2, which offers the options for the pipeline. Record them
+in two steps:
 
 1. Save the preferences to person memory when you choose them, tagged
    `[inferred]`, with the facts about their experience that the user stated.

@@ -65,6 +65,10 @@ name taken from the opening message, and say that the user can name another
 directory. Create the workspace after the user replies, at the default when
 the reply does not name one. If person memory does not exist yet, ask whether
 you may create it, as [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#rules) describes.
+Put the workspace and person memory to the user as one question, which counts
+once toward the three questions of a message of
+[Messages](../INSTRUCTIONS.md#messages). It states the default of each, and
+the user answers it with one yes or no.
 Create the project memory, record the corpus in it as [Phase 0](0-load.md)
 step 6 says, and add the project to the index of person memory.
 

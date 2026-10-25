@@ -191,9 +191,11 @@ when either check fails, and record the new corpus in project memory.
   models by their predictions, like a difference of LOO. It also keeps a stage
   that answers a concern the user names, such as a prior sensitivity analysis
   for a user who worries about the influence of the priors. Give the user a
-  rough runtime for each fit, from the compute plan of the design document,
-  which a probe script or the first smoke run calibrates. Record the mode in
-  project memory. The full workflow takes up the deferred stages, and the
+  rough runtime for each fit, from the compute plan of the design document.
+  Calibrate it from the most recent run of the same computation, such as the
+  last smoke run, because the load of a shared machine can change a runtime
+  several-fold between runs. On a shared machine, give a range, with the load that
+  `uptime` prints. Record the mode in project memory. The full workflow takes up the deferred stages, and the
   user switches to it by saying so at any point.
 - **Guard the analysis against data-driven revisions.** Revise each design by
   the [rules for revisions](phases/5-feedback.md#rules-for-revisions), which
@@ -341,7 +343,9 @@ phase follows these rules:
    has already run and reports no new answer. Give the expected runtime of
    each stage from the compute plan of the design document.
 7. **Bound every run.** Run each command with a timeout, about ten minutes for
-   a smoke run. Run a fit that can take longer in the background, with its
+   a smoke run. Run Python unbuffered, with `<python> -u` or
+   `PYTHONUNBUFFERED=1`, and write its output to a file as it runs, so that a
+   run that its timeout stops keeps its partial output. Run a fit that can take longer in the background, with its
    output written to the log file `<workspace>/runs/<stage>.log`, or give the user the command
    to run themselves. Read the log to follow the run.
 8. **Ask before you install anything,** such as a package, CmdStan, or a
