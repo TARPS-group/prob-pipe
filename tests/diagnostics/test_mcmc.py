@@ -414,7 +414,10 @@ class TestAddMcmcDiagnostics:
     def test_refuses_an_unknown_metric(self, posterior):
         with pytest.raises(
             ValueError,
-            match=r"unknown metric 'esss'; available metrics: \['rhat', 'ess', 'mcse', 'divergences'\]",
+            match=(
+                r"unknown metric 'esss'; available metrics: "
+                r"\['rhat', 'ess', 'mcse', 'divergences', 'e_bfmi', 'tree_depth'\]"
+            ),
         ):
             add_mcmc_diagnostics(posterior, metrics=["rhat", "esss"])
         assert not _mcmc_has_field(posterior, "rhat")
@@ -459,6 +462,17 @@ class TestAddMcmcDiagnostics:
         add_mcmc_diagnostics(posterior)
         assert posterior.diagnostics.mcmc.n_divergences == 3
 
+    def test_a_run_without_energy_or_tree_depth_statistics_gives_not_computed(self, posterior):
+        add_mcmc_diagnostics(posterior)
+        mcmc_view = posterior.diagnostics.mcmc
+        assert mcmc_view.e_bfmi == NotComputed("the run's sample statistics hold no 'energy'")
+        assert mcmc_view.n_at_max_tree_depth == NotComputed(
+            "the run's sample statistics hold no 'reached_max_treedepth'"
+        )
+        table = posterior.diagnostics.summary_table()
+        assert "E-BFMI by chain: N/A" in table
+        assert "Draws at the maximum tree depth: N/A" in table
+
     def test_vector_parameter_diagnostics_are_written_by_entry(self):
         posterior = _posterior_of_draws(_vector_draws())
 
@@ -470,3 +484,120 @@ class TestAddMcmcDiagnostics:
         assert set(view.rhat) == {"beta[0]", "beta[1]"}
         assert set(view.ess_bulk) == {"beta[0]", "beta[1]"}
         assert set(view.mcse_mean) == {"beta[0]", "beta[1]"}
+
+
+# ---------------------------------------------------------------------------
+# E-BFMI and tree-depth saturation
+# ---------------------------------------------------------------------------
+
+
+def _posterior_with_sample_stats(sample_stats: dict[str, np.ndarray], num_draws: int = 50) -> Any:
+    """A two-chain posterior of ``z`` whose run recorded *sample_stats*, each ``(2, num_draws)``."""
+    import jax.numpy as jnp
+
+    from probpipe import MultivariateNormal
+    from probpipe.inference._approximate_distribution import _posterior_from_chains
+    from probpipe.inference._inference_utils import build_mcmc_datatree
+
+    rng = np.random.default_rng(0)
+    chains = [jnp.asarray(rng.normal(size=(num_draws, 2))) for _ in range(2)]
+    prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
+    return _posterior_from_chains(
+        chains,
+        parents=(prior,),
+        method="test",
+        annotations=build_mcmc_datatree(chains, sample_stats),
+    )
+
+
+def _energy(rho: float) -> np.ndarray:
+    """Two chains of 50 energies, each an AR(1) series with autocorrelation *rho*."""
+    rng = np.random.default_rng(7)
+    energy = np.zeros((2, 50))
+    for i in range(1, 50):
+        energy[:, i] = rho * energy[:, i - 1] + rng.standard_normal(2)
+    return energy
+
+
+class TestEBfmi:
+    def test_the_e_bfmi_of_each_chain_is_arviz_bfmi_of_the_energy(self):
+        energy = _energy(0.0)
+        posterior = _posterior_with_sample_stats({"energy": energy})
+        add_mcmc_diagnostics(posterior, metrics="e_bfmi")
+        expected = np.asarray(_arviz_stats_module().bfmi(energy))
+        np.testing.assert_allclose(posterior.diagnostics.mcmc.e_bfmi, expected, rtol=1e-6)
+        assert posterior.diagnostics.e_bfmi == posterior.diagnostics.mcmc.e_bfmi
+
+    def test_the_e_bfmi_is_the_mean_squared_step_over_the_variance(self):
+        energy = np.array([[0.0, 1.0, 0.0, 1.0], [0.0, 1.0, 2.0, 3.0]])
+        posterior = _posterior_with_sample_stats({"energy": energy})
+        add_mcmc_diagnostics(posterior, metrics="e_bfmi")
+        # Both chains take three steps of size 1, and their variances, of divisor 3,
+        # are 1/3 and 5/3.
+        np.testing.assert_allclose(posterior.diagnostics.mcmc.e_bfmi, [3.0, 0.6])
+
+    def test_a_chain_below_the_threshold_warns(self):
+        # This series has E-BFMI 0.095 in chain 0 and 0.519 in chain 1.
+        posterior = _posterior_with_sample_stats({"energy": _energy(0.95)})
+        with pytest.warns(UserWarning, match=r"E-BFMI of chain 0 is 0\.095, below 0\.3"):
+            add_mcmc_diagnostics(posterior, metrics="e_bfmi")
+        assert len(posterior.diagnostics.mcmc.warnings) == 1
+
+    def test_the_threshold_is_an_argument(self, recwarn):
+        posterior = _posterior_with_sample_stats({"energy": _energy(0.95)})
+        add_mcmc_diagnostics(posterior, metrics="e_bfmi", e_bfmi_threshold=0.01)
+        assert posterior.diagnostics.mcmc.warnings == []
+        assert not [w for w in recwarn if "E-BFMI" in str(w.message)]
+
+    def test_independent_energies_do_not_warn(self, recwarn):
+        posterior = _posterior_with_sample_stats({"energy": _energy(0.0)})
+        add_mcmc_diagnostics(posterior, metrics="e_bfmi")
+        assert not [w for w in recwarn if "E-BFMI" in str(w.message)]
+
+    def test_a_chain_of_one_draw_gives_not_computed(self):
+        posterior = _posterior_with_sample_stats({"energy": np.zeros((2, 1))}, num_draws=1)
+        add_mcmc_diagnostics(posterior, metrics="e_bfmi")
+        assert posterior.diagnostics.mcmc.e_bfmi == NotComputed(
+            "E-BFMI requires at least 2 draws in each chain"
+        )
+
+
+class TestTreeDepthSaturation:
+    def test_the_count_is_the_sum_of_reached_max_treedepth(self):
+        reached = np.zeros((2, 50), dtype=bool)
+        reached[0, [1, 4, 9]] = True
+        reached[1, 30] = True
+        posterior = _posterior_with_sample_stats({"reached_max_treedepth": reached})
+        with pytest.warns(UserWarning, match="4 draws of 100 reached the maximum tree depth"):
+            add_mcmc_diagnostics(posterior, metrics="tree_depth")
+        assert posterior.diagnostics.mcmc.n_at_max_tree_depth == 4
+        assert posterior.diagnostics.n_at_max_tree_depth == 4
+        assert posterior.diagnostics.mcmc.warnings == [
+            "4 draws of 100 reached the maximum tree depth. Raise max_tree_depth in method_options"
+        ]
+
+    def test_no_saturated_draw_records_zero_and_no_warning(self, recwarn):
+        posterior = _posterior_with_sample_stats(
+            {"reached_max_treedepth": np.zeros((2, 50), dtype=bool)}
+        )
+        add_mcmc_diagnostics(posterior, metrics="tree_depth")
+        assert posterior.diagnostics.mcmc.n_at_max_tree_depth == 0
+        assert not [w for w in recwarn if "tree depth" in str(w.message)]
+
+    def test_the_summary_table_and_dict_report_the_sampler_statistics(self):
+        reached = np.zeros((2, 50), dtype=bool)
+        reached[1, 2] = True
+        diverging = np.zeros((2, 50), dtype=bool)
+        posterior = _posterior_with_sample_stats(
+            {"energy": _energy(0.0), "reached_max_treedepth": reached, "diverging": diverging}
+        )
+        with pytest.warns(UserWarning, match="1 draw of 100"):
+            add_mcmc_diagnostics(posterior)
+        e_bfmi = posterior.diagnostics.mcmc.e_bfmi
+        table = posterior.diagnostics.summary_table()
+        assert "Divergent transitions: 0" in table
+        assert f"E-BFMI by chain: {e_bfmi[0]:.3f}, {e_bfmi[1]:.3f}" in table
+        assert "Draws at the maximum tree depth: 1" in table
+        summary = posterior.diagnostics.to_dict()["mcmc"]
+        assert summary["e_bfmi"] == e_bfmi
+        assert summary["n_at_max_tree_depth"] == 1
