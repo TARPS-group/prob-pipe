@@ -621,6 +621,29 @@ def _point_shape(law: Any) -> tuple[int, ...] | None:
     return shape if shape else (1,)
 
 
+def _initial_state_keys(key: Array, num_chains: int) -> Array:
+    """The keys of the per-chain initial draws, split from a child of *key* that is no chain key.
+
+    The runners split *key* into the chain keys with
+    ``jax.random.split(key, num_chains)`` and derive every warmup and sampling
+    key from a chain key. The initial draws split the reserved key
+    ``jax.random.split(key, num_chains + 1)[num_chains]`` once per chain.
+    Each split computes Threefry blocks of *key* at integer counters. Under
+    JAX's default ``jax_threefry_partitionable``, chain key ``i`` is the
+    block at counter ``(0, i)`` and the reserved key is the block at
+    ``(0, num_chains)``. Under the original implementation, the two splits
+    compute the blocks at counters ``(j, num_chains + j)`` and
+    ``(j, num_chains + 1 + j)``, so they share no block. Threefry is a
+    bijection of the counter for a fixed key, so the reserved key is not a
+    chain key. The initial draws therefore use keys of the reserved key's
+    subtree and the chains use keys of the chain keys' subtrees, and a key of
+    one equals a key of the other only through a chance collision of Threefry
+    outputs, of probability about 2**-64 per pair.
+    """
+    reserved = jax.random.split(key, num_chains + 1)[num_chains]
+    return jax.random.split(reserved, num_chains)
+
+
 def chain_initial_states(
     law: Any,
     init: Any,
@@ -644,8 +667,9 @@ def chain_initial_states(
        *num_chains* and whose rows have the shape of one state: each chain
        starts from its row;
     4. :data:`PER_CHAIN_INIT`: each chain starts from its own draw of
-       :func:`get_init_state`, made with ``jax.random.fold_in(chain_key, 1)``
-       for the chain's key of ``jax.random.split(key, num_chains)``.
+       :func:`get_init_state`, made with its key of
+       :func:`_initial_state_keys`, which derives these keys from a subtree
+       of *key* that the chains' warmup and sampling keys are not in.
 
     Parameters
     ----------
@@ -690,10 +714,8 @@ def chain_initial_states(
                 f"inference method {method!r}: init={PER_CHAIN_INIT!r} needs a target whose "
                 f"parameters are one array or a record of arrays, got {_described(law)}"
             )
-        chain_keys = jax.random.split(as_prng_key(key), num_chains)
-        states = [
-            get_init_state(law, None, random_seed=jax.random.fold_in(k, 1)) for k in chain_keys
-        ]
+        init_keys = _initial_state_keys(as_prng_key(key), num_chains)
+        states = [get_init_state(law, None, random_seed=k) for k in init_keys]
         return jnp.stack(states), True
     if init is None or point_shape is None:
         return init, False

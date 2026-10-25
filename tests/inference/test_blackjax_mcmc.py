@@ -18,10 +18,11 @@ from probpipe import (
 )
 from probpipe.diagnostics import add_mcmc_diagnostics
 from probpipe.distributions import FactoredDistribution
-from probpipe.inference import inference_method_registry
+from probpipe.inference import _blackjax_mcmc, inference_method_registry
 from probpipe.inference._inference_utils import observed_target
 from tests._posterior import arviz_data, flat_chains, flat_draws
 from tests.inference._harness import validate_method
+from tests.inference._key_recorder import record_consumed_keys
 from tests.inference.canonical import ObservationKernel
 
 # TFP/JAX emit a deprecation warning during random-key construction
@@ -619,6 +620,19 @@ class TestChainStarts:
             _first_draws(method, small_model, {"y": jnp.zeros((4,))}, init="prior")
 
 
+@pytest.mark.parametrize("init", [None, "per_chain"])
+def test_the_initial_draws_consume_no_key_of_the_chains(monkeypatch, small_model, init):
+    """The keys of the per-chain draws are none of the keys the chains' warmup and sampling consume."""
+    budget = {"num_results": 3, "num_warmup": 3, "num_chains": 3, "init": init}
+    with record_consumed_keys(monkeypatch, _blackjax_mcmc, "_run_blackjax_chains") as keys:
+        _nuts_posterior(small_model, {"y": jnp.zeros((4,))}, **budget)
+    assert len(keys["init"]) >= 3
+    # Each chain's warmup and sampling consume at least one key per step.
+    assert len(keys["chains"]) >= 3 * (3 + 3)
+    # Both phases split the run's key, and they share no other key.
+    assert keys["init"] & keys["chains"] == keys["run"]
+
+
 def test_rhat_detects_unvisited_modes_with_the_default_starts():
     """Chains that share a start stay in one mode, and R-hat misses the other."""
 
@@ -627,7 +641,8 @@ def test_rhat_detects_unvisited_modes_with_the_default_starts():
         add_mcmc_diagnostics(posterior, metrics="rhat")
         return posterior.diagnostics.rhat["mu"]
 
-    # Observed across workflow seeds 0-5: R-hat 1.53-1.76 with per-chain starts.
+    # Observed with per-chain starts: R-hat 1.55-1.81 at workflow seeds 0-2, 4, and 5,
+    # and 1.00 at seed 3.
     # Chains that all start at mu = 2 stay in that mode.
     assert rhat(init=np.array([2.0])) < 1.05
     assert rhat() > 1.2

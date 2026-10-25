@@ -2124,8 +2124,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
           likelihood & prior, {"y": jnp.array([1.0, 4.0, 2.0])}
       )
   # before: every chain starts at [0.41, 0.55, 1.49]
-  # after: the chains start at [2.70, 0.40, 2.07], [-0.63, -0.38, 0.87],
-  #        [-0.81, -0.31, -1.10], and [0.71, -1.07, 2.07]
+  # after: the chains start at [-0.92, 0.23, 0.24], [0.33, 0.89, 0.11],
+  #        [-0.58, -0.66, 0.04], and [0.34, -0.56, 1.05]
   ```
 
   Pass one state as `init` to start every chain from it, as

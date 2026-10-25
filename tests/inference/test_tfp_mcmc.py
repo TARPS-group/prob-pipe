@@ -13,8 +13,10 @@ import pytest
 
 from probpipe import Normal, NumericArraySpec, condition_on, conditional_distribution, workflow_run
 from probpipe.diagnostics import add_mcmc_diagnostics
+from probpipe.inference import _tfp_mcmc
 from tests._posterior import arviz_data, flat_chains
 from tests.inference._harness import validate_method
+from tests.inference._key_recorder import record_consumed_keys
 
 test_tfp_nuts_canonical = validate_method("tfp_nuts")
 
@@ -79,7 +81,8 @@ class TestChainStarts:
     def test_by_default_each_chain_starts_from_its_own_draw(self):
         first = self._first_draws()
         distances = np.abs(first[:, None, :] - first[None, :, :]).max(axis=-1)
-        assert distances[~np.eye(4, dtype=bool)].min() > 0.1
+        # A chain moves about 0.002 from its start. The closest two of these starts are 0.016 apart.
+        assert distances[~np.eye(4, dtype=bool)].min() > 0.01
         np.testing.assert_array_equal(first, self._first_draws(init="per_chain"))
 
     def test_one_state_starts_every_chain_from_it(self):
@@ -89,6 +92,16 @@ class TestChainStarts:
     def test_one_state_per_chain_starts_each_chain_from_its_row(self):
         rows = np.array([[1.0], [-1.0], [0.5], [2.0]])
         np.testing.assert_allclose(self._first_draws(init=rows), rows, atol=0.01)
+
+    def test_the_initial_draws_consume_no_key_of_the_chains(self, monkeypatch):
+        """The keys of the per-chain draws are none of the keys the chains' warmup and sampling consume."""
+        with record_consumed_keys(monkeypatch, _tfp_mcmc, "_run_tfp_chains") as keys:
+            _run(num_results=3, num_warmup=3, num_chains=3)
+        assert len(keys["init"]) >= 3
+        # Each chain's warmup and sampling consume at least one key per step.
+        assert len(keys["chains"]) >= 3 * (3 + 3)
+        # Both phases split the run's key, and they share no other key.
+        assert keys["init"] & keys["chains"] == keys["run"]
 
     def test_rhat_detects_unvisited_modes_with_the_default_starts(self):
         likelihood = conditional_distribution(
@@ -105,7 +118,8 @@ class TestChainStarts:
             add_mcmc_diagnostics(posterior, metrics="rhat")
             return posterior.diagnostics.rhat["mu"]
 
-        # Observed across workflow seeds 0-5: R-hat 1.53-1.75 with per-chain starts.
+        # Observed with per-chain starts: R-hat 1.54-1.75 at workflow seeds 0-2, 4, and 5,
+        # and 1.00 at seed 3.
         # Chains that all start at mu = 2 stay in that mode.
         assert rhat(init=np.array([2.0])) < 1.05
         assert rhat() > 1.2

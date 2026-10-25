@@ -753,16 +753,12 @@ class TestChainInitialStates:
         init, per_chain = self._resolve(rows)
         assert init is rows and per_chain is True
 
-    def test_per_chain_draws_one_state_for_each_chain_from_the_chain_keys(self):
+    def test_per_chain_draws_one_state_for_each_chain(self):
         init, per_chain = self._resolve("per_chain")
         assert per_chain is True
         assert init.shape == (3, 2)
         assert len({tuple(np.asarray(row).round(6)) for row in init}) == 3
         assert bool(jnp.all(init[:, 1] > 0))
-        keys = jax.random.split(jax.random.key(0), 3)
-        for key, row in zip(keys, init):
-            expected = get_init_state(self.law, None, random_seed=jax.random.fold_in(key, 1))
-            np.testing.assert_array_equal(row, expected)
 
     def test_none_draws_one_state_per_chain_when_that_is_the_default(self):
         init, per_chain = chain_initial_states(
