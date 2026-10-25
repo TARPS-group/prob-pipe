@@ -2,28 +2,27 @@
 
 This module is part of the design-pipeline assistant's skeleton, beside
 `pipeline_skeleton.py`. It holds the code that every pipeline shares, so the
-pipeline itself shows the data, the model with its priors, and the named
-steps. Copy it unchanged, and change the budgets in the pipeline. The rules
-are those of phases/4-proposal.md "Write the code":
+pipeline itself shows the data, the models with their priors, and the named
+steps. Its code serves every design, so a design changes the budgets and the
+models in the pipeline. The rules are those of phases/4-proposal.md "Write the
+code":
 
 1. `resolve_stage()` resolves the stage once into a `Settings` object that
-   holds the budgets, the steps to run, the output folder, and the result of
-   the gate. Every step then runs the same way whatever the stage, so the code
-   that a smoke run tests is the code that the fit runs.
-2. The smoke stage runs the data step, the checks of the code, the prior
-   predictive draws, and one fit to one simulated dataset with the steps after
-   it. The validate stage runs the prior predictive check and the validation.
-   The fit stage runs the fit to the real data and the steps after it.
-3. A hold on the fits to simulated data leaves the smoke stage the data step
+   holds the budgets, the steps to run, the models to fit with the label of
+   each, and the output folder. Every step then runs the same way whatever
+   the stage, so the code that a smoke run tests is the code that the fit
+   runs.
+2. A hold on the fits to simulated data leaves the smoke stage the data step
    and the checks of the code, and it stops the validate stage at once.
-4. The gate of the fit stage reads `runs/validation.json`. A validation of the
-   current code matches its stage, its design version, and the hash of the
-   pipeline and of each module beside it other than `report.py`. A change to
-   the reporting therefore keeps a passed validation, and a change to the
-   model forces a new one. A model without a passed validation of the current
-   code is fitted only when the user gave a reason for provisional results,
-   and its outputs carry the label of its status.
-5. `grade_validation()` grades by RESOURCES.md stage D step 6.
+3. The gate of the fit stage reads `runs/validation.json`, which grades each
+   model. A validation of the current code matches its stage, its design
+   version, and the hash of the pipeline, of the code cells of
+   `pipeline.ipynb`, and of each module beside them other than `report.py`.
+   A model without a passed validation of the current code is fitted only
+   when the user gave a reason for provisional results, and its outputs carry
+   the label of its status.
+4. `fits_to_rerun()` and `grade_validation()` implement RESOURCES.md stage D
+   step 6, which states the rule.
 """
 
 from __future__ import annotations
@@ -43,6 +42,7 @@ import probpipe
 HERE = Path(__file__).resolve().parent
 OUT_DIRS = {"smoke": "runs/smoke", "validate": "runs/validate", "fit": "outputs"}
 VALIDATION_FILE = HERE / "runs" / "validation.json"
+SMOKE_LABEL = "smoke run, not for inference"
 
 
 @dataclass(frozen=True)
@@ -55,17 +55,18 @@ class Settings:
     checks_code: bool  # the checks of the pipeline's own code, in the smoke stage
     checks_priors: bool  # the prior predictive check
     validates: bool  # the validation on realistic simulated data
-    fits: bool  # the fit and the steps after it
+    fit: dict[str, str]  # the models whose fit runs, each with the label of its outputs
+    remedied: frozenset[str]  # the models whose validation needed the remedy of a rerun
     real_response: bool  # True only in the fit stage, after the gate passed
-    label: str  # the label of every output, such as "smoke run, not for inference"
+    label: str  # the label of the outputs of no one model
     out_dir: Path
-    validation_file: Path
     record: dict  # the provenance written beside every output
 
 
 def resolve_stage(
     stage: str,
     budgets: dict[str, dict],
+    models: tuple[str, ...],
     design_version: int,
     seed: int,
     allow_unvalidated: str,
@@ -92,65 +93,82 @@ def resolve_stage(
         "probpipe_commit": probpipe_commit(),
     }
     if stage == "validate" and VALIDATION_FILE.exists():
-        VALIDATION_FILE.unlink()  # a validate run that stops early leaves no stale file
-    label = {"smoke": "smoke run, not for inference", "validate": ""}.get(stage)
+        VALIDATION_FILE.unlink()  # a validate run that stops early leaves no stale grade
+    fit, remedied = {}, frozenset()
+    if stage == "smoke" and not hold:
+        fit = dict.fromkeys(models, SMOKE_LABEL)
     if stage == "fit":
-        label = gate(record, allow_unvalidated)
-    simulated_fits = stage == "smoke" and not hold
+        fit, remedied = gate(record, models, allow_unvalidated)
     return Settings(
         stage=stage,
         seed=seed,
         budget=budgets[stage],
         checks_code=stage == "smoke",
-        checks_priors=stage == "validate" or simulated_fits,
+        checks_priors=stage == "validate" or (stage == "smoke" and not hold),
         validates=stage == "validate",
-        fits=stage == "fit" or simulated_fits,
+        fit=fit,
+        remedied=remedied,
         real_response=stage == "fit",
-        label=label,
+        label=SMOKE_LABEL if stage == "smoke" else "",
         out_dir=out_dir,
-        validation_file=VALIDATION_FILE,
-        record=record | {"label": label},
+        record=record | {"models": fit},
     )
 
 
-def gate(record: dict, allow_unvalidated: str) -> str:
-    """Stop unless the fit may run, and return the label of its outputs."""
-    status = validation_status(record)
-    if status in ("passed", "passed with notes"):
-        return ""
-    if not allow_unvalidated:
+def gate(
+    record: dict, models: tuple[str, ...], allow_unvalidated: str
+) -> tuple[dict[str, str], frozenset[str]]:
+    """The models that may be fit with the label of each, and those that need the remedy."""
+    grades = validation_grades(record)
+    fit = {}
+    for name in models:
+        grade = grades.get(name, {}).get("grade", "not validated")
+        if grade in ("passed", "passed with notes"):
+            fit[name] = ""
+        elif allow_unvalidated:
+            status = "validation failed" if grade == "failed" else "not validated"
+            fit[name] = f"PROVISIONAL: {status}"
+        else:
+            print(f"Gate: the model {name} is {grade}, so it is not fit to the real data.")
+    if not fit:
         raise SystemExit(
-            f"Gate: the model is {status}, so it is not fit to the real data. "
-            "Run STAGE=validate, or set ALLOW_UNVALIDATED to the reason for provisional results."
+            "Gate: no model may be fit. Run STAGE=validate, or set ALLOW_UNVALIDATED "
+            "to the reason for provisional results."
         )
-    return f"PROVISIONAL: {'validation failed' if status == 'failed' else 'not validated'}"
+    return fit, frozenset(name for name in fit if grades.get(name, {}).get("remedy"))
 
 
-def validation_status(record: dict) -> str:
-    """The grade of the validation of the current code, or "not validated"."""
+def validation_grades(record: dict) -> dict:
+    """The grade of each model in the validation of the current code."""
     if not VALIDATION_FILE.exists():
-        return "not validated"
+        return {}
     validation = json.loads(VALIDATION_FILE.read_text())
     current = {"stage": "validate"} | {k: record[k] for k in ("design_version", "code_hash")}
     if any(validation.get(key) != value for key, value in current.items()):
-        return "not validated"
-    return validation["grade"]
+        return {}
+    return validation["models"]
 
 
 def code_hash() -> str:
-    """A hash of the pipeline and the modules beside it, without `report.py` and the stage lines."""
-    paths = sorted(
-        {
-            Path(module.__file__).resolve()
-            for module in list(sys.modules.values())
-            if getattr(module, "__file__", None)
-        }
-    )
+    """A hash of the pipeline's code, without `report.py` and the lines that read the environment."""
+    modules = {
+        Path(m.__file__).resolve()
+        for m in list(sys.modules.values())
+        if getattr(m, "__file__", None)
+    }
+    sources = [
+        p.read_text()
+        for p in sorted(modules)
+        if p.parent == HERE and p.suffix == ".py" and p.name != "report.py"
+    ]
+    notebook = HERE / "pipeline.ipynb"
+    if notebook.exists():  # the code cells of the notebook, without their outputs
+        cells = json.loads(notebook.read_text())["cells"]
+        sources += ["".join(cell["source"]) for cell in cells if cell["cell_type"] == "code"]
     digest = hashlib.sha256()
-    for path in paths:
-        if path.parent == HERE and path.suffix == ".py" and path.name != "report.py":
-            lines = path.read_text().splitlines()
-            digest.update("\n".join(line for line in lines if "os.environ" not in line).encode())
+    for source in sources:
+        lines = source.splitlines()
+        digest.update("\n".join(line for line in lines if "os.environ" not in line).encode())
     return digest.hexdigest()
 
 
@@ -175,23 +193,69 @@ def fits_pass(diagnostics: dict, num_chains: int) -> np.ndarray:
     )
 
 
+def fits_to_rerun(diagnostics: dict, num_chains: int) -> np.ndarray:
+    """The fits that are rerun with a remedy: at least one, at most 5%, each just past the criteria."""
+    failing = ~fits_pass(diagnostics, num_chains)
+    just_past = (diagnostics["max_r_hat"] <= 1.05) & (
+        diagnostics["min_ess_bulk"] >= 50 * num_chains
+    )
+    if failing.sum() <= 0.05 * failing.size and just_past[failing].all():
+        return np.flatnonzero(failing)
+    return np.array([], dtype=int)
+
+
 SENTENCES = {
     "passed": "The method recovered known answers from data like yours, so its intervals can be trusted.",
     "failed": "The method did not reliably recover known answers from data like yours, so its estimates cannot be trusted yet.",
 }
 
 
-def grade_validation(z: np.ndarray, coverage: np.ndarray, fits_ok: bool, n: int) -> tuple[str, str]:
-    """The grade and its sentence, with the prior draws as one group of `n` datasets."""
-    shortfall = (0.9 - coverage) / np.sqrt(0.9 * 0.1 / n)  # in Monte Carlo standard errors
-    bias = z.mean(axis=0) * np.sqrt(n)  # in standard errors of 1/sqrt(n)
-    criteria = [shortfall, np.abs(bias), np.abs(z)]
-    if not fits_ok or any(c.max() > bound(0.0027, c.size) for c in criteria):
-        return "failed", SENTENCES["failed"]
-    if all(np.abs(c).max() <= bound(0.0455, c.size) for c in criteria):
-        return "passed", SENTENCES["passed"]
-    note = " Some results lie between their two bounds, as the table shows."
-    return "passed with notes", SENTENCES["passed"] + note
+def grade_validation(
+    z: np.ndarray,
+    coverage: np.ndarray,
+    contraction: np.ndarray,
+    names: list[str],
+    fits_ok: bool,
+    rerun: int,
+    quick_start: bool,
+) -> dict:
+    """The grade of one group of datasets drawn from the prior, with its sentence and notes.
+
+    `z` holds the z-scores of shape (dataset, coordinate), `coverage` the 90%
+    coverage of each coordinate, `contraction` its mean contraction, and
+    `names` its name, which each note uses.
+    `fits_ok` says whether every fit passes the criteria of stage E, after the
+    rerun of the `rerun` fits that `fits_to_rerun()` chose.
+    """
+    n = z.shape[0]
+    results = {"bias": z.mean(axis=0) * np.sqrt(n), "single misses": z}
+    if not quick_start:  # quick start reports the coverage without a grade
+        results["coverage"] = (coverage - 0.9) / np.sqrt(0.9 * 0.1 / n)
+    # The coverage fails only below its level, and the other results on either side.
+    worst = {k: -v.min() if k == "coverage" else np.abs(v).max() for k, v in results.items()}
+    if not fits_ok or any(worst[k] > bound(0.0027, v.size) for k, v in results.items()):
+        return {"grade": "failed", "sentence": SENTENCES["failed"], "notes": []}
+    notes = [f"{rerun} fits passed only after a rerun with the remedy"] if rerun else []
+    notes += [
+        f"the {k} lie between their two bounds"
+        for k, v in results.items()
+        if np.abs(v).max() > bound(0.0455, v.size)
+    ]
+    notes += [f"{names[j]} has a contraction below 0.1" for j in np.flatnonzero(contraction < 0.1)]
+    if not notes:
+        return {"grade": "passed", "sentence": SENTENCES["passed"], "notes": []}
+    sentence = SENTENCES["passed"] + " Notes: " + "; ".join(notes) + "."
+    return {"grade": "passed with notes", "sentence": sentence, "notes": notes}
+
+
+def coordinate_names(model, response: str) -> list[str]:
+    """The name of each coordinate of the parameters, in the order of the posterior summaries."""
+    names = []
+    for name, spec in model.event_spec.outputs.items():
+        size = int(np.prod(spec.shape))
+        if name != response:
+            names += [name] if size == 1 else [f"{name}[{i}]" for i in range(size)]
+    return names
 
 
 def bound(tail: float, results: int) -> float:

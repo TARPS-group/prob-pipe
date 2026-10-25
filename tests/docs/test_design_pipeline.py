@@ -3,8 +3,9 @@
 The assistant is in ``.claude/skills/design-pipeline/``. Its ``CAPABILITIES.md``
 names ProbPipe entry points and example sections, ``check_symbols.py`` checks a
 pipeline's ProbPipe names and call arguments, and ``build_corpus.py`` flattens
-the documentation into part files and an index. The skeleton of a pipeline in
-``templates/`` passes the symbol check and runs its smoke stage end to end.
+the documentation into part files and an index. The worked example of a
+pipeline in ``templates/`` passes the symbol check and runs its smoke stage end
+to end, whole and with its optional blocks deleted.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -226,13 +228,29 @@ class TestPipelineSkeleton:
         assert "no problems" in capsys.readouterr().out
 
     @staticmethod
-    def _run(workspace: Path, stage: str, **settings: str) -> subprocess.CompletedProcess:
-        """Run the skeleton copied to *workspace* in *stage*, from another directory."""
+    def _pare(workspace: Path) -> None:
+        """Delete each block tagged ``OPTIONAL:``, by phases/4-proposal.md "Write the code"."""
+        for path in workspace.glob("*.py"):
+            kept, in_block = [], False
+            for line in path.read_text().splitlines():
+                if line.startswith(("# ---", "if __name__")):
+                    in_block = line.startswith("# --- OPTIONAL:")
+                if not in_block and not re.search(r"# OPTIONAL: .+$", line):
+                    kept.append(line)
+            path.write_text("\n".join(kept) + "\n")
+
+    @classmethod
+    def _run(
+        cls, workspace: Path, stage: str, pared: bool = False, **settings: str
+    ) -> subprocess.CompletedProcess:
+        """Run the example copied to *workspace* in *stage*, from another directory."""
         pytest.importorskip("matplotlib")
         pytest.importorskip("pandas")
         for path in TEMPLATES.iterdir():
             if path.is_file():
                 shutil.copy(path, workspace)
+        if pared:
+            cls._pare(workspace)
         pythonpath = os.pathsep.join(filter(None, [str(ROOT), os.environ.get("PYTHONPATH")]))
         env = os.environ | settings | {"STAGE": stage, "PYTHONPATH": pythonpath}
         return subprocess.run(
@@ -241,35 +259,97 @@ class TestPipelineSkeleton:
             env=env,
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=600,
         )
 
-    def test_the_smoke_stage_runs_every_step(self, tmp_path):
+    def test_the_smoke_stage_runs_every_block(self, tmp_path):
         result = self._run(tmp_path, "smoke")
         assert result.returncode == 0, result.stderr
-        assert "smoke run, not for inference: change in yield per degree Celsius:" in result.stdout
+        label = "smoke run, not for inference"
+        assert f"{label}: normal: change in yield per degree Celsius:" in result.stdout
         out = tmp_path / "runs" / "smoke"
-        for name in ("answers.json", "prior_predictive.png", "prior_predictive.csv"):
+        for name in (
+            "normal_answers.json",
+            "student_t_prior_predictive.png",
+            "model_comparison.csv",
+            "algorithms.csv",
+            "heldout_scores.json",
+            "PROVISIONAL_by_year.csv",
+        ):
             assert (out / name).exists(), name
         assert json.loads((out / "provenance.json").read_text())["seed"] == 20261025
 
+    def test_the_pared_example_passes_the_symbol_check_and_runs(self, tmp_path, capsys):
+        result = self._run(tmp_path, "smoke", pared=True)
+        assert result.returncode == 0, result.stderr
+        assert "OPTIONAL:" not in (tmp_path / "pipeline_skeleton.py").read_text().split('"""')[2]
+        assert check_symbols.main([str(tmp_path / "pipeline_skeleton.py")]) == 0
+        assert not (tmp_path / "runs" / "smoke" / "model_comparison.csv").exists()
+
     def test_a_hold_leaves_the_smoke_stage_without_a_fit(self, tmp_path):
-        result = self._run(tmp_path, "smoke", HOLD_SIMULATED_FITS="2026-10-25")
+        result = self._run(tmp_path, "smoke", pared=True, HOLD_SIMULATED_FITS="2026-10-25")
         assert result.returncode == 0, result.stderr
         assert (tmp_path / "runs" / "smoke" / "provenance.json").exists()
-        assert not (tmp_path / "runs" / "smoke" / "answers.json").exists()
+        assert not (tmp_path / "runs" / "smoke" / "normal_answers.json").exists()
 
     def test_the_fit_stage_stops_at_the_gate_without_a_validation(self, tmp_path):
-        result = self._run(tmp_path, "fit")
+        result = self._run(tmp_path, "fit", pared=True)
         assert result.returncode != 0
-        assert "Gate: the model is not validated" in result.stderr
-        assert not (tmp_path / "outputs" / "answers.json").exists()
+        assert "Gate: no model may be fit" in result.stderr
+        assert not (tmp_path / "outputs" / "normal_answers.json").exists()
 
     def test_a_fit_without_a_validation_is_labeled_provisional(self, tmp_path):
-        result = self._run(tmp_path, "fit", ALLOW_UNVALIDATED="the user declined the validation")
+        reason = "the user declined the validation"
+        result = self._run(tmp_path, "fit", pared=True, ALLOW_UNVALIDATED=reason)
         assert result.returncode == 0, result.stderr
-        assert "PROVISIONAL: not validated: change in yield per degree Celsius:" in result.stdout
-        assert (tmp_path / "outputs" / "PROVISIONAL_answers.json").exists()
+        label = "PROVISIONAL: not validated"
+        assert f"{label}: student_t: change in yield per degree Celsius:" in result.stdout
+        assert (tmp_path / "outputs" / "PROVISIONAL_normal_answers.json").exists()
+
+
+class TestValidationGrade:
+    """``grade_validation()`` and ``fits_to_rerun()`` follow RESOURCES.md stage D step 6."""
+
+    @pytest.fixture(scope="class")
+    def support(self):
+        sys.path.insert(0, str(TEMPLATES))
+        try:
+            return importlib.import_module("pipeline_support")
+        finally:
+            sys.path.remove(str(TEMPLATES))
+
+    @staticmethod
+    def _grade(support, z, coverage, fits_ok=True, rerun=0, quick_start=True):
+        names = [f"c{j}" for j in range(z.shape[1])]
+        contraction = np.full(z.shape[1], 0.5)
+        return support.grade_validation(
+            z, coverage, contraction, names, fits_ok, rerun, quick_start
+        )
+
+    def test_quick_start_reports_coverage_without_a_grade(self, support):
+        z = np.zeros((20, 2))
+        low_coverage = np.array([0.5, 0.5])
+        assert self._grade(support, z, low_coverage)["grade"] == "passed"
+        assert self._grade(support, z, low_coverage, quick_start=False)["grade"] == "failed"
+
+    def test_a_rerun_of_a_few_fits_is_a_note(self, support):
+        result = self._grade(support, np.zeros((20, 2)), np.full(2, 0.9), rerun=1)
+        assert result["grade"] == "passed with notes"
+        assert "1 fits passed only after a rerun" in result["notes"][0]
+
+    def test_a_bias_beyond_the_failing_bound_fails(self, support):
+        assert self._grade(support, np.full((20, 2), 1.5), np.full(2, 0.9))["grade"] == "failed"
+
+    def test_only_a_few_fits_just_past_the_criteria_are_rerun(self, support):
+        diagnostics = {
+            "divergences": np.zeros(20, int),
+            "max_r_hat": np.full(20, 1.001),
+            "min_ess_bulk": np.full(20, 1000.0),
+        }
+        diagnostics["max_r_hat"][3] = 1.02
+        assert support.fits_to_rerun(diagnostics, 4).tolist() == [3]
+        diagnostics["max_r_hat"][5] = 1.2
+        assert support.fits_to_rerun(diagnostics, 4).tolist() == []
 
 
 class TestBuildCorpus:

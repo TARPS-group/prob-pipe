@@ -14,9 +14,7 @@ import numpy as np
 from probpipe import RecordBatch, sample, workflow_run
 
 
-def simulate(
-    model, n: int, parameters: tuple[str, ...], response: str, seed: int
-) -> tuple[RecordBatch, np.ndarray]:
+def simulate(model, n: int, response: str, seed: int) -> tuple[RecordBatch, np.ndarray]:
     """`n` datasets drawn from `model`, and the parameter values that generated them.
 
     The datasets are a `RecordBatch` on the level `sim`, which `condition_on`
@@ -25,4 +23,5 @@ def simulate(
     """
     with workflow_run(seed=seed):
         sims = sample(model, sample_shape=(n,)).with_level_names(sample="sim")
+    parameters = [name for name in model.event_spec.outputs if name != response]
     return sims.without(*parameters), np.asarray(sims.without(response).to_vector())
