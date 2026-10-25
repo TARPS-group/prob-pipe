@@ -21,9 +21,8 @@ then lift the resulting chain back through the prior's event spec,
 so the posterior names its fields by the prior's outputs.
 
 The per-draw diagnostics (``acceptance_rate``, ``diverging``,
-``energy``, ``num_integration_steps``, and for NUTS ``tree_depth`` and
-``reached_max_treedepth``) are read off the BlackJAX ``info`` objects,
-under ArviZ's names, and packed into a dict consumed by
+``energy``, ``num_integration_steps``) are read off the BlackJAX
+``info`` objects, under ArviZ's names, and packed into a dict consumed by
 :func:`build_mcmc_datatree`, the same ArviZ converter the TFP path
 uses. The adapted ``step_size`` is not carried on those ``info``
 objects, so it is threaded out of the warmup separately and injected
@@ -269,9 +268,7 @@ def _run_blackjax_chains(
             lambda chain_key: run_one_chain(chain_key, init_state), chain_keys
         )
     chains = [all_positions[c] for c in range(num_chains)]
-    sample_stats = _extract_blackjax_sample_stats(
-        all_infos, adapted_step_sizes, num_results, max_tree_depth
-    )
+    sample_stats = _extract_blackjax_sample_stats(all_infos, adapted_step_sizes, num_results)
     return chains, sample_stats
 
 
@@ -279,7 +276,6 @@ def _extract_blackjax_sample_stats(
     infos: Any,
     step_sizes: Array,
     num_results: int,
-    max_tree_depth: int = _DEFAULT_MAX_TREE_DEPTH,
 ) -> dict[str, np.ndarray]:
     """Pack BlackJAX per-step ``info`` into a TFP-shaped sample-stats dict.
 
@@ -293,11 +289,6 @@ def _extract_blackjax_sample_stats(
     expose ``step_size`` on the per-step info, so it is injected here and
     broadcast across draws to match the per-draw diagnostics. Info fields
     not present on a given algorithm are silently skipped.
-
-    NUTS's ``num_trajectory_expansions`` is recorded as ArviZ's
-    ``tree_depth``, and ``reached_max_treedepth`` marks each draw whose
-    trajectory reached ``max_tree_depth`` doublings without turning or
-    diverging, which is the draw the depth limit cut short.
     """
     stats: dict[str, np.ndarray] = {}
     # Each info field under the name ArviZ gives it, so a divergence is "diverging".
@@ -310,15 +301,6 @@ def _extract_blackjax_sample_stats(
         value = getattr(infos, field, None)
         if value is not None:
             stats[key] = np.asarray(value)
-    expansions = getattr(infos, "num_trajectory_expansions", None)
-    if expansions is not None:
-        tree_depth = np.asarray(expansions).astype(np.int64)
-        stats["tree_depth"] = tree_depth
-        stats["reached_max_treedepth"] = (
-            (tree_depth >= max_tree_depth)
-            & ~np.asarray(infos.is_turning)
-            & ~np.asarray(infos.is_divergent)
-        )
     step_sizes = np.asarray(step_sizes)
     stats["step_size"] = np.broadcast_to(
         step_sizes[:, None],
@@ -535,11 +517,6 @@ def BlackJAXNutsMethod() -> _BlackJAXMCMCMethod:
 
     Chains from distinct starting points let R-hat detect a chain that has not
     left the mode it started in.
-
-    The run's sample statistics hold, under ArviZ's names, ``tree_depth``, the
-    number of doublings of each draw's trajectory, and
-    ``reached_max_treedepth``, which marks each draw whose trajectory reached
-    ``max_tree_depth`` doublings without turning or diverging.
 
     Notes
     -----

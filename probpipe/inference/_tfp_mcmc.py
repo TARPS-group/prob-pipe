@@ -27,7 +27,6 @@ from ._inference_utils import (
     chain_initial_states,
     get_init_state,
     no_density_reason,
-    nuts_controls,
     observed_parts,
     traces_in_jax,
     unconstrained_chain,
@@ -44,7 +43,6 @@ def _run_tfp_chains(
     num_chains: int,
     step_size: float,
     target_accept_prob: float,
-    max_tree_depth: int = 10,
     random_seed: int | PRNGKey,
     per_chain_init: bool = False,
 ) -> tuple[list[Array], dict[str, np.ndarray]]:
@@ -60,7 +58,6 @@ def _run_tfp_chains(
     inner_kernel = tfp_mcmc.NoUTurnSampler(
         target_log_prob_fn=target_log_prob_fn,
         step_size=step_size,
-        max_tree_depth=max_tree_depth,
     )
 
     num_adapt = int(0.8 * num_warmup) if num_warmup > 0 else 0
@@ -99,12 +96,7 @@ def _run_tfp_chains(
 def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, np.ndarray]:
     """Extract sample stats arrays from TFP traces.
 
-    Returns dict of numpy arrays shaped (num_chains, num_draws). The NUTS
-    kernel's ``leapfrogs_taken`` is recorded as ``num_integration_steps``, the
-    name ``blackjax_nuts`` records it under, the depth its tree reached,
-    ``ceil(log2(leapfrogs_taken + 1))``, as ArviZ's ``tree_depth``, and its
-    ``reach_max_depth`` as ArviZ's ``reached_max_treedepth``, which marks each
-    draw whose trajectory reached the maximum depth without turning.
+    Returns dict of numpy arrays shaped (num_chains, num_draws).
     """
     results = traces
     stats: dict[str, np.ndarray] = {}
@@ -127,16 +119,6 @@ def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, np.ndarray]
     has_divergence = getattr(results, "has_divergence", None)
     if has_divergence is not None:
         stats["diverging"] = np.asarray(has_divergence)
-
-    leapfrogs = getattr(results, "leapfrogs_taken", None)
-    if leapfrogs is not None:
-        steps = np.asarray(leapfrogs).astype(np.int64)
-        stats["num_integration_steps"] = steps
-        stats["tree_depth"] = np.ceil(np.log2(steps + 1)).astype(np.int64)
-
-    reach_max_depth = getattr(results, "reach_max_depth", None)
-    if reach_max_depth is not None:
-        stats["reached_max_treedepth"] = np.asarray(reach_max_depth)
 
     return stats
 
@@ -168,7 +150,6 @@ class _TFPGradientMethod(InferenceMethod):
 
     _method_options = (
         "init",
-        "max_tree_depth",
         "num_chains",
         "num_results",
         "num_warmup",
@@ -243,18 +224,16 @@ class _TFPGradientMethod(InferenceMethod):
 
         Raises
         ------
-        TypeError
-            If an option is one the method does not read, or
-            ``target_accept_prob`` or ``max_tree_depth`` has the wrong type.
         ValueError
-            If ``target_accept_prob`` is not strictly between 0 and 1,
-            ``max_tree_depth`` is less than 1, or ``init`` is neither a state,
-            one state per chain, nor ``"per_chain"``.
+            If ``target_accept_prob`` is not strictly between 0 and 1, or
+            ``init`` is neither a state, one state per chain, nor ``"per_chain"``.
         """
         self._check_options(options)
-        target_accept_prob, max_tree_depth = nuts_controls(
-            self._method_name, options, default_target_accept_prob=0.75
-        )
+        target_accept_prob = options.get("target_accept_prob", 0.75)
+        if not 0.0 < target_accept_prob < 1.0:
+            raise ValueError(
+                f"target_accept_prob must be strictly between 0 and 1; got {target_accept_prob!r}"
+            )
         num_results = options.get("num_results", 1000)
         num_warmup = options.get("num_warmup", 500)
         num_chains = options.get("num_chains", 4)
@@ -281,7 +260,6 @@ class _TFPGradientMethod(InferenceMethod):
             num_chains=num_chains,
             step_size=options.get("step_size", 0.1),
             target_accept_prob=target_accept_prob,
-            max_tree_depth=max_tree_depth,
             random_seed=key,
             per_chain_init=per_chain_init,
         )
@@ -315,18 +293,8 @@ def TFPNutsMethod() -> _TFPGradientMethod:
       is 0.75 unless set. A higher target adapts a smaller step, which removes
       the divergent transitions of a posterior with regions of high curvature
       at the cost of longer trajectories;
-    - ``max_tree_depth``: the maximum depth of the NUTS tree, a positive
-      integer, which is TFP's 10 unless set. A trajectory takes at most
-      ``2**max_tree_depth - 1`` leapfrog steps;
     - ``init``: where the chains start, in the four forms that
       ``BlackJAXNutsMethod`` states for ``blackjax_nuts``.
-
-    The run's sample statistics hold ``num_integration_steps``, the leapfrog
-    steps of each draw, and, under ArviZ's names, ``tree_depth``, the depth
-    each draw's tree reached, and ``reached_max_treedepth``, which marks each
-    draw whose trajectory reached ``max_tree_depth`` without turning. They hold
-    no ``energy``, so ``add_mcmc_diagnostics`` computes no E-BFMI for this
-    method.
 
     Notes
     -----

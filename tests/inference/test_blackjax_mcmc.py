@@ -409,15 +409,13 @@ class TestSampleStats:
             )(small_model, {"y": jnp.zeros((4,))})
         ds = arviz_data(posterior)["sample_stats"]
 
-        # NUTS plumbs these info fields plus the injected step_size.
+        # NUTS plumbs these four info fields plus the injected step_size.
         expected = {
             "step_size",
             "acceptance_rate",
             "diverging",
             "num_integration_steps",
             "energy",
-            "tree_depth",
-            "reached_max_treedepth",
         }
         assert expected.issubset(set(ds.data_vars))
 
@@ -499,7 +497,7 @@ def _nuts_posterior(model, data, seed=0, **options):
 
 
 class TestNutsOptions:
-    """``target_accept_prob`` and ``max_tree_depth`` reach BlackJAX, and the run records the tree depth."""
+    """``target_accept_prob`` and ``max_tree_depth`` reach BlackJAX."""
 
     def test_a_higher_target_adapts_a_smaller_step(self, small_model):
         def step_size(target_accept_prob):
@@ -514,21 +512,9 @@ class TestNutsOptions:
 
     def test_the_maximum_tree_depth_caps_the_integration_steps(self, small_model):
         posterior = _nuts_posterior(small_model, {"y": jnp.zeros((4,))}, max_tree_depth=2)
-        stats = arviz_data(posterior)["sample_stats"]
-        steps = np.asarray(stats["num_integration_steps"])
-        tree_depth = np.asarray(stats["tree_depth"])
-        assert steps.max() <= 2**2 - 1
-        assert tree_depth.max() == 2
-        np.testing.assert_array_equal(steps <= 2**tree_depth - 1, True)
-
-    def test_a_draw_at_the_maximum_depth_that_did_not_turn_is_marked(self, small_model):
-        posterior = _nuts_posterior(small_model, {"y": jnp.zeros((4,))}, max_tree_depth=1)
-        stats = arviz_data(posterior)["sample_stats"]
-        reached = np.asarray(stats["reached_max_treedepth"])
-        assert reached.dtype == np.bool_
-        # A depth of 1 stops every trajectory after one step, so most draws reach it.
-        assert reached.mean() > 0.5
-        np.testing.assert_array_equal(np.asarray(stats["tree_depth"])[reached], 1)
+        steps = np.asarray(arviz_data(posterior)["sample_stats"]["num_integration_steps"])
+        # Two doublings take at most three steps, and the default depth takes more here.
+        assert steps.max() == 2**2 - 1
 
     def test_the_default_options_are_blackjaxs_defaults(self, small_model):
         data = {"y": jnp.zeros((4,))}
