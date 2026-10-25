@@ -296,8 +296,11 @@ phase follows these rules:
       The smoke and the validate stage read the structure of the real data,
       such as its sizes and its covariates, which the user's consent to read
       the file covers. Before each such run, say what it does and how long it
-      takes, and start it without waiting. The setup's approval covers the
-      commands of [phases/0-load.md](phases/0-load.md).
+      takes, and start it without waiting. When sending a message makes your
+      tool wait for the user's reply, start the run in the background before
+      you send the message that announces it, or, when your tool cannot run
+      it in the background, announce it and wait for the reply. The setup's
+      approval covers the commands of [phases/0-load.md](phases/0-load.md).
    2. *Separate consent.* Ask, and wait for an explicit yes, before each of
       these:
       - the first reading of each file of the user's, which
@@ -309,7 +312,9 @@ phase follows these rules:
         consent covers the fit stage of later design versions, which you
         announce as item 1 says;
       - each run of code that the user supplied, which you read in full
-        before you ask;
+        before you ask. A script that you write and that only calls the
+        user's code, such as one that sources their R files and exports the
+        results, counts as their code, so show it with the request;
       - each install, by rule 8.
    3. *Sensitive data.* For data that [Phase 2](phases/2-materials.md#data)
       found sensitive, the user runs each stage that fits the real data or
