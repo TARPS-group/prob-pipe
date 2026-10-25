@@ -51,17 +51,22 @@ start mode, by the [ground rules](../INSTRUCTIONS.md#ground-rules), in plain
 words, such as "I'll get you a first complete answer first: a simple model
 and the model your questions need, checks that the analysis can be trusted,
 and your estimates with their uncertainty. Say 'full workflow' at any time."
-Its three questions are what the user wants to learn, where the data is, and
-the background question, so that the summary of the data of
-[Phase 2](2-materials.md#data) comes early. Ask the other topics after that
-summary.
+Its three questions are, in this order, what the user wants to learn, where
+the data is, and the background question, so that the summary of the data of
+[Phase 2](2-materials.md#data) comes early. Skip each question that the
+opening message already answers, and ask in its place the most important
+topic of this phase that remains open, such as the user's existing models or
+the deadline. Ask the other topics after the summary of the data.
 
-Once you can name the project, propose a workspace directory by
-[MEMORY-FORMAT.md](../MEMORY-FORMAT.md#workspace), as a default that the user
-can change. If person memory does not exist yet, ask now whether you may create it,
-as [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#rules) describes. Create the project
-memory, record the corpus in it as [Phase 0](0-load.md) step 6 says, and add
-the project to the index of person memory.
+The inspection of Phase 2 writes its script in the workspace, so propose the
+workspace directory in the message that asks to read the data. Name its
+default by [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#workspace), with a project
+name taken from the opening message, and say that the user can name another
+directory. Create the workspace after the user replies, at the default when
+the reply does not name one. If person memory does not exist yet, ask whether
+you may create it, as [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#rules) describes.
+Create the project memory, record the corpus in it as [Phase 0](0-load.md)
+step 6 says, and add the project to the index of person memory.
 
 Write sections 1-2 of `<workspace>/notes/brief.md`. Then summarize the problem and
 the goals for the user in a few sentences, and ask them to confirm the summary
