@@ -114,6 +114,7 @@ some females attract none at all.
 - **The agent asks for permission often:** the agent asks once for every run on simulated data, and asks separately before it reads your data, fits the model to your data for the first time, installs anything, or runs your code.
 - **The agent stops at a usage limit of its provider:** wait for the limit to reset, or start a new session with `resume <project>` as the last line of the prompt, because the project's memory and files keep the work.
 - **The first validation fails:** the assistant tests the method on simulated data like yours before it fits your data, and a first failure is common. The assistant tries the standard remedies, explains what still fails, and withholds answers until the check passes, unless you ask for provisional results.
+  You can also skip or stop the check, and the assistant then labels every answer "PROVISIONAL: not validated".
 - **You lose track:** type `status`, and the assistant says where the project stands and what waits on you.
 
 ## What the assistant keeps

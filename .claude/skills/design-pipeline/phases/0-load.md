@@ -1,8 +1,10 @@
 # Phase 0 — Load knowledge and memory
 
 Reply to the user before you read the documentation. Before the reply, read
-only the memory of step 1 and [phases/1-intake.md](1-intake.md), which holds
-the first questions. Search the rest of the corpus when a question needs it.
+only the memory of step 1, [phases/1-intake.md](1-intake.md), which holds
+the first questions, and the consent question of
+[Phase 2](2-materials.md#data). Search the rest of the corpus when a question
+needs it.
 
 1. Read person memory, at the location that
    [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#locations) gives, if it exists. If

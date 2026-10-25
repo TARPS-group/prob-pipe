@@ -55,8 +55,12 @@ model. Plan for that return.
   prior predictive check of stage C. A simulated value is implausible when it
   lies beyond a bound that the user can name, such as a physical limit or the
   largest value on record, or else beyond ten times the range of the observed
-  outcome. Tighten the scales of the priors until at most 10% of the
-  simulated datasets hold an implausible value, which is the default share.
+  outcome. Tighten the scales of the priors until at most 5% of the simulated
+  observations are implausible, which is the default share. The share of
+  datasets that hold an implausible value grows with their size, so judge
+  whole datasets only by a summary whose plausible range the user names for
+  data of this size, such as the largest of the n observations, with at most
+  10% of the datasets outside that range.
   Record in section 3 of the design document that this check set the priors,
   with the bound and the share.
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage B.
@@ -68,16 +72,16 @@ model. Plan for that return.
   large values, mean that the priors or the model structure need revision.
 - Show the expert one or two summaries in the units of the data, so that they
   judge the simulations by what they know. An example is the share of
-  simulated datasets whose largest value exceeds the largest value they would
-  believe, beside the range of a typical value.
+  simulated observations beyond the largest value they would believe, beside
+  the range of a typical value.
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage C.
 
 ### D. Validate the computation on realistic simulated data
 
 Validate the computation on simulated data with a known ground truth before
 you trust a fit to the real data. Every design includes this validation, and
-the real-data fit is interpreted only after the validation's grade, by step 6,
-is *passed* or *passed with notes*.
+the answers of a real-data fit count as validated only after the validation's
+grade, by step 6, is *passed* or *passed with notes*.
 
 1. **Simulate at the real design.** Simulate datasets from the model with the
    actual covariates, sample sizes, grouping structure, and missingness
@@ -86,6 +90,11 @@ is *passed* or *passed with notes*.
    several datasets at each, 20 by default, because step 6 grades recovery by
    their mean. When the user cannot name realistic values, validate on the
    prior draws alone, and say so to the user and in the design document.
+   A likelihood whose scale is computed from the observations defines no law
+   to simulate from. Simulate and fit with each scale fixed at its value in
+   the real data, and say in the description of each check that uses such
+   data, those of stage F included, that it tests the procedure under that
+   fixed-scale model.
 2. **Fit with the planned method.** Fit each simulated dataset with the
    inference method and the settings planned for the real data, and record
    the settings.
@@ -204,11 +213,17 @@ is *passed* or *passed with notes*.
 
    Estimate the cost of the validation before you propose it, as the number
    of fits times the time of one fit at the planned settings, scaled from the
-   most recent smoke run. When the cost exceeds the user's budget, propose a
-   pilot, which fits fewer datasets. Tell the user plainly that a pilot
-   checks the diagnostics of each fit and gross bias, and that it cannot
-   establish coverage. Record that limit in the status of each answer of the
-   pilot's model, in section 0 of the design document.
+   most recent smoke run. When the cost exceeds the user's time budget, or
+   the user declines or holds the validation, offer two choices at once, and
+   the user decides:
+   1. a pilot, which fits fewer datasets, with its cost. Tell the user
+      plainly that a pilot checks the diagnostics of each fit and gross
+      bias, and that it cannot establish coverage. Record that limit in the
+      status of each answer of the pilot's model, in section 0 of the design
+      document;
+   2. results labeled "PROVISIONAL: not validated", whose intervals rest on
+      the diagnostics of the fit alone, by
+      [phases/4-proposal.md](phases/4-proposal.md#write-the-code).
 
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage D.
 

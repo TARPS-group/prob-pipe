@@ -72,8 +72,8 @@ The other files of the assistant directory are these:
 - `check_symbols.py`: the script that checks the ProbPipe names and call
   arguments of a pipeline against the installed package;
 - `templates/`: the skeleton of a pipeline script, `pipeline_skeleton.py`,
-  with its modules `report.py` and `sim_data.py` and the example data file
-  `example_data.csv`, from which
+  with its modules `pipeline_support.py`, `report.py`, and `sim_data.py` and
+  the example data file `example_data.csv`, from which
   [phases/4-proposal.md](phases/4-proposal.md#write-the-code) starts the
   code.
 
@@ -195,13 +195,11 @@ when either check fails, and record the new corpus in project memory.
   estimand needs, such as the cross-validation of an estimand that compares
   models by their predictions, like a difference of LOO. It also keeps a stage
   that answers a concern the user names, such as a prior sensitivity analysis
-  for a user who worries about the influence of the priors. Give the user a
-  rough runtime for each fit, from the compute plan of the design document.
-  Calibrate it from the most recent run of the same computation, such as the
-  last smoke run, because the load of a shared machine can change a runtime
-  several-fold between runs. On a shared machine, give a range, with the load that
-  `uptime` prints. Record the mode in project memory. The full workflow takes up the deferred stages, and the
-  user switches to it by saying so at any point.
+  for a user who worries about the influence of the priors. On the path of
+  [phases/4-existing-pipeline.md](phases/4-existing-pipeline.md), quick start
+  is its reproduction check and then one addition that the user chooses.
+  Record the mode in project memory. The full workflow takes up the deferred
+  stages, and the user switches to it by saying so at any point.
 - **Guard the analysis against data-driven revisions.** Revise each design by
   the [rules for revisions](phases/5-feedback.md#rules-for-revisions), which
   apply in every phase.
@@ -238,14 +236,14 @@ Every message to the user follows these rules:
    4. checks and fit: the validate and the fit stage;
    5. answers and revisions: Phase 5.
 2. **Ask at most three questions.** Order the questions of a message by
-   importance. Give each one the reason you ask it, in a few words, and the
-   default you will use if the user skips it. When a reply answers some of
+   importance. Give a question's reason only when it is not obvious, and give
+   the default you will use if the user skips it. When a reply answers some of
    them, take the default of each one it skips, say so in one line, and ask
    that question again only when its default turns out wrong. Accept "I don't
    know", and record it as an open question. Ask a question with a few
    discrete answers, such as the choice of a route for the model, as a
    multiple-choice question if your tool supports it, otherwise in plain
-   text. Ask an open-ended question in plain conversation.
+   text.
 3. **Show a result within about three messages.** By your second or third
    message, show the user a result from their own materials, such as the
    summary of the data of [Phase 2](phases/2-materials.md#data), so ask for
@@ -255,17 +253,23 @@ Every message to the user follows these rules:
    of the pipeline, and in the design document. An estimand that names
    another level, such as a 90% prediction interval, keeps the form with its
    own quantiles and states its level once.
-5. **Hedge each claim about what other people accept.** Present a claim
-   about what reviewers, editors, or a field accept as common practice, with
-   its source when you have one, and say that a given reviewer may ask for
-   more, such as "many reviewers accept priors that a prior predictive check
-   supports, though yours may ask for a sensitivity analysis".
+5. **Claim only what the evidence shows.** Say what each check establishes
+   and what it leaves open, such as "your input functions reproduce the saved
+   inputs, and only a rerun shows whether the saved draws come from this
+   code". Hedge each claim about what reviewers, editors, or a field accept,
+   with its source when you have one, such as "many reviewers accept priors
+   that a prior predictive check supports, though yours may ask for a
+   sensitivity analysis".
 6. **Answer "status" at any time.** When the user or a workshop presenter
    types "status", reply with the lines of *Where we left off* in project
    memory: the step of rule 1 and the design version, the last run with its
-   stage, its date, and its verdict, what waits on the user, and the agreed
-   next step. Keep those lines current at each checkpoint of
-   [MEMORY-FORMAT.md](MEMORY-FORMAT.md#rules).
+   stage, its date, and its verdict, the runs that the user holds, what waits
+   on the user, and the agreed next step. Keep those lines current at each
+   checkpoint of [MEMORY-FORMAT.md](MEMORY-FORMAT.md#rules).
+7. **Keep each message short,** about 150 words as a guide, and point to the
+   workspace files for detail. When the user asks for shorter messages,
+   record that at once as a `[stated]` working preference, and from then on
+   ask each question in one line, without its reason.
 
 ## User materials and code
 
@@ -305,14 +309,23 @@ phase follows these rules:
       validate stage under the remedies of
       [phases/4-proposal.md](phases/4-proposal.md), the probe scripts, and
       `check_symbols.py`, which imports ProbPipe and no code of the user's.
-      The smoke and the validate stage read the structure of the real data,
-      such as its sizes and its covariates, which the user's consent to read
-      the file covers. Before each such run, say what it does and how long it
-      takes, and start it without waiting. When sending a message makes your
-      tool wait for the user's reply, start the run in the background before
-      you send the message that announces it, or, when your tool cannot run
-      it in the background, announce it and wait for the reply. The setup's
+      Ask before the proposal, such as with the summary of the data, so that
+      the approval covers the first smoke run, whose result the proposal
+      shows. The smoke and the validate stage read the structure of the real
+      data, such as its sizes and its covariates, which the user's consent to
+      read the file covers. Before each such run, say what it does and how
+      long it takes, by rule 6, and start it without waiting. When sending a
+      message makes your tool wait for the user's reply, start the run in the
+      background before you send the message that announces it, or, when your
+      tool cannot run it in the background, announce it and wait for the
+      reply. The setup's
       approval covers the commands of [phases/0-load.md](phases/0-load.md).
+
+      When the user asks to stop or skip these runs or the validation, stop
+      each running one, and start none until the user lifts the hold, the fit
+      of the smoke stage and the reruns of remedies included. Record the hold
+      in *Where we left off* of project memory, and offer the choices of
+      [RESOURCES.md](RESOURCES.md) stage D.
    2. *Separate consent.* Ask, and wait for an explicit yes, before each of
       these:
       - the first reading of each file of the user's, which
@@ -326,7 +339,9 @@ phase follows these rules:
       - each run of code that the user supplied, which you read in full
         before you ask. A script that you write and that only calls the
         user's code, such as one that sources their R files and exports the
-        results, counts as their code, so show it with the request;
+        results, counts as their code. Show it with the request, or describe
+        the calls it will make and what it writes, and show it with its
+        result;
       - each install, by rule 8.
    3. *Sensitive data.* For data that [Phase 2](phases/2-materials.md#data)
       found sensitive, the user runs each stage that fits the real data or
@@ -347,11 +362,14 @@ phase follows these rules:
 6. **Run in stages.** Run each design version in the stages that
    [phases/4-proposal.md](phases/4-proposal.md#write-the-code) defines: the
    smoke stage first, the validate stage after a smoke run succeeds, and the
-   fit stage only after the validate stage, whose grades the gate of the fit
-   stage checks. The reproduction check of an existing pipeline fits the real
-   data before any validation, because it repeats an analysis that the user
-   has already run and reports no new answer. Give the expected runtime of
-   each stage from the compute plan of the design document.
+   fit stage after the validate stage, whose grades the gate of the fit stage
+   checks, or after the user chooses provisional results by
+   [RESOURCES.md](RESOURCES.md) stage D. The reproduction check of an existing
+   pipeline fits the real data before any validation, because it repeats an
+   analysis that the user has already run and reports no new answer. Give no
+   runtime before the first smoke run. After it, give one number per stage,
+   scaled from the most recent run, and say when `uptime` shows a loaded
+   machine. An existing pipeline's own log gives the runtime of its fit.
 7. **Bound every run.** Run each command with a timeout, about ten minutes for
    a smoke run. Run Python unbuffered, with `<python> -u` or
    `PYTHONUNBUFFERED=1`, and write its output to a file as it runs, so that a

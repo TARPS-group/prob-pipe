@@ -62,13 +62,15 @@ The inspection of Phase 2 writes its script in the workspace, so propose the
 workspace directory in the message that asks to read the data. Name its
 default by [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#workspace), with a project
 name taken from the opening message, and say that the user can name another
-directory. Create the workspace after the user replies, at the default when
-the reply does not name one. If person memory does not exist yet, ask whether
-you may create it, as [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#rules) describes.
-Put the workspace and person memory to the user as one question, which counts
-once toward the three questions of a message of
-[Messages](../INSTRUCTIONS.md#messages). It states the default of each, and
-the user answers it with one yes or no.
+directory. If person memory does not exist yet, ask whether you may create
+it, as [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#rules) describes. Put the
+consents of that message to the user as one question, which counts once
+toward the three questions of a message of
+[Messages](../INSTRUCTIONS.md#messages): the consent to read the data with
+its question on sensitive data, by [Phase 2](2-materials.md#data), the
+workspace, and person memory. It states the default of each, and the user
+answers it with one yes or no, or names what to change. Create the workspace
+after the user replies, at the default when the reply does not name one.
 Create the project memory, record the corpus in it as [Phase 0](0-load.md)
 step 6 says, and add the project to the index of person memory.
 
