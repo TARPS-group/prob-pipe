@@ -55,42 +55,27 @@ class MCMCView(DatasetView):
     def mcse_sd(self) -> dict[str, float | NotComputed]:
         return self.indexed("mcse_sd", dim="param")
 
-    def _sampler_statistic(self, key: str) -> Any:
-        """The JSON value of the attribute *key*, or the ``NotComputed`` it records or its absence gives."""
+    @property
+    def n_divergences(self) -> int | NotComputed:
         ds = self.dataset()
         if ds is None:
             return NotComputed("mcmc diagnostics not yet computed")
 
-        raw = ds.attrs.get(key)
+        raw = ds.attrs.get("n_divergences")
 
         if raw is None:
             return NotComputed("not recorded by this backend")
 
         try:
             parsed = json.loads(str(raw))
+            if isinstance(parsed, dict) and "not_computed" in parsed:
+                return NotComputed(parsed["not_computed"])
+            return int(parsed)
         except Exception:
-            return NotComputed(f"could not parse {key}")
-        if isinstance(parsed, dict) and "not_computed" in parsed:
-            return NotComputed(parsed["not_computed"])
-        return parsed
-
-    @property
-    def n_divergences(self) -> int | NotComputed:
-        """The number of divergent transitions over all chains."""
-        value = self._sampler_statistic("n_divergences")
-        return value if isinstance(value, NotComputed) else int(value)
-
-    @property
-    def e_bfmi(self) -> list[float] | NotComputed:
-        """The E-BFMI of each chain, in chain order, which ``add_mcmc_diagnostics`` defines."""
-        value = self._sampler_statistic("e_bfmi")
-        return value if isinstance(value, NotComputed) else [float(v) for v in value]
-
-    @property
-    def n_at_max_tree_depth(self) -> int | NotComputed:
-        """The number of draws, over all chains, whose trajectory reached the maximum tree depth."""
-        value = self._sampler_statistic("n_at_max_tree_depth")
-        return value if isinstance(value, NotComputed) else int(value)
+            try:
+                return int(raw)
+            except Exception:
+                return NotComputed("could not parse n_divergences")
 
     @property
     def warnings(self) -> list[str]:
@@ -100,13 +85,7 @@ class MCMCView(DatasetView):
 
         msgs: list[str] = []
 
-        for key in (
-            "rhat_warnings",
-            "ess_warnings",
-            "mcse_warnings",
-            "e_bfmi_warnings",
-            "tree_depth_warnings",
-        ):
+        for key in ("rhat_warnings", "ess_warnings", "mcse_warnings"):
             raw = ds.attrs.get(key, "[]")
             with suppress(Exception):
                 msgs.extend(json.loads(raw))
@@ -330,14 +309,6 @@ class DiagnosticsView(DataTreeView):
         return self.mcmc.n_divergences
 
     @property
-    def e_bfmi(self):
-        return self.mcmc.e_bfmi
-
-    @property
-    def n_at_max_tree_depth(self):
-        return self.mcmc.n_at_max_tree_depth
-
-    @property
     def warnings(self) -> list[str]:
         return self.mcmc.warnings + self.loo.warnings
 
@@ -356,14 +327,7 @@ class DiagnosticsView(DataTreeView):
     # ── summaries ----------------------------------------------------------
 
     def summary_table(self) -> str:
-        """Pretty-printed table of MCMC metrics for notebook display.
-
-        The table has one row per parameter, of its R-hat, bulk and tail ESS,
-        and MCSE of the mean. The lines below it give the run's number of
-        divergent transitions, the E-BFMI of each chain, and the number of
-        draws at the maximum tree depth, each ``N/A`` when not computed, and
-        then the warnings.
-        """
+        """Pretty-printed table of MCMC metrics for notebook display."""
         rhat = self.rhat
         ess_b = self.ess_bulk
         ess_t = self.ess_tail
@@ -407,18 +371,6 @@ class DiagnosticsView(DataTreeView):
 
         rows.append("")
 
-        def _run_value(value: Any) -> str:
-            if isinstance(value, NotComputed):
-                return "N/A"
-            if isinstance(value, list):
-                return ", ".join(f"{v:.3f}" for v in value)
-            return str(value)
-
-        rows.append(f"Divergent transitions: {_run_value(self.n_divergences)}")
-        rows.append(f"E-BFMI by chain: {_run_value(self.e_bfmi)}")
-        rows.append(f"Draws at the maximum tree depth: {_run_value(self.n_at_max_tree_depth)}")
-        rows.append("")
-
         warns = self.warnings
         if warns:
             rows.extend(f"⚠  {w}" for w in warns)
@@ -445,8 +397,6 @@ class DiagnosticsView(DataTreeView):
                 "mcse_mean": _ser(self.mcse_mean),
                 "mcse_sd": _ser(self.mcse_sd),
                 "n_divergences": _ser(self.n_divergences),
-                "e_bfmi": _ser(self.e_bfmi),
-                "n_at_max_tree_depth": _ser(self.n_at_max_tree_depth),
                 "warnings": self.mcmc.warnings,
             },
             "ppc": _ser(self.ppc.result),

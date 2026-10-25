@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .._messages import count, unknown_names
+from .._messages import unknown_names
 from ..core._shapes import NamesLike, _as_names
 from ._utils import _dataset_values
 
@@ -57,17 +57,8 @@ __all__ = [
 
 _RHAT_THRESHOLD: float = 1.01
 _ESS_THRESHOLD: int = 400
-#: The E-BFMI below which a chain's exploration of the energy is suspect, the conventional 0.3.
-_E_BFMI_THRESHOLD: float = 0.3
 #: The metrics add_mcmc_diagnostics computes, in the order it computes them.
-_MCMC_METRICS: tuple[str, ...] = (
-    "rhat",
-    "ess",
-    "mcse",
-    "divergences",
-    "e_bfmi",
-    "tree_depth",
-)
+_MCMC_METRICS: tuple[str, ...] = ("rhat", "ess", "mcse", "divergences")
 
 
 # ---------------------------------------------------------------------------
@@ -601,63 +592,31 @@ def add_mcmc_diagnostics(
     rhat_method: str = "rank",
     rhat_threshold: float = _RHAT_THRESHOLD,
     ess_threshold: int = _ESS_THRESHOLD,
-    e_bfmi_threshold: float = _E_BFMI_THRESHOLD,
     force: bool = False,
 ) -> None:
     """Compute MCMC diagnostics and attach to ``_annotations/diagnostics/mcmc/``.
 
-    Computes R-hat, bulk ESS, tail ESS, and MCSE by default, and three
-    statistics of the sampler, each from a variable of the run's ArviZ sample
-    statistics, ``posterior.annotations["arviz"]["sample_stats"]``:
-
-    1. the number of divergent transitions, the sum of ``diverging`` over
-       chains and draws, which ``posterior.diagnostics.mcmc.n_divergences``
-       reads;
-    2. the E-BFMI of each chain, from ``energy``, which
-       ``posterior.diagnostics.mcmc.e_bfmi`` reads as a list in chain order.
-       The E-BFMI of a chain of energies ``E_1, ..., E_n`` is
-       ``mean((E_{i+1} - E_i)**2) / var(E)``, with the variance's divisor
-       ``n - 1``, as ``arviz_stats.bfmi`` computes it. A chain below
-       *e_bfmi_threshold* warns, because its momentum resampling explores the
-       energy poorly, as it does in a heavy-tailed or funnel-shaped posterior;
-    3. the number of draws whose trajectory reached the maximum tree depth,
-       the sum of ``reached_max_treedepth``, which
-       ``posterior.diagnostics.mcmc.n_at_max_tree_depth`` reads. A positive
-       count warns, because those trajectories stopped before they turned.
-
-    Every NUTS method records ``diverging`` and ``reached_max_treedepth``, and
-    each method but ``tfp_nuts`` records ``energy``. A statistic whose
-    variable the run does not record reads as ``NotComputed``, which names
-    the missing variable. Skips R-hat, ESS, and MCSE when already present
-    unless ``force=True``, and recomputes the sampler's statistics on every
-    call.
+    Computes R-hat, bulk ESS, tail ESS, and MCSE by default, and records the
+    number of divergent transitions when the run's sample statistics hold the
+    ArviZ variable ``diverging``, which ``posterior.diagnostics.mcmc.n_divergences``
+    reads. Skips any metric already present unless ``force=True``.
 
     Parameters
     ----------
     posterior : EmpiricalDistribution
         The fitted posterior. Mutated in place.
     metrics : str, sequence of str, or None
-        The metrics to compute, among ``"rhat"``, ``"ess"``, ``"mcse"``,
-        ``"divergences"``, ``"e_bfmi"``, and ``"tree_depth"``. A str names one
-        metric, and ``None`` computes all six.
+        The metrics to compute, among ``"rhat"``, ``"ess"``, ``"mcse"``, and
+        ``"divergences"``. A str names one metric, and ``None`` computes all
+        four.
     rhat_method : str
         ArviZ R-hat variant: ``"rank"`` by default.
     rhat_threshold : float
         R-hat warning threshold.
     ess_threshold : int
         ESS warning threshold.
-    e_bfmi_threshold : float
-        The E-BFMI below which a chain warns, which is 0.3 unless set.
     force : bool
         Recompute even if metrics are already stored.
-
-    Warns
-    -----
-    UserWarning
-        For each parameter whose R-hat exceeds *rhat_threshold* or whose ESS
-        is below *ess_threshold*, for each chain whose E-BFMI is below
-        *e_bfmi_threshold*, and once when any draw reached the maximum tree
-        depth.
 
     Raises
     ------
@@ -698,98 +657,7 @@ def add_mcmc_diagnostics(
     if "divergences" in compute:
         _record_divergences(posterior)
 
-    if "e_bfmi" in compute:
-        _record_e_bfmi(posterior, e_bfmi_threshold)
-
-    if "tree_depth" in compute:
-        _record_tree_depth(posterior)
-
     return None
-
-
-def _sample_statistic(posterior: EmpiricalDistribution, name: str) -> np.ndarray | None:
-    """The values of the ArviZ sample statistic *name* of *posterior*'s run, by chain and draw, or None."""
-    annotations = getattr(posterior, "_annotations", None)
-    try:
-        return np.asarray(annotations["arviz"]["sample_stats"][name].values)
-    except (KeyError, TypeError):
-        return None
-
-
-def _write_sampler_statistic(
-    posterior: EmpiricalDistribution, attrs: Mapping[str, Any], warns: list[str]
-) -> None:
-    """Write *attrs* to ``/diagnostics/mcmc`` and emit each of *warns*, which the attrs also record."""
-    from ._datatree_store import _add_group, _get_or_create_mcmc_ds
-
-    dataset = _get_or_create_mcmc_ds(posterior)
-    dataset.attrs.update(attrs)
-    _add_group(posterior, "diagnostics/mcmc", dataset)
-    for message in warns:
-        warnings.warn(message, stacklevel=4)
-
-
-def _not_recorded(variable: str) -> str:
-    """The JSON attribute of a sampler statistic whose run records no *variable*."""
-    return json.dumps({"not_computed": f"the run's sample statistics hold no {variable!r}"})
-
-
-def _e_bfmi(energy: np.ndarray) -> np.ndarray:
-    """The E-BFMI of each chain of *energy*, an array of shape ``(chains, draws)``."""
-    energy = np.asarray(energy, dtype=float)
-    return np.mean(np.square(np.diff(energy, axis=1)), axis=1) / np.var(energy, axis=1, ddof=1)
-
-
-def _record_e_bfmi(posterior: EmpiricalDistribution, threshold: float) -> None:
-    """Record the E-BFMI of each chain, and warn for each chain below *threshold*.
-
-    A run whose sample statistics hold no ``energy``, or fewer than two draws
-    of it per chain, records why the E-BFMI is not computed.
-    """
-    energy = _sample_statistic(posterior, "energy")
-    warns: list[str] = []
-    if energy is None:
-        value = _not_recorded("energy")
-    elif energy.ndim != 2 or energy.shape[1] < 2:
-        value = json.dumps({"not_computed": "E-BFMI requires at least 2 draws in each chain"})
-    else:
-        values = [float(v) for v in _e_bfmi(energy)]
-        value = json.dumps(values)
-        warns = [
-            f"E-BFMI of chain {chain} is {v:.3f}, below {threshold}, so the sampler may "
-            f"explore the posterior's tails poorly"
-            for chain, v in enumerate(values)
-            if v < threshold
-        ]
-    attrs = {
-        "e_bfmi": value,
-        "e_bfmi_threshold": threshold,
-        "e_bfmi_warnings": _json_warnings(warns),
-    }
-    _write_sampler_statistic(posterior, attrs, warns)
-
-
-def _record_tree_depth(posterior: EmpiricalDistribution) -> None:
-    """Record the number of draws whose trajectory reached the maximum tree depth, and warn when any did.
-
-    The count is the sum of the ArviZ variable ``reached_max_treedepth`` over
-    chains and draws. A run whose sample statistics hold no such variable
-    records why the count is not computed.
-    """
-    reached = _sample_statistic(posterior, "reached_max_treedepth")
-    warns: list[str] = []
-    if reached is None:
-        value = _not_recorded("reached_max_treedepth")
-    else:
-        n = int(np.asarray(reached, dtype=bool).sum())
-        value = json.dumps(n)
-        if n:
-            warns = [
-                f"{count(n, 'draw')} of {reached.size} reached the maximum tree depth. "
-                f"Raise max_tree_depth in method_options"
-            ]
-    attrs = {"n_at_max_tree_depth": value, "tree_depth_warnings": _json_warnings(warns)}
-    _write_sampler_statistic(posterior, attrs, warns)
 
 
 def _record_divergences(posterior: EmpiricalDistribution) -> None:
