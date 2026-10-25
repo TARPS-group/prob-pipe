@@ -46,11 +46,12 @@ Cover these topics:
   - the hardware, such as a GPU, and the wall-clock time available.
 
 Ask the questions of this phase over several messages, by the rules of
-[Messages](../INSTRUCTIONS.md#messages). The first message announces quick
-start mode, by the [ground rules](../INSTRUCTIONS.md#ground-rules), in plain
-words, such as "I'll get you a first complete answer first: a simple model
-and the model your questions need, checks that the analysis can be trusted,
-and your estimates with their uncertainty. Say 'full workflow' at any time."
+[Messages](../INSTRUCTIONS.md#messages). The first message announces the
+quick start mode of the [ground rules](../INSTRUCTIONS.md#ground-rules) and
+the way to leave it, in plain words, such as "I'll get you a first complete
+answer first: a simple model and the model your questions need, checks that
+the analysis can be trusted, and your estimates with their uncertainty. Say
+'full workflow' at any time."
 Its three questions are, in this order, what the user wants to learn, where
 the data is, and the background question, so that the summary of the data of
 [Phase 2](2-materials.md#data) comes early. Skip each question that the
@@ -68,6 +69,8 @@ consents of that message to the user as one question, which counts once
 toward the three questions of a message of
 [Messages](../INSTRUCTIONS.md#messages): the consent to read the data with
 its question on sensitive data, by [Phase 2](2-materials.md#data), the
+standing approval of rule 5 of the
+[rules for user materials](../INSTRUCTIONS.md#user-materials-and-code), the
 workspace, and person memory. It states the default of each, and the user
 answers it with one yes or no, or names what to change. Create the workspace
 after the user replies, at the default when the reply does not name one.

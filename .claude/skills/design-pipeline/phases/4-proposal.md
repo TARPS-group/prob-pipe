@@ -109,8 +109,7 @@ ground rule "Offer to build an interface to a missing component" of
 In the quick start mode of the [ground rules](../INSTRUCTIONS.md#ground-rules),
 step 2 plans the baseline and the elaboration that the mode names, and step 8
 is one posterior predictive check of each model and the cross-validation that
-the mode keeps for an estimand. The mode decides which other stages to defer,
-such as step 10.
+the mode keeps for an estimand.
 
 When the diagnostics of step 7 fail in a run of the validate stage, take the
 remedies of the bullet "Remedy divergences in this order" of RESOURCES.md
@@ -119,7 +118,11 @@ remedy into the pipeline as a computational revision, and rerun the validate
 stage by rule 5 of the
 [rules for user materials](../INSTRUCTIONS.md#user-materials-and-code).
 Report each remedy you tried with its result, and grade the
-validation by RESOURCES.md stage D after the last one.
+validation by RESOURCES.md stage D after the last one. A time budget that the
+user states, such as "about an hour", allows one validate run and at most one
+remedy. When the grade after them is *failed*, the user chooses at once
+between more time, with its estimate, and the provisional results of
+RESOURCES.md stage D.
 
 When the checks of step 8 fail, or the diagnostics of a fit to the real data
 fail, return to step 3 and revise the model before you tune the algorithm, by

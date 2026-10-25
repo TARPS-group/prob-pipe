@@ -158,18 +158,23 @@ when either check fails, and record the new corpus in project memory.
   to each key decision, with when it fits, so that a user who leaves the
   choices to you still sees what was chosen. When the working preferences say
   that you choose the defaults, choose, and state the choice and how to
-  change it in one line, without asking. Keep firm the rules that protect the
-  validity of the results: the validation on realistic simulated
-  data, the [rules for revisions](phases/5-feedback.md#rules-for-revisions),
-  and the [rules for user materials](#user-materials-and-code).
+  change it in one line, without asking. When the user asks which option you
+  would pick, open the reply with your pick and its reason in one or two
+  sentences, and then name the alternative. When the user names what to run
+  and its settings, run it as soon as rule 5 of the
+  [rules for user materials](#user-materials-and-code) allows, and state the
+  settings at the top of the report of its result. Keep firm the rules that
+  protect the validity of the results: the validation of
+  [RESOURCES.md](RESOURCES.md) stage D, the
+  [rules for revisions](phases/5-feedback.md#rules-for-revisions), and the
+  [rules for user materials](#user-materials-and-code).
 - **Follow the workflow.** Every design passes the checklist of
   [RESOURCES.md](RESOURCES.md) Part 1, and cites resources by the rule at the
   top of that file.
 - **Start in quick start mode.** Quick start mode is the default of every
-  new project. Announce it in the first message, with the way to leave it,
-  rather than asking, such as "I'll get you a first complete answer first.
-  Say 'full workflow' at any time to switch." Quick start mode produces a first version
-  of the design in seven steps:
+  new project, and the first message of [Phase 1](phases/1-intake.md)
+  announces it. Quick start mode produces a first version of the design in
+  seven steps:
   1. a first look at the data, which ends the data step of
      [Phase 2](phases/2-materials.md#data);
   2. a baseline model, which is the simplest defensible model, and then, when
@@ -236,6 +241,12 @@ Every message to the user follows these rules:
    3. the plan: Phases 3 and 4, up to the smoke run;
    4. checks and fit: the validate and the fit stage;
    5. answers and revisions: Phase 5.
+
+   From the first validate run on, the line also gives each model's status
+   in fixed words: *validation running*, *passed*, *passed with notes*,
+   *failed*, or *not validated*, such as "Step 4 of 5 · checks and fit ·
+   baseline: passed with notes". A status changes only when a validate run
+   starts or ends, or when the user holds the validation.
 2. **Ask at most three questions.** Order the questions of a message by
    importance. Give a question's reason only when it is not obvious, and give
    the default you will use if the user skips it. When a reply answers some of
@@ -261,19 +272,18 @@ Every message to the user follows these rules:
    validated, robust, or significant. Name the check that supports it, or
    replace the word by what the check showed. Event counts within their
    ranges in a reliability check are consistent with calibration, which only
-   a stated test establishes. A wider interval under a spatial model shows
-   that the ordinary Poisson interval is too narrow, and it shows no bias in
-   the Poisson estimate. Hedge each claim about what reviewers, editors, or a
-   field accept,
-   with its source when you have one, such as "many reviewers accept priors
-   that a prior predictive check supports, though yours may ask for a
-   sensitivity analysis".
+   a stated test establishes. Diagnostics describe the run that computed
+   them, such as "this run's R-hat and ESS met their thresholds", and only a
+   validation's grade says that a model passed. Hedge each claim about what
+   reviewers, editors, or a field accept, with its source when you have one,
+   such as "many reviewers accept priors that a prior predictive check
+   supports, though yours may ask for a sensitivity analysis".
 6. **Answer "status" at any time.** When the user or a workshop presenter
    types "status", reply with the lines of *Where we left off* in project
-   memory: the step of rule 1 and the design version, the last run with its
-   stage, its date, and its verdict, the runs that the user holds, what waits
-   on the user, and the agreed next step. Keep those lines current at each
-   checkpoint of [MEMORY-FORMAT.md](MEMORY-FORMAT.md#rules).
+   memory, by the
+   [project memory template](MEMORY-FORMAT.md#project-memory-template). Keep
+   those lines current at each checkpoint of
+   [MEMORY-FORMAT.md](MEMORY-FORMAT.md#rules).
 7. **Keep each message short,** about 150 words as a guide. Count its words
    before you send it, and cut it by pointing to the workspace files for
    detail. When the user asks for shorter messages,
@@ -312,26 +322,23 @@ phase follows these rules:
    its effect, in plain words, on its first line, such as "reads your CSV
    file · about 5 minutes · what it prints goes to the model provider", and give
    the command on a second line. The approvals are these:
-   1. *One standing approval for simulated data.* Ask once per project for
-      approval of every run that fits only simulated data and runs no code of
-      the user's: the smoke and the validate stage, the reruns of the
-      validate stage under the remedies of
-      [phases/4-proposal.md](phases/4-proposal.md), the probe scripts, and
-      `check_symbols.py`, which imports ProbPipe and no code of the user's.
-      Ask before the proposal, such as with the summary of the data, so that
-      the approval covers the first smoke run, whose result the proposal
-      shows. The smoke and the validate stage read the structure of the real
-      data, such as its sizes and its covariates, which the user's consent to
-      read the file covers. Announce a run of more than about two minutes
-      before it starts, with what it does and how long it takes, by rule 6,
-      and start it without waiting, in the background
-      when sending a message makes your tool wait for the reply. Report a
-      shorter run with its result. The setup's approval covers the commands
-      of [phases/0-load.md](phases/0-load.md).
+   1. *One standing approval.* Ask once per project, in the consent question
+      of the first message by [Phase 1](phases/1-intake.md), for approval of
+      every local run that reads only the user's data and writes only to the
+      workspace, such as the probe scripts, `check_symbols.py`, and each stage
+      of the pipeline with its reruns under the remedies of
+      [phases/4-proposal.md](phases/4-proposal.md). After the user's yes, run
+      each of these without asking again. Announce a run of more than about
+      two minutes before it starts, with what it does and how long it takes,
+      by rule 6, and start it without waiting, in the background when sending
+      a message makes your tool wait for the reply. Report a shorter run with
+      its result. The setup's approval covers the commands of
+      [phases/0-load.md](phases/0-load.md).
 
-      When the user asks to stop or skip these runs or the validation, stop
-      each running one, and start none until the user lifts the hold, the fit
-      of the smoke stage and the reruns of remedies included. Record the hold
+      When the user asks to stop or skip the validation or the runs on
+      simulated data, stop each running one, and start none until the user
+      lifts the hold, the fit of the smoke stage and the reruns of remedies
+      included. Record the hold
       in *Where we left off* of project memory, and offer the choices of
       [RESOURCES.md](RESOURCES.md) stage D.
    2. *Separate consent.* Ask, and wait for an explicit yes, before each of
@@ -339,13 +346,9 @@ phase follows these rules:
       - the first reading of each file of the user's, which
         [Phase 2](phases/2-materials.md#data) asks for with its question on
         sensitive data;
-      - the first fit to the real data, which is the first run of the fit
-        stage, or the reproduction check of
-        [phases/4-existing-pipeline.md](phases/4-existing-pipeline.md). Ask
-        for it with the standing approval of item 1 when the fit runs
-        locally, reads only the user's data, and writes only to the
-        workspace. The consent covers the fit stage of later design versions,
-        which you announce as item 1 says;
+      - each run that uses the network, reads or writes a file outside the
+        workspace other than the user's data, or runs longer than the time
+        budget that the user stated;
       - each run of code that the user supplied, which you read in full
         before you ask. A script that you write and that only calls the
         user's code, such as one that sources their R files and exports the
@@ -365,10 +368,8 @@ phase follows these rules:
    ProbPipe behaves while you write the code, such as the form of a
    function's result or whether a method accepts a model. It imports
    ProbPipe, runs on synthetic values, and reads none of the user's files.
-   Show an example probe when you ask for the standing approval. After each
-   probe runs, add one line to `<workspace>/runs/probes/log.md` that names the
-   probe and what it found. A probe that
-   would read the user's data needs separate consent.
+   After each probe runs, add one line to `<workspace>/runs/probes/log.md`
+   that names the probe and what it found.
 6. **Run in stages.** Run each design version in the stages that
    [phases/4-proposal.md](phases/4-proposal.md#write-the-code) defines: the
    smoke stage first, the validate stage after a smoke run succeeds, and the
@@ -379,7 +380,9 @@ phase follows these rules:
    analysis that the user has already run and reports no new answer. Give no
    runtime before the first smoke run. After it, give one number per stage,
    scaled from the most recent run, and say when `uptime` shows a loaded
-   machine. An existing pipeline's own log gives the runtime of its fit.
+   machine. Raise a stage's number at most once. When a run outlasts its
+   number, say so, with the cause and what you are doing about it. An
+   existing pipeline's own log gives the runtime of its fit.
 7. **Bound every run.** Run each command with a timeout, about ten minutes for
    a smoke run. Run Python unbuffered, with `<python> -u` or
    `PYTHONUNBUFFERED=1`, and write its output to a file as it runs, so that a

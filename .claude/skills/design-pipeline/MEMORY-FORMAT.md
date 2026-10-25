@@ -226,7 +226,7 @@ Corpus: <corpus directory> · commit <commit> · ProbPipe <version>
 Python: <python> · Kernel: <kernel>
 
 ## Where we left off
-- Step <k> of 5 (<name of the step>) · Design version <n>
+- Step <k> of 5 (<name of the step>) · Design version <n> · <each model's status>
 - Last run: <stage>, <date>, <verdict, such as "validation passed with notes">
 - Hold: <the runs the user holds, with the date, or "none">
 - Waiting on you: <what only the user can do, or "nothing">

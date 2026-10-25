@@ -12,11 +12,10 @@ cannot be shared. Also ask how the data was collected:
 - the mechanisms of missingness.
 
 Before you open any dataset, ask for consent to read it, by rule 5 of the
-[rules for user materials](../INSTRUCTIONS.md#user-materials-and-code), such
-as "reads your CSV file · a few seconds · each value it prints goes to the
-model provider". In the same message, ask whether it contains personal or health
-information, sensitive locations such as the sites of protected species, or
-data under a use agreement. Aggregated statistics that identify no person,
+[rules for user materials](../INSTRUCTIONS.md#user-materials-and-code). In
+the same message, ask whether it contains personal or health information,
+sensitive locations such as the sites of protected species, or data under a
+use agreement. Aggregated statistics that identify no person,
 such as published case counts per district, count as non-personal data. Ask
 whether a small-cell rule applies to them, such as a rule that suppresses
 counts below five, and follow it in what you show and record. If the dataset
@@ -95,9 +94,12 @@ the design document. When the user asks whether their numbers bias the
 analysis, say that the concern is fair, show what the priors imply by the
 prior predictive check, and offer the prior sensitivity analysis that quick
 start keeps for this concern. When the user cannot give these numbers, ask
-for a bound on the outcome that they can name, such as a physical limit or
-the largest value on record, and set the priors by the default of
-[RESOURCES.md](../RESOURCES.md) stage B.
+for a bound on the outcome that they can name, such as a physical limit or a
+value they would not believe, and set the priors by the default of
+[RESOURCES.md](../RESOURCES.md) stage B. A number from the user sets a prior
+bound or a check threshold only when the user calls it one, so ask once what
+any other number is, such as "Is 800 mm a limit, or the wettest year you
+remember?"
 
 The elicitation and the first inspection's limit on the outcome serve a new
 analysis. A user who brings an analysis that they already ran on these data,
