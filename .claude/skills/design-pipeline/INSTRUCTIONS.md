@@ -337,7 +337,10 @@ phase follows these rules:
    to run themselves. Read the log to follow the run.
 8. **Ask before you install anything,** such as a package, CmdStan, or a
    Jupyter kernel, by rule 5. The setup prompt's install of ProbPipe is the
-   one install that needs no further consent.
+   one install that needs no further consent. Install a Python package into
+   the environment of `<python>` with `<python> -m pip install <package>`.
+   When `<python> -m pip --version` fails, as in an environment that uv
+   created, install with `uv pip install --python <python> <package>`.
 
 ## Memory and workspace
 
