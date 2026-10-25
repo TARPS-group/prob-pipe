@@ -320,8 +320,9 @@ phase follows these rules:
    ProbPipe behaves while you write the code, such as the form of a
    function's result or whether a method accepts a model. It imports
    ProbPipe, runs on synthetic values, and reads none of the user's files.
-   Show an example probe when you ask for the standing approval, and list each
-   probe with what it found in `<workspace>/runs/probes/log.md`. A probe that
+   Show an example probe when you ask for the standing approval. After each
+   probe runs, add one line to `<workspace>/runs/probes/log.md` that names the
+   probe and what it found. A probe that
    would read the user's data needs separate consent.
 6. **Run in stages.** Run each design version in the stages that
    [phases/4-proposal.md](phases/4-proposal.md#write-the-code) defines: the
