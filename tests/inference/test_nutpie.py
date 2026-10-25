@@ -22,11 +22,21 @@ from probpipe import (
 )
 from probpipe.core.constraints import real
 from probpipe.inference._nutpie import (
+    _COMPILED_MODELS,
+    _cached_compilation,
     _compile_for_nutpie,
     _extract_chains,
     condition_on_nutpie,
 )
 from tests.inference._harness import validate_method
+
+
+@pytest.fixture(autouse=True)
+def _clear_nutpie_compilations():
+    _COMPILED_MODELS.clear()
+    yield
+    _COMPILED_MODELS.clear()
+
 
 # ---------------------------------------------------------------------------
 # Helpers (no model compilation needed)
@@ -110,10 +120,13 @@ class TestCompileForNutpie:
         )
         with (
             patch.object(nutpie, "compile_stan_model", _compile_stan_model),
-            patch.object(nutpie, "sample", return_value=trace),
+            patch.object(nutpie, "sample", return_value=trace) as sample,
         ):
             result = condition_on_nutpie.apply(posterior, num_results=3, num_chains=2)
         assert tuple(result.event_spec.outputs) == ("mu", "theta")
+        assert result.provenance.metadata["backend_seed"] == sample.call_args.kwargs["seed"]
+        assert result.provenance.metadata["compile_seconds"] >= 0.0
+        assert result.provenance.metadata["sampling_seconds"] >= 0.0
         assert result.event_spec.term_spec["theta"] == NumericArraySpec(
             (2,), jnp.result_type(float), real
         )
@@ -158,6 +171,78 @@ class TestCompileForNutpie:
             _compile_for_nutpie(model, data=None)
 
     @pytest.mark.usefixtures("_stanc")
+    def test_stan_compilation_is_shared_but_each_fit_binds_its_own_data(self, tmp_path):
+        from probpipe.families import StanModel
+
+        program = tmp_path / "program.stan"
+        program.write_text("data { real y; } parameters { real mu; } model { }")
+        first = StanModel(str(program), data={"y": 1.0})
+        second = StanModel(str(program), data={"y": 9.0})
+        with patch.object(nutpie, "compile_stan_model", wraps=_compile_stan_model) as compile_stan:
+            first_compiled, _ = _compile_for_nutpie(first, None)
+            second_compiled, _ = _compile_for_nutpie(second, None)
+        assert compile_stan.call_count == 1
+        assert first_compiled.data == {"y": 1.0}
+        assert second_compiled.data == {"y": 9.0}
+
+    @pytest.mark.usefixtures("_stanc")
+    def test_stan_content_and_compile_arguments_invalidate_compilation(self, tmp_path, monkeypatch):
+        from probpipe.families import StanModel, _programs
+
+        program = tmp_path / "program.stan"
+        program.write_text("parameters { real mu; } model { mu ~ normal(0, 1); }")
+        posterior = StanModel(str(program))
+        with patch.object(nutpie, "compile_stan_model", wraps=_compile_stan_model) as compile_stan:
+            _compile_for_nutpie(posterior, None)
+            program.write_text("parameters { real mu; } model { mu ~ normal(1, 1); }")
+            _compile_for_nutpie(posterior, None)
+            monkeypatch.setattr(_programs, "_BRIDGESTAN_MAKE_ARGS", ("STAN_THREADS=true",))
+            _compile_for_nutpie(posterior, None)
+        assert compile_stan.call_count == 3
+
+    @pytest.mark.usefixtures("_stanc")
+    def test_stan_include_dependencies_are_not_cached(self, tmp_path):
+        from probpipe.families import StanModel
+
+        program = tmp_path / "program.stan"
+        program.write_text("parameters { real mu; } model { }")
+        posterior = StanModel(str(program))
+        program.write_text("#include another.stan\n")
+        with patch.object(nutpie, "compile_stan_model", wraps=_compile_stan_model) as compile_stan:
+            _compile_for_nutpie(posterior, None)
+            _compile_for_nutpie(posterior, None)
+        assert compile_stan.call_count == 2
+
+    def test_pymc_compilation_is_reused_only_at_the_same_observations(self):
+        pm = pytest.importorskip("pymc")
+        from probpipe import PyMCModel
+
+        def normal_model(y=None):
+            with pm.Model() as built_model:
+                mu = pm.Normal("mu")
+                pm.Normal("y", mu, 1.0, observed=y)
+            return built_model
+
+        model = PyMCModel(normal_model)
+        observed = np.array([1.0, 2.0])
+        with patch.object(
+            nutpie, "compile_pymc_model", side_effect=lambda built: built
+        ) as compile_pymc:
+            first, first_build = _compile_for_nutpie(model, {"y": observed})
+            repeated, _ = _compile_for_nutpie(model, {"y": observed.copy()})
+            observed[0] = 8.0
+            changed, _ = _compile_for_nutpie(model, {"y": observed})
+        assert first is repeated is first_build
+        assert changed is not first
+        assert compile_pymc.call_count == 2
+        np.testing.assert_array_equal(
+            first.rvs_to_values[first["y"]].eval(mode="FAST_COMPILE"), [1.0, 2.0]
+        )
+        np.testing.assert_array_equal(
+            changed.rvs_to_values[changed["y"]].eval(mode="FAST_COMPILE"), [8.0, 2.0]
+        )
+
+    @pytest.mark.usefixtures("_stanc")
     def test_a_stan_posterior_conditioned_on_a_parameter_is_declined(self, tmp_path):
         """nutpie samples a Stan program at its data, so it cannot fix a parameter."""
         from probpipe.families import StanModel
@@ -175,6 +260,42 @@ class TestCompileForNutpie:
         assert report.feasible is False
         assert "parameter" in report.description
         assert NutpieNutsMethod().check(posterior).feasible is True
+
+
+class TestCompilationCache:
+    def test_a_failed_compile_can_be_retried(self):
+        compile_model = MagicMock(side_effect=[RuntimeError("compiler failed"), "compiled"])
+        with pytest.raises(RuntimeError, match="compiler failed"):
+            _cached_compilation(("program",), compile_model)
+        assert _cached_compilation(("program",), compile_model) == "compiled"
+        assert compile_model.call_count == 2
+
+    def test_simultaneous_fits_compile_once(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from time import sleep
+
+        def slow_compilation():
+            sleep(0.02)
+            return object()
+
+        compile_model = MagicMock(side_effect=slow_compilation)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            compiled_models = list(
+                pool.map(lambda _: _cached_compilation(("program",), compile_model), range(4))
+            )
+        assert all(compiled is compiled_models[0] for compiled in compiled_models)
+        assert compile_model.call_count == 1
+
+    def test_the_cache_evicts_the_least_recently_used_compilation(self):
+        compile_model = MagicMock(side_effect=object)
+        first = _cached_compilation((0,), compile_model)
+        for program_index in range(1, 16):
+            _cached_compilation((program_index,), compile_model)
+        assert _cached_compilation((0,), compile_model) is first
+        _cached_compilation((16,), compile_model)
+        assert (0,) in _COMPILED_MODELS
+        assert (1,) not in _COMPILED_MODELS
+        assert len(_COMPILED_MODELS) == 16
 
 
 def _stan_trace():
@@ -217,6 +338,50 @@ class TestMethodOptions:
 
         assert seed(0) == seed(0)
         assert seed(0) != seed(1)
+
+    def test_provenance_records_the_backend_seed_and_separate_durations(self, tmp_path):
+        from probpipe.families import StanModel
+
+        program = tmp_path / "program.stan"
+        program.write_text("parameters { real mu; } model { }")
+        posterior = StanModel(str(program))
+        with (
+            patch.object(nutpie, "compile_stan_model", _compile_stan_model),
+            patch.object(nutpie, "sample", return_value=_stan_trace()) as sample,
+            patch("probpipe.inference._nutpie.perf_counter", side_effect=[1.0, 3.0, 4.0, 9.0]),
+            workflow_run(seed=7),
+        ):
+            result = inference_method_registry.execute(
+                posterior, method="nutpie_nuts", num_results=3, num_chains=2
+            )
+        metadata = result.provenance.metadata
+        assert metadata["compile_seconds"] == 2.0
+        assert metadata["sampling_seconds"] == 5.0
+        assert metadata["backend_seed"] == sample.call_args.kwargs["seed"]
+
+    def test_condition_on_preserves_the_inference_run_metadata(self, tmp_path):
+        from probpipe import StanModel, condition_on
+
+        program = tmp_path / "program.stan"
+        program.write_text("data { real y; } parameters { real mu; } model { }")
+        model = StanModel(str(program))
+        fit = condition_on.using(
+            method="nutpie_nuts", method_options={"num_results": 3, "num_chains": 2}
+        )
+        with (
+            patch.object(nutpie, "compile_stan_model", _compile_stan_model),
+            patch.object(nutpie, "sample", return_value=_stan_trace()) as sample,
+            workflow_run(seed=7),
+        ):
+            result = fit(model, {"y": 1.0})
+        run_metadata = next(
+            parent.provenance.metadata
+            for parent in result.provenance.parents
+            if parent.provenance is not None and parent.provenance.operation == "nutpie_nuts"
+        )
+        assert run_metadata["compile_seconds"] >= 0.0
+        assert run_metadata["sampling_seconds"] >= 0.0
+        assert run_metadata["backend_seed"] == sample.call_args.kwargs["seed"]
 
 
 class TestSeedKeywords:
