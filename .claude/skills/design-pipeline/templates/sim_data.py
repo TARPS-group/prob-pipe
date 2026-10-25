@@ -9,19 +9,15 @@ the CAPABILITIES.md row "Validate the computation on realistic simulated data".
 
 from __future__ import annotations
 
-import numpy as np
-
 from probpipe import RecordBatch, sample
 
 
-def simulate(joint, n: int, response: str) -> tuple[RecordBatch, np.ndarray]:
+def simulate(model, n: int, response: str) -> tuple[RecordBatch, RecordBatch]:
     """`n` datasets drawn from the joint model, and the parameter values that generated them.
 
-    The datasets are a `RecordBatch` on the level `sim`, which `condition_on`
-    fits in one sweep. The true values are an array of shape (sim, coordinate),
-    ordered by the fields of the parameters like the posterior summaries. The
-    draw takes its key from the enclosing `workflow_run`.
+    Both are record batches on the level `sim`, which `condition_on` fits in
+    one sweep. The draw takes its key from the enclosing `workflow_run`.
     """
-    sims = sample(joint, sample_shape=(n,)).with_level_names(sample="sim")
-    parameters = [name for name in joint.event_spec.outputs if name != response]
-    return sims.without(*parameters), np.asarray(sims.without(response).to_vector())
+    sims = sample(model, sample_shape=(n,)).with_level_names(sample="sim")
+    parameters = [name for name in model.event_spec.outputs if name != response]
+    return sims.without(*parameters), sims.without(response)

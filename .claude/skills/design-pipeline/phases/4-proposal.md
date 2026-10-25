@@ -140,17 +140,46 @@ way they work, and the script `<workspace>/pipeline.py` for one who names
 scripts. When the user's answers name neither, ask in one line.
 
 Start from the worked example `<assistant>/templates/pipeline_skeleton.py`
-and its modules `pipeline_support.py`, `report.py`, and `sim_data.py`. Its
-comments give the reason for each part, and they say when to keep each block
-tagged `# OPTIONAL: <name>`. Pare it down in four steps:
+and its modules `pipeline_support.py`, `report.py`, and `sim_data.py`. Each
+block tagged `# OPTIONAL: <name>` has a one-line comment that says what it
+computes. Keep a block when the design calls for it:
+
+| Block | Keep it when |
+|---|---|
+| compare models | the design compares models |
+| held-out subset | the data allow a held-out period, region, or random split, chosen before any elaboration and scored once after it ends, by the [rules for revisions](5-feedback.md#rules-for-revisions) |
+| calibration | the answer is the probability of an event, and the held-out subset is kept |
+| plug-in forecast | the answer is a probability or a decision, so the answer at the posterior mean shows what the propagated uncertainty changes |
+| scenarios | the user compares conditions |
+| prior sensitivity | the user asks how much the priors matter, by RESOURCES.md stage H |
+| external result | the user must reconcile the answer with another tool's or an earlier run's |
+| provenance | the user reports how each result was computed, as in a methods section |
+| compare algorithms | the choice of inference method is in question, by RESOURCES.md stage E |
+| several datasets | the design reports an answer per site, group, or year |
+| bring in a model from another package | the model is written in PyMC, Stan, or the user's code, by the row "Bring any model" of CAPABILITIES.md |
+| large data | the data have many observations, by RESOURCES.md stage E "Many observations", or need many independent fits, by the row "Run a pipeline at scale" of CAPABILITIES.md |
+
+Pare the example down in four steps:
 
 1. Copy the example and its modules to the workspace.
 2. Keep each optional block that the design document calls for, and delete
    the others: each line that ends in the tag, and each section from its
    tagged header to the next `# ---` header, in the pipeline and in
    `report.py`.
-3. Replace the example's data, models, and estimands with those of the
-   design.
+3. Replace the example's data, models, estimands, and `show_*` functions with
+   those of the design:
+   - the docstring of the script says where each choice of the design is
+     made, as the example's does;
+   - the data step checks the columns, types, ranges, and codes of missing
+     values that the data notes give;
+   - `VALIDATED` lists each function and setting that the data step, the
+     split, a model, the simulation, or the fit calls;
+   - the validation recovers the parameters at prior draws, and a design with
+     parameter values that the user judges realistic adds the recovery at
+     those values by the same recipe;
+   - `check_code()` adds the agreement check of
+     [phases/4-existing-pipeline.md](4-existing-pipeline.md) for a model
+     re-implemented from the user's code.
 4. Run `check_symbols.py` by [Check and run the code](#check-and-run-the-code),
    and delete what only a deleted block used, such as an import.
 
@@ -168,7 +197,9 @@ metadata names the project's kernel, which
 [Check and run the code](#check-and-run-the-code) registers, with the language
 `python`, so that Colab runs the notebook on its own Python kernel. Each step
 of the pipeline matches a subsection of section 4 of the design document, and
-shows a figure where one helps, with a one-sentence comment on how to read it.
+shows a figure where one helps, with a one-sentence caption on how to read it,
+which `save_figure()` of `report.py` writes under the figure. A step without a
+figure prints that sentence after its result.
 The notebook's first text cell, or the docstring of a script, says where to
 change each choice, such as "the priors are in `build_model()`", so that the
 user can find, defend, and edit each choice in code they did not write.

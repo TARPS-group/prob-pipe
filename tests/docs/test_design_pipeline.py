@@ -332,7 +332,7 @@ class TestPipelineSkeleton:
         script = tmp_path / "pipeline_skeleton.py"
         source = script.read_text()
         first = code_hash()
-        step_after_fit = "def estimands(posterior, data, settings) -> dict:\n"
+        step_after_fit = "def estimands(posterior, X_dry_hot: jnp.ndarray, scales: NumericRecord, settings) -> dict:\n"
         script.write_text(source.replace(step_after_fit, step_after_fit + "    # edited\n"))
         (tmp_path / "report.py").write_text((tmp_path / "report.py").read_text() + "# edited\n")
         assert code_hash() == first

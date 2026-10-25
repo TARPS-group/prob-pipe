@@ -1,11 +1,7 @@
 """The stages, the gate, the records of a run, and the grade of the validation.
 
-This module is part of the design-pipeline assistant's skeleton, beside
-`pipeline_skeleton.py`. It holds the code that every pipeline shares, so the
-pipeline itself shows the data, the models with their priors, and the named
-steps. Its code serves every design, so a design changes the budgets and the
-models in the pipeline. The rules are those of phases/4-proposal.md "Write the
-code":
+This module holds the code that every pipeline shares, so the pipeline itself
+shows the data, the models with their priors, and the named steps:
 
 1. `resolve_stage()` reads the stage, the hold, and the reason for provisional
    results from the environment, and it resolves them once into a `Settings`
@@ -29,8 +25,9 @@ code":
    validated model's prior, method, or data.
 4. `record_run()` writes the provenance and the Python environment into the
    output folder, so each result can be traced to the code that computed it.
-5. `fits_to_rerun()` and `grade_validation()` implement RESOURCES.md stage D
-   step 6, which states the rule.
+5. `fits_to_rerun()`, `grade_recovery()`, and `grade_validation()` implement
+   RESOURCES.md stage D step 6, which states the rule. The grading converts
+   the summaries of the fits to NumPy arrays.
 """
 
 from __future__ import annotations
@@ -343,13 +340,65 @@ def grade_validation(
     return {"grade": "passed with notes", "sentence": sentence, "notes": notes} | misses
 
 
-def coordinate_names(model, response: str) -> list[str]:
-    """The name of each coordinate of the parameters, in the order of the posterior summaries."""
+def fit_diagnostics(summaries, posteriors) -> dict[str, np.ndarray]:
+    """The largest R-hat, the smallest bulk ESS, and the divergences of each fit of a batch.
+
+    `summaries` holds the summaries of `posteriors` by `summarize()`, which
+    reports no divergences, so each posterior's sampler statistics are read on
+    their own. A method without divergences, such as random-walk Metropolis,
+    records none.
+    """
+    stats = [posterior.annotations["arviz"]["sample_stats"] for posterior in posteriors]
+    return {
+        "max_r_hat": np.asarray(summaries["r_hat"].to_vector()).max(axis=-1),
+        "min_ess_bulk": np.asarray(summaries["ess_bulk"].to_vector()).min(axis=-1),
+        "divergences": np.array([int(np.sum(s.get("diverging", 0))) for s in stats]),
+    }
+
+
+def grade_recovery(
+    summaries,
+    posteriors,
+    theta,
+    theta_prior,
+    num_chains: int,
+    n_rerun: int,
+    quick_start: bool,
+) -> dict:
+    """The grade of the recovery of the parameters theta of simulated datasets, with its table.
+
+    z = (posterior mean - theta) / posterior sd for each fit and coordinate,
+    the coverage is the share of fits whose central interval of probability
+    COVERAGE_LEVEL holds theta, and the contraction is
+    1 - mean posterior variance / prior variance, by RESOURCES.md stage D.
+    `summaries` holds the summaries of `posteriors` with that interval,
+    `theta` the parameters of each dataset, and `theta_prior` draws of the
+    prior of the parameters.
+    """
+    ends = [f"q{100 * q:g}" for q in ((1 - COVERAGE_LEVEL) / 2, (1 + COVERAGE_LEVEL) / 2)]
+    mean, sd, low, high = (np.asarray(summaries[k].to_vector()) for k in ("mean", "sd", *ends))
+    theta_values = np.asarray(theta.to_vector())  # (fit, coordinate)
+    z = (mean - theta_values) / sd
+    coverage = ((low <= theta_values) & (theta_values <= high)).mean(axis=0)
+    contraction = 1 - (sd**2).mean(axis=0) / np.asarray(theta_prior.to_vector()).var(axis=0)
+    diagnostics = fit_diagnostics(summaries, posteriors)
+    all_pass = bool(meets_fit_criteria(diagnostics, num_chains).all())
+    names = coordinate_names(theta)
+    grade = grade_validation(z, coverage, contraction, names, all_pass, n_rerun, quick_start)
+    table = {"coordinates": names, "coverage": coverage, "mean_z": z.mean(axis=0)}
+    table |= {"contraction": contraction} | diagnostics
+    return grade | {
+        "remedy": bool(n_rerun),
+        "table": {k: np.asarray(v).tolist() for k, v in table.items()},
+    }
+
+
+def coordinate_names(values) -> list[str]:
+    """The name of each coordinate of a record or a record batch, in the order of `to_vector()`."""
     names = []
-    for name, spec in model.event_spec.outputs.items():
+    for name, spec in values.event_template.items():
         size = int(np.prod(spec.shape))
-        if name != response:
-            names += [name] if size == 1 else [f"{name}[{i}]" for i in range(size)]
+        names += [name] if size == 1 else [f"{name}[{i}]" for i in range(size)]
     return names
 
 
@@ -360,6 +409,8 @@ def tail_bound(tail: float, n_results: int) -> float:
 
 # The grading code of stage D, which the hash of every validation covers.
 GRADING = (
+    fit_diagnostics,
+    grade_recovery,
     meets_fit_criteria,
     fits_to_rerun,
     grade_validation,
