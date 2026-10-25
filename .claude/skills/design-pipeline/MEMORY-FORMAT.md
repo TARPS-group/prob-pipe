@@ -66,25 +66,25 @@ that separate the notes, the deliverables, and the record of the runs:
     code, or descriptions.
   - `<workspace>/notes/pipeline-design.md`: the current design, which follows
     [DESIGN-DOC-TEMPLATE.md](DESIGN-DOC-TEMPLATE.md), with a version history.
-- `<workspace>/outputs/`: the deliverables of the current design version, which
+- `<workspace>/results/`: the deliverables of the current design version, which
   only the fit stage writes, such as the tables, the figures, and the
   posterior draws. Before the fit stage of a new design version runs, move the
-  outputs of the earlier version to `<workspace>/runs/archive/v<n>/`, where n
+  results of the earlier version to `<workspace>/archive/v<n>/`, where n
   is the earlier version.
-- `<workspace>/runs/`: the record of the runs.
-  - `<workspace>/runs/pipeline.<stage>.ipynb`: the executed copy of the
+- `<workspace>/archive/`: the results of the earlier design versions.
+- `<workspace>/checks/`: the checks of the pipeline and the record of its runs.
+  - `<workspace>/checks/pipeline.<stage>.ipynb`: the executed copy of the
     notebook from the last run of each stage, which
     [phases/4-proposal.md](phases/4-proposal.md#check-and-run-the-code)
     describes.
-  - `<workspace>/runs/smoke/` and `<workspace>/runs/validate/`: the results
+  - `<workspace>/checks/smoke/` and `<workspace>/checks/validate/`: the results
     that the smoke and the validate stage write.
-  - `<workspace>/runs/validation.json`: the grades and the table of the
+  - `<workspace>/checks/validation.json`: the grades and the table of the
     validation on realistic simulated data, which only the validate stage
     writes and the gate of the fit stage checks.
-  - `<workspace>/runs/<stage>.log`: the log of a run in the background.
-  - `<workspace>/runs/archive/`: the outputs of the earlier design versions.
+  - `<workspace>/checks/<stage>.log`: the log of a run in the background.
   - The scripts that inspect the user's files, and the probe scripts with
-    their log in `<workspace>/runs/probes/`, by rules 3 and 5 of the
+    their log in `<workspace>/checks/probes/`, by rules 3 and 5 of the
     [rules for user materials](INSTRUCTIONS.md#user-materials-and-code).
 
 ## Rules
@@ -210,8 +210,8 @@ Keep it under about ten lines.
 # <Project name>
 - Your answers and their status: section 0 of notes/pipeline-design.md.
 - How to run the pipeline: section 11 of notes/pipeline-design.md.
-- outputs/: the current results. runs/: the trial runs, the checks, and the
-  results of earlier versions. notes/: the brief, the notes on your data and
+- results/: the current results. checks/: the trial runs and the checks.
+  archive/: the results of earlier versions. notes/: the brief, the notes on your data and
   models, and the design document.
 - To continue with the assistant, start it with "resume <short-project-slug>".
   Type "status" at any time to see where the project stands.

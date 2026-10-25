@@ -246,7 +246,7 @@ Colab edits.
 2. `STAGE=validate` runs the prior predictive check and the validation on
    realistic simulated data at their full budgets, and grades the validation
    of each model by RESOURCES.md stage D. Under a hold it stops at once. It
-   deletes `<workspace>/runs/validation.json` when it starts, and
+   deletes `<workspace>/checks/validation.json` when it starts, and
    `record_validation()` writes it as each model's validation ends, with
    these entries:
    - `stage`, which is `"validate"`;
@@ -267,7 +267,7 @@ Colab edits.
    be trusted."
 3. `STAGE=fit` runs the fit to the real data and the steps after it. Its
    gate is part of `resolve_stage()`, so it runs before any step. The gate
-   reads `<workspace>/runs/validation.json`, and a file whose stage, design
+   reads `<workspace>/checks/validation.json`, and a file whose stage, design
    version, and hash match the current code is a validation of that code.
    The gate lists the models to fit, which are those whose grade is *passed*
    or *passed with notes*, and it marks in the settings object that the
@@ -278,7 +278,7 @@ Colab edits.
    smoke stage it returns simulated data. A run whose gate fails therefore
    fits nothing, even under nbconvert's `--allow-errors`. Colab deletes
    the files of `/content` when its runtime resets, so run the validate and
-   the fit stage in one session, or upload the `<workspace>/runs/validation.json`
+   the fit stage in one session, or upload the `<workspace>/checks/validation.json`
    from a validate run of the same design version.
 
 The user chooses provisional results after a failed validation or by the
@@ -295,20 +295,20 @@ one of two labels:
    ended, as when the user declined or held it.
 
 The label appears in each printed answer, each figure title, each file name
-in `<workspace>/outputs/`, and each estimate in the design document, and the
+in `<workspace>/results/`, and each estimate in the design document, and the
 methods paragraph of the design document states the status.
 
 Every run resolves the stage and then runs the data step. Each stage writes
 its results, such as the diagnostics and the estimates, as it computes them,
 so a run that a failed step stops keeps the results computed before it. The
-smoke and the validate stage write to `<workspace>/runs/smoke/` and
-`<workspace>/runs/validate/`, and only the fit stage writes to
-`<workspace>/outputs/`, so a result of a smoke run never takes the file name of
+smoke and the validate stage write to `<workspace>/checks/smoke/` and
+`<workspace>/checks/validate/`, and only the fit stage writes to
+`<workspace>/results/`, so a result of a smoke run never takes the file name of
 a deliverable. [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#workspace) describes the
 layout of the workspace.
 
 Every number in section 0 and in the methods paragraph of the design document
-is copied from a file that the fit stage wrote to `<workspace>/outputs/`
+is copied from a file that the fit stage wrote to `<workspace>/results/`
 (Sandve et al. 2013). `report.py` saves each figure with a CSV file of the
 numbers it plots. `record_run()` writes into each output folder `<folder>`
 `<folder>/provenance.json`, with the seed, the ProbPipe version and checkout
@@ -332,8 +332,8 @@ Take these steps before you show the code, and again after each revision:
    commands of a stage are these, shown for the validate stage:
    - a script: `STAGE=validate <python> <workspace>/pipeline.py`;
    - a notebook:
-     `STAGE=validate <python> -m nbconvert --to notebook --execute <workspace>/pipeline.ipynb --ExecutePreprocessor.kernel_name=<kernel> --output pipeline.validate --output-dir <workspace>/runs`,
-     which writes the executed copy `<workspace>/runs/pipeline.validate.ipynb`
+     `STAGE=validate <python> -m nbconvert --to notebook --execute <workspace>/pipeline.ipynb --ExecutePreprocessor.kernel_name=<kernel> --output pipeline.validate --output-dir <workspace>/checks`,
+     which writes the executed copy `<workspace>/checks/pipeline.validate.ipynb`
      and runs the notebook from the workspace, so its relative paths hold.
 
    For another stage, replace `validate` with the stage. Run the smoke and

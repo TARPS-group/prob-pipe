@@ -307,7 +307,7 @@ phase follows these rules:
    files (`.rds`, `.RData`) read through rpy2.
 3. **Inspect in isolated mode.** Write each script that inspects the user's
    files, such as the script of [Phase 2](phases/2-materials.md#data), in
-   `<workspace>/runs/`, pass each file's path to it as an argument, and run it in
+   `<workspace>/checks/`, pass each file's path to it as an argument, and run it in
    isolated mode: `<python> -I <script> <file>`. Isolated mode keeps the
    environment's own packages, such as a pandas installed in its virtual
    environment, and leaves out the directories of the script and the data,
@@ -364,11 +364,11 @@ phase follows these rules:
       stage with the user's consent to that run, and read only its aggregate
       output.
 
-   A probe is a short script in `<workspace>/runs/probes/` that checks how
+   A probe is a short script in `<workspace>/checks/probes/` that checks how
    ProbPipe behaves while you write the code, such as the form of a
    function's result or whether a method accepts a model. It imports
    ProbPipe, runs on synthetic values, and reads none of the user's files.
-   After each probe runs, add one line to `<workspace>/runs/probes/log.md`
+   After each probe runs, add one line to `<workspace>/checks/probes/log.md`
    that names the probe and what it found.
 6. **Run in stages.** Run each design version in the stages that
    [phases/4-proposal.md](phases/4-proposal.md#write-the-code) defines: the
@@ -390,7 +390,7 @@ phase follows these rules:
    notebook's output only when the run ends, so follow a notebook's run by
    the files that `report.py` writes after each step. Run a fit that can take
    longer in the background, with its output written to
-   `<workspace>/runs/<stage>.log`, or give the user the command to run
+   `<workspace>/checks/<stage>.log`, or give the user the command to run
    themselves.
 8. **Ask before you install anything,** such as a package, CmdStan, or a
    Jupyter kernel, by rule 5. The setup prompt's install of ProbPipe is the

@@ -86,7 +86,7 @@ the proposal" of phases/4-proposal.md apply to it, and so do the
       `<workspace>/reproduce.py` for a user who works in scripts. It runs the
       integrated or migrated pipeline on the same data, with the same priors,
       and with the same inference method and settings where ProbPipe has the
-      method, and it writes its results to `<workspace>/runs/reproduce/`.
+      method, and it writes its results to `<workspace>/checks/reproduce/`.
       The reproduction of an integrated pipeline is two runs of the original
       code. A run with its seed shows that the saved outputs come from this code when
       the two are identical, and a run with a second seed is the comparison

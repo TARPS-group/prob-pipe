@@ -98,8 +98,10 @@ some females attract none at all.
 
 ## If something goes wrong
 
+> **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.
+
 - **The install fails:** run `python3 --version`, or `py -0` on Windows, and use Python 3.12 or 3.13, or uv as the section "Before the workshop" describes.
-- **The agent asks for permission often:** the agent asks once for every run on simulated data, and asks separately before it reads your data, fits the model to your data for the first time, installs anything, or runs your code.
+- **The agent asks for permission:** its first message asks once to read your data and to run the pipeline on your computer, writing only to the project directory. It asks again before it installs anything, runs your own code, uses the network, writes outside the project directory, or runs longer than the time you gave it.
 - **The agent stops at a usage limit of its provider:** wait for the limit to reset, or start a new session with `resume <project>` as the last line of the prompt, because the project's memory and files keep the work.
 - **The first validation fails:** the assistant tests the method on simulated data like yours before it fits your data, and a first failure is common. The assistant tries the standard remedies, explains what still fails, and withholds answers until the check passes, unless you ask for provisional results.
   You can also skip or stop the check, and the assistant then labels every answer "PROVISIONAL: not validated".
@@ -112,7 +114,7 @@ It asks before it creates this memory, and it stores it in `~/.probpipe-design/u
 Ask the assistant to forget you, and it deletes the file.
 
 Each project's directory holds the pipeline, the project's memory, and a short guide, `START-HERE.md`.
-Its directory `notes/` holds the notes and the design document, `outputs/` holds the current results, and `runs/` holds the trial runs and the checks.
+Its directory `notes/` holds the notes and the design document, `results/` holds the current results, `checks/` holds the trial runs and the checks, and `archive/` holds the results of earlier design versions.
 The assistant's memory records the paths of your data files but no actual data.
 The memory files are Markdown, so you can read, edit, or delete them at any time.
 

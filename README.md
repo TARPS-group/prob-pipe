@@ -164,6 +164,7 @@ The [installation page](https://tarps-group.github.io/prob-pipe/get_started/inst
 ## Learn more
 
 - [The quickstart](https://tarps-group.github.io/prob-pipe/get_started/quickstart/) works through this example in more detail, including demonstrating how to use built-in diagnostics and perform a predictive check.
+- [The design assistant](https://tarps-group.github.io/prob-pipe/get_started/design_assistant/) is a set of instructions for an AI coding agent, which designs and builds a ProbPipe pipeline for your own problem and data with you.
 - [The tutorials](https://tarps-group.github.io/prob-pipe/tutorials/01_first_analysis/) work through a complete statistical analysis of a moose population, including model checks, model elaboration, forecasting, and fitting models with likelihood-free methods.
 - [The API reference](https://tarps-group.github.io/prob-pipe/api/) provides complete documentation of ProbPipe capabilities.
 - [How to cite ProbPipe](https://tarps-group.github.io/prob-pipe/cite/), [getting help](https://tarps-group.github.io/prob-pipe/help/), and [contributing](CONTRIBUTING.md).

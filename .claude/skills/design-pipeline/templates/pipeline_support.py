@@ -15,7 +15,7 @@ code":
    that the fit runs.
 2. A hold on the fits to simulated data leaves the smoke stage the data step
    and the checks of the code, and it stops the validate stage at once.
-3. The gate of the fit stage reads `runs/validation.json`, which
+3. The gate of the fit stage reads `checks/validation.json`, which
    `record_validation()` writes. A validation of the current code matches
    its stage, its design version, and the hash of what the validation
    depends on: the data file, the data step, the model definitions, the
@@ -51,8 +51,8 @@ import probpipe
 from probpipe.diagnostics import NotComputed
 
 HERE = Path(__file__).resolve().parent
-OUT_DIRS = {"smoke": "runs/smoke", "validate": "runs/validate", "fit": "outputs"}
-VALIDATION_FILE = HERE / "runs" / "validation.json"
+OUT_DIRS = {"smoke": "checks/smoke", "validate": "checks/validate", "fit": "results"}
+VALIDATION_FILE = HERE / "checks" / "validation.json"
 SMOKE_LABEL = "smoke run, not for inference"
 # The quantiles of every reported interval, "median [2.5%, 97.5%]" by rule 4 of
 # the assistant's Messages, and the names of their columns in each table.
