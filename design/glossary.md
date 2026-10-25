@@ -115,6 +115,8 @@ The canonical name of a recurring concept is the name that its parameters, attri
 | the set of evaluation points an executor runs | `evaluation_points` |
 | the options of an executor, kept apart from the arguments | `executor_options` |
 | the number of evaluation points in one chunk | `chunk_size` |
+| the acceptance probability that an MCMC method's step-size adaptation targets, a method option | `target_accept_prob` |
+| the maximum depth of a NUTS tree, a method option | `max_tree_depth` |
 | a distribution's event spec, an `OutputSpec` | `event_spec` |
 | a PRNG key | `key` |
 | a function from which `distribution` builds a law | the operation it realizes: `sample`, `log_prob`, or `unnormalized_log_prob` |

@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
 import itertools
 import logging
+import numbers
 
 import jax
 import jax.numpy as jnp
@@ -69,6 +70,7 @@ __all__ = [
     "build_mcmc_datatree",
     "build_target_log_prob",
     "build_target_log_prob_flat",
+    "chain_initial_states",
     "extract_chain_columns",
     "flat_density",
     "flat_vector",
@@ -78,6 +80,7 @@ __all__ = [
     "likelihood_flat",
     "model_factors",
     "no_density_reason",
+    "nuts_controls",
     "observed_parts",
     "observed_target",
     "parallel_chain_map",
@@ -597,6 +600,200 @@ def get_init_state(
     )
 
 
+#: The value of a gradient MCMC method's ``init`` option that starts each chain
+#: from its own draw of the default initial state.
+PER_CHAIN_INIT = "per_chain"
+
+
+def _point_shape(law: Any) -> tuple[int, ...] | None:
+    """The shape of one initial state of a chain over *law*, or ``None`` when *law* lays out no array.
+
+    A numeric record's state is its flat vector, and one array's state is the
+    array, at least 1-D, as :func:`get_init_state` returns them.
+    """
+    record = _flat_record_spec(law)
+    if record is not None:
+        return (record.vector_size,)
+    leaves = _flat_leaves(law)
+    if leaves is None or len(leaves) != 1:
+        return None
+    shape = leaves[0][0]
+    return shape if shape else (1,)
+
+
+def _initial_state_keys(key: Array, num_chains: int) -> Array:
+    """The keys of the per-chain initial draws, split from a child of *key* that is no chain key.
+
+    The runners split *key* into the chain keys with
+    ``jax.random.split(key, num_chains)`` and derive every warmup and sampling
+    key from a chain key. The initial draws split the reserved key
+    ``jax.random.split(key, num_chains + 1)[num_chains]`` once per chain.
+    Each split computes Threefry blocks of *key* at integer counters. Under
+    JAX's default ``jax_threefry_partitionable``, chain key ``i`` is the
+    block at counter ``(0, i)`` and the reserved key is the block at
+    ``(0, num_chains)``. Under the original implementation, the two splits
+    compute the blocks at counters ``(j, num_chains + j)`` and
+    ``(j, num_chains + 1 + j)``, so they share no block. Threefry is a
+    bijection of the counter for a fixed key, so the reserved key is not a
+    chain key. The initial draws therefore use keys of the reserved key's
+    subtree and the chains use keys of the chain keys' subtrees, and a key of
+    one equals a key of the other only through a chance collision of Threefry
+    outputs, of probability about 2**-64 per pair.
+    """
+    reserved = jax.random.split(key, num_chains + 1)[num_chains]
+    return jax.random.split(reserved, num_chains)
+
+
+def chain_initial_states(
+    law: Any,
+    init: Any,
+    *,
+    num_chains: int,
+    key: Array,
+    method: str,
+    default_per_chain: bool = False,
+) -> tuple[Any, bool]:
+    """Resolve a gradient MCMC method's ``init`` option to the chains' initial states.
+
+    ``init`` takes four forms:
+
+    1. ``None``: the per-chain draws of the last form when
+       *default_per_chain* is set and *law* lays out an array, and otherwise
+       one state that :func:`get_init_state` draws with *key*, which every
+       chain starts from;
+    2. one state, an array of the shape of a draw's flat vector: every chain
+       starts from it;
+    3. one state per chain, an array whose leading axis has length
+       *num_chains* and whose rows have the shape of one state: each chain
+       starts from its row;
+    4. :data:`PER_CHAIN_INIT`: each chain starts from its own draw of
+       :func:`get_init_state`, made with its key of
+       :func:`_initial_state_keys`, which derives these keys from a subtree
+       of *key* that the chains' warmup and sampling keys are not in.
+
+    Parameters
+    ----------
+    law : Distribution
+        The law the chains sample, whose event spec lays out a state.
+    init : None, array-like, or str
+        The method's ``init`` option.
+    num_chains : int
+        The number of chains.
+    key : PRNGKey
+        The run's random key.
+    method : str
+        The method's name, for the error messages.
+    default_per_chain : bool
+        Whether ``None`` starts each chain from its own draw.
+
+    Returns
+    -------
+    tuple
+        ``(init, per_chain)``: the value to pass to :func:`get_init_state`,
+        which returns an array unchanged, and whether that value holds one
+        state per chain on its leading axis.
+
+    Raises
+    ------
+    ValueError
+        If *init* is a string other than ``"per_chain"``, if it is
+        ``"per_chain"`` for a law that lays out no array, or if it has one more
+        axis than one state and its shape is not ``(num_chains, *state_shape)``.
+    """
+    point_shape = _point_shape(law)
+    if init is None and default_per_chain and point_shape is not None:
+        init = PER_CHAIN_INIT
+    if isinstance(init, str):
+        if init != PER_CHAIN_INIT:
+            raise ValueError(
+                f"inference method {method!r}: init must be None, an array, or "
+                f"{PER_CHAIN_INIT!r}, got {init!r}"
+            )
+        if point_shape is None:
+            raise ValueError(
+                f"inference method {method!r}: init={PER_CHAIN_INIT!r} needs a target whose "
+                f"parameters are one array or a record of arrays, got {_described(law)}"
+            )
+        init_keys = _initial_state_keys(as_prng_key(key), num_chains)
+        states = [get_init_state(law, None, random_seed=k) for k in init_keys]
+        return jnp.stack(states), True
+    if init is None or point_shape is None:
+        return init, False
+    shape = tuple(np.shape(init))
+    if len(shape) != len(point_shape) + 1:
+        return init, False
+    if shape != (num_chains, *point_shape):
+        raise ValueError(
+            f"inference method {method!r}: init with one state per chain must have shape "
+            f"{(num_chains, *point_shape)}, got shape {shape}"
+        )
+    return init, True
+
+
+# ---------------------------------------------------------------------------
+# NUTS controls
+# ---------------------------------------------------------------------------
+
+
+def nuts_controls(
+    method: str,
+    options: Mapping[str, Any],
+    *,
+    default_target_accept_prob: float = 0.8,
+    default_max_tree_depth: int = 10,
+) -> tuple[float, int]:
+    """The ``target_accept_prob`` and ``max_tree_depth`` options of a NUTS method, checked.
+
+    Parameters
+    ----------
+    method : str
+        The method's name, for the error messages.
+    options : Mapping of str to Any
+        The method's ``method_options``.
+    default_target_accept_prob : float
+        The target acceptance probability of an unset option, the backend's
+        default.
+    default_max_tree_depth : int
+        The maximum tree depth of an unset option, the backend's default.
+
+    Returns
+    -------
+    tuple of float and int
+        The target acceptance probability and the maximum tree depth.
+
+    Raises
+    ------
+    TypeError
+        If ``target_accept_prob`` is not a real number, or ``max_tree_depth``
+        is not an integer.
+    ValueError
+        If ``target_accept_prob`` is not strictly between 0 and 1, or
+        ``max_tree_depth`` is less than 1.
+    """
+    target = options.get("target_accept_prob", default_target_accept_prob)
+    if isinstance(target, bool) or not isinstance(target, numbers.Real):
+        raise TypeError(
+            f"inference method {method!r}: target_accept_prob must be a number, "
+            f"got {type(target).__name__}"
+        )
+    if not 0.0 < target < 1.0:
+        raise ValueError(
+            f"inference method {method!r}: target_accept_prob must be strictly between 0 and 1, "
+            f"got {target!r}"
+        )
+    depth = options.get("max_tree_depth", default_max_tree_depth)
+    if isinstance(depth, bool) or not isinstance(depth, numbers.Integral):
+        raise TypeError(
+            f"inference method {method!r}: max_tree_depth must be a positive integer, "
+            f"got {type(depth).__name__}"
+        )
+    if depth < 1:
+        raise ValueError(
+            f"inference method {method!r}: max_tree_depth must be a positive integer, got {depth!r}"
+        )
+    return float(target), int(depth)
+
+
 # ---------------------------------------------------------------------------
 # Target log-density construction
 # ---------------------------------------------------------------------------
@@ -839,7 +1036,7 @@ def unconstrained_coordinates(law: Any) -> UnconstrainedCoordinates:
 
 
 def unconstrained_chain(
-    density: Callable[[Array], Array], init: Array, law: Any
+    density: Callable[[Array], Array], init: Array, law: Any, *, per_chain: bool = False
 ) -> tuple[Callable[[Array], Array], Array, Callable[[Array], Array]]:
     """The density, initial state, and draw map of a flat chain run in unconstrained coordinates.
 
@@ -855,15 +1052,18 @@ def unconstrained_chain(
     density : callable
         The log-density at a flat state of *law*'s leaves.
     init : Array
-        The flat initial state.
+        The flat initial state, or one per chain on a leading axis.
     law : Distribution
         The law whose event spec lays out the flat state.
+    per_chain : bool
+        Whether *init* holds one initial state per chain on its leading axis.
 
     Returns
     -------
     tuple
         ``(density, init, constrain)``: the log-density at an unconstrained
-        state, the unconstrained initial state, and the map from unconstrained
+        state, the unconstrained initial state, or one per chain on the
+        leading axis when *per_chain* is set, and the map from unconstrained
         states, with any leading axes, to flat states of *law*. Every leaf
         keeping its coordinates gives *density*, *init*, and the identity.
     """
@@ -875,15 +1075,21 @@ def unconstrained_chain(
     def unconstrained_density(z: Array) -> Array:
         return density(coordinates.forward(z)) + coordinates.log_jacobian(z)
 
-    parts = []
-    for leaf, segment in zip(maps, _segments(jnp.asarray(init), [m.size for m in maps])):
-        if leaf.bijector is None:
-            parts.append(segment)
-            continue
-        preimage = jnp.ravel(leaf.bijector._inverse(jnp.reshape(segment, leaf.shape)))
-        finite = bool(jnp.all(jnp.isfinite(preimage)))
-        parts.append(preimage if finite else jnp.zeros(leaf.unconstrained_size, preimage.dtype))
-    unconstrained_init = jnp.concatenate(parts)
+    def unconstrained_point(point: Array) -> Array:
+        parts = []
+        for leaf, segment in zip(maps, _segments(jnp.asarray(point), [m.size for m in maps])):
+            if leaf.bijector is None:
+                parts.append(segment)
+                continue
+            preimage = jnp.ravel(leaf.bijector._inverse(jnp.reshape(segment, leaf.shape)))
+            finite = bool(jnp.all(jnp.isfinite(preimage)))
+            parts.append(preimage if finite else jnp.zeros(leaf.unconstrained_size, preimage.dtype))
+        return jnp.concatenate(parts)
+
+    if per_chain:
+        unconstrained_init = jnp.stack([unconstrained_point(point) for point in jnp.asarray(init)])
+    else:
+        unconstrained_init = unconstrained_point(init)
 
     def constrain(states: Array) -> Array:
         states = jnp.asarray(states)
@@ -982,8 +1188,12 @@ def run_chain_scan(
 # ---------------------------------------------------------------------------
 
 
-def parallel_chain_map(fn: Callable[[Array], Any], chain_keys: Array) -> Any:
+def parallel_chain_map(fn: Callable[[Any], Any], chain_keys: Any) -> Any:
     """Run ``fn`` across ``chain_keys`` using the best parallelism available.
+
+    ``chain_keys`` is the chains' keys, or a pytree of per-chain arguments,
+    such as the keys and the initial states, whose leaves share a leading axis
+    of one entry per chain; ``fn`` takes one chain's entry.
 
     Picks between three strategies:
 
@@ -1013,9 +1223,9 @@ def parallel_chain_map(fn: Callable[[Array], Any], chain_keys: Array) -> Any:
     output shape; pmap returns sharded arrays that downstream code can
     index per-chain transparently.
     """
-    num_chains = int(chain_keys.shape[0])
+    num_chains = int(jax.tree.leaves(chain_keys)[0].shape[0])
     if num_chains == 1:
-        return jax.tree.map(lambda a: a[None], fn(chain_keys[0]))
+        return jax.tree.map(lambda a: a[None], fn(jax.tree.map(lambda a: a[0], chain_keys)))
     if jax.local_device_count() >= num_chains:
         return jax.pmap(fn)(chain_keys)
     return jax.vmap(fn)(chain_keys)
