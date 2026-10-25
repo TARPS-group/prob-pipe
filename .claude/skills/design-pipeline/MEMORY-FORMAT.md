@@ -50,9 +50,11 @@ that separate the notes, the deliverables, and the record of the runs:
 - `<workspace>/pipeline.ipynb`, or the script `<workspace>/pipeline.py` in its
   place: the runnable pipeline of the current design version.
 - `<workspace>/report.py` and `<workspace>/sim_data.py`: the modules of
-  printing and plotting helpers and of simulated data, which the pipeline
+  printing and plotting functions and of simulated data, which the pipeline
   imports from beside it, by
-  [phases/4-proposal.md](phases/4-proposal.md#write-the-code).
+  [phases/4-proposal.md](phases/4-proposal.md#write-the-code), and
+  `<workspace>/steps.py`, which holds the step functions of a notebook that
+  imports them.
 - `<workspace>/notes/`: the notes of the design.
   - `<workspace>/notes/brief.md`: the problem, the goals, the data, and the
     existing models, written in Phases 1 and 2 by the

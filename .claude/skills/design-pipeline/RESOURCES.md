@@ -1092,7 +1092,40 @@ et al. 2021.
   *Nature Human Behaviour* 5(10):1282–1291. doi:10.1038/s41562-021-01177-7
   (open access). It lists what a report of a Bayesian analysis states, from
   the model and the priors to the diagnostics and the sensitivity analysis,
-  and it is the checklist of the reporting section of a pipeline.
+  and it is the checklist of section 12, Reporting, of the design document.
+
+### Computing practice
+
+- **Wilson et al. 2014.** Wilson, Aruliah, Brown, Chue Hong, Davis, Guy,
+  Haddock, Huff, Mitchell, Plumbley, Waugh, White & Wilson, "Best practices
+  for scientific computing," *PLOS Biology* 12(1):e1001745.
+  doi:10.1371/journal.pbio.1001745 (open access). Its rule "Plan for mistakes"
+  asks for assertions that check a program as it runs, which the checks of
+  the pipeline's own code in the smoke stage follow.
+- **Wilson et al. 2017.** Wilson, Bryan, Cranston, Kitzes, Nederbragt & Teal,
+  "Good enough practices in scientific computing," *PLOS Computational
+  Biology* 13(6):e1005510. doi:10.1371/journal.pcbi.1005510 (open access). It
+  advises a short program built from functions of about one page each, with
+  a comment at the top that says how to run it, which is the structure of a
+  pipeline script.
+- **Sandve et al. 2013.** Sandve, Nekrutenko, Taylor & Hovig, "Ten simple
+  rules for reproducible computational research," *PLOS Computational
+  Biology* 9(10):e1003285. doi:10.1371/journal.pcbi.1003285 (open access).
+  Its rules on the versions of the software, the random seeds, the data
+  behind each plot, and the link from each statement to its result set what
+  each output of a pipeline records.
+- **Rule et al. 2019.** Rule, Birmingham, Zuniga, Altintas, Huang, Knight,
+  Moshiri, Nguyen, Rosenthal, Pérez & Rose, "Ten simple rules for writing and
+  sharing computational analyses in Jupyter Notebooks," *PLOS Computational
+  Biology* 15(7):e1007007. doi:10.1371/journal.pcbi.1007007 (open access). It
+  advises a notebook that explains the analysis to its reader, with one step
+  per cell, and that runs from top to bottom.
+- **Zeng et al. 2025.** Zeng, Jin, Wang, Zheng & Li, "AIRepr: An
+  analyst-inspector framework for evaluating reproducibility of LLMs in data
+  science," arXiv:2502.16395. It has a second model check whether the
+  workflow that a language model wrote reproduces its results, and it finds
+  that the more reproducible workflows tend to give more accurate analyses, which
+  motivates the clean rerun before a session closes.
 
 ### Software that ProbPipe works with
 

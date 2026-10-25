@@ -11,9 +11,9 @@ explanation to the working preferences in person memory.
 **Version:** <n> · **Date:** <date> · **Status:** draft | agreed
 
 ## 0. Answers and status
-One row per question of the user, in the user's words and units, written from
-the last run of the fit stage. A result of a smoke or a validate run has no
-row.
+One row per question of the user, in the user's words and units, copied from
+the output files of the last run of the fit stage, by phases/4-proposal.md
+"Write the code". A result of a smoke or a validate run has no row.
 | Question | Estimate | Interval: median [2.5%, 97.5%] units | Status | Caveats | Date | Design version |
 |---|---|---|---|---|---|---|
 The status of a row is the grade of the validation of its model: passed,

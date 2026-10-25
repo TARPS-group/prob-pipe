@@ -70,7 +70,12 @@ The other files of the assistant directory are these:
 - `build_corpus.py`: the script that builds the corpus of ProbPipe's
   documentation;
 - `check_symbols.py`: the script that checks the ProbPipe names and call
-  arguments of a pipeline against the installed package.
+  arguments of a pipeline against the installed package;
+- `templates/`: the skeleton of a pipeline script, `pipeline_skeleton.py`,
+  with its modules `report.py` and `sim_data.py` and the example data file
+  `example_data.csv`, from which
+  [phases/4-proposal.md](phases/4-proposal.md#write-the-code) starts the
+  code.
 
 ## Resume protocol
 

@@ -133,11 +133,17 @@ too small to judge the diagnostics and the checks.
 
 ## Write the code
 
-Write the pipeline as a runnable skeleton in the style of the tutorials, in the
-form the user works in: the notebook `<workspace>/pipeline.ipynb` for a user
-who works in notebooks, and `<workspace>/pipeline.py` otherwise. A notebook
-starts with an install cell in the style of the tutorials' Colab cell. On
-Google Colab, the cell installs ProbPipe at the commit that
+Write the pipeline in the form the user works in: the notebook
+`<workspace>/pipeline.ipynb` for a user who works in notebooks, and
+`<workspace>/pipeline.py` otherwise. Start from the skeleton
+`<assistant>/templates/pipeline_skeleton.py`, which shows the structure of
+this section with a small normal regression that runs in the smoke stage, and
+whose comments give the reason for each part. Copy it to the workspace with
+the modules `report.py` and `sim_data.py` beside it, and replace its example
+model, data checks, and estimands with those of the design.
+
+A notebook starts with an install cell in the style of the tutorials' Colab
+cell. On Google Colab, the cell installs ProbPipe at the commit that
 `<corpus>/MANIFEST.md` records, or at its branch when that commit is not on
 GitHub, so that Colab runs the code that `check_symbols.py` checked.
 `git -C <checkout> branch -r --contains <commit>` lists the branches on GitHub
@@ -148,15 +154,50 @@ script reads each file by a path relative to `Path(__file__).parent`, so that
 it runs from any directory. The notebook's metadata names the project's
 kernel, which [Check and run the code](#check-and-run-the-code) registers,
 with the language `python`, so that Colab, which lacks that kernel, runs the
-notebook on its own Python kernel. The pipeline loads
-the user's data or simulates it, and each pipeline stage is a labeled section
-that matches the design document. Each stage shows a figure where one helps,
-such as the prior predictive draws or the posterior predictive check, with a
-one-sentence comment on how to read it. The notebook's first text cell, or a
-comment at the top of a script, says where to change each choice, such as
-"the priors are in section 3, Priors, and the number of draws of each stage is
-in the first code cell", so that the user can find, defend, and edit each
-choice in code they did not write.
+notebook on its own Python kernel. The pipeline loads the user's data or
+simulates it, and each step of the pipeline matches a subsection of section 4
+of the design document. Each step shows a figure where one helps, such as the
+prior predictive draws or the posterior predictive check, with a
+one-sentence comment on how to read it. The notebook's first text cell, or
+the docstring at the top of a script, says where to change each choice, such
+as "the priors are in `build_model()`, and the number of draws of each stage
+is in `BUDGETS`", so that the user can find, defend, and edit each choice in
+code they did not write.
+
+Structure a script as a short program whose top function reads as the
+pipeline (Wilson et al. 2017):
+
+1. **`main()` first.** The script defines `main()` right after its imports and
+   settings, and it ends with `if __name__ == "__main__": main()`. `main()`
+   reads as the pipeline, with one or two lines per step, such as loading the
+   data, the validation, and the fit. Each step is a function below `main()`
+   whose name says what it does, and a step function fits on one screen, of
+   about 60 lines.
+2. **One block for the stage.** A settings block at the start of `main()`,
+   such as `resolve_stage()` of the skeleton, resolves the stage into a
+   settings object. The object holds the budgets, the steps that run, the
+   output folder, and the result of the gate. Every step then runs the same
+   way whatever the stage, and reads its budgets from the settings object.
+3. **Pure steps.** A step function takes its inputs as arguments and returns
+   values. The reads and writes of files happen in `main()`, in the settings
+   block, and in `<workspace>/report.py`, which holds every print, table, and
+   figure.
+4. **Checked data.** The step that loads the data checks it right after the
+   read: the expected columns, their types and ranges, and the codes of
+   missing values. It stops at the first problem with a message that names
+   the column.
+5. **Units in names.** A variable that holds a quantity with units names the
+   unit, such as `rain_mm`, and each unit conversion is one small named
+   function.
+
+A notebook mirrors this structure and explains the analysis to its reader
+(Rule et al. 2019). Its first code cell is the settings block, and each later
+code cell runs one step by calling its step function. A short text cell
+before each code cell says why the step is there and what to look at in its
+output, and each choice is recorded beside its result. The step functions may
+be defined in `<workspace>/steps.py`, which the notebook imports, while the
+model and its priors stay in a cell of the notebook, where the user reads
+them. The notebook runs from top to bottom in a fresh kernel.
 
 Write the code close to the mathematics, and in batches:
 
@@ -171,17 +212,13 @@ Write the code close to the mathematics, and in batches:
    present results, such as to print the rows of a table or to draw the
    panels of a figure.
 3. Keep the auxiliary code in two modules beside the pipeline, which the
-   pipeline imports. `<workspace>/report.py` holds the helpers that print,
-   plot, and write results, and it formats each interval by rule 4 of
-   [Messages](../INSTRUCTIONS.md#messages). `<workspace>/sim_data.py` draws the simulated
-   data at the real design from the model that the pipeline passes to it, and
-   masks it to the real pattern of missing values. The model, the inference,
-   and the checks stay in the pipeline itself.
-4. End the pipeline with its reporting section, which starts at the line
-   `# --- reporting ---`. It reads the results of the fit and prints, plots,
-   or writes them, such as a summary table or an alert threshold computed
-   from the posterior draws. The data steps, the model, the priors, and the
-   inference settings stay above that line.
+   pipeline imports. `<workspace>/report.py` holds the functions that print,
+   plot, and write the results of each step, and it formats each interval by
+   rule 4 of [Messages](../INSTRUCTIONS.md#messages).
+   `<workspace>/sim_data.py` draws the simulated data at the real design from
+   the model that the pipeline passes to it, and masks it to the real pattern
+   of missing values. The model, the inference, and the checks stay in the
+   pipeline itself.
 
 The code runs in three stages. The first code cell after the install cell,
 or the top of a script, reads the stage with
@@ -189,14 +226,23 @@ or the top of a script, reads the stage with
 so a user who runs the notebook in Jupyter or on Colab sets the stage by
 editing that default.
 
-1. `STAGE=smoke` runs every section at small budgets, such as a few draws,
+1. `STAGE=smoke` runs every step at small budgets, such as a few draws,
    chains, or training epochs. It fits data simulated from the model at the
    structure of the real data, such as its sizes, its groups, and its
    pattern of missing values, in place of the real data, so the code fixes
    that the smoke runs need stay out of the record of revisions. A smoke run
    on a subsample of the real data is an option that the user approves, and
    never for data that [Phase 2](2-materials.md#data) found sensitive.
-2. `STAGE=validate` runs the sections before the fit to the real data at
+   The smoke stage also runs a few checks of the pipeline's own code, as
+   asserts in one step function, such as `check_code()` of the skeleton
+   (Wilson et al. 2014). Each unit conversion matches a known value, the log
+   density matches a hand computation at one point, and a model
+   re-implemented from the user's code agrees with the original by the
+   agreement check of option 3 of
+   [phases/4-existing-pipeline.md](4-existing-pipeline.md). A check of
+   random draws passes within a statistical tolerance, such as four standard
+   errors.
+2. `STAGE=validate` runs the steps before the fit to the real data at
    their full budgets, such as the prior predictive check and the validation
    on realistic simulated data, and grades the validation of each model by
    RESOURCES.md stage D. It deletes `<workspace>/runs/validation.json` when it
@@ -204,42 +250,52 @@ editing that default.
    - `stage`, which is `"validate"`;
    - the design version;
    - a hash of the code that the validation depends on: the source of the
-     code cells of the notebook, or of the script, up to the line
-     `# --- reporting ---`, and of each module beside it that it imports
-     other than `<workspace>/report.py`, with each line that reads
-     `os.environ` left out. A change to the data steps, the model, the
-     priors, or the inference therefore changes the hash, and a change to
-     the reporting, or to the stage that the environment sets, keeps it;
+     script, or of the code cells of the notebook, and of each module beside
+     it that it imports other than `<workspace>/report.py`, with each line
+     that reads `os.environ` left out. A change to the data steps, the model,
+     the priors, or the inference therefore changes the hash, and a change
+     to `report.py`, or to the stage that the environment sets, keeps it;
    - the grade of each model, with its sentence;
    - the table of the validation.
 
-   No other stage writes the file. Each cell of the validation ends by
-   printing its verdict in one line of plain words, which is the grade of
-   RESOURCES.md stage D with its sentence, such as "Validation passed: the
+   No other stage writes the file. The validation step ends by printing its
+   verdict in one line of plain words, which is the grade of RESOURCES.md
+   stage D with its sentence, such as "Validation passed: the
    method recovered known answers from data like yours, so its intervals can
    be trusted."
-3. `STAGE=fit` runs the fit to the real data and the sections after it. Its
-   gate is the cell right after the data step. The gate reads
-   `<workspace>/runs/validation.json` and checks its stage, its design version, and
-   its hash against the current code. It stops with an error when a check
-   fails or when no model passed. Otherwise it binds the observed values, and
-   it lists the models to fit, which are those whose grade is *passed* or
-   *passed with notes*. Only the gate binds the observed values, after its
-   checks, so a run whose gate fails fits nothing, even under nbconvert's
-   `--allow-errors`. On Colab, the session's files hold no copy of the
-   notebook, so the gate there skips the hash and says so. Colab also deletes
+3. `STAGE=fit` runs the fit to the real data and the steps after it. Its
+   gate is part of the settings block, so it runs before any step. The gate
+   reads `<workspace>/runs/validation.json` and checks its stage, its design
+   version, and its hash against the current code. It stops with an error
+   when a check fails or when no model passed. Otherwise it lists the models
+   to fit, which are those whose grade is *passed* or *passed with notes*,
+   and it marks in the settings object that the observed values may be used.
+   The step that returns the observed values reads that mark, and in the
+   smoke stage it returns simulated data. A run whose gate fails therefore
+   fits nothing, even under nbconvert's `--allow-errors`. On Colab, the
+   session's files hold no copy of the notebook, so the gate there skips the
+   hash and says so. Colab also deletes
    the files of `/content` when its runtime resets, so run the validate and
    the fit stage in one session, or upload the `<workspace>/runs/validation.json`
    from a validate run of the same design version.
 
-Every stage runs the data step first. Each stage writes its results, such as
-the diagnostics and the estimates, as it computes them, so a run that a
-failed step stops keeps the results computed before it. The smoke and the
-validate stage write to `<workspace>/runs/smoke/` and
+Every stage runs the settings block and then the data step. Each stage writes
+its results, such as the diagnostics and the estimates, as it computes them,
+so a run that a failed step stops keeps the results computed before it. The
+smoke and the validate stage write to `<workspace>/runs/smoke/` and
 `<workspace>/runs/validate/`, and only the fit stage writes to
 `<workspace>/outputs/`, so a result of a smoke run never takes the file name of
 a deliverable. [MEMORY-FORMAT.md](../MEMORY-FORMAT.md#workspace) describes the
 layout of the workspace.
+
+Every number in section 0 and in the methods paragraph of the design document
+is copied from a file that the fit stage wrote to `<workspace>/outputs/`
+(Sandve et al. 2013). `report.py` saves each figure with a CSV file of the
+numbers it plots. Each output folder `<folder>` holds
+`<folder>/provenance.json`, with the seed, the ProbPipe version and checkout
+commit, the design version, and the code hash, and
+`<folder>/environment.txt`, with the versions of Python and of each installed
+package.
 
 When the validation of a model fails and the user still wants its answers,
 they can ask for provisional results. Offer them only on that request. Record
