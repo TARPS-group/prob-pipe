@@ -96,6 +96,13 @@ on the outcome that they can name, such as a physical limit or the largest
 value on record, and set the priors by the default of
 [RESOURCES.md](../RESOURCES.md) stage B.
 
+The elicitation and the first inspection's limit on the outcome serve a new
+analysis. A user who brings an analysis that they already ran on these data,
+as on the path of [phases/4-existing-pipeline.md](4-existing-pipeline.md),
+has already seen the outcome, and their analysis sets the priors. For such a
+user, inspect the outcome in the first inspection, and ask for the chosen
+values of the validation when the validation is added.
+
 If the data is not available yet, ask for a description detailed enough to
 simulate synthetic data of the same structure. Tell the user that the pipeline
 runs on synthetic data until the real data arrives.

@@ -21,7 +21,9 @@ the proposal" of phases/4-proposal.md apply to it, and so do the
    5. checks: the diagnostics and the checks that it runs.
 
    Note for each part the route of the section "Bring any model" of
-   [CAPABILITIES.md](../CAPABILITIES.md) by which it enters ProbPipe.
+   [CAPABILITIES.md](../CAPABILITIES.md) by which it enters ProbPipe. Skip
+   the elicitation of plausible values, by the section "Data" of
+   [Phase 2](2-materials.md#data).
 2. **Offer integration, migration, or a verified re-implementation.** Put
    the options to the user as a choice, with their trade-offs:
    1. *Integrate the pipeline as it stands.* The model enters by its route,
