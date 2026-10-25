@@ -205,6 +205,11 @@ when either check fails, and record the new corpus in project memory.
 - **Guard the analysis against data-driven revisions.** Revise each design by
   the [rules for revisions](phases/5-feedback.md#rules-for-revisions), which
   apply in every phase.
+- **Stop at a surprise.** When a result contradicts the summary of the data,
+  the user's stated expectations, an earlier fit, or a check, stop and show
+  it to the user with what you suspect, before you continue or change
+  anything. A change that the surprise then prompts is a revision by the
+  [rules for revisions](phases/5-feedback.md#rules-for-revisions).
 - **Ask only what memory does not answer.** Check memory before you ask
   anything about the person or the project. Confirm a remembered fact only
   when [MEMORY-FORMAT.md](MEMORY-FORMAT.md#rules) counts it as unconfirmed, or

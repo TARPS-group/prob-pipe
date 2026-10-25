@@ -70,6 +70,13 @@ any phase, follows these rules:
 
 ## Closing the session
 
+Before the closing summary of a session in which the fit stage ran, rerun
+the fit stage in a fresh process from the raw data files: the script with
+`STAGE=fit`, or the notebook with a restarted kernel and every cell run. Check
+that the answers of the rerun match those that the summary reports, and report
+each difference with its likely cause, such as a draw outside `workflow_run`
+(Zeng et al. 2025).
+
 When the user is done or stops for now, update both memory files. Project
 memory records where the project stopped and the agreed next step, and the
 index of person memory records the project's status. Close with a summary:
