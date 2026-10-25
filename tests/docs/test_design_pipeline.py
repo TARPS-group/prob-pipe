@@ -272,9 +272,9 @@ class TestPipelineSkeleton:
             "normal_answers.json",
             "student_t_prior_predictive.png",
             "model_comparison.csv",
-            "algorithms.csv",
+            "normal_algorithms.csv",
             "heldout_scores.json",
-            "PROVISIONAL_by_year.csv",
+            "student_t_by_year.csv",
         ):
             assert (out / name).exists(), name
         assert json.loads((out / "provenance.json").read_text())["seed"] == 20261025
@@ -306,6 +306,35 @@ class TestPipelineSkeleton:
         assert f"{label}: student_t: change in yield per degree Celsius:" in result.stdout
         assert (tmp_path / "outputs" / "PROVISIONAL_normal_answers.json").exists()
 
+    def test_the_hash_covers_the_code_that_the_validation_depends_on(self, tmp_path):
+        pytest.importorskip("matplotlib")
+        for path in TEMPLATES.iterdir():
+            if path.is_file():
+                shutil.copy(path, tmp_path)
+        pythonpath = os.pathsep.join(filter(None, [str(ROOT), os.environ.get("PYTHONPATH")]))
+        code = (
+            "import pipeline_skeleton as p, pipeline_support as s; print(s.code_hash(p.VALIDATED))"
+        )
+
+        def code_hash() -> str:
+            env = os.environ | {"PYTHONPATH": pythonpath}
+            result = subprocess.run(
+                [sys.executable, "-c", code], cwd=tmp_path, env=env, capture_output=True, text=True
+            )
+            assert result.returncode == 0, result.stderr
+            return result.stdout.strip().splitlines()[-1]
+
+        script = tmp_path / "pipeline_skeleton.py"
+        source = script.read_text()
+        first = code_hash()
+        step_after_fit = "def estimands(posterior, data, settings) -> dict:\n"
+        script.write_text(source.replace(step_after_fit, step_after_fit + "    # edited\n"))
+        (tmp_path / "report.py").write_text((tmp_path / "report.py").read_text() + "# edited\n")
+        assert code_hash() == first
+        prior = "prior_scale * jnp.array([2.5, 1.0, 1.0])"
+        script.write_text(source.replace(prior, "prior_scale * jnp.array([2.5, 1.0, 2.0])"))
+        assert code_hash() != first
+
 
 class TestValidationGrade:
     """``grade_validation()`` and ``fits_to_rerun()`` follow RESOURCES.md stage D step 6."""
@@ -319,11 +348,11 @@ class TestValidationGrade:
             sys.path.remove(str(TEMPLATES))
 
     @staticmethod
-    def _grade(support, z, coverage, fits_ok=True, rerun=0, quick_start=True):
+    def _grade(support, z, coverage, all_fits_pass=True, n_rerun=0, quick_start=True):
         names = [f"c{j}" for j in range(z.shape[1])]
         contraction = np.full(z.shape[1], 0.5)
         return support.grade_validation(
-            z, coverage, contraction, names, fits_ok, rerun, quick_start
+            z, coverage, contraction, names, all_fits_pass, n_rerun, quick_start
         )
 
     def test_quick_start_reports_coverage_without_a_grade(self, support):
@@ -333,7 +362,7 @@ class TestValidationGrade:
         assert self._grade(support, z, low_coverage, quick_start=False)["grade"] == "failed"
 
     def test_a_rerun_of_a_few_fits_is_a_note(self, support):
-        result = self._grade(support, np.zeros((20, 2)), np.full(2, 0.9), rerun=1)
+        result = self._grade(support, np.zeros((20, 2)), np.full(2, 0.9), n_rerun=1)
         assert result["grade"] == "passed with notes"
         assert "1 fits passed only after a rerun" in result["notes"][0]
 

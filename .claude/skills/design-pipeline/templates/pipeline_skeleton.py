@@ -23,19 +23,20 @@ The core of the example, which every pipeline keeps, is these steps:
 4. the fit with its diagnostics, a predictive check with named test
    statistics, and the answers as functions lifted to the posterior, with an
    `expectation` for the probability of an event;
-5. one `workflow_run(seed=...)` around each random step, with its own seed
-   derived from `SEED`, so a rerun reproduces each result.
+5. one `workflow_run(seed=SEED)` around every random step, so a rerun
+   reproduces each result.
 
-The structure follows the rules of phases/4-proposal.md "Write the code":
-`main()` reads as the pipeline and `run_model()` as the steps of one model,
-one or two lines per step. Step functions are pure, and the printing, tables,
-figures, and files are in `report.py`. The code stays close to the
-mathematics, units are carried in names, such as `rain_mm`, and each repeated
-computation is batched, such as the validation's datasets, the years, and the
-scenarios, which each run as one call.
+The structure follows the rules of phases/4-proposal.md "Write the code".
+`main()` reads as the pipeline, and `check_before_fit()` and `run_model()` as
+the steps of one model, one or two lines per step. Each step function returns
+plain values, such as arrays, laws, and tables. `pipeline_support.py` writes
+the records that later stages read, and `report.py` prints and saves each
+result. The code stays close to the mathematics, units are carried in names,
+such as `rain_mm`, and each repeated computation is batched, such as the
+validation's datasets, the years, and the scenarios, which each run as one
+call.
 """
 
-import os
 from pathlib import Path
 
 import jax
@@ -46,15 +47,22 @@ import report
 import scipy.stats
 import sim_data
 from pipeline_support import (
+    COVERAGE_LEVEL,
+    QUANTILE_COLUMNS,
+    QUANTILES,
     coordinate_names,
-    fits_pass,
+    divergences_of,
     fits_to_rerun,
     grade_validation,
+    meets_fit_criteria,
+    record_run,
+    record_validation,
     resolve_stage,
 )
 
 import probpipe  # OPTIONAL: plug-in forecast
 from probpipe import (
+    Bernoulli,
     DistributionBatch,
     Gamma,
     HalfNormal,
@@ -76,24 +84,22 @@ from probpipe import (
 from probpipe.diagnostics import add_mcmc_diagnostics
 
 # --- Settings -----------------------------------------------------------------
-# The settings that the user edits. The stage, the reason for provisional
-# results, and the date of a hold on fits to simulated data come from the
-# environment, and a notebook user edits their defaults. The hash of the
-# validation leaves out the lines that read the environment, so a change of
-# stage keeps a passed validation. Each file is read by a path relative to this
-# file, so the script runs from any directory.
-STAGE = os.environ.get("STAGE", "smoke")
-ALLOW_UNVALIDATED = os.environ.get("ALLOW_UNVALIDATED", "")
-HOLD_SIMULATED_FITS = os.environ.get("HOLD_SIMULATED_FITS", "")
+# The settings that the user edits. resolve_stage() reads the stage, the reason
+# for provisional results, and the date of a hold on fits to simulated data
+# from the environment variables STAGE, ALLOW_UNVALIDATED, and
+# HOLD_SIMULATED_FITS. Each file is read by a path relative to this file, so
+# the script runs from any directory.
 HERE = Path(__file__).resolve().parent
 DATA_FILE = HERE / "example_data.csv"
 DESIGN_VERSION = 1
-SEED = 20261025
+SEED = 20261025  # the seed of the run, from which ProbPipe derives the key of each random step
 QUICK_START = True  # the mode, which decides whether the validation grades coverage
 RESPONSE = "yield_t_per_ha"
-# The models by name, the baseline first, each with the inference method that
-# fits it. Changing a method here changes it everywhere, the validation included.
+# The models by name, each with the inference method that fits it. The baseline
+# is first, and the elaboration changes one component of it. Changing a method
+# here changes it everywhere, the validation included.
 MODELS = {"normal": "blackjax_nuts", "student_t": "blackjax_nuts"}
+BASELINE = next(iter(MODELS))
 # The event of the answer: a mean yield below LOW_YIELD_T_PER_HA in a dry, hot
 # year. The threshold is an arbitrary example, which the user sets.
 LOW_YIELD_T_PER_HA = 4.0
@@ -105,30 +111,33 @@ COMPARED_METHODS = ("blackjax_nuts", "tfp_nuts", "blackjax_rwmh")  # OPTIONAL: c
 # and the validate and fit budgets are the planned settings of the design
 # document (RESOURCES.md stage E for the sampler, stage D for the datasets).
 # "options" holds the settings of each method, and "remedy" the settings with
-# which a few fits that miss the criteria of stage E are rerun, here the
-# higher target acceptance rate of its second remedy. The fit to the real data
-# uses the remedy when the validation needed it.
+# which a few fits that miss the criteria of stage E are rerun. The fit to the
+# real data uses the remedy when the validation needed it. "n_sims" counts the
+# datasets of the validation, "n_prior_draws" the prior draws of the prior
+# predictive check and of the contraction, and "n_draws" the draws of each
+# answer and of each held-out prediction.
 SMOKE = {"num_chains": 2, "num_warmup": 100, "num_results": 100}
 FULL = {"num_chains": 4, "num_warmup": 500, "num_results": 1000}
 SLOW = {"num_chains": 4, "num_warmup": 2000, "num_results": 4000}  # for random-walk Metropolis
+REMEDY = {"target_accept_prob": 0.95}  # the second remedy of RESOURCES.md stage E
 BUDGETS = {
     "smoke": {
         "options": {"blackjax_nuts": SMOKE, "tfp_nuts": SMOKE, "blackjax_rwmh": SMOKE},
-        "remedy": {"blackjax_nuts": SMOKE | {"target_accept_prob": 0.95}},
+        "remedy": {"blackjax_nuts": SMOKE | REMEDY},
         "n_sims": 0,
         "n_prior_draws": 50,
         "n_draws": 200,
     },
     "validate": {
         "options": {"blackjax_nuts": FULL},
-        "remedy": {"blackjax_nuts": FULL | {"target_accept_prob": 0.95}},
+        "remedy": {"blackjax_nuts": FULL | REMEDY},
         "n_sims": 20,
         "n_prior_draws": 1000,
         "n_draws": 0,
     },
     "fit": {
         "options": {"blackjax_nuts": FULL, "tfp_nuts": FULL, "blackjax_rwmh": SLOW},
-        "remedy": {"blackjax_nuts": FULL | {"target_accept_prob": 0.95}},
+        "remedy": {"blackjax_nuts": FULL | REMEDY},
         "n_sims": 0,
         "n_prior_draws": 0,
         "n_draws": 4000,
@@ -137,67 +146,88 @@ BUDGETS = {
 
 
 def main():
-    """Run the pipeline of design version 1 in the stage that `STAGE` names."""
+    """Run the pipeline of design version DESIGN_VERSION in the stage that STAGE names."""
     settings = resolve_stage(
-        STAGE, BUDGETS, tuple(MODELS), DESIGN_VERSION, SEED, ALLOW_UNVALIDATED, HOLD_SIMULATED_FITS
+        BUDGETS, models=list(MODELS), design_version=DESIGN_VERSION, seed=SEED, validated=VALIDATED
     )
-    report.start(settings)
-    data = prepare(pd.read_csv(DATA_FILE))
+    record_run(settings)
+    # Each report.show_* call prints the result of a step and saves it under the
+    # output folder. It computes nothing that a later step uses.
+    report.show_stage(settings)
+    data = prepare_inputs(pd.read_csv(DATA_FILE))
     data, heldout = hold_out(data, HOLDOUT_YEAR)  # OPTIONAL: held-out subset
-    if settings.checks_code:
-        check_code(data, settings)
-    results = {}
-    for name, method in MODELS.items():  # each model in turn, by its own steps
-        results[name] = run_model(name, method, data, settings)
-    if not settings.fit:
-        return
-    report.compare_models(results, settings)  # OPTIONAL: compare models
-    scores = score_heldout(results, heldout, settings)  # OPTIONAL: held-out subset
-    report.heldout(scores, settings)  # OPTIONAL: held-out subset
-    report.calibration(calibrate(scores, settings), settings)  # OPTIONAL: calibration
-    algorithms = compare_algorithms(data, results, settings)  # OPTIONAL: compare algorithms
-    report.algorithms(algorithms, settings)  # OPTIONAL: compare algorithms
-    report.by_year(fit_by_year(data, results, settings), settings)  # OPTIONAL: several datasets
+    models = {name: build_model(name, data) for name in MODELS}
+    # ProbPipe derives the key of each random step inside this block from SEED,
+    # in the order that the steps run. A rerun of a stage therefore reproduces
+    # each result, and each draw and each fit of a batch has its own key.
+    with workflow_run(seed=SEED):
+        if settings.checks_code:
+            check_code(data, models[BASELINE])
+        for name, model in models.items():  # the models differ in their parameters
+            check_before_fit(name, model, settings)
+        if not settings.models_to_fit:  # the validate stage and a hold fit no model
+            return
+        fits = {}  # the results of each fitted model, which the comparisons across models read
+        for name in settings.models_to_fit:  # the models that the stage and the gate let fit
+            fits[name] = run_model(name, models[name], data, settings)
+        report.show_model_comparison(fits, settings)  # OPTIONAL: compare models
+        scores = score_heldout(fits, heldout, settings)  # OPTIONAL: held-out subset
+        report.show_heldout_scores(scores, settings)  # OPTIONAL: held-out subset
+        reliability = reliability_tables(scores, settings)  # OPTIONAL: calibration
+        report.show_reliability(reliability, settings)  # OPTIONAL: calibration
 
 
-def run_model(name: str, method: str, data: dict, settings) -> dict:
-    """The steps of one model in this stage, and its fit and answers when it was fit."""
-    likelihood, model = build_model(name, data)
+def check_before_fit(name: str, model: dict, settings) -> None:
+    """The prior predictive check and the validation of one model, in the stages that run them."""
     if settings.checks_priors:
-        report.prior_predictive(name, prior_predictive(model, settings), settings)
+        y_prior_t_per_ha = prior_predictive_yields(model["joint"], settings)
+        report.show_prior_predictive(name, y_prior_t_per_ha, settings)
     if settings.validates:
-        report.validation(name, validate(model, method, settings), settings)
-    if name not in settings.fit:
-        return {}
-    y_t_per_ha = observed_response(data, model, settings)
-    posterior = fit(model, {RESPONSE: y_t_per_ha}, settings, method, name in settings.remedied)
-    report.diagnostics(name, posterior, settings)
-    check = check_model(likelihood, posterior, y_t_per_ha, settings)
-    report.model_check(name, check, settings)
-    answers = answer(posterior, data, settings)
-    report.answers(name, answers, settings)
-    report.plug_in(name, plug_in(posterior, data), answers, settings)  # OPTIONAL: plug-in forecast
-    report.scenarios(name, scenarios(posterior, data, settings), settings)  # OPTIONAL: scenarios
+        validation = validate(model["joint"], MODELS[name], settings)
+        record_validation(name, validation, settings)  # the grade that the gate of the fit reads
+        report.show_validation(name, validation, settings)
+
+
+def run_model(name: str, model: dict, data: dict, settings) -> dict:
+    """Fit one model to the response of the stage, and run the steps after the fit."""
+    likelihood, joint = model["likelihood"], model["joint"]
+    y_t_per_ha = response_for_stage(data, joint, settings)
+    remedy = name in settings.models_with_remedy  # the validation needed it, so the fit uses it
+    posterior = fit(joint, {RESPONSE: y_t_per_ha}, settings, MODELS[name], remedy)
+    report.show_diagnostics(name, posterior, settings)
+    p_values = posterior_predictive_p_values(likelihood, posterior, y_t_per_ha)
+    report.show_predictive_check(name, p_values, settings)
+    answers = estimands(posterior, data, settings)
+    report.show_answers(name, answers, settings)
+    plug_in_t_per_ha = yield_at_posterior_mean(posterior, data)  # OPTIONAL: plug-in forecast
+    report.show_plug_in(name, plug_in_t_per_ha, answers, settings)  # OPTIONAL: plug-in forecast
+    scenarios = answers_by_scenario(posterior, data, settings)  # OPTIONAL: scenarios
+    report.show_scenarios(name, scenarios, settings)  # OPTIONAL: scenarios
     sensitivity = prior_sensitivity(name, data, y_t_per_ha, settings)  # OPTIONAL: prior sensitivity
-    report.sensitivity(name, sensitivity, settings)  # OPTIONAL: prior sensitivity
+    report.show_prior_sensitivity(name, sensitivity, settings)  # OPTIONAL: prior sensitivity
     external = compare_external(answers, pd.read_csv(EXTERNAL_FILE))  # OPTIONAL: external result
-    report.external(name, external, settings)  # OPTIONAL: external result
-    report.routes(name, routes(posterior, answers), settings)  # OPTIONAL: provenance
-    return {"posterior": posterior, "y": y_t_per_ha, "check": check, "answers": answers}
+    report.show_external_comparison(name, external, settings)  # OPTIONAL: external result
+    routes = computation_routes(posterior, answers)  # OPTIONAL: provenance
+    report.show_routes(name, routes, settings)  # OPTIONAL: provenance
+    methods = compare_algorithms(joint, y_t_per_ha, settings)  # OPTIONAL: compare algorithms
+    report.show_algorithms(name, methods, settings)  # OPTIONAL: compare algorithms
+    by_year = fit_by_year(name, data, y_t_per_ha, settings)  # OPTIONAL: several datasets
+    report.show_by_year(name, by_year, settings)  # OPTIONAL: several datasets
+    return {"posterior": posterior, "p_values": p_values, "answers": answers}
 
 
 # --- Step 1: load and check the data ----------------------------------------
 # The data step is a ProbPipe function, so the provenance of each result names
 # the step and the file it came from. The data are checked right after the read,
-# so a wrong file or a changed column fails here with a message that names the
-# column, and not later as a sampler error. Replace the columns, types, ranges,
-# and missing-value codes with those of the user's data, from the data notes.
+# so a wrong file or a changed column fails here, before any fit, with a
+# message that names the column. Replace the columns, types, ranges, and
+# missing-value codes with those of the user's data, from the data notes.
 
 MISSING_CODE = -99
 
 
 @function
-def prepare(table: pd.DataFrame) -> dict:
+def prepare_inputs(table: pd.DataFrame) -> dict:
     """The model's inputs in standard deviations, the response, and the scales of the weather."""
     check_columns(table)
     rain_mm = inches_to_mm(table["rain_in"].to_numpy())
@@ -220,7 +250,7 @@ def check_columns(table: pd.DataFrame) -> None:
     absent = set(expected) - set(table.columns)
     if absent:
         raise ValueError(f"The data file lacks the columns {sorted(absent)}.")
-    for column, (low, high) in expected.items():
+    for column, (low, high) in expected.items():  # one message per column, which names it
         values = table[column]
         if not pd.api.types.is_numeric_dtype(values):
             raise ValueError(f"The column {column} is not numeric.")
@@ -233,29 +263,41 @@ def check_columns(table: pd.DataFrame) -> None:
 
 
 # Each unit conversion is one named function, which check_code() tests.
-def inches_to_mm(x_in: np.ndarray) -> np.ndarray:
-    return x_in * 25.4
+def inches_to_mm(length_in):
+    return length_in * 25.4
 
 
-def fahrenheit_to_celsius(x_f: np.ndarray) -> np.ndarray:
-    return (x_f - 32.0) * 5.0 / 9.0
+def fahrenheit_to_celsius(temp_f):
+    return (temp_f - 32.0) * 5.0 / 9.0
 
 
-def standardize(x: np.ndarray) -> np.ndarray:
-    """`x` in standard deviations from its mean, so each slope is per standard deviation."""
-    return (x - x.mean()) / x.std()
+def standardize(values: np.ndarray) -> np.ndarray:
+    """`values` in standard deviations from their mean, so each slope is per standard deviation."""
+    return (values - values.mean()) / values.std()
 
 
-def subset(data, rows: np.ndarray) -> dict:
+def design_matrix(data) -> jnp.ndarray:
+    """The design matrix X, whose row i is [1, rain_i, temp_i] in standard deviations."""
+    rain, temp = jnp.asarray(data["rain"]), jnp.asarray(data["temp"])
+    return jnp.stack([jnp.ones_like(rain), rain, temp], axis=-1)
+
+
+def design_rows(data, rain_in, temp_f) -> jnp.ndarray:
+    """The rows of X for years with rainfall `rain_in` and temperature `temp_f`, scalars or arrays.
+
+    The weather is standardized by the mean and standard deviation of the data,
+    so the rows match the design matrix that the model was fitted to.
+    """
+    rain_mm = inches_to_mm(jnp.asarray(rain_in))
+    temp_c = fahrenheit_to_celsius(jnp.asarray(temp_f))
+    rain = (rain_mm - float(data["rain_mean_mm"])) / float(data["rain_sd_mm"])
+    temp = (temp_c - float(data["temp_mean_c"])) / float(data["temp_sd_c"])
+    return design_matrix({"rain": rain, "temp": temp})
+
+
+def select_rows(data, rows: np.ndarray) -> dict:
     """The inputs of the rows that `rows` selects, with the same scales of the weather."""
-    return {k: np.asarray(data[k])[rows] if np.ndim(data[k]) else np.asarray(data[k]) for k in data}
-
-
-def weather_row(data, rain_in: float, temp_f: float) -> jnp.ndarray:
-    """The row [1, rain, temp] of the design matrix for a year with this weather."""
-    rain = (inches_to_mm(rain_in) - float(data["rain_mean_mm"])) / float(data["rain_sd_mm"])
-    temp = (fahrenheit_to_celsius(temp_f) - float(data["temp_mean_c"])) / float(data["temp_sd_c"])
-    return jnp.array([1.0, rain, temp])
+    return {k: np.asarray(v)[rows] if np.ndim(v) else np.asarray(v) for k, v in data.items()}
 
 
 # --- OPTIONAL: held-out subset -------------------------------------------------
@@ -265,9 +307,9 @@ def weather_row(data, rain_in: float, temp_f: float) -> jnp.ndarray:
 
 
 def hold_out(data, year: int) -> tuple[dict, dict]:
-    """The rows of the years before `year`, and the rows of `year`, held out."""
+    """The rows of the years other than `year`, and the rows of `year`, held out."""
     years = np.asarray(data["year"])
-    return subset(data, years != year), subset(data, years == year)
+    return select_rows(data, years != year), select_rows(data, years == year)
 
 
 # --- Step 2: the models --------------------------------------------------------
@@ -276,10 +318,13 @@ def hold_out(data, year: int) -> tuple[dict, dict]:
 # glm_likelihood expresses could use it, by step 3 of phases/4-proposal.md, but
 # the elaboration's Student-t errors need a likelihood written by hand, so both
 # models are written this way and share every step downstream. The ProbPipe
-# calls are those of the CAPABILITIES.md rows for stages A and B.
+# calls are those of the CAPABILITIES.md rows for stages A and B. main() builds
+# each model once, and the steps receive it as a dict of two laws: the
+# likelihood, which the predictive checks draw from, and the joint model, which
+# the fits condition.
 
 
-def build_model(name: str, data, prior_scale: float = 1.0):
+def build_model(name: str, data, prior_scale: float = 1.0) -> dict:
     """The likelihood and the joint model of yield given rainfall and temperature.
 
     yield_i ~ Normal(X_i beta, sigma) for "normal", and
@@ -290,10 +335,9 @@ def build_model(name: str, data, prior_scale: float = 1.0):
     sigma ~ HalfNormal(1), and nu ~ Gamma(2, 0.1) has its mean at 20, where
     the errors are close to normal. `prior_scale` widens every prior scale.
     """
-    X = jnp.column_stack([jnp.ones_like(data["rain"]), data["rain"], data["temp"]])
-    s = prior_scale
-    prior = Normal("beta", jnp.array([5.0, 0.0, 0.0]), s * jnp.array([2.5, 1.0, 1.0]))
-    prior = prior & HalfNormal("sigma", s * 1.0)
+    X = design_matrix(data)
+    prior = Normal("beta", jnp.array([5.0, 0.0, 0.0]), prior_scale * jnp.array([2.5, 1.0, 1.0]))
+    prior = prior & HalfNormal("sigma", prior_scale * 1.0)
     if name == "normal":
 
         @conditional_distribution(label="yield")
@@ -301,7 +345,7 @@ def build_model(name: str, data, prior_scale: float = 1.0):
             return Normal(RESPONSE, X @ beta, sigma)
 
     else:
-        prior = prior & Gamma("nu", 2.0, 0.1 / s)
+        prior = prior & Gamma("nu", 2.0, 0.1 / prior_scale)
 
         @conditional_distribution(label="yield")
         def likelihood(
@@ -309,7 +353,7 @@ def build_model(name: str, data, prior_scale: float = 1.0):
         ) -> StudentT:
             return StudentT(RESPONSE, nu, X @ beta, sigma)
 
-    return likelihood, likelihood & prior
+    return {"likelihood": likelihood, "joint": likelihood & prior}
 
 
 # --- OPTIONAL: bring in a model from another package (comments only) ---------
@@ -324,7 +368,7 @@ def build_model(name: str, data, prior_scale: float = 1.0):
 #             pymc.Normal(RESPONSE, X @ beta, sigma, observed=y_t_per_ha)
 #         return m
 #
-#     model = PyMCModel(build_pymc)
+#     joint = PyMCModel(build_pymc)
 #
 # A Stan program enters as StanModel(stan_file, data=...), and existing code
 # that only scores or draws the data enters as distribution(log_prob=...,
@@ -335,37 +379,37 @@ def build_model(name: str, data, prior_scale: float = 1.0):
 # A handful of asserts, with no test framework: each conversion matches a
 # known value, the log density matches a hand computation at one point, and a
 # check of random draws holds within a statistical tolerance, never by
-# equality. For a model re-implemented from the user's code, add the agreement
-# check of phases/4-existing-pipeline.md here.
+# equality. The expected values are written out by hand, so each check
+# compares the code with an independent statement of its result. For a model
+# re-implemented from the user's code, add the agreement check of
+# phases/4-existing-pipeline.md here.
 
 
-def check_code(data, settings) -> None:
+def check_code(data, model: dict) -> None:
     """Raise an AssertionError when a part of the pipeline's own code is wrong."""
     assert np.isclose(inches_to_mm(1.0), 25.4), "inches_to_mm is wrong"
     assert np.isclose(fahrenheit_to_celsius(212.0), 100.0), "fahrenheit_to_celsius is wrong"
-    likelihood, model = build_model("normal", data)
     beta, sigma = jnp.array([5.0, 0.5, -0.3]), 0.8
-    X = np.column_stack([np.ones_like(data["rain"]), data["rain"], data["temp"]])
     y_t_per_ha = np.asarray(data[RESPONSE])
-    by_hand = scipy.stats.norm.logpdf(y_t_per_ha, X @ beta, sigma).sum()
-    law = condition_on(likelihood, {"beta": beta, "sigma": jnp.asarray(sigma)})
+    by_hand = scipy.stats.norm.logpdf(y_t_per_ha, design_matrix(data) @ beta, sigma).sum()
+    law = condition_on(model["likelihood"], {"beta": beta, "sigma": jnp.asarray(sigma)})
     assert np.isclose(float(log_prob(law, y_t_per_ha)), by_hand, rtol=1e-4), (
         "the log density differs from the hand computation"
     )
-    _, truth = sim_data.simulate(model, 400, RESPONSE, seed=settings.seed)
-    standard_error = 2.5 / np.sqrt(400)  # of the mean of 400 draws of beta_0 ~ Normal(5, 2.5)
-    assert abs(truth[:, 0].mean() - 5.0) < 4 * standard_error, "the draws of beta_0 are off"
+    n_draws = 400
+    _, theta = sim_data.simulate(model["joint"], n_draws, RESPONSE)
+    standard_error = 2.5 / np.sqrt(n_draws)  # of the mean of draws of beta_0 ~ Normal(5, 2.5)
+    assert abs(theta[:, 0].mean() - 5.0) < 4 * standard_error, "the draws of beta_0 are off"
 
 
 # --- Step 3: the prior predictive check --------------------------------------
-# RESOURCES.md stage C says what to look for, and report.prior_predictive()
-# shows it. The step returns the simulated data, and the report summarizes it.
+# RESOURCES.md stage C says what to look for, and report.show_prior_predictive()
+# shows it.
 
 
-def prior_predictive(model, settings) -> np.ndarray:
-    """Datasets simulated from the prior, of shape (draw, field), in t/ha."""
-    with workflow_run(seed=settings.seed + 1):
-        draws = sample(model, sample_shape=(settings.budget["n_prior_draws"],))
+def prior_predictive_yields(joint, settings) -> np.ndarray:
+    """Yields simulated from the prior predictive distribution, of shape (draw, field), in t/ha."""
+    draws = sample(joint, sample_shape=(settings.budget["n_prior_draws"],))
     return np.asarray(draws[RESPONSE].raw)
 
 
@@ -376,60 +420,61 @@ def prior_predictive(model, settings) -> np.ndarray:
 # judges realistic adds the recovery at those values from the same recipe.
 
 
-def validate(model, method: str, settings) -> dict:
-    """Fit datasets simulated with known parameters, and grade the recovery."""
-    datasets, truth = sim_data.simulate(
-        model, settings.budget["n_sims"], RESPONSE, settings.seed + 2
-    )
-    fits = recovery(fit(model, datasets, settings, method))  # one sweep over the datasets
+def validate(joint, method: str, settings) -> dict:
+    """Fit datasets simulated with known parameters theta, and grade the recovery of theta.
+
+    z = (posterior mean - theta) / posterior sd for each fit and coordinate,
+    and contraction = 1 - posterior variance / prior variance, by stage D.
+    """
+    datasets, theta = sim_data.simulate(joint, settings.budget["n_sims"], RESPONSE)
+    fits = posterior_summaries(fit(joint, datasets, settings, method))  # one sweep
     num_chains = settings.budget["options"][method]["num_chains"]
     rerun = fits_to_rerun(fits, num_chains)
     if rerun.size:  # a few fits just past the criteria are rerun with the remedy, in one sweep
         again = RecordBatch({RESPONSE: datasets[RESPONSE].raw[rerun]}, "sim")
-        for key, values in recovery(fit(model, again, settings, method, remedy=True)).items():
+        refits = posterior_summaries(fit(joint, again, settings, method, remedy=True))
+        for key, values in refits.items():  # each summary is its own array
             fits[key][rerun] = values
-    z = (fits["mean"] - truth) / fits["sd"]
-    coverage = ((fits["low"] <= truth) & (truth <= fits["high"])).mean(axis=0)
-    with workflow_run(seed=settings.seed + 7):
-        prior = np.asarray(sample(model, sample_shape=(4000,)).without(RESPONSE).to_vector())
-    contraction = 1 - (fits["sd"] ** 2).mean(axis=0) / prior.var(axis=0)
-    fits_ok = bool(fits_pass(fits, num_chains).all())
-    names = coordinate_names(model, RESPONSE)
-    grade = grade_validation(z, coverage, contraction, names, fits_ok, rerun.size, QUICK_START)
-    table = {"coordinates": names, "coverage_90": coverage, "mean_z": z.mean(axis=0)}
-    table |= {"contraction": contraction, "z_beyond_3_by_chance": 0.0027 * z.size}
-    table["z_beyond_3"] = [(names[j], int(i)) for i, j in np.argwhere(np.abs(z) > 3)]
-    table |= {k: fits[k] for k in ("max_r_hat", "min_ess_bulk", "divergences")}
+    z = (fits["mean"] - theta) / fits["sd"]
+    coverage = ((fits["low"] <= theta) & (theta <= fits["high"])).mean(axis=0)
+    draws = sample(joint, sample_shape=(settings.budget["n_prior_draws"],))
+    theta_prior = np.asarray(draws.without(RESPONSE).to_vector())  # (draw, coordinate)
+    contraction = 1 - (fits["sd"] ** 2).mean(axis=0) / theta_prior.var(axis=0)
+    names = coordinate_names(joint, RESPONSE)
+    all_pass = bool(meets_fit_criteria(fits, num_chains).all())
+    grade = grade_validation(z, coverage, contraction, names, all_pass, rerun.size, QUICK_START)
+    diagnostics = {k: fits[k] for k in ("max_r_hat", "min_ess_bulk", "divergences")}
+    table = {"coordinates": names, "coverage": coverage, "mean_z": z.mean(axis=0)}
+    table |= {"contraction": contraction} | diagnostics
     return grade | {
         "remedy": bool(rerun.size),
         "table": {k: np.asarray(v).tolist() for k, v in table.items()},
     }
 
 
-def recovery(posteriors) -> dict:
-    """The mean, sd, and 90% interval of each coordinate of each fit, with its diagnostics.
+def posterior_summaries(posteriors) -> dict:
+    """The mean, sd, and central interval of each coordinate of each fit, with its diagnostics.
 
-    The arrays are copies, so the rerun of a few fits can replace their rows.
+    The interval has the probability COVERAGE_LEVEL, whose coverage the
+    validation grades. The arrays are copies, so the rerun of a few fits can
+    replace their rows.
     """
     summary = summarize(posteriors)
-    bounds = np.array(quantile(posteriors, jnp.array([0.05, 0.95])).to_vector())
+    ends = np.array([1 - COVERAGE_LEVEL, 1 + COVERAGE_LEVEL]) / 2
+    interval = np.array(quantile(posteriors, ends).to_vector())  # (fit, end, coordinate)
+    # summarize() reports no divergences, so each posterior's sampler statistics
+    # are read on their own. A batched accessor is a ProbPipe gap. A method
+    # without divergences, such as random-walk Metropolis, records none.
+    stats = [p.annotations["arviz"]["sample_stats"] for p in posteriors]
+    divergences = [int(np.sum(s.get("diverging", 0))) for s in stats]
     return {
         "mean": np.array(summary["mean"].to_vector()),
         "sd": np.array(summary["sd"].to_vector()),
-        "low": bounds[:, 0],
-        "high": bounds[:, 1],
-    } | diagnose(posteriors)
-
-
-def diagnose(posteriors) -> dict:
-    """The largest R-hat, the smallest bulk ESS, and the divergences of each fit of a batch."""
-    summary = summarize(posteriors)
-    return {
+        "low": interval[:, 0],
+        "high": interval[:, 1],
         "max_r_hat": np.asarray(summary["r_hat"].to_vector()).max(axis=-1),
         "min_ess_bulk": np.asarray(summary["ess_bulk"].to_vector()).min(axis=-1),
-        "divergences": np.array(
-            [int(p.annotations["arviz"]["sample_stats"]["diverging"].sum()) for p in posteriors]
-        ),
+        "divergences": np.array(divergences),
     }
 
 
@@ -440,22 +485,53 @@ def diagnose(posteriors) -> dict:
 # of RESOURCES.md stage E are computed on every fit to the real data.
 
 
-def fit(model, observed, settings, method: str, remedy: bool = False):
-    """The posterior of `model` given `observed`, one per dataset for a batch."""
+def fit(joint, observed, settings, method: str, remedy: bool = False):
+    """The posterior of `joint` given `observed`, one per dataset for a batch."""
     options = settings.budget["remedy" if remedy else "options"][method]
-    with workflow_run(seed=settings.seed + 3):
-        posterior = condition_on.using(method=method, method_options=options)(model, observed)
-    if not isinstance(posterior, DistributionBatch):
+    posterior = condition_on.using(method=method, method_options=options)(joint, observed)
+    if not isinstance(posterior, DistributionBatch):  # a batch is diagnosed by summarize()
         add_mcmc_diagnostics(posterior)
     return posterior
 
 
-def observed_response(data, model, settings) -> jnp.ndarray:
-    """The real response after the gate passed, and otherwise one simulated dataset."""
-    if settings.real_response:
+def response_for_stage(data, joint, settings) -> jnp.ndarray:
+    """The observed response after the gate passed, and else one dataset simulated from `joint`."""
+    if settings.uses_real_response:
         return jnp.asarray(data[RESPONSE])
-    datasets, _ = sim_data.simulate(model, 1, RESPONSE, settings.seed + 4)
+    datasets, _ = sim_data.simulate(joint, 1, RESPONSE)
     return jnp.asarray(datasets[RESPONSE].raw[0])
+
+
+# --- What the validation depends on ----------------------------------------------
+# The gate accepts a validation whose hash matches the hash of these functions
+# and settings, with the grading code of pipeline_support.py. A change to any of
+# them makes a passed validation stale, and a change to a step after the fit,
+# such as an answer, a check, or a comparison, keeps it. Add each function that
+# the data step, a model, the simulation, or the fit of a design calls.
+
+VALIDATED = (
+    # the data step
+    prepare_inputs,
+    check_columns,
+    inches_to_mm,
+    fahrenheit_to_celsius,
+    standardize,
+    MISSING_CODE,
+    # the models
+    design_matrix,
+    build_model,
+    RESPONSE,
+    # the simulation of datasets, and the fit with its methods and budgets
+    sim_data.simulate,
+    fit,
+    MODELS,
+    BUDGETS["validate"],
+    {method: BUDGETS["fit"]["options"][method] for method in MODELS.values()},
+    # the validation itself
+    validate,
+    posterior_summaries,
+    QUICK_START,
+)
 
 
 # --- Step 6: check the model against the data --------------------------------
@@ -470,10 +546,13 @@ def yield_spread(y_t_per_ha):
     return jnp.std(y_t_per_ha)
 
 
-def check_model(likelihood, posterior, y_t_per_ha: jnp.ndarray, settings) -> dict:
-    """The posterior predictive p-value of each test statistic."""
-    with workflow_run(seed=settings.seed + 5):
-        return predictive_check(likelihood, posterior, [lowest_yield, yield_spread], y_t_per_ha)
+TEST_STATISTICS = [lowest_yield, yield_spread]
+
+
+def posterior_predictive_p_values(likelihood, posterior, y_t_per_ha: jnp.ndarray) -> dict:
+    """The posterior predictive p-value of each test statistic, by the statistic's name."""
+    check = predictive_check(likelihood, posterior, TEST_STATISTICS, y_t_per_ha)
+    return {t.__name__: float(check[f"{t.__name__}/p_value"]) for t in TEST_STATISTICS}
 
 
 # --- Step 7: answer the question ---------------------------------------------
@@ -485,26 +564,36 @@ def check_model(likelihood, posterior, y_t_per_ha: jnp.ndarray, settings) -> dic
 
 @function
 def per_degree_c(beta: jax.Array, temp_sd_c: jax.Array) -> jax.Array:
-    """The change in yield per degree Celsius, from the slope per standard deviation."""
+    """The change in yield per degree Celsius, beta_temp / sd(temp_c), in t/ha per °C.
+
+    It also converts quantiles of beta, since quantiles commute with the
+    division by the positive `temp_sd_c`.
+    """
     return beta[..., 2] / temp_sd_c
 
 
 @function
-def expected_yield(beta: jax.Array, x: jax.Array) -> jax.Array:
-    """The mean yield in t/ha of a year whose design-matrix row, or rows, are `x`."""
-    return x @ beta
+def expected_yield(beta: jax.Array, X: jax.Array) -> jax.Array:
+    """The mean yield X beta in t/ha of each year whose design-matrix row is a row of `X`."""
+    return X @ beta
 
 
-def answer(posterior, data, settings) -> dict:
-    """The change in yield per degree Celsius, and the chance of a low mean yield when dry and hot."""
-    n = settings.budget["n_draws"]
-    with workflow_run(seed=settings.seed + 6):
-        change = per_degree_c.using(max_evaluations=n)(posterior["beta"], data["temp_sd_c"])
-        dry_hot = expected_yield.using(max_evaluations=n)(
-            posterior["beta"], weather_row(data, **DRY_HOT)
-        )
-        p_low = expectation(dry_hot, lambda v: v < LOW_YIELD_T_PER_HA)
-    return {"change_per_c": change, "dry_hot": dry_hot, "p_low_yield": p_low}
+def is_low_yield(y_t_per_ha):
+    """Whether each yield is below LOW_YIELD_T_PER_HA, the event of the answer."""
+    return y_t_per_ha < LOW_YIELD_T_PER_HA
+
+
+def estimands(posterior, data, settings) -> dict:
+    """The change in yield per °C, and the chance of a low mean yield in a dry, hot year."""
+    n_draws = settings.budget["n_draws"]
+    change_per_c = per_degree_c.using(max_evaluations=n_draws)(posterior["beta"], data["temp_sd_c"])
+    X_dry_hot = design_rows(data, **DRY_HOT)
+    yield_dry_hot = expected_yield.using(max_evaluations=n_draws)(posterior["beta"], X_dry_hot)
+    return {
+        "change_per_c": change_per_c,
+        "yield_dry_hot": yield_dry_hot,
+        "p_low_yield_dry_hot": expectation(yield_dry_hot, is_low_yield),
+    }
 
 
 # --- OPTIONAL: plug-in forecast --------------------------------------------------
@@ -513,33 +602,28 @@ def answer(posterior, data, settings) -> dict:
 # for a scientist. Keep it when the answer is a probability or a decision.
 
 
-def plug_in(posterior, data) -> float:
-    """The mean yield in a dry, hot year at the posterior mean of the parameters."""
-    beta = np.asarray(probpipe.mean(posterior["beta"]))
-    return float(np.asarray(expected_yield(beta, weather_row(data, **DRY_HOT))))
+def yield_at_posterior_mean(posterior, data) -> float:
+    """The mean yield in t/ha of a dry, hot year at the posterior mean of beta."""
+    beta_mean = np.asarray(probpipe.mean(posterior["beta"]))
+    return float(np.asarray(expected_yield(beta_mean, design_rows(data, **DRY_HOT))))
 
 
 # --- OPTIONAL: scenarios ---------------------------------------------------------
 # The answer under several scenarios in one call: the lifted function takes a
 # matrix with one row per scenario. Keep it when the user compares conditions.
 
-SCENARIOS = {"dry_hot": DRY_HOT, "wet_cool": {"rain_in": 30.0, "temp_f": 66.0}}
+# One row per scenario, with its weather.
+SCENARIOS = pd.DataFrame({"dry_hot": DRY_HOT, "wet_cool": {"rain_in": 30.0, "temp_f": 66.0}}).T
 
 
-def scenarios(posterior, data, settings) -> dict:
-    """The mean yield and the chance of a low mean yield in each scenario of SCENARIOS."""
-    x = jnp.stack([weather_row(data, **weather) for weather in SCENARIOS.values()])
-    with workflow_run(seed=settings.seed + 8):
-        yields = expected_yield.using(max_evaluations=settings.budget["n_draws"])(
-            posterior["beta"], x
-        )
-        p_low = expectation(yields, lambda v: v < LOW_YIELD_T_PER_HA)
-        bounds = quantile(yields, jnp.array([0.025, 0.5, 0.975]))
-    return {
-        "names": list(SCENARIOS),
-        "quantiles": np.asarray(bounds),
-        "p_low_yield": np.asarray(p_low),
-    }
+def answers_by_scenario(posterior, data, settings) -> pd.DataFrame:
+    """The quantiles of the mean yield, and the chance of a low mean yield, in each scenario."""
+    X = design_rows(data, SCENARIOS["rain_in"].to_numpy(), SCENARIOS["temp_f"].to_numpy())
+    yields = expected_yield.using(max_evaluations=settings.budget["n_draws"])(posterior["beta"], X)
+    quantiles = np.asarray(quantile(yields, QUANTILES)).T  # (scenario, quantile)
+    table = pd.DataFrame(quantiles, index=SCENARIOS.index, columns=QUANTILE_COLUMNS)
+    table["p_low_yield"] = np.asarray(expectation(yields, is_low_yield))
+    return table
 
 
 # --- OPTIONAL: prior sensitivity -------------------------------------------------
@@ -547,17 +631,23 @@ def scenarios(posterior, data, settings) -> dict:
 # priors, by RESOURCES.md stage H. Keep it when the user asks how much the
 # priors matter.
 
+PRIOR_SCALES = [1.0, 3.0]
 
-def prior_sensitivity(name: str, data, y_t_per_ha, settings) -> dict:
-    """The change in yield per degree Celsius under the default and the wider priors."""
-    models = [build_model(name, data, scale)[1] for scale in (1.0, 3.0)]
-    observed = RecordBatch({RESPONSE: jnp.stack([y_t_per_ha, y_t_per_ha])}, "prior")
-    posteriors = fit(DistributionBatch(models, "prior"), observed, settings, MODELS[name])
-    beta_temp = np.asarray(quantile(posteriors, jnp.array([0.025, 0.5, 0.975])).to_vector())
-    return {
-        "prior_scale": [1.0, 3.0],
-        "change_per_c": beta_temp[:, :, 2] / float(data["temp_sd_c"]),
-    }
+
+def prior_sensitivity(name: str, data, y_t_per_ha, settings) -> pd.DataFrame:
+    """The quantiles of the change in yield per °C under each prior scale of PRIOR_SCALES."""
+    # One joint model per scale, since each holds its own priors.
+    joints = [build_model(name, data, scale)["joint"] for scale in PRIOR_SCALES]
+    observed = {RESPONSE: jnp.tile(y_t_per_ha, (len(PRIOR_SCALES), 1))}
+    posteriors = fit(
+        DistributionBatch(joints, "prior_scale"),
+        RecordBatch(observed, "prior_scale"),
+        settings,
+        MODELS[name],
+    )
+    change_per_c = per_degree_c(quantile(posteriors, QUANTILES)["beta"], data["temp_sd_c"])
+    index = pd.Index(PRIOR_SCALES, name="prior_scale")
+    return pd.DataFrame(np.asarray(change_per_c), index=index, columns=QUANTILE_COLUMNS)
 
 
 # --- OPTIONAL: external result ---------------------------------------------------
@@ -568,12 +658,9 @@ def prior_sensitivity(name: str, data, y_t_per_ha, settings) -> dict:
 
 def compare_external(answers: dict, external: pd.DataFrame) -> pd.DataFrame:
     """The quantiles of the change per degree Celsius beside those of the external result."""
-    ours = np.asarray(quantile(answers["change_per_c"], jnp.array([0.025, 0.5, 0.975])))
-    row = external.set_index("estimand").loc["change_per_c"]
-    return pd.DataFrame(
-        {"probpipe": ours, "external": row[["q2.5", "q50", "q97.5"]].to_numpy(float)},
-        index=["2.5%", "50%", "97.5%"],
-    )
+    ours = np.asarray(quantile(answers["change_per_c"], QUANTILES))
+    theirs = external.set_index("estimand").loc["change_per_c", QUANTILE_COLUMNS].to_numpy(float)
+    return pd.DataFrame([ours, theirs], index=["probpipe", "external"], columns=QUANTILE_COLUMNS)
 
 
 # --- OPTIONAL: provenance --------------------------------------------------------
@@ -581,13 +668,62 @@ def compare_external(answers: dict, external: pd.DataFrame) -> pd.DataFrame:
 # Keep it when the user reports the computation, as in a methods section.
 
 
-def routes(posterior, answers: dict) -> dict:
-    """The route of the posterior and of each answer, and whether each is exact."""
+def computation_routes(posterior, answers: dict) -> dict:
+    """The route and method of the posterior and of each answer, and whether each is exact."""
     results = {"posterior": posterior, **answers}
     return {
         name: {k: result.provenance.metadata.get(k) for k in ("route", "method", "exact")}
         for name, result in results.items()
     }
+
+
+# --- OPTIONAL: compare algorithms ------------------------------------------------
+# The model fitted by each method of COMPARED_METHODS, with the means, the
+# largest R-hat, and the divergences side by side, by RESOURCES.md stage E. condition_on.check names
+# the method that a call would select, before any computation. Keep it when the
+# choice of method is in question.
+
+
+def compare_algorithms(joint, y_t_per_ha, settings) -> dict:
+    """The method that condition_on selects, and each method's means, R-hat, and divergences."""
+    observed = {RESPONSE: y_t_per_ha}
+    rows = {}
+    for method in COMPARED_METHODS:  # each method runs its own algorithm
+        posterior = fit(joint, observed, settings, method)
+        summary = summarize(posterior)
+        r_hat = float(np.max(summary["r_hat"].to_vector()))
+        means = np.asarray(summary["mean"].to_vector(), dtype=float)
+        rows[method] = [*means, r_hat, divergences_of(posterior)]
+    columns = [*coordinate_names(joint, RESPONSE), "largest R-hat", "divergences"]
+    return {
+        "selected_method": condition_on.check(joint, observed).selected.method_name,
+        "table": pd.DataFrame.from_dict(rows, orient="index", columns=columns),
+    }
+
+
+# --- OPTIONAL: several datasets ----------------------------------------------------
+# The model fitted to each year on its own, as one batched sweep over a batch
+# of models, one per year at its own weather. The validation covered the pooled
+# design, so report.show_by_year() labels these fits not validated. Keep it
+# when the design reports an answer per site, group, or year.
+
+
+def fit_by_year(name: str, data, y_t_per_ha, settings) -> pd.DataFrame:
+    """The quantiles of the change in yield per degree Celsius in each year, from one sweep."""
+    years, rows_per_year = np.unique(np.asarray(data["year"]), return_counts=True)
+    if np.any(rows_per_year != rows_per_year[0]):  # a batch stacks the years
+        counts = dict(zip(years.tolist(), rows_per_year.tolist(), strict=True))
+        raise ValueError(f"fit_by_year needs the same number of rows in each year, not {counts}.")
+    rows = np.argsort(np.asarray(data["year"]), kind="stable").reshape(len(years), -1)
+    # One joint model per year, since each holds the weather of its year.
+    joints = [build_model(name, select_rows(data, year_rows))["joint"] for year_rows in rows]
+    observed = {RESPONSE: jnp.asarray(y_t_per_ha)[rows]}  # (year, field)
+    posteriors = fit(
+        DistributionBatch(joints, "year"), RecordBatch(observed, "year"), settings, MODELS[name]
+    )
+    change_per_c = per_degree_c(quantile(posteriors, QUANTILES)["beta"], data["temp_sd_c"])
+    index = pd.Index(years, name="year")
+    return pd.DataFrame(np.asarray(change_per_c), index=index, columns=QUANTILE_COLUMNS)
 
 
 # --- OPTIONAL: held-out subset (its score) ---------------------------------------
@@ -596,22 +732,31 @@ def routes(posterior, answers: dict) -> dict:
 # better). In the smoke stage the held-out yields are simulated.
 
 
-def score_heldout(results: dict, heldout, settings) -> dict:
-    """The predictive draws, the observed yields, and the CRPS of each fitted model."""
+def score_heldout(fits: dict, heldout, settings) -> dict:
+    """The predictive draws of the held-out yields, the yields, and the mean CRPS of each model."""
     scores = {}
-    for name, result in results.items():  # one entry per fitted model
-        if not result:
-            continue
-        likelihood, model = build_model(name, heldout)
-        with workflow_run(seed=settings.seed + 9):
-            draws = np.asarray(
-                sample(likelihood & result["posterior"], sample_shape=(1000,))[RESPONSE].raw
-            )
-        y = np.asarray(observed_response(heldout, model, settings))
-        spread = np.abs(draws[::2] - draws[1::2]).mean(axis=0)
-        crps = np.abs(draws - y).mean(axis=0) - 0.5 * spread
-        scores[name] = {"draws": draws, "y": y, "crps": crps}
+    for name, result in fits.items():  # the models differ in their parameters
+        # The held-out year has its own weather, so its likelihood is built from its rows.
+        model = build_model(name, heldout)
+        predictive = model["likelihood"] & result["posterior"]
+        draws = sample(predictive, sample_shape=(settings.budget["n_draws"],))
+        y_draws = np.asarray(draws[RESPONSE].raw)  # (draw, field)
+        y_t_per_ha = np.asarray(response_for_stage(heldout, model["joint"], settings))
+        scores[name] = {
+            "y_draws": y_draws,
+            "y_t_per_ha": y_t_per_ha,
+            "mean_crps": mean_crps(y_draws, y_t_per_ha),
+        }
     return scores
+
+
+def mean_crps(y_draws: np.ndarray, y: np.ndarray) -> float:
+    """The CRPS E|Y - y| - E|Y - Y'| / 2 of each field, averaged over the fields.
+
+    Y and Y' are independent predictive draws, here the even and the odd draws.
+    """
+    spread = np.abs(y_draws[::2] - y_draws[1::2]).mean(axis=0)
+    return float((np.abs(y_draws - y).mean(axis=0) - spread / 2).mean())
 
 
 # --- OPTIONAL: calibration ---------------------------------------------------------
@@ -620,79 +765,35 @@ def score_heldout(results: dict, heldout, settings) -> dict:
 # predicted probability beside its expected count, with the range that
 # calibrated probabilities give, and the Brier score, by RESOURCES.md stage F.
 
+PROBABILITY_BINS = np.array([0.0, 0.2, 0.5, 0.8, 1.0])
 
-def calibrate(scores: dict, settings) -> dict:
-    """The reliability table and the Brier score of each model."""
-    bins = np.array([0.0, 0.2, 0.5, 0.8, 1.0])
-    rng = np.random.default_rng(settings.seed + 10)
+
+def reliability_tables(scores: dict, settings) -> dict:
+    """The reliability table and the Brier score of each model's probability of a low yield."""
+    n_bins, n_draws = len(PROBABILITY_BINS) - 1, settings.budget["n_draws"]
     tables = {}
-    for name, score in scores.items():
-        p = (score["draws"] < LOW_YIELD_T_PER_HA).mean(axis=0)
-        event = score["y"] < LOW_YIELD_T_PER_HA
-        which = np.clip(np.digitize(p, bins) - 1, 0, len(bins) - 2)
-        calibrated = rng.random((4000, p.size)) < p  # outcomes drawn as if p were calibrated
-        rows = []
-        for b in range(len(bins) - 1):
-            members = which == b
-            counts = calibrated[:, members].sum(axis=1)
-            low, high = np.percentile(counts, [2.5, 97.5])
-            rows.append(
-                [
-                    bins[b],
-                    bins[b + 1],
-                    members.sum(),
-                    p[members].sum(),
-                    low,
-                    high,
-                    event[members].sum(),
-                ]
-            )
-        tables[name] = {"rows": np.array(rows), "brier": float(((p - event) ** 2).mean())}
+    for name, score in scores.items():  # each model puts different fields in each bin
+        p_low = is_low_yield(score["y_draws"]).mean(axis=0)  # (field,)
+        observed_low = is_low_yield(score["y_t_per_ha"])
+        bin_of_field = np.clip(np.digitize(p_low, PROBABILITY_BINS) - 1, 0, n_bins - 1)
+        in_bin = (bin_of_field[:, None] == np.arange(n_bins)).astype(float)  # (field, bin)
+        # Outcomes drawn as if p_low were calibrated give the range of each bin's count.
+        calibrated = sample(Bernoulli("low", probs=p_low), sample_shape=(n_draws,))
+        counts = np.asarray(calibrated.raw) @ in_bin  # (draw, bin)
+        range_low, _, range_high = np.quantile(counts, QUANTILES, axis=0)
+        table = pd.DataFrame(
+            {
+                "from": PROBABILITY_BINS[:-1],
+                "to": PROBABILITY_BINS[1:],
+                "fields": in_bin.sum(axis=0),
+                "expected": p_low @ in_bin,
+                "range_low": range_low,
+                "range_high": range_high,
+                "observed": observed_low @ in_bin,
+            }
+        )
+        tables[name] = {"table": table, "brier": float(np.mean((p_low - observed_low) ** 2))}
     return tables
-
-
-# --- OPTIONAL: compare algorithms ------------------------------------------------
-# The baseline fitted by each method of COMPARED_METHODS, with the means and the
-# largest R-hat side by side, by RESOURCES.md stage E. condition_on.check names
-# the method that a call would select, before any computation. Keep it when the
-# choice of method is in question.
-
-
-def compare_algorithms(data, results: dict, settings) -> dict:
-    """The method that condition_on selects, and each method's means and largest R-hat."""
-    name = next(iter(MODELS))
-    if not results[name]:
-        return {}
-    _, model = build_model(name, data)
-    observed = {RESPONSE: results[name]["y"]}
-    table = {}
-    for method in COMPARED_METHODS:  # one fit per method
-        summary = summarize(fit(model, observed, settings, method))
-        table[method] = np.r_[summary["mean"].to_vector(), summary["r_hat"].to_vector().max()]
-    selected = condition_on.check(model, observed).selected.method_name
-    return {"selected": selected, "table": table}
-
-
-# --- OPTIONAL: several datasets ----------------------------------------------------
-# The baseline fitted to each year on its own, as one batched sweep over a batch
-# of models, one per year at its own weather. The validation covered the pooled
-# design, so these fits are labeled not validated. Keep it when the design
-# reports an answer per site, group, or year.
-
-
-def fit_by_year(data, results: dict, settings) -> dict:
-    """The change in yield per degree Celsius in each year, from one sweep of fits."""
-    name = next(iter(MODELS))
-    if not results[name]:
-        return {}
-    years = np.unique(np.asarray(data["year"]))
-    rows = [np.asarray(data["year"]) == year for year in years]
-    models = DistributionBatch([build_model(name, subset(data, r))[1] for r in rows], "year")
-    y = np.asarray(results[name]["y"])
-    observed = RecordBatch({RESPONSE: jnp.stack([y[r] for r in rows])}, "year")
-    posteriors = fit(models, observed, settings, MODELS[name])
-    beta = np.asarray(quantile(posteriors, jnp.array([0.025, 0.5, 0.975])).to_vector())
-    return {"years": years, "change_per_c": beta[:, :, 2] / float(data["temp_sd_c"])}
 
 
 # --- OPTIONAL: large data (comments only) ----------------------------------------

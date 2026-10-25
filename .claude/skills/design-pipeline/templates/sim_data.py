@@ -11,17 +11,17 @@ from __future__ import annotations
 
 import numpy as np
 
-from probpipe import RecordBatch, sample, workflow_run
+from probpipe import RecordBatch, sample
 
 
-def simulate(model, n: int, response: str, seed: int) -> tuple[RecordBatch, np.ndarray]:
-    """`n` datasets drawn from `model`, and the parameter values that generated them.
+def simulate(joint, n: int, response: str) -> tuple[RecordBatch, np.ndarray]:
+    """`n` datasets drawn from the joint model, and the parameter values that generated them.
 
     The datasets are a `RecordBatch` on the level `sim`, which `condition_on`
     fits in one sweep. The true values are an array of shape (sim, coordinate),
-    ordered by the fields of the parameters like the posterior summaries.
+    ordered by the fields of the parameters like the posterior summaries. The
+    draw takes its key from the enclosing `workflow_run`.
     """
-    with workflow_run(seed=seed):
-        sims = sample(model, sample_shape=(n,)).with_level_names(sample="sim")
-    parameters = [name for name in model.event_spec.outputs if name != response]
+    sims = sample(joint, sample_shape=(n,)).with_level_names(sample="sim")
+    parameters = [name for name in joint.event_spec.outputs if name != response]
     return sims.without(*parameters), np.asarray(sims.without(response).to_vector())
