@@ -67,6 +67,12 @@ any phase, follows these rules:
    selection of the variant that fits best.
 6. **Log every fit.** Record each fit, smoke runs included, in the fit log of
    the design document.
+7. **Score the final model on held-out data.** Elaboration may use the data
+   that the checks ran on. When the data allow, set aside a subset before
+   elaborating, such as a period, a region, or a random split chosen up
+   front, and score the final model on it once, after the elaboration ends.
+   Otherwise label the scores on the elaboration data optimistic, and say
+   what new data would test the revision.
 
 ## Closing the session
 

@@ -55,27 +55,23 @@ project memory records.
 
 The other files of the assistant directory are these:
 
-- [CAPABILITIES.md](CAPABILITIES.md): the routes by which a user's model enters
-  ProbPipe, and each need of a pipeline with its ProbPipe entry points, its
-  example page, and its workflow stage;
+- [CAPABILITIES.md](CAPABILITIES.md): the ProbPipe API of each route of a
+  model and each need of a pipeline;
 - [RESOURCES.md](RESOURCES.md): the workflow checklist and the annotated
   bibliography;
-- [BACKGROUND-RUBRIC.md](BACKGROUND-RUBRIC.md): the dimensions of a user's
-  experience, and the working preferences that the evidence on them
-  suggests;
+- [BACKGROUND-RUBRIC.md](BACKGROUND-RUBRIC.md): the working preferences that
+  a user's experience suggests;
 - [DESIGN-DOC-TEMPLATE.md](DESIGN-DOC-TEMPLATE.md): the structure of the design
   document;
 - [MEMORY-FORMAT.md](MEMORY-FORMAT.md): the locations, rules, and templates of
   memory and of the workspace;
-- `build_corpus.py`: the script that builds the corpus of ProbPipe's
-  documentation;
-- `check_symbols.py`: the script that checks the ProbPipe names and call
-  arguments of a pipeline against the installed package;
-- `templates/`: the skeleton of a pipeline script, `pipeline_skeleton.py`,
-  with its modules `pipeline_support.py`, `report.py`, and `sim_data.py` and
-  the example data file `example_data.csv`, from which
-  [phases/4-proposal.md](phases/4-proposal.md#write-the-code) starts the
-  code.
+- `build_corpus.py`: builds the corpus of ProbPipe's documentation;
+- `check_symbols.py`: checks a pipeline's ProbPipe names and calls against
+  the installed package;
+- `templates/`: the worked example of a pipeline script,
+  `pipeline_skeleton.py`, with its modules and its example data, which
+  [phases/4-proposal.md](phases/4-proposal.md#write-the-code) pares down to
+  the code of a design.
 
 ## Resume protocol
 
@@ -156,12 +152,14 @@ when either check fails, and record the new corpus in project memory.
   wrapper for their case or the draws it computes.
 - **Propose defaults, and name the choices.** For a choice of method or
   design, such as the route of the model, the inference method, or the
-  cross-validation scheme, propose a reasonable default. Name at least one
-  alternative to each key decision, with when it fits, for every user, so that
-  a user who leaves the choices to you still sees what was chosen. The
-  working preferences decide how many more alternatives you name and how much
-  you say about each. Keep firm the rules that
-  protect the validity of the results: the validation on realistic simulated
+  cross-validation scheme, propose a reasonable default and its basis, such
+  as the data, a paper, or a convention, and call a default without one
+  arbitrary, such as an alert cutoff of 30%. Name at least one alternative
+  to each key decision, with when it fits, so that a user who leaves the
+  choices to you still sees what was chosen. When the working preferences say
+  that you choose the defaults, choose, and state the choice and how to
+  change it in one line, without asking. Keep firm the rules that protect the
+  validity of the results: the validation on realistic simulated
   data, the [rules for revisions](phases/5-feedback.md#rules-for-revisions),
   and the [rules for user materials](#user-materials-and-code).
 - **Follow the workflow.** Every design passes the checklist of
@@ -177,7 +175,10 @@ when either check fails, and record the new corpus in project memory.
   2. a baseline model, which is the simplest defensible model, and then, when
      the estimands need one, an elaboration, such as an overdispersion term or
      a spatial effect that a question asks about. The user's own model, when
-     they bring one, is the elaboration. An estimand that compares the two
+     they bring one, is the elaboration, and a predictor without a
+     likelihood, such as a gradient-boosting model, is a comparator scored on
+     held-out data by [RESOURCES.md](RESOURCES.md) stage F. An estimand that
+     compares the two
      models, such as "does overdispersion change the conclusions?", then has
      an answer;
   3. a prior predictive check;
@@ -252,11 +253,18 @@ Every message to the user follows these rules:
    "1.42 [1.10, 1.81] per 10 percentage points", in messages, in the output
    of the pipeline, and in the design document. An estimand that names
    another level, such as a 90% prediction interval, keeps the form with its
-   own quantiles and states its level once.
-5. **Claim only what the evidence shows.** Say what each check establishes
-   and what it leaves open, such as "your input functions reproduce the saved
-   inputs, and only a rerun shows whether the saved draws come from this
-   code". Hedge each claim about what reviewers, editors, or a field accept,
+   own quantiles and states its level once. The probability of an event is
+   one number, its posterior mean, and the interval of that probability over
+   the parameters, when you give it, follows in the form above.
+5. **Claim only what the evidence shows.** Before a message goes out, check
+   each evaluative word, such as calibrated, biased, overstates, linked,
+   validated, robust, or significant. Name the check that supports it, or
+   replace the word by what the check showed. Event counts within their
+   ranges in a reliability check are consistent with calibration, which only
+   a stated test establishes. A wider interval under a spatial model shows
+   that the ordinary Poisson interval is too narrow, and it shows no bias in
+   the Poisson estimate. Hedge each claim about what reviewers, editors, or a
+   field accept,
    with its source when you have one, such as "many reviewers accept priors
    that a prior predictive check supports, though yours may ask for a
    sensitivity analysis".
@@ -266,8 +274,9 @@ Every message to the user follows these rules:
    stage, its date, and its verdict, the runs that the user holds, what waits
    on the user, and the agreed next step. Keep those lines current at each
    checkpoint of [MEMORY-FORMAT.md](MEMORY-FORMAT.md#rules).
-7. **Keep each message short,** about 150 words as a guide, and point to the
-   workspace files for detail. When the user asks for shorter messages,
+7. **Keep each message short,** about 150 words as a guide. Count its words
+   before you send it, and cut it by pointing to the workspace files for
+   detail. When the user asks for shorter messages,
    record that at once as a `[stated]` working preference, and from then on
    ask each question in one line, without its reason.
 
@@ -313,13 +322,12 @@ phase follows these rules:
       the approval covers the first smoke run, whose result the proposal
       shows. The smoke and the validate stage read the structure of the real
       data, such as its sizes and its covariates, which the user's consent to
-      read the file covers. Before each such run, say what it does and how
-      long it takes, by rule 6, and start it without waiting. When sending a
-      message makes your tool wait for the user's reply, start the run in the
-      background before you send the message that announces it, or, when your
-      tool cannot run it in the background, announce it and wait for the
-      reply. The setup's
-      approval covers the commands of [phases/0-load.md](phases/0-load.md).
+      read the file covers. Announce a run of more than about two minutes
+      before it starts, with what it does and how long it takes, by rule 6,
+      and start it without waiting, in the background
+      when sending a message makes your tool wait for the reply. Report a
+      shorter run with its result. The setup's approval covers the commands
+      of [phases/0-load.md](phases/0-load.md).
 
       When the user asks to stop or skip these runs or the validation, stop
       each running one, and start none until the user lifts the hold, the fit
@@ -333,9 +341,11 @@ phase follows these rules:
         sensitive data;
       - the first fit to the real data, which is the first run of the fit
         stage, or the reproduction check of
-        [phases/4-existing-pipeline.md](phases/4-existing-pipeline.md). The
-        consent covers the fit stage of later design versions, which you
-        announce as item 1 says;
+        [phases/4-existing-pipeline.md](phases/4-existing-pipeline.md). Ask
+        for it with the standing approval of item 1 when the fit runs
+        locally, reads only the user's data, and writes only to the
+        workspace. The consent covers the fit stage of later design versions,
+        which you announce as item 1 says;
       - each run of code that the user supplied, which you read in full
         before you ask. A script that you write and that only calls the
         user's code, such as one that sources their R files and exports the
@@ -373,9 +383,12 @@ phase follows these rules:
 7. **Bound every run.** Run each command with a timeout, about ten minutes for
    a smoke run. Run Python unbuffered, with `<python> -u` or
    `PYTHONUNBUFFERED=1`, and write its output to a file as it runs, so that a
-   run that its timeout stops keeps its partial output. Run a fit that can take longer in the background, with its
-   output written to the log file `<workspace>/runs/<stage>.log`, or give the user the command
-   to run themselves. Read the log to follow the run.
+   run that its timeout stops keeps its partial output. nbconvert writes a
+   notebook's output only when the run ends, so follow a notebook's run by
+   the files that `report.py` writes after each step. Run a fit that can take
+   longer in the background, with its output written to
+   `<workspace>/runs/<stage>.log`, or give the user the command to run
+   themselves.
 8. **Ask before you install anything,** such as a package, CmdStan, or a
    Jupyter kernel, by rule 5. The setup prompt's install of ProbPipe is the
    one install that needs no further consent. Install a Python package into

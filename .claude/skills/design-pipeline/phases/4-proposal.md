@@ -117,10 +117,8 @@ remedies of the bullet "Remedy divergences in this order" of RESOURCES.md
 stage E yourself, in order, before you report the grade *failed*. Write each
 remedy into the pipeline as a computational revision, and rerun the validate
 stage by rule 5 of the
-[rules for user materials](../INSTRUCTIONS.md#user-materials-and-code). A
-remedy that is a setting, such as the target acceptance rate, can apply to the
-failed fits alone, as a sweep over their datasets, and the fit to the real
-data then uses it. Report each remedy you tried with its result, and grade the
+[rules for user materials](../INSTRUCTIONS.md#user-materials-and-code).
+Report each remedy you tried with its result, and grade the
 validation by RESOURCES.md stage D after the last one.
 
 When the checks of step 8 fail, or the diagnostics of a fit to the real data
@@ -134,96 +132,83 @@ too small to judge the diagnostics and the checks.
 ## Write the code
 
 Write the pipeline in the form the user works in: the notebook
-`<workspace>/pipeline.ipynb` for a user who works in notebooks, and
-`<workspace>/pipeline.py` otherwise. Start from the skeleton
-`<assistant>/templates/pipeline_skeleton.py`, which shows the structure of
-this section with a small normal regression that runs in the smoke stage, and
-whose comments give the reason for each part. Copy it to the workspace with
-the modules `pipeline_support.py`, `report.py`, and `sim_data.py` beside it,
-and replace its example model, data checks, and estimands with those of the
-design.
+`<workspace>/pipeline.ipynb` for a user who names notebooks or Jupyter as the
+way they work, and the script `<workspace>/pipeline.py` for one who names
+scripts. When the user's answers name neither, ask in one line.
+
+Start from the worked example `<assistant>/templates/pipeline_skeleton.py`
+and its modules `pipeline_support.py`, `report.py`, and `sim_data.py`. Its
+comments give the reason for each part, and they say when to keep each block
+tagged `# OPTIONAL: <name>`. Pare it down in four steps:
+
+1. Copy the example and its modules to the workspace.
+2. Keep each optional block that the design document calls for, and delete
+   the others: each line that ends in the tag, and each section from its
+   tagged header to the next `# ---` header, in the pipeline and in
+   `report.py`.
+3. Replace the example's data, models, and estimands with those of the
+   design.
+4. Run `check_symbols.py` by [Check and run the code](#check-and-run-the-code),
+   and delete what only a deleted block used, such as an import.
 
 A notebook starts with an install cell in the style of the tutorials' Colab
 cell. On Google Colab, the cell installs ProbPipe at the commit that
 `<corpus>/MANIFEST.md` records, or at its branch when that commit is not on
 GitHub, so that Colab runs the code that `check_symbols.py` checked.
 `git -C <checkout> branch -r --contains <commit>` lists the branches on GitHub
-that hold the commit, as of the last `git fetch`. The cell
-then asks the user to upload the data file with `google.colab.files.upload()`,
-and the pipeline reads each data file by a path relative to the notebook. A
-script reads each file by a path relative to `Path(__file__).parent`, so that
-it runs from any directory. The notebook's metadata names the project's
-kernel, which [Check and run the code](#check-and-run-the-code) registers,
-with the language `python`, so that Colab, which lacks that kernel, runs the
-notebook on its own Python kernel. The pipeline loads the user's data or
-simulates it, and each step of the pipeline matches a subsection of section 4
-of the design document. Each step shows a figure where one helps, such as the
-prior predictive draws or the posterior predictive check, with a
-one-sentence comment on how to read it. The notebook's first text cell, or
-the docstring at the top of a script, says where to change each choice, such
-as "the priors are in `build_model()`, and the number of draws of each stage
-is in `BUDGETS`", so that the user can find, defend, and edit each choice in
-code they did not write.
+that hold the commit, as of the last `git fetch`. The cell then asks the user
+to upload the data file and the modules beside the notebook with
+`google.colab.files.upload()`, and the pipeline reads each file by a path
+relative to the notebook. A script reads each file by a path relative to
+`Path(__file__).parent`, so that it runs from any directory. The notebook's
+metadata names the project's kernel, which
+[Check and run the code](#check-and-run-the-code) registers, with the language
+`python`, so that Colab runs the notebook on its own Python kernel. Each step
+of the pipeline matches a subsection of section 4 of the design document, and
+shows a figure where one helps, with a one-sentence comment on how to read it.
+The notebook's first text cell, or the docstring of a script, says where to
+change each choice, such as "the priors are in `build_model()`", so that the
+user can find, defend, and edit each choice in code they did not write.
 
 Structure a script as a short program whose top function reads as the
 pipeline (Wilson et al. 2017):
 
 1. **`main()` first.** The script defines `main()` right after its imports and
    settings, and it ends with `if __name__ == "__main__": main()`. `main()`
-   reads as the pipeline, with one or two lines per step, such as loading the
-   data, the validation, and the fit. Each step is a function below `main()`
-   whose name says what it does, and a step function fits on one screen, of
+   reads as the pipeline, one or two lines per step, and each step is a
+   function whose name says what it does and that fits on one screen, of
    about 60 lines.
 2. **One call for the stage.** `main()` starts with one call of
-   `resolve_stage()` of `<workspace>/pipeline_support.py`, which resolves
-   the stage into a settings object of the budgets, the steps that run, the
-   output folder, and the result of the gate. Every step then runs the same
-   way whatever the stage. That module also holds the gate and the grade of
-   the validation, so the pipeline shows the data, the model with its
-   priors, and the steps, and it defines no classes.
+   `resolve_stage()` of `<workspace>/pipeline_support.py`, which returns the
+   settings of the stage: the budgets, the steps that run, the models to fit
+   with their labels, and the output folder. That module holds the gate and
+   the grade of the validation, so the pipeline shows the data, the models
+   with their priors, and the steps, and it defines no classes.
 3. **Pure steps.** A step function takes its inputs as arguments and returns
    values. The reads and writes of files happen in `main()`, in
-   `<workspace>/pipeline_support.py`, and in `<workspace>/report.py`, which
-   holds every print, table, and figure.
-4. **Checked data.** The step that loads the data checks it right after the
-   read: the expected columns, their types and ranges, and the codes of
-   missing values. It stops at the first problem with a message that names
-   the column.
+   `pipeline_support.py`, and in `<workspace>/report.py`, which holds every
+   print, table, and figure and formats each interval by rule 4 of
+   [Messages](../INSTRUCTIONS.md#messages).
+4. **Checked data.** The data step checks the data right after the read: the
+   expected columns, their types and ranges, and the codes of missing values.
+   It stops at the first problem with a message that names the column.
 5. **Units in names.** A variable that holds a quantity with units names the
    unit, such as `rain_mm`, and each unit conversion is one small named
    function.
+6. **Close to the mathematics.** The model is written as its generative
+   equations, with the design document's notation as names. Each repeated
+   computation is batched, such as the validation's datasets in one sweep by
+   the recipe of [CAPABILITIES.md](../CAPABILITIES.md), and a Python loop
+   only presents results. `<workspace>/sim_data.py` draws the simulated data
+   at the real design and masks them to the real pattern of missing values.
 
 A notebook mirrors this structure and explains the analysis to its reader
 (Rule et al. 2019). Its first code cell holds the settings and the call of
-`resolve_stage()`, and each later code cell runs one step by calling its step
-function. A short text cell before each code cell says why the step is there
-and what to look at in its output, and each choice is recorded beside its
-result. The step functions may be defined in `<workspace>/steps.py`, which
-the notebook imports, while the model and its priors stay in a cell of the
-notebook, where the user reads them. The notebook runs from top to bottom in
-a fresh kernel.
-
-Write the code close to the mathematics, and in batches:
-
-1. Write the model as its generative equations, with the notation of the
-   design document as the variable names, such as `mu`, `tau`, and `z` for
-   μ, τ, and z_j.
-2. Batch each repeated computation. Draw all the simulated datasets of the
-   validation in one batched draw, fit them in one sweep, and compute the
-   coverage, the z-scores, and the summaries as array operations, by the
-   batched recipe of the row "Validate the computation on realistic simulated
-   data" of [CAPABILITIES.md](../CAPABILITIES.md). Use a Python loop only to
-   present results, such as to print the rows of a table or to draw the
-   panels of a figure.
-3. Keep the auxiliary code in the modules beside the pipeline, which the
-   pipeline imports: `<workspace>/pipeline_support.py` of rule 2 above, and
-   two more. `<workspace>/report.py` holds the functions that print,
-   plot, and write the results of each step, and it formats each interval by
-   rule 4 of [Messages](../INSTRUCTIONS.md#messages).
-   `<workspace>/sim_data.py` draws the simulated data at the real design from
-   the model that the pipeline passes to it, and masks it to the real pattern
-   of missing values. The model, the inference, and the checks stay in the
-   pipeline itself.
+`resolve_stage()`, and each later code cell runs one step. A short text cell
+before each code cell says why the step is there and what to look at in its
+output. The step functions may be in `<workspace>/steps.py`, which the
+notebook imports, while the models and their priors stay in a cell of the
+notebook. The notebook runs from top to bottom in a fresh kernel.
 
 The code runs in three stages. The first code cell after the install cell,
 or the top of a script, reads the stage with
@@ -233,9 +218,9 @@ editing that default.
 
 1. `STAGE=smoke` shows that the code runs, at small budgets, such as a few
    draws, chains, or training epochs. It runs the data step, the checks of
-   the pipeline's own code, the prior predictive draws, and one fit with the
-   steps after it, and no validation. The fit is to one dataset simulated
-   from the model at the structure of the real data, such as its sizes, its
+   the pipeline's own code, the prior predictive draws, and one fit of each
+   model with the steps after it, and no validation. Each fit is to one
+   dataset simulated from the model at the structure of the real data, such as its sizes, its
    groups, and its pattern of missing values, so the code fixes that the
    smoke runs need stay out of the record of revisions. A smoke run on a
    subsample of the real data is an option that the user approves, and never
@@ -245,7 +230,7 @@ editing that default.
    run it with `HOLD_SIMULATED_FITS` set to the date of the hold, and it runs
    only the data step and the checks of the code.
    The checks of the code are a few asserts in one step function, such as
-   `check_code()` of the skeleton (Wilson et al. 2014). Each unit conversion
+   `check_code()` of the example (Wilson et al. 2014). Each unit conversion
    matches a known value, the log density matches a hand computation at one
    point, and a model re-implemented from the user's code agrees with the
    original by the agreement check of option 3 of
@@ -261,11 +246,9 @@ editing that default.
    - a hash of the code that the validation depends on: the source of the
      script, or of the code cells of the notebook, and of each module beside
      it that it imports other than `<workspace>/report.py`, with each line
-     that reads `os.environ` left out. A change to the data steps, the model,
-     the priors, or the inference therefore changes the hash, and a change
-     to `report.py`, or to the stage that the environment sets, keeps it;
-   - the grade of each model, with its sentence;
-   - the table of the validation.
+     that reads `os.environ` left out;
+   - for each model, its grade with its sentence and notes, whether it
+     needed the remedy of a rerun, and its table.
 
    No other stage writes the file. The validation step ends by printing its
    verdict in one line of plain words, which is the grade of RESOURCES.md
@@ -332,15 +315,9 @@ Take these steps before you show the code, and again after each revision:
 
 1. Run `<python> <assistant>/check_symbols.py <workspace>/pipeline.py`, or the
    same command on the notebook, and fix each problem that it prints. It
-   checks the file and each module beside it that the file imports, such as
-   `<workspace>/report.py`. It checks five things:
-   - each ProbPipe name resolves;
-   - each call's arguments bind to the signature;
-   - the code calls no export that is not implemented;
-   - no `*` joins two laws, which `&` merges;
-   - each attribute read after `.event_spec` exists.
-
-   It checks no meaning, so read the docstring of each call whose meaning you
+   checks the names and the call arguments of the file and of each module
+   beside it that the file imports, by its docstring. It checks no meaning,
+   so read the docstring of each call whose meaning you
    are unsure of.
 2. If ProbPipe imports here, run the smoke stage by the
    [rules for running code](../INSTRUCTIONS.md#user-materials-and-code), and
@@ -384,9 +361,10 @@ result of the first smoke run. Draw a Mermaid diagram only in an interface
 that renders it. Point to the design document for the full detail and to its
 section 11 for how to run the code.
 
-For a user whose preferences ask for Bayesian choices in plain words, open
-with two plain sentences on what the analysis will tell them, list the stages
-with one sentence each, and give at most three key design decisions.
+For a user whose preferences ask for Bayesian choices in plain words, the
+message is a summary of at most about 150 words: two plain sentences on what
+the analysis will tell them, the smoke result, and at most three key design
+decisions. The stages and the rest are in the design document.
 
 For other users, give a stage diagram with one sentence per stage, the key
 design decisions with the alternative you considered and your reason, the

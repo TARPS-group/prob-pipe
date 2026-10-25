@@ -151,9 +151,7 @@ grade, by step 6, is *passed* or *passed with notes*.
    the bounds are 2 and 3, and for eight results they are 2.77 and 3.58. When
    each result is close to normal, an exact method crosses b₂(M) on some
    result with probability at most 0.0455, and b₃(M) with probability at most
-   0.0027, whatever the correlation between the results. A single bound of ±3 on each of 30
-   z-scores, in contrast, fails an exact method in about one run in 13. The
-   bias and the single misses use the n datasets of each chosen value, or the
+   0.0027, whatever the correlation between the results. The bias and the single misses use the n datasets of each chosen value, or the
    prior draws as one group of n datasets when step 1 has no chosen value.
    The three criteria are these:
    - *coverage:* the distance of the coverage of each estimand at each level
@@ -205,6 +203,11 @@ grade, by step 6, is *passed* or *passed with notes*.
    - *passed with notes:* the same sentence, with the caveat of each note;
    - *failed:* "The method did not reliably recover known answers from data
      like yours, so its estimates cannot be trusted yet."
+
+   When the user asks what passing means, answer in the chat with one line
+   per criterion, its threshold, and its source: the R-hat and the ESS of
+   stage E (Vehtari et al. 2021), the divergences (Betancourt 2017), the
+   bounds b₂ and b₃ of the bias and the single misses, and the coverage.
 
    In the quick start mode, the validation simulates few datasets, so its
    coverage has a wide Monte Carlo band. Its grade then rests on the
@@ -284,7 +287,8 @@ grade, by step 6, is *passed* or *passed with notes*.
      from 0.8 to 0.95. A higher target adapts a smaller step size, so each
      draw takes longer. The row "Condition on the data" of
      [CAPABILITIES.md](CAPABILITIES.md) names the methods that take this
-     setting.
+     setting. For a method that takes none, go on to remedy 3, or offer the
+     interface of that row.
   3. Lengthen the warmup, such as from 500 to 2000 iterations, so that the
      adaptation of the step size and the mass matrix settles.
 
@@ -421,7 +425,11 @@ grade, by step 6, is *passed* or *passed with notes*.
 - **Forecasts:** score a forecast of a time series or of new locations with
   a proper scoring rule, such as the log score or the continuous ranked
   probability score, and check its calibration with the probability integral
-  transform (Gneiting & Raftery 2007; Gneiting et al. 2007).
+  transform (Gneiting & Raftery 2007; Gneiting et al. 2007). Check the
+  probability of an event, such as a yield below a threshold, by a
+  reliability table: bin the units by their predicted probability, and set
+  the observed count of events in each bin beside its expected count and the
+  range that calibrated probabilities give, with the Brier score.
 - **Valid likelihoods only:** LOO, WAIC, and model comparison use the
   normalized pointwise log likelihood. A likelihood known only up to a
   constant that does not depend on the parameters, such as a learned
