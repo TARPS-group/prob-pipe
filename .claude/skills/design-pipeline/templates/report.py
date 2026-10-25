@@ -23,6 +23,7 @@ from pipeline_support import (
     QUANTILES,
     coordinate_names,
     divergences_of,
+    provenance_steps,
     refit_label,
     write_json,
 )
@@ -117,6 +118,31 @@ def show_answers(name: str, answers: dict, settings) -> None:
     print_labeled(settings, name, f"chance of a low mean yield in a dry, hot year: {p_low:.2f}")
 
 
+def show_provenance(name: str, answers: dict, settings) -> None:
+    """Print and save each answer's chain of steps back to the data file."""
+    chains = {answer: provenance_steps(value) for answer, value in answers.items()}
+    write_json(output_path(settings, name, "answer_provenance.json"), chains)
+    for answer, steps in chains.items():
+        lines = "".join(f"\n  {step_line(step)}" for step in steps)
+        print_labeled(settings, name, f"provenance of {answer}, nearest step first:{lines}")
+
+
+def step_line(step: dict, width: int = 60) -> str:
+    """One step of a provenance chain: its result, its operation, route, and method, and exactness.
+
+    A label longer than `width` is shortened, except the label of the loaded file, and the saved
+    chain keeps every label whole.
+    """
+    result = step["result"]
+    if len(result) > width and step["operation"] != "workflow.load_data":
+        result = result[: width - 3] + "..."
+    parts = [f"{result}: {step['operation']}"]
+    parts += [f"{k} {step[k]}" for k in ("route", "method") if step[k] is not None]
+    if step["exact"] is not None:
+        parts.append("exact" if step["exact"] else "approximate")
+    return ", ".join(parts)
+
+
 # --- OPTIONAL: plug-in forecast --------------------------------------------------
 
 
@@ -164,21 +190,6 @@ def show_external_comparison(name: str, answers: dict, external: pd.DataFrame, s
     table = pd.DataFrame([ours, theirs], index=rows, columns=QUANTILE_COLUMNS)
     heading = "change per degree Celsius, ProbPipe and external"
     print_and_save_table(settings, name, table, "external_comparison.csv", heading)
-
-
-# --- OPTIONAL: provenance --------------------------------------------------------
-
-
-def show_routes(name: str, results: dict, settings) -> None:
-    """Print and save the route and the method of each result, and whether it is exact."""
-    routes = {
-        result: {k: value.provenance.metadata.get(k) for k in ("route", "method", "exact")}
-        for result, value in results.items()
-    }
-    write_json(output_path(settings, name, "routes.json"), routes)
-    for result, route in routes.items():
-        line = f"{result}: route {route['route']}, method {route['method']}, exact {route['exact']}"
-        print_labeled(settings, name, line)
 
 
 # --- OPTIONAL: compare algorithms ------------------------------------------------

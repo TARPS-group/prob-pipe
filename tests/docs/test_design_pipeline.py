@@ -11,6 +11,7 @@ to end, whole and with its optional blocks deleted.
 from __future__ import annotations
 
 import ast
+import hashlib
 import importlib
 import json
 import os
@@ -241,9 +242,17 @@ class TestPipelineSkeleton:
 
     @classmethod
     def _run(
-        cls, workspace: Path, stage: str, pared: bool = False, **settings: str
+        cls,
+        workspace: Path,
+        stage: str,
+        pared: bool = False,
+        edit: tuple[str, str] | None = None,
+        **settings: str,
     ) -> subprocess.CompletedProcess:
-        """Run the example copied to *workspace* in *stage*, from another directory."""
+        """Run the example copied to *workspace* in *stage*, from another directory.
+
+        *edit* replaces a piece of the pipeline's source, once, before the run.
+        """
         pytest.importorskip("matplotlib")
         pytest.importorskip("pandas")
         for path in TEMPLATES.iterdir():
@@ -251,6 +260,11 @@ class TestPipelineSkeleton:
                 shutil.copy(path, workspace)
         if pared:
             cls._pare(workspace)
+        if edit is not None:
+            script = workspace / "pipeline_skeleton.py"
+            source = script.read_text()
+            assert source.count(edit[0]) == 1, edit[0]
+            script.write_text(source.replace(*edit))
         pythonpath = os.pathsep.join(filter(None, [str(ROOT), os.environ.get("PYTHONPATH")]))
         env = os.environ | settings | {"STAGE": stage, "PYTHONPATH": pythonpath}
         return subprocess.run(
@@ -285,6 +299,44 @@ class TestPipelineSkeleton:
         assert "OPTIONAL:" not in (tmp_path / "pipeline_skeleton.py").read_text().split('"""')[2]
         assert check_symbols.main([str(tmp_path / "pipeline_skeleton.py")]) == 0
         assert not (tmp_path / "checks" / "smoke" / "model_comparison.csv").exists()
+
+    def test_the_provenance_of_each_answer_reaches_the_data_file(self, tmp_path):
+        result = self._run(tmp_path, "smoke", pared=True)
+        assert result.returncode == 0, result.stderr
+        heading = "smoke run, not for inference: normal: provenance of change_per_c"
+        assert heading in result.stdout
+        chains = json.loads(
+            (tmp_path / "checks" / "smoke" / "normal_answer_provenance.json").read_text()
+        )
+        sha256 = hashlib.sha256((tmp_path / "example_data.csv").read_bytes()).hexdigest()
+        for answer, steps in chains.items():
+            loads = [s for s in steps if s["operation"] == "workflow.load_data"]
+            assert any(sha256 in step["result"] for step in loads), answer
+
+    @pytest.mark.parametrize(
+        "edit, message",
+        [
+            (
+                (
+                    "fit(model, observations(data), settings",
+                    "fit(model, {RESPONSE: np.asarray(data[RESPONSE])}, settings",
+                ),
+                "does not reach load_data('example_data.csv'",
+            ),
+            (
+                (
+                    '"p_low_yield_dry_hot": expectation(yield_dry_hot, is_low_yield)',
+                    '"p_low_yield_dry_hot": np.asarray(expectation(yield_dry_hot, is_low_yield))',
+                ),
+                "The answer p_low_yield_dry_hot records no provenance",
+            ),
+        ],
+        ids=["observations converted", "answer converted"],
+    )
+    def test_a_broken_provenance_chain_stops_the_smoke_stage(self, tmp_path, edit, message):
+        result = self._run(tmp_path, "smoke", pared=True, edit=edit)
+        assert result.returncode != 0
+        assert message in result.stderr
 
     def test_a_hold_leaves_the_smoke_stage_without_a_fit(self, tmp_path):
         result = self._run(tmp_path, "smoke", pared=True, HOLD_SIMULATED_FITS="2026-10-25")

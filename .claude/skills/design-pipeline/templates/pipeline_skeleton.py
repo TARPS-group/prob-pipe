@@ -4,8 +4,8 @@ The pipeline answers two questions: how much the yield changes per degree
 Celsius, and how likely a low mean yield is in a dry, hot year. Each choice is
 made in one place:
 
-1. the data file, its checks, and its units are in `prepare_inputs()` and
-   `check_columns()`;
+1. the data file is read by `load_data()`, and its checks and units are in
+   `prepare_inputs()` and `check_columns()`;
 2. the models, their priors, and their likelihoods are in `build_model()`;
 3. the inference method of each model and the budgets of each stage are in
    `INFERENCE_METHODS` and `BUDGETS`;
@@ -18,6 +18,8 @@ stage prints its results and saves them in its output folder, and only the
 fit stage writes to `results/`.
 """
 
+import hashlib
+import io
 from pathlib import Path
 
 import jax
@@ -30,6 +32,8 @@ import sim_data
 from pipeline_support import (
     COVERAGE_LEVEL,
     QUANTILES,
+    check_provenance,
+    file_sha256,
     fit_diagnostics,
     fits_to_rerun,
     grade_recovery,
@@ -126,7 +130,7 @@ def main():
     )
     record_run(settings)
     report.show_stage(settings)
-    data = prepare_inputs(pd.read_csv(DATA_FILE))
+    data = prepare_inputs(load_data(DATA_FILE.name, file_sha256(DATA_FILE)))
     scales = weather_scales(data)
     data, heldout = hold_out(data, HOLDOUT_YEAR)  # OPTIONAL: held-out subset
     models = {name: build_model(name, data, scales) for name in INFERENCE_METHODS}
@@ -165,13 +169,15 @@ def run_model(name: str, model, data: NumericRecord, scales: NumericRecord, sett
     """Fit one model to the response of the stage, and run the steps after the fit."""
     data = with_stage_response(data, model, settings)
     remedy = name in settings.models_with_remedy  # the validation needed it, so every fit uses it
-    posterior = fit(model, {RESPONSE: data[RESPONSE]}, settings, INFERENCE_METHODS[name], remedy)
+    posterior = fit(model, observations(data), settings, INFERENCE_METHODS[name], remedy)
     report.show_diagnostics(name, posterior, settings)
     check = predictive_check(factor(model, RESPONSE), posterior, TEST_STATISTICS, data[RESPONSE])
     report.show_predictive_check(name, check, settings)
     X_dry_hot = design_matrix(weather(**DRY_HOT), scales)
     answers = estimands(posterior, X_dry_hot, scales, settings)
     report.show_answers(name, answers, settings)
+    check_provenance(answers, DATA_FILE, through=("prepare_inputs", "observations"))
+    report.show_provenance(name, answers, settings)
     plug_in = linear_predictor(mean(posterior["beta"]), X_dry_hot)  # OPTIONAL: plug-in forecast
     report.show_plug_in(name, plug_in, answers, settings)  # OPTIONAL: plug-in forecast
     scenarios = answers_by_scenario(posterior, scales, settings)  # OPTIONAL: scenarios
@@ -180,7 +186,6 @@ def run_model(name: str, model, data: NumericRecord, scales: NumericRecord, sett
     report.show_prior_sensitivity(name, sensitivity, settings)  # OPTIONAL: prior sensitivity
     external = pd.read_csv(EXTERNAL_FILE)  # OPTIONAL: external result
     report.show_external_comparison(name, answers, external, settings)  # OPTIONAL: external result
-    report.show_routes(name, {"posterior": posterior, **answers}, settings)  # OPTIONAL: provenance
     methods = compare_algorithms(name, model, data, settings)  # OPTIONAL: compare algorithms
     report.show_algorithms(name, methods, settings)  # OPTIONAL: compare algorithms
     by_year = fit_by_year(name, data, scales, settings)  # OPTIONAL: several datasets
@@ -191,6 +196,19 @@ def run_model(name: str, model, data: NumericRecord, scales: NumericRecord, sett
 # --- Step 1: load and check the data ----------------------------------------
 
 MISSING_CODE = -99
+
+
+@function
+def load_data(path: str, sha256: str) -> pd.DataFrame:
+    """The table in the file `path`, relative to this script, whose contents have the hash `sha256`.
+
+    The label of the result names the path and the hash, so the provenance of
+    each answer ends at these contents of the file.
+    """
+    contents = (HERE / path).read_bytes()
+    if hashlib.sha256(contents).hexdigest() != sha256:
+        raise ValueError(f"The file {path} changed after its hash was computed.")
+    return pd.read_csv(io.BytesIO(contents))
 
 
 @function
@@ -253,9 +271,28 @@ def select_rows(data: NumericRecord, rows) -> NumericRecord:
     return NumericRecord({field: values[rows] for field, values in data.items()})
 
 
+@function
+def observations(data: NumericRecord) -> NumericRecord:
+    """The observed response of `data`, in the form that `condition_on` takes."""
+    return NumericRecord({RESPONSE: data[RESPONSE]})
+
+
+@function
+def response_batch(data: NumericRecord, level: str) -> RecordBatch:
+    """The responses of `data`, of shape (element, field), as a batch on the level `level`."""
+    return RecordBatch({RESPONSE: data[RESPONSE]}, level)
+
+
+@function
+def with_response(data: NumericRecord, y_t_per_ha) -> NumericRecord:
+    """`data` with the response `y_t_per_ha` in place of the observed one."""
+    return NumericRecord({field: values for field, values in data.items()} | {RESPONSE: y_t_per_ha})
+
+
 TEMP = 2  # the column of temperature in X, and so the coordinate of its slope in beta
 
 
+@function
 def design_matrix(weather, scales: NumericRecord) -> jnp.ndarray:
     """The design matrix X, whose row i is [1, rain_i, temp_i] in standard deviations."""
     rain = (jnp.asarray(weather["rain_mm"]) - scales["rain_mm/mean"]) / scales["rain_mm/sd"]
@@ -276,6 +313,7 @@ def hold_out(data: NumericRecord, year: int) -> tuple[NumericRecord, NumericReco
 # --- Step 2: the models --------------------------------------------------------
 
 
+@function
 def build_model(name: str, data: NumericRecord, scales: NumericRecord, prior_scale: float = 1.0):
     """The joint model `likelihood & prior` of yield given rainfall and temperature.
 
@@ -404,7 +442,7 @@ def with_stage_response(data: NumericRecord, model, settings) -> NumericRecord:
     if settings.uses_real_response:
         return data
     datasets, _ = sim_data.simulate(model, 1, RESPONSE)
-    return data.replace({RESPONSE: datasets[RESPONSE].raw[0]})
+    return with_response(data, datasets[RESPONSE].raw[0])
 
 
 # --- What the validation depends on ----------------------------------------------
@@ -413,6 +451,7 @@ def with_stage_response(data: NumericRecord, model, settings) -> NumericRecord:
 VALIDATED = (
     # the data file, whose covariates and size the simulated datasets share, and the data step
     DATA_FILE,
+    load_data,
     prepare_inputs,
     check_columns,
     inches_to_mm,
@@ -430,6 +469,7 @@ VALIDATED = (
     # the simulation of datasets, and the fit with its methods, its budgets, and the remedies
     # of the validation and of the fit to the real data
     sim_data.simulate,
+    observations,
     fit,
     INFERENCE_METHODS,
     BUDGETS["validate"],
@@ -527,10 +567,10 @@ PRIOR_SCALES = [1.0, 3.0]
 
 def prior_sensitivity(name: str, data: NumericRecord, scales: NumericRecord, settings) -> dict:
     """The quantiles of the change in yield per °C under each prior scale of PRIOR_SCALES."""
-    # One model per scale, since each holds its own priors.
-    models = [build_model(name, data, scales, scale) for scale in PRIOR_SCALES]
-    observed = {RESPONSE: jnp.tile(jnp.asarray(data[RESPONSE]), (len(PRIOR_SCALES), 1))}
-    batch = DistributionBatch(models, "prior_scale"), RecordBatch(observed, "prior_scale")
+    models = models_by_prior_scale(name, data, scales)
+    every_row = np.tile(np.arange(len(np.asarray(data[RESPONSE]))), (len(PRIOR_SCALES), 1))
+    observed = response_batch(select_rows(data, every_row), "prior_scale")
+    batch = models, observed
     remedy = name in settings.models_with_remedy
     posteriors = fit(*batch, settings, INFERENCE_METHODS[name], remedy)
     beta = quantile(posteriors, QUANTILES)["beta"]
@@ -538,12 +578,17 @@ def prior_sensitivity(name: str, data: NumericRecord, scales: NumericRecord, set
     return {"prior_scale": PRIOR_SCALES, "change_per_c": change_per_c}
 
 
+@function
+def models_by_prior_scale(
+    name: str, data: NumericRecord, scales: NumericRecord
+) -> DistributionBatch:
+    """One model per scale of PRIOR_SCALES, since each holds its own priors."""
+    models = [build_model(name, data, scales, scale) for scale in PRIOR_SCALES]
+    return DistributionBatch(models, "prior_scale")
+
+
 # --- OPTIONAL: external result ---------------------------------------------------
 # The quantiles of another tool or of an earlier run, read from EXTERNAL_FILE.
-
-
-# --- OPTIONAL: provenance --------------------------------------------------------
-# The route and the method of each result, and whether it is exact.
 
 
 # --- OPTIONAL: compare algorithms ------------------------------------------------
@@ -552,7 +597,7 @@ def prior_sensitivity(name: str, data: NumericRecord, scales: NumericRecord, set
 
 def compare_algorithms(name: str, model, data: NumericRecord, settings) -> dict:
     """The method that condition_on selects, and the posterior of each method."""
-    observed = {RESPONSE: data[RESPONSE]}
+    observed = observations(data)
     remedied = name in settings.models_with_remedy
     posteriors = {}
     for method in COMPARED_METHODS:  # each method runs its own algorithm
@@ -575,15 +620,24 @@ def fit_by_year(name: str, data: NumericRecord, scales: NumericRecord, settings)
         counts = dict(zip(years.tolist(), rows_per_year.tolist(), strict=True))
         raise ValueError(f"fit_by_year needs the same number of rows in each year, not {counts}.")
     rows = np.argsort(np.asarray(data["year"]), kind="stable").reshape(len(years), -1)
-    # One model per year, since each holds the weather of its year.
-    models = [build_model(name, select_rows(data, year_rows), scales) for year_rows in rows]
-    observed = {RESPONSE: select_rows(data, rows)[RESPONSE]}  # (year, field)
-    batch = DistributionBatch(models, "year"), RecordBatch(observed, "year")
+    batch = (
+        models_by_year(name, data, scales, rows),
+        response_batch(select_rows(data, rows), "year"),
+    )
     remedy = name in settings.models_with_remedy
     posteriors = fit(*batch, settings, INFERENCE_METHODS[name], remedy)
     beta = quantile(posteriors, QUANTILES)["beta"]
     change_per_c = unstandardize_slope(beta, scales["temp_c/sd"], TEMP)
     return {"year": years, "change_per_c": change_per_c}
+
+
+@function
+def models_by_year(
+    name: str, data: NumericRecord, scales: NumericRecord, rows
+) -> DistributionBatch:
+    """One model per row of `rows`, at the weather of the observations that it selects."""
+    models = [build_model(name, select_rows(data, group), scales) for group in rows]
+    return DistributionBatch(models, "year")
 
 
 # --- OPTIONAL: held-out subset (its score) ---------------------------------------
@@ -596,6 +650,7 @@ def score_heldout(fits: dict, heldout: NumericRecord, scales: NumericRecord, set
     for name, result in fits.items():  # the models differ in their parameters
         # The held-out year has its own weather, so its model is built from its rows.
         model = build_model(name, heldout, scales)
+        # The merge `&` records no provenance, so the chain of the held-out scores stops here.
         predictive = factor(model, RESPONSE) & result["posterior"]
         draws = sample(predictive, sample_shape=(settings.budget["n_draws"],))
         y_draws = jnp.asarray(draws[RESPONSE].raw)  # (draw, field)

@@ -209,6 +209,11 @@ def code_hash(validated: tuple) -> str:
     return digest.hexdigest()
 
 
+def file_sha256(path: Path) -> str:
+    """The SHA-256 hash of the contents of the file `path`."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def probpipe_commit() -> str:
     """The commit of the ProbPipe checkout, or "unknown" for an installed package."""
     checkout = Path(probpipe.__file__).resolve().parents[1]
@@ -246,6 +251,71 @@ def divergences_of(posterior) -> int | str:
     """
     count = posterior.diagnostics.n_divergences
     return "not applicable for this method" if isinstance(count, NotComputed) else int(count)
+
+
+# --- The provenance of the answers ------------------------------------------------
+
+# The descriptors of the functions and the operations that a step called, which hold no provenance.
+CALLABLE_TYPES = ("Function", "Operation")
+
+
+def provenance_steps(result) -> list[dict]:
+    """The steps behind `result`, nearest first, each with its operation, route, method, and exactness.
+
+    The steps are the results that `provenance_ancestors()` returns, without
+    the functions and the operations that computed them. A step that records
+    no provenance has the operation None.
+    """
+    nodes = [(result.label, type(result).__name__, result.provenance)]
+    nodes += [
+        (node.label, node.type_name, node.provenance)
+        for node in probpipe.provenance_ancestors(result)
+        if node.type_name not in CALLABLE_TYPES
+    ]
+    steps = []
+    for label, type_name, provenance in nodes:
+        metadata = provenance.metadata if provenance is not None else {}
+        steps.append(
+            {
+                "result": label or type_name,
+                "operation": provenance.operation if provenance is not None else None,
+                "route": metadata.get("route"),
+                "method": metadata.get("method"),
+                "exact": metadata.get("exact"),
+            }
+        )
+    return steps
+
+
+def check_provenance(
+    answers: dict, data_file: Path, *, load_step: str = "load_data", through: tuple[str, ...]
+) -> None:
+    """Raise a ValueError that names the broken link when an answer's provenance misses `data_file`.
+
+    Each answer's chain holds the result of `load_step` for the current
+    contents of `data_file`, each step of `through` with that result among its
+    ancestors, and only results that record their provenance. A step that
+    converts a result to a plain array, such as a NumPy conversion, records
+    none and breaks the chain.
+    """
+    loaded = f"{load_step}({data_file.name!r}, {file_sha256(data_file)!r})"
+    for name, answer in answers.items():
+        if getattr(answer, "provenance", None) is None:
+            raise ValueError(f"The answer {name} records no provenance.")
+        steps = provenance_steps(answer)
+        broken = [step["result"] for step in steps if step["operation"] is None]
+        if broken:
+            raise ValueError(
+                f"The provenance of the answer {name} breaks at {broken[0]!r}, "
+                "a result that records no provenance."
+            )
+        for step_name in through:
+            results = [s["result"] for s in steps if s["operation"] == f"workflow.{step_name}"]
+            if not any(loaded in result for result in results):
+                raise ValueError(
+                    f"The provenance of the answer {name} does not reach {loaded} "
+                    f"through {step_name}."
+                )
 
 
 def write_json(path: Path, value: dict) -> None:

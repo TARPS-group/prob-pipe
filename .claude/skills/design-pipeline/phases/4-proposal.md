@@ -153,7 +153,6 @@ computes. Keep a block when the design calls for it:
 | scenarios | the user compares conditions |
 | prior sensitivity | the user asks how much the priors matter, by RESOURCES.md stage H |
 | external result | the user must reconcile the answer with another tool's or an earlier run's |
-| provenance | the user reports how each result was computed, as in a methods section |
 | compare algorithms | the choice of inference method is in question, by RESOURCES.md stage E |
 | several datasets | the design reports an answer per site, group, or year |
 | bring in a model from another package | the model is written in PyMC, Stan, or the user's code, by the row "Bring any model" of CAPABILITIES.md |
@@ -239,6 +238,13 @@ pipeline (Wilson et al. 2017):
    presents results or runs steps that differ in structure, such as models
    with different parameters. `<workspace>/sim_data.py` draws the simulated data
    at the real design and masks them to the real pattern of missing values.
+7. **Provenance to the data file.** Every answer's provenance reaches the data
+   file. Each step from the file to an answer is a ProbPipe `function` or
+   operation, starting with `load_data(path, sha256)`, whose label records the
+   file's path and the hash of its contents. The pipeline prints and saves
+   each answer's chain with `report.show_provenance()`, and
+   `check_provenance()` stops the run, the smoke stage included, at a step
+   that records no provenance, such as a NumPy conversion.
 
 A notebook mirrors this structure and explains the analysis to its reader
 (Rule et al. 2019). Its first code cell holds the settings and the call of
