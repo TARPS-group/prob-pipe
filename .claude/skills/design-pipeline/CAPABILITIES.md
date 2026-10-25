@@ -60,7 +60,7 @@ The built-in families and the hierarchical example of the user guide are conveni
 | Calibrate an amortized posterior | `probpipe.validation.interval_coverage`, `probpipe.validation.simulation_based_calibration`, `sample`, `condition_on` | `docs/tutorials/06_simulating.ipynb`, section "5. Checking the amortized posterior" | I. Simulators, amortized inference, and emulators | `sample(model, sample_shape=(n,))` simulates held-out parameters and data, and `condition_on` evaluates the amortized posterior at each simulated dataset. `interval_coverage(draws, truth, levels=(0.5, 0.8, 0.9, 0.95))` reports whether each central interval holds the true value, so its average over the simulations at each level is the expected-coverage check of RESOURCES.md stage I. ProbPipe has no coverage of highest-posterior-density regions, no TARP test, and no classifier two-sample test, which are ProbPipe gaps. |
 
 The batched recipe of the validation, for a joint model `model = likelihood & prior` whose parameters are the fields `parameters` and whose data is the field `"y"`, with `n` datasets simulated from prior draws and `m` at a chosen value, is below.
-In a pipeline it is the body of a step function, such as `validate(model, likelihood, settings)`, whose settings object holds `n`, `m`, `method`, and `options`, and which returns the grade and the table of the validation to `report.py`.
+In a pipeline it is the body of a step function, such as `validate(model, likelihood, settings)`, whose settings object holds `n`, `m`, `method`, and `options`, and which returns the grade and the table of the validation that `record_validation()` records.
 `validate()` of `templates/pipeline_skeleton.py` runs its first part, over the prior draws, as such a function.
 
 ```python

@@ -181,14 +181,17 @@ pipeline (Wilson et al. 2017):
 2. **One call for the stage.** `main()` starts with one call of
    `resolve_stage()` of `<workspace>/pipeline_support.py`, which returns the
    settings of the stage: the budgets, the steps that run, the models to fit
-   with their labels, and the output folder. That module holds the gate and
-   the grade of the validation, so the pipeline shows the data, the models
-   with their priors, and the steps, and it defines no classes.
+   with their labels, and the output folder. That module holds the gate, the
+   records of the run, and the grade of the validation, so the pipeline shows
+   the data, the models with their priors, and the steps, and it defines no
+   classes. `main()` runs the random steps in one `workflow_run(seed=SEED)`,
+   so a rerun reproduces each result.
 3. **Pure steps.** A step function takes its inputs as arguments and returns
    values. The reads and writes of files happen in `main()`, in
    `pipeline_support.py`, and in `<workspace>/report.py`, which holds every
    print, table, and figure and formats each interval by rule 4 of
-   [Messages](../INSTRUCTIONS.md#messages).
+   [Messages](../INSTRUCTIONS.md#messages). A `report.show_*` call shows a
+   step's named result and computes nothing that a later step uses.
 4. **Checked data.** The data step checks the data right after the read: the
    expected columns, their types and ranges, and the codes of missing values.
    It stops at the first problem with a message that names the column.
@@ -198,8 +201,9 @@ pipeline (Wilson et al. 2017):
 6. **Close to the mathematics.** The model is written as its generative
    equations, with the design document's notation as names. Each repeated
    computation is batched, such as the validation's datasets in one sweep by
-   the recipe of [CAPABILITIES.md](../CAPABILITIES.md), and a Python loop
-   only presents results. `<workspace>/sim_data.py` draws the simulated data
+   the recipe of [CAPABILITIES.md](../CAPABILITIES.md). A Python loop
+   presents results or runs steps that differ in structure, such as models
+   with different parameters. `<workspace>/sim_data.py` draws the simulated data
    at the real design and masks them to the real pattern of missing values.
 
 A notebook mirrors this structure and explains the analysis to its reader
@@ -210,11 +214,11 @@ output. The step functions may be in `<workspace>/steps.py`, which the
 notebook imports, while the models and their priors stay in a cell of the
 notebook. The notebook runs from top to bottom in a fresh kernel.
 
-The code runs in three stages. The first code cell after the install cell,
-or the top of a script, reads the stage with
-`STAGE = os.environ.get("STAGE", "smoke")` and sets the budgets of each stage,
-so a user who runs the notebook in Jupyter or on Colab sets the stage by
-editing that default.
+The code runs in three stages, each with its budgets in the settings.
+`resolve_stage()` reads the stage from the environment variable `STAGE`,
+`smoke` by default. A notebook's first code cell sets it with
+`os.environ.setdefault("STAGE", "smoke")`, whose default a user on Jupyter or
+Colab edits.
 
 1. `STAGE=smoke` shows that the code runs, at small budgets, such as a few
    draws, chains, or training epochs. It runs the data step, the checks of
@@ -239,14 +243,17 @@ editing that default.
 2. `STAGE=validate` runs the prior predictive check and the validation on
    realistic simulated data at their full budgets, and grades the validation
    of each model by RESOURCES.md stage D. Under a hold it stops at once. It
-   deletes `<workspace>/runs/validation.json` when it starts and writes it
-   when the validation ends, with these entries:
+   deletes `<workspace>/runs/validation.json` when it starts, and
+   `record_validation()` writes it as each model's validation ends, with
+   these entries:
    - `stage`, which is `"validate"`;
    - the design version;
-   - a hash of the code that the validation depends on: the source of the
-     script, or of the code cells of the notebook, and of each module beside
-     it that it imports other than `<workspace>/report.py`, with each line
-     that reads `os.environ` left out;
+   - the hash of what the validation depends on: the data step, the model
+     definitions, the simulation of datasets, the fit function with its
+     methods and budgets, and the grading code of stage D. The pipeline
+     declares these in `VALIDATED`, and a step after the fit, such as an
+     answer, a check, or a comparison, and `report.py` leave the hash
+     unchanged;
    - for each model, its grade with its sentence and notes, whether it
      needed the remedy of a rerun, and its table.
 
@@ -266,9 +273,7 @@ editing that default.
    stops with an error when no model is left to fit.
    The step that returns the observed values reads that mark, and in the
    smoke stage it returns simulated data. A run whose gate fails therefore
-   fits nothing, even under nbconvert's `--allow-errors`. On Colab, the
-   session's files hold no copy of the notebook, so the gate there skips the
-   hash and says so. Colab also deletes
+   fits nothing, even under nbconvert's `--allow-errors`. Colab deletes
    the files of `/content` when its runtime resets, so run the validate and
    the fit stage in one session, or upload the `<workspace>/runs/validation.json`
    from a validate run of the same design version.
@@ -276,10 +281,9 @@ editing that default.
 The user chooses provisional results after a failed validation or by the
 choices of RESOURCES.md stage D, and you record the choice as a decision with
 the user's reason, by rule 4 of the
-[rules for revisions](5-feedback.md#rules-for-revisions). The first code
-cell reads the reason with
-`ALLOW_UNVALIDATED = os.environ.get("ALLOW_UNVALIDATED", "")`, and the user
-sets the variable or edits that default. When it holds a reason, the gate
+[rules for revisions](5-feedback.md#rules-for-revisions). `resolve_stage()`
+reads the reason from the environment variable `ALLOW_UNVALIDATED`, which the
+user sets, as for `STAGE`. When it holds a reason, the gate
 also fits each model that no validation of the current code passed, with
 one of two labels:
 
@@ -303,7 +307,7 @@ layout of the workspace.
 Every number in section 0 and in the methods paragraph of the design document
 is copied from a file that the fit stage wrote to `<workspace>/outputs/`
 (Sandve et al. 2013). `report.py` saves each figure with a CSV file of the
-numbers it plots. Each output folder `<folder>` holds
+numbers it plots. `record_run()` writes into each output folder `<folder>`
 `<folder>/provenance.json`, with the seed, the ProbPipe version and checkout
 commit, the design version, and the code hash, and
 `<folder>/environment.txt`, with the versions of Python and of each installed
