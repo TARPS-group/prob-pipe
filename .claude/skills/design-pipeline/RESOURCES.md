@@ -240,6 +240,13 @@ is *passed* or *passed with notes*.
   7. Tree depth: trajectories that stop at the maximum tree depth make a run
      inefficient, and a higher maximum or a reparameterization reduces the
      cost. The posterior stays valid when the other criteria pass.
+  8. Values: each criterion has a value. A criterion reported as not
+     computed, such as an R-hat of N/A, counts as failed. A chain that never
+     leaves its initial point, as when the log density is NaN there, gives
+     such an R-hat, an MCSE of zero, and a divergence at every transition.
+
+  Judge a run by these criteria themselves, because a summary that reports
+  the run as passing can leave some of them unchecked.
 - **Folk theorem:** computational trouble usually signals a model problem.
   Before you tune the sampler, look for weak identifiability, a poor
   parameterization, poorly scaled parameters, or a model that disagrees with
