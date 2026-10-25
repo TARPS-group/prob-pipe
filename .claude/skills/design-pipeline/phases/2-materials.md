@@ -31,8 +31,12 @@ For each dataset you can open:
   [rules for user materials](../INSTRUCTIONS.md#user-materials-and-code). Load
   a file of a few megabytes or less in full, and read the header and a sample
   of the rows of a larger one. Use `pandas` if it is installed, and the
-  standard library otherwise.
-- Record these features in `<workspace>/notes/data-notes.md`:
+  standard library otherwise. The first inspection prints the covariates and
+  the missing values, and of the outcome only its type and its missing
+  values. A second inspection prints the distribution of the outcome after
+  the elicitation of plausible values below.
+- Record these features in `<workspace>/notes/data-notes.md`, those of the
+  outcome's values from the second inspection:
   - the format and the size;
   - the variables, with their types, units, and ranges;
   - missingness;
@@ -74,14 +78,14 @@ For each dataset you can open:
   ProbPipe, record where it runs and where its script is kept in the design
   document.
 
-After the inspection, show the user one quick summary of the structure of
+After the first inspection, show the user one quick summary of the structure of
 the data, such as the counts of observations by group and time and where
 values are missing, and ask whether it matches what they expected.
 
-Before you show a summary of the outcome, such as its mean or its largest
-value, ask the user for the plausible range of the outcome and for one or two
-realistic values of the quantities they want to learn, such as "about ten
-times fewer ticks at 530 m than at 400 m". These answers set the priors and
+Before you inspect or show the distribution of the outcome, such as its mean
+or its largest value, ask the user for the plausible range of the outcome and
+for one or two realistic values of the quantities they want to learn, such as
+"about ten times fewer ticks at 530 m than at 400 m". These answers set the priors and
 the chosen values of the validation of [RESOURCES.md](../RESOURCES.md) stage
 D, and they rest on the user's knowledge alone while the user has not seen the
 summary. When the user asks for the summary of the outcome first, or has
