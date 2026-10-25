@@ -437,6 +437,19 @@ is *passed* or *passed with notes*.
 
 - Propagate the full posterior into the estimands with joint draws of the
   parameters, and report the uncertainty of the estimands.
+- **Audit the uncertainty of a forecast.** List which sources of uncertainty
+  the forecast propagates and which it holds fixed (Dietze 2017):
+  1. the parameters;
+  2. the initial conditions;
+  3. the parameters fixed at one value, such as uncalibrated ones;
+  4. the drivers, such as forecast weather;
+  5. the process error;
+  6. the observation error.
+
+  Say whether its intervals are for the latent quantity or for new
+  observations. An interval for the latent quantity leaves out the
+  observation error, so its coverage of observed values falls below its
+  level. Propose each source that the forecast holds fixed as an addition.
 - **Sensitivity analysis:** measure how the conclusions change under
   alternative priors, likelihoods, or data exclusions, and report the changes
   that matter. Power-scaling the prior and the likelihood measures this

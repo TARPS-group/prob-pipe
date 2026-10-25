@@ -146,7 +146,9 @@ the proposal" of phases/4-proposal.md apply to it, and so do the
       [RESOURCES.md](../RESOURCES.md) stage D;
    2. the diagnostics of stage E;
    3. the predictive checks of stage F;
-   4. the propagation of the posterior into the downstream quantities;
+   4. the propagation of the posterior into the downstream quantities. For
+      a forecast, this piece starts with the audit of the original's forecast
+      by the bullet "Audit the uncertainty of a forecast" of stage H;
    5. the provenance of the data steps.
 
    An addition that leaves the model as it is belongs to the class *added
