@@ -177,6 +177,33 @@ class TestCheckSymbols:
         assert out.count("`from probpipe import sampel` fails") == 1
         assert "report.py:1:" in out
 
+    def test_a_product_of_laws_is_reported_once_per_chain(self, tmp_path, capsys):
+        script = tmp_path / "pipeline.py"
+        script.write_text(
+            "from probpipe import Beta, Normal, conditional_distribution\n"
+            "prior = (Normal('a', 0.0, 1.0) * Beta('b', 2.0, 2.0) * Normal('c', 0.0, 1.0)).with_label('p')\n"
+            "likelihood = conditional_distribution(lambda a: Normal('y', a, 1.0))\n"
+            "model = likelihood * prior\n"
+            "merged = likelihood & prior\n"
+            "scaled = 2.0 * prior\n"
+        )
+        assert check_symbols.main([str(script)]) == 1
+        out = capsys.readouterr().out
+        assert out.count("multiplies laws") == 2
+        assert "pipeline.py:2:" in out and "pipeline.py:4: `likelihood * prior`" in out
+
+    def test_an_attribute_that_an_output_spec_lacks_is_reported(self, tmp_path, capsys):
+        script = tmp_path / "pipeline.py"
+        script.write_text(
+            "from probpipe import Normal\n"
+            "prior = Normal('a', 0.0, 1.0)\n"
+            "print(prior.event_spec.outputs, prior.event_spec.components)\n"
+        )
+        assert check_symbols.main([str(script)]) == 1
+        out = capsys.readouterr().out
+        assert "an `OutputSpec` has no attribute `components`" in out
+        assert "`outputs`" not in out
+
     def test_a_reassigned_name_is_not_checked(self, tmp_path):
         script = tmp_path / "pipeline.py"
         script.write_text("from probpipe import Normal\nNormal = dict\nNormal(anything=1)\n")

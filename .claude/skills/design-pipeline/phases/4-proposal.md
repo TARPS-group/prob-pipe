@@ -260,10 +260,15 @@ Take these steps before you show the code, and again after each revision:
 1. Run `<python> <assistant>/check_symbols.py <workspace>/pipeline.py`, or the
    same command on the notebook, and fix each problem that it prints. It
    checks the file and each module beside it that the file imports, such as
-   `<workspace>/report.py`. It checks that each ProbPipe name resolves, that
-   each call's arguments bind to the signature, and that the code calls no
-   export that is not implemented. It checks no meaning, so read the docstring
-   of each call whose meaning you are unsure of.
+   `<workspace>/report.py`. It checks five things:
+   - each ProbPipe name resolves;
+   - each call's arguments bind to the signature;
+   - the code calls no export that is not implemented;
+   - no `*` joins two laws, which `&` merges;
+   - each attribute read after `.event_spec` exists.
+
+   It checks no meaning, so read the docstring of each call whose meaning you
+   are unsure of.
 2. If ProbPipe imports here, run the smoke stage by the
    [rules for running code](../INSTRUCTIONS.md#user-materials-and-code), and
    fix what breaks. Otherwise, say that the code has not been run. The

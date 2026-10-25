@@ -2,7 +2,7 @@
 
 The ``design-pipeline`` assistant runs this script on each version of a user's
 ``pipeline.py``, or of a notebook, before it shows the code. The script parses
-each file with ``ast`` and checks five things against the ``probpipe`` that this
+each file with ``ast`` and checks seven things against the ``probpipe`` that this
 Python imports:
 
 1. each ``import probpipe...`` and ``from probpipe... import ...`` resolves;
@@ -15,7 +15,18 @@ Python imports:
    assigns a string once at its top level, such as ``METHOD = "tfp_nuts"``;
 5. the file calls no top-level export that raises ``NotImplementedError`` on
    every call, which ``build_corpus.unimplemented_exports`` finds in the
-   source of the imported ``probpipe``.
+   source of the imported ``probpipe``;
+6. no ``*`` joins two laws, because ``*`` between laws raises ``TypeError``
+   and ``&`` merges them. A law is one of four expressions:
+
+   - a call of a ProbPipe distribution class, or of a function that builds a
+     law, such as ``conditional_distribution``;
+   - a name that the file assigns once to a law;
+   - ``law.with_label(...)``;
+   - a merge or a product of two laws;
+
+7. each attribute read after ``.event_spec``, such as
+   ``model.event_spec.outputs``, is an attribute of ``OutputSpec``.
 
 The script also checks each module beside a file that the file imports, such
 as ``report.py`` for a notebook that runs ``import report``. A name that the
@@ -50,6 +61,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_corpus
 
 _UNRESOLVED = object()
+
+# The ProbPipe functions, other than the distribution classes, that return a law.
+_LAW_FUNCTIONS = (
+    "probpipe.conditional_distribution",
+    "probpipe.distribution",
+    "probpipe.joint",
+    "probpipe.families.glm_likelihood",
+)
 
 
 @dataclass
@@ -157,6 +176,28 @@ def _unimplemented() -> dict[int, str]:
     return found
 
 
+@cache
+def _law_builders() -> tuple[frozenset[int], tuple[type, ...]]:
+    """The ids of the functions of ``_LAW_FUNCTIONS``, and the classes of laws and kernels."""
+    functions = (resolve(name) for name in _LAW_FUNCTIONS)
+    kinds = (
+        resolve("probpipe.Distribution"),
+        resolve("probpipe.distributions.ConditionalDistribution"),
+    )
+    return (
+        frozenset(id(target) for target in functions if target is not _UNRESOLVED),
+        tuple(kind for kind in kinds if kind is not _UNRESOLVED),
+    )
+
+
+def _builds_law(target: Any) -> bool:
+    """Whether calling *target* returns a law: a distribution class or a function of ``_LAW_FUNCTIONS``."""
+    functions, kinds = _law_builders()
+    if id(target) in functions:
+        return True
+    return inspect.isclass(target) and bool(kinds) and issubclass(target, kinds)
+
+
 class Checker(ast.NodeVisitor):
     """Collects the problems of one source file."""
 
@@ -171,6 +212,8 @@ class Checker(ast.NodeVisitor):
         for node in ast.walk(tree):
             for child in ast.iter_child_nodes(node):
                 child.parent = node  # type: ignore[attr-defined]
+        self.laws: set[str] = set()
+        self.tree = tree
 
     @staticmethod
     def _reassigned(tree: ast.Module) -> set[str]:
@@ -202,6 +245,40 @@ class Checker(ast.NodeVisitor):
             and isinstance(node.value, ast.Constant)
             and isinstance(node.value.value, str)
         }
+
+    def find_laws(self) -> None:
+        """Collect the names that the file assigns once to a law, after its imports are bound."""
+        stores: dict[str, int] = {}
+        assignments: dict[str, ast.expr] = {}
+        for node in ast.walk(self.tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                stores[node.id] = stores.get(node.id, 0) + 1
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+            ):
+                assignments[node.targets[0].id] = node.value
+        changed = True
+        while changed:
+            changed = False
+            for name, value in assignments.items():
+                if name not in self.laws and stores.get(name) == 1 and self.is_law(value):
+                    self.laws.add(name)
+                    changed = True
+
+    def is_law(self, node: ast.AST) -> bool:
+        """Whether the expression *node* evaluates to a law, as item 6 of the module docstring defines."""
+        if isinstance(node, ast.Name):
+            return node.id in self.laws
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.BitAnd, ast.Mult)):
+            return self.is_law(node.left) and self.is_law(node.right)
+        if not isinstance(node, ast.Call):
+            return False
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "with_label":
+            return self.is_law(node.func.value)
+        dotted = self.dotted(node.func)
+        return dotted is not None and _builds_law(resolve(dotted))
 
     def report(self, node: ast.AST, message: str) -> None:
         self.problems.append(f"{self.source.where(getattr(node, 'lineno', 0))}: {message}")
@@ -252,7 +329,31 @@ class Checker(ast.NodeVisitor):
             return ".".join([self.bound[node.id], *reversed(attributes)])
         return None
 
+    def visit_products(self) -> None:
+        """Report each ``*`` between two laws, once for a chain such as ``a * b * c``."""
+        for node in ast.walk(self.tree):
+            if not (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult)):
+                continue
+            if not (self.is_law(node.left) and self.is_law(node.right)):
+                continue
+            parent = getattr(node, "parent", None)
+            in_chain = isinstance(parent, ast.BinOp) and isinstance(parent.op, ast.Mult)
+            if not (in_chain and self.is_law(parent)):
+                self.report(
+                    node,
+                    f"`{ast.unparse(node)}` multiplies laws, which raises TypeError: "
+                    "merge them with `&`",
+                )
+
     def visit_Attribute(self, node: ast.Attribute) -> None:
+        value = node.value
+        if isinstance(value, ast.Attribute) and value.attr == "event_spec":
+            spec = resolve("probpipe.OutputSpec")
+            if spec is not _UNRESOLVED and not hasattr(spec, node.attr):
+                self.report(
+                    node,
+                    f"`{ast.unparse(node)}` fails: an `OutputSpec` has no attribute `{node.attr}`",
+                )
         if isinstance(getattr(node, "parent", None), ast.Attribute):
             self.generic_visit(node)
             return
@@ -343,6 +444,8 @@ def check(path: Path) -> tuple[list[str], int, int]:
     tree = ast.parse(source.code, filename=str(path))
     checker = Checker(source, tree)
     checker.visit(tree)
+    checker.find_laws()
+    checker.visit_products()
     return checker.problems, checker.names_checked, checker.calls_checked
 
 
