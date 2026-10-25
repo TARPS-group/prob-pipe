@@ -58,7 +58,7 @@ The built-in families, `glm_likelihood`, and the hierarchical example of the use
 | Validate the computation on realistic simulated data | `sample`, `condition_on`, `condition_on.using`, `RecordBatch`, `DistributionBatch`, `summarize`, `quantile`, `probpipe.validation.simulation_based_calibration`, `probpipe.validation.interval_coverage` | `docs/user_guide/07_checking_results.ipynb`, section "Simulation-based calibration" | D. Validate the computation on realistic simulated data | The recipe below this table runs the validation of RESOURCES.md stage D in batches. One `sample` of the joint model draws every simulated dataset with the parameters that generated it, at the real covariates that the likelihood holds, and `<workspace>/sim_data.py` masks each dataset to the pattern of missing values of the real data. One `condition_on` over the `RecordBatch` of the datasets fits each of them with the planned method, an MCMC method such as `blackjax_nuts` or `nutpie_nuts` included, and returns a `DistributionBatch` with one posterior per dataset on the level `sim`. `summarize` of that batch gives the R-hat and the ESS of each fit, and `quantile` and the summary's `mean` and `sd` give the coverage, the z-scores, and the contraction as array operations over the fits. `summarize` reports no divergences, so the recipe reads them from the sampler statistics of each posterior, which is a ProbPipe gap. `interval_coverage(draws, truth)` reports whether each central interval of one posterior covers the true value, and it takes the draws of an estimand as an array. `simulation_based_calibration(model, observed=..., num_simulations=..., num_posterior_draws=..., method=...)` ranks each parameter among its posterior draws, and its `posterior=` argument takes an amortized posterior, which it evaluates without a fit. Its `method_options=` sets the settings of the replications, such as fewer chains than the real fit. The `SBCResult` that it returns reports no divergences of each replication, which is a ProbPipe gap, so diagnose the validation fits by the recipe. It ranks parameters only, so a data-dependent test quantity is computed in the pipeline's own code and recorded as a ProbPipe gap. A model without a sampler, such as a `StanModel`, draws its datasets by a second route, as "Bring any model" says, and `RecordBatch({"y": draws}, "sim")` holds them, with `draws` of shape `(n, ...)`. |
 | Calibrate an amortized posterior | `probpipe.validation.interval_coverage`, `probpipe.validation.simulation_based_calibration`, `sample`, `condition_on` | `docs/tutorials/06_simulating.ipynb`, section "5. Checking the amortized posterior" | I. Simulators, amortized inference, and emulators | `sample(model, sample_shape=(n,))` simulates held-out parameters and data, and `condition_on` evaluates the amortized posterior at each simulated dataset. `interval_coverage(draws, truth, levels=(0.5, 0.8, 0.9, 0.95))` reports whether each central interval holds the true value, so its average over the simulations at each level is the expected-coverage check of RESOURCES.md stage I. ProbPipe has no coverage of highest-posterior-density regions, no TARP test, and no classifier two-sample test, which are ProbPipe gaps. |
 
-The batched recipe of the validation, for a joint model `model` whose parameters are the fields `parameters` and whose data is the field `"y"`, with `n` simulated datasets:
+The batched recipe of the validation, for a joint model `model = likelihood & prior` whose parameters are the fields `parameters` and whose data is the field `"y"`, with `n` datasets simulated from prior draws and `m` at a chosen value:
 
 ```python
 # All the simulated datasets in one draw. The level is renamed so that a later
@@ -85,11 +85,39 @@ bounds = quantile(posteriors, jnp.array([0.05, 0.95])).to_vector()  # (sim, 2, c
 coverage = ((bounds[:, 0] <= truth) & (truth <= bounds[:, 1])).mean(axis=0)
 z_score = (summary["mean"].to_vector() - truth) / summary["sd"].to_vector()
 with workflow_run(seed=3):
-    prior_variance = sample(model, sample_shape=(4000,)).without("y").to_vector().var(axis=0)
-contraction = 1 - summary["sd"].to_vector() ** 2 / prior_variance
+    prior_draws = sample(model, sample_shape=(4000,)).without("y").to_vector()
+contraction = 1 - summary["sd"].to_vector() ** 2 / prior_draws.var(axis=0)
+
+# Recovery at one chosen value `theta`, a mapping from each parameter to its value,
+# with m datasets drawn from the likelihood at that value.
+with workflow_run(seed=4):
+    at_theta = sample(condition_on(likelihood, theta), sample_shape=(m,)).raw
+    chosen = condition_on.using(method=method, method_options=options)(
+        model, RecordBatch({"y": at_theta}, "sim")
+    )
+    draws = sample(chosen, sample_shape=(1000,)).to_vector()  # (sim, draw, coordinate)
+theta_vector = np.concatenate([np.ravel(theta[name]) for name in parameters])
+chosen_summary = summarize(chosen)
+sd = chosen_summary["sd"].to_vector()
+deviation = draws - draws.mean(axis=1, keepdims=True)
+posterior_cov = np.einsum("sdi,sdj->sij", deviation, deviation) / (draws.shape[1] - 1)
+prior_precision = np.linalg.inv(np.cov(prior_draws, rowvar=False))
+pull = posterior_cov @ prior_precision @ (prior_draws.mean(axis=0) - theta_vector) / sd
+centered = (chosen_summary["mean"].to_vector() - theta_vector) / sd - pull  # (sim, coordinate)
+bias = np.abs(centered.mean(axis=0)) * np.sqrt(m)  # in standard errors
+
+
+def bound(tail: float, results: int) -> float:
+    """The bound whose two-sided tail over `results` results totals `tail`."""
+    return float(scipy.stats.norm.isf(tail / (2 * results)))
+
+
+largest = np.abs(centered).max()  # the largest single miss
+passed = bias.max() <= bound(0.0455, bias.size) and largest <= bound(0.0455, centered.size)
 ```
 
-The recipe orders the coordinates of `truth` and of each summary by the fields of the parameters, so the arrays align.
+The recipe orders the coordinates of each array, such as `truth`, `theta_vector`, and the draws, by the fields of the parameters, so the arrays align.
+RESOURCES.md stage D step 6 defines the bias, the single misses, and their bounds, and with several chosen values, `bias` and `centered` stack over them before `bound` counts the results.
 The fits that a remedy of RESOURCES.md stage E reruns are one sweep over their datasets, `RecordBatch({"y": datasets["y"].raw[divergences > 0]}, "sim")`.
 
 ## Inference

@@ -72,7 +72,10 @@ is *passed* or *passed with notes*.
 1. **Simulate at the real design.** Simulate datasets from the model with the
    actual covariates, sample sizes, grouping structure, and missingness
    pattern of the real data. Take the parameter values from several draws of
-   the prior, and add values that the user judges realistic.
+   the prior, and add one or two values that the user judges realistic, with
+   several datasets at each, 20 by default, because step 6 grades recovery by
+   their mean. When the user cannot name realistic values, validate on the
+   prior draws alone, and say so to the user and in the design document.
 2. **Fit with the planned method.** Fit each simulated dataset with the
    inference method and the settings planned for the real data, and record
    the settings.
@@ -85,16 +88,28 @@ is *passed* or *passed with notes*.
    coverage check uses the datasets simulated from prior draws. Across them,
    the posterior intervals of each estimand cover its true value at about
    their nominal rate. With n datasets, the coverage at the level p has the
-   Monte Carlo standard error √(p(1 − p)/n). At each value that the user
-   chose, check recovery instead. For each parameter, compute the posterior
-   z-score, which is the posterior mean minus the true value over the
-   posterior standard deviation, and the posterior contraction, which is one
-   minus the ratio of the posterior variance to the prior variance. A large
-   z-score marks bias, and a contraction near zero marks a parameter that the
-   data does not inform. Betancourt (2020) describes both. Also check that a
-   wide interval, such as the 95% interval, holds the true value. A posterior
-   at a chosen value shrinks toward the prior, so expect a moderate z-score in
-   the direction of the prior mean.
+   Monte Carlo standard error √(p(1 − p)/n). At each value θ that the user
+   chose, check recovery instead, by three quantities of each parameter in
+   each fit:
+   1. the posterior z-score, which is the posterior mean minus the true value
+      over the posterior standard deviation;
+   2. the posterior contraction, which is one minus the ratio of the posterior
+      variance to the prior variance, and whose value near zero marks a
+      parameter that the data does not inform;
+   3. the pull of the prior, which is Σ_post Σ_prior⁻¹ (μ_prior − θ) over the
+      posterior standard deviation, where Σ_post and Σ_prior are the
+      posterior and the prior covariance and μ_prior is the prior mean.
+
+   Betancourt (2020) describes the first two. An exact posterior at a fixed
+   value shrinks toward the prior mean. In a linear model with normal noise
+   and a normal prior, the z-scores of a parameter at θ therefore have the
+   pull as their mean and a standard deviation of at most one, and the same
+   holds approximately for a posterior close to normal. The *centered
+   z-score*, which is the z-score minus the pull, has mean zero for an exact
+   method, so a mean centered z-score far from zero marks bias. Over the
+   prior draws, the z-score of an exact method has mean zero and variance one,
+   so it is its own centered z-score there. Also check that a wide interval,
+   such as the 95% interval, holds the true value.
 5. **Run SBC when the model or the method calls for it.** Run
    simulation-based calibration (Talts et al. 2018) for a custom likelihood and
    for any approximate method. Run it always for an amortized method, because
@@ -109,13 +124,37 @@ is *passed* or *passed with notes*.
    its result. When you skip SBC, record the reason in the design document.
 6. **Grade the validation.** Grade the validation of each model after the
    remedies of the bullet "Remedy divergences in this order" of stage E, by
-   the criteria below. Their bounds are defaults. A project that sets other
-   bounds records them as a decision with its reason, as a project does that
-   counts every note as a failure.
+   the criteria below. Three of them grade many results at once, so their
+   bounds widen with the number of results M that each grades. The bound of
+   *passed* is b₂(M), the normal quantile whose two-sided tail is 0.0455/M,
+   and the bound of *failed* is b₃(M), whose two-sided tail is 0.0027/M.
+   `scipy.stats.norm.isf(0.0455 / (2 * M))` computes b₂(M). For one result
+   the bounds are 2 and 3, and for eight results they are 2.77 and 3.58. When
+   each result is close to normal, an exact method crosses b₂(M) on some
+   result with probability at most 0.0455, and b₃(M) with probability at most
+   0.0027, whatever the correlation between the results. A single bound of ±3 on each of 30
+   z-scores, in contrast, fails an exact method in about one run in 13. The
+   bias and the single misses use the n datasets of each chosen value, or the
+   prior draws as one group of n datasets when step 1 has no chosen value.
+   The three criteria are these:
+   - *coverage:* the distance of the coverage of each estimand at each level
+     from the level, in Monte Carlo standard errors, with M the number of
+     estimands times the number of levels;
+   - *bias:* the mean centered z-score of each parameter over the n datasets
+     of each group, in standard errors of 1/√n, with M the number of
+     parameters times the number of groups;
+   - *single misses:* the largest absolute centered z-score over every
+     parameter and every dataset of the groups, with M the number K of those
+     z-scores.
+
+   These bounds, and the 20 datasets at each chosen value, are defaults. A
+   project that sets others records them as a decision with its reason. Two
+   named options are *strict single z-scores*, which grades each z-score by
+   the bounds 2 and 3, and *notes fail*, which counts every note as a
+   failure.
    1. *Passed:* every fit passes the criteria of stage E with no divergence,
-      the coverage of each estimand at each level is within two Monte Carlo
-      standard errors of the level, and each posterior z-score at a chosen
-      value lies within ±2.
+      and the coverage, the bias, and the single misses each lie within
+      b₂(M).
    2. *Passed with notes:* no criterion of *failed* holds, and some result
       misses *passed*. Each note names its result. Examples are these:
       - a few fits, at most 5% of them and at least one, whose divergences or
@@ -123,16 +162,22 @@ is *passed* or *passed with notes*.
         1.05 or a bulk ESS of at least 50 per chain, disappear when those
         fits are rerun with a remedy, which the fit to the real data then
         uses;
-      - a coverage between two and three standard errors below its level, or
-        more than two above it, which marks intervals wider than they need to
-        be;
-      - a z-score between 2 and 3 in absolute value;
+      - a coverage between b₂(M) and b₃(M) standard errors below its level,
+        or more than b₂(M) above it, which marks intervals wider than they
+        need to be;
+      - a bias or a single miss between b₂(M) and b₃(M);
       - a contraction below 0.1, which marks an estimand that the data barely
-        inform.
+        inform;
+      - a mean pull beyond ±1, which marks a chosen value whose estimate the
+        prior moves by more than one posterior standard deviation.
    3. *Failed:* divergences or failed diagnostics that the remedies leave, or
-      that occur in more fits; a coverage more than three standard errors
-      below its level; a z-score beyond ±3; or an SBC rank ECDF that leaves
-      its simultaneous band.
+      that occur in more fits; a coverage more than b₃(M) standard errors
+      below its level; a bias or a single miss beyond b₃(M); or an SBC rank
+      ECDF that leaves its simultaneous band.
+
+   Beside the grade, list each centered z-score beyond ±3 with its parameter
+   and its dataset, and the number that chance gives an exact method, which
+   is 0.0027 K, so that no mean hides a large miss.
 
    Report each grade with one sentence, in the user's terms, on what it means
    for the answers:
@@ -144,8 +189,8 @@ is *passed* or *passed with notes*.
 
    In the quick start mode, the validation simulates few datasets, so its
    coverage has a wide Monte Carlo band. Its grade then rests on the
-   diagnostics of each fit and the recovery at the chosen values, and its
-   coverage is reported without a grade.
+   diagnostics of each fit, the bias, and the single misses, and its coverage
+   is reported without a grade.
 
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage D.
 
