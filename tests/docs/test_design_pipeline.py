@@ -303,8 +303,14 @@ class TestPipelineSkeleton:
     def test_the_provenance_of_each_answer_reaches_the_data_file(self, tmp_path):
         result = self._run(tmp_path, "smoke", pared=True)
         assert result.returncode == 0, result.stderr
-        heading = "smoke run, not for inference: normal: provenance of change_per_c"
-        assert heading in result.stdout
+        line = next(
+            line
+            for line in result.stdout.splitlines()
+            if "normal: provenance of change_per_c" in line
+        )
+        assert "load_data('example_data.csv', " in line, line
+        assert "→ observations → condition_on (blackjax_nuts, approximate" in line, line
+        assert line.endswith("approximate overall"), line
         chains = json.loads(
             (tmp_path / "checks" / "smoke" / "normal_answer_provenance.json").read_text()
         )

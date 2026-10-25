@@ -38,6 +38,7 @@ import inspect
 import json
 import os
 import platform
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -285,6 +286,99 @@ def provenance_steps(result) -> list[dict]:
             }
         )
     return steps
+
+
+def provenance_line(result, *, load_step: str = "load_data") -> str:
+    """The stages of `result` from the loaded data file to it, on one line.
+
+    A stage is a ProbPipe function of the pipeline or an operation such as
+    `condition_on`. The line follows the longest chain of stages from the
+    result of `load_step` to `result`, preferring data over laws between chains
+    of one length. Another input of a stage, such as the model of
+    `condition_on`, is named in brackets at that stage. A stage shows its method
+    or its exactness when its route is not a function body, and the line ends
+    with whether `result` is exact or approximate.
+    """
+    paths: dict[int, list] = {}
+
+    def inputs(node) -> list:
+        return [
+            parent
+            for parent in node.provenance.parents
+            if parent.type_name not in CALLABLE_TYPES and parent.provenance is not None
+        ]
+
+    def path_to_data(node) -> list:
+        """The nodes from `node` to the loaded file along the most stages, or [] if none."""
+        key = id(node.provenance)
+        if key not in paths:
+            paths[key] = []
+            if stage_name(node) == load_step:
+                paths[key] = [node]
+            candidates = [path_to_data(parent) for parent in inputs(node)]
+            candidates = [path for path in candidates if path]
+            if candidates and not paths[key]:
+                best = max(candidates, key=lambda path: (stage_count(path), is_data(path[0])))
+                paths[key] = [node, *best]
+        return paths[key]
+
+    def side_stages(node, main) -> list[str]:
+        names = []
+        for parent in inputs(node):
+            if any(parent.provenance is step.provenance for step in main):
+                continue
+            nearest, frontier = None, [parent]
+            while frontier and nearest is None:  # descend through internal steps
+                nearest = next((n for n in frontier if stage_name(n)), None)
+                frontier = [p for n in frontier for p in inputs(n)]
+            name = stage_name(nearest) if nearest is not None else None
+            if name and name not in names:
+                names.append(name)
+        return names
+
+    main = path_to_data(result)[::-1]
+    stages = []
+    for node in main:
+        name = stage_name(node)
+        if not name or (stages and stages[-1][0] == name):
+            continue
+        metadata = node.provenance.metadata
+        notes = []
+        if metadata.get("route") not in ("body", None):
+            notes += [metadata["method"]] if metadata.get("method") else []
+            notes += [] if metadata.get("exact") is None else [exactness(metadata["exact"])]
+        sides = [s for s in side_stages(node, main) if s != name]
+        details = ", ".join(notes) + ("; " if notes and sides else "")
+        details += f"with {', '.join(sides)}" if sides else ""
+        stages.append((name, f"{name} ({details})" if details else name))
+    if stages and stages[0][0] == load_step:
+        label = main[0].label or load_step
+        stages[0] = (load_step, re.sub(r"'([0-9a-f]{8})[0-9a-f]{56}'", r"\1…", label))
+    exact = all(step["exact"] is not False for step in provenance_steps(result))
+    return " → ".join(text for _, text in stages) + f", {exactness(exact)} overall"
+
+
+def stage_name(node) -> str | None:
+    """The name of the stage that computed `node`, or None for an internal step."""
+    operation = node.provenance.operation
+    if operation.startswith("workflow."):
+        return operation.removeprefix("workflow.")
+    if operation == "broadcast":  # a lifted function, which the first parent names
+        functions = [p.label for p in node.provenance.parents if p.type_name == "Function"]
+        return functions[0] if functions else None
+    return None
+
+
+def stage_count(path: list) -> int:
+    return sum(stage_name(node) is not None for node in path)
+
+
+def is_data(node) -> bool:
+    return "Distribution" not in node.type_name
+
+
+def exactness(exact: bool) -> str:
+    return "exact" if exact else "approximate"
 
 
 def check_provenance(
