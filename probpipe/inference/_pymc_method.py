@@ -21,7 +21,6 @@ from ._inference_utils import (
     extract_chain_columns,
     integer_seed,
     joint_and_given,
-    nuts_controls,
 )
 
 
@@ -39,16 +38,7 @@ class PyMCNutsMethod(InferenceMethod):
       of the chain count and the CPU count unless set;
     - ``progress_bar``: whether PyMC's sampler draws its progress bar. The
       sampler receives the option as ``progressbar``, which is ``True`` unless
-      set;
-    - ``target_accept_prob``: the acceptance probability that PyMC's step-size
-      adaptation targets, a number strictly between 0 and 1, which PyMC's NUTS
-      receives as ``target_accept`` and which is PyMC's 0.8 unless set;
-    - ``max_tree_depth``: the maximum depth of the NUTS tree, a positive
-      integer, which PyMC's NUTS receives as ``max_treedepth`` and which is
-      PyMC's 10 unless set.
-
-    The run's sample statistics hold PyMC's per-draw ``tree_depth`` and
-    ``reached_max_treedepth``, which are ArviZ's names.
+      set.
 
     Notes
     -----
@@ -62,12 +52,10 @@ class PyMCNutsMethod(InferenceMethod):
 
     _method_options = (
         "cores",
-        "max_tree_depth",
         "num_chains",
         "num_results",
         "num_warmup",
         "progress_bar",
-        "target_accept_prob",
     )
 
     def __init__(self) -> None:
@@ -102,34 +90,8 @@ class PyMCNutsMethod(InferenceMethod):
     def execute(
         self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any
     ) -> EmpiricalDistribution:
-        """PyMC's NUTS on the model the target carries, at the observed values it binds.
-
-        Parameters
-        ----------
-        target : InferenceTarget
-            The law to sample, the model at its observed values.
-        key : PRNGKey
-            The run's random key, which seeds the sampler.
-        **options : Any
-            The call's ``method_options``, which ``PyMCNutsMethod`` lists.
-
-        Returns
-        -------
-        EmpiricalDistribution
-            The posterior, with its atoms on the levels ``chain`` and ``draw``
-            and the sampler's trace as its annotations.
-
-        Raises
-        ------
-        TypeError
-            If an option is one the method does not read, or
-            ``target_accept_prob`` or ``max_tree_depth`` has the wrong type.
-        ValueError
-            If ``target_accept_prob`` is not strictly between 0 and 1, or
-            ``max_tree_depth`` is less than 1.
-        """
+        """PyMC inference on the model the target carries, at the observed values it binds."""
         self._check_options(options)
-        target_accept_prob, max_tree_depth = nuts_controls(self.name, options)
         from ..families._programs import _import_pymc
 
         pm = _import_pymc(f"the inference method {self.name!r}")
@@ -163,7 +125,6 @@ class PyMCNutsMethod(InferenceMethod):
                 progressbar=options.get("progress_bar", True),
                 return_inferencedata=True,
                 nuts_sampler="pymc",
-                nuts={"target_accept": target_accept_prob, "max_treedepth": max_tree_depth},
             )
 
         chains = extract_chain_columns(trace, list(parameter_shapes), num_chains)

@@ -18,7 +18,7 @@ from ..families._programs import _StanPosterior
 from ..operations._condition import InferenceMethod
 from ..operations._inference_target import InferenceTarget
 from ._approximate_distribution import make_posterior
-from ._inference_utils import integer_seed, joint_and_given, nuts_controls
+from ._inference_utils import integer_seed, joint_and_given
 
 
 def _import_cmdstanpy():
@@ -34,40 +34,11 @@ def _import_cmdstanpy():
         ) from e
 
 
-def _add_reached_max_treedepth(trace: Any, max_tree_depth: int) -> None:
-    """Mark, in place, each draw of *trace* whose tree reached *max_tree_depth*, as ``reached_max_treedepth``.
-
-    A trace with no ``tree_depth`` in its ``sample_stats`` group is left unmarked.
-    """
-    try:
-        stats = trace["sample_stats"]
-    except (KeyError, TypeError):
-        return
-    if "tree_depth" in stats.data_vars:
-        stats["reached_max_treedepth"] = stats["tree_depth"] >= max_tree_depth
-
-
 class CmdStanNutsMethod(InferenceMethod):
     """CmdStanPy-backed NUTS, registered as ``cmdstan_nuts`` at priority 82.
 
     Applies to a Stan program's posterior at its data, the target that
     binding a ``StanModel``'s data gives; cmdstanpy is imported at execution.
-    Its ``method_options`` are:
-
-    - ``num_results``, ``num_warmup``, and ``num_chains``: the draw, warmup,
-      and chain counts, which are 1000, 1000, and 4 unless set;
-    - ``target_accept_prob``: the acceptance probability that Stan's step-size
-      adaptation targets, a number strictly between 0 and 1, which CmdStan
-      receives as ``adapt_delta`` and which is Stan's 0.8 unless set;
-    - ``max_tree_depth``: the maximum depth of the NUTS tree, a positive
-      integer, which CmdStan receives as ``max_treedepth`` and which is
-      Stan's 10 unless set.
-
-    The run's sample statistics hold Stan's ``treedepth__`` under ArviZ's name
-    ``tree_depth``, and ``reached_max_treedepth``, which marks each draw whose
-    tree reached ``max_tree_depth``. Stan records no reason a trajectory
-    stopped, so a draw whose trajectory turned at its last doubling also
-    counts.
 
     Notes
     -----
@@ -77,13 +48,7 @@ class CmdStanNutsMethod(InferenceMethod):
     applies to a disjoint model class.
     """
 
-    _method_options = (
-        "max_tree_depth",
-        "num_chains",
-        "num_results",
-        "num_warmup",
-        "target_accept_prob",
-    )
+    _method_options = ("num_chains", "num_results", "num_warmup")
 
     @property
     def description(self) -> str:
@@ -122,35 +87,8 @@ class CmdStanNutsMethod(InferenceMethod):
         The posterior keeps the target's parameter record: each chain holds the
         draws of the parameter blocks alone, each in its own shape, and no
         sampler, transformed, or generated column.
-
-        Parameters
-        ----------
-        target : InferenceTarget
-            The law to sample, the model at its observed values.
-        key : PRNGKey
-            The run's random key, which seeds the sampler.
-        **options : Any
-            The call's ``method_options``, which ``CmdStanNutsMethod`` lists.
-
-        Returns
-        -------
-        EmpiricalDistribution
-            The posterior, with its atoms on the levels ``chain`` and ``draw``
-            and the sampler's trace as its annotations.
-
-        Raises
-        ------
-        ImportError
-            If cmdstanpy is not installed.
-        TypeError
-            If an option is one the method does not read, or
-            ``target_accept_prob`` or ``max_tree_depth`` has the wrong type.
-        ValueError
-            If ``target_accept_prob`` is not strictly between 0 and 1, or
-            ``max_tree_depth`` is less than 1.
         """
         self._check_options(options)
-        target_accept_prob, max_tree_depth = nuts_controls(self.name, options)
         cmdstanpy = _import_cmdstanpy()
 
         num_results = options.get("num_results", 1000)
@@ -166,8 +104,6 @@ class CmdStanNutsMethod(InferenceMethod):
             iter_sampling=num_results,
             iter_warmup=num_warmup,
             seed=random_seed,
-            adapt_delta=target_accept_prob,
-            max_treedepth=max_tree_depth,
             show_console=False,
         )
 
@@ -188,13 +124,11 @@ class CmdStanNutsMethod(InferenceMethod):
         ]
         shapes = {name: draws[name].shape[1:] for name in names}
 
-        trace = azb.from_cmdstanpy(fit)
-        _add_reached_max_treedepth(trace, max_tree_depth)
         return make_posterior(
             target,
             chains,
             method="cmdstan_nuts",
-            annotations=trace,
+            annotations=azb.from_cmdstanpy(fit),
             parameter_shapes=shapes,
             num_results=num_results,
             num_warmup=num_warmup,

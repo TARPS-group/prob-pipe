@@ -19,7 +19,6 @@ from ._inference_utils import (
     extract_chain_columns,
     integer_seed,
     joint_and_given,
-    nuts_controls,
     observed_target,
     refuse_seed_keywords,
 )
@@ -138,9 +137,7 @@ def _nutpie_posterior(
     -------
     EmpiricalDistribution
         The posterior on the levels ``chain`` and ``draw``, whose annotations
-        hold nutpie's trace. Its sample statistics also hold nutpie's
-        ``depth`` and ``maxdepth_reached`` under ArviZ's names ``tree_depth``
-        and ``reached_max_treedepth``.
+        hold nutpie's trace.
 
     Raises
     ------
@@ -173,7 +170,6 @@ def _nutpie_posterior(
         seed=random_seed,
         **kwargs,
     )
-    _add_arviz_tree_depth(trace)
     # nutpie sorts the trace's variables by name, so the parameters are extracted
     # by name, in the target's order, without a program's transformed and
     # generated variables.
@@ -198,25 +194,6 @@ def _nutpie_posterior(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-#: nutpie's names of the per-draw tree statistics, with ArviZ's name for each.
-_ARVIZ_TREE_STATISTICS = (("depth", "tree_depth"), ("maxdepth_reached", "reached_max_treedepth"))
-
-
-def _add_arviz_tree_depth(trace: Any) -> None:
-    """Copy nutpie's tree depth and depth-limit flag of each draw to ArviZ's names, in place.
-
-    A trace with no ``sample_stats`` group, or without a statistic, is left
-    without its copy.
-    """
-    try:
-        stats = trace["sample_stats"]
-    except (KeyError, TypeError):
-        return
-    for name, arviz_name in _ARVIZ_TREE_STATISTICS:
-        if name in stats.data_vars and arviz_name not in stats.data_vars:
-            stats[arviz_name] = stats[name]
 
 
 def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any | None]:
@@ -304,23 +281,9 @@ class NutpieNutsMethod(InferenceMethod):
     Applies to a Stan program's posterior at its data, and to a ``PyMCModel``
     target at its observed values; infeasible while nutpie is not installed.
 
-    Its ``method_options`` are:
-
-    - ``num_results``, ``num_warmup``, and ``num_chains``: the draw, warmup,
-      and chain counts, which are 1000, 500, and 4 unless set;
-    - ``target_accept_prob``: the acceptance probability that nutpie's
-      step-size adaptation targets, a number strictly between 0 and 1, which
-      nutpie receives as ``target_accept`` and which is nutpie's 0.8 unless
-      set;
-    - ``max_tree_depth``: the maximum depth of the NUTS tree, a positive
-      integer, which nutpie receives as ``maxdepth`` and which is nutpie's 10
-      unless set;
-    - ``progress_bar``: whether nutpie draws its progress bar, which is
-      nutpie's default unless set.
-
-    The run's sample statistics hold nutpie's per-draw ``depth`` and
-    ``maxdepth_reached`` also under ArviZ's names ``tree_depth`` and
-    ``reached_max_treedepth``.
+    Its ``method_options`` are the draw, warmup, and chain counts, and
+    ``progress_bar``, which passes to nutpie's sampler; an unset
+    ``progress_bar`` leaves nutpie's default.
 
     Notes
     -----
@@ -329,14 +292,7 @@ class NutpieNutsMethod(InferenceMethod):
     class, so it ranks above all of them.
     """
 
-    _method_options = (
-        "max_tree_depth",
-        "num_chains",
-        "num_results",
-        "num_warmup",
-        "progress_bar",
-        "target_accept_prob",
-    )
+    _method_options = ("num_chains", "num_results", "num_warmup", "progress_bar")
 
     def __init__(self) -> None:
         from ..families._programs import PyMCModel, _StanPosterior
@@ -390,46 +346,8 @@ class NutpieNutsMethod(InferenceMethod):
         """nutpie's NUTS on the program the target carries, at the observed values it binds.
 
         The posterior's provenance names the target as its parent.
-
-        Parameters
-        ----------
-        target : InferenceTarget
-            The law to sample, the model at its observed values.
-        key : PRNGKey
-            The run's random key, which seeds the sampler.
-        **options : Any
-            The call's ``method_options``, which ``NutpieNutsMethod`` lists.
-
-        Returns
-        -------
-        EmpiricalDistribution
-            The posterior, with its atoms on the levels ``chain`` and ``draw``
-            and the sampler's trace as its annotations.
-
-        Raises
-        ------
-        TypeError
-            If an option is one the method does not read, or
-            ``target_accept_prob`` or ``max_tree_depth`` has the wrong type.
-        ValueError
-            If ``target_accept_prob`` is not strictly between 0 and 1, or
-            ``max_tree_depth`` is less than 1.
         """
         self._check_options(options)
-        target_accept_prob, max_tree_depth = nuts_controls(self.name, options)
-        sampler_options = {
-            name: value
-            for name, value in options.items()
-            if name not in ("max_tree_depth", "target_accept_prob")
-        }
         dist, observed = joint_and_given(target)
         seed = integer_seed(key)
-        return _nutpie_posterior(
-            dist,
-            observed,
-            target,
-            random_seed=seed,
-            target_accept=target_accept_prob,
-            maxdepth=max_tree_depth,
-            **sampler_options,
-        )
+        return _nutpie_posterior(dist, observed, target, random_seed=seed, **options)
