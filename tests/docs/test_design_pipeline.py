@@ -334,6 +334,11 @@ class TestPipelineSkeleton:
         prior = "prior_scale * jnp.array([2.5, 1.0, 1.0])"
         script.write_text(source.replace(prior, "prior_scale * jnp.array([2.5, 1.0, 2.0])"))
         assert code_hash() != first
+        script.write_text(source)
+        data_file = tmp_path / "example_data.csv"
+        rows = data_file.read_text().splitlines()
+        data_file.write_text("\n".join([*rows, rows[-1]]) + "\n")
+        assert code_hash() != first
 
 
 class TestValidationGrade:

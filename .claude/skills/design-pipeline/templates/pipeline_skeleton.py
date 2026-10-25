@@ -505,12 +505,14 @@ def response_for_stage(data, joint, settings) -> jnp.ndarray:
 # --- What the validation depends on ----------------------------------------------
 # The gate accepts a validation whose hash matches the hash of these functions
 # and settings, with the grading code of pipeline_support.py. A change to any of
-# them makes a passed validation stale, and a change to a step after the fit,
-# such as an answer, a check, or a comparison, keeps it. Add each function that
-# the data step, a model, the simulation, or the fit of a design calls.
+# them, the data file included, makes a passed validation stale, and a change
+# to a step after the fit, such as an answer, a check, or a comparison, keeps
+# it. Add each function that the data step, a model, the simulation, or the fit
+# of a design calls.
 
 VALIDATED = (
-    # the data step
+    # the data file, whose covariates and size the simulated datasets share, and the data step
+    DATA_FILE,
     prepare_inputs,
     check_columns,
     inches_to_mm,

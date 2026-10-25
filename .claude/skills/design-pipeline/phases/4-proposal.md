@@ -248,9 +248,9 @@ Colab edits.
    these entries:
    - `stage`, which is `"validate"`;
    - the design version;
-   - the hash of what the validation depends on: the data step, the model
-     definitions, the simulation of datasets, the fit function with its
-     methods and budgets, and the grading code of stage D. The pipeline
+   - the hash of what the validation depends on: the data file, the data
+     step, the model definitions, the simulation of datasets, the fit
+     function with its methods and budgets, and the grading code of stage D. The pipeline
      declares these in `VALIDATED`, and a step after the fit, such as an
      answer, a check, or a comparison, and `report.py` leave the hash
      unchanged;

@@ -18,9 +18,9 @@ code":
 3. The gate of the fit stage reads `runs/validation.json`, which
    `record_validation()` writes. A validation of the current code matches
    its stage, its design version, and the hash of what the validation
-   depends on: the data step, the model definitions, the simulation of
-   datasets, the fit function with its methods and budgets, and the grading
-   code of stage D. The pipeline declares these in `VALIDATED`, and
+   depends on: the data file, the data step, the model definitions, the
+   simulation of datasets, the fit function with its methods and budgets, and
+   the grading code of stage D. The pipeline declares these in `VALIDATED`, and
    `code_hash()` adds `GRADING`. A step after the fit, such as an answer, a
    check, or a comparison, and `report.py` leave the hash unchanged. A model
    without a passed validation of the current code is fitted only when the
@@ -169,18 +169,19 @@ def validation_grades(record: dict) -> dict:
 def code_hash(validated: tuple) -> str:
     """A hash of the functions and settings that the validation depends on, with GRADING.
 
-    A function contributes its source and a setting its value, so a change to
-    either makes a passed validation stale.
+    A data file contributes its bytes, a function its source, and a setting
+    its value, so a change to any of them makes a passed validation stale.
     """
-    parts = []
+    digest = hashlib.sha256()
     for item in (*validated, *GRADING):
-        if callable(item):  # a ProbPipe function's source is that of the callable it wraps
-            parts.append(
-                inspect.getsource(item.raw if isinstance(item, probpipe.Function) else item)
-            )
+        if isinstance(item, Path):  # the validation simulates at the file's covariates and size
+            digest.update(item.read_bytes())
+        elif callable(item):  # a ProbPipe function's source is that of the callable it wraps
+            function = item.raw if isinstance(item, probpipe.Function) else item
+            digest.update(inspect.getsource(function).encode())
         else:
-            parts.append(json.dumps(item, sort_keys=True, default=str))
-    return hashlib.sha256("\n".join(parts).encode()).hexdigest()
+            digest.update(json.dumps(item, sort_keys=True, default=str).encode())
+    return digest.hexdigest()
 
 
 def probpipe_commit() -> str:
