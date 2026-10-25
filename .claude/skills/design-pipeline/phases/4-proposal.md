@@ -139,8 +139,9 @@ Write the pipeline in the form the user works in: the notebook
 `<assistant>/templates/pipeline_skeleton.py`, which shows the structure of
 this section with a small normal regression that runs in the smoke stage, and
 whose comments give the reason for each part. Copy it to the workspace with
-the modules `report.py` and `sim_data.py` beside it, and replace its example
-model, data checks, and estimands with those of the design.
+the modules `pipeline_support.py`, `report.py`, and `sim_data.py` beside it,
+and replace its example model, data checks, and estimands with those of the
+design.
 
 A notebook starts with an install cell in the style of the tutorials' Colab
 cell. On Google Colab, the cell installs ProbPipe at the commit that
@@ -173,15 +174,17 @@ pipeline (Wilson et al. 2017):
    data, the validation, and the fit. Each step is a function below `main()`
    whose name says what it does, and a step function fits on one screen, of
    about 60 lines.
-2. **One block for the stage.** A settings block at the start of `main()`,
-   such as `resolve_stage()` of the skeleton, resolves the stage into a
-   settings object. The object holds the budgets, the steps that run, the
+2. **One call for the stage.** `main()` starts with one call of
+   `resolve_stage()` of `<workspace>/pipeline_support.py`, which resolves
+   the stage into a settings object of the budgets, the steps that run, the
    output folder, and the result of the gate. Every step then runs the same
-   way whatever the stage, and reads its budgets from the settings object.
+   way whatever the stage. That module also holds the gate and the grade of
+   the validation, so the pipeline shows the data, the model with its
+   priors, and the steps, and it defines no classes.
 3. **Pure steps.** A step function takes its inputs as arguments and returns
-   values. The reads and writes of files happen in `main()`, in the settings
-   block, and in `<workspace>/report.py`, which holds every print, table, and
-   figure.
+   values. The reads and writes of files happen in `main()`, in
+   `<workspace>/pipeline_support.py`, and in `<workspace>/report.py`, which
+   holds every print, table, and figure.
 4. **Checked data.** The step that loads the data checks it right after the
    read: the expected columns, their types and ranges, and the codes of
    missing values. It stops at the first problem with a message that names
@@ -191,13 +194,14 @@ pipeline (Wilson et al. 2017):
    function.
 
 A notebook mirrors this structure and explains the analysis to its reader
-(Rule et al. 2019). Its first code cell is the settings block, and each later
-code cell runs one step by calling its step function. A short text cell
-before each code cell says why the step is there and what to look at in its
-output, and each choice is recorded beside its result. The step functions may
-be defined in `<workspace>/steps.py`, which the notebook imports, while the
-model and its priors stay in a cell of the notebook, where the user reads
-them. The notebook runs from top to bottom in a fresh kernel.
+(Rule et al. 2019). Its first code cell holds the settings and the call of
+`resolve_stage()`, and each later code cell runs one step by calling its step
+function. A short text cell before each code cell says why the step is there
+and what to look at in its output, and each choice is recorded beside its
+result. The step functions may be defined in `<workspace>/steps.py`, which
+the notebook imports, while the model and its priors stay in a cell of the
+notebook, where the user reads them. The notebook runs from top to bottom in
+a fresh kernel.
 
 Write the code close to the mathematics, and in batches:
 
@@ -211,8 +215,9 @@ Write the code close to the mathematics, and in batches:
    data" of [CAPABILITIES.md](../CAPABILITIES.md). Use a Python loop only to
    present results, such as to print the rows of a table or to draw the
    panels of a figure.
-3. Keep the auxiliary code in two modules beside the pipeline, which the
-   pipeline imports. `<workspace>/report.py` holds the functions that print,
+3. Keep the auxiliary code in the modules beside the pipeline, which the
+   pipeline imports: `<workspace>/pipeline_support.py` of rule 2 above, and
+   two more. `<workspace>/report.py` holds the functions that print,
    plot, and write the results of each step, and it formats each interval by
    rule 4 of [Messages](../INSTRUCTIONS.md#messages).
    `<workspace>/sim_data.py` draws the simulated data at the real design from
@@ -226,27 +231,31 @@ or the top of a script, reads the stage with
 so a user who runs the notebook in Jupyter or on Colab sets the stage by
 editing that default.
 
-1. `STAGE=smoke` runs every step at small budgets, such as a few draws,
-   chains, or training epochs. It fits data simulated from the model at the
-   structure of the real data, such as its sizes, its groups, and its
-   pattern of missing values, in place of the real data, so the code fixes
-   that the smoke runs need stay out of the record of revisions. A smoke run
-   on a subsample of the real data is an option that the user approves, and
-   never for data that [Phase 2](2-materials.md#data) found sensitive.
-   The smoke stage also runs a few checks of the pipeline's own code, as
-   asserts in one step function, such as `check_code()` of the skeleton
-   (Wilson et al. 2014). Each unit conversion matches a known value, the log
-   density matches a hand computation at one point, and a model
-   re-implemented from the user's code agrees with the original by the
-   agreement check of option 3 of
-   [phases/4-existing-pipeline.md](4-existing-pipeline.md). A check of
-   random draws passes within a statistical tolerance, such as four standard
-   errors.
-2. `STAGE=validate` runs the steps before the fit to the real data at
-   their full budgets, such as the prior predictive check and the validation
-   on realistic simulated data, and grades the validation of each model by
-   RESOURCES.md stage D. It deletes `<workspace>/runs/validation.json` when it
-   starts and writes it when the validation ends, with these entries:
+1. `STAGE=smoke` shows that the code runs, at small budgets, such as a few
+   draws, chains, or training epochs. It runs the data step, the checks of
+   the pipeline's own code, the prior predictive draws, and one fit with the
+   steps after it, and no validation. The fit is to one dataset simulated
+   from the model at the structure of the real data, such as its sizes, its
+   groups, and its pattern of missing values, so the code fixes that the
+   smoke runs need stay out of the record of revisions. A smoke run on a
+   subsample of the real data is an option that the user approves, and never
+   for data that [Phase 2](2-materials.md#data) found sensitive. Under a
+   hold of rule 5 of the
+   [rules for user materials](../INSTRUCTIONS.md#user-materials-and-code),
+   run it with `HOLD_SIMULATED_FITS` set to the date of the hold, and it runs
+   only the data step and the checks of the code.
+   The checks of the code are a few asserts in one step function, such as
+   `check_code()` of the skeleton (Wilson et al. 2014). Each unit conversion
+   matches a known value, the log density matches a hand computation at one
+   point, and a model re-implemented from the user's code agrees with the
+   original by the agreement check of option 3 of
+   [phases/4-existing-pipeline.md](4-existing-pipeline.md). A check of random
+   draws passes within a statistical tolerance, such as four standard errors.
+2. `STAGE=validate` runs the prior predictive check and the validation on
+   realistic simulated data at their full budgets, and grades the validation
+   of each model by RESOURCES.md stage D. Under a hold it stops at once. It
+   deletes `<workspace>/runs/validation.json` when it starts and writes it
+   when the validation ends, with these entries:
    - `stage`, which is `"validate"`;
    - the design version;
    - a hash of the code that the validation depends on: the source of the
@@ -264,12 +273,14 @@ editing that default.
    method recovered known answers from data like yours, so its intervals can
    be trusted."
 3. `STAGE=fit` runs the fit to the real data and the steps after it. Its
-   gate is part of the settings block, so it runs before any step. The gate
-   reads `<workspace>/runs/validation.json` and checks its stage, its design
-   version, and its hash against the current code. It stops with an error
-   when a check fails or when no model passed. Otherwise it lists the models
-   to fit, which are those whose grade is *passed* or *passed with notes*,
-   and it marks in the settings object that the observed values may be used.
+   gate is part of `resolve_stage()`, so it runs before any step. The gate
+   reads `<workspace>/runs/validation.json`, and a file whose stage, design
+   version, and hash match the current code is a validation of that code.
+   The gate lists the models to fit, which are those whose grade is *passed*
+   or *passed with notes*, and it marks in the settings object that the
+   observed values may be used. A model without such a grade is fitted only
+   for the provisional results of the paragraph after this list, and the gate
+   stops with an error when no model is left to fit.
    The step that returns the observed values reads that mark, and in the
    smoke stage it returns simulated data. A run whose gate fails therefore
    fits nothing, even under nbconvert's `--allow-errors`. On Colab, the
@@ -279,7 +290,25 @@ editing that default.
    the fit stage in one session, or upload the `<workspace>/runs/validation.json`
    from a validate run of the same design version.
 
-Every stage runs the settings block and then the data step. Each stage writes
+The user chooses provisional results after a failed validation or by the
+choices of RESOURCES.md stage D, and you record the choice as a decision with
+the user's reason, by rule 4 of the
+[rules for revisions](5-feedback.md#rules-for-revisions). The first code
+cell reads the reason with
+`ALLOW_UNVALIDATED = os.environ.get("ALLOW_UNVALIDATED", "")`, and the user
+sets the variable or edits that default. When it holds a reason, the gate
+also fits each model that no validation of the current code passed, with
+one of two labels:
+
+1. "PROVISIONAL: validation failed" when its validation graded it *failed*;
+2. "PROVISIONAL: not validated" when no validation of the current code
+   ended, as when the user declined or held it.
+
+The label appears in each printed answer, each figure title, each file name
+in `<workspace>/outputs/`, and each estimate in the design document, and the
+methods paragraph of the design document states the status.
+
+Every run resolves the stage and then runs the data step. Each stage writes
 its results, such as the diagnostics and the estimates, as it computes them,
 so a run that a failed step stops keeps the results computed before it. The
 smoke and the validate stage write to `<workspace>/runs/smoke/` and
@@ -296,18 +325,6 @@ numbers it plots. Each output folder `<folder>` holds
 commit, the design version, and the code hash, and
 `<folder>/environment.txt`, with the versions of Python and of each installed
 package.
-
-When the validation of a model fails and the user still wants its answers,
-they can ask for provisional results. Offer them only on that request. Record
-the request as a decision with the user's reason, by rule 4 of the [rules for
-revisions](5-feedback.md#rules-for-revisions). The first code cell reads the
-reason with `ALLOW_UNVALIDATED = os.environ.get("ALLOW_UNVALIDATED", "")`, and
-the user sets the variable or edits that default. When it holds a reason, the
-gate also fits each model whose grade is *failed*, and each output of such a
-model carries the label "PROVISIONAL: validation failed": each printed answer,
-each figure title, each column name or file name of a CSV file, and each
-estimate in the design document. The methods paragraph of the design document
-states the failure.
 
 ## Check and run the code
 
@@ -362,23 +379,18 @@ Take these steps before you show the code, and again after each revision:
 ## Present the proposal
 
 Open the proposal's message with the one line of
-[Phase 3](3-background.md) that confirms the working preferences. Present the
-proposal at the depth that the preferences call for. Draw a Mermaid diagram
-only in an interface that renders it. Give the user the steps of
-section 11 of the design document, so that they can run the code.
+[Phase 3](3-background.md) that confirms the working preferences, and show the
+result of the first smoke run. Draw a Mermaid diagram only in an interface
+that renders it. Point to the design document for the full detail and to its
+section 11 for how to run the code.
 
 For a user whose preferences ask for Bayesian choices in plain words, open
-with two plain sentences on what the analysis will tell them. Then list the stages as a
-numbered list with one sentence each, and give at most three key design
-decisions. The design
-document is your record of the work, so point the user to it in place of
-presenting it.
+with two plain sentences on what the analysis will tell them, list the stages
+with one sentence each, and give at most three key design decisions.
 
-For other users, lead with a short overview, which is a stage diagram with one
-sentence per stage. Then give the key design decisions, each with the
-alternative you considered and the reason for your choice. List the assumptions that the user
-should check, and the open questions. Point to the files for the full detail,
-and to one or two resources of [RESOURCES.md](../RESOURCES.md) that suit the
-user's background and the hardest part of the design. End with targeted
-feedback questions about the decisions you are least sure of. Update project
-memory.
+For other users, give a stage diagram with one sentence per stage, the key
+design decisions with the alternative you considered and your reason, the
+assumptions to check, and the open questions. Point to one or two resources
+of [RESOURCES.md](../RESOURCES.md) that suit the user's background and the
+hardest part of the design. End with feedback questions about the decisions
+you are least sure of. Update project memory.

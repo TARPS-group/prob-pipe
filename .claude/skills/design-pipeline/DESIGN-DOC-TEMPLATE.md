@@ -17,8 +17,9 @@ the output files of the last run of the fit stage, by phases/4-proposal.md
 | Question | Estimate | Interval: median [2.5%, 97.5%] units | Status | Caveats | Date | Design version |
 |---|---|---|---|---|---|---|
 The status of a row is the grade of the validation of its model: passed,
-passed with notes, or "PROVISIONAL: validation failed" for the provisional
-results of phases/4-proposal.md. The status of a grade from a pilot
+passed with notes, or the label of the provisional results of
+phases/4-proposal.md, which is "PROVISIONAL: validation failed" or
+"PROVISIONAL: not validated". The status of a grade from a pilot
 validation, which RESOURCES.md stage D step 6 describes, adds "pilot: coverage
 not established". The caveats name each note of the grade and each check of
 the fit that failed.

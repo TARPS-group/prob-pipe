@@ -9,7 +9,8 @@ passed validation. Replace the example's functions with one per step of the
 design, and keep these rules of phases/4-proposal.md "Write the code":
 
 1. Each function prefixes the stage's label, such as "smoke run, not for
-   inference", to what it prints and to each figure's title.
+   inference", to what it prints and to each figure's title, and `path()`
+   prefixes "PROVISIONAL_" to the name of each file of a provisional fit.
 2. Each interval has the form "median [2.5%, 97.5%] units" of `interval()`.
 3. Each figure is saved with a CSV file of the numbers it plots, and each
    answer with the draws behind it, so every number in the design document is
@@ -36,15 +37,17 @@ import pandas as pd
 
 def start(settings) -> None:
     """Print the stage, and record the provenance and the Python environment."""
-    print(
-        f"stage {settings.stage}, design version {settings.record['design_version']}: results in {settings.out_dir}"
+    say(
+        settings,
+        f"stage {settings.stage}, design version {settings.record['design_version']}:",
+        f"results in {settings.out_dir}",
     )
-    write_json(settings.out_dir / "provenance.json", settings.record)
+    write_json(path(settings, "provenance.json"), settings.record)
     packages = sorted(
         f"{d.metadata['Name']}=={d.version}" for d in importlib.metadata.distributions()
     )
     environment = [f"python {platform.python_version()}", *packages]
-    (settings.out_dir / "environment.txt").write_text("\n".join(environment) + "\n")
+    path(settings, "environment.txt").write_text("\n".join(environment) + "\n")
 
 
 def prior_predictive(y_t_per_ha: np.ndarray, settings) -> None:
@@ -62,7 +65,7 @@ def prior_predictive(y_t_per_ha: np.ndarray, settings) -> None:
     save_figure(
         fig,
         pd.DataFrame({"mean_yield_t_per_ha": mean_yield}),
-        settings.out_dir / "prior_predictive",
+        path(settings, "prior_predictive"),
     )
 
 
@@ -74,7 +77,7 @@ def validation(result: dict, settings) -> None:
 
 def diagnostics(result: dict, settings) -> None:
     """The R-hat, the ESS, and the divergences of the fit."""
-    write_json(settings.out_dir / "diagnostics.json", {k: v.tolist() for k, v in result.items()})
+    write_json(path(settings, "diagnostics.json"), {k: v.tolist() for k, v in result.items()})
     say(
         settings,
         f"largest R-hat {result['max_r_hat'].max():.3f}, smallest bulk ESS {result['min_ess_bulk'].min():.0f},",
@@ -87,7 +90,7 @@ def model_check(result: dict, settings) -> None:
     p_values = {
         k.removesuffix("/p_value"): float(v) for k, v in result.items() if k.endswith("/p_value")
     }
-    write_json(settings.out_dir / "predictive_check.json", p_values)
+    write_json(path(settings, "predictive_check.json"), p_values)
     for statistic, p_value in p_values.items():
         say(settings, f"posterior predictive p-value of {statistic}: {p_value:.2f}")
     # How to read it: a p-value near 0 or 1 means the model rarely reproduces that feature of the data.
@@ -97,11 +100,11 @@ def answers(result: dict, settings) -> None:
     """Each estimand as 'median [2.5%, 97.5%] units', and the draws behind it."""
     change = result["yield_change_t_per_ha_per_c"]
     write_json(
-        settings.out_dir / "answers.json",
+        path(settings, "answers.json"),
         {"yield_change_per_c": interval(change, "t/ha per °C"), **settings.record},
     )
     pd.DataFrame({"yield_change_t_per_ha_per_c": change}).to_csv(
-        settings.out_dir / "answer_draws.csv", index=False
+        path(settings, "answer_draws.csv"), index=False
     )
     say(settings, "change in yield per degree Celsius:", interval(change, "t/ha per °C"))
 
@@ -110,6 +113,12 @@ def interval(draws: np.ndarray, units: str, digits: int = 2) -> str:
     """Draws as 'median [2.5%, 97.5%] units', by rule 4 of the assistant's Messages."""
     low, median, high = np.percentile(np.asarray(draws), [2.5, 50, 97.5])
     return f"{median:.{digits}f} [{low:.{digits}f}, {high:.{digits}f}] {units}"
+
+
+def path(settings, name: str) -> Path:
+    """The path of the output file `name`, prefixed "PROVISIONAL_" for a provisional fit."""
+    prefix = "PROVISIONAL_" if settings.label.startswith("PROVISIONAL") else ""
+    return settings.out_dir / f"{prefix}{name}"
 
 
 def say(settings, *parts: str) -> None:

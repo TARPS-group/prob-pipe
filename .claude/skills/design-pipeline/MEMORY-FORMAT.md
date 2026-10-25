@@ -49,8 +49,9 @@ that separate the notes, the deliverables, and the record of the runs:
 - `<workspace>/memory.md`: the project memory.
 - `<workspace>/pipeline.ipynb`, or the script `<workspace>/pipeline.py` in its
   place: the runnable pipeline of the current design version.
-- `<workspace>/report.py` and `<workspace>/sim_data.py`: the modules of
-  printing and plotting functions and of simulated data, which the pipeline
+- `<workspace>/pipeline_support.py`, `<workspace>/report.py`, and
+  `<workspace>/sim_data.py`: the modules of the stages and the gate, of
+  printing and plotting functions, and of simulated data, which the pipeline
   imports from beside it, by
   [phases/4-proposal.md](phases/4-proposal.md#write-the-code), and
   `<workspace>/steps.py`, which holds the step functions of a notebook that
@@ -227,6 +228,7 @@ Python: <python> · Kernel: <kernel>
 ## Where we left off
 - Step <k> of 5 (<name of the step>) · Design version <n>
 - Last run: <stage>, <date>, <verdict, such as "validation passed with notes">
+- Hold: <the runs the user holds, with the date, or "none">
 - Waiting on you: <what only the user can do, or "nothing">
 - Next: <the agreed next step>
 

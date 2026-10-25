@@ -226,7 +226,7 @@ class TestPipelineSkeleton:
         assert "no problems" in capsys.readouterr().out
 
     @staticmethod
-    def _run(workspace: Path, stage: str) -> subprocess.CompletedProcess:
+    def _run(workspace: Path, stage: str, **settings: str) -> subprocess.CompletedProcess:
         """Run the skeleton copied to *workspace* in *stage*, from another directory."""
         pytest.importorskip("matplotlib")
         pytest.importorskip("pandas")
@@ -234,7 +234,7 @@ class TestPipelineSkeleton:
             if path.is_file():
                 shutil.copy(path, workspace)
         pythonpath = os.pathsep.join(filter(None, [str(ROOT), os.environ.get("PYTHONPATH")]))
-        env = os.environ | {"STAGE": stage, "PYTHONPATH": pythonpath}
+        env = os.environ | settings | {"STAGE": stage, "PYTHONPATH": pythonpath}
         return subprocess.run(
             [sys.executable, str(workspace / "pipeline_skeleton.py")],
             cwd=ROOT,
@@ -253,11 +253,23 @@ class TestPipelineSkeleton:
             assert (out / name).exists(), name
         assert json.loads((out / "provenance.json").read_text())["seed"] == 20261025
 
+    def test_a_hold_leaves_the_smoke_stage_without_a_fit(self, tmp_path):
+        result = self._run(tmp_path, "smoke", HOLD_SIMULATED_FITS="2026-10-25")
+        assert result.returncode == 0, result.stderr
+        assert (tmp_path / "runs" / "smoke" / "provenance.json").exists()
+        assert not (tmp_path / "runs" / "smoke" / "answers.json").exists()
+
     def test_the_fit_stage_stops_at_the_gate_without_a_validation(self, tmp_path):
         result = self._run(tmp_path, "fit")
         assert result.returncode != 0
-        assert "Gate: no validation found" in result.stderr
+        assert "Gate: the model is not validated" in result.stderr
         assert not (tmp_path / "outputs" / "answers.json").exists()
+
+    def test_a_fit_without_a_validation_is_labeled_provisional(self, tmp_path):
+        result = self._run(tmp_path, "fit", ALLOW_UNVALIDATED="the user declined the validation")
+        assert result.returncode == 0, result.stderr
+        assert "PROVISIONAL: not validated: change in yield per degree Celsius:" in result.stdout
+        assert (tmp_path / "outputs" / "PROVISIONAL_answers.json").exists()
 
 
 class TestBuildCorpus:

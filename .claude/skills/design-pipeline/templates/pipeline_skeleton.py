@@ -1,9 +1,9 @@
 """Crop yield and growing-season weather: the skeleton of a pipeline script.
 
 This file is a template for the design-pipeline assistant. Copy it to
-`<workspace>/pipeline.py`, copy `report.py` and `sim_data.py` beside it, and
-replace the example model, a normal regression of crop yield on rainfall and
-temperature, with the model of the design document. The comments explain the
+`<workspace>/pipeline.py`, copy `pipeline_support.py`, `report.py`, and
+`sim_data.py` beside it, and replace the example model, a normal regression of
+crop yield on rainfall and temperature, with the model of the design document. The comments explain the
 reason for each part of the structure, and the rules they cite are those of
 the assistant's files. In the user's copy, replace this docstring with the
 guide to where each choice is changed, by phases/4-proposal.md
@@ -15,48 +15,36 @@ these reasons:
 1. `main()` comes right after the settings and reads as the pipeline, one or
    two lines per step. A reader learns what the pipeline does from one screen,
    and each step's details are in a function whose name says what it does.
-2. The stage is resolved once, in `resolve_stage()`, into a `Settings` object
-   that holds the budgets, the steps to run, the output folder, and the
-   result of the gate. Every step then runs the same way whatever the stage,
-   so the code that a smoke run tests is the code that the fit runs.
+2. The stage, the gate of the fit, and the grade of the validation are in
+   `pipeline_support.py`, so this file shows the data, the model with its
+   priors, and the steps. `main()` resolves the stage with one call.
 3. Step functions are pure. They take their inputs as arguments and return
    values, and they print, plot, and write nothing. The reads and writes of
-   files happen in `main()` and in `resolve_stage()`, and the printing,
+   files happen in `main()` and in `pipeline_support.py`, and the printing,
    tables, and figures are in `report.py`. A step can therefore be rerun,
    tested, or called from a notebook cell with no side effects.
 4. Simulated data come from the model itself, through `sim_data.py`. The
    smoke run and the validation then exercise the model that the real fit
    uses, at the real covariates.
-5. The fit to the real data is gated on `runs/validation.json`. The gate
-   checks the stage, the design version, and a hash of the model, data, and
-   inference code, which is this file and each module beside it other than
-   `report.py`. A change to the reporting therefore keeps a passed
-   validation, and a change to the model forces a new one.
-6. The code stays close to the mathematics, with the design document's
+5. The code stays close to the mathematics, with the design document's
    notation as variable names, and each repeated computation is batched: the
    validation draws all its datasets in one call and fits them in one sweep.
-7. Every draw happens inside `workflow_run(seed=...)`, with a seed of its own
+6. Every draw happens inside `workflow_run(seed=...)`, with a seed of its own
    derived from the run's seed, so a rerun reproduces each result, and the
    seed is recorded with the outputs.
-8. Units are carried in variable names, such as `rain_mm`, and each unit
+7. Units are carried in variable names, such as `rain_mm`, and each unit
    conversion is one small named function, which `check_code()` tests.
-9. The data are checked right after they are read, so a wrong file or a
+8. The data are checked right after they are read, so a wrong file or a
    changed column stops the run at once with a message that names the column.
-10. The smoke stage runs `check_code()`, a few asserts on the pipeline's own
-    code, because a run that raises no error can still compute the wrong
-    numbers.
-11. `report.py` saves each figure with a CSV file of the numbers it plots, and
+9. The smoke stage runs `check_code()`, a few asserts on the pipeline's own
+   code, because a run that raises no error can still compute the wrong
+   numbers.
+10. `report.py` saves each figure with a CSV file of the numbers it plots, and
     each output folder holds the provenance of its results, so every number
     that the design document reports is read from a file.
 """
 
-from __future__ import annotations
-
-import hashlib
-import json
 import os
-import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 
 import jax.numpy as jnp
@@ -65,8 +53,8 @@ import pandas as pd
 import report
 import scipy.stats
 import sim_data
+from pipeline_support import fits_pass, grade_validation, resolve_stage
 
-import probpipe
 from probpipe import (
     DistributionBatch,
     HalfNormal,
@@ -81,15 +69,16 @@ from probpipe import (
 )
 from probpipe.families import GaussianFamily, glm_likelihood
 
-# The settings that the user edits. The stage comes from the environment, and a
-# notebook user edits its default. The hash of the validation leaves out the
-# lines that read the environment, so a change of stage keeps a passed
-# validation. The data file is read by a path relative to this file, so the
-# script runs from any directory.
+# The settings that the user edits. The stage, the reason for provisional
+# results, and the date of a hold on fits to simulated data come from the
+# environment, and a notebook user edits their defaults. The hash of the
+# validation leaves out the lines that read the environment, so a change of
+# stage keeps a passed validation. The data file is read by a path relative to
+# this file, so the script runs from any directory.
 STAGE = os.environ.get("STAGE", "smoke")
-ALLOW_UNVALIDATED = os.environ.get("ALLOW_UNVALIDATED", "")  # the reason for provisional results
-HERE = Path(__file__).resolve().parent
-DATA_FILE = HERE / "example_data.csv"
+ALLOW_UNVALIDATED = os.environ.get("ALLOW_UNVALIDATED", "")
+HOLD_SIMULATED_FITS = os.environ.get("HOLD_SIMULATED_FITS", "")
+DATA_FILE = Path(__file__).resolve().parent / "example_data.csv"
 DESIGN_VERSION = 1
 SEED = 20261025
 RESPONSE = "yield_t_per_ha"
@@ -100,7 +89,7 @@ PARAMETERS = ("beta", "dispersion")
 BUDGETS = {
     "smoke": {
         "nuts": {"num_chains": 2, "num_warmup": 100, "num_results": 100},
-        "n_sims": 2,
+        "n_sims": 0,
         "n_prior_draws": 50,
     },
     "validate": {
@@ -116,16 +105,19 @@ BUDGETS = {
 }
 
 
-def main() -> None:
+def main():
     """Run the pipeline of design version 1 in the stage that `STAGE` names."""
-    settings = resolve_stage(STAGE, ALLOW_UNVALIDATED)
+    settings = resolve_stage(
+        STAGE, BUDGETS, DESIGN_VERSION, SEED, ALLOW_UNVALIDATED, HOLD_SIMULATED_FITS
+    )
     report.start(settings)
     data = prepare_data(pd.read_csv(DATA_FILE))
     likelihood, model = build_model(data["X"])
     if settings.checks_code:
         check_code(data, likelihood, model, settings)
-    if settings.checks_before_fit:
+    if settings.checks_priors:
         report.prior_predictive(prior_predictive(model, settings), settings)
+    if settings.validates:
         report.validation(validate(model, settings), settings)
     if settings.fits:
         y_t_per_ha = observed_response(data, model, settings)
@@ -133,107 +125,6 @@ def main() -> None:
         report.diagnostics(diagnose(posterior), settings)
         report.model_check(check_model(likelihood, posterior, y_t_per_ha, settings), settings)
         report.answers(answer(posterior, data, settings), settings)
-
-
-# --- The stage: resolved once, before any step runs -------------------------
-# phases/4-proposal.md "Write the code" defines the three stages and the gate.
-# Change the budgets above, not this logic, for a new model.
-
-
-@dataclass(frozen=True)
-class Settings:
-    """What the stage decides: the budgets, the steps to run, and where results go."""
-
-    stage: str
-    seed: int
-    nuts: dict
-    n_sims: int
-    n_prior_draws: int
-    checks_code: bool  # the checks of the pipeline's own code, in the smoke stage
-    checks_before_fit: bool  # the prior predictive check and the validation
-    fits: bool  # the fit to the data and the steps after it
-    real_response: bool  # True only after the gate passed
-    label: str  # the label of every output, such as "smoke run, not for inference"
-    out_dir: Path
-    validation_file: Path | None
-    record: dict  # the provenance written beside every output
-
-
-def resolve_stage(stage: str, allow_unvalidated: str) -> Settings:
-    """The settings of `stage`, after the gate of the fit stage has passed."""
-    if stage not in BUDGETS:
-        raise SystemExit(f"STAGE must be smoke, validate, or fit, not {stage!r}.")
-    out_dir = HERE / {"smoke": "runs/smoke", "validate": "runs/validate", "fit": "outputs"}[stage]
-    out_dir.mkdir(parents=True, exist_ok=True)
-    record = {
-        "stage": stage,
-        "design_version": DESIGN_VERSION,
-        "code_hash": code_hash(),
-        "seed": SEED,
-        "probpipe_version": probpipe.__version__,
-        "probpipe_commit": probpipe_commit(),
-    }
-    validation_file = {
-        "smoke": out_dir / "validation.json",
-        "validate": HERE / "runs/validation.json",
-    }.get(stage)
-    if stage == "validate" and validation_file.exists():
-        validation_file.unlink()  # a validate run that stops early leaves no stale file
-    label = {"smoke": "smoke run, not for inference", "validate": "", "fit": ""}[stage]
-    if stage == "fit":
-        label = gate(record, allow_unvalidated)
-    return Settings(
-        stage=stage,
-        seed=SEED,
-        nuts=BUDGETS[stage]["nuts"],
-        n_sims=BUDGETS[stage]["n_sims"],
-        n_prior_draws=BUDGETS[stage]["n_prior_draws"],
-        checks_code=stage == "smoke",
-        checks_before_fit=stage in ("smoke", "validate"),
-        fits=stage in ("smoke", "fit"),
-        real_response=stage == "fit",
-        label=label,
-        out_dir=out_dir,
-        validation_file=validation_file,
-        record=record,
-    )
-
-
-def gate(record: dict, allow_unvalidated: str) -> str:
-    """Stop unless a validation of this code passed, and return the label of the outputs."""
-    path = HERE / "runs/validation.json"
-    if not path.exists():
-        raise SystemExit("Gate: no validation found. Run STAGE=validate first.")
-    validation = json.loads(path.read_text())
-    for key in ("stage", "design_version", "code_hash"):
-        expected = "validate" if key == "stage" else record[key]
-        if validation[key] != expected:
-            raise SystemExit(
-                f"Gate: the validation's {key} does not match. Run STAGE=validate again."
-            )
-    if validation["grade"] in ("passed", "passed with notes"):
-        return ""
-    if allow_unvalidated:
-        return "PROVISIONAL: validation failed"
-    raise SystemExit("Gate: the validation failed, so the model is not fit to the real data.")
-
-
-def code_hash() -> str:
-    """A hash of the model, data, and inference code, without `report.py` and the stage lines."""
-    digest = hashlib.sha256()
-    for path in (Path(__file__).resolve(), HERE / "sim_data.py"):
-        lines = path.read_text().splitlines()
-        digest.update("\n".join(line for line in lines if "os.environ" not in line).encode())
-    return digest.hexdigest()
-
-
-def probpipe_commit() -> str:
-    """The commit of the ProbPipe checkout, or "unknown" for an installed package."""
-    checkout = Path(probpipe.__file__).resolve().parents[1]
-    result = subprocess.run(
-        ["git", "-C", str(checkout), "rev-parse", "HEAD"], capture_output=True, text=True
-    )
-    return result.stdout.strip() or "unknown"
 
 
 # --- Step 1: load and check the data ----------------------------------------
@@ -320,7 +211,7 @@ def build_model(X: jnp.ndarray):
 # check of phases/4-existing-pipeline.md here.
 
 
-def check_code(data: dict, likelihood, model, settings: Settings) -> None:
+def check_code(data: dict, likelihood, model, settings) -> None:
     """Raise an AssertionError when a part of the pipeline's own code is wrong."""
     assert np.isclose(inches_to_mm(1.0), 25.4), "inches_to_mm is wrong"
     assert np.isclose(fahrenheit_to_celsius(212.0), 100.0), "fahrenheit_to_celsius is wrong"
@@ -341,10 +232,10 @@ def check_code(data: dict, likelihood, model, settings: Settings) -> None:
 # shows it. The step returns the simulated data, and the report summarizes it.
 
 
-def prior_predictive(model, settings: Settings) -> np.ndarray:
+def prior_predictive(model, settings) -> np.ndarray:
     """Datasets simulated from the prior, of shape (draw, field), in t/ha."""
     with workflow_run(seed=settings.seed + 1):
-        draws = sample(model, sample_shape=(settings.n_prior_draws,))
+        draws = sample(model, sample_shape=(settings.budget["n_prior_draws"],))
     return np.asarray(draws[RESPONSE].raw)
 
 
@@ -355,10 +246,10 @@ def prior_predictive(model, settings: Settings) -> np.ndarray:
 # judges realistic adds the recovery at those values from the same recipe.
 
 
-def validate(model, settings: Settings) -> dict:
+def validate(model, settings) -> dict:
     """Fit datasets simulated with known parameters, and grade the recovery."""
     datasets, truth = sim_data.simulate(
-        model, settings.n_sims, PARAMETERS, RESPONSE, settings.seed + 2
+        model, settings.budget["n_sims"], PARAMETERS, RESPONSE, settings.seed + 2
     )
     posteriors = fit(model, datasets, settings)  # one sweep: one posterior per dataset
     summary = summarize(posteriors)
@@ -367,8 +258,8 @@ def validate(model, settings: Settings) -> dict:
     bounds = np.asarray(quantile(posteriors, jnp.array([0.05, 0.95])).to_vector())
     coverage = ((bounds[:, 0] <= truth) & (truth <= bounds[:, 1])).mean(axis=0)
     diagnostics = diagnose(posteriors)
-    fits_ok = bool(fits_pass(diagnostics, settings.nuts["num_chains"]).all())
-    grade, sentence = grade_validation(z, coverage, fits_ok, settings.n_sims)
+    fits_ok = bool(fits_pass(diagnostics, settings.budget["nuts"]["num_chains"]).all())
+    grade, sentence = grade_validation(z, coverage, fits_ok, settings.budget["n_sims"])
     table = {"coverage_90": coverage, "mean_z": z.mean(axis=0), "max_abs_z": np.abs(z).max()}
     table |= diagnostics
     return {
@@ -378,54 +269,21 @@ def validate(model, settings: Settings) -> dict:
     }
 
 
-def fits_pass(diagnostics: dict, num_chains: int) -> np.ndarray:
-    """Whether each fit passes the criteria of RESOURCES.md stage E."""
-    return (
-        (diagnostics["divergences"] == 0)
-        & (diagnostics["max_r_hat"] < 1.01)
-        & (diagnostics["min_ess_bulk"] > 100 * num_chains)
-    )
-
-
-SENTENCES = {
-    "passed": "The method recovered known answers from data like yours, so its intervals can be trusted.",
-    "failed": "The method did not reliably recover known answers from data like yours, so its estimates cannot be trusted yet.",
-}
-
-
-def grade_validation(z: np.ndarray, coverage: np.ndarray, fits_ok: bool, n: int) -> tuple[str, str]:
-    """The grade of RESOURCES.md stage D step 6, with the prior draws as one group."""
-    shortfall = (0.9 - coverage) / np.sqrt(0.9 * 0.1 / n)  # in Monte Carlo standard errors
-    bias = z.mean(axis=0) * np.sqrt(n)  # in standard errors of 1/sqrt(n)
-    criteria = [shortfall, np.abs(bias), np.abs(z)]
-    if not fits_ok or any(c.max() > bound(0.0027, c.size) for c in criteria):
-        return "failed", SENTENCES["failed"]
-    if all(np.abs(c).max() <= bound(0.0455, c.size) for c in criteria):
-        return "passed", SENTENCES["passed"]
-    note = " Some results lie between their two bounds, as the table shows."
-    return "passed with notes", SENTENCES["passed"] + note
-
-
-def bound(tail: float, results: int) -> float:
-    """The bound whose two-sided tail over `results` results totals `tail`."""
-    return float(scipy.stats.norm.isf(tail / (2 * results)))
-
-
 # --- Step 5: fit -------------------------------------------------------------
 # One function fits one dataset or a batch of them, so the validation and the
 # real fit use the same method and settings. The method is the one that the
 # design document names, by the CAPABILITIES.md row "Condition on the data".
 
 
-def fit(model, observed, settings: Settings):
+def fit(model, observed, settings):
     """The posterior of `model` given `observed`, one per dataset for a batch."""
     with workflow_run(seed=settings.seed + 3):
-        return condition_on.using(method="blackjax_nuts", method_options=settings.nuts)(
+        return condition_on.using(method="blackjax_nuts", method_options=settings.budget["nuts"])(
             model, observed
         )
 
 
-def observed_response(data: dict, model, settings: Settings) -> jnp.ndarray:
+def observed_response(data: dict, model, settings) -> jnp.ndarray:
     """The real response after the gate passed, and otherwise one simulated dataset."""
     if settings.real_response:
         return data[RESPONSE]
@@ -458,7 +316,7 @@ def yield_spread(y_t_per_ha):
     return jnp.std(y_t_per_ha)
 
 
-def check_model(likelihood, posterior, y_t_per_ha: jnp.ndarray, settings: Settings) -> dict:
+def check_model(likelihood, posterior, y_t_per_ha: jnp.ndarray, settings) -> dict:
     """The posterior predictive p-value of each test statistic."""
     with workflow_run(seed=settings.seed + 5):
         return predictive_check(likelihood, posterior, [lowest_yield, yield_spread], y_t_per_ha)
@@ -468,7 +326,7 @@ def check_model(likelihood, posterior, y_t_per_ha: jnp.ndarray, settings: Settin
 # Each estimand of the design document, as posterior draws in the user's units.
 
 
-def answer(posterior, data: dict, settings: Settings) -> dict:
+def answer(posterior, data: dict, settings) -> dict:
     """Posterior draws of the change in yield per degree Celsius, in t/ha."""
     with workflow_run(seed=settings.seed + 6):
         beta = np.asarray(sample(posterior, sample_shape=(4000,))["beta"].raw)
