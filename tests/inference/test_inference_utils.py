@@ -764,6 +764,25 @@ class TestChainInitialStates:
             expected = get_init_state(self.law, None, random_seed=jax.random.fold_in(key, 1))
             np.testing.assert_array_equal(row, expected)
 
+    def test_none_draws_one_state_per_chain_when_that_is_the_default(self):
+        init, per_chain = chain_initial_states(
+            self.law,
+            None,
+            num_chains=3,
+            key=jax.random.key(0),
+            method="m",
+            default_per_chain=True,
+        )
+        assert per_chain is True
+        np.testing.assert_array_equal(init, self._resolve("per_chain")[0])
+
+    def test_a_law_that_lays_out_no_array_shares_its_default_state(self):
+        law = _NoInitHeuristicDist()
+        resolved = chain_initial_states(
+            law, None, num_chains=2, key=jax.random.key(0), method="m", default_per_chain=True
+        )
+        assert resolved == (None, False)
+
     def test_per_chain_is_reproducible_under_one_key(self):
         first, _ = self._resolve("per_chain")
         second, _ = self._resolve("per_chain")

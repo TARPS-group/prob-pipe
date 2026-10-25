@@ -628,21 +628,24 @@ def chain_initial_states(
     num_chains: int,
     key: Array,
     method: str,
+    default_per_chain: bool = False,
 ) -> tuple[Any, bool]:
     """Resolve a gradient MCMC method's ``init`` option to the chains' initial states.
 
     ``init`` takes four forms:
 
-    1. ``None``: one state that :func:`get_init_state` draws with *key*, which
-       every chain starts from;
+    1. ``None``: the per-chain draws of the last form when
+       *default_per_chain* is set and *law* lays out an array, and otherwise
+       one state that :func:`get_init_state` draws with *key*, which every
+       chain starts from;
     2. one state, an array of the shape of a draw's flat vector: every chain
        starts from it;
     3. one state per chain, an array whose leading axis has length
        *num_chains* and whose rows have the shape of one state: each chain
        starts from its row;
     4. :data:`PER_CHAIN_INIT`: each chain starts from its own draw of
-       :func:`get_init_state`, made with a key folded from the chain's key,
-       which ``jax.random.split(key, num_chains)`` gives.
+       :func:`get_init_state`, made with ``jax.random.fold_in(chain_key, 1)``
+       for the chain's key of ``jax.random.split(key, num_chains)``.
 
     Parameters
     ----------
@@ -656,6 +659,8 @@ def chain_initial_states(
         The run's random key.
     method : str
         The method's name, for the error messages.
+    default_per_chain : bool
+        Whether ``None`` starts each chain from its own draw.
 
     Returns
     -------
@@ -672,6 +677,8 @@ def chain_initial_states(
         axis than one state and its shape is not ``(num_chains, *state_shape)``.
     """
     point_shape = _point_shape(law)
+    if init is None and default_per_chain and point_shape is not None:
+        init = PER_CHAIN_INIT
     if isinstance(init, str):
         if init != PER_CHAIN_INIT:
             raise ValueError(

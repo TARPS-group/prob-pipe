@@ -587,18 +587,37 @@ def _bimodal():
     return likelihood & Normal("mu", 0.0, 3.0)
 
 
+def _distinct_rows(first):
+    """Whether every two rows of *first* differ by more than 0.1 in some coordinate."""
+    distances = np.abs(first[:, None, :] - first[None, :, :]).max(axis=-1)
+    return distances[~np.eye(len(first), dtype=bool)].min() > 0.1
+
+
+class TestDefaultChainStarts:
+    def test_nuts_starts_each_chain_from_its_own_draw(self, small_model):
+        data = {"y": jnp.zeros((4,))}
+        first = _first_draws("blackjax_nuts", small_model, data)
+        assert _distinct_rows(first)
+        per_chain = _first_draws("blackjax_nuts", small_model, data, init="per_chain")
+        np.testing.assert_array_equal(first, per_chain)
+
+    def test_hmc_starts_every_chain_from_one_point(self, small_model):
+        first = _first_draws("blackjax_hmc", small_model, {"y": jnp.zeros((4,))})
+        np.testing.assert_allclose(first, np.broadcast_to(first[0], first.shape), atol=0.01)
+
+
 @pytest.mark.parametrize("method", ["blackjax_nuts", "blackjax_hmc"])
 class TestChainStarts:
     """``init`` gives every chain one starting point, or each chain its own."""
 
-    def test_by_default_every_chain_starts_from_one_point(self, method, small_model):
-        first = _first_draws(method, small_model, {"y": jnp.zeros((4,))})
-        np.testing.assert_allclose(first, np.broadcast_to(first[0], first.shape), atol=0.01)
+    def test_one_state_starts_every_chain_from_it(self, method, small_model):
+        state = np.array([1.0, -2.0])
+        first = _first_draws(method, small_model, {"y": jnp.zeros((4,))}, init=state)
+        np.testing.assert_allclose(first, np.broadcast_to(state, first.shape), atol=0.01)
 
     def test_per_chain_starts_each_chain_from_its_own_draw(self, method, small_model):
         first = _first_draws(method, small_model, {"y": jnp.zeros((4,))}, init="per_chain")
-        distances = np.abs(first[:, None, :] - first[None, :, :]).max(axis=-1)
-        assert distances[~np.eye(4, dtype=bool)].min() > 0.1
+        assert _distinct_rows(first)
 
     def test_one_state_per_chain_starts_each_chain_from_its_row(self, method, small_model):
         rows = np.array([[1.0, -2.0], [2.0, -1.0], [0.5, -3.0], [1.5, -2.5]])
@@ -614,7 +633,7 @@ class TestChainStarts:
             _first_draws(method, small_model, {"y": jnp.zeros((4,))}, init="prior")
 
 
-def test_rhat_detects_unvisited_modes_with_per_chain_starts():
+def test_rhat_detects_unvisited_modes_with_the_default_starts():
     """Chains that share a start stay in one mode, and R-hat misses the other."""
 
     def rhat(**options):
@@ -622,11 +641,10 @@ def test_rhat_detects_unvisited_modes_with_per_chain_starts():
         add_mcmc_diagnostics(posterior, metrics="rhat")
         return posterior.diagnostics.rhat["mu"]
 
-    # Observed across workflow seeds 0-5: R-hat 1.53-1.76 with per-chain starts,
-    # and 1.003-1.016 with a shared start in the five seeds whose chains all stayed
-    # in one mode.
-    assert rhat() < 1.05
-    assert rhat(init="per_chain") > 1.2
+    # Observed across workflow seeds 0-5: R-hat 1.53-1.76 with per-chain starts.
+    # Chains that all start at mu = 2 stay in that mode.
+    assert rhat(init=np.array([2.0])) < 1.05
+    assert rhat() > 1.2
 
 
 # ---------------------------------------------------------------------------

@@ -2106,6 +2106,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   # after:  'merge'
   ```
 
+- **`blackjax_nuts` and `tfp_nuts` start each chain from its own draw of the
+  prior.** Before, every chain started from one draw. This is a silent change:
+  the same seeded call runs and draws differently, and R-hat can now detect a
+  chain that stayed in the mode it started in. The call below shows where each
+  chain starts, in a run without warmup whose tiny step keeps each chain at
+  its start:
+
+  ```python
+  prior = Normal("theta", jnp.zeros(3), jnp.ones(3))
+  likelihood = conditional_distribution(
+      lambda theta: Poisson("y", jnp.exp(theta)), label="likelihood", given_spec=prior.event_spec
+  )
+  options = {"num_warmup": 0, "num_results": 1, "num_chains": 4, "step_size": 1e-6}
+  with workflow_run(seed=0):
+      posterior = condition_on.using(method="blackjax_nuts", method_options=options)(
+          likelihood & prior, {"y": jnp.array([1.0, 4.0, 2.0])}
+      )
+  # before: every chain starts at [0.41, 0.55, 1.49]
+  # after: the chains start at [2.70, 0.40, 2.07], [-0.63, -0.38, 0.87],
+  #        [-0.81, -0.31, -1.10], and [0.71, -1.07, 2.07]
+  ```
+
+  Pass one state as `init` to start every chain from it, as
+  `method_options={"init": jnp.array([0.4, 0.55, 1.5])}`.
+
 ### Added
 
 - **Bare calls can share a default random stream.**
@@ -3352,16 +3377,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   )(model, observed)
   ```
 
-- **`blackjax_nuts`, `blackjax_hmc`, and `tfp_nuts` start each chain from its
-  own point on request.** `init="per_chain"` starts each chain from its own
-  draw of the default initial state, which is a draw of the prior when the
-  prior can be sampled, and an array with a leading axis of length
-  `num_chains` gives each chain its row. Chains from distinct points let R-hat
-  detect a chain that has not left the mode it started in. Unset, every chain
-  starts from one point, as before:
+- **`init` gives each chain its own starting point.** For `blackjax_nuts`,
+  `blackjax_hmc`, and `tfp_nuts`, an array with a leading axis of length
+  `num_chains` gives each chain its row, and `init="per_chain"` starts each
+  chain from its own draw of the default initial state, which is a draw of the
+  prior when the prior can be sampled. `blackjax_nuts` and `tfp_nuts` start
+  each chain from its own draw by default, and `blackjax_hmc` keeps one shared
+  start unless `init` says otherwise:
 
   ```python
-  posterior = condition_on.using(method_options={"init": "per_chain"})(model, observed)
+  posterior = condition_on.using(
+      method="blackjax_hmc", method_options={"init": "per_chain"}
+  )(model, observed)
   ```
 
 - **`add_mcmc_diagnostics` computes the E-BFMI of each chain and counts the

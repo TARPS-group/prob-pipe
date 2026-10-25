@@ -126,20 +126,21 @@ class TestChainStarts:
         posterior = _run(num_results=1, num_warmup=0, num_chains=4, step_size=1e-6, **options)
         return np.asarray(flat_chains(posterior))[:, 0, :]
 
-    def test_by_default_every_chain_starts_from_one_point(self):
+    def test_by_default_each_chain_starts_from_its_own_draw(self):
         first = self._first_draws()
-        np.testing.assert_allclose(first, np.broadcast_to(first[0], first.shape), atol=0.01)
-
-    def test_per_chain_starts_each_chain_from_its_own_draw(self):
-        first = self._first_draws(init="per_chain")
         distances = np.abs(first[:, None, :] - first[None, :, :]).max(axis=-1)
         assert distances[~np.eye(4, dtype=bool)].min() > 0.1
+        np.testing.assert_array_equal(first, self._first_draws(init="per_chain"))
+
+    def test_one_state_starts_every_chain_from_it(self):
+        first = self._first_draws(init=np.array([1.5]))
+        np.testing.assert_allclose(first, np.full(first.shape, 1.5), atol=0.01)
 
     def test_one_state_per_chain_starts_each_chain_from_its_row(self):
         rows = np.array([[1.0], [-1.0], [0.5], [2.0]])
         np.testing.assert_allclose(self._first_draws(init=rows), rows, atol=0.01)
 
-    def test_rhat_detects_unvisited_modes_with_per_chain_starts(self):
+    def test_rhat_detects_unvisited_modes_with_the_default_starts(self):
         likelihood = conditional_distribution(
             lambda mu: Normal("y", mu**2, 0.5), given_spec={"mu": NumericArraySpec(())}, label="y"
         )
@@ -154,8 +155,7 @@ class TestChainStarts:
             add_mcmc_diagnostics(posterior, metrics="rhat")
             return posterior.diagnostics.rhat["mu"]
 
-        # Observed across workflow seeds 0-5: R-hat 1.53-1.75 with per-chain starts,
-        # and 1.005-1.024 with a shared start in the five seeds whose chains all stayed
-        # in one mode.
-        assert rhat() < 1.05
-        assert rhat(init="per_chain") > 1.2
+        # Observed across workflow seeds 0-5: R-hat 1.53-1.75 with per-chain starts.
+        # Chains that all start at mu = 2 stay in that mode.
+        assert rhat(init=np.array([2.0])) < 1.05
+        assert rhat() > 1.2

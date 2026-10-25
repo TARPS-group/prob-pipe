@@ -434,7 +434,12 @@ class _BlackJAXMCMCMethod(InferenceMethod):
                 _DEFAULT_MAX_TREE_DEPTH,
             )
         init, per_chain_init = chain_initial_states(
-            model, options.get("init"), num_chains=num_chains, key=key, method=self._method_name
+            model,
+            options.get("init"),
+            num_chains=num_chains,
+            key=key,
+            method=self._method_name,
+            default_per_chain=self._algorithm == "nuts",
         )
         target_flat, flat_init = build_target_log_prob_flat(
             model,
@@ -514,8 +519,12 @@ def BlackJAXNutsMethod() -> _BlackJAXMCMCMethod:
 
     ``init`` takes four forms, for this method, ``blackjax_hmc``, and ``tfp_nuts``:
 
-    1. unset or ``None``: every chain starts from one default initial state,
-       which is a draw of the prior when the prior can be sampled;
+    1. unset or ``None``: for ``blackjax_nuts`` and ``tfp_nuts``, each chain
+       starts from its own default initial state, as for ``"per_chain"``, and
+       for ``blackjax_hmc``, every chain starts from one default initial
+       state. A default initial state is a draw of the prior when the prior
+       can be sampled. A target whose parameters are neither one array nor a
+       record of arrays starts every chain from one state;
     2. one state, a flat vector of the target's parameters in the order of
        its event spec, or the array of a target with one array parameter:
        every chain starts from it;
@@ -524,8 +533,8 @@ def BlackJAXNutsMethod() -> _BlackJAXMCMCMethod:
     4. ``"per_chain"``: each chain starts from its own default initial state,
        drawn with a key derived from the chain's key.
 
-    Chains from distinct starting points, as the last two forms give, let
-    R-hat detect a chain that has not left the mode it started in.
+    Chains from distinct starting points let R-hat detect a chain that has not
+    left the mode it started in.
 
     The run's sample statistics hold, under ArviZ's names, ``tree_depth``, the
     number of doublings of each draw's trajectory, and

@@ -260,7 +260,12 @@ class _TFPGradientMethod(InferenceMethod):
         num_chains = options.get("num_chains", 4)
         model, observed = observed_parts(target)
         init, per_chain_init = chain_initial_states(
-            model, options.get("init"), num_chains=num_chains, key=key, method=self._method_name
+            model,
+            options.get("init"),
+            num_chains=num_chains,
+            key=key,
+            method=self._method_name,
+            default_per_chain=True,
         )
         density, init = _chain_target(model, observed, init=init, random_seed=key)
         density, init, constrain = unconstrained_chain(
