@@ -92,8 +92,11 @@ does not connect to.
 
 ## 4f. Reproduction of the original pipeline
 For a pipeline the user brought, by phases/4-existing-pipeline.md: the
-comparison of the original results with ProbPipe's, before any change.
-| Estimand | Original: median [2.5%, 97.5%] | ProbPipe: median [2.5%, 97.5%] | Bound of agreement (3 × combined MCSE) | Agree? |
+comparison of the original results with ProbPipe's, before any change. A
+row is a parameter, with its three quantiles, or a pair of parameters, with
+its correlation r. Below the table, give the number M of z-scores, the bounds
+b₂(M) and b₃(M), and the mean, the standard deviation, and the largest |z|.
+| Estimand | Original: median [2.5%, 97.5%], or r | ProbPipe: median [2.5%, 97.5%], or r | z of 2.5% / 50% / 97.5%, or of r | Agree? |
 |---|---|---|---|---|
 
 ## 5. Key design decisions

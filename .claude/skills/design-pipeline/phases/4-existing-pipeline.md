@@ -67,20 +67,48 @@ the proposal" of phases/4-proposal.md apply to it, and so do the
       fit to the real data, which needs the user's consent by rule 5, and
       which rule 6 allows before the validation.
    3. Compare the estimands. For each one, compute the median and the 2.5% and
-      97.5% quantiles of the draws of each run, and the Monte Carlo standard
-      error (MCSE) of each, with ArviZ's `mcse` on the draws arranged as
-      (chain, draw), with `method="median"` or with `method="quantile"` and
-      `prob=`. Two values agree when their difference is at most three times
-      the square root of the sum of their squared MCSEs. The bound is a
-      default, and a project that sets another bound records it as a
-      decision. A deterministic step, such as an optimizer or a wrapped
-      function, agrees when its outputs match within the tolerance of the
-      original's own solver.
+      97.5% quantiles of the draws of each run, and compute the correlation of
+      each pair of parameters. The error of each value is approximately the
+      mean of its influence function over the draws, so the Monte Carlo
+      standard error (MCSE) of the value is the MCSE of that mean. The
+      influence functions are these:
+      - the quantile q_p: (p − 1{x ≤ q_p})/f(q_p), with f a density estimate
+        of x at q_p;
+      - the correlation r of x and y: z_x z_y − r(z_x² + z_y²)/2, with z_x and
+        z_y the standardized draws.
+
+      The MCSE then depends on which chains are independent:
+      1. Chains that run independently, as NUTS runs them: ArviZ's `mcse` on
+         the draws arranged as (chain, draw) with `method="quantile"` and
+         `prob=` gives the MCSE of a quantile, and `mcse` with
+         `method="mean"` on the influence-function series gives the MCSE of a
+         correlation.
+      2. Chains that share information within a run, as in a population
+         sampler such as DEzs or an ensemble sampler such as emcee: the runs
+         are the independent units. Average the influence-function series
+         over the chains of each run at each iteration, compute the MCSE of
+         that average from its autocorrelation or by batch means, and combine
+         the runs as independent. With one run, the batch means of that run
+         give the MCSE.
+
+      The z-score of a comparison is the difference of the two values over
+      the square root of the sum of their squared MCSEs. Judge the M z-scores
+      together by the bounds b₂(M) and b₃(M) of
+      [RESOURCES.md](../RESOURCES.md) stage D step 6. The runs agree when
+      every |z| is within b₂(M). Each |z| between b₂(M) and b₃(M) is a note
+      that names its estimand, and an |z| beyond b₃(M) is a disagreement.
+      Report the mean, the standard deviation, and the largest |z| beside the
+      verdict, and report a set within the bounds as consistent with Monte
+      Carlo error. The bounds are defaults, and a project that sets others
+      records them as a decision. A deterministic step, such as an optimizer
+      or a wrapped function, agrees when its outputs match within the
+      tolerance of the original's own solver.
    4. Show the comparison as a table of one row per estimand, with both
       results in the form of rule 4 of
-      [Messages](../INSTRUCTIONS.md#messages) and whether they agree. Record
-      it in section 4f of the design document, and in the fit log with the
-      stage `reproduce`. When an estimand disagrees, find the cause before you
+      [Messages](../INSTRUCTIONS.md#messages) and whether they agree, and give
+      the diagnostics of stage E of each run beside it. Record it in section
+      4f of the design document, and in the fit log with the stage
+      `reproduce`. When an estimand disagrees, find the cause before you
       change anything, such as another prior, parameterization, data step, or
       method, or a run that has not converged.
 4. **Add what ProbPipe brings, one piece at a time.** Add the pieces that the
