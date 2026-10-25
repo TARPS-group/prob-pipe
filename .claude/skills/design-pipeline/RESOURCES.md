@@ -202,6 +202,14 @@ is *passed* or *passed with notes*.
    diagnostics of each fit, the bias, and the single misses, and its coverage
    is reported without a grade.
 
+   Estimate the cost of the validation before you propose it, as the number
+   of fits times the time of one fit at the planned settings, scaled from the
+   most recent smoke run. When the cost exceeds the user's budget, propose a
+   pilot, which fits fewer datasets. Tell the user plainly that a pilot
+   checks the diagnostics of each fit and gross bias, and that it cannot
+   establish coverage. Record that limit in the status of each answer of the
+   pilot's model, in section 0 of the design document.
+
 - *ProbPipe:* the rows of [CAPABILITIES.md](CAPABILITIES.md) for stage D.
 
 ### E. Fit and diagnose the computation

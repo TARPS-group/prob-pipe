@@ -18,8 +18,10 @@ row.
 |---|---|---|---|---|---|---|
 The status of a row is the grade of the validation of its model: passed,
 passed with notes, or "PROVISIONAL: validation failed" for the provisional
-results of phases/4-proposal.md. The caveats name each note of the grade and
-each check of the fit that failed.
+results of phases/4-proposal.md. The status of a grade from a pilot
+validation, which RESOURCES.md stage D step 6 describes, adds "pilot: coverage
+not established". The caveats name each note of the grade and each check of
+the fit that failed.
 
 ## 1. Goals and estimands
 - Scientific goal, in the user's words.
