@@ -5285,6 +5285,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   )
   ```
 
+- **Repeated nutpie fits reuse compiled models.** Stan programs without includes
+  reuse an unbound compilation across datasets, keyed by the source contents,
+  file path, and compile arguments. Each fit binds its own data. PyMC fits
+  reuse compilation for the same builder at unchanged bound and observed
+  values; changed data compile a fresh model. The process-local cache holds
+  at most 16 compilations. Posterior provenance records `compile_seconds`,
+  `sampling_seconds`, and the `backend_seed` sent to nutpie.
+
 ## [0.1.0] - 2025-03-21
 
 Initial release with TensorFlow Probability / JAX backend.
