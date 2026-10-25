@@ -100,12 +100,26 @@ some females attract none at all.
 
 > **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.
 
-- **The install fails:** run `python3 --version`, or `py -0` on Windows, and use Python 3.12 or 3.13, or uv as the section "Before the workshop" describes.
-- **The agent asks for permission:** its first message asks once to read your data and to run the pipeline on your computer, writing only to the project directory. It asks again before it installs anything, runs your own code, uses the network, writes outside the project directory, or runs longer than the time you gave it.
-- **The agent stops at a usage limit of its provider:** wait for the limit to reset, or start a new session with `resume <project>` as the last line of the prompt, because the project's memory and files keep the work.
-- **The first validation fails:** the assistant tests the method on simulated data like yours before it fits your data, and a first failure is common. The assistant tries the standard remedies, explains what still fails, and withholds answers until the check passes, unless you ask for provisional results.
-  You can also skip or stop the check, and the assistant then labels every answer "PROVISIONAL: not validated".
-- **You lose track:** type `status`, and the assistant says where the project stands and what waits on you.
+Each problem below is followed by what to do about it.
+
+- **The setup fails, or its check does not print `is ready`.**
+  Paste the error into the agent and ask it to fix the setup.
+  The most common cause is the Python version: `python3 --version`, or `py -0` on Windows, must show 3.12 or 3.13, and otherwise the setup prompt installs Python 3.12 through uv.
+  At the workshop, ask a presenter, or work through the [tutorials](../tutorials/01_first_analysis.ipynb) in Google Colab while the setup is fixed.
+- **The agent asks for permission too often.**
+  Answer yes to the consent question of its first message, which covers every run on your computer that reads your data and writes only to the project directory.
+  The agent still asks before it installs anything, runs your own code, uses the network, writes outside the project directory, or runs longer than the time you gave it.
+- **The checks on simulated data take too long, or fail.**
+  Tell the agent how much time you have.
+  Within that time, a failed check gets one remedy, and then the agent asks you to choose between more time and provisional results.
+  To skip the checks, say "skip the validation", and the agent labels every answer "PROVISIONAL: not validated".
+- **The messages are too long or too technical.**
+  Say "shorter" or "in plain terms", and the agent keeps to that for the rest of the project.
+- **The agent stops at a usage limit of its provider.**
+  Wait for the limit to reset, or start a new session with `resume <project>` as the last line of the start prompt.
+  The project's memory and files keep the work.
+- **You lose track of where the project stands.**
+  Type `status`, and the agent says what is done, what is running, and what waits on you.
 
 ## What information the design assistant stores
 
