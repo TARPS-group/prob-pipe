@@ -11,14 +11,16 @@ from probpipe import (
     Normal,
     NumericArraySpec,
     condition_on,
+    conditional_distribution,
     mean,
     variance,
     workflow_run,
 )
+from probpipe.diagnostics import add_mcmc_diagnostics
 from probpipe.distributions import FactoredDistribution
 from probpipe.inference import inference_method_registry
 from probpipe.inference._inference_utils import observed_target
-from tests._posterior import arviz_data, flat_draws
+from tests._posterior import arviz_data, flat_chains, flat_draws
 from tests.inference._harness import validate_method
 from tests.inference.canonical import ObservationKernel
 
@@ -407,13 +409,15 @@ class TestSampleStats:
             )(small_model, {"y": jnp.zeros((4,))})
         ds = arviz_data(posterior)["sample_stats"]
 
-        # NUTS plumbs these four info fields plus the injected step_size.
+        # NUTS plumbs these info fields plus the injected step_size.
         expected = {
             "step_size",
             "acceptance_rate",
             "diverging",
             "num_integration_steps",
             "energy",
+            "tree_depth",
+            "reached_max_treedepth",
         }
         assert expected.issubset(set(ds.data_vars))
 
@@ -480,6 +484,149 @@ class TestCheckFeasibility:
         method = inference_method_registry.get_method("blackjax_nuts")
         info = method.check(observed_target(small_model, {"y": jnp.zeros((4,))}))
         assert info.feasible is True
+
+
+# ---------------------------------------------------------------------------
+# The NUTS options: target acceptance rate and maximum tree depth
+# ---------------------------------------------------------------------------
+
+
+def _nuts_posterior(model, data, seed=0, **options):
+    """The ``blackjax_nuts`` posterior of *model* at *data*, with a short run unless *options* set it."""
+    budget = {"num_results": 100, "num_warmup": 200, "num_chains": 2, **options}
+    with workflow_run(seed=seed):
+        return condition_on.using(method="blackjax_nuts", method_options=budget)(model, data)
+
+
+class TestNutsOptions:
+    """``target_accept_prob`` and ``max_tree_depth`` reach BlackJAX, and the run records the tree depth."""
+
+    def test_a_higher_target_adapts_a_smaller_step(self, small_model):
+        def step_size(target_accept_prob):
+            posterior = _nuts_posterior(
+                small_model, {"y": jnp.zeros((4,))}, target_accept_prob=target_accept_prob
+            )
+            return float(np.mean(np.asarray(arviz_data(posterior)["sample_stats"]["step_size"])))
+
+        # Observed across workflow seeds 0-3: step 0.65-0.72 at 0.95 and 1.13-1.51 at 0.6,
+        # a ratio of 0.47-0.57.
+        assert step_size(0.95) < 0.75 * step_size(0.6)
+
+    def test_the_maximum_tree_depth_caps_the_integration_steps(self, small_model):
+        posterior = _nuts_posterior(small_model, {"y": jnp.zeros((4,))}, max_tree_depth=2)
+        stats = arviz_data(posterior)["sample_stats"]
+        steps = np.asarray(stats["num_integration_steps"])
+        tree_depth = np.asarray(stats["tree_depth"])
+        assert steps.max() <= 2**2 - 1
+        assert tree_depth.max() == 2
+        np.testing.assert_array_equal(steps <= 2**tree_depth - 1, True)
+
+    def test_a_draw_at_the_maximum_depth_that_did_not_turn_is_marked(self, small_model):
+        posterior = _nuts_posterior(small_model, {"y": jnp.zeros((4,))}, max_tree_depth=1)
+        stats = arviz_data(posterior)["sample_stats"]
+        reached = np.asarray(stats["reached_max_treedepth"])
+        assert reached.dtype == np.bool_
+        # A depth of 1 stops every trajectory after one step, so most draws reach it.
+        assert reached.mean() > 0.5
+        np.testing.assert_array_equal(np.asarray(stats["tree_depth"])[reached], 1)
+
+    def test_the_default_options_are_blackjaxs_defaults(self, small_model):
+        data = {"y": jnp.zeros((4,))}
+        unset = flat_chains(_nuts_posterior(small_model, data))
+        stated = flat_chains(
+            _nuts_posterior(small_model, data, target_accept_prob=0.8, max_tree_depth=10)
+        )
+        np.testing.assert_array_equal(np.asarray(unset), np.asarray(stated))
+
+    @pytest.mark.parametrize(
+        ("options", "error", "match"),
+        [
+            ({"target_accept_prob": 1.0}, ValueError, "strictly between 0 and 1, got 1.0"),
+            ({"target_accept_prob": "0.9"}, TypeError, "must be a number, got str"),
+            ({"max_tree_depth": 0}, ValueError, "positive integer, got 0"),
+            ({"max_tree_depth": 2.5}, TypeError, "positive integer, got float"),
+        ],
+    )
+    def test_an_inadmissible_value_raises(self, small_model, options, error, match):
+        with pytest.raises(error, match=f"inference method 'blackjax_nuts': .*{match}"):
+            _nuts_posterior(small_model, {"y": jnp.zeros((4,))}, **options)
+
+    def test_nuts_refuses_the_hmc_trajectory_length(self, small_model):
+        with pytest.raises(TypeError, match="unknown method option 'num_integration_steps'"):
+            _nuts_posterior(small_model, {"y": jnp.zeros((4,))}, num_integration_steps=5)
+
+    @pytest.mark.parametrize("option", ["target_accept_prob", "max_tree_depth"])
+    def test_hmc_refuses_the_nuts_options(self, small_model, option):
+        with pytest.raises(TypeError, match=f"unknown method option '{option}'"):
+            condition_on.using(method="blackjax_hmc", method_options={option: 0.9})(
+                small_model, {"y": jnp.zeros((4,))}
+            )
+
+
+# ---------------------------------------------------------------------------
+# The chains' starting points
+# ---------------------------------------------------------------------------
+
+
+def _first_draws(method, model, data, **options):
+    """The first draw of each chain of a run without warmup whose tiny step keeps it near its start.
+
+    A trajectory of at most 1023 steps of size 1e-6 moves a draw by about 0.002.
+    """
+    budget = {"num_results": 1, "num_warmup": 0, "num_chains": 4, "step_size": 1e-6, **options}
+    with workflow_run(seed=0):
+        posterior = condition_on.using(method=method, method_options=budget)(model, data)
+    return np.asarray(flat_chains(posterior))[:, 0, :]
+
+
+def _bimodal():
+    """``y ~ Normal(mu**2, 0.5)`` with ``mu ~ Normal(0, 3)``, which at ``y = 4`` has modes at -2 and 2."""
+    likelihood = conditional_distribution(
+        lambda mu: Normal("y", mu**2, 0.5), given_spec={"mu": NumericArraySpec(())}, label="y"
+    )
+    return likelihood & Normal("mu", 0.0, 3.0)
+
+
+@pytest.mark.parametrize("method", ["blackjax_nuts", "blackjax_hmc"])
+class TestChainStarts:
+    """``init`` gives every chain one starting point, or each chain its own."""
+
+    def test_by_default_every_chain_starts_from_one_point(self, method, small_model):
+        first = _first_draws(method, small_model, {"y": jnp.zeros((4,))})
+        np.testing.assert_allclose(first, np.broadcast_to(first[0], first.shape), atol=0.01)
+
+    def test_per_chain_starts_each_chain_from_its_own_draw(self, method, small_model):
+        first = _first_draws(method, small_model, {"y": jnp.zeros((4,))}, init="per_chain")
+        distances = np.abs(first[:, None, :] - first[None, :, :]).max(axis=-1)
+        assert distances[~np.eye(4, dtype=bool)].min() > 0.1
+
+    def test_one_state_per_chain_starts_each_chain_from_its_row(self, method, small_model):
+        rows = np.array([[1.0, -2.0], [2.0, -1.0], [0.5, -3.0], [1.5, -2.5]])
+        first = _first_draws(method, small_model, {"y": jnp.zeros((4,))}, init=rows)
+        np.testing.assert_allclose(first, rows, atol=0.01)
+
+    def test_a_per_chain_init_of_another_shape_raises(self, method, small_model):
+        with pytest.raises(ValueError, match=r"must have shape \(4, 2\), got shape \(3, 2\)"):
+            _first_draws(method, small_model, {"y": jnp.zeros((4,))}, init=np.zeros((3, 2)))
+
+    def test_an_unknown_init_name_raises(self, method, small_model):
+        with pytest.raises(ValueError, match="init must be None, an array, or 'per_chain'"):
+            _first_draws(method, small_model, {"y": jnp.zeros((4,))}, init="prior")
+
+
+def test_rhat_detects_unvisited_modes_with_per_chain_starts():
+    """Chains that share a start stay in one mode, and R-hat misses the other."""
+
+    def rhat(**options):
+        posterior = _nuts_posterior(_bimodal(), {"y": jnp.asarray(4.0)}, num_chains=4, **options)
+        add_mcmc_diagnostics(posterior, metrics="rhat")
+        return posterior.diagnostics.rhat["mu"]
+
+    # Observed across workflow seeds 0-5: R-hat 1.53-1.76 with per-chain starts,
+    # and 1.003-1.016 with a shared start in the five seeds whose chains all stayed
+    # in one mode.
+    assert rhat() < 1.05
+    assert rhat(init="per_chain") > 1.2
 
 
 # ---------------------------------------------------------------------------

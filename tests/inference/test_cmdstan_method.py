@@ -69,8 +69,20 @@ def fake_cmdstanpy(monkeypatch):
         def __init__(self, *, stan_file: str) -> None:
             self.stan_file = stan_file
 
-        def sample(self, *, data, chains, iter_sampling, iter_warmup, seed, show_console):
+        def sample(
+            self,
+            *,
+            data,
+            chains,
+            iter_sampling,
+            iter_warmup,
+            seed,
+            adapt_delta,
+            max_treedepth,
+            show_console,
+        ):
             module.data = data
+            module.controls = {"adapt_delta": adapt_delta, "max_treedepth": max_treedepth}
             return _Fit(chains, iter_sampling)
 
     module.CmdStanModel = CmdStanModel
@@ -127,6 +139,67 @@ def test_condition_on_a_stan_model_returns_its_parameter_record(
     view = condition_on.using(method_options={"num_results": 3, "num_warmup": 1, "num_chains": 2})
     posterior = view(StanModel(str(program), label="program"), {"N": 2, "y": [1.0, 2.0]})
     assert tuple(posterior.event_spec.outputs) == ("mu", "theta")
+
+
+@pytest.mark.stan
+@pytest.mark.parametrize(
+    ("options", "controls"),
+    [
+        ({}, {"adapt_delta": 0.8, "max_treedepth": 10}),
+        (
+            {"target_accept_prob": 0.95, "max_tree_depth": 12},
+            {"adapt_delta": 0.95, "max_treedepth": 12},
+        ),
+    ],
+)
+def test_the_nuts_options_reach_cmdstan_under_its_names(
+    fake_cmdstanpy, tmp_path, options, controls
+):
+    from probpipe.inference._cmdstan_method import CmdStanNutsMethod
+
+    CmdStanNutsMethod().execute(
+        _posterior(tmp_path), key=jax.random.key(0), num_results=3, num_chains=2, **options
+    )
+    assert fake_cmdstanpy.controls == controls
+
+
+@pytest.mark.stan
+def test_an_inadmissible_target_raises_before_cmdstan_runs(fake_cmdstanpy, tmp_path):
+    from probpipe.inference._cmdstan_method import CmdStanNutsMethod
+
+    with pytest.raises(ValueError, match="inference method 'cmdstan_nuts': target_accept_prob"):
+        CmdStanNutsMethod().execute(
+            _posterior(tmp_path), key=jax.random.key(0), target_accept_prob=1.2
+        )
+    assert not hasattr(fake_cmdstanpy, "controls")
+
+
+def test_a_draw_whose_tree_reached_the_maximum_depth_is_marked():
+    import xarray as xr
+
+    from probpipe.inference._cmdstan_method import _add_reached_max_treedepth
+
+    depth = np.array([[3, 5, 5], [4, 5, 2]])
+    trace = xr.DataTree.from_dict(
+        {"sample_stats": xr.Dataset({"tree_depth": (("chain", "draw"), depth)})}
+    )
+    _add_reached_max_treedepth(trace, 5)
+    np.testing.assert_array_equal(
+        trace["sample_stats"]["reached_max_treedepth"].values,
+        [[False, True, True], [False, True, False]],
+    )
+
+
+def test_a_trace_without_tree_depth_is_left_unmarked():
+    import xarray as xr
+
+    from probpipe.inference._cmdstan_method import _add_reached_max_treedepth
+
+    trace = xr.DataTree.from_dict(
+        {"sample_stats": xr.Dataset({"lp": (("chain", "draw"), [[0.0]])})}
+    )
+    _add_reached_max_treedepth(trace, 5)
+    assert "reached_max_treedepth" not in trace["sample_stats"].data_vars
 
 
 def test_cmdstan_method_binds_arviz_base():

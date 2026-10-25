@@ -34,10 +34,13 @@ from probpipe.inference._inference_utils import (
     as_prng_key,
     build_target_log_prob,
     build_target_log_prob_flat,
+    chain_initial_states,
     get_init_state,
     likelihood_flat,
     model_factors,
+    nuts_controls,
     observed_target,
+    parallel_chain_map,
     parameter_given,
     require_trace_variables,
     run_chain_scan,
@@ -707,8 +710,151 @@ class TestUnconstrainedChain:
         np.testing.assert_allclose(jnp.sum(draws, axis=-1), 1.0, rtol=1e-5)
         assert bool(jnp.all(jnp.isfinite(jax.vmap(density)(jnp.zeros((2, 2))))))
 
+    def test_one_initial_state_per_chain_is_mapped_row_by_row(self):
+        law = Gamma("g", 2.0, 1.0)
+        rows = jnp.array([[0.5], [1.0], [4.0]])
+        _, init, constrain = unconstrained_chain(lambda theta: 0.0, rows, law, per_chain=True)
+        assert init.shape == (3, 1)
+        for row, state in zip(rows, init):
+            _, one, _ = unconstrained_chain(lambda theta: 0.0, row, law)
+            np.testing.assert_allclose(state, one, rtol=1e-6)
+        np.testing.assert_allclose(constrain(init), rows, rtol=1e-5)
+
     def test_an_initial_state_outside_the_support_starts_at_the_center(self):
         law = Gamma("g", 2.0, 1.0)
         _, init, constrain = unconstrained_chain(lambda theta: 0.0, jnp.array([-1.0]), law)
         assert bool(jnp.all(jnp.isfinite(init)))
         assert float(jnp.squeeze(constrain(init[None]))) > 0
+
+
+# ---------------------------------------------------------------------------
+# chain_initial_states
+# ---------------------------------------------------------------------------
+
+
+class TestChainInitialStates:
+    """``init`` resolves to one state shared by the chains or to one state per chain."""
+
+    law = Normal("a", 1.0, 0.5) & HalfNormal("scale", 1.0)
+
+    def _resolve(self, init, num_chains=3):
+        return chain_initial_states(
+            self.law, init, num_chains=num_chains, key=jax.random.key(0), method="m"
+        )
+
+    def test_none_and_one_state_are_shared(self):
+        assert self._resolve(None) == (None, False)
+        state = jnp.array([1.0, 2.0])
+        init, per_chain = self._resolve(state)
+        assert init is state and per_chain is False
+
+    def test_one_state_per_chain_is_returned_as_given(self):
+        rows = np.ones((3, 2))
+        init, per_chain = self._resolve(rows)
+        assert init is rows and per_chain is True
+
+    def test_per_chain_draws_one_state_for_each_chain_from_the_chain_keys(self):
+        init, per_chain = self._resolve("per_chain")
+        assert per_chain is True
+        assert init.shape == (3, 2)
+        assert len({tuple(np.asarray(row).round(6)) for row in init}) == 3
+        assert bool(jnp.all(init[:, 1] > 0))
+        keys = jax.random.split(jax.random.key(0), 3)
+        for key, row in zip(keys, init):
+            expected = get_init_state(self.law, None, random_seed=jax.random.fold_in(key, 1))
+            np.testing.assert_array_equal(row, expected)
+
+    def test_per_chain_is_reproducible_under_one_key(self):
+        first, _ = self._resolve("per_chain")
+        second, _ = self._resolve("per_chain")
+        np.testing.assert_array_equal(first, second)
+
+    def test_a_per_chain_array_of_another_shape_raises(self):
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"inference method 'm': init with one state per chain must have shape "
+                r"\(3, 2\), got shape \(2, 2\)"
+            ),
+        ):
+            self._resolve(np.ones((2, 2)))
+
+    def test_another_name_raises(self):
+        with pytest.raises(
+            ValueError, match="init must be None, an array, or 'per_chain', got 'prior'"
+        ):
+            self._resolve("prior")
+
+    def test_per_chain_for_a_law_that_lays_out_no_array_raises(self):
+        with pytest.raises(ValueError, match="init='per_chain' needs a target whose parameters"):
+            chain_initial_states(
+                _NoInitHeuristicDist(),
+                "per_chain",
+                num_chains=2,
+                key=jax.random.key(0),
+                method="m",
+            )
+
+
+class TestParallelChainMapArguments:
+    def test_a_pytree_of_per_chain_arguments_maps_each_chain_entry(self):
+        keys = jax.random.split(jax.random.key(0), 3)
+        starts = jnp.arange(3.0)
+        out = parallel_chain_map(lambda chain: chain[1] * 2.0, (keys, starts))
+        np.testing.assert_array_equal(out, starts * 2.0)
+
+    def test_one_chain_of_a_pytree_gets_its_entry(self):
+        keys = jax.random.split(jax.random.key(0), 1)
+        out = parallel_chain_map(lambda chain: chain[1] + 1.0, (keys, jnp.array([4.0])))
+        np.testing.assert_array_equal(out, [5.0])
+
+
+# ---------------------------------------------------------------------------
+# nuts_controls
+# ---------------------------------------------------------------------------
+
+
+class TestNutsControls:
+    def test_unset_options_take_the_backend_defaults(self):
+        assert nuts_controls("m", {}) == (0.8, 10)
+        assert nuts_controls(
+            "m", {}, default_target_accept_prob=0.75, default_max_tree_depth=8
+        ) == (0.75, 8)
+
+    def test_set_options_are_returned_as_float_and_int(self):
+        target, depth = nuts_controls(
+            "m", {"target_accept_prob": np.float32(0.9), "max_tree_depth": np.int64(12)}
+        )
+        assert (type(target), type(depth)) == (float, int)
+        assert depth == 12
+        assert target == pytest.approx(0.9)
+
+    @pytest.mark.parametrize(
+        ("options", "error", "message"),
+        [
+            (
+                {"target_accept_prob": 0.0},
+                ValueError,
+                "inference method 'm': target_accept_prob must be strictly between 0 and 1, got 0.0",
+            ),
+            (
+                {"target_accept_prob": True},
+                TypeError,
+                "inference method 'm': target_accept_prob must be a number, got bool",
+            ),
+            (
+                {"max_tree_depth": -1},
+                ValueError,
+                "inference method 'm': max_tree_depth must be a positive integer, got -1",
+            ),
+            (
+                {"max_tree_depth": 10.0},
+                TypeError,
+                "inference method 'm': max_tree_depth must be a positive integer, got float",
+            ),
+        ],
+    )
+    def test_an_inadmissible_value_raises(self, options, error, message):
+        with pytest.raises(error) as raised:
+            nuts_controls("m", options)
+        assert str(raised.value) == message

@@ -210,6 +210,20 @@ class TestMethodOptions:
     def test_without_progress_bar_the_sampler_keeps_its_default(self, tmp_path):
         assert "progress_bar" not in self._sampled_with(tmp_path)
 
+    def test_unset_nuts_options_pass_nutpies_defaults(self, tmp_path):
+        kwargs = self._sampled_with(tmp_path)
+        assert (kwargs["target_accept"], kwargs["maxdepth"]) == (0.8, 10)
+
+    def test_the_nuts_options_reach_nutpie_under_its_names(self, tmp_path):
+        kwargs = self._sampled_with(tmp_path, target_accept_prob=0.95, max_tree_depth=6)
+        assert (kwargs["target_accept"], kwargs["maxdepth"]) == (0.95, 6)
+        assert "target_accept_prob" not in kwargs
+        assert "max_tree_depth" not in kwargs
+
+    def test_an_inadmissible_depth_raises(self, tmp_path):
+        with pytest.raises(ValueError, match="inference method 'nutpie_nuts': max_tree_depth"):
+            self._sampled_with(tmp_path, max_tree_depth=0)
+
     def test_the_sampler_seed_follows_the_workflow_seed(self, tmp_path):
         def seed(workflow_seed):
             with workflow_run(seed=workflow_seed):
@@ -508,6 +522,34 @@ class TestNutpieIntegration:
         with workflow_run(seed=0):
             posterior = condition_on.using(method_options=options)(renamed, data)
         assert list(posterior.event_spec.outputs) == ["location"]
+
+    def test_the_maximum_tree_depth_caps_the_trajectories(self):
+        """nutpie's depth statistics are also recorded under ArviZ's names."""
+        from probpipe.diagnostics import add_mcmc_diagnostics
+        from probpipe.operations._condition import condition_on
+
+        model = PyMCModel(_gaussian_pymc_fn, label="gaussian")
+        options = {
+            "num_results": 50,
+            "num_warmup": 50,
+            "num_chains": 2,
+            "max_tree_depth": 1,
+            "progress_bar": False,
+        }
+        with workflow_run(seed=0):
+            posterior = condition_on.using(method="nutpie_nuts", method_options=options)(
+                model, {"y": np.array([0.0, 1.0])}
+            )
+        stats = arviz_data(posterior)["sample_stats"]
+        np.testing.assert_array_equal(stats["tree_depth"].values, stats["depth"].values)
+        np.testing.assert_array_equal(
+            stats["reached_max_treedepth"].values, stats["maxdepth_reached"].values
+        )
+        assert int(stats["n_steps"].values.max()) <= 1
+        add_mcmc_diagnostics(posterior, metrics=["e_bfmi", "tree_depth"])
+        mcmc_view = posterior.diagnostics.mcmc
+        assert mcmc_view.n_at_max_tree_depth == int(stats["maxdepth_reached"].values.sum())
+        assert len(mcmc_view.e_bfmi) == 2
 
     def test_annotations_trace_attached(self):
         model = PyMCModel(_gaussian_pymc_fn, label="gaussian")
