@@ -21,8 +21,6 @@ Six ideas make this work:
 
 ## A short example
 
-> **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.
-
 --8<-- "README.md:quick-example"
 
 ## Where to go next
