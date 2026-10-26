@@ -362,6 +362,28 @@ class TestAddMcse:
 
 
 class TestAddMcmcDiagnostics:
+    def test_warnings_group_coordinates_by_parameter(self):
+        draws = _vector_draws()
+        draws["beta"][0] -= 4
+        draws["beta"][1] += 4
+        posterior = _posterior_of_draws(draws)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            add_mcmc_diagnostics(posterior)
+
+        view = posterior.diagnostics
+        assert len(caught) == 3
+        for warning, values, worst, precision in zip(
+            caught, (view.rhat, view.ess_bulk, view.ess_tail), (max, min, min), (4, 0, 0)
+        ):
+            message = str(warning.message)
+            assert "for 'beta'" in message
+            assert "2 coordinates" in message
+            assert f"worst {worst(values.values()):.{precision}f}" in message
+        assert view.warnings == [str(w.message) for w in caught]
+        assert view.summary_table().count("⚠") == 3
+
     def test_writes_all_three_fields(self, posterior):
         add_mcmc_diagnostics(posterior)
         assert _mcmc_has_field(posterior, "rhat")

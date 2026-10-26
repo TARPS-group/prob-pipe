@@ -26,7 +26,7 @@ __all__ = ["predictive_check"]
 
 @function
 def predictive_check[D](
-    kernel: ConditionalDistribution,
+    kernel: Any,
     law: Distribution,
     test_fns: Callable[[D], float] | Sequence[Callable[[D], float]],
     observed_data: D | None = None,
@@ -57,7 +57,8 @@ def predictive_check[D](
     ----------
     kernel : ConditionalDistribution
         The law of the observations given the parameters, such as the
-        likelihood of a model ``likelihood & prior``.
+        likelihood of a model ``likelihood & prior``. An invalid kernel
+        raises ``TypeError`` before any sampling.
     law : Distribution
         A law over the kernel's inputs: the posterior for a posterior
         predictive check, or the prior for a prior predictive check. A
@@ -254,7 +255,7 @@ def _predictive_joint(
     if not isinstance(kernel, ConditionalDistribution):
         raise TypeError(
             f"{operation}: kernel must be a ConditionalDistribution of the observations given "
-            f"the parameters; got {type(kernel).__name__}"
+            f"the parameters; got {type(kernel).__name__}. Pass the likelihood as kernel."
         )
     if not isinstance(law, Distribution) or not callable(getattr(law, "_sample", None)):
         raise TypeError(

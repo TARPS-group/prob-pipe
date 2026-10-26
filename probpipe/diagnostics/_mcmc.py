@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from .._messages import unknown_names
+from .._messages import count, unknown_names
 from ..core._shapes import NamesLike, _as_names
 from ._utils import _dataset_values
 
@@ -138,10 +138,10 @@ def _values_from_dataset(ds: xr.Dataset) -> dict[str, float]:
 
 
 def _rhat_warnings(values: dict[str, Any], threshold: float) -> list[str]:
-    """Generate R-hat warning messages."""
+    """Report the failing coordinate count and maximum R-hat per parameter."""
     from ._datatree import NotComputed
 
-    msgs: list[str] = []
+    failing: dict[str, list[float]] = {}
 
     for param, val in values.items():
         if isinstance(val, NotComputed):
@@ -153,12 +153,14 @@ def _rhat_warnings(values: dict[str, Any], threshold: float) -> list[str]:
             continue
 
         if numeric_val > threshold:
-            msgs.append(
-                f"R-hat > {threshold} for '{param}' ({numeric_val:.4f}) -- "
-                f"chains may not have converged."
-            )
+            failing.setdefault(param.rsplit("[", 1)[0], []).append(numeric_val)
 
-    return msgs
+    return [
+        f"R-hat > {threshold} for '{param}' "
+        f"({count(len(vals), 'coordinate')}, worst {max(vals):.4f}) -- "
+        "chains may not have converged."
+        for param, vals in failing.items()
+    ]
 
 
 def _ess_warnings(
@@ -166,39 +168,33 @@ def _ess_warnings(
     tail: dict[str, Any],
     threshold: int,
 ) -> list[str]:
-    """Generate ESS warning messages."""
+    """Report the failing coordinate count and minimum ESS per parameter and kind."""
     from ._datatree import NotComputed
 
     msgs: list[str] = []
 
-    for param, val in bulk.items():
-        if isinstance(val, NotComputed):
-            continue
+    for kind, values, advice in (
+        ("bulk", bulk, "consider more iterations."),
+        ("tail", tail, "tail estimates may be unreliable."),
+    ):
+        failing: dict[str, list[float]] = {}
+        for param, val in values.items():
+            if isinstance(val, NotComputed):
+                continue
 
-        try:
-            numeric_val = float(val)
-        except Exception:
-            continue
+            try:
+                numeric_val = float(val)
+            except Exception:
+                continue
 
-        if numeric_val < threshold:
-            msgs.append(
-                f"Low ESS (bulk) for '{param}' ({numeric_val:.0f}) -- consider more iterations."
-            )
+            if numeric_val < threshold:
+                failing.setdefault(param.rsplit("[", 1)[0], []).append(numeric_val)
 
-    for param, val in tail.items():
-        if isinstance(val, NotComputed):
-            continue
-
-        try:
-            numeric_val = float(val)
-        except Exception:
-            continue
-
-        if numeric_val < threshold:
-            msgs.append(
-                f"Low ESS (tail) for '{param}' ({numeric_val:.0f}) -- "
-                f"tail estimates may be unreliable."
-            )
+        msgs.extend(
+            f"Low ESS ({kind}) for '{param}' "
+            f"({count(len(vals), 'coordinate')}, worst {min(vals):.0f}) -- {advice}"
+            for param, vals in failing.items()
+        )
 
     return msgs
 
@@ -498,7 +494,8 @@ def add_rhat(
     This is the in-place wrapper around :func:`_compute_rhat_op`.
 
     Skips computation if R-hat is already present unless ``force=True``.
-    Emits a Python warning for any parameter with R-hat > ``threshold``.
+    Emits one warning per parameter with R-hat > ``threshold``, reporting
+    the number of coordinates above the threshold and the maximum R-hat.
     """
     from ._datatree import _mcmc_has_field
 
@@ -533,7 +530,8 @@ def add_ess(
     This is the in-place wrapper around :func:`_compute_ess_op`.
 
     Skips computation if ESS is already present unless ``force=True``.
-    Emits Python warnings for parameters below ``threshold``.
+    Emits one warning per parameter and ESS kind below ``threshold``, reporting
+    the number of coordinates below the threshold and the minimum ESS.
     """
     from ._datatree import _mcmc_has_field
 

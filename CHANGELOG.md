@@ -4446,6 +4446,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `predictive_check` rejects a model passed as its kernel before sampling and
+  asks for the likelihood.
+
+- MCMC warnings summarize each parameter's failing coordinates and worst value.
+  Diagnostic tables size the parameter column to fit long names.
+
 - **Default workflow streams continue across notebook cells.** IPython cells
   with top-level `await` and kernels that change tasks between cells keep the
   configured stream. User-created tasks retain their own ownership checks.

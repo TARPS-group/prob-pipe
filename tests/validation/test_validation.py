@@ -572,6 +572,16 @@ class TestOptionalInputs:
 
 
 class TestErrors:
+    def test_a_model_in_place_of_the_kernel_raises_before_sampling(
+        self, prior, likelihood, monkeypatch
+    ):
+        model = likelihood & prior
+        monkeypatch.setattr(
+            type(model), "_sample", lambda *args, **kwargs: pytest.fail("kernel was sampled")
+        )
+        with pytest.raises(TypeError, match=r"got FactoredDistribution.*Pass the likelihood"):
+            predictive_check(model, prior, sample_mean)
+
     def test_a_law_that_misses_an_input_raises_naming_it(self, prior, observed_data):
         kernel = conditional_distribution(
             lambda mu, sigma: Normal("y", mu * jnp.ones(N), sigma),

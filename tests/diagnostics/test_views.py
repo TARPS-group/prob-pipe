@@ -412,6 +412,16 @@ class TestDiagnosticsView:
         assert "alpha" in table
         assert "R-hat" in table
 
+    def test_summary_table_aligns_long_parameter_names(self):
+        name = "district_log_relative_risk[0]"
+        view = self._view_with_mcmc(rhat={name: 1.2, "alpha": 1.0})
+        lines = view.summary_table().splitlines()
+        column = lines[0].index("R-hat")
+        assert column > len(name)
+        for param, value in ((name, "1.2000"), ("alpha", "1.0000")):
+            row = next(row for row in lines[2:] if row.startswith(param))
+            assert row[column:].startswith(value)
+
     def test_summary_table_formats_not_computed(self):
         da = xr.DataArray(
             [float("nan")],
