@@ -254,7 +254,9 @@ class TestLiftedScores:
             "derived",
             ("value",),
         )
-        assert prob.check(Bare("b"), Gaussian("v")).feasible is False
+        declined = prob.check(Bare("b"), Gaussian("v"))
+        assert declined.feasible is False
+        assert isinstance(declined.result.term_spec, DistributionSpec)
 
 
 class TestDerivedDensities:

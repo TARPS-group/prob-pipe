@@ -1147,6 +1147,8 @@ class TestLiftedChecks:
         batch = _laws(Gaussian("g"), Bare("g"))
         report = center.check(batch)
         assert report.feasible is False
+        # Planning precedes resolution, so the declaration stands without a route.
+        assert report.result.term_spec.level_names == ("laws",)
         assert "sweep cell (1,)" in report.description
         assert "does not implement SupportsMean" in report.description
         with pytest.raises(

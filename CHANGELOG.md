@@ -9,17 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
-- **`Function.check` reports the output spec of the value a lifted call
-  returns.** Before, `CallReport.result` was the function's output spec, which
-  describes one evaluation. Now a sweep reports a batch spec on the swept
-  levels, a broadcast reports `OutputSpec(DistributionSpec(event))`, and a
-  nested sweep reports a batch spec of those laws, so `f.check(batch).result`
-  describes what `f(batch)` returns. Read the per-element spec of a sweep as
-  `report.result.term_spec.element_spec` and a broadcast's event spec as
-  `report.result.term_spec.event_spec`. `result` is `None` for a lifted call
-  whose element or event spec only the returned values complete, for a call
-  whose route is infeasible or unresolved, and for a call that waits on a
-  conversion that decides its lift.
+- **`Function.check` reports the call's output spec.** `CallReport.result` is
+  the output spec whose `term_spec` is the spec of the term the call returns.
+  Before, it was the function's output spec, which describes one evaluation of
+  a lifted call. Now a sweep reports a batch spec on the swept levels, a
+  broadcast reports `OutputSpec(DistributionSpec(event))`, and a nested sweep
+  reports a batch spec of those laws, so `f.check(batch).result` describes what
+  `f(batch)` returns. Read a broadcast's event spec as
+  `report.result.term_spec.event_spec`, and a sweep's element type as
+  `report.result.term_spec.element_spec.term_spec`; the element spec names a
+  single array `element` rather than the function's output name. `result` is
+  `None` for a lifted call whose element or event spec only the returned values
+  complete, and for a call that waits on a conversion that decides its lift.
+  `check` now raises two declaration conflicts that the call raised only at
+  return: an `include_inputs=True` parameter named like an output, and a swept
+  batch output on a level the sweep ranges over.
+
 - **Record conformance and unification require declaration order.** Before,
   `RecordSpec(x=(), y=())` admitted an existing record or record spec ordered
   `{y, x}`. Now it refuses that order, including inside nested records and at

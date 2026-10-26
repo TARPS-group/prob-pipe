@@ -793,6 +793,9 @@ def _run_call(
             function, argument_values, resolved_controls, broadcast_plan
         )
     _plan.require_empty_sweep_output(broadcast_plan, concrete_output_spec)
+    _plan.require_distinct_swept_levels(
+        broadcast_plan, concrete_output_spec, output_label=function.output_label
+    )
     concrete_output_template = (
         _output_record_spec(concrete_output_spec) if concrete_output_spec is not None else None
     )
@@ -2004,29 +2007,27 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
             lifted=lifted,
             conversions=MappingProxyType(conversions),
         )
+    planned = _planned_result(
+        function, output_spec, argument_values, broadcast_plan, resolved_controls
+    )
     route_info, route = _route_report(
         function, argument_values, broadcast_plan, resolved_controls["method"], resolved_controls
     )
-    if route is None:
-        return CallReport(
-            routes=(route_info,),
-            selected=None if route_info.feasible is None else route_info,
-            deferred=deferred,
-            lifted=lifted,
-            conversions=MappingProxyType(conversions),
+    execution = (
+        ExecutionReport()
+        if route is None
+        else _lifted_execution_report(
+            function, argument_values, broadcast_plan, None, resolved_controls, route.name
         )
+    )
     return CallReport(
         routes=(route_info,),
-        selected=route_info,
+        selected=None if route_info.feasible is None else route_info,
         deferred=deferred,
-        result=_planned_result(
-            function, output_spec, argument_values, broadcast_plan, resolved_controls
-        ),
+        result=planned,
         lifted=lifted,
         conversions=MappingProxyType(conversions),
-        execution=_lifted_execution_report(
-            function, argument_values, broadcast_plan, None, resolved_controls, route.name
-        ),
+        execution=execution,
     )
 
 
@@ -2037,9 +2038,9 @@ def _planned_result(
     broadcast_plan: _plan.BroadcastPlan,
     resolved_controls: Mapping[str, Any],
 ) -> OutputSpec | None:
-    """The output spec of the call's result, from the output spec *output_spec* of one evaluation.
+    """The call's planned output spec, from the evaluation's output spec *output_spec*.
 
-    The result is planned as :func:`._plan.planned_result` states, under the
+    The spec is planned as :func:`._plan.planned_result` states, under the
     function's output name and result label and the call's ``include_inputs``.
     """
     return _plan.planned_result(

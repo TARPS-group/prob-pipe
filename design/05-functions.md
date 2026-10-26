@@ -53,7 +53,7 @@ class CallReport:
     routes:      tuple[MethodInfo, ...]         # one per route, in selection order
     selected:    MethodInfo | None              # None when selection cannot be decided
     deferred:    tuple[str, ...]                # the checks left to return
-    result:      OutputSpec | None              # the planned output spec of the value the call returns (V.6); None when no route is selected or only the return settles it
+    result:      OutputSpec | None              # the call's planned output spec, whose term_spec is the spec of the returned term (V.6); None when only the return or a pending conversion settles it
     lifted:      tuple[str, ...]                # the parameters whose arguments lift or sweep (V.5)
     conversions: Mapping[str, ConversionInfo]   # the planned conversion of each parameter that converts (V.4)
     execution:   ExecutionReport                # how each callable's evaluation points will run (V.9)
@@ -212,7 +212,7 @@ def rate(x):
 2. **A sweep** returns a batch of the output kind on the swept levels, with one element for each element swept, whose element spec is the function's completed output spec (II.5).
 3. **A nested sweep** returns a `DistributionBatch` on the swept levels, whose element at each position is the law that the broadcast at that position returns.
 
-Planning gives the output spec of this result from the function's output spec, and `check` reports it as the `CallReport`'s `result` (V.1). A sweep's is a batch spec on the swept levels whose element spec is the function's output spec, and an element that is itself a batch adds its own levels after the swept ones. A broadcast's is `OutputSpec(DistributionSpec(event))`, whose event is the law's event spec, and a nested sweep's is a batch spec of those laws on the swept levels. A lifted call whose output spec leaves its spec unspecified has no planned result, since only the returned values complete its elements or its event.
+Planning also gives the **call's output spec**, whose `term_spec` is the spec of the term the call returns, as a `Function`'s output spec's `term_spec` is the spec of what it returns (II.2), and `check` reports it as the `CallReport`'s `result` (V.1). A plain call's is the function's output spec. A sweep's term spec is a batch spec on the swept levels whose element spec is the function's output spec, and an element that is itself a batch adds its own levels after the swept ones. A broadcast's call output spec is `OutputSpec(DistributionSpec(event))`, whose event is the event spec of the law it returns, and a nested sweep's term spec is a batch spec of those laws on the swept levels. The spec of the returned term completes the call's output spec. A lifted call whose function's output spec is unspecified has no planned call output spec, since only the returned values complete its elements or its event.
 
 Without an output spec, the result's output spec completes at return from the outputs, by the rule that **The declared output** states. The elements of a sweep must then complete to one output spec, and elements that disagree raise `ResultSchemaError` (V.10). An empty sweep has no output to complete from, so its output spec must already be complete, with every spec stated and every dimension bound.
 

@@ -1520,10 +1520,9 @@ class Function(TrackedTerm, Annotated):
             The call's report: for each candidate route whether it is feasible,
             infeasible with a reason, or unresolved with the declarations it
             still needs; the selected route when selection can be decided; the
-            planned output spec of the value the call returns, which for a
-            lifted call is the batch or law the lift returns; the checks
-            deferred to return; the lifted parameters; and the planned
-            conversions.
+            call's planned output spec, whose term spec is the spec of the
+            batch or law that a lifted call returns; the checks deferred to
+            return; the lifted parameters; and the planned conversions.
 
         Raises
         ------

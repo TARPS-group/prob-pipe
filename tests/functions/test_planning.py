@@ -8,14 +8,15 @@ settle:
 - an unspecified output type: is filled per call, and the output spec keeps it;
 - a lift: plans a distribution over the output spec;
 - ``include_inputs``: returns the joint law of the lifted inputs and the output.
-- ``check``: reports the output spec of the value the call returns, a batch or a
-  law for a lifted call.
+- ``check``: reports the call's output spec, whose term spec is the spec of the
+  batch or law that a lifted call returns.
 """
 
 from __future__ import annotations
 
 import jax.numpy as jnp
 import pytest
+import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
     ApplicabilityError,
@@ -225,8 +226,9 @@ class TestEmptySweepPlanning:
         assert result.element_spec.term_spec.shape == ()
 
 
-#: A scalar output whose dtype the stored results share, so a planned batch spec
-#: equals the returned batch's spec.
+#: A scalar output declared at the dtype the stored results take. A planned spec
+#: that states every dtype equals the returned term's spec, which ``is_valid``
+#: compares by equality; return completes a dtype the declaration leaves open.
 _FLOAT = NumericArraySpec((), jnp.float32)
 _SCALAR = OutputSpec(f=_FLOAT)
 
@@ -244,7 +246,7 @@ def _items() -> NumericArrayBatch:
 
 
 class TestTheCheckedResult:
-    """``check`` reports the output spec of the value the call returns, whatever the lift."""
+    """``check`` reports the call's output spec, whose term spec is the returned term's."""
 
     def test_a_plain_call_reports_the_functions_output_spec(self):
         assert _scalar_function().check(1.0).result == _SCALAR
@@ -257,6 +259,18 @@ class TestTheCheckedResult:
         result = f(_items())
         assert planned.term_spec.is_valid(result)
         assert planned.term_spec.level_names == result.level_names
+
+    def test_return_completes_what_a_swept_declaration_leaves_open(self):
+        @function(output_spec=OutputSpec(f=NumericArraySpec(("n",))))
+        def spread(x):
+            return x * jnp.ones(3)
+
+        planned = spread.check(_items()).result
+        assert planned == OutputSpec(f=BatchSpec(NumericArraySpec(("n",)), item=2))
+        returned = spread(_items()).spec
+        assert returned.level_names == planned.term_spec.level_names
+        assert returned.element_spec.term_spec.shape == (3,)
+        assert returned.element_spec.term_spec.dtype == jnp.float32
 
     def test_a_swept_record_keeps_the_positional_form(self):
         record = RecordSpec(a=_FLOAT, b=_FLOAT)
@@ -283,8 +297,13 @@ class TestTheCheckedResult:
         def spread(x):
             return NumericArrayBatch(x * jnp.ones(3), "item", label="spread")
 
-        assert isinstance(error_of(lambda: spread.check(_items())), ValueError)
-        assert isinstance(error_of(lambda: spread(_items())), ValueError)
+        checked, called = (
+            error_of(lambda: spread.check(_items())),
+            error_of(lambda: spread(_items())),
+        )
+        assert isinstance(checked, ValueError) and isinstance(called, ValueError)
+        assert str(checked) == str(called)
+        assert "'spread' sweeps the level 'item'" in str(checked)
 
     def test_a_broadcast_reports_a_law_over_the_outputs(self):
         f = _scalar_function()
@@ -296,6 +315,8 @@ class TestTheCheckedResult:
         assert tuple(planned.term_spec.event_spec.outputs) == tuple(result.event_spec.outputs)
 
     def test_a_broadcast_of_returned_laws_holds_each_law_under_the_output_name(self):
+        # The event holds each law in the keyword form, an interim form of the
+        # one-field record that design V.6 names.
         law = DistributionSpec(OutputSpec(y=NumericArraySpec(())))
 
         @function(output_spec=OutputSpec(law), max_evaluations=6)
@@ -317,14 +338,16 @@ class TestTheCheckedResult:
         assert tuple(result.event_spec.outputs) == ("x", "f")
         assert planned.term_spec.is_valid(result)
 
-    def test_including_an_input_named_like_an_output_raises_at_check(self):
-        @function(
-            include_inputs=True, max_evaluations=6, output_spec=OutputSpec(x=NumericArraySpec(()))
-        )
+    @pytest.mark.parametrize(
+        "declared", [NumericArraySpec(()), None], ids=["specified", "unspecified"]
+    )
+    def test_including_an_input_named_like_an_output_raises_at_check(self, declared):
+        @function(include_inputs=True, max_evaluations=6, output_spec=OutputSpec(x=declared))
         def double(x):
             return 2.0 * x
 
-        assert isinstance(error_of(lambda: double.check(standard_normal())), ApplicabilityError)
+        with pytest.raises(ApplicabilityError, match="cannot add parameter 'x' to the output"):
+            double.check(standard_normal())
 
     def test_a_nested_sweep_reports_a_batch_of_laws(self):
         @function(output_spec=_SCALAR, max_evaluations=6)
@@ -361,10 +384,15 @@ class TestTheCheckedResult:
 
         assert f.check(1.0).result == OutputSpec(f=None)
 
-    def test_a_call_without_a_feasible_route_reports_no_result(self):
-        report = _scalar_function().using(method="sampling_lift").check(1.0)
-        assert report.selected.feasible is False
+    def test_a_conversion_that_decides_the_lift_leaves_the_result_open(self):
+        report = _scalar_function().check(tfd.Normal(0.0, 1.0))
+        assert report.selected is None and report.routes[0].unresolved
         assert report.result is None
+
+    def test_a_call_without_a_feasible_route_reports_its_planned_result(self):
+        report = _scalar_function().using(method="sampling_lift").check(_items())
+        assert report.selected.feasible is False
+        assert report.result == OutputSpec(f=BatchSpec(_FLOAT, item=2))
 
 
 class TestIncludingTheInputs:
