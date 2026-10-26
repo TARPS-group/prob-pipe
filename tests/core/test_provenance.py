@@ -13,6 +13,7 @@ import probpipe
 from probpipe import (
     EmpiricalDistribution,
     Function,
+    LogNormal,
     MultivariateNormal,
     Normal,
     NumericRecord,
@@ -23,13 +24,20 @@ from probpipe import (
     condition_on,
     conditional_distribution,
     convert,
+    joint,
     provenance_ancestors,
     provenance_dag,
+    quantile,
     workflow_run,
 )
 from probpipe.core._specs import NumericArraySpec, OutputSpec
 from probpipe.core.provenance import ParentInfo
-from probpipe.distributions import ConditionalDistribution, SupportsConditionalSampling
+from probpipe.distributions import (
+    ConditionalDistribution,
+    FactoredConditionalDistribution,
+    FactoredDistribution,
+    SupportsConditionalSampling,
+)
 from probpipe.families import BijectorTransformedDistribution
 from tests._ops import condition_on as condition_on_operation
 
@@ -284,23 +292,23 @@ class TestBijectorTransformedDistributionProvenance:
 
 class TestConditioningProvenance:
     def test_product_condition_on(self):
-        joint = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=1.0, scale=2.0, label="y")
-        cond = condition_on(joint, {"x": jnp.array(0.0)})
+        model = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=1.0, scale=2.0, label="y")
+        cond = condition_on(model, {"x": jnp.array(0.0)})
         assert cond.provenance is not None
         assert cond.provenance.operation == "workflow.condition_on"
         assert isinstance(cond.provenance.parents[0], ParentInfo)
         # The operation, the joint, and the slice's law, whose own record names its stage.
         assert [parent.label for parent in cond.provenance.parents] == [
             "condition_on",
-            joint.label,
+            model.label,
             "y",
         ]
 
     def test_condition_on_records_plain_observation_by_parameter(self):
-        joint = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=1.0, scale=2.0)
+        model = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=1.0, scale=2.0)
 
-        at_zero = condition_on(joint, {"x": jnp.array(0.0)})
-        at_five = condition_on(joint, {"x": jnp.array(5.0)})
+        at_zero = condition_on(model, {"x": jnp.array(0.0)})
+        at_five = condition_on(model, {"x": jnp.array(5.0)})
 
         assert at_zero.provenance is not None
         assert at_five.provenance is not None
@@ -312,13 +320,13 @@ class TestConditioningProvenance:
         )
 
     def test_dependent_joint_condition_on(self):
-        joint = _ShiftKernel() & Normal("z", loc=0.0, scale=1.0)
-        cond = condition_on_operation(joint, {"z": jnp.array(1.0)})
+        model = _ShiftKernel() & Normal("z", loc=0.0, scale=1.0)
+        cond = condition_on_operation(model, {"z": jnp.array(1.0)})
         assert cond.provenance.operation == "workflow.condition_on"
         # The operation, the joint, and the slice's law, whose own record names its stage.
         assert [parent.label for parent in cond.provenance.parents] == [
             "condition_on",
-            joint.label,
+            model.label,
             "x",
         ]
         assert isinstance(cond.provenance.parents[0], ParentInfo)
@@ -520,21 +528,22 @@ class TestBroadcastingProvenance:
 
 
 class TestProvenanceChains:
-    def test_two_step_chain(self):
-        """convert → condition_on creates a 2-step chain.
+    def test_three_step_chain(self):
+        """convert → & → condition_on creates a 3-step chain.
 
         The converted law keeps the source's output, which the joint conditions on.
         """
         src = StudentT("prior", df=5.0, loc=0.0, scale=1.0, label="prior")
         converted = convert(src, Normal)
-        joint = converted & Normal("y", loc=0.0, scale=1.0)
-        cond = condition_on(joint, {"prior": jnp.array(0.0)})
+        model = converted & Normal("y", loc=0.0, scale=1.0)
+        cond = condition_on(model, {"prior": jnp.array(0.0)})
 
-        # cond's provenance points to joint
+        # cond's provenance points to the model
         assert cond.provenance.operation == "workflow.condition_on"
-        # joint has no provenance (constructed directly)
-        assert joint.provenance is None
-        # but converted has provenance pointing to src
+        # the model records the merge of the converted law and the root Normal
+        assert model.provenance.operation == "&"
+        assert model.provenance.parents[0].provenance is converted.provenance
+        # and converted has provenance pointing to src
         assert converted.provenance.operation == "workflow.convert"
         assert isinstance(converted.provenance.parents[1], ParentInfo)
         assert converted.provenance.parents[1].label == "prior"
@@ -565,6 +574,74 @@ class TestProvenanceChains:
         assert parent_td.provenance.operation == "transform"
         assert isinstance(parent_td.provenance.parents[0], ParentInfo)
         assert parent_td.provenance.parents[0].parent is base
+
+
+class TestMergeProvenance:
+    """``a & b`` records the step ``&`` with its two operands as parents (VI.7)."""
+
+    def test_a_merge_records_its_operands_left_first(self):
+        a = Normal("a", 0.0, 1.0, label="a")
+        b = Normal("b", 0.0, 1.0, label="b")
+        merged = a & b
+        assert merged.provenance.operation == "&"
+        assert [p.label for p in merged.provenance.parents] == ["a", "b"]
+        assert [p.label for p in (b & a).provenance.parents] == ["b", "a"]
+
+    def test_a_kernel_merge_records_its_operands(self):
+        kernel = _ShiftKernel()
+        z = Normal("z", 0.0, 1.0, label="z")
+        merged = kernel & z
+        assert isinstance(merged, FactoredDistribution)
+        assert merged.provenance.operation == "&"
+        assert [p.label for p in merged.provenance.parents] == ["x", "z"]
+        unmet = kernel & Normal("w", 0.0, 1.0, label="w")
+        assert isinstance(unmet, FactoredConditionalDistribution)
+        assert unmet.provenance.operation == "&"
+
+    def test_a_chain_records_each_merge_as_written(self):
+        a, b, c = (Normal(name, 0.0, 1.0, label=name) for name in "abc")
+        chain = a & b & c
+        left, right = chain.provenance.parents
+        assert left.provenance.operation == "&"
+        assert [p.label for p in left.provenance.parents] == ["a", "b"]
+        assert right.label == "c" and right.provenance is None
+
+    def test_a_merge_takes_no_second_record(self):
+        merged = Normal("a", 0.0, 1.0, label="a") & Normal("b", 0.0, 1.0, label="b")
+        with pytest.raises(RuntimeError, match="already set"):
+            merged.with_provenance(Provenance("mine"))
+
+    def test_a_constructed_product_is_a_root(self):
+        a = Normal("a", 0.0, 1.0, label="a")
+        b = Normal("b", 0.0, 1.0, label="b")
+        assert FactoredDistribution((a, b)).provenance is None
+
+    def test_off_mode_records_no_merge(self):
+        a = Normal("a", 0.0, 1.0, label="a")
+        b = Normal("b", 0.0, 1.0, label="b")
+        with probpipe.config.provenance.using(mode=ProvenanceMode.OFF):
+            assert (a & b).provenance is None
+
+    def test_ancestors_and_to_dict_reach_the_operands(self):
+        renamed = Normal("x", 0.0, 1.0, label="prior").rename(x="mu")
+        merged = Normal("y", 0.0, 1.0, label="y") & renamed
+        assert "rename" in {
+            a.provenance.operation for a in provenance_ancestors(merged) if a.provenance
+        }
+        record = merged.provenance.to_dict()
+        assert record["operation"] == "&"
+        assert record["parents"][1]["provenance"]["operation"] == "rename"
+
+    def test_joint_folds_its_merge_into_one_line(self):
+        a = Normal("a", 0.0, 1.0, label="a")
+        kernel = conditional_distribution(
+            lambda b: Normal("y", b, 1.0), given_spec={"b": NumericArraySpec(())}, label="k"
+        )
+        realigned = joint(kernel, a, a="b")
+        assert "&" in {
+            p.provenance.operation for p in provenance_ancestors(realigned) if p.provenance
+        }
+        assert str(realigned.provenance) == "1. joint(k, a, **align['a'])  route merge, exact"
 
 
 # ===========================================================================
@@ -866,7 +943,7 @@ def _reweighted_posterior():
         label="lik",
     )
     prior = EmpiricalDistribution(jnp.linspace(-2.0, 2.0, 41), output_name="mu", label="prior")
-    model = likelihood & prior
+    model = FactoredDistribution((likelihood, prior))
     model.with_provenance(Provenance.create("build_model"))
     data = NumericRecord({"y": jnp.array([0.4, 0.9, -0.1])}, label="data")
     data.with_provenance(Provenance.create("load"))
@@ -1052,6 +1129,87 @@ class TestProvenanceStr:
         first, second = _diamond(), _diamond()
         assert str(first.provenance) == str(second.provenance)
         assert str(first.provenance) == str(first.provenance)
+
+    def test_a_merge_prints_its_operands_joined_by_and(self):
+        a, b = _law("a"), _law("b")
+        assert str((a & b.rename(x="y")).provenance) == "1. b = rename(b)\n2. a & 1"
+
+    def test_a_merge_chain_prints_as_one_line(self):
+        a, b, c = (Normal(name, 0.0, 1.0, label=name) for name in "abc")
+        assert str((a & b & c).provenance) == "1. a & b & c"
+        assert str((a & (b & c)).provenance) == "1. a & (b & c)"
+
+    def test_a_shared_merge_stays_a_line(self):
+        a, b, c, d = (Normal(name, 0.0, 1.0, label=name) for name in "abcd")
+        ab = a & b
+        top = _law("top", "h", [ab & c, ab & d])
+        assert str(top.provenance).splitlines() == [
+            "1. a & b",
+            "2. 1 & c",
+            "3. 1 & d",
+            "4. h(2, 3)",
+        ]
+
+    def test_a_merge_groups_an_operand_label_of_several_words(self):
+        merged = Normal("a", 0.0, 1.0, label="my model") & Normal("b", 0.0, 1.0, label="b")
+        assert str(merged.provenance) == "1. [my model] & b"
+
+    def test_a_kernel_merge_prints_its_operands(self):
+        merged = _ShiftKernel() & Normal("z", 0.0, 1.0, label="z")
+        assert str(merged.provenance) == "1. x & z"
+
+    def test_a_merge_of_a_view_refers_to_its_container(self):
+        a, b, c = (Normal(name, 0.0, 1.0, label=name) for name in "abc")
+        ab = a & b
+        assert str((c & ab["a"]).provenance).splitlines() == ["1. a & b", "2. c & 1['a']"]
+
+    def test_a_merge_chain_prints_as_one_line_in_full_mode(self, full_provenance_mode):
+        a, b, c, d = (Normal(name, 0.0, 1.0, label=name) for name in "abcd")
+        assert str((a & b & (c & d)).provenance) == "1. a & b & (c & d)"
+
+    def test_a_deserialized_merge_prints_without_its_operands(self):
+        a, b = (Normal(name, 0.0, 1.0, label=name) for name in "ab")
+        record = Provenance.from_dict((a & b).provenance.to_dict())
+        assert str(record) == "1. &()"
+
+    def test_a_quantile_of_a_posterior_predictive_has_condition_on_as_an_ancestor(self):
+        """A predictive merged from a posterior keeps the posterior's lineage.
+
+        The model and the predictive are built with ``&`` as a first analysis
+        builds them, so a quantile of the predictive traces back through the
+        merges to ``condition_on``.
+        """
+        prior = Normal("mu", 0.0, 1.0, label="prior_mu") & LogNormal(
+            "sigma", 0.0, 0.5, label="prior_sigma"
+        )
+
+        @conditional_distribution(given_spec=prior.event_spec)
+        def likelihood(mu, sigma):
+            return Normal("y", mu * jnp.ones(3), sigma)
+
+        nuts = condition_on.using(
+            method="blackjax_nuts",
+            method_options={"num_results": 50, "num_warmup": 50, "num_chains": 1},
+        )
+        with workflow_run(seed=0):
+            posterior = nuts(likelihood & prior, {"y": jnp.array([0.4, 0.9, -0.1])})
+            posterior = posterior.with_label("posterior")
+            predictive = likelihood.rename(y="y_pred") & posterior
+            _, median, _ = quantile(predictive["y_pred"], jnp.array([0.05, 0.5, 0.95]))
+        assert str(predictive.provenance).splitlines() == [
+            "1. likelihood = rename(likelihood)",
+            "2. likelihood & (prior_mu & prior_sigma)",
+            "3. likelihood·prior_mu·prior_sigma = condition_on(2, given)  "
+            "route inference_methods, method blackjax_nuts, approximate",
+            "4. posterior = with_label(3)",
+            "5. 1 & 4",
+        ]
+        assert str(median.provenance).splitlines()[-1] == (
+            "6. quantile(5['y_pred'], q, given)                   route monte_carlo, approximate"
+        )
+        assert "workflow.condition_on" in {
+            a.provenance.operation for a in provenance_ancestors(median) if a.provenance
+        }
 
 
 # ===========================================================================

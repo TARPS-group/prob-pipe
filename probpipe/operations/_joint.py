@@ -70,18 +70,22 @@ def joint(A: Any, B: Any, **align: str):
     """
 
 
-def _can_merge(call: BoundCall, result: OutputSpec | None) -> bool:
+def _can_merge_factors(call: BoundCall, result: OutputSpec | None) -> bool:
     """Both factors are distributions or conditional distributions, which merge joins."""
-    kinds = (Distribution, ConditionalDistribution)
-    return isinstance(call.operands["A"], kinds) and isinstance(call.operands["B"], kinds)
+    factor_classes = (Distribution, ConditionalDistribution)
+    return isinstance(call.operands["A"], factor_classes) and isinstance(
+        call.operands["B"], factor_classes
+    )
 
 
-def _merge(call: BoundCall, result: OutputSpec | None) -> Any:
+def _merge_realigned_factors(call: BoundCall, result: OutputSpec | None) -> Any:
     """``A & B`` after ``B.rename(align)``."""
     A, B = call.operands["A"], call.operands["B"]
     align = call.operands.get("align") or {}
     return A & (B.rename(dict(align)) if align else B)
 
 
-joint.structural_route("merge", check=_can_merge, execute=_merge, exact=True)
+joint.structural_route(
+    "merge", check=_can_merge_factors, execute=_merge_realigned_factors, exact=True
+)
 _install_expression_rule(joint, _merged_expression)
