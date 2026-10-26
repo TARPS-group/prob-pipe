@@ -21,6 +21,7 @@ from probpipe import (
     ProvenanceMode,
     StudentT,
     condition_on,
+    conditional_distribution,
     convert,
     provenance_ancestors,
     provenance_dag,
@@ -857,6 +858,22 @@ def _diamond():
     return _law("top", "h", [left, right])
 
 
+def _reweighted_posterior():
+    """A posterior by ``empirical_reweighting`` of a tracked model on tracked data."""
+    likelihood = conditional_distribution(
+        lambda mu: Normal("y", mu * jnp.ones(3), 1.0),
+        given_spec={"mu": NumericArraySpec(())},
+        label="lik",
+    )
+    prior = EmpiricalDistribution(jnp.linspace(-2.0, 2.0, 41), output_name="mu", label="prior")
+    model = likelihood & prior
+    model.with_provenance(Provenance.create("build_model"))
+    data = NumericRecord({"y": jnp.array([0.4, 0.9, -0.1])}, label="data")
+    data.with_provenance(Provenance.create("load"))
+    with workflow_run(seed=0):
+        return condition_on(model, data)
+
+
 class TestProvenanceStr:
     def test_repr_stays_short(self):
         top = _diamond()
@@ -968,6 +985,68 @@ class TestProvenanceStr:
         loaded = _law(f"load_data('data.csv', '{digest}')", "workflow.load_data", [])
         top = _law("top", "f", [loaded])
         assert str(top.provenance).splitlines()[0] == "1. load_data('data.csv', '01234567…')"
+
+    def test_condition_on_prints_one_fit_step(self):
+        posterior = _reweighted_posterior()
+        assert str(posterior.provenance).splitlines() == [
+            "1. lik·prior = build_model()",
+            "2. data = load()",
+            "3. condition_on(1, 2)         route inference_methods, method empirical_reweighting, exact",
+        ]
+
+    def test_folded_steps_stay_in_the_record(self):
+        posterior = _reweighted_posterior()
+        operations = [
+            a.provenance.operation for a in provenance_ancestors(posterior) if a.provenance
+        ]
+        assert sorted(operations) == [
+            "build_model",
+            "condition_on",
+            "empirical_reweighting",
+            "load",
+        ]
+        record = posterior.provenance.to_dict()
+        run = record["parents"][record["metadata"]["route_results"][0]]["provenance"]
+        assert run["operation"] == "empirical_reweighting"
+        assert run["parents"][0]["provenance"]["operation"] == "condition_on"
+
+    def test_route_result_is_folded_into_its_call(self):
+        model = _law("model", "build")
+        target = _law("model", "condition_on", [model])
+        run = _law("posterior", "nuts", [target], metadata={"method": "nuts"})
+        fit = _law(
+            "posterior",
+            "workflow.condition_on",
+            [model, run],
+            metadata={"method": "nuts", "exact": False, "route_results": [1]},
+        )
+        top = _law("top", "mean", [fit])
+        assert str(top.provenance).splitlines() == [
+            "1. model = build()",
+            "2. posterior = condition_on(1)  method nuts, approximate",
+            "3. mean(2)",
+        ]
+
+    def test_shared_route_result_stays_a_step(self):
+        model = _law("model", "build")
+        target = _law("model", "condition_on", [model])
+        run = _law("run", "nuts", [target], metadata={"method": "nuts"})
+        fit = _law(
+            "posterior",
+            "workflow.condition_on",
+            [model, run],
+            metadata={"method": "nuts", "exact": False, "route_results": [1]},
+        )
+        other = _law("other", "g", [run])
+        top = _law("top", "h", [fit, other])
+        assert str(top.provenance).splitlines() == [
+            "1. model = build()",
+            "2. model = condition_on(1)",
+            "3. run = nuts(2)                   method nuts",
+            "4. posterior = condition_on(1, 3)  method nuts, approximate",
+            "5. other = g(3)",
+            "6. h(4, 5)",
+        ]
 
     def test_same_lineage_gives_the_same_string(self):
         first, second = _diamond(), _diamond()

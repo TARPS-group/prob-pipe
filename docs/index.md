@@ -1,5 +1,3 @@
-> **AI-generated.** An AI assistant drafted this page, and no maintainer has reviewed it yet. Please report errors on the issue tracker.
-
 # ProbPipe
 
 --8<-- "README.md:intro"
@@ -32,3 +30,5 @@ Six ideas make this work:
 - The [user guide](user_guide/index.md) explains one feature at a time on small examples, such as building a joint model, choosing an inference method, or reading a result's provenance.
 - The [API reference](api/index.md) documents every public name, grouped by topic.
 - [Cite](cite.md) gives the citation, and [Help](help.md) says where to ask questions.
+
+> **Human-validated** by Jonathan Huggins on 2026-10-25.

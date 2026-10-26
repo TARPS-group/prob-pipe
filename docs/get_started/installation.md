@@ -1,5 +1,3 @@
-> **AI-generated.** An AI assistant drafted this page, and no maintainer has reviewed it yet. Please report errors on the issue tracker.
-
 # Installation
 
 ProbPipe requires Python 3.12 or later, and it installs JAX as a dependency.
@@ -136,3 +134,5 @@ standard deviation of the draws: 1.0
 ## Next steps
 
 - The [quickstart](quickstart.ipynb) fits a first model, checks it, and forecasts with it in about ten minutes.
+
+> **Human-validated** by Jonathan Huggins on 2026-10-25.

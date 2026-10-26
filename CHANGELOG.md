@@ -2140,7 +2140,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   element read from a container shows as the container indexed by its path,
   as `4['beta']`. Operands remain visible when their labels match the operation's
   name, and substituting parent references preserves quoted string arguments.
-  The repr stays the short form.
+  The steps that a route runs inside a call, such as the inference target and
+  the sampler's run inside `condition_on`, fold into that call's line, which
+  names the route and the method. A step that a later step also uses stays a
+  line, and the record, `to_dict()`, and `provenance_ancestors` keep every step.
+  A managed call records the positions of its route's results among its parents
+  under the metadata key `route_results`. The repr stays the short form.
 
   ```text
   >>> print(answer.provenance)

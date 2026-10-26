@@ -71,7 +71,7 @@ from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
 from ..core._specs import InputSpec, NumericRecordSpec, OutputSpec
 from ..core.config import ProvenanceMode, WorkflowKind, config
 from ..core.named_tree import _PATH_SEP, _unflatten_paths
-from ..core.provenance import Provenance
+from ..core.provenance import _ROUTE_RESULTS, Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._empirical import EmpiricalDistribution
@@ -1028,10 +1028,16 @@ def _run_call(
         route = replace(route, num_samples=num_samples_used.provenance_num_samples)
     name = function._label
     controls, diagnostics = _recipe.provenance_recipe_fields(None)
+    metadata = {"func": name, **route.metadata}
+    if route_provenance_parents:
+        # The positions of the route's results among the parents, so the
+        # printed lineage shows the route's own steps as part of this call.
+        first = len(provenance_parents)
+        metadata[_ROUTE_RESULTS] = list(range(first, first + len(route_provenance_parents)))
     provenance = Provenance.create(
         f"workflow.{name}",
         parents=[*provenance_parents, *route_provenance_parents],
-        metadata={"func": name, **route.metadata},
+        metadata=metadata,
         inputs=provenance_inputs,
         controls=controls,
         diagnostics=diagnostics,
