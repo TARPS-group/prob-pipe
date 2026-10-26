@@ -241,10 +241,12 @@ pipeline (Wilson et al. 2017):
 7. **Provenance to the data file.** Every answer's provenance reaches the data
    file. Each step from the file to an answer is a ProbPipe `function` or
    operation, starting with `load_data(path, sha256)`, whose label records the
-   file's path and the hash of its contents. The pipeline prints and saves
-   each answer's chain with `report.show_provenance()`, and
-   `check_provenance()` stops the run, the smoke stage included, at a step
-   that records no provenance, such as a NumPy conversion.
+   file's path and the hash of its contents. `report.show_provenance()`
+   prints each answer's lineage with `print(answer.provenance)`, one step per
+   line from the load of the file, and saves `answer.provenance.to_dict()` as
+   JSON. `check_provenance()` stops the run, the smoke stage included, when an
+   answer records no provenance or when its ancestors miss the load of the
+   current file or a named step, as a NumPy conversion on the way causes.
 
 A notebook mirrors this structure and explains the analysis to its reader
 (Rule et al. 2019). Its first code cell holds the settings and the call of

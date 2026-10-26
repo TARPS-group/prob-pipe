@@ -303,21 +303,19 @@ class TestPipelineSkeleton:
     def test_the_provenance_of_each_answer_reaches_the_data_file(self, tmp_path):
         result = self._run(tmp_path, "smoke", pared=True)
         assert result.returncode == 0, result.stderr
-        line = next(
-            line
-            for line in result.stdout.splitlines()
-            if "normal: provenance of change_per_c" in line
+        lines = result.stdout.splitlines()
+        start = lines.index(
+            next(line for line in lines if "normal: provenance of change_per_c:" in line)
         )
-        assert "load_data('example_data.csv', " in line, line
-        assert "→ observations → condition_on (blackjax_nuts, approximate" in line, line
-        assert line.endswith("approximate overall"), line
-        chains = json.loads(
+        lineage = lines[start + 1 : start + 12]
+        assert lineage[0].startswith("1. ") and "load_data('example_data.csv', " in lineage[0]
+        assert any("condition_on(" in line and "approximate" in line for line in lineage), lineage
+        records = json.loads(
             (tmp_path / "checks" / "smoke" / "normal_answer_provenance.json").read_text()
         )
         sha256 = hashlib.sha256((tmp_path / "example_data.csv").read_bytes()).hexdigest()
-        for answer, steps in chains.items():
-            loads = [s for s in steps if s["operation"] == "workflow.load_data"]
-            assert any(sha256 in step["result"] for step in loads), answer
+        for answer, record in records.items():
+            assert sha256 in json.dumps(record), answer
 
     @pytest.mark.parametrize(
         "edit, message",

@@ -23,8 +23,6 @@ from pipeline_support import (
     QUANTILES,
     coordinate_names,
     divergences_of,
-    provenance_line,
-    provenance_steps,
     refit_label,
     write_json,
 )
@@ -120,11 +118,12 @@ def show_answers(name: str, answers: dict, settings) -> None:
 
 
 def show_provenance(name: str, answers: dict, settings) -> None:
-    """Print each answer's stages from the data file to it, and save its full chain of steps."""
-    chains = {answer: provenance_steps(value) for answer, value in answers.items()}
-    write_json(output_path(settings, name, "answer_provenance.json"), chains)
+    """Print each answer's lineage from the data file to it, and save each answer's provenance."""
+    records = {answer: value.provenance.to_dict() for answer, value in answers.items()}
+    write_json(output_path(settings, name, "answer_provenance.json"), records)
     for answer, value in answers.items():
-        print_labeled(settings, name, f"provenance of {answer}: {provenance_line(value)}")
+        print_labeled(settings, name, f"provenance of {answer}:")
+        print(value.provenance)
 
 
 # --- OPTIONAL: plug-in forecast --------------------------------------------------
