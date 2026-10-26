@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import copy
+import io
 import logging
 import math
 import re
+import tokenize
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -159,14 +161,15 @@ class Provenance:
            to its parents and then to the names of its plain inputs. A parent
            that is a step shows its number, and a parent that records no
            provenance shows its label, or its class name when it has no label.
-           A parent that records no provenance and whose label is the
-           operation's name is the callable the step applied, and the call
-           leaves it out. A step whose label differs from its call shows the
-           label first, as ``posterior = condition_on(1, 2)``, and a label
+           The first parent of a managed call is omitted when it describes a
+           root ``Function`` or ``Operation`` under the callable's name.
+           A step whose label differs from its call shows the label first,
+           as ``posterior = condition_on(1, 2)``, and a label
            that is the call with literal arguments, as
            ``load_data('data.csv')``, replaces the call. Inside a label, each
-           parent's label shows as the parent's reference. The last line shows
-           the call alone, because a record does not store its term's label;
+           parent's label outside string literals shows as the parent's
+           reference. The last line shows the call alone, because a record
+           does not store its term's label;
         3. how the step ran, from its metadata: ``route`` and ``method`` where
            it records them, and ``exact`` or ``approximate`` where it records
            ``exact``.
@@ -612,6 +615,32 @@ def _view_index(metadata: Mapping[str, Any]) -> str:
     return "[" + ", ".join(f"{k}={v!r}" for k, v in metadata.items()) + "]"
 
 
+def _replace_parent_references(label: str, replacements: Mapping[str, str]) -> str:
+    """Replace parent labels in an expression while preserving its string literals."""
+    if not replacements:
+        return label
+    offsets = [0]
+    for line in label.splitlines(keepends=True):
+        offsets.append(offsets[-1] + len(line))
+    try:
+        strings = [
+            (offsets[token.start[0] - 1] + token.start[1], offsets[token.end[0] - 1] + token.end[1])
+            for token in tokenize.generate_tokens(io.StringIO(label).readline)
+            if token.type == tokenize.STRING
+        ]
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return label
+    names = "|".join(re.escape(name) for name in sorted(replacements, key=len, reverse=True))
+    pattern = rf"(?<![\w.])(?:{names})(?![\w(])"
+
+    def replace(match: re.Match[str]) -> str:
+        if any(start <= match.start() < end for start, end in strings):
+            return match.group()
+        return replacements[match.group()]
+
+    return re.sub(pattern, replace, label)
+
+
 def _format_lineage(provenance: Provenance) -> str:
     refs: dict[Any, str] = {}
 
@@ -634,19 +663,26 @@ def _format_lineage(provenance: Provenance) -> str:
         else:
             arguments = [
                 ref(p)
-                for p in node.parents
-                if not (_provenance_of(p) is None and getattr(p, "label", None) == name)
+                for index, p in enumerate(node.parents)
+                if not (
+                    index == 0
+                    and node.operation.startswith(_MANAGED_CALL_PREFIX)
+                    and (p.type_name if isinstance(p, ParentInfo) else type(p).__name__)
+                    in ("Function", "Operation")
+                    and _provenance_of(p) is None
+                    and getattr(p, "label", None) == name
+                )
             ]
             arguments += list(node.inputs)
             call = f"{name}({', '.join(arguments)})"
         if label is None:
             return call
-        shown = label
-        for p in sorted(node.parents, key=lambda p: -len(getattr(p, "label", None) or "")):
-            parent_label = getattr(p, "label", None)
-            if parent_label and _parent_key(p) in refs and parent_label != label:
-                pattern = rf"(?<![\w.]){re.escape(parent_label)}(?![\w(])"
-                shown = re.sub(pattern, lambda _m, p=p: ref(p), shown)
+        replacements = {
+            p.label: ref(p)
+            for p in node.parents
+            if getattr(p, "label", None) and _parent_key(p) in refs and p.label != label
+        }
+        shown = _replace_parent_references(label, replacements)
         shown = _shorten_digests(shown)
         if shown == call or (not is_view(node) and shown.startswith(f"{name}(")):
             return shown
