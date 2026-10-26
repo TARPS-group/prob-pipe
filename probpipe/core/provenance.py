@@ -50,10 +50,11 @@ class ParentInfo:
         Class name of the tracked parent or plain input (e.g.
         ``"EmpiricalDistribution"`` or ``"ArrayImpl"``).
     label : str or None
-        Label of the tracked parent. ``None`` for plain inputs and unlabeled
-        tracked terms.
+        Label of the tracked parent. ``None`` for plain inputs, a class such
+        as the target of ``convert`` among them, and unlabeled tracked terms.
     provenance : Provenance or None
-        The parent's own provenance node.  Kept in both LIGHTWEIGHT and
+        The parent's own provenance node, and ``None`` for a plain input or a
+        tracked term that records none.  Kept in both LIGHTWEIGHT and
         FULL modes so the ancestry DAG remains traversable without holding
         the parent's data arrays alive.  Excluded from hashing (``Provenance``
         holds an unhashable ``metadata`` dict) but included in equality so
@@ -87,6 +88,28 @@ class ParentInfo:
     parent: Any | None = field(default=None, compare=False)
     fingerprint_is_weak: bool = field(default=False, compare=False)
     identity: int | None = field(default=None, compare=False)
+
+
+def _term_label(value: Any) -> str | None:
+    """The label of *value* when it is a tracked term, and ``None`` for a plain input.
+
+    A class carries the ``label`` property of its instances as an attribute, so
+    only a tracked term's attribute is read.
+    """
+    from .tracked import TrackedTerm
+
+    return value.label if isinstance(value, TrackedTerm) else None
+
+
+def _term_provenance(value: Any) -> Provenance | None:
+    """The provenance of *value* when it is a tracked term, and ``None`` for a plain input.
+
+    A class carries the ``provenance`` property of its instances as an
+    attribute, so only a tracked term's attribute is read.
+    """
+    from .tracked import TrackedTerm
+
+    return value.provenance if isinstance(value, TrackedTerm) else None
 
 
 # ---------------------------------------------------------------------------
@@ -312,8 +335,8 @@ class Provenance:
         parents = tuple(
             ParentInfo(
                 type_name=type(parent).__name__,
-                label=getattr(parent, "label", None),
-                provenance=getattr(parent, "provenance", None),
+                label=_term_label(parent),
+                provenance=_term_provenance(parent),
                 fingerprint=_identity_fingerprint(parent),
                 parent=parent if keep else None,
                 fingerprint_is_weak=True,
@@ -383,14 +406,14 @@ class Provenance:
                 logger.warning(
                     "fingerprint() failed for %s %r: %s",
                     type(p).__name__,
-                    getattr(p, "label", None),
+                    _term_label(p),
                     exc,
                 )
                 fp = None
             return ParentInfo(
                 type_name=type(p).__name__,
-                label=getattr(p, "label", None),
-                provenance=getattr(p, "provenance", None),
+                label=_term_label(p),
+                provenance=_term_provenance(p),
                 fingerprint=fp,
                 parent=p if keep else None,
                 fingerprint_is_weak=fingerprint_is_weak,
