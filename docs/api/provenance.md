@@ -4,6 +4,7 @@
 
 Each tracked term carries a label and a write-once provenance record, which names the operation that produced the term and its parents.
 This page documents the identity of a tracked term, the provenance record and its traversal, and the modes of how much history a provenance chain keeps.
+`print(x.provenance)` prints the lineage of `x`, one step per line from the loaded data or other roots down to `x`, as `Provenance.__str__` states.
 The settings `config.provenance` and `config.notation` are on [Settings](config.md).
 Replay from a provenance record is on [Workflows and reproducibility](workflows.md).
 

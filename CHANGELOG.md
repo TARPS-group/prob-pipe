@@ -2133,6 +2133,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`print(x.provenance)` prints the lineage of `x`.** Each line is one step,
+  from the loaded data or another root down to `x`, with the call that made it,
+  its route and method, and whether it is exact or approximate. A step that two
+  later steps use is listed once, and both refer to its number. A field or an
+  element read from a container shows as the container indexed by its path,
+  as `4['beta']`. The repr stays the short form.
+
+  ```text
+  >>> print(answer.provenance)
+  1. load_data('data.csv', '72327ac7…')  route body, exact
+  2. prepare_inputs(1)                   route body, exact
+  3. model = build_model(2)              route body, exact
+  4. posterior = condition_on(3, 2)      method nuts, approximate
+  5. mean(4['beta'])                     route closed_form, exact
+  ```
+
 - **Bare calls can share a default random stream.**
   `workflow_run.set_default(seed=...)` starts the stream, and
   `workflow_run.clear_default()` removes it. Explicit scopes and replay use
@@ -5296,6 +5312,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       Normal, loc=jnp.zeros(5), scale=1.0, name="x",
   )
   ```
+
+- **Repeated nutpie fits reuse compiled models.** Stan programs without includes
+  reuse an unbound compilation across datasets, keyed by the source contents,
+  file path, and compile arguments. Each fit binds its own data. PyMC fits
+  reuse compilation for the same builder at unchanged bound and observed
+  values; changed data compile a fresh model. The process-local cache holds
+  at most 16 compilations. Posterior provenance records `compile_seconds`,
+  `sampling_seconds`, and the `backend_seed` sent to nutpie.
 
 ## [0.1.0] - 2025-03-21
 

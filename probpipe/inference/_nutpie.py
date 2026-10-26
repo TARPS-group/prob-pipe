@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
+from collections.abc import Callable
+from hashlib import sha256
+from pathlib import Path
+from threading import RLock
+from time import perf_counter
 from typing import Any
 
 import numpy as np
 
 from ..core._dispatch import Feasibility
+from ..core._fingerprint import _fingerprint_with_strength
 from ..custom_types import ArrayLike, PRNGKey
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
@@ -74,7 +81,14 @@ def condition_on_nutpie(
     -------
     EmpiricalDistribution
         The chains of the program's parameters, with nutpie's trace as the
-        annotations.
+        annotations. Its inference-run provenance includes ``compile_seconds`` (preparing
+        the compiled model, including cache lookup and data binding),
+        ``sampling_seconds`` (the sampler call), and ``backend_seed``.
+        Compilations are kept in a bounded process-local cache. Stan programs
+        without includes reuse compilation across datasets; PyMC builds reuse
+        compilation only at unchanged bound and observed values.
+        A surrounding ``condition_on`` call retains this run's provenance as
+        a parent of its own provenance record.
 
     Raises
     ------
@@ -151,7 +165,9 @@ def _nutpie_posterior(
             "nutpie is required for condition_on_nutpie. Install it with: pip install nutpie"
         ) from e
 
+    compilation_started = perf_counter()
     compiled, pymc_build = _compile_for_nutpie(model, data)
+    compile_seconds = perf_counter() - compilation_started
 
     # A PyMC model's shapes come from its build at the data, before sampling,
     # so a dynamic-RV or non-concrete model fails fast. A Stan model's come from
@@ -162,6 +178,7 @@ def _nutpie_posterior(
         parameter_shapes = None
     parameter_names = list(target.event_spec.outputs)
 
+    sampling_started = perf_counter()
     trace = nutpie.sample(
         compiled,
         draws=num_results,
@@ -170,6 +187,7 @@ def _nutpie_posterior(
         seed=random_seed,
         **kwargs,
     )
+    sampling_seconds = perf_counter() - sampling_started
     # nutpie sorts the trace's variables by name, so the parameters are extracted
     # by name, in the target's order, without a program's transformed and
     # generated variables.
@@ -188,12 +206,39 @@ def _nutpie_posterior(
         num_results=num_results,
         num_warmup=num_warmup,
         num_chains=num_chains,
+        compile_seconds=compile_seconds,
+        sampling_seconds=sampling_seconds,
+        backend_seed=random_seed,
     )
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+#: Process-local compiled models, in least-recently-used order. Holding
+#: the lock through compilation prevents duplicate builds by simultaneous fits.
+_COMPILED_MODELS: OrderedDict[tuple[Any, ...], Any] = OrderedDict()
+_COMPILATION_LOCK = RLock()
+_COMPILATION_CACHE_SIZE = 16
+
+
+def _cached_compilation(cache_key: tuple[Any, ...], compile_model: Callable[[], Any]) -> Any:
+    """Reuse a compiled model, retaining at most sixteen in this process.
+
+    Successful compilations alone enter the cache. Each caller binds its data
+    on a separate compiled-model view after leaving the lock, so the cached
+    compilation never holds a fit's Stan data. Eviction releases the cache's
+    reference without changing a model another fit is using.
+    """
+    with _COMPILATION_LOCK:
+        if cache_key not in _COMPILED_MODELS:
+            _COMPILED_MODELS[cache_key] = compile_model()
+            if len(_COMPILED_MODELS) > _COMPILATION_CACHE_SIZE:
+                _COMPILED_MODELS.popitem(last=False)
+        _COMPILED_MODELS.move_to_end(cache_key)
+        return _COMPILED_MODELS[cache_key]
 
 
 def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any | None]:
@@ -203,9 +248,14 @@ def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any | None]:
     data-conditioned ``pm.Model`` for PyMCModel targets (so the caller
     can derive a matching parameter record), and ``None`` for Stan
     targets, which nutpie compiles from the program's file and then gives
-    the program's data.
+    the program's data. Stan compilations are reused by resolved filename,
+    source-content hash, and compile arguments. Programs with includes are
+    rebuilt, since the main file alone does not identify their dependencies.
+    A PyMC program's build and compilation are reused only at unchanged bound
+    and observed values with content-based fingerprints. Opaque inputs bypass
+    the cache. Different PyMC program objects never share a compilation.
     """
-    from ..families._programs import StanModel, _StanPosterior, _to_numpy
+    from ..families._programs import PyMCModel, StanModel, _StanPosterior, _to_numpy
 
     if isinstance(model, StanModel) and isinstance(data, dict):
         # Binding a Stan program's data gives the posterior.
@@ -215,14 +265,52 @@ def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any | None]:
 
         from ..families._programs import _BRIDGESTAN_MAKE_ARGS
 
-        compiled = nutpie.compile_stan_model(
-            filename=model.stan_file, extra_compile_args=list(_BRIDGESTAN_MAKE_ARGS)
-        )
+        stan_file = str(Path(model.stan_file).resolve())
+        stan_source = Path(stan_file).read_bytes()
+
+        def compile_stan() -> Any:
+            return nutpie.compile_stan_model(
+                filename=stan_file, extra_compile_args=list(_BRIDGESTAN_MAKE_ARGS)
+            )
+
+        if b"#include" in stan_source:
+            compiled = compile_stan()
+        else:
+            compiled = _cached_compilation(
+                (
+                    nutpie.compile_stan_model,
+                    stan_file,
+                    sha256(stan_source).digest(),
+                    tuple(_BRIDGESTAN_MAKE_ARGS),
+                ),
+                compile_stan,
+            )
         return compiled.with_data(**{k: _to_numpy(v) for k, v in model.data.items()}), None
 
     if hasattr(model, "_pymc_model"):
         import nutpie
 
+        if isinstance(model, PyMCModel):
+            import pytensor
+
+            inputs_hash, weak_inputs = _fingerprint_with_strength(
+                (dict(model._program.bound), data), max_array_bytes=None
+            )
+            if not weak_inputs:
+
+                def compile_pymc() -> tuple[Any, Any]:
+                    conditioned_model = model._pymc_model(data=data)
+                    return nutpie.compile_pymc_model(conditioned_model), conditioned_model
+
+                return _cached_compilation(
+                    (
+                        nutpie.compile_pymc_model,
+                        model._program,
+                        inputs_hash,
+                        pytensor.config.get_config_hash(),
+                    ),
+                    compile_pymc,
+                )
         pymc_build = model._pymc_model(data=data)
         return nutpie.compile_pymc_model(pymc_build), pymc_build
 
@@ -345,7 +433,9 @@ class NutpieNutsMethod(InferenceMethod):
     ) -> EmpiricalDistribution:
         """nutpie's NUTS on the program the target carries, at the observed values it binds.
 
-        The posterior's provenance names the target as its parent.
+        The posterior's provenance names the target as its parent and records
+        ``compile_seconds``, ``sampling_seconds``, and ``backend_seed``, as
+        :func:`condition_on_nutpie` describes.
         """
         self._check_options(options)
         dist, observed = joint_and_given(target)
