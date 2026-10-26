@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A product built with `&` carries provenance, so it takes no record of
+  your own.** Before, `(a & b).with_provenance(p)` attached `p`. Now it raises
+  `RuntimeError`, since the merge records `&` and provenance is set once. To
+  attach a record of your own to a product, build it with
+  `FactoredDistribution((a, b))` from `probpipe.distributions`, whose result
+  carries none.
 - **Record conformance and unification require declaration order.** Before,
   `RecordSpec(x=(), y=())` admitted an existing record or record spec ordered
   `{y, x}`. Now it refuses that order, including inside nested records and at
@@ -4451,6 +4457,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - MCMC warnings summarize each original parameter's failing coordinates and worst value.
   Diagnostic tables size the parameter column to fit long names.
+- **A law or a kernel built with `&` records its lineage.** Before, `(a &
+  b).provenance` was `None`, so a result computed from a merge, such as a
+  quantile of a posterior predictive `likelihood.rename(y="y_pred") &
+  posterior`, lost the lineage of the posterior and stopped short of
+  `condition_on`. Now the merge records the operation `&` with its two
+  operands as parents, left first, and `print(x.provenance)` shows it as `1 &
+  4`. A chain such as `a & b & c` prints as one line, and so does
+  `lik & (a & b)`. A law that a constructor builds, `FactoredDistribution(...)`
+  included, still records none.
+
+  ```text
+  >>> print(median.provenance)
+  1. likelihood = rename(likelihood)
+  2. likelihood & (prior_mu & prior_sigma)
+  3. likelihood·prior_mu·prior_sigma = condition_on(2, given)  route inference_methods, method blackjax_nuts, approximate
+  4. posterior = with_label(3)
+  5. 1 & 4
+  6. quantile(5['y_pred'], q, given)                   route monte_carlo, approximate
+  ```
 
 - **Default workflow streams continue across notebook cells.** IPython cells
   with top-level `await` and kernels that change tasks between cells keep the

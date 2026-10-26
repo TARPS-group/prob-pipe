@@ -339,7 +339,7 @@ Applying a kernel to its given and conditioning a law on a path of its event are
 
 ### Contract
 
-`A & B` (IV.2) is the merge operator; its result's `provenance` records `&` as the operation, and its `name` follows the canonical-order rule fixed there.
+`A & B` (IV.2) is the merge operator. Its result's `provenance` records `&` as the operation, with `A` and `B` as its parents in the order written, so a law computed from the joint traces back through the merge to each operand's lineage. Its label follows the labeling rule of IV.2.
 
 **The realigning `joint` form.** `&` feeds an input from the output of the same name. The `joint(A, B, **align)` operation renames first and then merges as `&` does, so it is equivalent to `A & B.rename(**align)`. For example, a likelihood that conditions on `slope` can be combined with a prior where the slope is called `beta` with `joint(lik, prior, beta="slope")`.
 
