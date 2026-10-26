@@ -160,7 +160,8 @@ class TestCoupledMarginals:
             object.__setattr__(first, "_parent", second)
             object.__setattr__(second, "_parent", first)
 
-        with pytest.raises(TypeError, match="Cyclic coupled marginal"):
+        cycle_message = "^coupled marginals cannot read one another in a cycle$"
+        with pytest.raises(TypeError, match=cycle_message):
             _descendants.capture_stochastic_consumer(first)
 
     def test_sibling_views_and_their_parent_form_one_plan_group(self):

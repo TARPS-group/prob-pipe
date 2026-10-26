@@ -371,7 +371,7 @@ def _capture_coupled_marginal(
     """
     identity = id(coupled_marginal)
     if identity in session.active_descendants:
-        raise TypeError("Cyclic coupled marginal graph is unsupported")
+        raise TypeError("coupled marginals cannot read one another in a cycle")
     parent, path = coupled_marginal.parent, coupled_marginal.path
     session.active_descendants.add(identity)
     try:

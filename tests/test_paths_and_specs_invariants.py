@@ -143,13 +143,13 @@ def test_i5_paths_chain_on_records_and_batches():
     assert draw.spec["g"]["c"] == draw.spec["g/c"]
 
 
-@pytest.mark.pending(reason="G1a: a view of a group offers the group's parts", raises=KeyError)
+@pytest.mark.pending(reason="a view of a group offers the group's parts", raises=KeyError)
 def test_i5_paths_chain_through_a_law_at_a_group():
     grouped = _grouped()
     assert grouped["g"]["c"].event_spec == grouped["g/c"].event_spec
 
 
-@pytest.mark.pending(reason="G3: paths continue into a field that holds a law", raises=KeyError)
+@pytest.mark.pending(reason="paths continue into a field that holds a law", raises=KeyError)
 def test_i5_paths_chain_through_a_held_law():
     record_with_law = Record({"n": 3.0, "G": _prior()}, label="record_with_law")
     assert record_with_law["G/mu"].event_spec == record_with_law["G"]["mu"].event_spec
@@ -214,7 +214,7 @@ def test_i9_one_path_gives_the_node_and_a_list_a_record_that_holds_it():
     assert x[["x"]].event_spec == OutputSpec(RecordSpec(x=x.event_spec.term_spec))
 
 
-@pytest.mark.pending(reason="S4: a batch stores its elements' output name", raises=TypeError)
+@pytest.mark.pending(reason="a batch stores its elements' output name", raises=TypeError)
 def test_i9_a_batchs_output_at_the_root():
     draws = _sample(Normal("x", 0.0, 1.0), sample_shape=4)
     assert draws[["x"]].element_spec.term_spec.keys() == ("x",)
@@ -250,7 +250,7 @@ def test_i10_on_an_input_spec():
     assert set(inputs[["a"]]) | set(inputs.without("a")) == {"a", "b"}
 
 
-@pytest.mark.pending(reason="G4: law.without", raises=AttributeError)
+@pytest.mark.pending(reason="law.without", raises=AttributeError)
 def test_i10_on_a_law():
     grouped = _grouped()
     assert grouped.without("g/e").event_spec == grouped[["a", "g/c"]].event_spec
@@ -265,20 +265,20 @@ def test_i11_conditioning_removes_what_it_fixes():
     assert condition_on(prior, {"mu": 0.1}).event_spec == prior.event_spec.without("mu")
 
 
-@pytest.mark.pending(reason="G3: the accessor of the term at an output", raises=AttributeError)
+@pytest.mark.pending(reason="the accessor of the term at an output", raises=AttributeError)
 def test_i12_the_term_at_an_output():
     grouped = _grouped()
     assert grouped.output_name("g").event_spec == grouped["g"].event_spec
 
 
-@pytest.mark.pending(reason="G3: [] on a Function", raises=TypeError)
+@pytest.mark.pending(reason="[] on a Function", raises=TypeError)
 def test_i13_indexing_commutes_with_producing():
     emulator = _emulator()
     theta = jnp.asarray(2.0)
     np.testing.assert_allclose(emulator["mean"](theta).raw, emulator(theta)["mean"].raw)
 
 
-@pytest.mark.pending(reason="G3: [] on a Function", raises=TypeError)
+@pytest.mark.pending(reason="[] on a Function", raises=TypeError)
 def test_i14_indexing_keeps_inputs():
     emulator = _emulator()
     assert emulator["mean"].input_spec == emulator.input_spec
@@ -291,8 +291,15 @@ def test_i15_a_kernels_sides_are_disjoint():
 
 
 def test_i15_a_merges_sides_are_disjoint():
-    model = _lik() & _prior()
-    assert not set(getattr(model, "given_spec", {})) & set(model.event_spec.outputs)
+    scaled = conditional_distribution(
+        lambda mu, sigma: Normal("y", mu, sigma),
+        given_spec={"mu": _REAL, "sigma": _REAL},
+        label="scaled",
+    )
+    model = scaled & Normal("mu", 0.0, 1.0)
+    assert set(model.given_spec) == {"sigma"}
+    assert set(model.event_spec.outputs) == {"y", "mu"}
+    assert not set(model.given_spec) & set(model.event_spec.outputs)
 
 
 @pytest.mark.parametrize(
@@ -342,17 +349,34 @@ def test_i18_rename_takes_the_same_paths():
 
 
 def test_i19_a_merge_is_associative():
-    """I19, which holds for ``&``."""
-    a, b, c = Normal("a", 0.0, 1.0), Normal("b", 1.0, 2.0), Normal("c", 2.0, 3.0)
-    left, right = ((a & b) & c), (a & (b & c))
+    """I19, which holds for ``&``: a chain y | x | w merges to one law however it is grouped."""
+    y_given_x = conditional_distribution(
+        lambda x: Normal("y", x, 1.0), given_spec={"x": _REAL}, label="y_given_x"
+    )
+    x_given_w = conditional_distribution(
+        lambda w: Normal("x", w, 1.0), given_spec={"w": _REAL}, label="x_given_w"
+    )
+    w = Normal("w", 0.0, 1.0)
+    left, right = ((y_given_x & x_given_w) & w), (y_given_x & (x_given_w & w))
     assert left.event_spec == right.event_spec
-    for name in ("a", "b", "c"):
-        np.testing.assert_allclose(variance(left)[name].raw, variance(right)[name].raw)
+    left_draws, right_draws = _sample(left, sample_shape=4000), _sample(right, sample_shape=4000)
+    for name in ("y", "x", "w"):
+        np.testing.assert_array_equal(left_draws[name].raw, right_draws[name].raw)
+    # y - x is the noise of y given x, so its variance is 1; were y drawn apart
+    # from x, it would be the 3 of y's and x's variances added.
+    np.testing.assert_allclose(
+        np.var(np.asarray(left_draws["y"].raw - left_draws["x"].raw)), 1.0, atol=0.15
+    )
 
 
 def test_i20_sampling_commutes_with_merge():
-    merged = Normal("x", 0.0, 1.0) & Normal("y", 0.0, 2.0)
+    """Each factor of a merge draws with its own key, as the factor sampled alone does."""
+    merged = Normal("x", 0.0, 1.0) & Normal("y", 0.0, 1.0)
     assert _sample(merged).keys() == ("x", "y")
+    draws = _sample(merged, sample_shape=4000)
+    x_draws, y_draws = np.asarray(draws["x"].raw), np.asarray(draws["y"].raw)
+    assert not np.array_equal(x_draws, y_draws)
+    assert abs(np.corrcoef(x_draws, y_draws)[0, 1]) < 0.1
 
 
 def test_i21_merge_commutes_with_renaming():
@@ -378,19 +402,19 @@ def test_i6_a_view_of_a_group_agrees_with_its_parents_output_spec():
     assert grouped["g"].event_spec == grouped.event_spec["g"]
 
 
-@pytest.mark.pending(reason="G3: lists of paths continue into a held law", raises=KeyError)
+@pytest.mark.pending(reason="lists of paths continue into a held law", raises=KeyError)
 def test_i9_a_list_of_paths_through_a_held_law():
     record_with_law = Record({"n": 3.0, "G": _prior()}, label="record_with_law")
     assert record_with_law[["G/mu"]].keys() == ("G",)
 
 
-@pytest.mark.pending(reason="G5: [] on a kernel", raises=TypeError)
+@pytest.mark.pending(reason="[] on a kernel", raises=TypeError)
 def test_i13_indexing_commutes_with_a_kernel():
     lik = _lik()
     assert lik["y"].event_spec == lik.event_spec
 
 
-@pytest.mark.pending(reason="G3: in follows paths through a held law", raises=AssertionError)
+@pytest.mark.pending(reason="in follows paths through a held law", raises=AssertionError)
 def test_i18_membership_through_a_held_law():
     record_with_law = Record({"n": 3.0, "G": _prior()}, label="record_with_law")
     assert "G/mu" in record_with_law

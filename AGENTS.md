@@ -24,6 +24,7 @@ The design reference in `design/` describes the target state, and the documents 
 | An error or warning message | `STYLE_GUIDE.md` §9.3 |
 | A docs page or a notebook | `CONTRIBUTING.md` § Documentation |
 | Installation | `CONTRIBUTING.md` § Installation |
+| A release to PyPI | `CONTRIBUTING.md` § Releasing |
 | The branch, the PR title and body, the CHANGELOG entry, and labels | `CONTRIBUTING.md` § PR Workflow and `.github/PULL_REQUEST_TEMPLATE.md` |
 
 Where `design/` disagrees with the code or with a contributor document, `CONTRACTS.md` directive 5 decides.
@@ -57,7 +58,7 @@ CI pins the pyright version in `.github/workflows/ci.yml`.
 
 1. **Select the tests.** `python3 scripts/ci/import_graph.py test-targets <changed .py files>` prints the targets that CI runs for changed source files, and each changed test file runs too.
 2. **Compare counts with the base branch.** Run the targets on the branch and on its base, and compare the pass, skip, and xfail counts. A test that skips on the branch and passes on the base hides a failure, as a missing optional backend does.
-3. **Run the design and documentation tests.** A change to `design/` needs `tests/docs/` and the four `test_design_conformance.py` files under `tests/`, and a change to `probpipe/`, a rule document, or an agent file needs `tests/docs/`.
+3. **Run the design and documentation tests.** A change to `design/` needs `tests/docs/` and the five `test_design_conformance.py` files under `tests/`, and a change to `probpipe/`, a rule document, or an agent file needs `tests/docs/`.
 4. **Run the ruff gate and the docstring check.** `uv run ruff check .`, `uv run ruff format --check .`, and `pre-commit run pydoclint --all-files` pass.
 5. **Check the prose.** Run `scripts/design/prose.py` on each changed Markdown file and on the PR body, and judge each candidate it prints against `STYLE_GUIDE.md` §10.
 6. **Run the full suite once before opening a PR.** It takes about seven minutes.
@@ -72,7 +73,8 @@ An agent that does not load skills can read a skill's `SKILL.md` and follow its 
 - `review-pr`: a review of a PR against the rule documents;
 - `review-all`: four independent reviews of a PR, merged into one report;
 - `audit-tests`: an audit of the test suite;
-- `criticize-design` and `criticize-with-docs`: an interview that stress-tests a design.
+- `criticize-design` and `criticize-with-docs`: an interview that stress-tests a design;
+- `design-pipeline`: an interview that designs a ProbPipe analysis pipeline for a user's problem, whose agent-neutral instructions are `.claude/skills/design-pipeline/INSTRUCTIONS.md`.
 
 These checks run without being asked:
 

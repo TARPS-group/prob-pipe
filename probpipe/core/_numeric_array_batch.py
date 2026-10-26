@@ -157,7 +157,7 @@ class NumericArrayBatch(Batch[NumericArray]):
             sizes = ", ".join(f"{name}=..." for name in symbolic)
             raise ValueError(
                 f"NumericArrayBatch: element shape {element.shape} has unbound "
-                f"symbolic dimensions; bind them first with element.with_dim_sizes({sizes})"
+                f"symbolic dimensions. Bind them first with element.with_dim_sizes({sizes})"
             )
         if not _is_numeric_leaf(values):
             raise TypeError(_not_numeric("NumericArrayBatch", "values", values))
@@ -177,7 +177,7 @@ class NumericArrayBatch(Batch[NumericArray]):
                 # one against, so the claim is unsupportable either way.
                 raise TypeError(
                     f"NumericArrayBatch: values have no single dtype to check against the "
-                    f"declared {np.dtype(element.dtype)}; omit the dtype from "
+                    f"declared {np.dtype(element.dtype)}. Omit the dtype from "
                     f"element, or pass values with one dtype"
                 )
             if not np.can_cast(dtype, element.dtype, casting="same_kind"):

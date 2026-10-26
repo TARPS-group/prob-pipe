@@ -35,7 +35,7 @@ For short scalar computations, task scheduling can cost more than evaluation.
 Install the `prefect` extra from the source branch used by this documentation, then install Prefect-Ray:
 
 ```bash
-python -m pip install "probpipe-core[prefect] @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
+python -m pip install "probpipe-core[prefect] @ git+https://github.com/TARPS-group/prob-pipe.git@main"
 python -m pip install prefect-ray
 ```
 

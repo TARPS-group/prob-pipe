@@ -659,7 +659,10 @@ class TestExecuteDistributionBroadcast:
     def test_low_max_evaluations_warns(self):
         values = {"x": Normal("x", loc=0.0, scale=1.0)}
         plan = _stochastic_plan(values, 3)
-        with pytest.warns(UserWarning, match="max_evaluations=3 is too low"):
+        with pytest.warns(
+            UserWarning,
+            match=r"^max_evaluations=3 is below 5, so the result may be unreliable\. Pass max_evaluations of at least 5$",
+        ):
             result = _broadcast_in_a_call(
                 func=lambda x: x,
                 values=values,

@@ -161,13 +161,17 @@ class _GivenLaw(Distribution):
             values = dict(given)
         else:
             raise ApplicabilityError("given must be a Record or a mapping of inputs")
-        unknown = set(values) - set(kernel.given_spec)
-        missing = set(kernel.given_spec.required) - set(values)
-        if unknown or missing:
+        unknown = sorted(set(values) - set(kernel.given_spec))
+        if unknown:
             raise ApplicabilityError(
-                f"given for {kernel.label!r}: unknown inputs {sorted(unknown)}; "
-                f"missing required inputs {sorted(missing)}; "
-                f"available inputs {list(kernel.given_spec)}"
+                f"given for {kernel.label!r} names the unknown {_input_names(unknown)}. "
+                f"Its inputs are {list(kernel.given_spec)}"
+            )
+        missing = sorted(set(kernel.given_spec.required) - set(values))
+        if missing:
+            raise ApplicabilityError(
+                f"given for {kernel.label!r} leaves the required {_input_names(missing)} "
+                "without a value. Give a value for each"
             )
         bindings: dict[str, int] = {}
         try:
@@ -189,3 +193,8 @@ class _GivenLaw(Distribution):
         object.__setattr__(self, "kernel", kernel)
         object.__setattr__(self, "given", given if isinstance(given, StandIn) else values)
         self._store_expression(kernel._embedded_expression().with_fixed(tuple(values)))
+
+
+def _input_names(names: list[str]) -> str:
+    """*names* after the noun "input", as ``input 'mu'`` or ``inputs ['mu', 'tau']``."""
+    return f"input {names[0]!r}" if len(names) == 1 else f"inputs {names}"

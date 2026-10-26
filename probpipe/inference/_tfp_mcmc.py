@@ -24,6 +24,7 @@ from ._inference_utils import (
     build_mcmc_datatree,
     build_target_log_prob,
     build_target_log_prob_flat,
+    chain_initial_states,
     get_init_state,
     no_density_reason,
     observed_parts,
@@ -43,11 +44,14 @@ def _run_tfp_chains(
     step_size: float,
     target_accept_prob: float,
     random_seed: int | PRNGKey,
+    per_chain_init: bool = False,
 ) -> tuple[list[Array], dict[str, np.ndarray]]:
     """Run TFP-backed MCMC chains.
 
     Returns (chains, sample_stats_dict) where sample_stats_dict contains
     arrays shaped (num_chains, num_results) for building DataTree.
+    ``init_state`` is one state, or one per chain on its leading axis when
+    ``per_chain_init`` is set.
     """
     if algorithm != "nuts":
         raise ValueError(f"algorithm must be 'nuts'; got {algorithm!r}")
@@ -68,17 +72,20 @@ def _run_tfp_chains(
 
     chain_keys = jax.random.split(as_prng_key(random_seed), num_chains)
 
-    def _run_one_chain(chain_key):
+    def _run_one_chain(chain_key, chain_init):
         return tfp_mcmc.sample_chain(
             num_results=num_results,
-            current_state=init_state,
+            current_state=chain_init,
             kernel=kernel,
             num_burnin_steps=num_warmup,
             seed=chain_key,
             trace_fn=lambda _, kr: kr,
         )
 
-    all_samples, all_traces = jax.vmap(_run_one_chain)(chain_keys)
+    init_axis = 0 if per_chain_init else None
+    all_samples, all_traces = jax.vmap(_run_one_chain, in_axes=(0, init_axis))(
+        chain_keys, init_state
+    )
     # all_samples: (num_chains, num_results, *event_shape)
     chains = [all_samples[c] for c in range(num_chains)]
 
@@ -184,8 +191,12 @@ class _TFPGradientMethod(InferenceMethod):
             return Feasibility(feasible=False, description=no_density_reason(model))
         if not traces_in_jax(model):
             return Feasibility(feasible=False, description=UNTRACEABLE_DENSITY)
+        init = kwargs.get("init")
+        if isinstance(init, str) or np.ndim(init) >= 2:
+            # A starting point for each chain is resolved and checked when the method runs.
+            init = None
         try:
-            density, init = _chain_target(model, observed, init=kwargs.get("init"), random_seed=0)
+            density, init = _chain_target(model, observed, init=init, random_seed=0)
             unconstrained_chain(density, init, model)
         except Exception as e:
             return Feasibility(feasible=False, description=str(e))
@@ -214,7 +225,8 @@ class _TFPGradientMethod(InferenceMethod):
         Raises
         ------
         ValueError
-            If ``target_accept_prob`` is not strictly between 0 and 1.
+            If ``target_accept_prob`` is not strictly between 0 and 1, or
+            ``init`` is neither a state, one state per chain, nor ``"per_chain"``.
         """
         self._check_options(options)
         target_accept_prob = options.get("target_accept_prob", 0.75)
@@ -222,13 +234,22 @@ class _TFPGradientMethod(InferenceMethod):
             raise ValueError(
                 f"target_accept_prob must be strictly between 0 and 1; got {target_accept_prob!r}"
             )
-        model, observed = observed_parts(target)
-        density, init = _chain_target(model, observed, init=options.get("init"), random_seed=key)
-        density, init, constrain = unconstrained_chain(density, init, model)
-
         num_results = options.get("num_results", 1000)
         num_warmup = options.get("num_warmup", 500)
         num_chains = options.get("num_chains", 4)
+        model, observed = observed_parts(target)
+        init, per_chain_init = chain_initial_states(
+            model,
+            options.get("init"),
+            num_chains=num_chains,
+            key=key,
+            method=self._method_name,
+            default_per_chain=True,
+        )
+        density, init = _chain_target(model, observed, init=init, random_seed=key)
+        density, init, constrain = unconstrained_chain(
+            density, init, model, per_chain=per_chain_init
+        )
 
         chains, sample_stats = _run_tfp_chains(
             density,
@@ -240,6 +261,7 @@ class _TFPGradientMethod(InferenceMethod):
             step_size=options.get("step_size", 0.1),
             target_accept_prob=target_accept_prob,
             random_seed=key,
+            per_chain_init=per_chain_init,
         )
         chains = [constrain(chain) for chain in chains]
         annotations = build_mcmc_datatree(chains, sample_stats)
@@ -260,12 +282,19 @@ def TFPNutsMethod() -> _TFPGradientMethod:
     Runs only when the caller pins ``method="tfp_nuts"``; ``blackjax_nuts``
     is what automatic selection picks for the same targets.
 
-    Its ``method_options`` are the draw, warmup, and chain counts, ``init``,
-    the initial ``step_size``, and ``target_accept_prob``, the
-    acceptance probability that warmup's step-size adaptation targets, 0.75
-    unless set. A higher target adapts a smaller step, which removes the
-    divergent transitions of a posterior with regions of high curvature at the
-    cost of longer trajectories.
+    Its ``method_options`` are:
+
+    - ``num_results``, ``num_warmup``, and ``num_chains``: the draw, warmup,
+      and chain counts, which are 1000, 500, and 4 unless set. Step-size
+      adaptation runs over the first 80% of the warmup steps;
+    - ``step_size``: the initial step size, which is 0.1 unless set;
+    - ``target_accept_prob``: the acceptance probability that warmup's
+      step-size adaptation targets, a number strictly between 0 and 1, which
+      is 0.75 unless set. A higher target adapts a smaller step, which removes
+      the divergent transitions of a posterior with regions of high curvature
+      at the cost of longer trajectories;
+    - ``init``: where the chains start, in the four forms that
+      ``BlackJAXNutsMethod`` states for ``blackjax_nuts``.
 
     Notes
     -----

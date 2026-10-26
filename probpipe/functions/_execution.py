@@ -32,6 +32,7 @@ except ImportError:
 from ..core._call_context import (
     _AUTOMATIC_SELECTION,
     _jax_tracing_active,
+    _jax_transformation_active,
     current_call_context,
 )
 from ..core._dispatch import Feasibility
@@ -151,7 +152,8 @@ def evaluate_plain_call(
     A plain call's failure is its body's: the call raises the exception its
     body raised, as if the body had run in the calling thread. ``jax`` never
     maps a plain call, so a call that names ``jax`` runs its body in the
-    calling thread, as automatic selection does.
+    calling thread, as automatic selection does. So does a call made inside a
+    JAX transformation, whose traced arguments no other executor can run.
 
     Parameters
     ----------
@@ -185,12 +187,13 @@ def evaluate_plain_call(
         names_jax = execution_choice.executor_name == "jax"
         if names_jax and execution_choice.named_executor_use is not None:
             execution_choice.named_executor_use.note_ran_a_set()
-        evaluation_outcomes = _evaluated_outcomes(
-            evaluation_points,
-            execution_choice=(
-                _AUTOMATIC_SELECTION if side_effects_forbidden or names_jax else None
-            ),
-        )
+        in_calling_thread = side_effects_forbidden or names_jax or _jax_transformation_active()
+        if in_calling_thread:
+            evaluation_outcomes = _run_on_executor(
+                evaluation_points, executor_registry.get_method("sequential"), {}
+            )
+        else:
+            evaluation_outcomes = _evaluated_outcomes(evaluation_points)
     body_failure = evaluation_outcomes.failures.get(0)
     if body_failure is not None and body_failure.error is not None:
         raise body_failure.error
@@ -335,7 +338,7 @@ def warn_if_named_executor_ran_nothing() -> None:
     selection, so it does not warn. A call opened while JAX stages a program
     only stages its evaluations, which run when the program runs, so it does
     not warn either. When ``jax`` compiled the call's code in place of the
-    executor, the warning says so.
+    executor, or the call ran inside a JAX transformation, the warning says so.
     """
     call_context = current_call_context()
     execution_choice = call_context.execution_choice
@@ -352,11 +355,14 @@ def warn_if_named_executor_ran_nothing() -> None:
         or _jax_tracing_active()
     ):
         return
-    why_nothing_ran = (
-        "every callable in the call is traceable and was compiled by jax"
-        if named_executor_use.jax_compiled_a_set
-        else "the call evaluated no user callable"
-    )
+    if named_executor_use.jax_compiled_a_set:
+        why_nothing_ran = "every callable in the call is traceable and was compiled by jax"
+    elif _jax_transformation_active():
+        why_nothing_ran = (
+            "the call ran inside a JAX transformation, which runs its body in the calling thread"
+        )
+    else:
+        why_nothing_ran = "the call evaluated no user callable"
     warnings.warn(
         f"{call_context.function_label} named executor={executor_name!r}, but "
         f"{why_nothing_ran}, so {executor_name!r} ran nothing",

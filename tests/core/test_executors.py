@@ -67,6 +67,10 @@ def _traceable_sum(x, scale):
     return scale * jnp.sum(x)
 
 
+def _traceable_sine_sum(x, scale):
+    return scale * jnp.sum(jnp.sin(0.37 * x))
+
+
 def _simulate_with_a_nested_draw(x, scale):
     noise = np.asarray(sample(Normal("noise", 0.0, 1.0)))
     return scale * np.asarray(x) + noise
@@ -150,12 +154,36 @@ class TestNamingAnExecutor:
         ):
             pass
         assert str(raised.value) == (
-            "executor 'thread' does not read the option 'n_jobs'; its options are chunk_size, max_workers"
+            "executor 'thread' does not read the option 'n_jobs'. Its options are chunk_size, max_workers"
+        )
+
+    def test_every_option_the_executor_does_not_read_is_named(self):
+        with (
+            pytest.raises(ValueError) as raised,
+            requester_call(
+                requester(executor="thread", executor_options={"n_jobs": 50, "affinity": 1})
+            ),
+        ):
+            pass
+        assert str(raised.value) == (
+            "executor 'thread' does not read the options 'affinity' and 'n_jobs'. "
+            "Its options are chunk_size, max_workers"
+        )
+
+    def test_options_the_automatically_selected_executor_does_not_read_say_how_it_was_chosen(
+        self,
+    ):
+        with pytest.raises(ValueError) as raised:
+            _run_set(_opaque_sum, requester_controls={"executor_options": {"max_workers": 2}})
+        assert str(raised.value) == (
+            "executor 'sequential', chosen automatically since the call names no executor, "
+            "does not read the option 'max_workers'. Its options are chunk_size. "
+            "Name the executor the options are for, such as executor='thread'"
         )
 
     def test_jax_refuses_a_batch_size_until_compiled_lifting(self):
         with (
-            pytest.raises(ValueError, match="its options are none"),
+            pytest.raises(ValueError, match="Its options are none"),
             requester_call(requester(executor="jax", executor_options={"batch_size": 8})),
         ):
             pass
@@ -210,7 +238,7 @@ class TestInheritingAnExecutor:
             assert inner.execution_choice.executor_name == "thread"
             assert inner.execution_choice.source == "inherited"
 
-    def test_an_executor_set_on_the_function_wins_and_takes_only_its_own_options(self):
+    def test_options_without_an_executor_make_the_choice_the_functions_own(self):
         outer = requester(executor="thread", executor_options={"max_workers": 2})
         inner = requester(executor_options={"chunk_size": 3})
         with requester_call(outer), requester_call(inner) as inner_context:
@@ -325,9 +353,9 @@ class TestAgreement:
             np.testing.assert_array_equal(output, reference_output)
 
     def test_jax_agrees_with_sequential_within_tolerance(self):
-        jax_outputs, _ = _run_set(_traceable_sum, claims=ExecutionClaims(traceable=True))
+        jax_outputs, _ = _run_set(_traceable_sine_sum, claims=ExecutionClaims(traceable=True))
         sequential_outputs, _ = _run_set(
-            _traceable_sum,
+            _traceable_sine_sum,
             claims=ExecutionClaims(traceable=True),
             requester_controls={"executor": "sequential"},
         )
@@ -418,10 +446,17 @@ class TestTheCallContextInWorkers:
 
     def test_a_process_pool_is_reused_by_calls_under_equal_jax_settings(self):
         controls = {"executor": "process", "executor_options": {"max_workers": 2}}
+        pools_before = dict(_PROCESS_POOLS)
         _run_set(_opaque_sum, requester_controls=controls)
+        new_pool_keys = set(_PROCESS_POOLS) - set(pools_before)
         pools_after_one_call = dict(_PROCESS_POOLS)
         _run_set(_opaque_sum, requester_controls=controls)
-        assert pools_after_one_call == _PROCESS_POOLS
+        assert pools_after_one_call, "the first call stores no process pool"
+        assert len(new_pool_keys) <= 1
+        assert set(_PROCESS_POOLS) == set(pools_after_one_call)
+        assert all(
+            _PROCESS_POOLS[pool_key] is pool for pool_key, pool in pools_after_one_call.items()
+        )
 
 
 class TestFailures:

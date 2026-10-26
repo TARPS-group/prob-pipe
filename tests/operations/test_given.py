@@ -479,6 +479,26 @@ class TestConditionalOperations:
         assert sample(kernel, sample_shape=(2,), given={"mu": jnp.ones(3)}).shape == (2, 3)
         assert kernel.event_spec.term_spec.free_dims == frozenset({"n"})
 
+    @pytest.mark.parametrize(
+        ("given", "message"),
+        [
+            (
+                {"wrong": 1.0, "mu": 0.0},
+                "given for 'lik' names the unknown input 'wrong'. Its inputs are ['mu']",
+            ),
+            (
+                {},
+                "given for 'lik' leaves the required input 'mu' without a value. "
+                "Give a value for each",
+            ),
+        ],
+        ids=["unknown", "missing"],
+    )
+    def test_a_given_with_unknown_or_missing_inputs_names_them(self, given, message):
+        with pytest.raises(ApplicabilityError) as raised:
+            mean(_Fallback(), given=given)
+        assert str(raised.value) == message
+
     @pytest.mark.parametrize("given", [{}, {"wrong": 1.0}, {"mu": jnp.ones(2)}])
     def test_invalid_given_fails_before_a_kernel_runs(self, given):
         kernel = _Fallback()

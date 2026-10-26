@@ -250,7 +250,7 @@ class Numeric(ABC):                         # the flat-vector interface of the n
 
     # the coordinate protocols: NumPy and JAX read the value as to_vector(),
     # so their functions return bare arrays
-    def __array__(self) -> np.ndarray: ...
+    def __array__(self, dtype=None, copy=None) -> np.ndarray: ...   # NumPy's array protocol
     def __jax_array__(self) -> Array: ...
 ```
 

@@ -354,17 +354,17 @@ def _event_declaration(output_name: str | None, event_spec: Any) -> OutputSpec:
         if output_name is not None:
             raise TypeError(
                 f"distribution: {type(event_spec).__name__} names its own outputs, so pass "
-                f"no output_name; got output_name={output_name!r}"
+                f"no output_name, got output_name={output_name!r}"
             )
         return event_spec if isinstance(event_spec, OutputSpec) else OutputSpec(event_spec)
     if isinstance(event_spec, TermSpec):
         if output_name is None:
             raise TypeError(
                 f"distribution: a whole-term event of type {type(event_spec).__name__} needs an "
-                f"output name; pass output_name='name'"
+                f"output name. Pass output_name='name'"
             )
         if not isinstance(output_name, str):
-            raise TypeError(f"distribution: output_name must be a string; got {output_name!r}")
+            raise TypeError(f"distribution: output_name must be a string, got {output_name!r}")
         return OutputSpec.default(event_spec, output_name=output_name)
     raise TypeError(
         f"distribution: event_spec must be an OutputSpec or a TermSpec; got "

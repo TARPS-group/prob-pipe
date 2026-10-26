@@ -30,11 +30,11 @@ uv run python scripts/design/design_blocks.py check <ids> --module <module> [--m
 `list` prints what the sections declare. `check` reports each declared class,
 member, field, and parameter that the code lacks or declares differently, and
 its `--module` options are the modules that `design/package-structure.md`
-places the sections in, in order. The four conformance tests hold those module
-lists and their known exceptions, so run them too:
+places the sections in, in order. The five conformance tests hold those module
+lists and their known exceptions, listed by member, so run them too:
 
 ```
-uv run pytest tests/distributions/test_design_conformance.py tests/families/test_design_conformance.py tests/functions/test_design_conformance.py tests/operations/test_design_conformance.py
+uv run pytest tests/core/test_design_conformance.py tests/distributions/test_design_conformance.py tests/families/test_design_conformance.py tests/functions/test_design_conformance.py tests/operations/test_design_conformance.py
 ```
 
 ## Step 3: Run the ledger and the documentation tests

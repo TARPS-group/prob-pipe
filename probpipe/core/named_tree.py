@@ -485,7 +485,7 @@ class NamedTree[L]:
     overrides the hook. Mappings are never leaves: a mapping value denotes tree
     structure (see :meth:`_check_leaf`).
     Navigation yields views into the same storage; the structure-preserving
-    transforms (:meth:`map`, :meth:`replace`, :meth:`merge`, :meth:`without`,
+    transforms (:meth:`map`, :meth:`replace`, :meth:`__and__`, :meth:`without`,
     :meth:`rename`) return a tree of the same family, rebuilt through
     :meth:`_rebuild_class`.
 
@@ -1143,6 +1143,8 @@ class NamedTree[L]:
 
         Raises
         ------
+        TypeError
+            If *other* is not a tree of this family, through ``NotImplemented``.
         ValueError
             If a top-level name is in both trees.
 
@@ -1152,6 +1154,8 @@ class NamedTree[L]:
         >>> (RecordSpec(a=(3,)) & (RecordSpec(g=RecordSpec(b=()))))
         NumericRecordSpec(a=(3,), g=NumericRecordSpec(b=()))
         """
+        if not isinstance(other, self._node_type()):
+            return NotImplemented
         return self._rebuild_node(self._leaves_merged(other), node_name=None)
 
     def _resolve_replace_updates(

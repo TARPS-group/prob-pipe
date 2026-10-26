@@ -138,7 +138,7 @@ def _product_of(factors: Iterable[Any]) -> Product:
 def _with_named(joint: Any, named: bool) -> Any:
     """*joint*, a product just built, which displays by its label when *named* and factor by factor otherwise.
 
-    A product built by ``*`` or by the ``joint`` operation is unlabeled, so it
+    A product built by ``&`` or by the ``joint`` operation is unlabeled, so it
     displays factor by factor, and a product given a label displays by it.
     *joint* keeps the paths it holds fixed, and it is set in place.
     """
@@ -1238,12 +1238,12 @@ def _requested_paths(joint: Any, paths: str | tuple[str, ...]) -> tuple[str, ...
             head, _, within = requested.partition(_PATH_SEP)
             if head != output_name or not within:
                 raise KeyError(
-                    f"{requested!r} is not an event path of {joint.label!r}; its paths start "
+                    f"{requested!r} is not an event path of {joint.label!r}. Its paths start "
                     f"with {output_name + _PATH_SEP!r}"
                 )
         if within not in record:
             raise KeyError(
-                f"{requested!r} is not an event path of {joint.label!r}; its fields: "
+                f"{requested!r} is not an event path of {joint.label!r}. Its fields: "
                 f"{list(joint.event_spec.outputs)}"
             )
         inner.append(within)
@@ -2082,7 +2082,7 @@ _REFINEMENTS: list[tuple[type, Callable[[tuple[Factor, ...]], bool]]] = []
 def _register_refinement(cls: type, predicate: Callable[[tuple[Factor, ...]], bool]) -> None:
     """Register *cls* as the class of an unconditional joint whose factors satisfy *predicate*.
 
-    A family registers its factored class at import. ``*``, a joint rebuilt by a
+    A family registers its factored class at import. ``&``, a joint rebuilt by a
     transform, and a conditional joint bound at its givens construct the most
     specific registered class whose predicate holds for the flattened factors.
 
@@ -2152,7 +2152,7 @@ class FactoredDistribution(Distribution, SupportsFactors):
 
     A joint constructed by this class is labeled, so its :attr:`notation` is
     its label followed by its signature, as ``model(y, mu)``. A joint that
-    ``*`` or the ``joint`` operation builds is unlabeled, and its notation joins
+    ``&`` or the ``joint`` operation builds is unlabeled, and its notation joins
     its factors' notations with ``·``, as ``lik(y | mu)·prior(mu)``, until
     ``with_label`` gives it a label. A law built from a joint, such as a copy,
     a packaged sub-joint, or a marginal that reduces a factor to part of its

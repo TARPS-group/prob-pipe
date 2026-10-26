@@ -4,11 +4,10 @@
 
 The user guide explains ProbPipe one feature at a time, on small examples.
 Each chapter explains a calling rule or a group of operations with a small example.
-You can consult a chapter without following the tutorials' scientific analysis.
 You describe the mathematical objects and operations; ProbPipe selects a computation from the available representations and capabilities.
 Start with the short example in [Terms](01_terms.ipynb), which combines a known value with a distribution through a function.
 Its later sections provide optional reference on term properties.
-The [tutorials](../tutorials/01_first_analysis.ipynb) follow one analysis from start to finish, and the [API reference](../api/index.md) documents every public name.
+The [API reference](../api/index.md) documents every public name.
 
 ## Choose a reading path
 

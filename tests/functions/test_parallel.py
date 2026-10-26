@@ -13,6 +13,7 @@ import pickle
 import threading
 import warnings
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from dataclasses import FrozenInstanceError, replace
 from threading import Barrier, Event
 from types import SimpleNamespace
@@ -1310,6 +1311,59 @@ class TestEvaluationPointRetryClaims:
 
 
 class TestRemoteReportTransactions:
+    @pytest.mark.parametrize("rejection", ["replay", "conflicting-success"])
+    def test_a_rejected_report_leaves_the_parent_occurrence_and_later_keys_unchanged(
+        self, rejection
+    ):
+        with workflow_run(seed=17):
+            reference = sample(Normal("z", 0.0, 1.0))
+        replay_state = replay_mod._validate_provenance(reference.provenance)
+        evaluation_points = issue_points()
+        evaluation_point = evaluation_points[0]
+        with workflow_run(seed=17):
+            with evaluation_keys_mod._function_stochastic_scope() as parent_broker:
+                parent_broker.register_evaluation_points(evaluation_points)
+                attempt = evaluation_keys_mod.EvaluationPointAttempt.create(
+                    evaluation_point.frame.token
+                )
+                envelope = parent_broker.reserve_remote_evaluation_point_attempt(
+                    evaluation_point.frame, attempt
+                )
+                effect = make_remote_effect(envelope)
+                report = evaluation_keys_mod.EvaluationPointClaimReport(
+                    frame=evaluation_point.frame,
+                    attempt=attempt,
+                    child_count=1,
+                    effects=(effect,),
+                    successful_effects=(effect,),
+                )
+                if rejection == "replay":
+                    parent_broker._replay_state = replay_state
+                    exception = ReplayCompatibilityError
+                    message = "that matches no draw"
+                else:
+                    parent_broker._effects_by_identity[
+                        evaluation_keys_mod._effect_identity(effect)
+                    ] = replace(effect, provider_abi="conflicting-provider/v1")
+                    exception = RuntimeError
+                    message = "different effect plan"
+                try:
+                    with pytest.raises(exception, match=message):
+                        parent_broker.accept_remote_claim_report(report)
+                    assert parent_broker._invocation is None
+                    assert parent_broker._frame.ledger.next_ordinal == 0
+                    claim_state = parent_broker._evaluation_point_claims.by_token[
+                        evaluation_point.frame.token
+                    ]
+                    assert claim_state.child_invocations == []
+                    assert claim_state.effect_claims_by_identity == {}
+                finally:
+                    parent_broker._replay_state = None
+                    parent_broker._effects_by_identity.clear()
+                    parent_broker.abort_remote_evaluation_point_attempt(attempt)
+            after_rejection = sample(Normal("z", 0.0, 1.0))
+        np.testing.assert_array_equal(np.asarray(after_rejection), np.asarray(reference))
+
     def test_worker_rejects_a_transported_frame_root_mismatch(self):
         frame = make_evaluation_point_frame()
         attempt = make_evaluation_point_attempt()
@@ -2023,9 +2077,10 @@ class TestPrefectTransport:
         assert snapshot is None
         assert len(claim_state.effect_claims_by_identity) == 1
 
+    @pytest.mark.parametrize("default_scope", [False, True], ids=["explicit", "default"])
     @pytest.mark.parametrize("ship_chunks", [False, True], ids=["in-place", "shipped"])
     def test_prefect_retry_reuses_evaluation_point_token_and_key(
-        self, ship_chunks, prefect_fakes, monkeypatch
+        self, default_scope, ship_chunks, prefect_fakes, monkeypatch
     ):
         monkeypatch.setattr(execution_mod, "_prefect_retry_policy", lambda: (1, ()))
         FakeMappedTask.ship_chunks = ship_chunks
@@ -2039,7 +2094,14 @@ class TestPrefectTransport:
                 raise RuntimeError("retry me")
             return words
 
-        with workflow_run(seed=17), requester_call(requester()):
+        with ExitStack() as stack:
+            if default_scope:
+                workflow_run.set_default(seed=17)
+                stack.callback(workflow_run.clear_default)
+                stack.enter_context(context_mod._ephemeral_workflow_run())
+            else:
+                stack.enter_context(workflow_run(seed=17))
+            stack.enter_context(requester_call(requester()))
             evaluation_points = points_of(fail_once_after_claim)
             (retried,) = run_on("prefect", evaluation_points)
             snapshot = evaluation_keys_mod._snapshot_active_recipe_state()
@@ -2054,6 +2116,12 @@ class TestPrefectTransport:
         assert len(snapshot.effects) == 1
         assert len(claim_state.seen_attempts) == 2
         assert FakeMappedTask.map_calls == 2
+
+        # Use the same callable and point layout: only the scope and executor
+        # differ from the retried call above.
+        with workflow_run(seed=17), requester_call(requester()):
+            (reference,) = run_on("sequential", points_of(fail_once_after_claim))
+        assert retried == reference
 
     @pytest.mark.parametrize(
         ("configured", "expected"),

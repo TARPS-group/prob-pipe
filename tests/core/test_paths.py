@@ -101,7 +101,8 @@ class TestTheReaderErrors:
             pytest.param(
                 ("a", 0),
                 TypeError,
-                r"cannot mix a path and a position in one \[\]",
+                r"cannot mix a path and a position in one \[\]|since 0 is a position and "
+                r"only a batch takes positions\. Give only paths",
                 id="path-and-position",
             ),
         ],

@@ -151,18 +151,18 @@ class ConversionInfo(MethodInfo):
             )
         if self.method_name is not None and self.exact is None:
             raise ValueError(
-                f"ConversionInfo got method_name={self.method_name!r} without exact; "
-                "a converter's check must leave both unset"
+                f"ConversionInfo got method_name={self.method_name!r} without exact. "
+                "A converter's check must leave both unset"
             )
         if self.method_name is None and self.exact is False:
             raise ValueError(
-                "ConversionInfo got exact=False without method_name; "
-                "a converter's check must leave exact unset"
+                "ConversionInfo got exact=False without method_name. "
+                "A converter's check must leave exact unset"
             )
         if self.method_name is None and self.exact is True and self.feasible is False:
             raise ValueError(
-                "ConversionInfo got exact=True without method_name on an infeasible report; "
-                "a converter's check must leave exact unset"
+                "ConversionInfo got exact=True without method_name on an infeasible report. "
+                "A converter's check must leave exact unset"
             )
         if self.feasible is True and self.target_spec is None:
             raise ValueError("a feasible ConversionInfo must set target_spec")

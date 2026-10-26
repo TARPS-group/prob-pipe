@@ -464,7 +464,7 @@ def mapped_row_body(
             if isinstance(out, Opaque):
                 raise TypeError(
                     f"{label}: jax.vmap cannot stack a row that returned "
-                    f"{type_name(out.raw)}; it stacks only arrays, records, and batches"
+                    f"{type_name(out.raw)}. It stacks only arrays, records, and batches"
                 )
         if isinstance(out, RecordBatch):
             return _MappedBatchColumns.of(out)

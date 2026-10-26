@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from probpipe.core import _execution_claims
 from probpipe.core._execution_claims import (
     FalseTraceableClaimError,
     ProbeResult,
@@ -169,6 +170,39 @@ class TestProbeClosure:
         assert again.abstract_output.shape == (3,)
         # With the count as data each fails; as a constant each traces, keyed by its value.
         assert probe_attempts == [False, True, True]
+
+    def test_captured_arrays_are_hashed_only_when_the_probe_with_them_as_data_fails(
+        self, monkeypatch
+    ):
+        hashed_arrays = []
+        hash_contents = _execution_claims._array_contents_cache_key
+
+        def counting_hash(arrays):
+            hashed_arrays.append(arrays)
+            return hash_contents(arrays)
+
+        monkeypatch.setattr(_execution_claims, "_array_contents_cache_key", counting_hash)
+        probe_results = ProbeResults()
+        probe_closure(
+            probe_results,
+            self._scaled_by(jnp.ones(2)),
+            _call_closure,
+            jnp.ones(2),
+            label="f",
+            role="f",
+        )
+        assert hashed_arrays == []
+
+        count = np.array(3)
+        probe_closure(
+            probe_results,
+            lambda key: jax.random.normal(key, (int(count),)),
+            _call_closure,
+            jax.random.key(0),
+            label="f",
+            role="sample",
+        )
+        assert len(hashed_arrays) == 1
 
     def test_a_closure_capturing_a_plain_callable_is_probed_for_itself(self, probe_attempts):
         def scale(y):

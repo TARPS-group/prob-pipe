@@ -1,0 +1,6 @@
+/* The theme shows the latest GitHub release beside the repository name, which
+   lags the development version these pages describe. Remove this rule when
+   the next release is published. */
+.md-source__fact--version {
+  display: none;
+}

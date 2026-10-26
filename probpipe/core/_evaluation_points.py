@@ -810,8 +810,8 @@ class EvaluationError(RuntimeError):
         if unlisted_count > 0:
             listed_failures += f"; and {unlisted_count} more"
         super().__init__(
-            f"evaluation of {origin!r} failed at {len(self.failures)} of {len(self.outputs)} "
-            f"evaluation points: {listed_failures}"
+            f"evaluation of {origin!r} failed at {len(self.failures)} of "
+            f"{count(len(self.outputs), 'evaluation point')}: {listed_failures}"
         )
 
     @classmethod
@@ -1248,10 +1248,13 @@ def _holds_only_values(term_spec: TermSpec | None) -> bool:
 
 
 def _num_rows(varying: Mapping[str, Any], origin: str) -> int:
-    """The number of rows every array leaf of *varying* has on its leading axis."""
-    row_counts_by_argument = {
+    """The number of rows every array leaf of *varying* has on its leading axis.
+
+    A scalar leaf has no leading axis, which the row counts record as ``None``.
+    """
+    row_counts_by_argument: dict[str, set[int | None]] = {
         argument_name: {
-            np.shape(leaf)[0] if np.ndim(leaf) > 0 else 0
+            np.shape(leaf)[0] if np.ndim(leaf) > 0 else None
             for leaf in jax.tree.leaves(stacked_values)
         }
         for argument_name, stacked_values in varying.items()
@@ -1263,7 +1266,16 @@ def _num_rows(varying: Mapping[str, Any], origin: str) -> int:
             "Give each argument that differs between evaluation points, stacked on a "
             "leading axis"
         )
-    if len(row_counts) != 1 or 0 in row_counts:
+    for argument_name, stacked_values in varying.items():
+        if isinstance(stacked_values, (list, tuple)) and row_counts_by_argument[argument_name] == {
+            None
+        }:
+            raise ValueError(
+                f"cannot build evaluation points of {origin!r} from the "
+                f"{type(stacked_values).__name__} {argument_name}, whose items are separate "
+                f"scalars. Stack its rows as an array, as jnp.asarray({argument_name})"
+            )
+    if len(row_counts) != 1 or None in row_counts:
         described_counts = ", ".join(
             f"{argument_name} {_described_row_counts(argument_row_counts)}"
             for argument_name, argument_row_counts in row_counts_by_argument.items()
@@ -1273,14 +1285,24 @@ def _num_rows(varying: Mapping[str, Any], origin: str) -> int:
             f"different numbers of rows: {described_counts}. Stack every varying argument "
             "with one row per evaluation point on its leading axis"
         )
-    return next(iter(row_counts))
+    (num_rows,) = row_counts
+    if num_rows == 0:
+        raise ValueError(
+            f"cannot build evaluation points of {origin!r} from varying arguments with 0 rows. "
+            "Give each varying argument at least one row on its leading axis"
+        )
+    return num_rows
 
 
-def _described_row_counts(row_counts: set[int]) -> str:
+def _described_row_counts(row_counts: set[int | None]) -> str:
     """*row_counts* in a message: ``"has 3 rows"``, or ``"has no leading axis"`` for a scalar."""
-    if row_counts == {0}:
-        return "has no leading axis"
-    return "has " + " and ".join(count(row_count, "row") for row_count in sorted(row_counts))
+    described = ["has no leading axis"] if None in row_counts else []
+    sized_counts = sorted(row_count for row_count in row_counts if row_count is not None)
+    if sized_counts:
+        described.append(
+            "has " + " and ".join(count(row_count, "row") for row_count in sized_counts)
+        )
+    return " and ".join(described)
 
 
 def _stacked_shared_arguments(shared_arguments: Mapping[str, Any], num_rows: int) -> dict[str, Any]:
@@ -1304,7 +1326,7 @@ def _stacked_shared_arguments(shared_arguments: Mapping[str, Any], num_rows: int
 def _output_rows(stacked_output: Any, num_rows: int, origin: str) -> list[Any]:
     """The *num_rows* rows of a vectorized callable's stacked output."""
     leaf_row_counts = {
-        np.shape(leaf)[0] if np.ndim(leaf) > 0 else 0 for leaf in jax.tree.leaves(stacked_output)
+        np.shape(leaf)[0] if np.ndim(leaf) > 0 else None for leaf in jax.tree.leaves(stacked_output)
     }
     if leaf_row_counts != {num_rows}:
         raise ValueError(

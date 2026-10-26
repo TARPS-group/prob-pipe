@@ -1,11 +1,9 @@
-> **AI-generated.** An AI assistant drafted this page, and no maintainer has reviewed it yet. Please report errors on the issue tracker.
-
 # Installation
 
 ProbPipe requires Python 3.12 or later, and it installs JAX as a dependency.
-ProbPipe is not yet on PyPI, so every command on this page installs it from GitHub.
-Until a release, the commands install the `dev/overhaul` branch, which is the version this documentation describes.
-pip and uv clone the repository to install it, so they need [Git](https://git-scm.com/downloads).
+ProbPipe is not yet on PyPI, so for now it needs to be installed directly from GitHub.
+Until a release, the commands install the `main` branch, which is the version this documentation describes.
+Since pip or uv needs to clone the repository to install it, you will also need [Git](https://git-scm.com/downloads).
 
 ## The two distributions
 
@@ -16,7 +14,7 @@ ProbPipe has two distributions, and both install the same import package, `probp
 | `probpipe-core` | ProbPipe with JAX, BlackJAX, TensorFlow Probability, and ArviZ | A minimal install, to which you add the extras you need |
 | `probpipe` | `probpipe-core` with the extras `pymc`, `nutpie`, and `pyabc`, and with `bayesflow` on Python 3.12 and 3.13 | Running the tutorials |
 
-The `probpipe` distribution depends on `probpipe-core==0.1.0`, which is not yet on PyPI.
+The `probpipe` distribution depends on `probpipe-core==0.2.0.dev0`, which is not yet on PyPI.
 Until it is, install the tutorials' set of extras through `probpipe-core`, as the commands below do.
 
 ## Google Colab
@@ -25,7 +23,7 @@ Until it is, install the tutorials' set of extras through `probpipe-core`, as th
 To install the smallest set, run this in a code cell:
 
 ```text
-%pip install "probpipe-core[pymc] @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
+%pip install "probpipe-core[pymc] @ git+https://github.com/TARPS-group/prob-pipe.git@main"
 ```
 
 Colab comes with PyMC 5, which does not work with the ArviZ 1.x that ProbPipe requires.
@@ -34,7 +32,7 @@ The command therefore installs the `pymc` extra, and the extra upgrades PyMC.
 To install the set the tutorials use, run this instead:
 
 ```text
-%pip install "probpipe-core[pymc,nutpie,pyabc,bayesflow] @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
+%pip install "probpipe-core[pymc,nutpie,pyabc,bayesflow] @ git+https://github.com/TARPS-group/prob-pipe.git@main"
 ```
 
 If Colab's Python is 3.14, leave `bayesflow` out of the list, as `!python --version` shows.
@@ -47,13 +45,13 @@ Create a virtual environment, activate it, and install ProbPipe into it:
 ```bash
 python -m venv .venv
 source .venv/bin/activate  # on Windows: .venv\Scripts\activate
-pip install "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
+pip install "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@main"
 ```
 
 To install the set the tutorials use, name the extras in brackets:
 
 ```bash
-pip install "probpipe-core[pymc,nutpie,pyabc,bayesflow] @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
+pip install "probpipe-core[pymc,nutpie,pyabc,bayesflow] @ git+https://github.com/TARPS-group/prob-pipe.git@main"
 ```
 
 On Python 3.14, leave `bayesflow` out of the list.
@@ -63,14 +61,14 @@ On Python 3.14, leave `bayesflow` out of the list.
 In a project that [uv](https://docs.astral.sh/uv/) manages, `uv add` installs ProbPipe and records it as a dependency in `pyproject.toml`:
 
 ```bash
-uv add "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
+uv add "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@main"
 ```
 
 In a virtual environment that is not a uv project, `uv pip install` takes the same arguments as `pip install`:
 
 ```bash
 uv venv
-uv pip install "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
+uv pip install "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@main"
 ```
 
 Both commands take extras in brackets, as pip does.
@@ -89,7 +87,7 @@ The extras add optional backends and tools:
 | `prefect` | Prefect | To run a pipeline's functions as Prefect tasks and flows, and on a Ray cluster through Prefect, as [Ray via Prefect](../user_guide/ray.md) describes |
 | `viz` | matplotlib and graphviz | To draw the plots of the quickstart and the tutorials, and a provenance graph with `provenance_dag` |
 
-Two extras need more than their packages:
+Two extras need additional tools installed:
 
 1. **`stan`:** CmdStan and a C++ toolchain, which compile Stan programs. CmdStanPy's command `install_cmdstan` installs CmdStan, and the [CmdStanPy installation guide](https://mc-stan.org/cmdstanpy/installation.html) lists the toolchain each operating system needs.
 2. **`bayesflow`:** Python 3.12 or 3.13, and the JAX backend of Keras. ProbPipe sets the environment variable `KERAS_BACKEND` to `jax` when it first imports BayesFlow, unless the variable is already set. A program that imports Keras before then, or sets the variable to another backend, must set `KERAS_BACKEND=jax` before its first import of Keras.
@@ -101,7 +99,7 @@ The extras `docs` and `dev` are for contributors, and the [contributing guide](h
 Neither of these two ways needs Python installed beforehand:
 
 - **In the browser:** open the [quickstart](quickstart.ipynb) in Google Colab from the badge at its top, which needs only a Google account.
-- **On your computer:** install uv by following its [installation guide](https://docs.astral.sh/uv/getting-started/installation/). uv downloads a suitable Python when it needs one. The command `uv init my-analysis` creates a project in the folder `my-analysis`, and the `uv add` command of the [uv section](#uv) run in that folder installs ProbPipe into it. The command `uv run python` then starts Python in the project's environment.
+- **On your computer:** install uv by following its [installation guide](https://docs.astral.sh/uv/getting-started/installation/). uv downloads a suitable Python version when it needs one. The command `uv init my-analysis` creates a project in the folder `my-analysis`, and the `uv add` command of the [uv section](#uv) run in that folder installs ProbPipe into it. The command `uv run python` then starts Python in the project's environment.
 
 The [Python tutorial](https://docs.python.org/3/tutorial/) introduces the language itself.
 
@@ -127,7 +125,7 @@ print("standard deviation of the draws:", round(float(jnp.std(draws.raw)), 2))
 It prints:
 
 ```text
-ProbPipe version: 0.1.0
+ProbPipe version: 0.2.0.dev0
 number of draws: 1000
 mean of the draws: 3.0
 standard deviation of the draws: 1.0
@@ -136,4 +134,5 @@ standard deviation of the draws: 1.0
 ## Next steps
 
 - The [quickstart](quickstart.ipynb) fits a first model, checks it, and forecasts with it in about ten minutes.
-- The [first tutorial](../tutorials/01_first_analysis.ipynb) begins a forecasting problem that the tutorials follow from a first posterior to simulation-based inference.
+
+> **Human-validated** by Jonathan Huggins on 2026-10-25.
