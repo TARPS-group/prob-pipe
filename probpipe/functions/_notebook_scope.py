@@ -1,39 +1,52 @@
-"""Continue default random streams across IPython kernel cell tasks."""
+"""Continue default random streams across IPython cells."""
 
 from __future__ import annotations
 
 import inspect
 import sys
+import threading
 import weakref
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from contextvars import Context
+
     from ._context import _DefaultWorkflowState, _WorkflowOwner
 
 
-def _cell_info(shell: Any) -> Any:
-    """Find this shell's cell execution in the current task's Python stack."""
-    code = shell.run_cell_async.__func__.__code__
+def _cell_on_stack(shell: Any) -> bool:
+    """Whether this shell's cell coroutine is on the current Python stack."""
+    from IPython.core.interactiveshell import InteractiveShell
+
+    code = InteractiveShell.run_cell_async.__code__
     frame = inspect.currentframe()
     try:
         while frame is not None:
-            if frame.f_code is code and frame.f_locals.get("self") is shell:
-                return frame.f_locals.get("info")
+            if frame.f_code is code and frame.f_locals["self"] is shell:
+                return True
             frame = frame.f_back
-        return None
+        return False
     finally:
         del frame
 
 
 class _NotebookDefaultScope:
-    """Hold one shell's default, admitting only the task executing its current cell."""
+    """Persist an IPython shell's default from each completed cell's context.
+
+    Parameters
+    ----------
+    shell : IPython shell
+        The shell whose cell events delimit default-scope ownership.
+    """
 
     def __init__(self, shell: Any):
+        from . import _context
+
         self._shell = weakref.ref(shell)
         self._state: _DefaultWorkflowState | None = None
-        self._owner: _WorkflowOwner | None = None
-        self._host: _WorkflowOwner | None = None
-        self._info: Any = None
+        self._host: _WorkflowOwner = _context._current_workflow_owner()
+        self._cell_active = False
+        self._cell_context: Context | None = None
         shell.events.register("pre_execute", self.before_cell)
         shell.events.register("post_execute", self.after_cell)
 
@@ -42,65 +55,68 @@ class _NotebookDefaultScope:
         from . import _context
 
         shell = self._shell()
-        if shell is None or self._info is not None:
+        if shell is None or self._cell_active:
             return
-        info = _cell_info(shell)
-        if info is None:
+        if not _cell_on_stack(shell):
             return
         owner = _context._current_workflow_owner()
-        if self._host is not None and (
+        if (
             owner.process_id != self._host.process_id
             or owner.thread_ref() is not self._host.thread_ref()
         ):
             return
-        self._host = owner
-        self._owner = owner
-        self._info = info
+        self._cell_active = True
+        task = owner.task_ref() if owner.task_ref is not None else None
+        self._cell_context = task.get_context() if task is not None else None
         if self._state is not None:
             self._state.owner = owner
         _context._DEFAULT_WORKFLOW_STATE.set(self._state)
 
     def after_cell(self) -> None:
-        """Release the cell owner after completion, including an error or cancellation."""
-        shell = self._shell()
-        if shell is None:
-            return
-        result = shell.last_execution_result
-        if result is not None and result.info is self._info:
-            self._info = None
-            self._owner = None
-
-    def remember(self, state: _DefaultWorkflowState | None) -> None:
-        """Persist a cell's setting without persisting a child task's local default."""
+        """Save the completed cell's default and release its execution context."""
         from . import _context
 
         shell = self._shell()
-        if shell is None:
+        if shell is None or not self._cell_active:
             return
-        if self._info is None:
-            # The first set/clear can install the hooks after pre_execute ran.
-            # A child task has no shell execution on its stack and cannot claim it.
-            current = _context._DEFAULT_WORKFLOW_STATE.get()
-            self.before_cell()
-            _context._DEFAULT_WORKFLOW_STATE.set(current)
-        if self._owner is not None and _context._is_current_workflow_owner(self._owner):
-            self._state = state
+        owner = _context._current_workflow_owner()
+        if (
+            owner.process_id != self._host.process_id
+            or owner.thread_ref() is not self._host.thread_ref()
+        ):
+            return
+        # A nested run_cell's completion still has the outer cell on its stack.
+        if _cell_on_stack(shell):
+            return
+        if self._cell_context is not None:
+            self._state = self._cell_context.get(_context._DEFAULT_WORKFLOW_STATE)
+        elif owner.task_ref is None:
+            # Synchronous cells keep their setting in the callback's context.
+            self._state = _context._DEFAULT_WORKFLOW_STATE.get()
+        self._cell_active = False
+        self._cell_context = None
 
 
-def _remember_notebook_default(state: _DefaultWorkflowState | None) -> None:
-    """Save a notebook cell's default without importing an optional IPython runtime."""
+def _remember_notebook_default() -> None:
+    """Bind the current IPython cell for saving its default at completion."""
     ipython = sys.modules.get("IPython")
     if ipython is None:
         return
     shell = ipython.get_ipython()
-    if shell is None or getattr(shell, "kernel", None) is None:
+    if shell is None:
         return
     adapter = getattr(shell, "_probpipe_default_scope", None)
     if adapter is None:
-        # A first setting in a worker is local to that worker. Install shell
-        # hooks only from a cell, rather than racing to register them in workers.
-        if _cell_info(shell) is None:
+        if threading.current_thread() is not threading.main_thread():
+            return
+        if not _cell_on_stack(shell):
             return
         adapter = _NotebookDefaultScope(shell)
         shell._probpipe_default_scope = adapter
-    adapter.remember(state)
+    if not adapter._cell_active:
+        from . import _context
+
+        # Initial installation can happen after pre_execute fired.
+        current = _context._DEFAULT_WORKFLOW_STATE.get()
+        adapter.before_cell()
+        _context._DEFAULT_WORKFLOW_STATE.set(current)

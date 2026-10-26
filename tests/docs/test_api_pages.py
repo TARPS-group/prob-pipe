@@ -9,7 +9,7 @@ the test matches the pages' paths to the public names by object identity.
 Each ``::: dotted.path`` line of ``docs/api/*.md`` is a mkdocstrings directive,
 which renders the object at that path. The test checks three things:
 
-1. each directive names a public object;
+1. each directive names a public object or one of ``workflow_run``'s methods;
 2. each public object has a directive on exactly one page;
 3. the docstring of each documented object starts with a summary, a line that
    ends with a period and that a blank line or the end of the docstring follows.
@@ -18,6 +18,8 @@ mkdocstrings reads docstrings from the source through griffe, so the third check
 reads them through griffe too. An instance at module level, such as
 ``probpipe.real``, therefore needs a docstring of its own after its assignment,
 since the docstring of its class is not rendered for it.
+``workflow_run``'s methods are rendered from their defining class because
+griffe represents the exported instance as an attribute.
 """
 
 from __future__ import annotations
@@ -115,7 +117,15 @@ def _summary_problem(docstring: str) -> str | None:
 
 
 def test_each_directive_names_a_public_object():
-    public = _public_objects()
+    public = set(_public_objects())
+    public.update(
+        id(method.__func__)
+        for method in (
+            probpipe.workflow_run.__call__,
+            probpipe.workflow_run.set_default,
+            probpipe.workflow_run.clear_default,
+        )
+    )
     stray = [f"{page}: {path}" for page, path in _directives() if id(_resolve(path)) not in public]
     assert stray == []
 
