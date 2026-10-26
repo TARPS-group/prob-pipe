@@ -83,6 +83,7 @@ nav:
   - Get started:
     - Installation: get_started/installation.md
     - Quickstart: get_started/quickstart.ipynb
+    - Design assistant: get_started/design_assistant.md
   - Tutorials:
     - "1. A model of the moose counts": tutorials/01_first_analysis.ipynb
     - "2. Fitting and checking the model": tutorials/02_fitting.ipynb

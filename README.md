@@ -153,10 +153,10 @@ Its provenance shows it was generated using this sampling approach and that it i
 
 ## Installation
 
-ProbPipe requires Python 3.12 or later. It is not yet on PyPI, so it installs from GitHub, and until a release the documentation describes the `dev/overhaul` branch:
+ProbPipe requires Python 3.12 or later. It is not yet on PyPI, so it installs from GitHub, and until a release the documentation describes the `main` branch:
 
 ```bash
-pip install "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
+pip install "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@main"
 ```
 
 The [installation page](https://tarps-group.github.io/prob-pipe/get_started/installation/) provides guidance for installing ProbPipe directly using uv or with Google Colab.
@@ -164,6 +164,7 @@ The [installation page](https://tarps-group.github.io/prob-pipe/get_started/inst
 ## Learn more
 
 - [The quickstart](https://tarps-group.github.io/prob-pipe/get_started/quickstart/) works through this example in more detail, including demonstrating how to use built-in diagnostics and perform a predictive check.
+- [The design assistant](https://tarps-group.github.io/prob-pipe/get_started/design_assistant/) is a set of instructions for an AI coding agent, which designs and builds a ProbPipe pipeline for your own problem and data with you.
 - [The tutorials](https://tarps-group.github.io/prob-pipe/tutorials/01_first_analysis/) work through a complete statistical analysis of a moose population, including model checks, model elaboration, forecasting, and fitting models with likelihood-free methods.
 - [The API reference](https://tarps-group.github.io/prob-pipe/api/) provides complete documentation of ProbPipe capabilities.
 - [How to cite ProbPipe](https://tarps-group.github.io/prob-pipe/cite/), [getting help](https://tarps-group.github.io/prob-pipe/help/), and [contributing](CONTRIBUTING.md).
