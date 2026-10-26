@@ -1937,7 +1937,8 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         declarations conflict.
     ValueError
         If an empty sweep lacks a concrete output spec after input
-        dimensions bind.
+        dimensions bind, or a swept level is also a level of the batch the
+        output spec declares.
     ResolutionError
         If a conversion has no converter, or the ``method`` control names no
         route of a Function realized by routes.
@@ -1983,45 +1984,71 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         values=argument_values,
         lifted_names={ref.parameter_name for ref in lifted_refs},
     )
-    result_spec = (
+    output_spec = (
         function.output_spec.with_dim_sizes(**bindings)
         if function.output_spec is not None
         else None
     )
-    _plan.require_empty_sweep_output(broadcast_plan, result_spec)
+    _plan.require_empty_sweep_output(broadcast_plan, output_spec)
     deferred = ()
-    if result_spec is None or result_spec.term_spec is None:
+    if output_spec is None or output_spec.term_spec is None:
         deferred = ("the result's type is completed from the returned value",)
     lifted = tuple(dict.fromkeys(ref.parameter_name for ref in lifted_refs))
     if waiting:
         # The lift of a converted argument is decided by the law the conversion
-        # constructs, so the selection waits on it.
+        # constructs, so the selection, and the kind of the result, wait on it.
         pending = MethodInfo(None, pending=waiting, method_name=_PLANNED, exact=False)
         return CallReport(
             routes=(pending,),
             deferred=deferred,
-            result=result_spec,
             lifted=lifted,
             conversions=MappingProxyType(conversions),
         )
     route_info, route = _route_report(
         function, argument_values, broadcast_plan, resolved_controls["method"], resolved_controls
     )
-    execution = (
-        ExecutionReport()
-        if route is None
-        else _lifted_execution_report(
-            function, argument_values, broadcast_plan, None, resolved_controls, route.name
+    if route is None:
+        return CallReport(
+            routes=(route_info,),
+            selected=None if route_info.feasible is None else route_info,
+            deferred=deferred,
+            lifted=lifted,
+            conversions=MappingProxyType(conversions),
         )
-    )
     return CallReport(
         routes=(route_info,),
-        selected=None if route_info.feasible is None else route_info,
+        selected=route_info,
         deferred=deferred,
-        result=result_spec,
+        result=_planned_result(
+            function, output_spec, argument_values, broadcast_plan, resolved_controls
+        ),
         lifted=lifted,
         conversions=MappingProxyType(conversions),
-        execution=execution,
+        execution=_lifted_execution_report(
+            function, argument_values, broadcast_plan, None, resolved_controls, route.name
+        ),
+    )
+
+
+def _planned_result(
+    function: Function,
+    output_spec: OutputSpec | None,
+    argument_values: Mapping[str, Any],
+    broadcast_plan: _plan.BroadcastPlan,
+    resolved_controls: Mapping[str, Any],
+) -> OutputSpec | None:
+    """The output spec of the call's result, from the output spec *output_spec* of one evaluation.
+
+    The result is planned as :func:`._plan.planned_result` states, under the
+    function's output name and result label and the call's ``include_inputs``.
+    """
+    return _plan.planned_result(
+        output_spec,
+        broadcast_plan,
+        values=argument_values,
+        output_name=function._output_name,
+        output_label=function.output_label,
+        include_inputs=resolved_controls["include_inputs"],
     )
 
 
@@ -2076,6 +2103,9 @@ def _check_routes(
     _plan.require_empty_sweep_output(broadcast_plan, points_report.result)
     return _resolution.call_report(
         points_report,
+        result=_planned_result(
+            function, points_report.result, argument_values, broadcast_plan, resolved_controls
+        ),
         lifted=lifted,
         conversions=conversions,
         candidates=candidates,

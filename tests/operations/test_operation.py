@@ -1139,7 +1139,8 @@ class TestLiftedChecks:
         report = center.check(batch)
         assert (report.feasible, report.route, report.exact) == (True, "closed_form", True)
         assert report.lifted == ("d",)
-        assert report.result == Gaussian("g").event_spec
+        element = Gaussian("g").event_spec.term_spec
+        assert report.result == OutputSpec(g=BatchSpec(element, laws=2))
         np.testing.assert_array_equal(np.asarray(center(batch).raw), [1.0, 2.0])
 
     def test_an_element_no_route_applies_to_makes_the_check_infeasible(self):

@@ -8,6 +8,8 @@ settle:
 - an unspecified output type: is filled per call, and the output spec keeps it;
 - a lift: plans a distribution over the output spec;
 - ``include_inputs``: returns the joint law of the lifted inputs and the output.
+- ``check``: reports the output spec of the value the call returns, a batch or a
+  law for a lifted call.
 """
 
 from __future__ import annotations
@@ -17,11 +19,13 @@ import pytest
 
 from probpipe import (
     ApplicabilityError,
+    BatchSpec,
     DistributionBatch,
     DistributionSpec,
     EmpiricalDistribution,
     Function,
     InputSpec,
+    Normal,
     NumericArrayBatch,
     NumericArraySpec,
     OutputSpec,
@@ -194,7 +198,9 @@ class TestEmptySweepPlanning:
             raise AssertionError("An empty sweep must not evaluate the body")
 
         empty = NumericArrayBatch(jnp.zeros((0, 2)), "row", label="rows")
-        assert unexpected.check(empty).result.term_spec.shape == (2,)
+        planned = unexpected.check(empty).result.term_spec
+        assert planned.level_names == ("row",)
+        assert planned.element_spec.term_spec.shape == (2,)
         result = unexpected(empty)
         assert isinstance(result, NumericArrayBatch)
         assert result.batch_shape == (0,)
@@ -210,11 +216,155 @@ class TestEmptySweepPlanning:
             element=DistributionSpec(OutputSpec(x=NumericArraySpec(()))),
             label="laws",
         )
-        assert mean.check(empty).result.term_spec.shape == ()
+        planned = mean.check(empty).result.term_spec
+        assert planned.level_names == ("row",)
+        assert planned.element_spec.term_spec.shape == ()
         result = mean(empty)
         assert isinstance(result, NumericArrayBatch)
         assert result.batch_shape == (0,)
         assert result.element_spec.term_spec.shape == ()
+
+
+#: A scalar output whose dtype the stored results share, so a planned batch spec
+#: equals the returned batch's spec.
+_FLOAT = NumericArraySpec((), jnp.float32)
+_SCALAR = OutputSpec(f=_FLOAT)
+
+
+def _scalar_function(**controls) -> Function:
+    @function(output_spec=_SCALAR, max_evaluations=6, **controls)
+    def f(x):
+        return 2.0 * x
+
+    return f
+
+
+def _items() -> NumericArrayBatch:
+    return NumericArrayBatch(jnp.array([1.0, 2.0]), "item", label="X")
+
+
+class TestTheCheckedResult:
+    """``check`` reports the output spec of the value the call returns, whatever the lift."""
+
+    def test_a_plain_call_reports_the_functions_output_spec(self):
+        assert _scalar_function().check(1.0).result == _SCALAR
+
+    @pytest.mark.parametrize("executor, traceable", _EXECUTORS)
+    def test_a_sweep_reports_a_batch_on_the_swept_levels(self, executor, traceable):
+        f = _scalar_function(executor=executor, traceable=traceable)
+        planned = f.check(_items()).result
+        assert planned == OutputSpec(f=BatchSpec(_FLOAT, item=2))
+        result = f(_items())
+        assert planned.term_spec.is_valid(result)
+        assert planned.term_spec.level_names == result.level_names
+
+    def test_a_swept_record_keeps_the_positional_form(self):
+        record = RecordSpec(a=_FLOAT, b=_FLOAT)
+
+        @function(output_spec=record)
+        def pair(x):
+            return {"a": x, "b": 2.0 * x}
+
+        planned = pair.check(_items()).result
+        assert planned == OutputSpec(BatchSpec(record, item=2))
+        assert planned.term_spec.is_valid(pair(_items()))
+
+    def test_a_returned_batch_adds_its_levels_after_the_swept_ones(self):
+        @function(output_spec=OutputSpec(f=BatchSpec(_FLOAT, inner=3)))
+        def spread(x):
+            return NumericArrayBatch(x * jnp.ones(3), "inner", label="spread")
+
+        planned = spread.check(_items()).result
+        assert planned == OutputSpec(f=BatchSpec(_FLOAT, item=2, inner=3))
+        assert planned.term_spec.is_valid(spread(_items()))
+
+    def test_a_returned_batch_on_a_swept_level_raises_as_the_call_does(self):
+        @function(output_spec=OutputSpec(f=BatchSpec(_FLOAT, item=3)))
+        def spread(x):
+            return NumericArrayBatch(x * jnp.ones(3), "item", label="spread")
+
+        assert isinstance(error_of(lambda: spread.check(_items())), ValueError)
+        assert isinstance(error_of(lambda: spread(_items())), ValueError)
+
+    def test_a_broadcast_reports_a_law_over_the_outputs(self):
+        f = _scalar_function()
+        planned = f.check(standard_normal()).result
+        assert planned == OutputSpec(DistributionSpec(_SCALAR))
+        with workflow_run(seed=0):
+            result = f(standard_normal())
+        assert planned.term_spec.is_valid(result)
+        assert tuple(planned.term_spec.event_spec.outputs) == tuple(result.event_spec.outputs)
+
+    def test_a_broadcast_of_returned_laws_holds_each_law_under_the_output_name(self):
+        law = DistributionSpec(OutputSpec(y=NumericArraySpec(())))
+
+        @function(output_spec=OutputSpec(law), max_evaluations=6)
+        def centered(x):
+            return Normal("y", x, 1.0)
+
+        planned = centered.check(standard_normal()).result
+        assert planned == OutputSpec(DistributionSpec(OutputSpec(centered=law)))
+        with workflow_run(seed=0):
+            result = centered(standard_normal())
+        assert planned.term_spec.is_valid(result)
+
+    def test_including_the_inputs_reports_the_joint_law(self):
+        f = _scalar_function(include_inputs=True)
+        planned = f.check(standard_normal()).result
+        with workflow_run(seed=0):
+            result = f(standard_normal())
+        assert tuple(planned.term_spec.event_spec.outputs) == ("x", "f")
+        assert tuple(result.event_spec.outputs) == ("x", "f")
+        assert planned.term_spec.is_valid(result)
+
+    def test_including_an_input_named_like_an_output_raises_at_check(self):
+        @function(
+            include_inputs=True, max_evaluations=6, output_spec=OutputSpec(x=NumericArraySpec(()))
+        )
+        def double(x):
+            return 2.0 * x
+
+        assert isinstance(error_of(lambda: double.check(standard_normal())), ApplicabilityError)
+
+    def test_a_nested_sweep_reports_a_batch_of_laws(self):
+        @function(output_spec=_SCALAR, max_evaluations=6)
+        def f(x, scale):
+            return x * scale
+
+        planned = f.check(standard_normal(), _items()).result
+        assert planned == OutputSpec(BatchSpec(DistributionSpec(_SCALAR), item=2))
+        with workflow_run(seed=0):
+            result = f(standard_normal(), _items())
+        assert isinstance(result, DistributionBatch)
+        assert planned.term_spec.is_valid(result)
+
+    def test_an_operation_swept_over_laws_reports_a_batch(self):
+        laws = DistributionBatch([standard_normal(), Normal("z", 1.0, 1.0)], "row", label="laws")
+        planned = mean.check(laws).result
+        assert planned.term_spec.level_names == ("row",)
+        assert planned.term_spec.is_valid(mean(laws))
+
+    @pytest.mark.parametrize("argument", [_items, standard_normal], ids=["sweep", "broadcast"])
+    def test_a_lift_of_an_unspecified_type_reports_no_result(self, argument):
+        @function(output_spec=OutputSpec(f=None), max_evaluations=6)
+        def f(x):
+            return 2.0 * x
+
+        report = f.check(argument())
+        assert report.result is None
+        assert report.deferred
+
+    def test_a_plain_call_of_an_unspecified_type_reports_the_named_output(self):
+        @function(output_spec=OutputSpec(f=None))
+        def f(x):
+            return 2.0 * x
+
+        assert f.check(1.0).result == OutputSpec(f=None)
+
+    def test_a_call_without_a_feasible_route_reports_no_result(self):
+        report = _scalar_function().using(method="sampling_lift").check(1.0)
+        assert report.selected.feasible is False
+        assert report.result is None
 
 
 class TestIncludingTheInputs:

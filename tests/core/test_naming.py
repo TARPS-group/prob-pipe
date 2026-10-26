@@ -1023,7 +1023,7 @@ class TestTheLabelsOfALiftedFunction:
     def test_a_lifted_score_keeps_the_output_its_check_declares(self):
         prior = Normal("g", 0.0, 1.0, label="prior")
         proposal = Normal("q", 0.0, 1.0, label="proposal")
-        declared = log_prob.check(prior, proposal).result
+        declared = log_prob.check(prior, proposal).result.term_spec.event_spec
         with workflow_run(seed=0):
             lifted = log_prob(prior, proposal)
         assert tuple(lifted.event_spec.outputs) == tuple(declared.outputs)

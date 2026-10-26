@@ -22,7 +22,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._batch import Batch, BatchSpec, _flat_batch_spec
+from ..core._batch import Batch, BatchSpec
 from ..core._evaluation_points import _requested_evaluation_points
 from ..core._executors import _holds_tracer
 from ..core._expression import Expression
@@ -36,7 +36,7 @@ from ..core._record_batch import (
     _stacked_batches,
 )
 from ..core._record_spec import RecordSpec, _layout_record_mapping
-from ..core._spec_base import NumericArraySpec
+from ..core._spec_base import NumericArraySpec, TermSpec
 from ..core._specs import OutputSpec, _has_record_outputs, _root_output_name
 from ..core.config import WorkflowKind, _checked_count
 from ..core.named_tree import _PATH_SEP, _unflatten_paths
@@ -46,10 +46,9 @@ from ..core.tracked import TrackedTerm
 from ..custom_types import Array, PRNGKey
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _raw_record
-from ..values._binding import FunctionInputRef, input_ref_value, replace_input_refs
+from ..values._binding import FunctionInputRef, replace_input_refs
 from ..values._function_base import _NAMELESS_OUTPUT, _validate_stacked_output
 from . import _plan, _recipe
-from ._call import ApplicabilityError
 from ._execution import (
     evaluate_requested_points,
     lifted_evaluation_point_segment,
@@ -334,16 +333,13 @@ def _lift_result(
     atoms, declaration = _output_atoms(
         draws.outputs, draws.count, output_label, output_spec, output_name
     )
-    if _root_output_name(declaration) is None and not _has_record_outputs(declaration):
-        # A law's event is a value, so the law of the evaluations holds each
-        # returned law whole under the default output, as an undeclared
-        # output places its result.
-        declaration = OutputSpec(**{output_name: declaration.term_spec})
+    event = _plan.evaluations_event_spec(declaration, output_name=output_name)
     if not include_inputs:
-        return EmpiricalDistribution(
-            atoms, draws.weights, label=output_label, event_spec=declaration
-        )
-    joint = _joint_atoms(atoms, declaration, draws, values, broadcast_args, output_label)
+        return EmpiricalDistribution(atoms, draws.weights, label=output_label, event_spec=event)
+    fields = _plan.joint_event_fields(
+        event, values=values, lifted_refs=broadcast_args, output_label=output_label
+    )
+    joint = _joint_atoms(atoms, event, fields, draws, broadcast_args, output_label)
     return EmpiricalDistribution(joint, draws.weights, label=output_label)
 
 
@@ -413,7 +409,7 @@ def _output_atoms(
                 f"output, but the evaluations return batches on the levels "
                 f"{list(returned)}, which include it. Pass an explicit OutputSpec with a distinct "
                 f"output name, such as "
-                f"output_spec=OutputSpec({_free_output(dict.fromkeys(returned))}=None)."
+                f"output_spec=OutputSpec({_plan.free_output(dict.fromkeys(returned))}=None)."
             )
         completed = None if output_spec is None else _aggregate_output_spec(output_spec, rows)
         try:
@@ -472,9 +468,9 @@ def _rows_of(outputs: Any, output_label: str) -> Any:
 
 def _joint_atoms(
     atoms: Batch,
-    declaration: OutputSpec,
+    event: OutputSpec,
+    fields: Mapping[str, TermSpec],
     draws: _LiftDraws,
-    values: Mapping[str, Any],
     broadcast_args: Sequence[FunctionInputRef],
     output_label: str,
 ) -> RecordBatch:
@@ -483,90 +479,52 @@ def _joint_atoms(
     Each lifted parameter contributes one field, under its label, holding its
     complete draw at the kind its law's event spec names, so a record
     draw stays nested even when it has one field. The returned values
-    contribute the outputs of *declaration*.
+    contribute the outputs of *event*.
 
     Parameters
     ----------
     atoms : Batch
         The outputs on the level the output names, as :func:`_output_atoms`
         returns them.
-    declaration : OutputSpec
-        The completed output spec, as :func:`_output_atoms` returns it.
+    event : OutputSpec
+        The evaluations' event spec, as :func:`._plan.evaluations_event_spec`
+        gives it.
+    fields : Mapping of str to TermSpec
+        The joint event's fields, as :func:`._plan.joint_event_fields` gives
+        them, which the atoms' element spec takes.
     draws : _LiftDraws
         The lifted call's evaluations, whose ``inputs`` hold each lifted
         argument's draws.
-    values : mapping of str to Any
-        The call's resolved arguments, from which each lifted law's event
-        spec is read.
     broadcast_args : sequence of FunctionInputRef
         The references to the lifted arguments, in the order of their fields.
     output_label : str
-        The batch's label. The function's outputs come from *declaration*.
+        The batch's label. The function's outputs come from *event*.
 
     Returns
     -------
     RecordBatch
         The joint atoms on the level the output names, labeled *output_label*.
-
-    Raises
-    ------
-    ApplicabilityError
-        If a lifted parameter's label is also an output.
     """
-    fields: dict[str, Any] = {}
     columns: dict[str, Any] = {}
     for ref in broadcast_args:
-        event = input_ref_value(values, ref).event_spec.term_spec
-        if isinstance(event, BatchSpec):
-            event = _flat_batch_spec(event)
-        fields[ref.label] = event
+        draw = fields[ref.label]
         inputs = draws.inputs[ref]
-        if isinstance(event, BatchSpec):
+        if isinstance(draw, BatchSpec):
             # A batch-valued field holds one batch per draw in its object column.
-            inputs = _record_columns(inputs, ref.label, event, as_batch=True)
+            inputs = _record_columns(inputs, ref.label, draw, as_batch=True)
         columns.update(_draw_columns(ref.label, inputs))
-    clash = sorted(set(fields) & set(declaration.outputs))
-    if clash:
-        if len(clash) == 1:
-            named, held = f"parameter {clash[0]!r}", "an output with that name"
-        else:
-            named, held = f"parameters {clash}", "outputs with those names"
-        raise ApplicabilityError(
-            f"include_inputs=True cannot add {named} to the output of {output_label!r}, which "
-            f"already has {held}. Rename the {'parameter' if len(clash) == 1 else 'parameters'}, "
-            f"or pass output_spec=OutputSpec({_free_output(fields)}=None) to hold the output "
-            "under a name no parameter has"
-        )
-    if isinstance(declaration.term_spec, BatchSpec):
-        output_name = cast(str, _root_output_name(declaration))
-        fields[output_name] = declaration.term_spec
-        columns[output_name] = _from_iterable(
+    if isinstance(event.term_spec, BatchSpec):
+        columns[cast(str, _root_output_name(event))] = _from_iterable(
             [atoms[index] for index in range(draws.count)], kind="batch-valued output atoms"
         )
-        element = RecordSpec(fields)
-        return _batch_class_for(element)(
-            columns, atoms.level_names[0], element=element, label=output_label
-        )
-    stored = _batch_columns(atoms)
-    if _has_record_outputs(declaration):
-        fields.update(declaration.term_spec.children)
-        columns.update(stored)
+    elif _has_record_outputs(event):
+        columns.update(_batch_columns(atoms))
     else:
-        output_name = cast(str, _root_output_name(declaration))
-        fields[output_name] = declaration.term_spec
-        columns.update(_prefixed(output_name, stored))
-    element = RecordSpec(fields)
+        columns.update(_prefixed(cast(str, _root_output_name(event)), _batch_columns(atoms)))
+    element = RecordSpec(dict(fields))
     return _batch_class_for(element)(
         columns, atoms.level_names[0], element=element, label=output_label
     )
-
-
-def _free_output(taken: Mapping[str, Any]) -> str:
-    """An output name that no key of *taken* is: ``output``, extended by ``_`` until it is free."""
-    name = "output"
-    while name in taken:
-        name += "_"
-    return name
 
 
 def _draw_columns(label: str, draws: Any) -> dict[str, Any]:

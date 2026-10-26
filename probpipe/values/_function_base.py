@@ -1520,8 +1520,10 @@ class Function(TrackedTerm, Annotated):
             The call's report: for each candidate route whether it is feasible,
             infeasible with a reason, or unresolved with the declarations it
             still needs; the selected route when selection can be decided; the
-            planned output spec of the result; the checks deferred to return; the
-            lifted parameters; and the planned conversions.
+            planned output spec of the value the call returns, which for a
+            lifted call is the batch or law the lift returns; the checks
+            deferred to return; the lifted parameters; and the planned
+            conversions.
 
         Raises
         ------
@@ -1533,7 +1535,8 @@ class Function(TrackedTerm, Annotated):
             call raises.
         ValueError
             If an empty sweep lacks a concrete output spec after input
-            dimensions bind.
+            dimensions bind, or a swept level is also a level of the batch the
+            output spec declares.
         ResolutionError
             If a conversion has no converter, or the ``method`` control names no
             route of a Function realized by routes.
