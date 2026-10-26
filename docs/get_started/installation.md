@@ -4,7 +4,7 @@
 
 ProbPipe requires Python 3.12 or later, and it installs JAX as a dependency.
 ProbPipe is not yet on PyPI, so every command on this page installs it from GitHub.
-Until a release, the commands install the `dev/overhaul` branch, which is the version this documentation describes.
+Until a release, the commands install the `main` branch, which is the version this documentation describes.
 pip and uv clone the repository to install it, so they need [Git](https://git-scm.com/downloads).
 
 ## The two distributions
@@ -25,7 +25,7 @@ Until it is, install the tutorials' set of extras through `probpipe-core`, as th
 To install the smallest set, run this in a code cell:
 
 ```text
-%pip install "probpipe-core[pymc] @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
+%pip install "probpipe-core[pymc] @ git+https://github.com/TARPS-group/prob-pipe.git@main"
 ```
 
 Colab comes with PyMC 5, which does not work with the ArviZ 1.x that ProbPipe requires.
@@ -34,7 +34,7 @@ The command therefore installs the `pymc` extra, and the extra upgrades PyMC.
 To install the set the tutorials use, run this instead:
 
 ```text
-%pip install "probpipe-core[pymc,nutpie,pyabc,bayesflow] @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
+%pip install "probpipe-core[pymc,nutpie,pyabc,bayesflow] @ git+https://github.com/TARPS-group/prob-pipe.git@main"
 ```
 
 If Colab's Python is 3.14, leave `bayesflow` out of the list, as `!python --version` shows.
@@ -47,13 +47,13 @@ Create a virtual environment, activate it, and install ProbPipe into it:
 ```bash
 python -m venv .venv
 source .venv/bin/activate  # on Windows: .venv\Scripts\activate
-pip install "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
+pip install "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@main"
 ```
 
 To install the set the tutorials use, name the extras in brackets:
 
 ```bash
-pip install "probpipe-core[pymc,nutpie,pyabc,bayesflow] @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
+pip install "probpipe-core[pymc,nutpie,pyabc,bayesflow] @ git+https://github.com/TARPS-group/prob-pipe.git@main"
 ```
 
 On Python 3.14, leave `bayesflow` out of the list.
@@ -63,14 +63,14 @@ On Python 3.14, leave `bayesflow` out of the list.
 In a project that [uv](https://docs.astral.sh/uv/) manages, `uv add` installs ProbPipe and records it as a dependency in `pyproject.toml`:
 
 ```bash
-uv add "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
+uv add "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@main"
 ```
 
 In a virtual environment that is not a uv project, `uv pip install` takes the same arguments as `pip install`:
 
 ```bash
 uv venv
-uv pip install "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
+uv pip install "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@main"
 ```
 
 Both commands take extras in brackets, as pip does.
@@ -136,4 +136,3 @@ standard deviation of the draws: 1.0
 ## Next steps
 
 - The [quickstart](quickstart.ipynb) fits a first model, checks it, and forecasts with it in about ten minutes.
-- The [first tutorial](../tutorials/01_first_analysis.ipynb) begins a forecasting problem that the tutorials follow from a first posterior to simulation-based inference.

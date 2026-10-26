@@ -3377,6 +3377,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   together: ValueError: r must be positive`, and `error.failures` still lists
   each evaluation point.
 
+- **An AI assistant designs a ProbPipe pipeline with you.** The design
+  assistant interviews a scientist about their question, data, and existing
+  models, then proposes, validates on realistic simulated data, and fits a
+  pipeline, recording each decision in a design document. Any agent that can
+  run shell commands follows it through the prompt in
+  `docs/get_started/design_assistant.md`. In Claude Code it is the skill
+  `/design-pipeline`. Its instructions are in `.claude/skills/design-pipeline/`.
+
 - **`blackjax_nuts` takes `target_accept_prob` and `max_tree_depth`.** It
   passes the target acceptance rate of the step-size adaptation to BlackJAX's
   window adaptation as `target_acceptance_rate`, and the maximum depth of the
@@ -3406,6 +3414,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
 
 ### Changed
+
+- **The documentation installs ProbPipe from `main`.** The install commands,
+  the Colab cells of the tutorials and user guide, their data URLs, and the
+  design assistant's prompt name the `main` branch.
 
 - **Faster minibatches without replacement.** Sampling retains distinct indices
   from batches of random candidates. Additional candidates supplement an incomplete batch.
