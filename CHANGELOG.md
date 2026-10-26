@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A product built with `&` carries provenance, so it takes no record of
+  your own.** Before, `(a & b).with_provenance(p)` attached `p`. Now it raises
+  `RuntimeError`, since the merge records `&` and provenance is set once. To
+  attach a record of your own to a product, build it with
+  `FactoredDistribution((a, b))` from `probpipe.distributions`, whose result
+  carries none.
 - **Record conformance and unification require declaration order.** Before,
   `RecordSpec(x=(), y=())` admitted an existing record or record spec ordered
   `{y, x}`. Now it refuses that order, including inside nested records and at
@@ -4454,9 +4460,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   operands as parents, left first, and `print(x.provenance)` shows it as `1 &
   4`. A chain such as `a & b & c` prints as one line, and so does
   `lik & (a & b)`. A law that a constructor builds, `FactoredDistribution(...)`
-  included, still records none. Provenance is write-once, so
-  `(a & b).with_provenance(p)` now raises `RuntimeError`; to attach a record of
-  your own, build the product with `FactoredDistribution((a, b))`.
+  included, still records none.
 
   ```text
   >>> print(median.provenance)

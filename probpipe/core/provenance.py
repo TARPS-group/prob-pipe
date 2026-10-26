@@ -108,7 +108,7 @@ class Provenance:
     ----------
     operation : str
         The operation that produced the object (e.g. ``"broadcast"``,
-        ``"condition_on"``, ``"with_label"``).
+        ``"condition_on"``, ``"with_label"``, or ``"&"`` for a merge).
     parents : tuple of ParentInfo
         Descriptors of tracked terms the operation consumed. Only these
         descriptors participate in ancestry traversal.
@@ -192,14 +192,18 @@ class Provenance:
         steps too. A view, the result of ``__getitem__``, is
         not a step of its own: each step that consumes it refers to its
         container indexed by the view's path or position, as ``4['beta']``.
-        A merge, which records the operation ``&``, shows its two parents
-        joined by ``&``, as ``1 & 4``, and never its label, since a merge's
-        label joins its operands' labels. A parent that records no provenance
-        shows its label grouped as a derived label groups an operand, so a
-        label of several words is bracketed, as ``[my model] & 2``. A merge
-        whose one consumer is a merge is not a line of its own: the consumer
-        shows it in its place, in parentheses where it is the right operand,
-        so ``a & b & c`` is one line, and so is ``lik & (a & b)``.
+
+        A merge, which records the operation ``&``, prints by three rules:
+
+        1. it shows its two parents joined by ``&``, as ``1 & 4``, and never
+           its label, since a merge's label joins its operands' labels;
+        2. an operand that records no provenance shows its label grouped as a
+           derived label groups an operand, so a label of several words is
+           bracketed, as ``[my model] & 2``;
+        3. a merge whose one consumer is a merge is not a line of its own: the
+           consumer shows it in its place, in parentheses where it is the right
+           operand, so ``a & b & c`` is one line, and so is ``lik & (a & b)``.
+
         A hexadecimal digest of 32 or more digits shows its first 8, followed
         by ``…``. The run details of the lines start in one column, after the
         widest call of at most 48 characters. The steps are the ancestors that
@@ -343,7 +347,7 @@ class Provenance:
             for parent in (container, source)
             if parent is not None
         )
-        return cls("__getitem__", parents=parents, metadata=metadata)
+        return cls(_VIEW_OPERATION, parents=parents, metadata=metadata)
 
     @classmethod
     def create(
@@ -604,11 +608,26 @@ _DIGEST = re.compile(r"\b[0-9a-f]{32,}\b")
 # The widest call that the column of each line's run details aligns after.
 _CALL_COLUMN = 48
 #: The key of the record whose lineage prints, beside the keys of its steps.
-_PRINTED_RECORD = object()
+_PRINTED_RECORD_KEY = object()
 
 
-def _provenance_of(p: Any) -> Provenance | None:
-    return getattr(p, "provenance", None)
+def _provenance_of(parent: Any) -> Provenance | None:
+    return getattr(parent, "provenance", None)
+
+
+def _type_name_of(parent: Any) -> str:
+    """The class name of *parent*, which a descriptor records and a live object carries."""
+    return parent.type_name if isinstance(parent, ParentInfo) else type(parent).__name__
+
+
+def _is_view(step_record: Provenance) -> bool:
+    """Whether *step_record* records a view, the result of ``__getitem__`` on its first parent."""
+    return step_record.operation == _VIEW_OPERATION and bool(step_record.parents)
+
+
+def _is_merge(step_record: Provenance) -> bool:
+    """Whether *step_record* records a merge ``a & b`` of its two parents."""
+    return step_record.operation == _MERGE_OPERATION and len(step_record.parents) == 2
 
 
 def _lineage_steps(provenance: Provenance) -> list[Any]:
@@ -619,95 +638,101 @@ def _lineage_steps(provenance: Provenance) -> list[Any]:
     """
     order: list[Any] = []
     visited: set = set()
-    stack: list[tuple[Any, bool]] = [(p, False) for p in reversed(provenance.parents)]
+    stack: list[tuple[Any, bool]] = [(parent, False) for parent in reversed(provenance.parents)]
     while stack:
-        p, expanded = stack.pop()
+        step, expanded = stack.pop()
         if expanded:
-            order.append(p)
+            order.append(step)
             continue
-        key = _parent_key(p)
-        if key in visited:
+        step_key = _parent_key(step)
+        if step_key in visited:
             continue
-        visited.add(key)
-        parent_provenance = _provenance_of(p)
-        if parent_provenance is None:
+        visited.add(step_key)
+        step_record = _provenance_of(step)
+        if step_record is None:
             continue
-        stack.append((p, True))
+        stack.append((step, True))
         stack.extend(
-            (pp, False)
-            for pp in reversed(parent_provenance.parents)
-            if _parent_key(pp) not in visited
+            (parent, False)
+            for parent in reversed(step_record.parents)
+            if _parent_key(parent) not in visited
         )
     return order
 
 
-def _step_consumers(
+def _step_records_and_consumers(
     provenance: Provenance, steps: list[Any]
 ) -> tuple[dict[Any, Provenance], dict[Any, set[Any]]]:
-    """The record of each step of *provenance*'s lineage, and the records that consume each step.
+    """The record of each step of *provenance*'s lineage, and the keys of the records that consume each step.
 
     The records are keyed by the :func:`_parent_key` of their steps, and
-    *provenance* itself by :data:`_PRINTED_RECORD`. A step's consumers are the
-    keys of the records that list the step among their parents.
+    *provenance* itself by :data:`_PRINTED_RECORD_KEY`. A step's consumers are
+    the records that list the step among their parents.
     """
-    records = {_parent_key(p): p.provenance for p in steps}
-    records[_PRINTED_RECORD] = provenance
-    consumers: dict[Any, set[Any]] = {}
-    for key, node in records.items():
-        for p in node.parents:
-            if _provenance_of(p) is not None:
-                consumers.setdefault(_parent_key(p), set()).add(key)
-    return records, consumers
+    step_records = {_parent_key(step): step.provenance for step in steps}
+    step_records[_PRINTED_RECORD_KEY] = provenance
+    consumer_keys: dict[Any, set[Any]] = {}
+    for step_key, step_record in step_records.items():
+        for parent in step_record.parents:
+            if _provenance_of(parent) is not None:
+                consumer_keys.setdefault(_parent_key(parent), set()).add(step_key)
+    return step_records, consumer_keys
 
 
 def _folded_steps(
-    records: dict[Any, Provenance], consumers: dict[Any, set[Any]], steps: list[Any]
+    step_records: dict[Any, Provenance], consumer_keys: dict[Any, set[Any]], steps: list[Any]
 ) -> set[Any]:
     """The keys of the *steps* that the printed lineage folds into the call whose route made them.
 
     A step folds into a call when the call records it under ``route_results``
     and each of its other consumers folds into the call, and a step whose
-    consumers all fold into one call folds into that call too. *records* and
-    *consumers* are what :func:`_step_consumers` gives. Each step of *steps*
-    follows every step it consumed, so visiting them in reverse meets every
-    consumer of a step before the step.
+    consumers all fold into one call folds into that call too. *step_records*
+    and *consumer_keys* are what :func:`_step_records_and_consumers` gives.
+    Each step of *steps* follows every step it consumed, so visiting them in
+    reverse meets every consumer of a step before the step.
     """
-    route_results: dict[Any, set[Any]] = {}
-    for key, node in records.items():
-        positions = node.metadata.get(_ROUTE_RESULTS) or ()
-        route_results[key] = {
-            _parent_key(node.parents[i])
-            for i in positions
-            if isinstance(i, int) and 0 <= i < len(node.parents)
+    route_result_keys: dict[Any, set[Any]] = {}
+    for step_key, step_record in step_records.items():
+        positions = step_record.metadata.get(_ROUTE_RESULTS) or ()
+        route_result_keys[step_key] = {
+            _parent_key(step_record.parents[position])
+            for position in positions
+            if isinstance(position, int) and 0 <= position < len(step_record.parents)
         }
-    owner: dict[Any, Any] = {}
-    for p in reversed(steps):
-        key = _parent_key(p)
-        owners = {owner.get(c, c) for c in consumers.get(key, ())}
-        if len(owners) != 1:
+    # The key of each folded step, mapped to the key of the call it folds into.
+    folding_call_keys: dict[Any, Any] = {}
+    for step in reversed(steps):
+        step_key = _parent_key(step)
+        consumers = consumer_keys.get(step_key, set())
+        consumer_calls = {folding_call_keys.get(key, key) for key in consumers}
+        if len(consumer_calls) != 1:
             continue
-        (call,) = owners
-        if all(c in owner for c in consumers[key]) or any(
-            key in route_results[c] for c in consumers[key]
+        (call_key,) = consumer_calls
+        if all(key in folding_call_keys for key in consumers) or any(
+            step_key in route_result_keys[key] for key in consumers
         ):
-            owner[key] = call
-    return set(owner)
+            folding_call_keys[step_key] = call_key
+    return set(folding_call_keys)
 
 
-def _inlined_merges(records: dict[Any, Provenance], consumers: dict[Any, set[Any]]) -> set[Any]:
+def _inlined_merges(
+    step_records: dict[Any, Provenance], consumer_keys: dict[Any, set[Any]]
+) -> set[Any]:
     """The keys of the merge steps that the printed lineage shows inside the merge that consumes them.
 
     A merge step whose one consumer is itself a merge is not a line of its own,
-    so the chain ``a & b & c`` prints as one line. *records* and *consumers*
-    are what :func:`_step_consumers` gives.
+    so the chain ``a & b & c`` prints as one line. *step_records* and
+    *consumer_keys* are what :func:`_step_records_and_consumers` gives.
     """
-    return {
-        key
-        for key, node in records.items()
-        if node.operation == _MERGE_OPERATION
-        and len(consumers.get(key, ())) == 1
-        and records[next(iter(consumers[key]))].operation == _MERGE_OPERATION
-    }
+    inlined_keys: set[Any] = set()
+    for step_key, step_record in step_records.items():
+        consumers = consumer_keys.get(step_key, set())
+        if not _is_merge(step_record) or len(consumers) != 1:
+            continue
+        (consumer_key,) = consumers
+        if _is_merge(step_records[consumer_key]):
+            inlined_keys.add(step_key)
+    return inlined_keys
 
 
 def _shorten_digests(text: str) -> str:
@@ -752,98 +777,103 @@ def _replace_parent_references(label: str, replacements: Mapping[str, str]) -> s
 
 
 def _format_lineage(provenance: Provenance) -> str:
-    refs: dict[Any, str] = {}
+    # The text that a later line shows for each step: its number, or a view's or
+    # an inlined merge's own text.
+    step_references: dict[Any, str] = {}
 
-    def ref(p: Any) -> str:
-        key = _parent_key(p)
-        if key in refs:
-            return refs[key]
-        label = getattr(p, "label", None)
-        if label is None:
-            label = p.type_name if isinstance(p, ParentInfo) else type(p).__name__
-        return _shorten_digests(label)
+    def reference(parent: Any) -> str:
+        parent_key = _parent_key(parent)
+        if parent_key in step_references:
+            return step_references[parent_key]
+        label = getattr(parent, "label", None)
+        return _shorten_digests(_type_name_of(parent) if label is None else label)
 
-    def is_view(node: Provenance) -> bool:
-        return node.operation == _VIEW_OPERATION and bool(node.parents)
+    def merge_operand_text(parent: Any, *, is_right_operand: bool) -> str:
+        # Python groups a & b & c from the left, so an inlined merge on the
+        # right is parenthesized.
+        if _parent_key(parent) in inlined_keys:
+            text = reference(parent)
+            return f"({text})" if is_right_operand else text
+        return grouped_label(reference(parent))
 
-    def merge_operand(p: Any, position: int) -> str:
-        # A chain reads left to right, as Python groups `a & b & c`, so an
-        # inlined merge on the right is parenthesized.
-        if _parent_key(p) in inlined:
-            return f"({ref(p)})" if position else ref(p)
-        return grouped_label(ref(p))
-
-    def step_text(node: Provenance, label: str | None) -> str:
-        name = node.operation.removeprefix(_MANAGED_CALL_PREFIX)
-        if is_view(node):
-            call = ref(node.parents[0]) + _view_index(node.metadata)
-        elif node.operation == _MERGE_OPERATION:
-            # A merge's label joins its operands' labels (IV.2), so it would
-            # restate the call.
-            return " & ".join(merge_operand(p, i) for i, p in enumerate(node.parents))
+    def step_text(step_record: Provenance, label: str | None) -> str:
+        if _is_merge(step_record):
+            left, right = step_record.parents
+            return (
+                f"{merge_operand_text(left, is_right_operand=False)} & "
+                f"{merge_operand_text(right, is_right_operand=True)}"
+            )
+        operation_name = step_record.operation.removeprefix(_MANAGED_CALL_PREFIX)
+        if _is_view(step_record):
+            call_text = reference(step_record.parents[0]) + _view_index(step_record.metadata)
         else:
             arguments = [
-                ref(p)
-                for index, p in enumerate(node.parents)
-                if _parent_key(p) not in folded
+                reference(parent)
+                for position, parent in enumerate(step_record.parents)
+                if _parent_key(parent) not in folded_keys
                 and not (
-                    index == 0
-                    and node.operation.startswith(_MANAGED_CALL_PREFIX)
-                    and (p.type_name if isinstance(p, ParentInfo) else type(p).__name__)
-                    in ("Function", "Operation")
-                    and _provenance_of(p) is None
-                    and getattr(p, "label", None) == name
+                    position == 0
+                    and step_record.operation.startswith(_MANAGED_CALL_PREFIX)
+                    and _type_name_of(parent) in ("Function", "Operation")
+                    and _provenance_of(parent) is None
+                    and getattr(parent, "label", None) == operation_name
                 )
             ]
-            arguments += list(node.inputs)
-            call = f"{name}({', '.join(arguments)})"
+            arguments += list(step_record.inputs)
+            call_text = f"{operation_name}({', '.join(arguments)})"
         if label is None:
-            return call
-        replacements = {
-            p.label: ref(p)
-            for p in node.parents
-            if getattr(p, "label", None) and _parent_key(p) in refs and p.label != label
+            return call_text
+        label_replacements = {
+            parent.label: reference(parent)
+            for parent in step_record.parents
+            if getattr(parent, "label", None)
+            and _parent_key(parent) in step_references
+            and parent.label != label
         }
-        shown = _replace_parent_references(label, replacements)
-        shown = _shorten_digests(shown)
-        if shown == call or (not is_view(node) and shown.startswith(f"{name}(")):
-            return shown
-        return f"{shown} = {call}"
+        shown_label = _shorten_digests(_replace_parent_references(label, label_replacements))
+        if shown_label == call_text or (
+            not _is_view(step_record) and shown_label.startswith(f"{operation_name}(")
+        ):
+            return shown_label
+        return f"{shown_label} = {call_text}"
 
-    def run_details(node: Provenance) -> str:
-        details = [
-            f"{key} {node.metadata[key]}"
+    def run_details(step_record: Provenance) -> str:
+        detail_parts = [
+            f"{key} {step_record.metadata[key]}"
             for key in ("route", "method")
-            if node.metadata.get(key) is not None
+            if step_record.metadata.get(key) is not None
         ]
-        exact = node.metadata.get("exact")
+        exact = step_record.metadata.get("exact")
         if isinstance(exact, bool):
-            details.append("exact" if exact else "approximate")
-        return ", ".join(details)
+            detail_parts.append("exact" if exact else "approximate")
+        return ", ".join(detail_parts)
 
     steps = _lineage_steps(provenance)
-    records, consumers = _step_consumers(provenance, steps)
-    folded = _folded_steps(records, consumers, steps)
-    inlined = _inlined_merges(records, consumers)
-    lines: list[tuple[str, str]] = []
-    for p in steps:
-        if _parent_key(p) in folded:
+    step_records, consumer_keys = _step_records_and_consumers(provenance, steps)
+    folded_keys = _folded_steps(step_records, consumer_keys, steps)
+    inlined_keys = _inlined_merges(step_records, consumer_keys)
+    step_lines: list[tuple[str, str]] = []
+    for step in steps:
+        step_key = _parent_key(step)
+        if step_key in folded_keys:
             continue
-        node = p.provenance
-        if is_view(node) or _parent_key(p) in inlined:
-            refs[_parent_key(p)] = step_text(node, None)
+        step_record = step.provenance
+        if _is_view(step_record) or step_key in inlined_keys:
+            step_references[step_key] = step_text(step_record, None)
             continue
-        text = step_text(node, getattr(p, "label", None))
-        refs[_parent_key(p)] = str(len(lines) + 1)
-        lines.append((text, run_details(node)))
-    lines.append((step_text(provenance, None), run_details(provenance)))
+        line_text = step_text(step_record, getattr(step, "label", None))
+        step_references[step_key] = str(len(step_lines) + 1)
+        step_lines.append((line_text, run_details(step_record)))
+    step_lines.append((step_text(provenance, None), run_details(provenance)))
 
-    width = min(_CALL_COLUMN, max(len(text) for text, _ in lines))
-    number_width = len(f"{len(lines)}.")
-    rendered = []
-    for number, (text, details) in enumerate(lines, start=1):
-        line = f"{f'{number}.':<{number_width}} {text}"
-        if details:
-            line = f"{f'{number}.':<{number_width}} {text:<{width}}  {details}"
-        rendered.append(line.rstrip())
-    return "\n".join(rendered)
+    call_column_width = min(_CALL_COLUMN, max(len(line_text) for line_text, _ in step_lines))
+    number_width = len(f"{len(step_lines)}.")
+    rendered_lines = []
+    for number, (line_text, run_details_text) in enumerate(step_lines, start=1):
+        numbered = f"{f'{number}.':<{number_width}}"
+        if run_details_text:
+            line = f"{numbered} {line_text:<{call_column_width}}  {run_details_text}"
+        else:
+            line = f"{numbered} {line_text}"
+        rendered_lines.append(line.rstrip())
+    return "\n".join(rendered_lines)

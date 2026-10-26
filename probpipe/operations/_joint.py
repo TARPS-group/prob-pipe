@@ -72,8 +72,10 @@ def joint(A: Any, B: Any, **align: str):
 
 def _can_merge_factors(call: BoundCall, result: OutputSpec | None) -> bool:
     """Both factors are distributions or conditional distributions, which merge joins."""
-    kinds = (Distribution, ConditionalDistribution)
-    return isinstance(call.operands["A"], kinds) and isinstance(call.operands["B"], kinds)
+    factor_classes = (Distribution, ConditionalDistribution)
+    return isinstance(call.operands["A"], factor_classes) and isinstance(
+        call.operands["B"], factor_classes
+    )
 
 
 def _merge_realigned_factors(call: BoundCall, result: OutputSpec | None) -> Any:

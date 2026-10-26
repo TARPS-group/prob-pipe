@@ -292,23 +292,23 @@ class TestBijectorTransformedDistributionProvenance:
 
 class TestConditioningProvenance:
     def test_product_condition_on(self):
-        joint = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=1.0, scale=2.0, label="y")
-        cond = condition_on(joint, {"x": jnp.array(0.0)})
+        model = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=1.0, scale=2.0, label="y")
+        cond = condition_on(model, {"x": jnp.array(0.0)})
         assert cond.provenance is not None
         assert cond.provenance.operation == "workflow.condition_on"
         assert isinstance(cond.provenance.parents[0], ParentInfo)
         # The operation, the joint, and the slice's law, whose own record names its stage.
         assert [parent.label for parent in cond.provenance.parents] == [
             "condition_on",
-            joint.label,
+            model.label,
             "y",
         ]
 
     def test_condition_on_records_plain_observation_by_parameter(self):
-        joint = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=1.0, scale=2.0)
+        model = Normal("x", loc=0.0, scale=1.0) & Normal("y", loc=1.0, scale=2.0)
 
-        at_zero = condition_on(joint, {"x": jnp.array(0.0)})
-        at_five = condition_on(joint, {"x": jnp.array(5.0)})
+        at_zero = condition_on(model, {"x": jnp.array(0.0)})
+        at_five = condition_on(model, {"x": jnp.array(5.0)})
 
         assert at_zero.provenance is not None
         assert at_five.provenance is not None
@@ -320,13 +320,13 @@ class TestConditioningProvenance:
         )
 
     def test_dependent_joint_condition_on(self):
-        joint = _ShiftKernel() & Normal("z", loc=0.0, scale=1.0)
-        cond = condition_on_operation(joint, {"z": jnp.array(1.0)})
+        model = _ShiftKernel() & Normal("z", loc=0.0, scale=1.0)
+        cond = condition_on_operation(model, {"z": jnp.array(1.0)})
         assert cond.provenance.operation == "workflow.condition_on"
         # The operation, the joint, and the slice's law, whose own record names its stage.
         assert [parent.label for parent in cond.provenance.parents] == [
             "condition_on",
-            joint.label,
+            model.label,
             "x",
         ]
         assert isinstance(cond.provenance.parents[0], ParentInfo)
@@ -535,14 +535,14 @@ class TestProvenanceChains:
         """
         src = StudentT("prior", df=5.0, loc=0.0, scale=1.0, label="prior")
         converted = convert(src, Normal)
-        joint = converted & Normal("y", loc=0.0, scale=1.0)
-        cond = condition_on(joint, {"prior": jnp.array(0.0)})
+        model = converted & Normal("y", loc=0.0, scale=1.0)
+        cond = condition_on(model, {"prior": jnp.array(0.0)})
 
-        # cond's provenance points to joint
+        # cond's provenance points to the model
         assert cond.provenance.operation == "workflow.condition_on"
-        # the joint records the merge of the converted law and the root Normal
-        assert joint.provenance.operation == "&"
-        assert joint.provenance.parents[0].provenance is converted.provenance
+        # the model records the merge of the converted law and the root Normal
+        assert model.provenance.operation == "&"
+        assert model.provenance.parents[0].provenance is converted.provenance
         # and converted has provenance pointing to src
         assert converted.provenance.operation == "workflow.convert"
         assert isinstance(converted.provenance.parents[1], ParentInfo)
@@ -590,10 +590,10 @@ class TestMergeProvenance:
     def test_a_kernel_merge_records_its_operands(self):
         kernel = _ShiftKernel()
         z = Normal("z", 0.0, 1.0, label="z")
-        joint = kernel & z
-        assert isinstance(joint, FactoredDistribution)
-        assert joint.provenance.operation == "&"
-        assert [p.label for p in joint.provenance.parents] == ["x", "z"]
+        merged = kernel & z
+        assert isinstance(merged, FactoredDistribution)
+        assert merged.provenance.operation == "&"
+        assert [p.label for p in merged.provenance.parents] == ["x", "z"]
         unmet = kernel & Normal("w", 0.0, 1.0, label="w")
         assert isinstance(unmet, FactoredConditionalDistribution)
         assert unmet.provenance.operation == "&"
@@ -605,6 +605,11 @@ class TestMergeProvenance:
         assert left.provenance.operation == "&"
         assert [p.label for p in left.provenance.parents] == ["a", "b"]
         assert right.label == "c" and right.provenance is None
+
+    def test_a_merge_takes_no_second_record(self):
+        merged = Normal("a", 0.0, 1.0, label="a") & Normal("b", 0.0, 1.0, label="b")
+        with pytest.raises(RuntimeError, match="already set"):
+            merged.with_provenance(Provenance("mine"))
 
     def test_a_constructed_product_is_a_root(self):
         a = Normal("a", 0.0, 1.0, label="a")
@@ -1146,8 +1151,26 @@ class TestProvenanceStr:
         ]
 
     def test_a_merge_groups_an_operand_label_of_several_words(self):
-        model = Normal("a", 0.0, 1.0, label="my model")
-        assert str((model & Normal("b", 0.0, 1.0, label="b")).provenance) == ("1. [my model] & b")
+        merged = Normal("a", 0.0, 1.0, label="my model") & Normal("b", 0.0, 1.0, label="b")
+        assert str(merged.provenance) == "1. [my model] & b"
+
+    def test_a_kernel_merge_prints_its_operands(self):
+        merged = _ShiftKernel() & Normal("z", 0.0, 1.0, label="z")
+        assert str(merged.provenance) == "1. x & z"
+
+    def test_a_merge_of_a_view_refers_to_its_container(self):
+        a, b, c = (Normal(name, 0.0, 1.0, label=name) for name in "abc")
+        ab = a & b
+        assert str((c & ab["a"]).provenance).splitlines() == ["1. a & b", "2. c & 1['a']"]
+
+    def test_a_merge_chain_prints_as_one_line_in_full_mode(self, full_provenance_mode):
+        a, b, c, d = (Normal(name, 0.0, 1.0, label=name) for name in "abcd")
+        assert str((a & b & (c & d)).provenance) == "1. a & b & (c & d)"
+
+    def test_a_deserialized_merge_prints_without_its_operands(self):
+        a, b = (Normal(name, 0.0, 1.0, label=name) for name in "ab")
+        record = Provenance.from_dict((a & b).provenance.to_dict())
+        assert str(record) == "1. &()"
 
     def test_a_quantile_of_a_posterior_predictive_has_condition_on_as_an_ancestor(self):
         """A predictive merged from a posterior keeps the posterior's lineage.

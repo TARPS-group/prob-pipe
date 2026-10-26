@@ -9,7 +9,7 @@ unmet and a ``FactoredConditionalDistribution`` over the unmet inputs
 otherwise; it is unlabeled, so its expression is the product of the operands'
 expressions: its label joins the operands' current labels with ``·`` and it
 displays operand by operand, a labeled operand by its label. Its provenance
-records the step ``&`` with the two operands as its parents, left first.
+is the one :meth:`Distribution.__and__` states.
 
 The base classes expose the operator through ``__and__``, which delegates to the
 engine this module installs at import.
@@ -56,9 +56,7 @@ def _merge_distributions(
         kind. The joint is unlabeled, so its notation joins its operands'
         notations with ``·``, an unlabeled product operand entering as its
         factors, as ``lik(y | mu)·prior(mu)`` or ``model(y, mu)·d(z)``. Its
-        provenance records the operation ``&`` with *left* and *right* as its
-        parents, in that order, as written rather than flattened, wherever
-        :meth:`~probpipe.core.provenance.Provenance.create` records one.
+        provenance is the one :meth:`Distribution.__and__` states.
 
     Raises
     ------
@@ -77,16 +75,16 @@ def _merge_distributions(
     # graph flattens a factored operand and carries its scope.
     _refuse_coupled_operands(left, right)
     operands = (left, right)
-    label = _joined_label((left.label, right.label))
+    joined_label = _joined_label((left.label, right.label))
     if _factor_graph(operands).unmet is None:
         joint = FactoredDistribution(
             operands,
-            label=label,
+            label=joined_label,
         )
     else:
         joint = FactoredConditionalDistribution(
             operands,
-            label=label,
+            label=joined_label,
         )
     joint._store_expression(_product_of(operands))
     return joint.with_provenance(Provenance.create(_MERGE_OPERATION, parents=operands))
