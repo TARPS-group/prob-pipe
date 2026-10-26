@@ -926,6 +926,43 @@ class TestProvenanceStr:
         doubled = Function(double, output_spec=OutputSpec(double=None))(loaded["a"])
         assert str(doubled.provenance) == ("1. data = load()\n2. double(1['a'])  route body, exact")
 
+    @pytest.mark.parametrize("operation", ["mean", "workflow.mean", "workflow.stack"])
+    def test_root_operand_can_share_the_operation_name(self, operation):
+        name = operation.removeprefix("workflow.")
+        root = _law(name)
+        assert str(Provenance.create(operation, parents=[root])) == f"1. {name}({name})"
+
+    def test_managed_call_keeps_an_operand_with_the_function_name(self):
+        def double(x: float) -> float:
+            return 2 * x
+
+        value = probpipe.NumericArray(1.0, label="double")
+        result = Function(double, output_spec=OutputSpec(double=None))(value)
+        assert str(result.provenance) == "1. double(double)  route body, exact"
+
+    @pytest.mark.parametrize(
+        "literal", ["'data.csv'", '"data.csv"', "r'data.csv'", "'''data.csv'''", "'data\\'s.csv'"]
+    )
+    def test_parent_references_preserve_string_literals(self, literal):
+        data = _law("data", "load")
+        intermediate = _law(f"f(data, filename={literal})", "f", [data])
+        top = _law("top", "g", [intermediate])
+        assert str(top.provenance).splitlines() == [
+            "1. data = load()",
+            f"2. f(1, filename={literal})",
+            "3. g(2)",
+        ]
+
+    def test_parent_reference_can_contain_a_string_literal(self):
+        data = _law("load('data.csv')", "load")
+        intermediate = _law("f(load('data.csv'), filename='data.csv')", "f", [data])
+        top = _law("top", "g", [intermediate])
+        assert str(top.provenance).splitlines() == [
+            "1. load('data.csv')",
+            "2. f(1, filename='data.csv')",
+            "3. g(2)",
+        ]
+
     def test_label_with_a_digest_shows_its_first_eight_digits(self):
         digest = "0123456789abcdef" * 4
         loaded = _law(f"load_data('data.csv', '{digest}')", "workflow.load_data", [])

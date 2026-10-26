@@ -2138,7 +2138,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its route and method, and whether it is exact or approximate. A step that two
   later steps use is listed once, and both refer to its number. A field or an
   element read from a container shows as the container indexed by its path,
-  as `4['beta']`. The repr stays the short form.
+  as `4['beta']`. Operands remain visible when their labels match the operation's
+  name, and substituting parent references preserves quoted string arguments.
+  The repr stays the short form.
 
   ```text
   >>> print(answer.provenance)
