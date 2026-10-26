@@ -136,4 +136,3 @@ standard deviation of the draws: 1.0
 ## Next steps
 
 - The [quickstart](quickstart.ipynb) fits a first model, checks it, and forecasts with it in about ten minutes.
-- The [first tutorial](../tutorials/01_first_analysis.ipynb) begins a forecasting problem that the tutorials follow from a first posterior to simulation-based inference.

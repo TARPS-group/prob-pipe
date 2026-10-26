@@ -15,7 +15,7 @@ The agent will also record any issues with ProbPipe that it runs into along the 
 If you approve, it can post them to ProbPipe's GitHub issue tracker.
 
 Note that a web-based chat interface that cannot run commands won't be able to run the design assistant.
-If you don't want to run code locally, you can try out the [tutorials](../tutorials/01_first_analysis.ipynb), each of which opens in Google Colab.
+If you don't want to run code locally, you can try out the [quickstart](quickstart.ipynb), which opens in Google Colab.
 
 ## Before the workshop
 
@@ -100,7 +100,7 @@ some females attract none at all.
 
 | Problem | What to do |
 |---|---|
-| The setup fails, or its check does not print `is ready`. | Paste the error into the agent and ask it to fix the setup. The most common cause is the Python version: `python3 --version`, or `py -0` on Windows, must show 3.12 or 3.13, and otherwise the setup prompt installs Python 3.12 through uv. At the workshop, ask a presenter, or work through the [tutorials](../tutorials/01_first_analysis.ipynb) in Google Colab while the setup is fixed. |
+| The setup fails, or its check does not print `is ready`. | Paste the error into the agent and ask it to fix the setup. The most common cause is the Python version: `python3 --version`, or `py -0` on Windows, must show 3.12 or 3.13, and otherwise the setup prompt installs Python 3.12 through uv. At the workshop, ask a presenter, or open the [quickstart](quickstart.ipynb) in Google Colab while the setup is fixed. |
 | The agent asks for permission too often. | Answer yes to the consent question of its first message, which covers every run on your computer that reads your data and writes only to the project directory. The agent still asks before it installs anything, runs your own code, uses the network, writes outside the project directory, or runs past the time limit you gave it. |
 | The checks on simulated data take too long, or fail. | Tell the agent your time limit. Within that limit, a failed check gets one remedy, and then the agent asks you to choose between more time and provisional results. To skip the checks, say "skip the validation", and the agent labels every answer "PROVISIONAL: not validated". |
 | The messages are too long or too technical. | Say "shorter" or "in plain terms", and the agent keeps to that for the rest of the project. |
