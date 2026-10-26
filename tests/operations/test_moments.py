@@ -1467,11 +1467,8 @@ class TestTheDrawCount:
             result = mean.using(num_samples=15)(_dependent_joint())
         assert result.provenance.metadata["route"] == "by_output"
         assert result.provenance.metadata["num_samples"] == 15
-        (record,) = [
-            parent.provenance
-            for parent in result.provenance.parents
-            if parent.provenance is not None
-        ]
+        (position,) = result.provenance.metadata["route_results"]
+        record = result.provenance.parents[position].provenance
         blocks = {tuple(block["outputs"]): block for block in record.metadata["blocks"]}
         assert blocks[("mu",)]["exact"] is True
         assert "num_samples" not in blocks[("mu",)]

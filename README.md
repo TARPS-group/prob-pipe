@@ -80,7 +80,8 @@ posterior mean of beta: [11.66378    -0.18358812]
 provenance of the prior's mean:
 1. mean(prior, given)  route closed_form, exact
 provenance of the posterior:
-1. condition_on(likelihood·prior, given)  route inference_methods, method blackjax_nuts, approximate
+1. likelihood & prior
+2. condition_on(1, given)  route inference_methods, method blackjax_nuts, approximate
 ```
 
 The prior and the likelihood are both ProbPipe objects: a distribution of the coefficients, and a conditional distribution of the data given the coefficients (constructed with `glm_likelihood`).
@@ -151,12 +152,16 @@ print(damage_prob.provenance)
 P(damage at 31°F), posterior mean: 0.974
 P(damage at 31°F), 90% interval: [0.86161655 0.999984  ]
 provenance of the forecast:
-1. likelihood·prior = condition_on(likelihood·prior, given)  route inference_methods, method blackjax_nuts, approximate
-2. broadcast(challenger_damage_probability, 1['beta'])  route sampling_lift, approximate
+1. likelihood & prior
+2. likelihood·prior = condition_on(1, given)         route inference_methods, method blackjax_nuts, approximate
+3. broadcast(challenger_damage_probability, 2['beta'])  route sampling_lift, approximate
 ```
 
 We wrote `challenger_damage_probability` for one pair of coefficients, and ProbPipe automatically lifted it to operate on the posterior distribution: it evaluated the function at draws from the posterior distribution, and returned the distribution of the results.
-Its provenance lists both steps: the fit, which gives approximate draws, and the function evaluated at those draws (`sampling_lift`), so the forecast is approximate too.
+Its provenance lists each step:
+1. the merge with `&` that builds the model;
+2. the fit, which gives approximate draws;
+3. the function evaluated at those draws (`sampling_lift`), so the forecast is approximate too.
 <!-- --8<-- [end:quick-example] -->
 
 ## Installation
