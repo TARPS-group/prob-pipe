@@ -118,12 +118,11 @@ def show_answers(name: str, answers: dict, settings) -> None:
 
 
 def show_provenance(name: str, answers: dict, settings) -> None:
-    """Print each answer's lineage from the data file to it, and save each answer's provenance."""
-    records = {answer: value.provenance.to_dict() for answer, value in answers.items()}
-    write_json(output_path(settings, name, "answer_provenance.json"), records)
-    for answer, value in answers.items():
-        print_labeled(settings, name, f"provenance of {answer}:")
-        print(value.provenance)
+    """Print each answer's lineage from the data file to it, and save the printed lineages."""
+    lineages = [f"provenance of {answer}:\n{value.provenance}" for answer, value in answers.items()]
+    output_path(settings, name, "answer_provenance.txt").write_text("\n\n".join(lineages) + "\n")
+    for lineage in lineages:
+        print_labeled(settings, name, lineage)
 
 
 # --- OPTIONAL: plug-in forecast --------------------------------------------------

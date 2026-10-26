@@ -310,12 +310,12 @@ class TestPipelineSkeleton:
         lineage = lines[start + 1 : start + 12]
         assert lineage[0].startswith("1. ") and "load_data('example_data.csv', " in lineage[0]
         assert any("condition_on(" in line and "approximate" in line for line in lineage), lineage
-        records = json.loads(
-            (tmp_path / "checks" / "smoke" / "normal_answer_provenance.json").read_text()
-        )
+        saved = (tmp_path / "checks" / "smoke" / "normal_answer_provenance.txt").read_text()
         sha256 = hashlib.sha256((tmp_path / "example_data.csv").read_bytes()).hexdigest()
-        for answer, record in records.items():
-            assert sha256 in json.dumps(record), answer
+        lineages = saved.split("\n\n")
+        assert len(lineages) == 3, saved
+        for lineage in lineages:
+            assert f"load_data('example_data.csv', '{sha256[:8]}" in lineage, lineage
 
     @pytest.mark.parametrize(
         "edit, message",

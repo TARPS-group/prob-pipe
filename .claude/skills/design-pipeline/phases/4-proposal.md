@@ -243,8 +243,8 @@ pipeline (Wilson et al. 2017):
    operation, starting with `load_data(path, sha256)`, whose label records the
    file's path and the hash of its contents. `report.show_provenance()`
    prints each answer's lineage with `print(answer.provenance)`, one step per
-   line from the load of the file, and saves `answer.provenance.to_dict()` as
-   JSON. `check_provenance()` stops the run, the smoke stage included, when an
+   line from the load of the file, and saves the printed lineages as text.
+   `check_provenance()` stops the run, the smoke stage included, when an
    answer records no provenance or when its ancestors miss the load of the
    current file or a named step, as a NumPy conversion on the way causes.
 
