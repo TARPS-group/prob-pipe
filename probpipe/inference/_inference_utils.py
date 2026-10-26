@@ -10,11 +10,10 @@ Two target builders:
 - :func:`build_target_log_prob` returns a Record-shaped target
   (the TFP-flavoured interface).
 - :func:`build_target_log_prob_flat` returns a flat-vector target —
-  the BlackJAX entry point. It wraps the Record-shaped target through
-  the prior's
-  :meth:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution.as_flat_distribution`
-  view so kernels that operate on flat parameter vectors plug in
-  without per-backend flatten / unflatten plumbing.
+  the BlackJAX entry point. It rebuilds the prior's event from each flat
+  vector, the layout III.7 fixes for a numeric law, so kernels that operate
+  on flat parameter vectors plug in without per-backend flatten / unflatten
+  plumbing.
 
 Scope: private to ``probpipe.inference``. Symbols are package-private
 utilities shared across the backend modules; not re-exported through
@@ -23,47 +22,107 @@ utilities shared across the backend modules; not re-exported through
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
     from xarray import DataTree
 
+import itertools
 import logging
+import numbers
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._specs import OutputSpec
-from ..core.protocols import SupportsSampling
+from ..core._execution_claims import Traceability
+from ..core._numeric_record import _reconstruct_from_vector
+from ..core._record_spec import NumericRecordSpec
+from ..core._spec_base import NumericArraySpec
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
+from ..distributions._capabilities import SupportsSampling, _is_normalized
+from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
+from ..distributions._factored import (
+    _children,
+    _outputs_of,
+)
+from ..families._backend import TFPDistribution
+from ..operations._condition import _unnormalized_conditional
+from ..operations._inference_target import (
+    ModelFactors,
+    _as_inference_target,
+    _described,
+    _flat_record_spec,
+    _flat_unflatten,
+    _no_flat_layout,
+    _one_array_spec,
+    _reshape_to,
+    _UnnormalizedConditional,
+)
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "as_prng_key",
-    "build_likelihood_flat",
     "build_mcmc_datatree",
     "build_target_log_prob",
     "build_target_log_prob_flat",
+    "chain_initial_states",
     "extract_chain_columns",
-    "extract_event_spec",
+    "flat_density",
+    "flat_vector",
     "get_init_state",
-    "get_prior",
-    "is_jax_traceable",
-    "is_simple_model",
+    "integer_seed",
+    "joint_and_given",
+    "likelihood_flat",
+    "model_factors",
+    "no_density_reason",
+    "nuts_controls",
+    "observed_parts",
+    "observed_target",
     "parallel_chain_map",
-    "posterior_var_order",
+    "parameter_given",
+    "refuse_seed_keywords",
+    "require_trace_variables",
     "run_chain_scan",
+    "traces_in_jax",
+    "unconstrained_chain",
+    "unconstrained_coordinates",
+    "unfactored_model_reason",
 ]
 
 
 # ---------------------------------------------------------------------------
 # Chain extraction
 # ---------------------------------------------------------------------------
+
+
+def require_trace_variables(trace: Any, names: Iterable[str]) -> None:
+    """Refuse a backend's *trace* that holds no draws of one of the parameters *names*.
+
+    Parameters
+    ----------
+    trace : ArviZ-like trace
+        The backend's trace, whose ``posterior`` group lists its variables in
+        ``data_vars``.
+    names : iterable of str
+        The parameters whose draws the trace must hold.
+
+    Raises
+    ------
+    ValueError
+        If any name in *names* is absent from ``trace.posterior``.
+    """
+    available = list(trace.posterior.data_vars)
+    missing = [name for name in names if name not in available]
+    if missing:
+        raise ValueError(
+            f"the sampler's trace is missing the parameters {missing}. Its posterior "
+            f"variables are {available}"
+        )
 
 
 def extract_chain_columns(
@@ -76,9 +135,8 @@ def extract_chain_columns(
     For each chain ``c`` and each variable in *names* (in that order),
     pulls ``trace.posterior[name].values[c]``, flattens trailing axes to
     2-D ``(draws, -1)``, and concatenates across variables. Columns are
-    laid out in *names* order; pass the same order as ``field_order`` to
-    :func:`make_posterior` so assembly aligns them to the template fields
-    by name.
+    laid out in *names* order; a method passes its target's parameters in the
+    target's order, so the chains are in the target's flat layout.
 
     Parameters
     ----------
@@ -94,6 +152,7 @@ def extract_chain_columns(
     list of Array
         One ``(draws, total_flat_dim)`` array per chain.
     """
+    require_trace_variables(trace, names)
     chains = []
     for c in range(num_chains):
         chain_arrays = []
@@ -108,57 +167,29 @@ def extract_chain_columns(
     return chains
 
 
-def posterior_var_order(trace: Any, keep: Iterable[str]) -> list[str]:
-    """Variable names in *trace*'s ``posterior`` natural order, filtered
-    to *keep*.
-
-    Pass the result as both the extraction order
-    (:func:`extract_chain_columns`) and ``field_order``
-    (:func:`make_posterior`), so name-keyed assembly realigns columns to
-    the template regardless of the backend's variable order — nutpie, for
-    instance, sorts ``data_vars`` alphabetically.
-
-    Raises
-    ------
-    ValueError
-        If any name in *keep* is absent from ``trace.posterior``. Failing
-        here names the missing variables, rather than letting them surface
-        later as a cryptic "not a permutation" error in
-        :func:`make_posterior`'s column realignment.
-    """
-    keep = list(keep)
-    available = list(trace.posterior.data_vars)
-    missing = [name for name in keep if name not in available]
-    if missing:
-        raise ValueError(
-            f"trace posterior is missing expected variable name(s) "
-            f"{missing}; available posterior variables are {available}. "
-            f"Every parameter being assembled must be present in the trace."
-        )
-    keep_set = set(keep)
-    return [name for name in available if name in keep_set]
-
-
 # ---------------------------------------------------------------------------
-# JAX-traceability probe
+# Traceability of the target
 # ---------------------------------------------------------------------------
 
 
-def is_jax_traceable(fn: Callable, init_state: jnp.ndarray) -> bool:
-    """Probe whether *fn* can be traced by JAX at *init_state*.
+#: Why a method that runs its target inside a JAX program cannot run it.
+UNTRACEABLE_DENSITY = "the log-density is not JAX-traceable"
 
-    Used by gradient-based MCMC ``check()`` methods to filter out
-    targets that would fail at ``execute()`` time. Costs ~one JAX
-    trace — note that ``jax.make_jaxpr`` does not populate the JIT
-    cache, so the subsequent ``lax.scan`` / ``vmap`` inside the
-    runner re-traces from scratch.
+
+def traces_in_jax(term: Any) -> bool:
+    """Whether JAX can trace the raw methods of the law or kernel *term*, as its traceability states (V.13).
+
+    Parameters
+    ----------
+    term : Distribution or ConditionalDistribution
+        The target, the model, or the likelihood a method runs.
+
+    Returns
+    -------
+    bool
+        ``True`` when *term* is traceable.
     """
-    try:
-        jax.make_jaxpr(fn)(init_state)
-        return True
-    except Exception:
-        logger.debug("is_jax_traceable: trace failed for %r", fn, exc_info=True)
-        return False
+    return term._traceability() is Traceability.TRACEABLE
 
 
 def as_prng_key(seed: int | Array) -> Array:
@@ -168,6 +199,306 @@ def as_prng_key(seed: int | Array) -> Array:
     the gradient-MCMC backends.
     """
     return jax.random.PRNGKey(seed) if isinstance(seed, int) else seed
+
+
+#: The keywords that would seed a backend, which a run takes from its random key.
+_SEED_KEYWORDS = ("random_seed", "seed")
+
+
+def refuse_seed_keywords(caller: str, keywords: Mapping[str, Any]) -> None:
+    """Refuse a seed among the keywords that the function *caller* passes to its backend.
+
+    A run's seed is drawn from a workflow-owned random event, so a
+    ``random_seed`` or ``seed`` keyword raises the ``TypeError`` of an
+    unexpected keyword of *caller*. A backend that received such a keyword
+    would drop it or seed itself from it.
+
+    Parameters
+    ----------
+    caller : str
+        The name of the public function, which the error names.
+    keywords : Mapping[str, Any]
+        The keywords the function passes on.
+
+    Raises
+    ------
+    TypeError
+        If *keywords* holds ``random_seed`` or ``seed``.
+    """
+    for name in _SEED_KEYWORDS:
+        if name in keywords:
+            raise TypeError(
+                f"{caller}() got an unexpected keyword argument {name!r}; its seed is drawn "
+                "from a workflow-owned random event, which workflow_run(seed=...) fixes"
+            )
+
+
+def integer_seed(seed: int | Array) -> int:
+    """*seed* as the non-negative 32-bit integer a backend's own seed argument takes.
+
+    An integer is returned as it is, and a key gives an integer drawn from it.
+    """
+    if isinstance(seed, int | np.integer):
+        return int(seed)
+    return int(jax.random.randint(as_prng_key(seed), (), 0, np.iinfo(np.int32).max))
+
+
+# ---------------------------------------------------------------------------
+# Targets
+# ---------------------------------------------------------------------------
+
+
+def observed_target(model: Any, observed: Any) -> Any:
+    """The target of normalizing *model* at *observed*, as ``probpipe.condition_on`` passes them.
+
+    A law with no data is the target of conditioning it on nothing, and an
+    object that is neither a law nor a kernel is returned as it is. Data keyed
+    by the model's inputs and fields form the exact stage of ``condition_on``
+    (VI.6): a kernel binds the inputs its data name first, as the
+    ``bind_inputs`` route does, and the data of the fields it produces then
+    form the unnormalized conditional of the result, whose joint and given
+    values a method reads back. A law that binding leaves unnormalized, with no
+    data left, is the target of conditioning it on nothing. Data that name no
+    field, such as one array for a whole program, form the unnormalized
+    conditional of the model at those data, from which :func:`observed_parts`
+    reads them back, and so do data that only bind a kernel to a normalized
+    law, which no method normalizes.
+    """
+    if observed is None and isinstance(model, Distribution):
+        return _as_inference_target(model)
+    if observed is None or not isinstance(model, (Distribution, ConditionalDistribution)):
+        return model
+    if not isinstance(observed, (Record, Mapping)):
+        return _UnnormalizedConditional(model, observed, model.event_spec, keyed=False)
+    values = dict(observed.children if isinstance(observed, Record) else observed)
+    law = model
+    if isinstance(model, ConditionalDistribution):
+        input_values = {key: value for key, value in values.items() if key in model.given_spec}
+        values = {key: value for key, value in values.items() if key not in input_values}
+        if input_values:
+            law = model._condition_on(input_values)
+    if not values:
+        if isinstance(law, Distribution) and not _is_normalized(law):
+            return _as_inference_target(law)
+        return _UnnormalizedConditional(model, observed, model.event_spec, keyed=False)
+    if not set(values) <= set(law.event_spec.outputs):
+        return _UnnormalizedConditional(law, values, law.event_spec, keyed=False)
+    return _unnormalized_conditional(
+        law,
+        Record(
+            values,
+            label="given",
+        ),
+    )
+
+
+def observed_parts(target: Any) -> tuple[Any, Any]:
+    """The model and the observed data *target* binds, as the model-and-data helpers take them.
+
+    An unnormalized conditional at data its joint does not declare as fields
+    is that joint and those data, and the target of conditioning a law on
+    nothing is that law, with no data. Any other target is its own model, with
+    its data already bound.
+    """
+    if isinstance(target, _UnnormalizedConditional):
+        if not target.keyed:
+            return target.joint, target.given
+        if target.conditions_on_nothing:
+            return target.joint, None
+    return target, None
+
+
+def joint_and_given(target: Any) -> tuple[Any, Any]:
+    """The joint and the given values an unnormalized conditional carries, else *target* and None.
+
+    A method backed by a program reads the program from the joint and its
+    observed values from the given values. The target of conditioning a law on
+    nothing gives that law and None.
+    """
+    if isinstance(target, _UnnormalizedConditional):
+        return target.joint, None if target.conditions_on_nothing else target.given
+    return target, None
+
+
+def _has_flat_view(prior: Any) -> bool:
+    """Whether *prior* is a parametric family, whose one array a flat vector lays out."""
+    return isinstance(prior, TFPDistribution)
+
+
+def _flat_view(prior: Any) -> Callable[[Array], Array] | None:
+    """The map from a flat vector to a draw of *prior*, or ``None`` when it is no family.
+
+    A parametric family draws one array, which the flat vector lays out in
+    row-major order, so the map reshapes the vector to the event's shape.
+    """
+    if not _has_flat_view(prior):
+        return None
+    spec = prior.event_spec.term_spec
+    return _reshape_to(spec.shape if isinstance(spec, NumericArraySpec) else ())
+
+
+def flat_vector(value: Any) -> Array:
+    """*value*, a draw of a numeric law, as one flat vector in canonical order.
+
+    A record, or the nested mapping of a record draw's raw leaves, gives its
+    leaves' coordinates in canonical order, and an array is raveled.
+    """
+    if isinstance(value, Mapping):
+        value = Record(
+            value,
+            label="draw",
+        )
+    if isinstance(value, Record):
+        return value.to_numeric().to_vector()
+    return jnp.ravel(jnp.asarray(value))
+
+
+def _declared_vector(law: Any, draw: Record | Mapping[str, Any]) -> Array:
+    """*draw*, a record draw of *law*, as one flat vector laid out as *law* declares its leaves.
+
+    The leaves follow the canonical order of the numeric record :func:`_flat_record_spec`
+    names, which :func:`_flat_unflatten` reads back, whatever order the draw's own
+    mapping keeps. A law that declares no such record lays the draw out as
+    :func:`flat_vector` does.
+    """
+    record = _flat_record_spec(law)
+    if record is None:
+        return flat_vector(draw)
+    value = (
+        draw
+        if isinstance(draw, Record)
+        else Record(
+            draw,
+            label="draw",
+        )
+    )
+    return jnp.concatenate([jnp.ravel(jnp.asarray(value._raw_at(path))) for path in record])
+
+
+def no_density_reason(model: Any) -> str:
+    """Why *model*, which claims no unnormalized log-density, has no chain to run on."""
+    return (
+        "the model must have an unnormalized log-density (SupportsUnnormalizedLogProb); "
+        f"got {_described(model)}"
+    )
+
+
+def unfactored_model_reason(target: Any) -> str:
+    """Why *target*, for which :func:`model_factors` gives None, has no prior and likelihood.
+
+    The one wording of that check, which every method that reads a model's
+    factors raises or reports.
+    """
+    if not isinstance(target, _UnnormalizedConditional) or target.conditions_on_nothing:
+        got = f"{_described(target)} with no observed fields"
+    elif target.keyed:
+        got = f"{_described(target.joint)} conditioned on {list(target.given.fields)}"
+    else:
+        got = f"{_described(target.joint)} conditioned on data not keyed by its fields"
+    return (
+        "the model must be a merge such as likelihood & prior, conditioned on every field "
+        f"the likelihood produces and on no field of the prior; got {got}"
+    )
+
+
+def model_factors(target: Any) -> ModelFactors | None:
+    """The prior, the likelihood, and the observed value of the model *target* conditions, or None.
+
+    None when *target* is no inference target, such as an object a method named
+    by ``method=`` receives without the registry's check of its type, and when
+    its model has no prior and likelihood (:meth:`InferenceTarget.factors`).
+    """
+    return target.factors() if isinstance(target, _UnnormalizedConditional) else None
+
+
+def parameter_given(factors: ModelFactors, draw: Any) -> dict[str, Any]:
+    """The likelihood's given values at *draw*, a draw of the prior.
+
+    An optional input that the prior does not produce takes its default.
+    """
+    if not isinstance(factors.likelihood, ConditionalDistribution):
+        return {}
+    outputs = _outputs_of(factors.prior.event_spec, draw)
+    return {
+        input_name: outputs[input_name]
+        for input_name in factors.likelihood.given_spec
+        if input_name in outputs
+    }
+
+
+def likelihood_flat(factors: ModelFactors) -> Callable[[Array], Array]:
+    """The log-likelihood at a flat parameter vector, up to a constant in the parameters.
+
+    The vector unflattens to a draw of the prior, whose values bind the
+    likelihood's inputs, and the likelihood's unnormalized density is read
+    at the observed value.
+    """
+    unflatten = _flat_unflatten(factors.prior)
+    likelihood = factors.likelihood
+
+    def loglikelihood_fn(theta_flat: Array) -> Array:
+        if isinstance(likelihood, ConditionalDistribution):
+            given = parameter_given(factors, unflatten(theta_flat))
+            return likelihood._conditional_unnormalized_log_prob(given, factors.observed)
+        return likelihood._unnormalized_log_prob(factors.observed)
+
+    return loglikelihood_fn
+
+
+def flat_density(dist: Any) -> Callable[[Array], Array]:
+    """*dist*'s unnormalized log-density at a flat vector.
+
+    The vector is unflattened to the numeric record :func:`_flat_record_spec` names,
+    and taken as it is for any other law.
+    """
+    record = _flat_record_spec(dist)
+    if record is None:
+        return dist._unnormalized_log_prob
+
+    def density(theta: Array) -> Array:
+        return dist._unnormalized_log_prob(_reconstruct_from_vector(dist.label, record, theta))
+
+    return density
+
+
+def _joint_draw(target: Any, key: Array, record: NumericRecordSpec) -> Array | None:
+    """A flat draw of *target*'s fields from the joint it conditions, or None when there is none.
+
+    The draw is the joint's, restricted to the fields *record* declares, so it
+    lies in the support of the unnormalized conditional. A factored joint that
+    does not sample draws each field from the factor producing it, when that
+    factor is a law that samples, as a prior is.
+    """
+    joint = target.joint if isinstance(target, _UnnormalizedConditional) else None
+    if joint is None:
+        return None
+    try:
+        if isinstance(joint, SupportsSampling):
+            children = dict(_children(joint._sample(key, sample_shape=())))
+        else:
+            children = {}
+            laws = [
+                factor
+                for factor in getattr(joint, "factors", ())
+                if isinstance(factor, Distribution) and isinstance(factor, SupportsSampling)
+            ]
+            for law, subkey in zip(laws, jax.random.split(key, max(len(laws), 1))):
+                draw = law._sample(subkey, sample_shape=())
+                if isinstance(draw, Record):
+                    children.update(draw.children)
+                else:
+                    (output_name,) = law.event_spec.outputs
+                    children[output_name] = draw
+        if not set(record.fields) <= set(children):
+            return None
+        fields = Record(
+            {name: children[name] for name in record.fields},
+            label="init",
+        )
+        return fields.to_numeric().to_vector()
+    except Exception:
+        logger.debug("get_init_state: the joint's draw failed for %r", target, exc_info=True)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -183,26 +514,28 @@ def get_init_state(
 ) -> jnp.ndarray:
     """Determine an initial chain state.
 
-    Pass the full target (a ``SimpleModel`` or a bare ``Distribution``);
-    this helper calls :func:`get_prior` internally and works against
-    the prior — that is the parameter-space distribution from which
-    init candidates should be drawn.
+    Pass the target, the law over the parameters from which init
+    candidates are drawn.
 
     Resolution order:
 
     1. Explicit ``init`` — trusted, returned verbatim (cast to the
        prior's dtype).
     2. **Prior sample** — if the prior implements ``SupportsSampling``,
-       draw a single sample with the supplied ``random_seed``. For a
-       ``RecordDistribution`` the sample is flattened to a numeric
-       vector via ``NumericRecord``.
-    3. **Stan default** — if the prior has no sampling path but
-       exposes ``event_shape``, return a coordinate-wise
-       ``Uniform(-2, 2)`` draw, matching Stan's default init for
-       unconstrained parameters. The gradient-based MCMC methods this
-       helper feeds all assume an unconstrained parameter space, so
-       the box is guaranteed to be inside the support.
-    4. Raise — no init heuristic applies.
+       draw a single sample with the supplied ``random_seed``. A record
+       draw, or the nested mapping a factored prior draws, is flattened
+       to a numeric vector in the order of the prior's event spec.
+    3. **Joint draw** — if the prior is an unnormalized conditional
+       over a numeric record, return the draw of its joint restricted
+       to the unconditioned fields, flattened. A factored joint that
+       does not sample draws each field from the factor producing it.
+    4. **Stan default** — if the prior has no sampling path but
+       exposes ``event_shape`` or a numeric record, return a
+       coordinate-wise ``Uniform(-2, 2)`` draw, matching Stan's default
+       init for unconstrained parameters. The gradient-based MCMC
+       methods this helper feeds all assume an unconstrained parameter
+       space, so the box is guaranteed to be inside the support.
+    5. Raise — no init heuristic applies.
 
     Observed data is deliberately not consulted: a ``mean(observed)``
     heuristic would live in the *data* space while the chain state
@@ -210,7 +543,7 @@ def get_init_state(
     pure location models. Callers that genuinely need a data-derived
     init should pass ``init=`` explicitly.
     """
-    prior = get_prior(dist)
+    prior = dist
 
     target_dtype = getattr(prior, "dtype", None)
     if not isinstance(target_dtype, jnp.dtype):
@@ -226,12 +559,8 @@ def get_init_state(
     if isinstance(prior, SupportsSampling):
         try:
             s = prior._sample(key, sample_shape=())
-            if isinstance(s, Record):
-                from ..core._numeric_record import NumericRecord
-
-                if not isinstance(s, NumericRecord):
-                    s = s.to_numeric()
-                s = s.to_vector()
+            if isinstance(s, Record | Mapping):
+                s = _declared_vector(prior, s)
             return jnp.atleast_1d(jnp.asarray(s, dtype=target_dtype))
         except Exception:
             logger.debug(
@@ -240,11 +569,19 @@ def get_init_state(
                 exc_info=True,
             )
 
+    record = _flat_record_spec(prior)
+    if record is not None:
+        draw = _joint_draw(prior, key, record)
+        if draw is not None:
+            return jnp.atleast_1d(jnp.asarray(draw, dtype=target_dtype))
+
     try:
         shape = prior.event_shape
     except (AttributeError, ValueError):
         # A prior that draws no single concrete array has no box to draw from.
         shape = None
+    if shape is None and record is not None:
+        shape = (record.vector_size,)
     if shape is not None:
         return jax.random.uniform(
             key,
@@ -254,43 +591,207 @@ def get_init_state(
             dtype=target_dtype,
         )
 
+    failure = (
+        "drawing from it failed" if isinstance(prior, SupportsSampling) else "it cannot be sampled"
+    )
     raise ValueError(
-        "Cannot determine initial state: pass init= explicitly, or "
-        "provide a distribution whose prior implements "
-        "SupportsSampling or exposes event_shape."
+        f"cannot choose an initial state for {_described(prior)}: {failure} and it has no "
+        f"event_shape. Pass init= explicitly."
     )
 
 
-# ---------------------------------------------------------------------------
-# SimpleModel detection and prior extraction
-# ---------------------------------------------------------------------------
+#: The value of a gradient MCMC method's ``init`` option that starts each chain
+#: from its own draw of the default initial state.
+PER_CHAIN_INIT = "per_chain"
 
 
-def is_simple_model(dist: Distribution) -> bool:
-    """Check whether *dist* is a SimpleModel (lazy import for circularity)."""
-    from ..modeling._simple import SimpleModel
+def _point_shape(law: Any) -> tuple[int, ...] | None:
+    """The shape of one initial state of a chain over *law*, or ``None`` when *law* lays out no array.
 
-    return isinstance(dist, SimpleModel)
-
-
-def get_prior(dist: Distribution) -> Distribution:
-    """Return the prior of a model, or *dist* itself for non-model targets."""
-    return dist._prior if is_simple_model(dist) else dist
-
-
-def extract_event_spec(dist: Distribution) -> OutputSpec | None:
-    """Return the declaration of *dist*'s prior, or ``None`` for a prior with no flat view.
-
-    A ``SimpleModel``'s prior is read through :func:`get_prior`; any other
-    target is its own prior. A prior without ``as_flat_distribution``, such as a
-    bare ``SupportsLogProb`` target over a flat array, gives ``None``.
-    :func:`build_target_log_prob_flat` uses the same condition, so every method
-    names and shapes the posterior of such a target alike.
+    A numeric record's state is its flat vector, and one array's state is the
+    array, at least 1-D, as :func:`get_init_state` returns them.
     """
-    prior = get_prior(dist)
-    if getattr(prior, "as_flat_distribution", None) is None:
+    record = _flat_record_spec(law)
+    if record is not None:
+        return (record.vector_size,)
+    leaves = _flat_leaves(law)
+    if leaves is None or len(leaves) != 1:
         return None
-    return prior.event_spec
+    shape = leaves[0][0]
+    return shape if shape else (1,)
+
+
+def _initial_state_keys(key: Array, num_chains: int) -> Array:
+    """The keys of the per-chain initial draws, split from a child of *key* that is no chain key.
+
+    The runners split *key* into the chain keys with
+    ``jax.random.split(key, num_chains)`` and derive every warmup and sampling
+    key from a chain key. The initial draws split the reserved key
+    ``jax.random.split(key, num_chains + 1)[num_chains]`` once per chain.
+    Each split computes Threefry blocks of *key* at integer counters. Under
+    JAX's default ``jax_threefry_partitionable``, chain key ``i`` is the
+    block at counter ``(0, i)`` and the reserved key is the block at
+    ``(0, num_chains)``. Under the original implementation, the two splits
+    compute the blocks at counters ``(j, num_chains + j)`` and
+    ``(j, num_chains + 1 + j)``, so they share no block. Threefry is a
+    bijection of the counter for a fixed key, so the reserved key is not a
+    chain key. The initial draws therefore use keys of the reserved key's
+    subtree and the chains use keys of the chain keys' subtrees, and a key of
+    one equals a key of the other only through a chance collision of Threefry
+    outputs, of probability about 2**-64 per pair.
+    """
+    reserved = jax.random.split(key, num_chains + 1)[num_chains]
+    return jax.random.split(reserved, num_chains)
+
+
+def chain_initial_states(
+    law: Any,
+    init: Any,
+    *,
+    num_chains: int,
+    key: Array,
+    method: str,
+    default_per_chain: bool = False,
+) -> tuple[Any, bool]:
+    """Resolve a gradient MCMC method's ``init`` option to the chains' initial states.
+
+    ``init`` takes four forms:
+
+    1. ``None``: the per-chain draws of the last form when
+       *default_per_chain* is set and *law* lays out an array, and otherwise
+       one state that :func:`get_init_state` draws with *key*, which every
+       chain starts from;
+    2. one state, an array of the shape of a draw's flat vector: every chain
+       starts from it;
+    3. one state per chain, an array whose leading axis has length
+       *num_chains* and whose rows have the shape of one state: each chain
+       starts from its row;
+    4. :data:`PER_CHAIN_INIT`: each chain starts from its own draw of
+       :func:`get_init_state`, made with its key of
+       :func:`_initial_state_keys`, which derives these keys from a subtree
+       of *key* that the chains' warmup and sampling keys are not in.
+
+    Parameters
+    ----------
+    law : Distribution
+        The law the chains sample, whose event spec lays out a state.
+    init : None, array-like, or str
+        The method's ``init`` option.
+    num_chains : int
+        The number of chains.
+    key : PRNGKey
+        The run's random key.
+    method : str
+        The method's name, for the error messages.
+    default_per_chain : bool
+        Whether ``None`` starts each chain from its own draw.
+
+    Returns
+    -------
+    tuple
+        ``(init, per_chain)``: the value to pass to :func:`get_init_state`,
+        which returns an array unchanged, and whether that value holds one
+        state per chain on its leading axis.
+
+    Raises
+    ------
+    ValueError
+        If *init* is a string other than ``"per_chain"``, if it is
+        ``"per_chain"`` for a law that lays out no array, or if it has one more
+        axis than one state and its shape is not ``(num_chains, *state_shape)``.
+    """
+    point_shape = _point_shape(law)
+    if init is None and default_per_chain and point_shape is not None:
+        init = PER_CHAIN_INIT
+    if isinstance(init, str):
+        if init != PER_CHAIN_INIT:
+            raise ValueError(
+                f"inference method {method!r}: init must be None, an array, or "
+                f"{PER_CHAIN_INIT!r}, got {init!r}"
+            )
+        if point_shape is None:
+            raise ValueError(
+                f"inference method {method!r}: init={PER_CHAIN_INIT!r} needs a target whose "
+                f"parameters are one array or a record of arrays, got {_described(law)}"
+            )
+        init_keys = _initial_state_keys(as_prng_key(key), num_chains)
+        states = [get_init_state(law, None, random_seed=k) for k in init_keys]
+        return jnp.stack(states), True
+    if init is None or point_shape is None:
+        return init, False
+    shape = tuple(np.shape(init))
+    if len(shape) != len(point_shape) + 1:
+        return init, False
+    if shape != (num_chains, *point_shape):
+        raise ValueError(
+            f"inference method {method!r}: init with one state per chain must have shape "
+            f"{(num_chains, *point_shape)}, got shape {shape}"
+        )
+    return init, True
+
+
+# ---------------------------------------------------------------------------
+# NUTS controls
+# ---------------------------------------------------------------------------
+
+
+def nuts_controls(
+    method: str,
+    options: Mapping[str, Any],
+    *,
+    default_target_accept_prob: float = 0.8,
+    default_max_tree_depth: int = 10,
+) -> tuple[float, int]:
+    """The ``target_accept_prob`` and ``max_tree_depth`` options of a NUTS method, checked.
+
+    Parameters
+    ----------
+    method : str
+        The method's name, for the error messages.
+    options : Mapping of str to Any
+        The method's ``method_options``.
+    default_target_accept_prob : float
+        The target acceptance probability of an unset option, the backend's
+        default.
+    default_max_tree_depth : int
+        The maximum tree depth of an unset option, the backend's default.
+
+    Returns
+    -------
+    tuple of float and int
+        The target acceptance probability and the maximum tree depth.
+
+    Raises
+    ------
+    TypeError
+        If ``target_accept_prob`` is not a real number, or ``max_tree_depth``
+        is not an integer.
+    ValueError
+        If ``target_accept_prob`` is not strictly between 0 and 1, or
+        ``max_tree_depth`` is less than 1.
+    """
+    target = options.get("target_accept_prob", default_target_accept_prob)
+    if isinstance(target, bool) or not isinstance(target, numbers.Real):
+        raise TypeError(
+            f"inference method {method!r}: target_accept_prob must be a number, "
+            f"got {type(target).__name__}"
+        )
+    if not 0.0 < target < 1.0:
+        raise ValueError(
+            f"inference method {method!r}: target_accept_prob must be strictly between 0 and 1, "
+            f"got {target!r}"
+        )
+    depth = options.get("max_tree_depth", default_max_tree_depth)
+    if isinstance(depth, bool) or not isinstance(depth, numbers.Integral):
+        raise TypeError(
+            f"inference method {method!r}: max_tree_depth must be a positive integer, "
+            f"got {type(depth).__name__}"
+        )
+    if depth < 1:
+        raise ValueError(
+            f"inference method {method!r}: max_tree_depth must be a positive integer, got {depth!r}"
+        )
+    return float(target), int(depth)
 
 
 # ---------------------------------------------------------------------------
@@ -304,17 +805,15 @@ def build_target_log_prob(
 ) -> Callable[[Any], Array]:
     """Build a ``target_log_prob_fn(params)`` from *dist* and *observed*.
 
-    Three cases, in the order the body dispatches them:
+    Two cases, in the order the body dispatches them:
 
-    1. **SimpleModel** (has prior + likelihood):
-       ``prior._log_prob(params) + likelihood.log_likelihood(params, data)``.
-    2. **Bare target with data**: joint over ``(params, data)``,
+    1. **Bare target with data**: joint over ``(params, data)``,
        evaluated as ``dist._unnormalized_log_prob((params, data))``.
-    3. **Bare target without data**: ``dist._unnormalized_log_prob``
-       returned directly (the caller is presumed to have already
-       folded the data into the distribution, e.g. via closure).
+    2. **Target without data**: ``dist._unnormalized_log_prob``
+       returned directly, the data already bound, as an unnormalized
+       conditional binds them.
 
-    The unnormalized accessor is used for cases 2 and 3 because MCMC
+    The unnormalized accessor is used because MCMC
     samplers do not require a normalized density. Distributions that
     only implement ``_log_prob`` are unaffected: the
     ``SupportsUnnormalizedLogProb`` protocol provides a default
@@ -324,19 +823,6 @@ def build_target_log_prob(
     raw array, a ``Record`` object, or a dict — the likelihood handles
     its own input types).
     """
-    if is_simple_model(dist):
-
-        def target_log_prob_fn(params):
-            lp = dist._prior._log_prob(params)
-            if observed is not None:
-                lp = lp + dist._likelihood.log_likelihood(
-                    params=params,
-                    data=observed,
-                )
-            return lp
-
-        return target_log_prob_fn
-
     if observed is not None:
         return lambda params: dist._unnormalized_log_prob((params, observed))
 
@@ -349,91 +835,268 @@ def build_target_log_prob_flat(
     *,
     init: ArrayLike | None = None,
     random_seed: int | Array = 0,
-) -> tuple[Callable[[Array], Array], Array, OutputSpec | None]:
-    """Build a flat-vector target + initial state + (optional) prior declaration.
+) -> tuple[Callable[[Array], Array], Array]:
+    """Build a flat-vector target and its initial state.
 
-    Returns ``(target_flat_fn, flat_init, event_spec)``:
+    Returns ``(target_flat_fn, flat_init)``:
 
     - ``target_flat_fn(theta_flat) -> log_prob``: a callable that
       consumes a flat parameter vector.
     - ``flat_init``: the flat-vector initial chain state from
       :func:`get_init_state`.
-    - ``event_spec``: the prior's declaration when the prior is a
-      numeric law with a flat-vector view; ``None`` for bare
-      array-shaped targets. Passes through to
-      :func:`~probpipe.inference._approximate_distribution.make_posterior`
-      so the posterior names its fields by the prior's components.
 
-    Two cases:
+    Three cases:
 
-    1. **Record-shaped prior** (a :class:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution`
-       — every ``SimpleModel`` prior is one). ``target_flat_fn``
-       composes :func:`build_target_log_prob` with the prior's
-       :meth:`~probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution.unflatten_sample`,
-       and the prior's declaration is returned for downstream lift-back.
-    2. **Bare ``SupportsLogProb`` target** with no Record-shaped prior
+    1. **A parametric family prior**: ``target_flat_fn`` composes
+       :func:`build_target_log_prob` with the reshape of the flat vector to
+       the family's event.
+    2. **A record-shaped prior or target**, such as a factored joint or the
+       unnormalized conditional of one: ``target_flat_fn`` unflattens the
+       vector to the numeric record the target declares.
+    3. **Bare ``SupportsLogProb`` target** with no Record-shaped prior
        (e.g., a hand-rolled ``Distribution`` subclass implementing
        ``_unnormalized_log_prob`` over a flat ``Array``). The target
        already takes a flat input; no flattening is needed.
-       ``event_spec`` is returned as ``None``.
 
     Intended for use by BlackJAX-flavoured MCMC / VI backends.
     """
-    prior = get_prior(dist)
+    prior = dist
     target_record = build_target_log_prob(dist, observed)
     flat_init = get_init_state(dist, init, random_seed=random_seed)
 
-    flat_view = getattr(prior, "as_flat_distribution", None)
-    if flat_view is not None:
-        flat_prior = flat_view()
+    flat_prior = _flat_view(prior)
+    if flat_prior is not None:
 
         def target_flat(theta_flat: Array) -> Array:
-            return target_record(flat_prior.unflatten_sample(theta_flat))
+            return target_record(flat_prior(theta_flat))
 
-        return target_flat, flat_init, prior.event_spec
+        return target_flat, flat_init
 
-    # Bare array-shaped target: ``target_record`` already accepts a
-    # flat array and no template is available to lift the chain.
-    return target_record, flat_init, None
+    record = _flat_record_spec(prior)
+    if record is not None:
+
+        def target_unflattened(theta_flat: Array) -> Array:
+            return target_record(_reconstruct_from_vector(prior.label, record, theta_flat))
+
+        return target_unflattened, flat_init
+
+    # Bare array-shaped target: ``target_record`` already accepts a flat array.
+    return target_record, flat_init
 
 
-def build_likelihood_flat(
-    prior: Distribution,
-    likelihood: Any,
-    data: ArrayLike | Record | None,
-) -> Callable[[Array], Array]:
-    """Build a flat-vector ``loglikelihood_fn(theta_flat)`` from a prior +
-    likelihood + data.
+def _flat_leaves(law: Any) -> list[tuple[tuple[int, ...], Any]] | None:
+    """The shape and declared support of each leaf a flat chain over *law* lays out, in its order.
 
-    Unlike :func:`build_target_log_prob_flat` (which builds the *joint*
-    prior + likelihood density), this returns the *likelihood alone* as
-    a function of a flat parameter vector. Elliptical slice sampling
-    folds the Gaussian prior into the proposal mechanism, so it needs
-    the likelihood by itself.
-
-    Two cases:
-
-    - **Record-shaped prior** (any ``SimpleModel`` prior): the flat
-      vector unflattens through the prior's
-      :meth:`~probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution.unflatten_sample`
-      so the likelihood sees structured ``Record``-shaped params.
-    - **Bare-array prior**: the likelihood already accepts a flat
-      vector, so it is called directly.
+    ``None`` when *law* declares no array or numeric record that a flat vector
+    lays out, as a bare target over a flat array does.
     """
-    flat_view = getattr(prior, "as_flat_distribution", None)
-    if flat_view is not None:
-        flat_prior = flat_view()
+    if _has_flat_view(law):
+        spec = law.event_spec.term_spec
+        if isinstance(spec, NumericArraySpec):
+            return [(tuple(spec.shape), spec.support)]
+        return None
+    record = _flat_record_spec(law)
+    if record is not None:
+        return [(tuple(record[path].shape), record[path].support) for path in record]
+    array = _one_array_spec(law)
+    if array is not None:
+        return [(tuple(array.shape), array.support)]
+    return None
 
-        def loglikelihood_fn(theta_flat: Array) -> Array:
-            params = flat_prior.unflatten_sample(theta_flat)
-            return likelihood.log_likelihood(params=params, data=data)
 
-        return loglikelihood_fn
+class _LeafMap(NamedTuple):
+    """One leaf's segment of a flat state: its sizes, shapes, and bijector, if any."""
 
-    def loglikelihood_fn(theta_flat: Array) -> Array:
-        return likelihood.log_likelihood(params=theta_flat, data=data)
+    size: int
+    shape: tuple[int, ...]
+    unconstrained_size: int
+    unconstrained_shape: tuple[int, ...]
+    bijector: Any
 
-    return loglikelihood_fn
+
+class UnconstrainedCoordinates(NamedTuple):
+    """The maps between flat states of a law and its unconstrained coordinates, each at one point.
+
+    ``forward`` maps unconstrained coordinates to a flat state in the support,
+    ``inverse`` maps a flat state to its preimage, which is not finite outside
+    the support, and ``log_jacobian`` is the log-determinant of the forward
+    map's Jacobian. ``size`` is the number of unconstrained coordinates.
+    """
+
+    size: int
+    forward: Callable[[Array], Array]
+    inverse: Callable[[Array], Array]
+    log_jacobian: Callable[[Array], Array]
+
+
+def _leaf_maps(law: Any) -> list[_LeafMap] | None:
+    """The segment map of each leaf of a flat state of *law*, by the rule of :func:`unconstrained_coordinates`.
+
+    ``None`` when *law* declares no array or numeric record that a flat vector
+    lays out.
+    """
+    from ..core._dispatch import MathematicalDomainError, ResolutionError
+    from ..core.constraints import real
+    from ..functions import bijector_for
+
+    leaves = _flat_leaves(law)
+    if leaves is None:
+        return None
+    maps: list[_LeafMap] = []
+    for shape, support in leaves:
+        size = int(np.prod(shape, dtype=int))
+        bijector = None
+        if support is not None and not isinstance(support, type(real)):
+            try:
+                bijector = bijector_for(support)
+            except (MathematicalDomainError, ResolutionError):
+                bijector = None
+        if bijector is None:
+            maps.append(_LeafMap(size, shape, size, shape, None))
+            continue
+        point = jax.ShapeDtypeStruct(shape, jnp.float32)
+        unconstrained = tuple(jax.eval_shape(bijector._inverse, point).shape)
+        maps.append(
+            _LeafMap(size, shape, int(np.prod(unconstrained, dtype=int)), unconstrained, bijector)
+        )
+    return maps
+
+
+def _segments(vector: Array, sizes: Iterable[int]) -> list[Array]:
+    """*vector*'s consecutive segments of *sizes*, along its last axis."""
+    bounds = np.cumsum([0, *sizes])
+    return [vector[..., start:stop] for start, stop in itertools.pairwise(bounds)]
+
+
+def _coordinates(maps: list[_LeafMap]) -> UnconstrainedCoordinates:
+    """The maps that move each leaf of *maps* by its bijector and keep the others' coordinates."""
+    sizes = [leaf.size for leaf in maps]
+    unconstrained_sizes = [leaf.unconstrained_size for leaf in maps]
+
+    def forward(z: Array) -> Array:
+        parts = []
+        for leaf, segment in zip(maps, _segments(z, unconstrained_sizes)):
+            if leaf.bijector is None:
+                parts.append(segment)
+                continue
+            value = leaf.bijector.raw(jnp.reshape(segment, leaf.unconstrained_shape))
+            parts.append(jnp.reshape(value, (leaf.size,)))
+        return jnp.concatenate(parts)
+
+    def inverse(x: Array) -> Array:
+        parts = []
+        for leaf, segment in zip(maps, _segments(x, sizes)):
+            if leaf.bijector is None:
+                parts.append(segment)
+                continue
+            preimage = leaf.bijector._inverse(jnp.reshape(segment, leaf.shape))
+            parts.append(jnp.reshape(preimage, (leaf.unconstrained_size,)))
+        return jnp.concatenate(parts)
+
+    def log_jacobian(z: Array) -> Array:
+        total = jnp.zeros(())
+        for leaf, segment in zip(maps, _segments(z, unconstrained_sizes)):
+            if leaf.bijector is not None:
+                point = jnp.reshape(segment, leaf.unconstrained_shape)
+                total = total + leaf.bijector._log_det_jacobian(point)
+        return total
+
+    return UnconstrainedCoordinates(sum(unconstrained_sizes), forward, inverse, log_jacobian)
+
+
+def unconstrained_coordinates(law: Any) -> UnconstrainedCoordinates:
+    """The unconstrained coordinates of a flat state of *law*.
+
+    A leaf whose declared support is other than the reals takes the bijector
+    :func:`~probpipe.bijector_for` gives it, which maps the leaf's unconstrained
+    coordinates onto the support. A leaf of the reals, of no declared support,
+    or of a support with no smooth bijector, such as a discrete one, keeps its
+    coordinates.
+
+    Parameters
+    ----------
+    law : Distribution
+        The law whose event spec lays out the flat state.
+
+    Returns
+    -------
+    UnconstrainedCoordinates
+        The maps of the whole flat state, which apply each leaf's map to its
+        segment.
+
+    Raises
+    ------
+    TypeError
+        If *law* declares no array or numeric record that a flat vector lays out.
+    """
+    maps = _leaf_maps(law)
+    if maps is None:
+        raise TypeError(_no_flat_layout(law))
+    return _coordinates(maps)
+
+
+def unconstrained_chain(
+    density: Callable[[Array], Array], init: Array, law: Any, *, per_chain: bool = False
+) -> tuple[Callable[[Array], Array], Array, Callable[[Array], Array]]:
+    """The density, initial state, and draw map of a flat chain run in unconstrained coordinates.
+
+    The chain runs in the coordinates :func:`unconstrained_coordinates` gives
+    *law*, so its state ranges over all of ``R^n`` and every draw lies in the
+    support. The density in these coordinates adds the forward map's
+    log-Jacobian. An initial coordinate outside a leaf's support has no
+    preimage, and that leaf starts at the preimage of the bijector's center,
+    the origin.
+
+    Parameters
+    ----------
+    density : callable
+        The log-density at a flat state of *law*'s leaves.
+    init : Array
+        The flat initial state, or one per chain on a leading axis.
+    law : Distribution
+        The law whose event spec lays out the flat state.
+    per_chain : bool
+        Whether *init* holds one initial state per chain on its leading axis.
+
+    Returns
+    -------
+    tuple
+        ``(density, init, constrain)``: the log-density at an unconstrained
+        state, the unconstrained initial state, or one per chain on the
+        leading axis when *per_chain* is set, and the map from unconstrained
+        states, with any leading axes, to flat states of *law*. Every leaf
+        keeping its coordinates gives *density*, *init*, and the identity.
+    """
+    maps = _leaf_maps(law)
+    if maps is None or all(leaf.bijector is None for leaf in maps):
+        return density, init, lambda states: states
+    coordinates = _coordinates(maps)
+
+    def unconstrained_density(z: Array) -> Array:
+        return density(coordinates.forward(z)) + coordinates.log_jacobian(z)
+
+    def unconstrained_point(point: Array) -> Array:
+        parts = []
+        for leaf, segment in zip(maps, _segments(jnp.asarray(point), [m.size for m in maps])):
+            if leaf.bijector is None:
+                parts.append(segment)
+                continue
+            preimage = jnp.ravel(leaf.bijector._inverse(jnp.reshape(segment, leaf.shape)))
+            finite = bool(jnp.all(jnp.isfinite(preimage)))
+            parts.append(preimage if finite else jnp.zeros(leaf.unconstrained_size, preimage.dtype))
+        return jnp.concatenate(parts)
+
+    if per_chain:
+        unconstrained_init = jnp.stack([unconstrained_point(point) for point in jnp.asarray(init)])
+    else:
+        unconstrained_init = unconstrained_point(init)
+
+    def constrain(states: Array) -> Array:
+        states = jnp.asarray(states)
+        flat = jnp.reshape(states, (-1, states.shape[-1]))
+        return jnp.reshape(jax.vmap(coordinates.forward)(flat), (*states.shape[:-1], -1))
+
+    return unconstrained_density, unconstrained_init, constrain
 
 
 # ---------------------------------------------------------------------------
@@ -450,7 +1113,9 @@ def build_mcmc_datatree(
 
     Groups: ``posterior``, ``sample_stats`` (if provided), ``warmup``
     (if provided). Backend-agnostic — consumed by both the TFP and
-    BlackJAX MCMC paths.
+    BlackJAX MCMC paths. The ``posterior`` and ``warmup`` groups hold the
+    flat draws as the one variable ``params``, which :func:`make_posterior`
+    names by the target's leaves.
     """
     import arviz_base as azb
     import xarray as xr
@@ -523,8 +1188,12 @@ def run_chain_scan(
 # ---------------------------------------------------------------------------
 
 
-def parallel_chain_map(fn: Callable[[Array], Any], chain_keys: Array) -> Any:
+def parallel_chain_map(fn: Callable[[Any], Any], chain_keys: Any) -> Any:
     """Run ``fn`` across ``chain_keys`` using the best parallelism available.
+
+    ``chain_keys`` is the chains' keys, or a pytree of per-chain arguments,
+    such as the keys and the initial states, whose leaves share a leading axis
+    of one entry per chain; ``fn`` takes one chain's entry.
 
     Picks between three strategies:
 
@@ -554,9 +1223,9 @@ def parallel_chain_map(fn: Callable[[Array], Any], chain_keys: Array) -> Any:
     output shape; pmap returns sharded arrays that downstream code can
     index per-chain transparently.
     """
-    num_chains = int(chain_keys.shape[0])
+    num_chains = int(jax.tree.leaves(chain_keys)[0].shape[0])
     if num_chains == 1:
-        return jax.tree.map(lambda a: a[None], fn(chain_keys[0]))
+        return jax.tree.map(lambda a: a[None], fn(jax.tree.map(lambda a: a[0], chain_keys)))
     if jax.local_device_count() >= num_chains:
         return jax.pmap(fn)(chain_keys)
     return jax.vmap(fn)(chain_keys)

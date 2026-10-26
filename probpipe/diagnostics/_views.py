@@ -327,7 +327,12 @@ class DiagnosticsView(DataTreeView):
     # ── summaries ----------------------------------------------------------
 
     def summary_table(self) -> str:
-        """Pretty-printed table of MCMC metrics for notebook display."""
+        """Pretty-printed table of MCMC metrics for notebook display.
+
+        The table ends with the warnings, and then with a line that reports the
+        run as not passed when a transition diverged or an R-hat is not
+        computed, or else, when no warning was issued, as passed.
+        """
         rhat = self.rhat
         ess_b = self.ess_bulk
         ess_t = self.ess_tail
@@ -372,9 +377,17 @@ class DiagnosticsView(DataTreeView):
         rows.append("")
 
         warns = self.warnings
-        if warns:
-            rows.extend(f"⚠  {w}" for w in warns)
-        else:
+        rows.extend(f"⚠  {w}" for w in warns)
+        reasons = []
+        n_divergences = self.n_divergences
+        if not isinstance(n_divergences, NotComputed) and n_divergences > 0:
+            reasons.append(f"{n_divergences} divergent transitions")
+        no_rhat = [p for p, v in rhat.items() if isinstance(v, NotComputed)]
+        if no_rhat:
+            reasons.append(f"R-hat not computed for {', '.join(no_rhat)}")
+        if reasons:
+            rows.append(f"✗  Not passed: {' and '.join(reasons)}.")
+        elif not warns:
             rows.append("✓  All available diagnostics passed.")
 
         return "\n".join(rows)

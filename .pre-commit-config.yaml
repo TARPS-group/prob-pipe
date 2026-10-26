@@ -33,3 +33,43 @@ repos:
       - id: check-merge-conflict
       - id: check-added-large-files
         args: ["--maxkb=2000"]   # allow uv.lock (~760 KB); still catch stray data/binaries
+
+  # pydoclint checks that a docstring with a section documents each parameter
+  # and the return value (STYLE_GUIDE.md §3.3). It runs as a flake8 plugin, and
+  # `--select=DOC` reports its codes alone. The plugin lets the hook ignore
+  # DOC105, which compares a docstring's types with the annotations, because a
+  # docstring states its types in words, such as "array-like". In
+  # probpipe/operations/ it also ignores two codes that an operation's
+  # declaration breaks by design: DOC107 flags an unannotated parameter, which
+  # an operation leaves unannotated so that a law or a batch at it lifts (design
+  # V.5), and DOC202 flags a Returns section in a function without a return
+  # statement, while a declaration has no body, since its routes compute what
+  # its Returns section describes. The CI lint job runs this hook over the
+  # whole tree, so its options here are the only copy.
+  - repo: https://github.com/pycqa/flake8
+    rev: 7.4.1
+    hooks:
+      - id: flake8
+        alias: pydoclint
+        name: pydoclint (docstrings)
+        additional_dependencies: ["pydoclint==0.11.0"]
+        files: ^probpipe/.*\.py$
+        args:
+          - --select=DOC
+          - --extend-ignore=DOC105
+          - --per-file-ignores=probpipe/operations/*.py:DOC107,DOC202
+          - --style=numpy
+          - --skip-checking-raises=True
+          - --check-return-types=False
+          - --check-yield-types=False
+          - --check-class-attributes=False
+
+  # CONTRACTS.md directive 2 bans PR and issue references in code: a word form
+  # such as "issue 12" or "PR #12", a bare "#12", or a GitHub issue or pull URL.
+  - repo: local
+    hooks:
+      - id: no-issue-numbers
+        name: no issue or PR numbers in probpipe/
+        language: pygrep
+        entry: '(?i)(?<![\w/-])(?:issues?|prs?|pull requests?)\s+#?\d+\b|(?<![&\w/])#\d+\b|github\.com/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+'
+        files: ^probpipe/.*\.py$

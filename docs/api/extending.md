@@ -1,224 +1,449 @@
-# Extending ProbPipe
+> **AI-generated.** An AI assistant drafted this page, and no maintainer has reviewed it yet. Please report errors on the issue tracker.
 
-ProbPipe's extension surface is small and grouped by capability. The
-table below maps each kind of extension to the contract you implement
-against and the registry (if any) you register with. Each row links to
-the section on this page that covers it in detail.
+# Registries for extensions
 
-| To add a... | Implement | Register with |
-|---|---|---|
-| New distribution family | Subclass of [`Distribution`](#distribution-base-classes), `RecordDistribution`, `NumericRecordDistribution`, or `TFPDistribution` | (none — capability is detected by `isinstance` against the matching [protocol](#protocols)) |
-| New op support on an existing distribution | The matching underscore method (`_sample`, `_log_prob`, `_mean`, ...) on the class | (none — see [Protocols](#protocols) for which method backs which op) |
-| New inference method (custom sampler, optimiser, ...) | Subclass of `InferenceMethod` declaring `supported_types`, `priority`, `check()`, and `execute()` | `inference_method_registry.register(...)` — see [Custom inference methods](#custom-inference-methods) |
-| New distribution-to-distribution converter | Subclass of `Converter` with `check()` / `convert()` | `converter_registry.register(...)` — see [Custom converters](#custom-converters) |
-| New canonical bijector for a `Constraint` | A factory returning a TFP bijector | `register_bijector(constraint_or_class, factory)` — see [Custom bijectors](#custom-bijectors) |
-| New array backend (custom array-like leaf type) | An `ArrayBackend` (shape / dtype / conversion hooks) | `register_array_backend(leaf_type, backend)` — see [Custom array backends](#custom-array-backends) |
+An extension implements a base class or a protocol of ProbPipe and registers an instance with a registry, and this page states, for each kind of extension, what to implement and where to register it.
+It also documents the dispatch registries, the operation registry, and the base classes these extensions implement, and its last section documents the registry catalog.
+The registries that users query are documented on the pages of their topics: `inference_method_registry` on [Inference methods](inference.md) and `converter_registry` on [Conversion](conversion.md).
 
-The two remaining sections — [Broadcasting internals](#broadcasting-internals-exposed-for-extension)
-and the [Internals](internals.md) page — document classes that an
-extension rarely constructs directly but may need to reference.
+## A new family
 
-## Distribution base classes
+A family subclasses `Distribution`, or `ConditionalDistribution` for a kernel, and passes its label and the event spec of one draw to the base constructor as `label` and `event_spec`.
+A draw that is one whole term is declared by an `OutputSpec` whose one keyword names its output, such as `OutputSpec(y=NumericArraySpec((22,)))`.
+A family's constructor takes the output's name as its first argument and the label as the optional keyword `label=`, which defaults to the class name.
+So `Normal("mu", 0.0, 1.0)` is labeled `Normal`, and `Normal("mu", 0.0, 1.0, label="prior")` is labeled `prior`.
+A family over a TensorFlow Probability distribution subclasses `TFPDistribution`, which samples and scores through the backend distribution.
+A family claims a capability by defining its implementation method, such as `_sample` for `SupportsSampling` or `_mean` for `SupportsMean`, and claims a conditioning capability by inheriting `SupportsExactConditioning` or `SupportsApproximateConditioning`.
+A kernel's conditional methods, such as `_conditional_sample`, must be pure, since a joint compiles them when it maps the kernel over draws, as `ConditionalDistribution` states.
+[Distributions and families](distributions.md) documents the base classes and each capability.
 
-`Distribution` is the abstract root. `RecordDistribution` and
-`NumericRecordDistribution` specialise it for distributions whose
-`_sample()` returns a `Record` or `NumericRecord` respectively.
-`TFPDistribution` wraps an existing TFP `Distribution`.
-
-A subclass passes the declaration of one draw to `Distribution.__init__` as
-`event_spec`. A bare `RecordSpec` exposes its fields, and any other term spec
-is a whole term whose component defaults to the law's name. A law whose
-declaration is numeric is a
-`NumericDistribution`, which gives it the `dtypes`, `supports`, `dtype`, and
-`support` views.
-
-::: probpipe.Distribution
-
-::: probpipe.NumericDistribution
-
-::: probpipe.RecordDistribution
-
-::: probpipe.NumericRecordDistribution
-
-::: probpipe.TFPDistribution
-
-## Protocols
-
-Protocols define capabilities that distributions may support. Compliance
-is checked via `isinstance` at dispatch time. Most are
-`@runtime_checkable`, and an external type satisfies one structurally by
-implementing the underscore method (`_sample`, `_log_prob`, ...), with no
-inheritance required.
-
-The two conditioning capabilities are the exception. They are abstract
-base classes, so a distribution claims one by **inheriting** it, and a
-class that only defines `_condition_on` claims neither and is never
-selected through either conditioning route. Both declare the same
-`_condition_on`, and whether it returns the conditional law or a stand-in
-for it is a claim about the result rather than a fact about the method, so
-no structural check could tell them apart.
-
-::: probpipe.SupportsSampling
-
-::: probpipe.SupportsExpectation
-
-::: probpipe.SupportsLogProb
-
-::: probpipe.SupportsUnnormalizedLogProb
-
-::: probpipe.SupportsRandomLogProb
-
-::: probpipe.SupportsRandomUnnormalizedLogProb
-
-::: probpipe.SupportsMean
-
-::: probpipe.SupportsVariance
-
-::: probpipe.SupportsCovariance
-
-### Conditioning capabilities
-
-Claimed by inheriting, as above.
-
-::: probpipe.SupportsExactConditioning
-
-::: probpipe.SupportsApproximateConditioning
-
-`SupportsArrayBackend` is the only **class-level** protocol: its declared
-method (`_make_array_backend`) is a `@classmethod`, so the runtime check
-is `isinstance(MyDistribution, SupportsArrayBackend)` against the class
-itself, not an instance.
+A family registers with no registry, since an operation selects a capability route by the protocols the family claims.
+A family that stores its laws at batched parameters in one backend object implements `SupportsArrayBackend`.
 
 ::: probpipe.SupportsArrayBackend
 
-## Custom inference methods
+## A new inference method
 
-`InferenceMethod` subclasses register with
-`inference_method_registry` and declare `supported_types`, whether they are
-`exact`, a `priority`, and `check()` / `execute()` methods. When
-[`condition_on`](operations.md#conditioning) runs, the registry tries the
-methods in selection order and runs the first whose `check()` reports
-feasibility. The built-in methods table is on
-[Modeling and inference → Inference methods](inference.md#inference-methods).
+An inference method normalizes the target that `condition_on` forms when no exact route conditions a law, and it returns a normalized law over the target's event.
+It subclasses `InferenceMethod`, declares `name` and `supported_types`, implements `check` and `execute`, and registers with `inference_method_registry.register`.
 
-### Exactness, then rank
+A method reads the model through its target, which is an `InferenceTarget`. It reads the model as `target.joint` and the observed values as `target.given`, and `target.factors()` gives a merged model's prior and likelihood.
+Every target is an `InferenceTarget`, so a method's `supported_types` admits `Distribution`, and a method that runs one kind of model, such as a Stan program, recognizes it in `check` through `target.joint`.
+A target is a law, so a method reads its density with `unnormalized_log_prob(target, value)`, which applies when the model has a density; a method that requires one states `SupportsUnnormalizedLogProb` in its `check`, and a method that simulates reads `target.factors()` instead.
+A method that works on vectors uses the `to_vector` layout of the event's values: `NumericRecord.from_vector(target.event_spec.term_spec, vec, label=...)` reads a vector as a value of the parameters.
+`execute` also receives the run's random key as the keyword `key`, which `condition_on` derives from the enclosing `workflow_run`, so a seed reproduces the run; a method draws all of its randomness from that key.
+`make_posterior` turns chains of such vectors into the posterior the method returns.
 
-A method declares two things about where it stands, and they are separate.
-
-- **`exact`** says whether the result denotes the requested mathematical
-  object or stands in for it. Exact methods are always tried before
-  approximate ones, and `exact_only=True` on a call excludes the
-  approximate ones. Every built-in inference method is approximate:
-  a finite MCMC, SG-MCMC, slice, ABC, or variational output stands in for
-  the conditional law whatever its asymptotic guarantee. `InferenceMethod`
-  declares `exact = False` for you; a method that returns a representation
-  of the conditional law itself overrides it.
-- **`priority`** ranks methods of the same exactness, higher first; it is
-  only a rank and carries no other meaning. `None`, the default, is
-  **opt-in only**: the registry skips the method during auto-dispatch and
-  it runs only when named via `method="..."`. A method that does not
-  override `priority` is opt-in until a contributor ranks it, so registering
-  one never changes what runs.
-
-Ties go to the method whose declared types are closest to the argument's
-class, then to registration order. `inference_method_registry.set_priorities(...)`
-re-ranks at runtime, by keyword or by a mapping for names that are not
-identifiers; it cannot change whether a method is exact.
-
-#### Choosing a rank
-
-Rank among the approximate methods with these axes in mind, roughly in
-order of weight:
-
-1. **Robustness when applicable** — how often the method gives a usable
-   answer without per-model tuning, conditional on `check()` passing.
-2. **Computational cost per effective sample (or per converged result)**.
-   Two kinds of cost advantage deserve separate consideration:
-   *algorithmic* specialisation that exploits model structure for an
-   asymptotic speedup (Kalman, INLA, conjugate updates), and
-   *engineering* specialisation — same algorithm, faster backend
-   (nutpie's Rust-backed NUTS vs. BlackJAX's; Stan's compiled gradients
-   vs. JAX traces).
-3. **Approximation quality** — controlled-error approximations >
-   asymptotically-exact MCMC > intrinsic approximations. These are
-   guarantees a method documents, not a further exactness level.
-4. **Diagnostic richness** — methods that fail silently rank below
-   methods with built-in failure signals, all else equal.
-5. **Model-class breadth** as a tiebreaker only. A broader-applicability
-   method does not need a higher rank than a narrow one; whichever
-   applies wins via `check()`.
-
-The built-in ranks are anchors: `nutpie_nuts` 88, `blackjax_nuts` 85,
-`cmdstan_nuts` and `pymc_nuts` 82, `blackjax_elliptical_slice` 75,
-`blackjax_rwmh` 55, `blackjax_sgld` 45, `pyabc_smcabc` 6. Place a new
-method relative to the nearest of these.
-
-#### Setting `priority` on an `InferenceMethod` subclass
+This method draws vectors from a normal proposal and weights each by the target's density over the proposal's:
 
 ```python
-class MySelfTuningMethod(InferenceMethod):
+import jax
+import jax.numpy as jnp
+from jax.scipy.stats import norm
+
+from probpipe import (
+    Distribution,
+    NumericRecord,
+    NumericRecordSpec,
+    SupportsUnnormalizedLogProb,
+    inference_method_registry,
+    unnormalized_log_prob,
+)
+from probpipe.inference import Feasibility, InferenceMethod, InferenceTarget, make_posterior
+
+
+class ImportanceSampling(InferenceMethod):
+    _method_options = ("num_draws", "proposal_scale")  # the method_options entries execute reads
+
     @property
-    def priority(self) -> int | None:
-        # Self-tuning and broadly applicable: beside blackjax_elliptical_slice.
-        return 75
+    def name(self) -> str:
+        return "my_importance_sampling"
+
+    @property
+    def description(self) -> str:  # one line, which the registry catalog shows
+        return "Self-normalized importance sampling from a normal proposal."
+
+    def supported_types(self) -> tuple[type, ...]:
+        return (Distribution,)
+
+    def check(self, target: InferenceTarget, /, **options) -> Feasibility:
+        if not isinstance(target, SupportsUnnormalizedLogProb):
+            return Feasibility(False, "the target has no unnormalized density")
+        if not isinstance(target.event_spec.term_spec, NumericRecordSpec):
+            return Feasibility(False, "the parameters must be a record of numeric arrays")
+        return Feasibility(True)
+
+    def execute(self, target: InferenceTarget, /, *, key, **options) -> Distribution:
+        self._check_options(options)
+        num_draws = options.get("num_draws", 2000)
+        scale = options.get("proposal_scale", 2.0)
+        spec = target.event_spec.term_spec
+        vectors = scale * jax.random.normal(key, (num_draws, spec.vector_size))
+
+        def log_density(vec):  # a JAX array, so jax.vmap and jax.grad apply
+            value = NumericRecord.from_vector(spec, vec, label="theta")
+            return jnp.asarray(unnormalized_log_prob(target, value))
+
+        log_proposal = jnp.sum(norm.logpdf(vectors, 0.0, scale), axis=-1)
+        log_weights = jax.vmap(log_density)(vectors) - log_proposal
+        return make_posterior(
+            target, [vectors], method=self.name, weights=jax.nn.softmax(log_weights)
+        )
+
+
+inference_method_registry.register(ImportanceSampling())
 ```
 
-A method that should not auto-dispatch — perhaps it's experimental, has
-sharp failure modes, or exists only for `method=` testing — leaves
-`priority` at the inherited default of `None`.
+`condition_on.using(method="my_importance_sampling")` runs the method by name, and one seed gives the same draws:
 
-::: probpipe.core._dispatch.BaseDispatchRegistry
+```python
+from probpipe import Normal, NumericArraySpec, condition_on, conditional_distribution, mean, workflow_run
 
-::: probpipe.core._dispatch.UnaryDispatchRegistry
+likelihood = conditional_distribution(
+    lambda mu: Normal("y", mu * jnp.ones(3), 1.0), given_spec={"mu": NumericArraySpec(())}
+)
+model = (likelihood & Normal("mu", 0.0, 1.0))
+observed = {"y": jnp.array([0.4, 0.9, -0.1])}
 
-::: probpipe.core._dispatch.BinaryDispatchRegistry
+with workflow_run(seed=0):
+    posterior = condition_on.using(method="my_importance_sampling")(model, observed)
+with workflow_run(seed=0):
+    again = condition_on.using(method="my_importance_sampling")(model, observed)
 
-::: probpipe.core._dispatch.BaseDispatchMethod
+assert (posterior.atoms.raw["mu"] == again.atoms.raw["mu"]).all()
+print(mean(posterior))  # mu is near 0.3, the exact posterior mean
+```
 
-::: probpipe.core._dispatch.UnaryDispatchMethod
+The method takes part in automatic selection once it overrides `priority`.
 
-::: probpipe.core._dispatch.BinaryDispatchMethod
+### Exactness and priority
 
-::: probpipe.core._dispatch.Feasibility
+A method declares its exactness and its priority, and the two are independent:
 
-::: probpipe.core._dispatch.MethodInfo
+1. `exact`: whether the result denotes the conditional law itself. `InferenceMethod` declares `exact = False`, the declaration of a finite MCMC, variational, or ABC output, which stands in for the conditional law. A method whose result is the conditional law overrides it, as `empirical_reweighting` does: the posterior of an empirical prior is its atoms reweighted by the likelihood. The `exact_only` control excludes the approximate methods.
+2. `priority`: the rank, which [Dispatch registries](#dispatch-registries) defines with its default, `None`.
 
-::: probpipe.core._dispatch.ResolutionError
+A new method takes its rank relative to the nearest of the ranks of the built-in methods:
 
-::: probpipe.core._dispatch.MathematicalDomainError
+| Method | Priority |
+|---|---|
+| `empirical_reweighting` (exact) | 100 |
+| `nutpie_nuts` | 88 |
+| `blackjax_nuts` | 85 |
+| `cmdstan_nuts`, `pymc_nuts` | 82 |
+| `blackjax_elliptical_slice` | 75 |
+| `blackjax_rwmh` | 55 |
+| `blackjax_sgld` | 45 |
+| `pyabc_smcabc` | 6 |
 
-## Custom converters
+Five criteria, in decreasing weight, place a new approximate method among these ranks:
 
-Subclass `Converter`, implement `check()` / `convert()`, and register
-with `converter_registry.register(...)`. The built-in priorities and the
-registry handle itself are documented under
-[Conversion and interop](converters.md).
+1. Robustness: how often the method gives a usable answer without tuning for the model, once its `check` passes.
+2. Cost: the computation per effective draw or per converged result, whether a method saves it by exploiting the model's structure or by a faster backend.
+3. Approximation quality: an approximation with a controlled error ranks above an asymptotically exact MCMC method, which ranks above an approximation whose error does not vanish with more computation.
+4. Diagnostics: a method that reports its failures ranks above one that fails without a signal.
+5. Breadth: the range of models the method applies to, which breaks ties only, since `check` decides which methods apply.
 
-## Custom bijectors
+::: probpipe.inference.InferenceMethod
+    options:
+      show_root_full_path: true
 
-`register_bijector` overrides the canonical bijector returned by
-`bijector_for(c)` for a given `Constraint` instance or class. See
-[Constraints → Bijectors](constraints.md#bijectors-for-unconstrained-reparameterization).
+::: probpipe.inference.InferenceTarget
+    options:
+      show_root_full_path: true
 
-## Custom array backends
+::: probpipe.inference.ModelFactors
+    options:
+      show_root_full_path: true
 
-`register_array_backend` makes a new array-like container a first-class
-numeric leaf: recognised, promoted, converted at the compute boundary, and
-fingerprinted. See
-[Records → Array-backend registry](records.md#array-backend-registry).
+::: probpipe.inference.make_posterior
+    options:
+      show_root_full_path: true
 
-## Broadcasting internals (exposed for extension)
+## A new converter
 
-`DistributionArray` is the shape-indexed container produced by
-parameter-sweep `Function` calls whose inner call returns a
-`Distribution`. `BroadcastDistribution` is the joint container produced
-by `Function` when called with `workflow.with_options(include_inputs=True)(...)`.
+A converter moves a law to another representation.
+It subclasses `Converter` and defines five members:
 
-::: probpipe.DistributionArray
+1. `name`: the name by which a call selects the converter;
+2. `exact`: whether the converted law is the source law in another representation;
+3. `supported_types`: the pair of the source types and the target types;
+4. `check`: the promise of a conversion as a `ConversionInfo`, computed without converting, which leaves `method_name` and `exact` for the registry to set from the registration;
+5. `execute`: the converted law, which carries the source's event spec.
 
-::: probpipe.BroadcastDistribution
+`check` and `execute` receive a call's converter options as keywords, such as `num_samples`, and a converter's `execute` must raise `TypeError` for an option it does not read.
+`converter_registry.register` registers an instance, and `convert` and `with_conversion` then select among the registered converters.
+The shipped converters have priorities from 10 to 20, and a new converter sets its `priority` to take part in automatic selection.
 
-The truly private machinery (`_RecordDistributionView`, `_vmap_sample`,
-`_mc_expectation`) lives on [Internals](internals.md), alongside the
-public-but-rarely-constructed `FlattenedDistributionView` and
-`NumericRecordDistributionView`.
+::: probpipe.Converter
+
+## A new operation or route
+
+`@operation` declares an operation from its signature and its result rule, and it registers the operation with `operation_registry`.
+An operation registers its routes after construction, with `register_route` for any object that has the members of `OperationRoute`, or with one of four helpers:
+
+1. `structural_route`: an implementation that reads the operands' declared structure;
+2. `capability_route`: a call of a capability that one operand claims, such as `_mean`;
+3. `registry_route`: a delegation to a dispatch registry, whose selected method realizes the call;
+4. `fallback_route`: a generic scheme for a stated domain, which ranks below every other route of its exactness.
+
+`operation_registry.describe("mean")` prints the operands and the routes of `mean` in selection order.
+
+::: probpipe.operations.operation
+    options:
+      show_root_full_path: true
+
+::: probpipe.operation_registry
+
+::: probpipe.operations.OperationRegistry
+    options:
+      show_root_full_path: true
+
+::: probpipe.operations.OperationRoute
+    options:
+      show_root_full_path: true
+
+::: probpipe.operations.RouteSource
+    options:
+      show_root_full_path: true
+
+::: probpipe.operations.BoundCall
+    options:
+      show_root_full_path: true
+
+::: probpipe.operations.OperationSummary
+    options:
+      show_root_full_path: true
+
+::: probpipe.operations.OperandSummary
+    options:
+      show_root_full_path: true
+
+::: probpipe.operations.RouteSummary
+    options:
+      show_root_full_path: true
+
+## A new evaluation rule
+
+A call `f(d)` of a function at a distribution or a batch resolves among the evaluation rules, and a rule realizes the call for a pair of a map type and an operand type, as a closed form or a batched routine does.
+A rule is a `BinaryDispatchMethod` whose `supported_types` is a pair of the map types and the operand types.
+Its `check` and `execute` take the map and the operand positionally and the keywords `parameter`, `fixed_args`, and `controls`, and `evaluation_rule_registry.register` registers an instance.
+The registry ships three rules: the sampling lift and the elementwise sweep, which are floors and so rank below every other rule, and the exact enumeration of empirical laws.
+
+::: probpipe.evaluation_rule_registry
+
+## A bijector for a constraint
+
+`register_bijector` registers the factory of the bijector that `bijector_for` returns for a constraint, keyed on a `Constraint` subclass or on one constraint.
+
+::: probpipe.register_bijector
+
+## A new array backend
+
+`register_array_backend` makes the instances of an array-container type numeric leaves, and its `ArrayBackend` argument holds the functions that read their shapes and dtypes and convert them to arrays.
+
+::: probpipe.register_array_backend
+
+::: probpipe.ArrayBackend
+
+::: probpipe.array_backend_for
+
+## A new executor
+
+An executor decides how the evaluations a call asks for run: one after another, on threads, in worker processes, compiled by JAX, or on a cluster.
+It never decides what they compute, so changing the executor changes no result beyond the last bit of rounding.
+The evaluations of one callable that one request asks for, such as 200 runs of a simulator at 200 parameter values, form one `EvaluationPoints`, and an executor runs it by its chunks.
+A user names an executor on a `Function`, as `simulate.using(executor="thread", executor_options={"max_workers": 8})`, and a lifted call, a sweep, and a plain call of `simulate` then run their evaluations on it.
+A function JAX can trace is mapped by `jax` whatever executor is named.
+
+ProbPipe ships four executors in `executor_registry`:
+
+- `jax`, which maps a callable JAX can trace over every evaluation point at once, and is selected automatically for one;
+- `sequential`, which runs the evaluation points one after another, and is selected automatically for every other callable;
+- `thread`, which runs chunks on a pool of threads, with the options `max_workers` and `chunk_size`;
+- `process`, which runs chunks in worker processes started under the calling process's JAX settings, with the options `max_workers`, `chunk_size`, and `start_method`.
+
+`thread` and `process` run only when named, since user code may not be safe to run in several threads or to send to another process.
+
+A new executor subclasses `EvaluationExecutor`, sets its `name` and `description`, and implements `check` and `execute`.
+Its options are the parameters of `execute` after the set of evaluation points, which `check` takes too.
+`execute` runs every chunk, passing each the set's shared payload, and returns one outcome per evaluation point in order; `EvaluationOutcomes.merge` restores that order from chunks that finished in any order.
+A chunk pickles, so an executor may run it in another process or on another machine, and `shipping_check()` reports whether the set can be sent.
+Pickling a chunk again, to retry it after its first run was lost, gives the retry the same random keys.
+An executor that runs chunks elsewhere returns `EvaluationOutcomes.lost(chunk, reason)` for a chunk that never finished.
+An executor with no `priority` runs only when named.
+`check_executor`, in `probpipe.testing`, checks an executor against the contract before it is registered:
+
+<!-- docs-test: skip, a Slurm cluster and submitit -->
+```python
+import submitit
+
+from probpipe import EvaluationExecutor, EvaluationOutcomes, executor_registry
+from probpipe.testing import check_executor
+
+
+def run_chunk(chunk, shared_payload):
+    return chunk.run(shared_payload)
+
+
+class SlurmExecutor(EvaluationExecutor):
+    name = "slurm"
+    description = "Run chunks of evaluation points as Slurm array jobs."
+
+    def check(self, evaluation_points, /, *, n_jobs=1, partition="short", retries=0):
+        return evaluation_points.shipping_check()
+
+    def execute(self, evaluation_points, /, *, n_jobs=1, partition="short", retries=0):
+        cluster = submitit.AutoExecutor(folder="slurm_logs")
+        cluster.update_parameters(slurm_partition=partition)
+        shared_payload = evaluation_points.shared_payload()
+        pending_chunks = evaluation_points.chunks(num_chunks=n_jobs)
+        chunk_outcomes, failed_jobs = [], []
+        for _ in range(retries + 1):
+            jobs = cluster.map_array(run_chunk, pending_chunks, [shared_payload] * len(pending_chunks))
+            failed_jobs = []
+            for chunk, job in zip(pending_chunks, jobs):
+                try:
+                    chunk_outcomes.append(job.result())   # errors of user code are in the outcomes
+                except Exception as job_error:            # the job itself died
+                    failed_jobs.append((chunk, job_error))
+            pending_chunks = [chunk for chunk, _ in failed_jobs]
+            if not pending_chunks:
+                break
+        chunk_outcomes += [EvaluationOutcomes.lost(chunk, str(job_error)) for chunk, job_error in failed_jobs]
+        return EvaluationOutcomes.merge(chunk_outcomes)
+
+
+check_executor(SlurmExecutor())
+executor_registry.register(SlurmExecutor())
+```
+
+Code that runs inside a ProbPipe call, such as a route of an operation, asks for the evaluations of a callable at many arguments with `evaluate_at_points`, which builds one `EvaluationPoints` and runs it on the executor the call chooses.
+
+::: probpipe.evaluate_at_points
+
+::: probpipe.EvaluationExecutor
+    options:
+      members:
+        - check
+        - execute
+
+::: probpipe.executor_registry
+
+::: probpipe.EvaluationPoints
+
+::: probpipe.EvaluationChunk
+
+::: probpipe.SharedPayload
+
+::: probpipe.EvaluationOutcomes
+
+::: probpipe.EvaluationFailure
+
+::: probpipe.testing.check_executor
+
+## Dispatch registries
+
+A dispatch registry holds named methods and selects one for a call by the types of its arguments.
+It ranks the methods that admit a call by five criteria, in decreasing precedence:
+
+1. Floor status: a method that declares `is_floor` is a fallback, and it ranks after every method that does not, whatever their exactness and priority.
+2. Exactness: exact methods rank before approximate ones.
+3. Priority: a higher priority ranks first among methods of the same floor status and exactness, and a method whose priority is `None` runs only when a call names it.
+4. Specificity: the method whose declared types are closest to the arguments' classes ranks first.
+5. Registration order: the method registered first ranks first.
+
+The registry runs the first method in this order whose `check` reports the call feasible.
+`set_priorities` re-ranks the methods of a registry at runtime and keeps each method's exactness and floor status.
+
+::: probpipe.inference.BaseDispatchRegistry
+    options:
+      show_root_full_path: true
+
+::: probpipe.inference.UnaryDispatchRegistry
+    options:
+      show_root_full_path: true
+
+::: probpipe.inference.BinaryDispatchRegistry
+    options:
+      show_root_full_path: true
+
+::: probpipe.inference.BaseDispatchMethod
+    options:
+      show_root_full_path: true
+
+::: probpipe.inference.UnaryDispatchMethod
+    options:
+      show_root_full_path: true
+
+::: probpipe.inference.BinaryDispatchMethod
+    options:
+      show_root_full_path: true
+
+::: probpipe.inference.Feasibility
+    options:
+      show_root_full_path: true
+
+::: probpipe.inference.MethodInfo
+    options:
+      show_root_full_path: true
+
+::: probpipe.inference.UnarySupportedTypes
+    options:
+      show_root_full_path: true
+
+::: probpipe.inference.BinarySupportedTypes
+    options:
+      show_root_full_path: true
+
+## The registry catalog
+
+`registry_catalog` lists every cataloged registry and its entries, where an entry is one registered item of a registry, such as an inference method or a converter.
+It answers three queries:
+
+- `print(registry_catalog)`: one row per registry, with its kind, its entry count, and its description;
+- `registry_catalog.describe("inference")`: one registry's entries in its own order, each with its priority where the registry ranks its entries and its exactness where the registry declares it, with a dispatch registry's floors and its opt-in-only methods each in a section of their own;
+- `registry_catalog["inference"].describe_entry("blackjax_nuts")`: one entry, as an `EntrySummary`.
+
+The catalog holds six registries:
+
+- `"bijectors"`: the bijector factories that `bijector_for` selects from;
+- `"converters"`: `converter_registry`;
+- `"evaluation_rules"`: `evaluation_rule_registry`;
+- `"executors"`: `executor_registry`;
+- `"inference"`: `inference_method_registry`;
+- `"operations"`: `operation_registry`.
+
+A registry joins the catalog by implementing `SupportsRegistryCataloging` and by an explicit `registry_catalog.register(registry)`, which rejects an empty or duplicate name.
+Constructing a registry does not catalog it, so a registry that a test builds stays out of the catalog.
+The catalog has no removal, so reloading a module that registers a registry, as `importlib.reload` or IPython's `%autoreload` does, raises `ValueError`; restart the process instead.
+A dispatch registry implements the protocol already, and it takes its catalog name and description at construction:
+
+```python
+from probpipe import registry_catalog
+from probpipe.inference import BinaryDispatchRegistry
+
+kl_registry = BinaryDispatchRegistry(name="kl", description="KL divergence between two laws.")
+registry_catalog.register(kl_registry)
+```
+
+A dispatch method may declare a one-line `description` property, as it declares its `name`, which the registry reads at registration and the catalog shows.
+`register_bijector` takes a `description` keyword for the same purpose.
+
+::: probpipe.registry_catalog
+
+::: probpipe.RegistryCatalog
+    options:
+      show_root_full_path: true
+
+::: probpipe.SupportsRegistryCataloging
+    options:
+      show_root_full_path: true
+
+::: probpipe.EntrySummary
+    options:
+      show_root_full_path: true
+
+::: probpipe.RegistryInfo
+    options:
+      show_root_full_path: true

@@ -144,6 +144,14 @@ __pycache__/
 
 # transient CI artifact (pyright advisory job tees its output here)
 pyright-output.txt
-# Claude Code session scratch (plans, ephemeral worktrees)
+# Claude Code session scratch (plans, ephemeral worktrees) and personal settings
 .claude/plans/
 .claude/worktrees/
+.claude/settings.local.json
+
+# Local execution benchmark measurements
+.benchmark-results/
+
+# Workspaces of the design-pipeline assistant, when a user keeps one in the checkout
+probpipe-design/
+probpipe-projects/

@@ -1,0 +1,688 @@
+"""Return, step 8 of the stack (design V.10).
+
+Return validates the produced terms against the completed output spec and
+wraps a raw host into the kind its spec names. It labels the result by
+``output_label`` and gives it provenance, or returns it detached under
+``raw=True``. A result that violates its output spec raises ResultKindError or
+ResultSchemaError, which are return-contract defects.
+"""
+
+from __future__ import annotations
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+import pytest
+
+from probpipe import (
+    ApplicabilityError,
+    Batch,
+    BatchSpec,
+    Distribution,
+    DistributionSpec,
+    EvaluationError,
+    Function,
+    FunctionSpec,
+    Gamma,
+    Normal,
+    NumericArray,
+    NumericArrayBatch,
+    NumericArraySpec,
+    NumericRecordBatch,
+    Opaque,
+    OpaqueSpec,
+    OutputSpec,
+    Record,
+    RecordSpec,
+    ResultKindError,
+    ResultSchemaError,
+    config,
+    function,
+    mean,
+    workflow_run,
+)
+from probpipe.core.constraints import positive
+from probpipe.distributions import ConditionalDistribution
+
+from ._design_helpers import error_of, standard_normal
+
+SCALAR = NumericArraySpec(())
+
+#: Each executor of a lifted call, with the claim that makes it the one that
+#: runs: JAX maps a traceable function whatever executor is named, so the
+#: one-at-a-time executors take ``traceable=False``, and None selects automatically.
+_EXECUTORS = [
+    pytest.param("jax", None, id="jax"),
+    pytest.param("sequential", False, id="sequential"),
+    pytest.param("thread", False, id="thread"),
+    pytest.param(None, None, id="automatic"),
+]
+
+
+class _Kernel(ConditionalDistribution):
+    """A kernel from a scalar ``mu`` to a law over a scalar ``y``, which is never conditioned."""
+
+    def _condition_on(self, given, /, **kwargs):
+        raise NotImplementedError
+
+
+class TestTheKindDirectedWrap:
+    @pytest.mark.parametrize(
+        ("value", "kind"),
+        [
+            (jnp.ones(2), NumericArray),
+            ({"a": 1.0}, Record),
+            (lambda x: x, Function),
+            ("text", Opaque),
+        ],
+        ids=["array", "mapping", "callable", "other"],
+    )
+    def test_a_raw_return_is_wrapped_into_its_kind(self, value, kind):
+        result = Function(
+            lambda: value,
+            label="produce",
+        )()
+
+        assert isinstance(result, kind)
+
+    @pytest.mark.parametrize(
+        "value", [[1.0, 2.0], (1.0, 2.0), {1.0, 2.0}], ids=["list", "tuple", "set"]
+    )
+    def test_a_returned_collection_is_opaque(self, value):
+        assert isinstance(
+            Function(
+                lambda: value,
+                label="produce",
+            )(),
+            Opaque,
+        )
+
+    @pytest.mark.parametrize("value", [2.0, jnp.ones(2), lambda x: x])
+    def test_an_explicit_opaque_declaration_accepts_raw_numeric_values_and_callables(self, value):
+        wrapped = Function(
+            lambda: value,
+            output_spec=OutputSpec(produce=OpaqueSpec()),
+            label="produce",
+        )
+
+        assert isinstance(wrapped(), Opaque)
+        assert wrapped.apply() is value
+
+    def test_a_declared_batch_still_accepts_a_raw_sequence(self):
+        wrapped = Function(
+            lambda: [1.0, 2.0],
+            output_spec=OutputSpec(produce=BatchSpec(SCALAR, row=2)),
+            label="produce",
+        )
+
+        result = wrapped()
+
+        assert isinstance(result, NumericArrayBatch)
+        assert result.level_names == ("row",)
+        np.testing.assert_array_equal(result.raw, [1.0, 2.0])
+
+    def test_an_array_under_one_output_stays_an_array(self):
+        wrapped = Function(
+            lambda: jnp.ones(2),
+            output_spec=OutputSpec(beta=None),
+            label="f",
+        )
+
+        assert isinstance(wrapped(), NumericArray)
+
+    def test_a_one_field_record_stays_a_record(self):
+        wrapped = Function(
+            lambda: {"beta": jnp.ones(2)},
+            output_spec=RecordSpec(beta=NumericArraySpec((2,))),
+            label="f",
+        )
+
+        assert isinstance(wrapped(), Record)
+
+    def test_a_tracked_return_keeps_its_kind_under_a_fresh_identity(self):
+        stored = NumericArray(
+            jnp.ones(2),
+            label="stored",
+        )
+        result = Function(
+            lambda: stored,
+            output_label="loaded",
+            label="load",
+        )()
+
+        assert isinstance(result, NumericArray)
+        assert result is not stored
+        assert result.label == "loaded" and stored.label == "stored"
+        assert result.raw is stored.raw
+
+
+class TestLabelAndProvenance:
+    def test_a_result_is_labeled_by_output_name(self):
+        wrapped = Function(
+            lambda x: 2.0 * x,
+            output_label="prediction",
+            label="predict",
+        )
+
+        assert wrapped(1.0).label == "prediction"
+
+    def test_a_lifted_result_is_labeled_by_output_name(self):
+        wrapped = Function(
+            lambda x: 2.0 * x,
+            output_label="prediction",
+            max_evaluations=6,
+            executor="sequential",
+            label="predict",
+            output_spec=OutputSpec(prediction=None),
+        )
+
+        with workflow_run(seed=0):
+            law = wrapped(standard_normal())
+        rows = wrapped(
+            NumericArrayBatch(
+                jnp.arange(3.0),
+                "row",
+                element=SCALAR,
+                label="rows",
+            )
+        )
+
+        assert isinstance(law, Distribution) and law.label == "prediction"
+        assert isinstance(rows, Batch) and rows.label == "prediction"
+
+    def test_a_returned_product_takes_the_output_label_as_its_label(self):
+        """The product displays by the label, and the returned object is left unlabeled."""
+        product = Normal("a", 0.0, 1.0) & Gamma("b", 2.0, 1.0)
+        result = Function(
+            lambda: product,
+            label="predict",
+        )()
+
+        assert result.label == "predict"
+        assert str(result) == result.notation == "predict(a, b)"
+        assert product.notation == "Normal(a)·Gamma(b)"
+
+    def test_a_law_returned_by_a_value_call_displays_by_the_function_label(self):
+        @function
+        def predict(x):
+            return Normal("y", x, 1.0) & Normal("mu", 0.0, 1.0)
+
+        @function
+        def single(x):
+            return Normal("y", x, 1.0)
+
+        product, law = predict(1.0), single(1.0)
+
+        assert (product.label, str(product)) == ("predict", "predict(y, mu)")
+        assert (law.label, str(law)) == ("single", "single(y)")
+
+    def test_a_kernel_returned_by_a_value_call_displays_by_the_function_label(self):
+        result = Function(
+            lambda scale: _Kernel({"mu": SCALAR}, OutputSpec(y=SCALAR)), label="make"
+        )(2.0)
+
+        assert isinstance(result, ConditionalDistribution)
+        assert (result.label, str(result)) == ("make", "make(y | mu)")
+
+    def test_a_returned_law_takes_the_output_label_alias(self):
+        def predict(x):
+            return Normal("y", x, 1.0) & Normal("mu", 0.0, 1.0)
+
+        product = Function(predict, label="predict", output_label="model")(1.0)
+        law = Function(lambda x: Normal("y", x, 1.0), label="single", output_label="lik")(1.0)
+
+        assert (product.label, str(product)) == ("model", "model(y, mu)")
+        assert (law.label, str(law)) == ("lik", "lik(y)")
+
+    def test_a_relabeled_function_labels_its_returned_law(self):
+        single = Function(lambda x: Normal("y", x, 1.0), label="single").with_label("renamed")
+
+        assert str(single(1.0)) == "renamed(y)"
+
+    def test_a_value_result_keeps_the_application(self):
+        result = Function(lambda x: 2.0 * x, label="double")(1.0)
+
+        assert result.label == "double(1.0)"
+
+    def test_each_product_of_a_sweep_displays_by_its_element_label(self):
+        def predict(loc):
+            return Normal("a", loc, 1.0) & Gamma("b", 2.0, 1.0)
+
+        rows = NumericArrayBatch(
+            jnp.arange(2.0),
+            "row",
+            element=SCALAR,
+            label="rows",
+        )
+        result = Function(
+            predict,
+            label="predict",
+        )(rows)
+
+        assert result[0].notation == "predict(rows)[row=0]"
+
+    def test_provenance_records_the_function_its_dependencies_and_its_inputs(self):
+        wrapped = Function(
+            lambda x, y: x + y,
+            label="add",
+        )
+        tracked = NumericArray(
+            jnp.ones(2),
+            label="a",
+        )
+
+        provenance = wrapped(tracked, 3.0).provenance
+
+        assert [parent.label for parent in provenance.parents] == ["add", "a"]
+        assert set(provenance.inputs) == {"y"}
+
+    @pytest.mark.pending(
+        reason="provenance records the call's resolved controls", raises=AssertionError
+    )
+    def test_provenance_records_the_resolved_controls(self):
+        wrapped = Function(
+            lambda x, y: x + y,
+            exact_only=True,
+            label="add",
+        )
+
+        controls = wrapped(1.0, 2.0).provenance.controls
+
+        assert controls.get("exact_only") is True
+        assert controls.get("max_evaluations") == config.sampling.max_evaluations
+
+
+class TestRaw:
+    def test_raw_returns_a_returned_function_detached(self):
+        def inner(x):
+            return x
+
+        result = Function(
+            lambda: inner,
+            label="make",
+        ).using(raw=True)()
+
+        assert result is inner
+
+    def test_raw_returns_an_array_result_as_its_backing_array(self):
+        result = Function(
+            lambda x: 2.0 * x,
+            label="double",
+        ).using(raw=True)(jnp.ones(2))
+
+        np.testing.assert_allclose(np.asarray(result), 2.0)
+        assert not isinstance(result, NumericArray)
+
+
+class TestResultErrors:
+    def test_the_errors_are_return_contract_defects(self):
+        assert issubclass(ResultKindError, TypeError)
+        assert issubclass(ResultSchemaError, ValueError)
+        assert not issubclass(ResultKindError, ApplicabilityError)
+        assert not issubclass(ResultSchemaError, ApplicabilityError)
+
+    def test_an_incompatible_shape_raises_result_schema_error(self):
+        wrapped = Function(
+            lambda: jnp.ones(3),
+            output_spec=OutputSpec(f=NumericArraySpec((2,))),
+            label="f",
+        )
+
+        with pytest.raises(ResultSchemaError, match="output"):
+            wrapped()
+
+    @pytest.mark.parametrize("executor, traceable", _EXECUTORS)
+    @pytest.mark.parametrize("regime", ["broadcast", "sweep"])
+    def test_a_lifted_output_violation_raises_result_schema_error_under_every_executor(
+        self, regime, executor, traceable
+    ):
+        wrapped = Function(
+            lambda x: jnp.ones(3),
+            output_spec=OutputSpec(f=NumericArraySpec((2,))),
+            executor=executor,
+            traceable=traceable,
+            max_evaluations=6,
+            label="f",
+        )
+        operand = (
+            standard_normal()
+            if regime == "broadcast"
+            else NumericRecordBatch(
+                {"x": jnp.arange(3.0)},
+                "row",
+                element=RecordSpec(x=()),
+                label="rows",
+            )
+        )
+
+        with workflow_run(seed=0), pytest.raises(EvaluationError, match="output") as raised:
+            wrapped(operand)
+
+        assert isinstance(raised.value.__cause__, ResultSchemaError)
+
+    @pytest.mark.parametrize(
+        ("returned", "declared"),
+        [(jnp.int32, jnp.float32), (jnp.bool_, jnp.float32), (jnp.float32, jnp.int32)],
+        ids=["integer-for-float", "bool-for-float", "float-for-integer"],
+    )
+    def test_a_returned_dtype_of_another_kind_raises_result_schema_error(self, returned, declared):
+        wrapped = Function(
+            lambda: jnp.ones((), dtype=returned),
+            output_spec=OutputSpec(f=NumericArraySpec((), declared)),
+            label="f",
+        )
+
+        with pytest.raises(ResultSchemaError, match="dtype"):
+            wrapped()
+        with pytest.raises(ValueError, match="dtype"):
+            wrapped.apply()
+
+    def test_a_returned_dtype_of_the_declared_kind_keeps_the_declaration(self):
+        wrapped = Function(
+            lambda: jnp.ones((), dtype=jnp.float32),
+            output_spec=OutputSpec(f=NumericArraySpec((), jnp.float64)),
+            label="f",
+        )
+
+        with jax.enable_x64(True):
+            assert wrapped().spec == NumericArraySpec((), jnp.float64)
+
+    def test_a_record_field_of_another_dtype_kind_raises_result_schema_error(self):
+        wrapped = Function(
+            lambda: {"y": jnp.ones((), dtype=jnp.int32)},
+            output_spec=RecordSpec(y=NumericArraySpec((), jnp.float32)),
+            label="f",
+        )
+
+        with pytest.raises(ResultSchemaError, match="output/y dtype int32"):
+            wrapped()
+
+    def test_a_batch_of_another_dtype_kind_raises_result_schema_error(self):
+        returned = NumericArrayBatch(
+            jnp.arange(3, dtype=jnp.int32),
+            "row",
+            element=NumericArraySpec(()),
+            label="rows",
+        )
+        declared = BatchSpec(NumericArraySpec((), jnp.float32), returned.spec.levels)
+
+        with pytest.raises(ResultSchemaError, match="dtype int32"):
+            Function(
+                lambda: returned,
+                output_spec=OutputSpec.default(declared, output_name="f"),
+                label="f",
+            )()
+
+    @pytest.mark.parametrize(
+        "executor, traceable",
+        [pytest.param("jax", None, id="jax"), pytest.param("sequential", False, id="sequential")],
+    )
+    def test_a_lifted_dtype_of_another_kind_raises_result_schema_error(self, executor, traceable):
+        wrapped = Function(
+            lambda x: jnp.ones((), dtype=jnp.int32),
+            output_spec=OutputSpec(f=NumericArraySpec((), jnp.float32)),
+            executor=executor,
+            traceable=traceable,
+            max_evaluations=6,
+            label="f",
+        )
+
+        with workflow_run(seed=0), pytest.raises(EvaluationError, match="dtype") as raised:
+            wrapped(standard_normal())
+
+        assert isinstance(raised.value.__cause__, ResultSchemaError)
+
+    def test_a_violated_support_raises_result_schema_error(self):
+        wrapped = Function(
+            lambda: -jnp.ones(2),
+            output_spec=OutputSpec(f=NumericArraySpec((2,), support=positive)),
+            label="f",
+        )
+
+        with pytest.raises(ResultSchemaError, match="support"):
+            wrapped()
+
+    def test_an_output_dimension_bound_twice_raises_result_schema_error(self):
+        wrapped = Function(
+            lambda x: x[:-1],
+            input_spec={"x": NumericArraySpec(("obs",))},
+            output_spec=OutputSpec(y=NumericArraySpec(("obs",))),
+            label="f",
+        )
+
+        with pytest.raises(ResultSchemaError, match="output/y"):
+            wrapped(jnp.ones(4))
+
+    def test_rows_that_disagree_on_an_output_dimension_raise_result_schema_error(self):
+        wrapped = Function(
+            lambda x: jnp.ones(int(x) + 1),
+            output_spec=OutputSpec(y=NumericArraySpec(("k",))),
+            executor="sequential",
+            traceable=False,
+            label="f",
+        )
+        rows = NumericArrayBatch(
+            jnp.arange(2.0),
+            "row",
+            element=SCALAR,
+            label="rows",
+        )
+
+        with pytest.raises(ResultSchemaError):
+            wrapped(rows)
+
+    def test_a_wrong_returned_kind_raises_result_kind_error(self):
+        wrapped = Function(
+            lambda: "text",
+            output_spec=OutputSpec(f=NumericArraySpec(())),
+            label="f",
+        )
+
+        assert isinstance(error_of(wrapped), ResultKindError)
+
+    @pytest.mark.parametrize("mode", ["plain", "raw", "apply"])
+    @pytest.mark.parametrize(
+        ("declaration", "value"),
+        [
+            pytest.param(
+                SCALAR,
+                Opaque(
+                    "text",
+                    label="stored",
+                ),
+                id="tracked-opaque-for-array",
+            ),
+            pytest.param(SCALAR, {"y": 1.0}, id="mapping-for-array"),
+            pytest.param(RecordSpec(y=SCALAR), 1.0, id="array-for-record"),
+            pytest.param(FunctionSpec(), 1.0, id="array-for-function"),
+            pytest.param(DistributionSpec(OutputSpec(y=SCALAR)), 1.0, id="array-for-distribution"),
+            pytest.param(BatchSpec(SCALAR, row=2), jnp.ones(2), id="array-for-batch"),
+            pytest.param(OpaqueSpec(), {"y": 1.0}, id="mapping-for-opaque"),
+            pytest.param(
+                OpaqueSpec(),
+                NumericArray(
+                    1.0,
+                    label="stored",
+                ),
+                id="tracked-array-for-opaque",
+            ),
+        ],
+    )
+    def test_an_overall_kind_mismatch_is_distinguished_from_a_schema_error(
+        self, declaration, value, mode
+    ):
+        wrapped = Function(
+            lambda: value,
+            output_spec=declaration
+            if isinstance(declaration, OutputSpec) or declaration is None
+            else OutputSpec.default(declaration, output_name="produce"),
+            label="produce",
+        )
+        invoke = wrapped.apply if mode == "apply" else wrapped.using(raw=mode == "raw")
+
+        with pytest.raises(ValueError if mode == "apply" else ResultKindError, match="output"):
+            invoke()
+
+    @pytest.mark.parametrize("executor, traceable", _EXECUTORS)
+    @pytest.mark.parametrize("regime", ["broadcast", "sweep"])
+    @pytest.mark.parametrize("raw", [False, True])
+    def test_a_lifted_kind_mismatch_raises_result_kind_error(
+        self, executor, traceable, regime, raw
+    ):
+        wrapped = Function(
+            lambda x: {"y": x},
+            output_spec=OutputSpec.default(SCALAR, output_name="produce"),
+            executor=executor,
+            traceable=traceable,
+            max_evaluations=6,
+            raw=raw,
+            label="produce",
+        )
+        operand = (
+            standard_normal()
+            if regime == "broadcast"
+            else NumericArrayBatch(
+                jnp.arange(3.0),
+                "row",
+                element=SCALAR,
+                label="rows",
+            )
+        )
+
+        with (
+            workflow_run(seed=0),
+            pytest.raises(EvaluationError, match=r"output.*NumericArraySpec") as raised,
+        ):
+            wrapped(operand)
+
+        assert isinstance(raised.value.__cause__, ResultKindError)
+
+    @pytest.mark.parametrize("value", [{"y": "text"}, {"other": 1.0}])
+    def test_a_field_kind_or_structure_mismatch_remains_a_schema_error(self, value):
+        wrapped = Function(
+            lambda: value,
+            output_spec=RecordSpec(y=SCALAR),
+            label="produce",
+        )
+
+        with pytest.raises(ResultSchemaError, match="output"):
+            wrapped()
+
+    @pytest.mark.parametrize("error", [TypeError("body failed"), ValueError("body failed")])
+    def test_an_exception_from_the_body_of_a_plain_call_is_propagated_unchanged(self, error):
+        def body(x):
+            raise error
+
+        wrapped = Function(
+            body,
+            output_spec=OutputSpec.default(SCALAR, output_name="produce"),
+            label="produce",
+        )
+
+        with workflow_run(seed=0), pytest.raises(type(error)) as raised:
+            wrapped(1.0)
+
+        assert raised.value is error
+
+    @pytest.mark.parametrize("error", [TypeError("body failed"), ValueError("body failed")])
+    @pytest.mark.parametrize("regime", ["broadcast", "sweep"])
+    def test_an_exception_from_a_lifted_body_is_the_cause_of_an_evaluation_error(
+        self, error, regime
+    ):
+        def body(x):
+            raise error
+
+        wrapped = Function(
+            body,
+            output_spec=OutputSpec.default(SCALAR, output_name="produce"),
+            executor="sequential",
+            traceable=False,
+            label="produce",
+        )
+        operand = {
+            "broadcast": standard_normal(),
+            "sweep": NumericArrayBatch(
+                jnp.arange(3.0),
+                "row",
+                element=SCALAR,
+                label="rows",
+            ),
+        }[regime]
+
+        with workflow_run(seed=0), pytest.raises(EvaluationError, match="body failed") as raised:
+            wrapped(operand)
+
+        assert raised.value.__cause__ is error
+
+
+@function
+def _scaled_sine(x):
+    return jnp.sin(x) * 3.0
+
+
+@function
+def _moments(x):
+    return {"value": x, "square": x * x}
+
+
+class TestTheReturnInsideATrace:
+    """Inside a JAX transformation a plain call returns its raw form (II.4), and outside one a term."""
+
+    @pytest.mark.parametrize(
+        ("transform", "transformed_input"),
+        [
+            (jax.jit, jnp.asarray(1.0)),
+            (jax.vmap, jnp.arange(3.0)),
+            (lambda traced_body: jax.vmap(jax.jit(traced_body)), jnp.arange(3.0)),
+        ],
+        ids=["jit", "vmap", "vmap-of-jit"],
+    )
+    def test_a_plain_call_returns_its_raw_value(self, transform, transformed_input):
+        call_outputs = []
+
+        def traced_body(x):
+            call_output = _scaled_sine(x)
+            call_outputs.append(call_output)
+            return call_output
+
+        transformed_output = transform(traced_body)(transformed_input)
+        assert all(isinstance(call_output, jax.core.Tracer) for call_output in call_outputs)
+        np.testing.assert_allclose(transformed_output, 3.0 * jnp.sin(transformed_input), rtol=1e-6)
+
+    def test_a_gradient_differentiates_a_plain_call(self):
+        slope = jax.grad(lambda x: _scaled_sine(x))(1.0)
+        np.testing.assert_allclose(slope, 3.0 * np.cos(1.0), rtol=1e-6)
+
+    def test_a_record_result_returns_its_mapping(self):
+        mapped = jax.vmap(lambda x: _moments(x))(jnp.arange(3.0))
+        assert set(mapped) == {"value", "square"}
+        np.testing.assert_allclose(mapped["square"], jnp.arange(3.0) ** 2)
+
+    def test_a_call_outside_a_trace_returns_a_term(self):
+        assert isinstance(_scaled_sine(1.0), NumericArray)
+
+    def test_an_operation_inside_a_trace_keeps_its_term(self):
+        mean_kinds = []
+
+        def traced_body(loc):
+            law_mean = mean(Normal("x", loc, 1.0))
+            mean_kinds.append(type(law_mean))
+            return law_mean.raw
+
+        with workflow_run(seed=0):
+            means = jax.vmap(traced_body)(jnp.arange(3.0))
+        assert mean_kinds == [NumericArray]
+        np.testing.assert_allclose(means, jnp.arange(3.0))
+
+    def test_a_sweep_inside_a_trace_keeps_its_batch(self):
+        sweep_kinds = []
+
+        def traced_body(shift):
+            swept = _scaled_sine(x=NumericArrayBatch(jnp.arange(3.0) + shift, "x", label="xs"))
+            sweep_kinds.append(type(swept))
+            return swept.raw
+
+        sweeps = jax.vmap(traced_body)(jnp.arange(2.0))
+        assert sweep_kinds == [NumericArrayBatch]
+        expected = 3.0 * jnp.sin(jnp.arange(3.0)[None, :] + jnp.arange(2.0)[:, None])
+        np.testing.assert_allclose(sweeps, expected, rtol=1e-6)

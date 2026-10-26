@@ -1,68 +1,58 @@
+> **AI-generated.** An AI assistant drafted this page, and no maintainer has reviewed it yet. Please report errors on the issue tracker.
+
 # Validation
 
-Utilities for validating inference methods and models: predictive checking, and
-posterior-vs-reference comparison metrics that score an approximation against a
-trusted reference (analytic, long-NUTS, or sandwich). These answer "does this
-method recover the right posterior?", as opposed to per-fit convergence
-diagnostics, which assess a single fitted posterior.
+This page documents the predictive checks, the scores of an approximate posterior against a reference posterior, and simulation-based calibration.
+The diagnostics recorded on a posterior, such as R-hat and leave-one-out cross-validation, are on [Diagnostics](diagnostics.md).
 
 ## Predictive checks
 
-When `key` is omitted, `predictive_check` delegates randomness to the workflow
-broker only for the exact built-in `GLMLikelihood`. Custom or otherwise opaque
-generative likelihoods—including `GLMLikelihood` subclasses—must pass an
-explicit `key=`. Inheriting the built-in `generate_data` method is not enough
-to certify that a subclass preserves its stochastic-effect descriptor. The
-same boundary applies to `simulation_based_calibration` and the diagnostic
-helper `add_ppc`.
+::: probpipe.predictive_check
 
-The omitted-key route also requires the exact `GLMLikelihood` to carry its
-stored design matrix. Construct the likelihood with `x=` before using these
-generative checks; `GLMLikelihood.generate_data` itself requires that matrix
-regardless of key ownership.
-
-::: probpipe.validation.predictive_check
-
-## Reference posteriors
+## Scores against a reference posterior
 
 ::: probpipe.validation.Reference
-
-## Comparison metrics
-
-The metrics group by what the reference must carry: the moment metrics need the
-reference's high-precision `(mean, cov)`; the sample metrics need reference
-draws; the kernel Stein discrepancy needs only the target score `∇ log π`. All
-return JAX arrays and are jit-compatible; `score_posterior` aggregates a chosen
-set into a scorecard, skipping any whose reference pieces are absent.
-
-When sliced Wasserstein scoring is active, an omitted `score_posterior` key is
-workflow-owned. A bare call therefore receives a fresh ephemeral root.
-Reproducible benchmark scorecards, including calls from `probpipe-benchmark`,
-should use an enclosing `workflow_run(seed=...)` or pass `key=` explicitly.
-
-::: probpipe.validation.standardized_mean_error
-
-::: probpipe.validation.relative_cov_error
-
-::: probpipe.validation.std_ratios
-
-::: probpipe.validation.sliced_wasserstein
-
-::: probpipe.validation.mmd
-
-::: probpipe.validation.ksd
+    options:
+      show_root_full_path: true
 
 ::: probpipe.validation.score_posterior
+    options:
+      show_root_full_path: true
+
+::: probpipe.validation.standardized_mean_error
+    options:
+      show_root_full_path: true
+
+::: probpipe.validation.relative_cov_error
+    options:
+      show_root_full_path: true
+
+::: probpipe.validation.std_ratios
+    options:
+      show_root_full_path: true
+
+::: probpipe.validation.sliced_wasserstein
+    options:
+      show_root_full_path: true
+
+::: probpipe.validation.mmd
+    options:
+      show_root_full_path: true
+
+::: probpipe.validation.ksd
+    options:
+      show_root_full_path: true
 
 ## Calibration and coverage
 
-Method self-consistency checks: simulation-based calibration drives the inference
-method over many `(θ★, data, posterior)` replications and tests whether the rank
-of the truth among the posterior draws is uniform; interval coverage checks
-whether central credible intervals contain the truth at their nominal rate.
-
 ::: probpipe.validation.simulation_based_calibration
+    options:
+      show_root_full_path: true
 
 ::: probpipe.validation.SBCResult
+    options:
+      show_root_full_path: true
 
 ::: probpipe.validation.interval_coverage
+    options:
+      show_root_full_path: true

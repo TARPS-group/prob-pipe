@@ -1,0 +1,36 @@
+name: PR hygiene
+
+# Checks a PR's title, branch, and body against CONTRIBUTING.md and
+# .github/PULL_REQUEST_TEMPLATE.md through scripts/ci/pr_hygiene.py (tests in
+# tests/ci/). Advisory: each finding is a warning annotation and a line of the
+# job summary, and the job passes either way (continue-on-error).
+#
+# The title, branch, and body reach the script as environment variables, never
+# spliced into the shell script, so no PR text runs as a command.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  hygiene:
+    name: PR hygiene (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Check the title, branch, and body (advisory — does not gate merges)
+        continue-on-error: true
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: python3 scripts/ci/pr_hygiene.py

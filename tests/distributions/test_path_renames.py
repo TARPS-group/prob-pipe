@@ -1,0 +1,894 @@
+"""Renaming event paths and inputs keeps the law and renames its values.
+
+``rename`` on a law whose rename changes the path of a field of a
+record draw returns a law that holds the original and renames at its boundary,
+unless the law's family rebuilds itself under the new paths, as an empirical
+law over records does. Either way its draws, moments, and marginals carry the
+new names, and the law that holds the original translates a scored value, a
+given, or a path under the new names to the original's. Renaming a whole term's
+output alone changes only the event spec. On a kernel, a
+given-side target is the node's new path, so a rename may group inputs or split
+a field out of a structured input; binding the renamed kernel translates the
+given to the original inputs and renames what the binding returns.
+"""
+
+from __future__ import annotations
+
+import pickle
+from typing import Any
+
+import jax
+import jax.numpy as jnp
+import pytest
+
+from probpipe import (
+    MultivariateNormal,
+    Normal,
+    NumericArraySpec,
+    NumericRecordBatch,
+    OutputSpec,
+    Record,
+    RecordBatch,
+    RecordSpec,
+)
+from probpipe.core._dispatch import Feasibility
+from probpipe.distributions import (
+    ConditionalDistribution,
+    Distribution,
+    FactoredConditionalDistribution,
+)
+from probpipe.distributions._capabilities import (
+    SupportsConditionalLogProb,
+    SupportsConditionalMarginals,
+    SupportsConditionalMean,
+    SupportsConditionalSampling,
+    SupportsCovariance,
+    SupportsExactConditioning,
+    SupportsExpectation,
+    SupportsLogProb,
+    SupportsMarginals,
+    SupportsMean,
+    SupportsQuantile,
+    SupportsSampling,
+    SupportsVariance,
+    _capability_guard,
+)
+from probpipe.distributions._empirical import EmpiricalDistribution
+from probpipe.linalg import DenseLinOp, LinOp
+
+_REAL = Normal("x", 0.0, 1.0).event_spec.term_spec
+_SCALAR = NumericArraySpec(())
+_MEAN = jnp.array([1.0, 2.0, 3.0])
+_COV = jnp.array([[2.0, 0.3, 0.1], [0.3, 1.5, 0.2], [0.1, 0.2, 1.0]])
+
+#: A nested record in the positional form: a group two levels deep and a vector beside it.
+_NESTED = OutputSpec(RecordSpec(model=RecordSpec(theta=RecordSpec(mu=_REAL, tau=(2,))), y=(3,)))
+
+
+# -- Test doubles -------------------------------------------------------------
+
+
+class _Law(Distribution):
+    """A law over a declared event that claims no capability."""
+
+    def __init__(self, label: str, event_spec: OutputSpec) -> None:
+        super().__init__(
+            event_spec,
+            label=label,
+        )
+
+
+class _NestedLaw(
+    _Law, SupportsSampling, SupportsMean, SupportsMarginals, SupportsExactConditioning
+):
+    """A law over the nested event that records its marginal paths and givens.
+
+    A draw is a standard normal flat vector split into ``(mu, tau, y)``, the
+    mean is ``(0, ..., 5)`` so split, the marginal at a path is a standard
+    normal named by the path's final segment, and conditioning returns the law
+    of ``model/theta/mu`` and ``y``.
+    """
+
+    def __init__(self, label: str = "parent") -> None:
+        super().__init__(label, _NESTED)
+        self.marginal_calls: list[Any] = []
+        self.given_calls: list[dict[str, Any]] = []
+
+    def _record(self, flat: Any, sample_shape: tuple[int, ...] = ()) -> Any:
+        fields = {
+            "model": {"theta": {"mu": flat[..., 0], "tau": flat[..., 1:3]}},
+            "y": flat[..., 3:],
+        }
+        if sample_shape:
+            return RecordBatch(
+                fields,
+                "sample",
+                element=self.event_spec.term_spec,
+                axes_per_level=(len(sample_shape),),
+                label=self.label,
+            )
+        return Record(
+            fields,
+            event_template=self.event_spec.term_spec,
+            label=self.label,
+        )
+
+    def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
+        return self._record(jax.random.normal(key, (*sample_shape, 6)), sample_shape)
+
+    def _mean(self) -> Any:
+        return self._record(jnp.arange(6.0))
+
+    def _marginal(self, path: str | tuple[str, ...]) -> Distribution:
+        self.marginal_calls.append(path)
+        output_name = path.rsplit("/", 1)[-1]
+        if output_name == "theta":
+            return _Law("theta", OutputSpec(theta=RecordSpec(mu=_REAL, tau=(2,))))
+        return Normal(output_name, 0.0, 1.0)
+
+    def _marginal_guard(self, path: str | tuple[str, ...]) -> Feasibility:
+        if path == "y":
+            return Feasibility(False, "no closed form at y")
+        return Feasibility(True)
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Distribution:
+        self.given_calls.append(dict(given))
+        return _Law(
+            "conditioned",
+            OutputSpec(RecordSpec(model=RecordSpec(theta=RecordSpec(mu=_REAL)), y=(3,))),
+        )
+
+
+class _FiniteLaw(_Law, SupportsExpectation):
+    """A law over ``a`` and ``b`` with the atoms (0, 1) of weight 1/4 and (1, 3) of weight 3/4."""
+
+    def __init__(self, label: str = "parent") -> None:
+        super().__init__(label, OutputSpec(RecordSpec(a=_REAL, b=_REAL)))
+
+    def _expectation(self, f: Any) -> Any:
+        atoms = ((0.0, 1.0, 0.25), (1.0, 3.0, 0.75))
+        return sum(
+            weight
+            * f(
+                Record(
+                    {"a": jnp.asarray(a), "b": jnp.asarray(b)},
+                    label="atom",
+                )
+            )
+            for a, b, weight in atoms
+        )
+
+
+class _GuardedMeanLaw(_Law, SupportsMean):
+    """A law over the nested event whose mean guard rejects."""
+
+    REJECTED = Feasibility(False, "the mean does not exist")
+
+    def __init__(self, label: str = "parent") -> None:
+        super().__init__(label, _NESTED)
+
+    def _mean(self) -> Any:
+        raise AssertionError("the guard rejects the mean")
+
+    def _mean_guard(self) -> Feasibility:
+        return self.REJECTED
+
+
+class _WholeRecordLaw(_Law, SupportsSampling):
+    """The whole record ``parameters`` of a parent's draws."""
+
+    def __init__(self, parent: Distribution) -> None:
+        super().__init__("whole", OutputSpec(parameters=parent.event_spec.term_spec))
+        self.parent = parent
+
+    def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
+        return self.parent._sample(key, sample_shape)
+
+
+class _CovLaw(_Law, SupportsCovariance):
+    """A law over ``a`` and ``b`` whose covariance operator is one stored object."""
+
+    def __init__(self) -> None:
+        super().__init__("parent", OutputSpec(RecordSpec(a=(1,), b=(2,))))
+        self.cov = DenseLinOp(_COV)
+
+    def _cov(self) -> LinOp:
+        return self.cov
+
+
+class _QuantileLaw(_Law, SupportsQuantile):
+    """A law over ``a`` and ``b`` whose quantile at ``q`` is ``q`` plus each coordinate's index.
+
+    The quantiles take the event's raw form, a mapping of per-field arrays with
+    the level axes first, or with *flat* the flat coordinates after the levels.
+    """
+
+    def __init__(self, *, flat: bool = False) -> None:
+        super().__init__("parent", OutputSpec(RecordSpec(a=(1,), b=(2,))))
+        self.flat = flat
+
+    def _quantile(self, q: Any) -> Any:
+        coordinates = jnp.asarray(q)[..., None] + jnp.arange(3.0)
+        if self.flat:
+            return coordinates
+        return {"a": coordinates[..., :1], "b": coordinates[..., 1:]}
+
+
+class _NamedDensityLaw(_Law, SupportsLogProb):
+    """A law over ``u`` and ``y`` whose density reads each field by its name."""
+
+    def __init__(self) -> None:
+        super().__init__("parent", OutputSpec(RecordSpec(u=(1,), y=(2,))))
+
+    def _log_prob(self, value: Any) -> Any:
+        u, y = jnp.asarray(value["u"]), jnp.asarray(value["y"])
+        return -jnp.sum((u - 1.0) ** 2) - 2.0 * jnp.sum((y - jnp.array([3.0, 4.0])) ** 2)
+
+
+class _RecordingKernel(ConditionalDistribution):
+    """A kernel that records each given it binds and returns a kernel over the inputs left.
+
+    Binding every input returns a law over the kernel's event under the kernel's
+    label and records the bound values in input order; binding some returns the kernel over the rest,
+    which keeps the values bound so far.
+    """
+
+    def __init__(
+        self,
+        label: str,
+        given_spec: Any,
+        event_spec: OutputSpec,
+        *,
+        calls: list[dict[str, Any]] | None = None,
+        bound: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            given_spec,
+            event_spec,
+            label=label,
+        )
+        self.calls = [] if calls is None else calls
+        self.bound = dict(bound or {})
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        given = dict(given)
+        self.calls.append(given)
+        bound = {**self.bound, **given}
+        remaining = {
+            input_name: spec
+            for input_name, spec in self.given_spec.items()
+            if input_name not in given
+        }
+        if remaining:
+            return _RecordingKernel(
+                self.label, remaining, self.event_spec, calls=self.calls, bound=bound
+            )
+        return _Law(self.label, self.event_spec)
+
+
+class _MeanKernel(ConditionalDistribution, SupportsConditionalSampling, SupportsConditionalMean):
+    """``y | mu``: a record ``(y, z)`` whose mean is ``(mu, 0)``, and a draw ``(mu + e, e)``."""
+
+    def __init__(self, label: str = "k") -> None:
+        super().__init__(
+            {"mu": _SCALAR},
+            OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)),
+            label=label,
+        )
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        return _Law(self.label, self.event_spec)
+
+    def _conditional_mean(self, given: Any) -> Any:
+        return Record(
+            {"y": jnp.asarray(given["mu"]), "z": jnp.asarray(0.0)},
+            label="mean",
+        )
+
+    def _conditional_mean_guard(self) -> Feasibility:
+        return Feasibility(True)
+
+    def _conditional_sample(self, given: Any, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
+        noise = jax.random.normal(key, sample_shape)
+        return Record(
+            {"y": given["mu"] + noise, "z": noise},
+            label="draw",
+        )
+
+
+class _ScoreKernel(ConditionalDistribution, SupportsConditionalLogProb):
+    """``(y, z) | mu`` whose density reads the given and each field by name."""
+
+    def __init__(self, label: str = "k") -> None:
+        super().__init__(
+            {"mu": _SCALAR},
+            OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)),
+            label=label,
+        )
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        return _Law(self.label, self.event_spec)
+
+    def _conditional_log_prob(self, given: Any, value: Any) -> Any:
+        return -((value["y"] - given["mu"]) ** 2) - 2.0 * value["z"] ** 2
+
+
+class _MarginalKernel(ConditionalDistribution, SupportsConditionalMarginals):
+    """``(y, z) | mu`` whose conditional marginal at a field is ``Normal(mu, 1)`` named by the field.
+
+    It records the given and the path of each conditional marginal, and the
+    law it returns.
+    """
+
+    def __init__(self, label: str = "k") -> None:
+        super().__init__(
+            {"mu": _SCALAR},
+            OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)),
+            label=label,
+        )
+        self.marginal_calls: list[tuple[dict[str, Any], Any]] = []
+        self.marginals: list[Distribution] = []
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        return _Law(self.label, self.event_spec)
+
+    def _conditional_marginal(self, given: Any, path: str | tuple[str, ...]) -> Distribution:
+        self.marginal_calls.append((dict(given), path))
+        self.marginals.append(Normal(path, given["mu"], 1.0))
+        return self.marginals[-1]
+
+
+def _product() -> Distribution:
+    return Normal("a", 0.0, 1.0) & Normal("b", 2.0, 3.0)
+
+
+#: Three record atoms over ``a/x`` and ``b/y``.
+_GROUPED = RecordSpec(a=RecordSpec(x=_SCALAR), b=RecordSpec(y=_SCALAR))
+_XS, _YS = jnp.array([1.0, 2.0, 4.0]), jnp.array([10.0, 20.0, 40.0])
+
+
+def _grouped_law() -> EmpiricalDistribution:
+    atoms = NumericRecordBatch(
+        {"a/x": _XS, "b/y": _YS},
+        "row",
+        element=_GROUPED,
+        label="rows",
+    )
+    return EmpiricalDistribution(atoms, label="grouped")
+
+
+def _grouped_selection() -> Distribution:
+    """The selection of both groups of the grouped law.
+
+    A view does not rebuild itself under new paths, so a rename of it holds it.
+    """
+    return _grouped_law()[("a", "b")]
+
+
+def _whole_record_view() -> Distribution:
+    """The group ``parameters`` of the atoms of ``beta`` and ``sigma``, viewed as a whole record."""
+    spec = RecordSpec(parameters=RecordSpec(beta=_SCALAR, sigma=_SCALAR))
+    columns = {"parameters/beta": _XS, "parameters/sigma": _YS}
+    atoms = NumericRecordBatch(
+        columns,
+        "row",
+        element=spec,
+        label="rows",
+    )
+    return EmpiricalDistribution(atoms, label="p")["parameters"]
+
+
+# -- The renamed law ------------------------------------------------------------
+
+
+class TestRenamedLawDeclaration:
+    def test_renaming_a_whole_term_output_keeps_the_class(self):
+        law = Normal("x", 0.0, 1.0)
+        renamed = law.rename(x="location")
+        assert type(renamed) is type(law)
+        assert list(renamed.event_spec.outputs) == ["location"]
+
+    def test_renaming_a_field_keeps_the_name_and_renames_the_declaration(self):
+        parent = _product()
+        renamed = parent.rename(a="x")
+        assert renamed.label == parent.label
+        assert renamed.event_spec == parent.event_spec.rename(a="x")
+        assert renamed.provenance is not None
+        assert renamed.provenance.operation == "rename"
+        assert [info.label for info in renamed.provenance.parents] == [parent.label]
+
+    def test_a_renamed_law_claims_the_capabilities_of_its_parent(self):
+        parent = MultivariateNormal("x", _MEAN[:1], cov=_COV[:1, :1]) & MultivariateNormal(
+            "y", _MEAN[1:], cov=_COV[1:, 1:]
+        )
+        renamed = parent.rename(y="w")
+        claims = (
+            SupportsSampling,
+            SupportsLogProb,
+            SupportsMean,
+            SupportsVariance,
+            SupportsCovariance,
+        )
+        assert all(isinstance(renamed, protocol) for protocol in claims)
+        assert not isinstance(_Law("p", _NESTED).rename(y="w"), SupportsSampling)
+
+    def test_a_renamed_law_round_trips_through_pickle(self):
+        renamed = _product().rename(a="x")
+        restored = pickle.loads(pickle.dumps(renamed))
+        assert type(restored) is type(renamed)
+        assert (restored.label, restored.spec) == (renamed.label, renamed.spec)
+
+
+class TestRenamedLawValues:
+    def test_a_draw_carries_the_new_names(self, key):
+        parent = _NestedLaw()
+        renamed = parent.rename({"model/theta/mu": "model/theta/m", "y": "obs"})
+        draw = renamed._sample(key)
+        assert list(draw.keys()) == ["model/theta/m", "model/theta/tau", "obs"]
+        assert jnp.array_equal(draw["model/theta/m"], parent._sample(key)["model/theta/mu"])
+        assert renamed.event_spec.term_spec.is_valid(draw)
+
+    def test_a_batch_of_draws_carries_the_new_names(self, key):
+        parent = _NestedLaw()
+        draws = parent.rename(y="obs")._sample(key, (4,))
+        assert isinstance(draws, RecordBatch)
+        assert jnp.array_equal(draws["obs"], parent._sample(key, (4,))["y"])
+
+    def test_a_field_of_a_whole_record_term_is_renamed_in_its_draws(self, key):
+        parent = Normal("beta", 0.0, 1.0) & Normal("sigma", 1.0, 1.0)
+        whole = _WholeRecordLaw(parent)
+        renamed = whole.rename({"parameters/beta": "parameters/b"}).rename(parameters="theta")
+        assert renamed.event_spec == OutputSpec(theta=RecordSpec(b=_REAL, sigma=_REAL))
+        draw = renamed._sample(key)
+        assert list(draw.keys()) == ["b", "sigma"]
+
+    def test_the_mean_carries_the_new_names(self):
+        mean = _NestedLaw().rename({"model/theta": "model/coefficients"})._mean()
+        assert jnp.allclose(mean["model/coefficients/tau"], jnp.array([1.0, 2.0]))
+
+    def test_the_covariance_is_the_parent_covariance(self):
+        parent = _CovLaw()
+        assert parent.rename(a="x")._cov() is parent.cov
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param({"x": jnp.array([0.5]), "y": jnp.array([1.0, 2.0])}, id="mapping"),
+            pytest.param(
+                Record(
+                    {"x": jnp.array([0.5]), "y": jnp.array([1.0, 2.0])},
+                    label="v",
+                ),
+                id="record",
+            ),
+        ],
+    )
+    def test_the_density_scores_the_value_under_the_original_names(self, value):
+        parent = _NamedDensityLaw()
+        renamed = parent.rename(u="x")
+        original = {"u": jnp.array([0.5]), "y": jnp.array([1.0, 2.0])}
+        assert jnp.allclose(renamed._log_prob(value), parent._log_prob(original))
+        assert jnp.allclose(renamed._unnormalized_log_prob(value), parent._log_prob(original))
+
+    def test_the_expectation_integrates_the_renamed_value(self):
+        renamed = _FiniteLaw().rename(a="x")
+        expectation = renamed._expectation(lambda record: record["b"] - record["x"])
+        assert jnp.allclose(expectation, 0.25 * (1.0 - 0.0) + 0.75 * (3.0 - 1.0))
+
+
+class TestRenamedLawPaths:
+    def test_the_marginal_at_a_renamed_path_is_the_parent_marginal_at_the_original(self):
+        parent = _NestedLaw()
+        renamed = parent.rename({"model/theta/mu": "model/theta/m"})
+        marginal = renamed._marginal("model/theta/m")
+        assert parent.marginal_calls == ["model/theta/mu"]
+        assert list(marginal.event_spec.outputs) == ["m"]
+
+    def test_the_marginal_of_a_group_takes_the_renames_below_it(self):
+        parent = _NestedLaw()
+        renamed = parent.rename({"model/theta/mu": "model/theta/m"}).rename(
+            {"model/theta": "model/coefficients"}
+        )
+        marginal = renamed._marginal("model/coefficients")
+        assert parent.marginal_calls == ["model/theta"]
+        assert marginal.event_spec == OutputSpec(coefficients=RecordSpec(m=_REAL, tau=(2,)))
+
+    def test_the_marginal_guard_is_the_parent_guard_at_the_original_path(self):
+        renamed = _NestedLaw().rename(y="obs")
+        assert _capability_guard(renamed, "_marginal", "obs") == Feasibility(
+            False, "no closed form at y"
+        )
+        assert _capability_guard(renamed, "_marginal", "model") == Feasibility(True)
+        assert _capability_guard(renamed, "_marginal", "y").feasible is False
+
+    def test_the_marginal_at_a_path_that_is_not_an_event_path_raises_key_error(self):
+        with pytest.raises(KeyError):
+            _NestedLaw().rename(y="obs")._marginal("y")
+
+    def test_conditioning_reaches_the_parent_under_the_original_names(self):
+        parent = _NestedLaw()
+        renamed = parent.rename({"model/theta/tau": "model/theta/t", "y": "obs"})
+        conditioned = renamed._condition_on({"model/theta/t": jnp.zeros(2)})
+        assert [list(given) for given in parent.given_calls] == [["model/theta/tau"]]
+        assert conditioned.event_spec == OutputSpec(
+            RecordSpec(model=RecordSpec(theta=RecordSpec(mu=_REAL)), obs=(3,))
+        )
+
+    def test_a_given_record_is_renamed_below_its_path(self):
+        parent = _NestedLaw()
+        renamed = parent.rename({"model/theta/tau": "model/theta/t"})
+        renamed._condition_on({"model/theta": {"t": jnp.zeros(2), "mu": jnp.asarray(0.0)}})
+        assert list(parent.given_calls[0]["model/theta"]) == ["mu", "tau"]
+
+    def test_the_conditioning_guard_translates_the_paths(self):
+        renamed = _NestedLaw().rename(y="obs")
+        assert _capability_guard(renamed, "_condition_on", ("obs",)) == Feasibility(True)
+        assert _capability_guard(renamed, "_condition_on", ("y",)).feasible is False
+
+    def test_a_projected_capability_carries_the_parent_guard(self):
+        renamed = _GuardedMeanLaw().rename(y="obs")
+        assert _capability_guard(renamed, "_mean") == _GuardedMeanLaw.REJECTED
+
+    def test_the_marginal_at_paths_that_share_a_last_name_keeps_both(self):
+        renamed = _grouped_selection().rename({"b/y": "b/x"})
+        assert _capability_guard(renamed, "_marginal", ("b/x", "a/x")) == Feasibility(True)
+        marginal = renamed._marginal(("b/x", "a/x"))
+        assert list(marginal.event_spec.outputs) == list(renamed.event_spec.outputs)
+        assert marginal.event_spec.term_spec["b"].keys() == ("x",)
+
+
+class TestRenamedLawMoves:
+    """A target is the node's new exact path, so a rename may move fields of the draws."""
+
+    def test_a_moved_field_is_appended_to_its_new_parent_in_the_draws(self, key):
+        parent = _NestedLaw()
+        renamed = parent.rename({"model/theta/mu": "mu", "y": "model/y"})
+        draw = renamed._sample(key)
+        assert list(draw.keys()) == ["model/theta/tau", "model/y", "mu"]
+        original = parent._sample(key)
+        assert jnp.array_equal(draw["mu"], original["model/theta/mu"])
+        assert jnp.array_equal(draw["model/y"], original["y"])
+        assert renamed.event_spec.term_spec.is_valid(draw)
+
+    def test_a_batch_of_draws_moves_its_columns(self, key):
+        parent = _NestedLaw()
+        draws = parent.rename({"y": "model/y"})._sample(key, (4,))
+        assert tuple(draws.element_spec.term_spec.keys()) == (
+            "model/theta/mu",
+            "model/theta/tau",
+            "model/y",
+        )
+        assert jnp.array_equal(draws["model/y"], parent._sample(key, (4,))["y"])
+
+    def test_the_mean_moves_with_its_fields(self):
+        mean = _NestedLaw().rename({"y": "model/y"})._mean()
+        assert list(mean.keys()) == ["model/theta/mu", "model/theta/tau", "model/y"]
+        assert jnp.allclose(mean["model/y"], jnp.array([3.0, 4.0, 5.0]))
+
+    def test_the_covariance_follows_the_moved_coordinates(self):
+        # ``a`` moves behind ``b``, so the coordinates of a draw are ``(b, a)``.
+        cov = _CovLaw().rename({"a": "g/a"})._cov()
+        order = jnp.array([1, 2, 0])
+        assert jnp.allclose(cov.to_dense(), _COV[order][:, order])
+
+    @pytest.mark.parametrize("flat", [False, True], ids=["raw-form", "flat-coordinates"])
+    def test_the_quantiles_follow_the_moved_fields(self, flat):
+        q = jnp.array([0.25, 0.75])
+        quantiles = _QuantileLaw(flat=flat).rename({"a": "g/a"})._quantile(q)
+        of_a, of_b = q[:, None] + 0.0, q[:, None] + jnp.array([1.0, 2.0])
+        if flat:
+            assert jnp.allclose(quantiles, jnp.concatenate([of_b, of_a], axis=-1))
+        else:
+            assert list(quantiles) == ["b", "g"]
+            assert jnp.allclose(quantiles["b"], of_b)
+            assert jnp.allclose(quantiles["g"]["a"], of_a)
+
+    def test_the_quantiles_carry_the_new_names(self):
+        quantiles = _QuantileLaw().rename(a="x")._quantile(jnp.array(0.5))
+        assert list(quantiles) == ["x", "b"]
+
+    def test_the_density_scores_a_moved_value_under_the_original_paths(self):
+        parent = _NamedDensityLaw()
+        renamed = parent.rename({"u": "g/u"})
+        value = {"y": jnp.array([1.0, 2.0]), "g": {"u": jnp.array([0.5])}}
+        original = {"u": jnp.array([0.5]), "y": jnp.array([1.0, 2.0])}
+        assert jnp.allclose(renamed._log_prob(value), parent._log_prob(original))
+
+    def test_a_moved_empirical_law_permutes_its_covariance_and_moves_its_quantiles(self):
+        parent = _grouped_law()
+        renamed = parent.rename({"a/x": "b/x"})
+        assert renamed.event_spec == OutputSpec(RecordSpec(b=RecordSpec(y=_SCALAR, x=_SCALAR)))
+        order = jnp.array([1, 0])
+        assert jnp.allclose(renamed._cov().to_dense(), parent._cov().to_dense()[order][:, order])
+        q = jnp.array([0.5])
+        moved, original = renamed._quantile(q), parent._quantile(q)
+        assert list(moved) == ["b"]
+        assert list(moved["b"]) == ["y", "x"]
+        assert jnp.allclose(moved["b"]["x"], original["a"]["x"])
+        assert jnp.allclose(moved["b"]["y"], original["b"]["y"])
+
+    def test_the_marginal_at_a_moved_field_is_the_parent_marginal_at_its_origin(self):
+        parent = _grouped_law()
+        renamed = parent.rename({"a/x": "x"})
+        marginal = renamed._marginal("x")
+        assert list(marginal.event_spec.outputs) == ["x"]
+        assert jnp.allclose(marginal._mean(), jnp.mean(_XS))
+        assert renamed._marginal("b").event_spec == OutputSpec(b=RecordSpec(y=_SCALAR))
+
+    def test_the_marginal_at_a_group_that_gathers_several_nodes_is_rejected(self):
+        renamed = _grouped_selection().rename({"a/x": "g/x", "b/y": "g/y"})
+        assert _capability_guard(renamed, "_marginal", "g").feasible is False
+        with pytest.raises(ValueError, match="does not correspond to a single field"):
+            renamed._marginal("g")
+        assert _capability_guard(renamed, "_marginal", "g/x") == Feasibility(True)
+
+    def test_a_view_at_a_regrouping_node_claims_the_density_of_its_group(self, key):
+        """The node packages the factor of ``a``, whose marginal there is exact."""
+        renamed = (Normal("a", 0.0, 1.0) & Normal("b", 1.0, 1.0)).rename({"a": "g/a"})
+        view = renamed["g"]
+        assert isinstance(view, SupportsSampling)
+        assert isinstance(view, SupportsLogProb)
+        assert jnp.allclose(view._log_prob({"a": 0.5}), Normal("a", 0.0, 1.0)._log_prob(0.5))
+        assert jnp.array_equal(view._sample(key)["a"], renamed._sample(key)["g"]["a"])
+
+    def test_a_given_at_a_moved_field_reaches_the_parent_at_its_origin(self):
+        parent = _NestedLaw()
+        parent.rename({"model/theta/tau": "tau"})._condition_on({"tau": jnp.zeros(2)})
+        assert [list(given) for given in parent.given_calls] == [["model/theta/tau"]]
+
+    def test_the_conditioned_law_keeps_the_moves_of_the_fields_that_remain(self):
+        parent = _NestedLaw()
+        renamed = parent.rename({"y": "model/y"})
+        conditioned = renamed._condition_on({"model/theta/tau": jnp.zeros(2)})
+        assert conditioned.event_spec == OutputSpec(
+            RecordSpec(model=RecordSpec(theta=RecordSpec(mu=_REAL), y=(3,)))
+        )
+
+
+class TestRenamingARenamedLaw:
+    """A renamed law applies a further rename to its parent, merged with its own."""
+
+    def test_an_output_rename_after_a_field_rename_keeps_the_field_rename(self, key):
+        law = _whole_record_view()
+        renamed = law.rename({"parameters/beta": "parameters/b"}).rename(parameters="theta")
+        assert renamed._parent is law
+        assert renamed.event_spec == OutputSpec(theta=RecordSpec(b=_SCALAR, sigma=_SCALAR))
+        assert _capability_guard(renamed, "_marginal", "theta/b") == Feasibility(True)
+        marginal = renamed._marginal("theta/b")
+        assert list(marginal.event_spec.outputs) == ["b"]
+        assert jnp.allclose(marginal._mean(), jnp.mean(_XS))
+        assert list(renamed._sample(key).keys()) == ["b", "sigma"]
+
+    def test_a_move_after_a_rename_merges_both(self, key):
+        parent = _NestedLaw()
+        renamed = parent.rename(y="obs").rename({"obs": "model/obs"})
+        assert renamed._parent is parent
+        draw = renamed._sample(key)
+        assert list(draw.keys()) == ["model/theta/mu", "model/theta/tau", "model/obs"]
+        assert jnp.array_equal(draw["model/obs"], parent._sample(key)["y"])
+        renamed._marginal("model/obs")
+        assert parent.marginal_calls == ["y"]
+
+
+# -- The renamed kernel ---------------------------------------------------------
+
+
+def _vector(size: int) -> NumericArraySpec:
+    return NumericArraySpec((size,))
+
+
+class TestRenamedKernelBinding:
+    def test_a_grouped_input_binds_the_original_inputs(self):
+        kernel = _RecordingKernel("k", {"a": _SCALAR, "b": _vector(2)}, OutputSpec(y=_SCALAR))
+        grouped = kernel.rename({"a": "theta/a", "b": "theta/b"})
+        law = grouped._condition_on({"theta": {"a": 1.0, "b": jnp.zeros(2)}})
+        assert isinstance(law, Distribution)
+        assert list(kernel.calls[0]) == ["a", "b"]
+        assert kernel.calls[0]["a"] == 1.0
+
+    def test_split_inputs_bind_the_original_structured_input(self):
+        kernel = _RecordingKernel(
+            "k", {"theta": RecordSpec(a=_SCALAR, b=_vector(2))}, OutputSpec(y=_SCALAR)
+        )
+        split = kernel.rename({"theta/a": "a"})
+        split._condition_on({"a": 1.0, "theta": {"b": jnp.zeros(2)}})
+        (given,) = kernel.calls
+        assert list(given) == ["theta"]
+        assert given["theta"]["a"] == 1.0
+        assert jnp.array_equal(given["theta"]["b"], jnp.zeros(2))
+
+    def test_binding_one_split_input_holds_its_field_until_the_input_completes(self):
+        kernel = _RecordingKernel(
+            "k", {"theta": RecordSpec(a=_SCALAR, b=_vector(2))}, OutputSpec(y=_SCALAR)
+        )
+        rest = kernel.rename({"theta/a": "a"})._condition_on({"a": 1.0})
+        assert isinstance(rest, ConditionalDistribution)
+        assert list(rest.given_spec) == ["theta"]
+        assert rest.given_spec["theta"] == RecordSpec(b=_vector(2))
+        assert kernel.calls == []
+        law = rest._condition_on({"theta": {"b": jnp.zeros(2)}})
+        assert isinstance(law, Distribution)
+        assert kernel.calls[0]["theta"]["a"] == 1.0
+
+    def test_binding_some_inputs_returns_the_renamed_kernel_over_the_rest(self):
+        kernel = _RecordingKernel("k", {"mu": _SCALAR, "sigma": _SCALAR}, OutputSpec(y=_SCALAR))
+        renamed = kernel.rename(mu="loc", sigma="scale", y="obs")
+        rest = renamed._condition_on({"loc": 1.0})
+        assert isinstance(rest, ConditionalDistribution)
+        assert list(rest.given_spec) == ["scale"]
+        assert list(rest.event_spec.outputs) == ["obs"]
+        law = rest._condition_on({"scale": 2.0})
+        assert [dict(given) for given in kernel.calls] == [{"mu": 1.0}, {"sigma": 2.0}]
+        assert list(law.event_spec.outputs) == ["obs"]
+
+    def test_the_returned_law_carries_the_renamed_fields(self):
+        kernel = _RecordingKernel(
+            "k", {"mu": _SCALAR}, OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR))
+        )
+        law = kernel.rename(y="obs")._condition_on({"mu": 1.0})
+        assert law.event_spec == OutputSpec(RecordSpec(obs=_SCALAR, z=_SCALAR))
+
+    def test_binding_part_of_a_structured_input_raises_value_error(self):
+        kernel = _RecordingKernel("k", {"a": _SCALAR, "b": _SCALAR}, OutputSpec(y=_SCALAR))
+        grouped = kernel.rename({"a": "theta/a", "b": "theta/b"})
+        with pytest.raises(ValueError, match="cannot bind part of an input"):
+            grouped._condition_on({"theta": {"a": 1.0}})
+
+    def test_a_key_that_is_not_an_input_raises_key_error(self):
+        kernel = _RecordingKernel("k", {"mu": _SCALAR}, OutputSpec(y=_SCALAR))
+        with pytest.raises(KeyError):
+            kernel.rename(mu="loc")._condition_on({"mu": 1.0})
+
+    def test_a_renamed_kernel_round_trips_through_pickle(self):
+        kernel = _RecordingKernel("k", {"mu": _SCALAR}, OutputSpec(y=_SCALAR))
+        renamed = kernel.rename(mu="loc")
+        restored = pickle.loads(pickle.dumps(renamed))
+        assert (restored.label, restored.spec) == (renamed.label, renamed.spec)
+
+
+class TestRenamedKernelMoves:
+    @pytest.mark.parametrize(
+        ("moves", "error"),
+        [
+            pytest.param({"a": "a/x"}, ValueError, id="into-its-own-node"),
+            pytest.param({"a": "g", "b": "g/b"}, ValueError, id="overlapping-targets"),
+            pytest.param({"a": "b"}, ValueError, id="onto-an-input"),
+            pytest.param({"a": "g//a"}, ValueError, id="empty-segment"),
+            pytest.param({"a": "not a name"}, ValueError, id="not-an-identifier"),
+            pytest.param({"a/x": "x"}, KeyError, id="below-a-leaf"),
+        ],
+    )
+    def test_a_move_the_given_side_cannot_take_raises(self, moves, error):
+        kernel = _RecordingKernel("k", {"a": _SCALAR, "b": _SCALAR}, OutputSpec(y=_SCALAR))
+        with pytest.raises(error):
+            kernel.rename(moves)
+
+    def test_a_field_renamed_within_its_input_keeps_its_position(self):
+        kernel = _RecordingKernel(
+            "k", {"theta": RecordSpec(a=_SCALAR, b=_SCALAR)}, OutputSpec(y=_SCALAR)
+        )
+        renamed = kernel.rename({"theta/a": "theta/alpha"})
+        assert renamed.given_spec["theta"] == RecordSpec(alpha=_SCALAR, b=_SCALAR)
+
+    def test_swapped_inputs_exchange_their_names(self):
+        kernel = _RecordingKernel("k", {"a": _SCALAR, "b": _vector(2)}, OutputSpec(y=_SCALAR))
+        swapped = kernel.rename(a="b", b="a")
+        assert list(swapped.given_spec) == ["b", "a"]
+        assert swapped.given_spec["a"] == _vector(2)
+        swapped._condition_on({"a": jnp.zeros(2), "b": 1.0})
+        assert kernel.calls[0]["a"] == 1.0
+
+    def test_one_call_reads_the_targets_of_both_sides_as_exact_paths(self):
+        kernel = _RecordingKernel(
+            "k",
+            {"theta": RecordSpec(a=_SCALAR, b=_SCALAR)},
+            OutputSpec(RecordSpec(g=RecordSpec(mu=_SCALAR, sigma=_SCALAR), y=_SCALAR)),
+        )
+        renamed = kernel.rename({"theta/a": "alpha", "g/mu": "m"})
+        assert list(renamed.given_spec) == ["theta", "alpha"]
+        assert renamed.given_spec["theta"] == RecordSpec(b=_SCALAR)
+        assert renamed.event_spec == OutputSpec(
+            RecordSpec(g=RecordSpec(sigma=_SCALAR), y=_SCALAR, m=_SCALAR)
+        )
+        law = renamed._condition_on({"theta": {"b": 1.0}, "alpha": 2.0})
+        assert kernel.calls[0]["theta"]["a"] == 2.0
+        assert law.event_spec == renamed.event_spec
+
+    def test_a_factored_kernel_renames_through_its_factors(self):
+        first = _RecordingKernel("k1", {"x": _SCALAR}, OutputSpec(a=_SCALAR))
+        joint = first & _RecordingKernel("k2", {"w": _SCALAR}, OutputSpec(b=_SCALAR))
+        renamed = joint.rename(x="u", b="c")
+        assert isinstance(renamed, FactoredConditionalDistribution)
+        assert set(renamed.given_spec) == {"u", "w"}
+        assert list(renamed.event_spec.outputs) == ["a", "c"]
+        assert list(renamed.factors[0].given_spec) == ["u"]
+        assert list(renamed.factors[1].event_spec.outputs) == ["c"]
+        renamed._condition_on({"u": 1.0, "w": 2.0})
+        assert first.calls == [{"x": 1.0}]
+
+    def test_gathering_an_output_of_a_kernel_joint_packages_its_factor(self):
+        """Moving a whole term's output into a new node packages its factor as the node."""
+        joint = _RecordingKernel("k1", {"x": _SCALAR}, OutputSpec(a=_SCALAR)) & _RecordingKernel(
+            "k2", {"w": _SCALAR}, OutputSpec(b=_SCALAR)
+        )
+        renamed = joint.rename({"a": "g/a"})
+        assert isinstance(renamed, FactoredConditionalDistribution)
+        assert set(renamed.given_spec) == {"x", "w"}
+        assert list(renamed.event_spec.outputs) == ["g", "b"]
+        group = renamed.factors[0]
+        assert list(group.given_spec) == ["x"]
+        assert group.event_spec == OutputSpec(g=RecordSpec(a=_SCALAR))
+
+    def test_a_rename_the_factors_cannot_carry_renames_at_the_joint_boundary(self):
+        """Gathering ``a`` and ``c``, when ``b`` conditions on ``a`` and ``c`` on ``b``, is a cycle."""
+        joint = (
+            _RecordingKernel("k3", {"b": _SCALAR}, OutputSpec(c=_SCALAR))
+            & _RecordingKernel("k2", {"a": _SCALAR}, OutputSpec(b=_SCALAR))
+        ) & _RecordingKernel("k1", {"x": _SCALAR}, OutputSpec(a=_SCALAR))
+        renamed = joint.rename({"a": "g/a", "c": "g/c"})
+        assert not isinstance(renamed, FactoredConditionalDistribution)
+        assert list(renamed.given_spec) == ["x"]
+        assert set(renamed.event_spec.outputs) == {"b", "g"}
+
+
+class TestRenamedKernelCapabilities:
+    def test_a_renamed_kernel_claims_the_conditional_capabilities_of_its_parent(self):
+        renamed = _MeanKernel().rename(mu="loc")
+        assert isinstance(renamed, SupportsConditionalMean)
+        assert isinstance(renamed, SupportsConditionalSampling)
+        assert not isinstance(
+            _RecordingKernel("k", {"mu": _SCALAR}, OutputSpec(y=_SCALAR)).rename(mu="loc"),
+            SupportsConditionalMean,
+        )
+
+    def test_the_conditional_mean_translates_the_given_and_renames_the_mean(self):
+        renamed = _MeanKernel().rename(mu="loc", y="obs")
+        mean = renamed._conditional_mean({"loc": 2.0})
+        assert list(mean.keys()) == ["obs", "z"]
+        assert jnp.allclose(mean["obs"], 2.0)
+
+    def test_a_conditional_draw_carries_the_new_names(self, key):
+        renamed = _MeanKernel().rename(y="obs")
+        draw = renamed._conditional_sample({"mu": 1.0}, key)
+        assert list(draw.keys()) == ["obs", "z"]
+        assert jnp.allclose(draw["obs"] - draw["z"], 1.0)
+
+    def test_a_conditional_capability_needs_every_required_input(self):
+        kernel = _RecordingKernel("k", {"mu": _SCALAR, "sigma": _SCALAR}, OutputSpec(y=_SCALAR))
+        renamed = kernel.rename(mu="loc")
+        with pytest.raises(ValueError, match="every required input"):
+            renamed._parent_given({"loc": 1.0})
+
+    def test_a_conditional_capability_carries_the_parent_guard(self):
+        renamed = _MeanKernel().rename(mu="loc")
+        assert _capability_guard(renamed, "_conditional_mean") == Feasibility(True)
+
+    def test_a_moved_event_field_moves_in_the_conditional_draws_and_mean(self, key):
+        renamed = _MeanKernel().rename({"y": "g/y"})
+        assert list(renamed._conditional_mean({"mu": 2.0}).keys()) == ["z", "g/y"]
+        draw = renamed._conditional_sample({"mu": 1.0}, key)
+        assert list(draw.keys()) == ["z", "g/y"]
+        assert jnp.allclose(draw["g/y"] - draw["z"], 1.0)
+
+    def test_the_conditional_density_scores_under_the_original_names(self):
+        parent = _ScoreKernel()
+        renamed = parent.rename(mu="loc", y="g/obs")
+        value = {"z": jnp.asarray(0.5), "g": {"obs": jnp.asarray(2.0)}}
+        expected = parent._conditional_log_prob(
+            {"mu": 1.0}, {"y": jnp.asarray(2.0), "z": jnp.asarray(0.5)}
+        )
+        assert jnp.allclose(renamed._conditional_log_prob({"loc": 1.0}, value), expected)
+
+    def test_the_conditional_marginal_at_a_renamed_path_is_the_parent_marginal(self):
+        parent = _MarginalKernel()
+        renamed = parent.rename({"y": "g/y"})
+        assert _capability_guard(renamed, "_conditional_marginal", "g/y") == Feasibility(True)
+        marginal = renamed._conditional_marginal({"mu": 2.0}, "g/y")
+        assert parent.marginal_calls == [({"mu": 2.0}, "y")]
+        assert marginal is parent.marginals[0]
+
+    def test_the_conditional_marginal_guard_names_the_kernel_at_a_path_it_lacks(self):
+        renamed = _MarginalKernel().rename({"y": "g/y"})
+        report = _capability_guard(renamed, "_conditional_marginal", "y")
+        assert report.feasible is False
+        assert "'y' is not an event path of 'k'" in report.description

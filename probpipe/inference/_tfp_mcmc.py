@@ -1,4 +1,4 @@
-"""TFP-backed inference methods: NUTS and HMC."""
+"""The TFP-backed inference method, NUTS."""
 
 from __future__ import annotations
 
@@ -11,20 +11,26 @@ import numpy as np
 import tensorflow_probability.substrates.jax.mcmc as tfp_mcmc
 
 from ..core._dispatch import Feasibility
-from ..core.protocols import SupportsUnnormalizedLogProb
-from ..custom_types import Array
+from ..custom_types import Array, PRNGKey
+from ..distributions._capabilities import SupportsUnnormalizedLogProb
 from ..distributions._distribution import Distribution
-from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ..distributions._empirical import EmpiricalDistribution
+from ..operations._condition import InferenceMethod
+from ..operations._inference_target import InferenceTarget, _flat_record_spec
+from ._approximate_distribution import make_posterior
 from ._inference_utils import (
+    UNTRACEABLE_DENSITY,
     as_prng_key,
     build_mcmc_datatree,
     build_target_log_prob,
-    extract_event_spec,
+    build_target_log_prob_flat,
+    chain_initial_states,
     get_init_state,
-    get_prior,
-    is_jax_traceable,
+    no_density_reason,
+    observed_parts,
+    traces_in_jax,
+    unconstrained_chain,
 )
-from ._registry import InferenceMethod
 
 
 def _run_tfp_chains(
@@ -36,50 +42,50 @@ def _run_tfp_chains(
     num_warmup: int,
     num_chains: int,
     step_size: float,
-    random_seed: int,
+    target_accept_prob: float,
+    random_seed: int | PRNGKey,
+    per_chain_init: bool = False,
 ) -> tuple[list[Array], dict[str, np.ndarray]]:
     """Run TFP-backed MCMC chains.
 
     Returns (chains, sample_stats_dict) where sample_stats_dict contains
     arrays shaped (num_chains, num_results) for building DataTree.
+    ``init_state`` is one state, or one per chain on its leading axis when
+    ``per_chain_init`` is set.
     """
-    if algorithm == "nuts":
-        inner_kernel = tfp_mcmc.NoUTurnSampler(
-            target_log_prob_fn=target_log_prob_fn,
-            step_size=step_size,
-        )
-    elif algorithm == "hmc":
-        inner_kernel = tfp_mcmc.HamiltonianMonteCarlo(
-            target_log_prob_fn=target_log_prob_fn,
-            step_size=step_size,
-            num_leapfrog_steps=10,
-        )
-    else:
-        raise ValueError(f"algorithm must be 'nuts' or 'hmc', got {algorithm!r}")
+    if algorithm != "nuts":
+        raise ValueError(f"algorithm must be 'nuts'; got {algorithm!r}")
+    inner_kernel = tfp_mcmc.NoUTurnSampler(
+        target_log_prob_fn=target_log_prob_fn,
+        step_size=step_size,
+    )
 
     num_adapt = int(0.8 * num_warmup) if num_warmup > 0 else 0
     if num_adapt > 0:
         kernel = tfp_mcmc.DualAveragingStepSizeAdaptation(
             inner_kernel=inner_kernel,
             num_adaptation_steps=num_adapt,
-            target_accept_prob=0.75,
+            target_accept_prob=target_accept_prob,
         )
     else:
         kernel = inner_kernel
 
     chain_keys = jax.random.split(as_prng_key(random_seed), num_chains)
 
-    def _run_one_chain(chain_key):
+    def _run_one_chain(chain_key, chain_init):
         return tfp_mcmc.sample_chain(
             num_results=num_results,
-            current_state=init_state,
+            current_state=chain_init,
             kernel=kernel,
             num_burnin_steps=num_warmup,
             seed=chain_key,
             trace_fn=lambda _, kr: kr,
         )
 
-    all_samples, all_traces = jax.vmap(_run_one_chain)(chain_keys)
+    init_axis = 0 if per_chain_init else None
+    all_samples, all_traces = jax.vmap(_run_one_chain, in_axes=(0, init_axis))(
+        chain_keys, init_state
+    )
     # all_samples: (num_chains, num_results, *event_shape)
     chains = [all_samples[c] for c in range(num_chains)]
 
@@ -110,7 +116,28 @@ def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, np.ndarray]
     if is_accepted is not None:
         stats["is_accepted"] = np.asarray(is_accepted)
 
+    has_divergence = getattr(results, "has_divergence", None)
+    if has_divergence is not None:
+        stats["diverging"] = np.asarray(has_divergence)
+
     return stats
+
+
+def _chain_target(
+    model: Any, observed: Any, *, init: Any, random_seed: int | PRNGKey
+) -> tuple[Callable[[Array], Array], Array]:
+    """The log-density at a chain state, and the initial state.
+
+    TFP runs on the flat state :func:`get_init_state` gives. A target that
+    declares a numeric record it has no flat view of is scored at that state
+    unflattened, and any other at the state as it is.
+    """
+    if _flat_record_spec(model) is not None:
+        return build_target_log_prob_flat(model, observed, init=init, random_seed=random_seed)
+    return (
+        build_target_log_prob(model, observed),
+        get_init_state(model, init, random_seed=random_seed),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -121,14 +148,34 @@ def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, np.ndarray]
 class _TFPGradientMethod(InferenceMethod):
     """Base for TFP gradient-based MCMC methods (NUTS, HMC)."""
 
-    def __init__(self, algorithm: str, method_name: str, method_priority: int | None):
+    _method_options = (
+        "init",
+        "num_chains",
+        "num_results",
+        "num_warmup",
+        "step_size",
+        "target_accept_prob",
+    )
+
+    def __init__(
+        self,
+        algorithm: str,
+        method_name: str,
+        method_priority: int | None,
+        method_description: str,
+    ):
         self._algorithm = algorithm
         self._method_name = method_name
         self._method_priority = method_priority
+        self._method_description = method_description
 
     @property
     def name(self) -> str:
         return self._method_name
+
+    @property
+    def description(self) -> str:
+        return self._method_description
 
     def supported_types(self) -> tuple[type, ...]:
         return (Distribution,)
@@ -137,63 +184,92 @@ class _TFPGradientMethod(InferenceMethod):
     def priority(self) -> int | None:
         return self._method_priority
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
-        # Intentionally probes JAX traceability (via jax.make_jaxpr) to avoid
-        # selecting a gradient-based method that would fail at execute() time.
-        # The cost is ~one JAX trace, cached by JAX on subsequent calls.
-        if not isinstance(dist, SupportsUnnormalizedLogProb):
-            return Feasibility(
-                feasible=False,
-                description="Requires SupportsUnnormalizedLogProb",
-            )
+    def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
+        """Whether the target has an unnormalized density that JAX traces."""
+        model, observed = observed_parts(target)
+        if not isinstance(model, SupportsUnnormalizedLogProb):
+            return Feasibility(feasible=False, description=no_density_reason(model))
+        if not traces_in_jax(model):
+            return Feasibility(feasible=False, description=UNTRACEABLE_DENSITY)
+        init = kwargs.get("init")
+        if isinstance(init, str) or np.ndim(init) >= 2:
+            # A starting point for each chain is resolved and checked when the method runs.
+            init = None
         try:
-            target = build_target_log_prob(dist, observed)
-            init = get_init_state(
-                dist,
-                kwargs.get("init"),
-                random_seed=kwargs.get("random_seed", 0),
-            )
-            if not is_jax_traceable(target, init):
-                return Feasibility(
-                    feasible=False,
-                    description="Log-prob is not JAX-traceable",
-                )
+            density, init = _chain_target(model, observed, init=init, random_seed=0)
+            unconstrained_chain(density, init, model)
         except Exception as e:
             return Feasibility(feasible=False, description=str(e))
         return Feasibility(feasible=True)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
-        random_seed = kwargs.get("random_seed", 0)
-        target = build_target_log_prob(dist, observed)
-        prior = get_prior(dist)
-        init = get_init_state(
-            dist,
-            kwargs.get("init"),
-            random_seed=random_seed,
-        )
-        event_spec = extract_event_spec(dist)
+    def execute(
+        self, target: InferenceTarget, /, *, key: PRNGKey, **options: Any
+    ) -> EmpiricalDistribution:
+        """Chains of the TFP kernel on the target's unnormalized density.
 
-        num_results = kwargs.get("num_results", 1000)
-        num_warmup = kwargs.get("num_warmup", 500)
-        num_chains = kwargs.get("num_chains", 1)
+        Parameters
+        ----------
+        target : InferenceTarget
+            The law to sample: a law with an unnormalized density, or an
+            unnormalized conditional at data its joint does not declare as fields.
+        key : PRNGKey
+            The run's random key.
+        **options : Any
+            The call's ``method_options``, which :func:`TFPNutsMethod` lists.
+
+        Returns
+        -------
+        EmpiricalDistribution
+            The posterior, with its atoms on the levels ``chain`` and ``draw``.
+
+        Raises
+        ------
+        ValueError
+            If ``target_accept_prob`` is not strictly between 0 and 1, or
+            ``init`` is neither a state, one state per chain, nor ``"per_chain"``.
+        """
+        self._check_options(options)
+        target_accept_prob = options.get("target_accept_prob", 0.75)
+        if not 0.0 < target_accept_prob < 1.0:
+            raise ValueError(
+                f"target_accept_prob must be strictly between 0 and 1; got {target_accept_prob!r}"
+            )
+        num_results = options.get("num_results", 1000)
+        num_warmup = options.get("num_warmup", 500)
+        num_chains = options.get("num_chains", 4)
+        model, observed = observed_parts(target)
+        init, per_chain_init = chain_initial_states(
+            model,
+            options.get("init"),
+            num_chains=num_chains,
+            key=key,
+            method=self._method_name,
+            default_per_chain=True,
+        )
+        density, init = _chain_target(model, observed, init=init, random_seed=key)
+        density, init, constrain = unconstrained_chain(
+            density, init, model, per_chain=per_chain_init
+        )
 
         chains, sample_stats = _run_tfp_chains(
-            target,
+            density,
             init,
             algorithm=self._algorithm,
             num_results=num_results,
             num_warmup=num_warmup,
             num_chains=num_chains,
-            step_size=kwargs.get("step_size", 0.1),
-            random_seed=random_seed,
+            step_size=options.get("step_size", 0.1),
+            target_accept_prob=target_accept_prob,
+            random_seed=key,
+            per_chain_init=per_chain_init,
         )
+        chains = [constrain(chain) for chain in chains]
         annotations = build_mcmc_datatree(chains, sample_stats)
         return make_posterior(
+            target,
             chains,
-            parents=(prior,),
-            algorithm=self._method_name,
+            method=self._method_name,
             annotations=annotations,
-            event_spec=event_spec,
             num_results=num_results,
             num_warmup=num_warmup,
             num_chains=num_chains,
@@ -206,22 +282,27 @@ def TFPNutsMethod() -> _TFPGradientMethod:
     Runs only when the caller pins ``method="tfp_nuts"``; ``blackjax_nuts``
     is what automatic selection picks for the same targets.
 
+    Its ``method_options`` are:
+
+    - ``num_results``, ``num_warmup``, and ``num_chains``: the draw, warmup,
+      and chain counts, which are 1000, 500, and 4 unless set. Step-size
+      adaptation runs over the first 80% of the warmup steps;
+    - ``step_size``: the initial step size, which is 0.1 unless set;
+    - ``target_accept_prob``: the acceptance probability that warmup's
+      step-size adaptation targets, a number strictly between 0 and 1, which
+      is 0.75 unless set. A higher target adapts a smaller step, which removes
+      the divergent transitions of a posterior with regions of high curvature
+      at the cost of longer trajectories;
+    - ``init``: where the chains start, in the four forms that
+      ``BlackJAXNutsMethod`` states for ``blackjax_nuts``.
+
     Notes
     -----
     Kept for bit-pattern regression and side-by-side backend comparison.
     """
-    return _TFPGradientMethod("nuts", "tfp_nuts", None)
-
-
-def TFPHmcMethod() -> _TFPGradientMethod:
-    """TFP Hamiltonian Monte Carlo, registered as ``tfp_hmc``, opt-in-only.
-
-    Runs only when the caller pins ``method="tfp_hmc"``.
-
-    Notes
-    -----
-    Its ``check()`` is identical to that of ``tfp_nuts``, and both TFP
-    kernels are opt-in-only because ``blackjax_nuts`` is what automatic
-    selection picks for the same targets.
-    """
-    return _TFPGradientMethod("hmc", "tfp_hmc", None)
+    return _TFPGradientMethod(
+        "nuts",
+        "tfp_nuts",
+        None,
+        "NUTS through TensorFlow Probability, for a JAX-traceable log-density.",
+    )

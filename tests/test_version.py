@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import re
+import tomllib
+from pathlib import Path
+
 import probpipe
 
 
@@ -13,3 +17,33 @@ def test_version_resolves_from_distribution():
     version falls back to the ``"0.0.0+unknown"`` placeholder and this fails.
     """
     assert probpipe.__version__ != "0.0.0+unknown"
+
+
+def test_the_metapackage_moves_in_lockstep_with_the_core():
+    """The ``probpipe`` metapackage carries ``probpipe-core``'s version and pins it exactly.
+
+    CONTRIBUTING.md § Package Structure states the lockstep: both
+    ``pyproject.toml`` files carry one version, and each ``probpipe-core``
+    requirement of the metapackage pins that version with ``==``.
+    """
+    root = Path(__file__).resolve().parents[1]
+    core = tomllib.loads((root / "pyproject.toml").read_text())["project"]
+    meta = tomllib.loads((root / "packaging" / "probpipe" / "pyproject.toml").read_text())[
+        "project"
+    ]
+    assert meta["version"] == core["version"]
+    pins = [req for req in meta["dependencies"] if req.startswith("probpipe-core")]
+    assert pins
+    exact = re.compile(rf"==\s*{re.escape(core['version'])}\s*(;|$)")
+    assert [req for req in pins if not exact.search(req)] == []
+
+
+def test_the_metapackage_ships_the_root_license():
+    """The metapackage's ``LICENSE`` is a copy of the repository's ``LICENSE``.
+
+    PEP 639 requires each license file to be inside the project directory, so
+    ``packaging/probpipe/`` carries its own copy for the metapackage's sdist and wheel.
+    """
+    root = Path(__file__).resolve().parents[1]
+    copy = root / "packaging" / "probpipe" / "LICENSE"
+    assert copy.read_bytes() == (root / "LICENSE").read_bytes()

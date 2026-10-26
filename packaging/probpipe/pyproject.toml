@@ -9,14 +9,38 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "probpipe"
-version = "0.1.0"   # kept in lockstep with probpipe-core (the == pin below)
+version = "0.2.0.dev0"   # kept in lockstep with probpipe-core (the == pin below)
 description = "Probabilistic data-processing pipelines, with the PyMC, nutpie, pyabc, and BayesFlow inference backends included"
-readme = "README.md"
+readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.12"
 license = "Apache-2.0"
+license-files = ["LICENSE"]  # a copy of the root LICENSE, which tests/test_version.py checks
 authors = [
   { name = "ProbPipe Development Team", email = "huggins@bu.edu" },
 ]  # Full contributor list in the AUTHORS file (repository root)
+keywords = [
+  "bayesian inference",
+  "probabilistic programming",
+  "uncertainty quantification",
+  "simulation-based inference",
+  "mcmc",
+  "variational inference",
+  "jax",
+]
+# The `license` expression above states the license (PEP 639), and setuptools
+# rejects a license classifier beside it.
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Mathematics",
+]
 dependencies = [
   # Bundle the backends the docs use by pulling probpipe-core's own extras, so
   # their version constraints stay single-sourced in the root pyproject (no
@@ -25,11 +49,11 @@ dependencies = [
   # the fast NUTS backend, and pyabc powers the SMC-ABC tutorial section.
   #
   # Exact `==` pin: one repo builds two coordinated dists (the jax/jaxlib model);
-  # a CI version-sync guard (follow-up) keeps it equal to probpipe-core's version.
-  "probpipe-core[pymc,nutpie,pyabc]==0.1.0",
+  # tests/test_version.py checks that it equals probpipe-core's version.
+  "probpipe-core[pymc,nutpie,pyabc]==0.2.0.dev0",
   # BayesFlow caps Python <3.14 while core spans 3.12-3.14, so it is marker-guarded:
   # `pip install probpipe` still resolves on 3.14, just without neural SBI there.
-  "probpipe-core[bayesflow]==0.1.0; python_version < '3.14'",
+  "probpipe-core[bayesflow]==0.2.0.dev0; python_version < '3.14'",
 ]
 
 # Re-export only the user-facing extras NOT already bundled above, so
@@ -42,9 +66,11 @@ viz = ["probpipe-core[viz]"]
 stan = ["probpipe-core[stan]"]
 
 [project.urls]
-"Repository" = "https://github.com/TARPS-group/prob-pipe"
+"Homepage" = "https://tarps-group.github.io/prob-pipe/"
 "Documentation" = "https://tarps-group.github.io/prob-pipe/"
+"Repository" = "https://github.com/TARPS-group/prob-pipe"
 "Changelog" = "https://github.com/TARPS-group/prob-pipe/blob/main/CHANGELOG.md"
+"Issues" = "https://github.com/TARPS-group/prob-pipe/issues"
 
 # Code-less metapackage: no import package ships here (the `probpipe` import
 # package lives in probpipe-core). The empty packages list disables setuptools

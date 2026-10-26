@@ -23,22 +23,29 @@ See design III.3.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import Any, Self, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .._messages import count
 from ..custom_types import Array
+from ._batch import _batch_axis_count
 from ._record_batch import (
     RecordBatch,
+    _inferred_element_term_spec,
     _record_batch_flatten,
-    _record_element_spec,
+    _record_element_term_spec,
     _unflatten_with,
 )
+from ._repr import VALUE_INDENT, format_rows, rows_html, summary_with_values
+from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
+from ._table import batch_tables_html, batch_tables_text
 from .provenance import Provenance
+from .tracked import refuses_label_first
 
 __all__ = ["NumericRecordBatch"]
 
@@ -53,56 +60,149 @@ class NumericRecordBatch(RecordBatch):
     them; see the module docstring. It adds the batched flat layout,
     :meth:`to_vector` and :meth:`from_vector`.
 
-    Construction is that of :class:`RecordBatch`, narrowed: *element_spec* must
-    describe an all-numeric element, and every column must carry a numeric dtype.
+    Construction is that of :class:`RecordBatch`, narrowed: *element*, given
+    or inferred from the columns, must describe an all-numeric element, and every
+    column must carry a numeric dtype.
+
+    Parameters
+    ----------
+    fields : Mapping of str to array
+        The numeric columns, keyed by leaf path or given as a nested mapping, each
+        shaped ``(*batch_shape, *event_shape)``.
+    level_names : str or sequence of str
+        One name per level, outermost first; a single string names a single level.
+    label : str, optional
+        The batch's label. Defaults to ``record(field,...)``, which names the
+        top-level fields of the elements' spec, as for :class:`RecordBatch`.
+    element : RecordSpec, optional
+        The all-numeric schema every element satisfies. Defaults to the spec the
+        columns imply.
+    axes_per_level : int or sequence of int, optional
+        How many axes each level holds, outermost first (a single int is one level's
+        count). Defaults to one axis per level.
+    provenance : Provenance, optional
+        How this batch was produced.
 
     Raises
     ------
     TypeError
-        If *element_spec* does not describe an all-numeric element, or a column
+        If *element* does not describe an all-numeric element, or a column
         is not a numeric array.
+    TypeError
+        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
+        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
+        mapping are refused for both.
+    ValueError
+        If an *axes_per_level* count is less than 1, or a level name is empty or
+        contains ``/``.
     """
 
     __slots__ = ()
 
     def __init__(
         self,
-        name: str,
         fields: Mapping[str, Any],
         /,
-        level_names: str | Iterable[str],
+        level_names: NamesLike,
         *,
-        element_spec: RecordSpec,
-        axes_per_level: Iterable[int] | None = None,
+        label: str | None = None,
+        element: RecordSpec | None = None,
+        axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
-        template = _record_element_spec(element_spec, kind=type(self).__name__)
+        kind = type(self).__name__
+        names = _as_names(level_names, what=f"{kind} level_names")
+        axes = (
+            None
+            if axes_per_level is None
+            else _as_axis_counts(axes_per_level, what=f"{kind} axes_per_level")
+        )
+        if element is None:
+            n_batch = _batch_axis_count(names, axes)
+            element = _inferred_element_term_spec(fields, n_batch, kind=kind)
+        template = _record_element_term_spec(element, kind=type(self).__name__)
         if not isinstance(template, NumericRecordSpec):
+            others = [k for k in template if not isinstance(template[k], NumericArraySpec)]
+            if not others:
+                raise TypeError(
+                    f"{kind}: element must be a NumericRecordSpec, got {type(template).__name__}"
+                )
             raise TypeError(
-                f"{type(self).__name__} describes an all-numeric element, so its element_spec "
-                f"carries a NumericRecordSpec; got one over {type(template).__name__} with "
-                f"fields {list(template.keys())}"
+                f"{kind} requires every field to be a numeric array, but {others} are not; "
+                f"use RecordBatch for fields that are not numeric arrays"
             )
         super().__init__(
-            name,
             fields,
-            level_names,
-            element_spec=element_spec,
-            axes_per_level=axes_per_level,
+            names,
+            element=element,
+            axes_per_level=axes,
             provenance=provenance,
+            label=label,
         )
-
-    # ``element_spec`` is not overridden: it already reports the stored
-    # ``RecordSpec``, and only ``event_template`` has anything narrower to say.
 
     @property
     def event_template(self) -> NumericRecordSpec:
-        """The numeric structure of one element — a view on :attr:`element_spec`."""
-        return cast(NumericRecordSpec, self.element_spec)
+        """The numeric structure of one element, ``element_spec.term_spec``."""
+        return cast(NumericRecordSpec, self.element_spec.term_spec)
 
     # ``_check_columns`` is not overridden: every field of a numeric template is
     # a ``NumericArraySpec``, so the base already checks each column for a numeric
     # dtype the declaration admits.
+
+    # -- display --------------------------------------------------------------
+
+    def __repr__(self) -> str:
+        """The class, the label, and the levels, then one line for each field with its values.
+
+        Each line gives a field's path and its stored column, batch axes
+        leading, as NumPy prints it, so ``np.set_printoptions`` sets the
+        precision and shortens a large column with ``...``, and a shortened
+        column ends with its shape. Only the entries shown are read from the
+        device. Inside a JAX trace, where the columns are tracers, the repr is
+        the summary of the label, the levels, and the field paths.
+
+        A batch of records of summaries, whose provenance describes how each
+        column of each element was computed, as the batch ``summarize`` returns
+        for a batch of laws does, shows one table for each element instead, as
+        a record's repr states. Each table is titled by its element's levels, as
+        ``law=0``, each title is indented by two spaces and each table by four,
+        and the elements are shortened to ``edgeitems`` at each end when their
+        rows number more than NumPy's ``threshold``. The line that states how
+        the columns were computed follows each table, or follows the last when
+        every element's line is the same.
+        """
+        tables = batch_tables_text(self, self._repr_summary(structure=False))
+        if tables is not None:
+            return tables
+        return summary_with_values(
+            self._repr_summary(structure=False),
+            format_rows(self._value_rows(), VALUE_INDENT),
+            alone=self._repr_summary(),
+        )
+
+    def __str__(self) -> str:
+        """The lines of the repr's values or tables alone, or the summary inside a JAX trace."""
+        tables = batch_tables_text(self, None)
+        if tables is not None:
+            return tables
+        rows = format_rows(self._value_rows())
+        return self._repr_summary() if rows is None else rows
+
+    def _repr_html_(self) -> str | None:
+        """The batch as a two-column table of its field paths and columns, for a notebook.
+
+        Each column is formatted as the repr formats it, and a batch the repr
+        shows as tables is one HTML table for each element. Inside a JAX trace
+        the result is ``None``, so the notebook shows the repr.
+        """
+        tables = batch_tables_html(self, self._repr_summary(structure=False))
+        if tables is not None:
+            return tables
+        return rows_html(self._repr_summary(structure=False), self._value_rows())
+
+    def _value_rows(self) -> list[tuple[str, Any]]:
+        """Each field's path and its stored column, batch axes leading, in canonical order."""
+        return list(self._columns.items())
 
     # -- single-field coercion ----------------------------------------------
     #
@@ -116,8 +216,8 @@ class NumericRecordBatch(RecordBatch):
         """The one field's values, or a refusal naming what to do instead."""
         if len(self._columns) != 1:
             raise TypeError(
-                f"a {type(self).__name__} of {len(self._columns)} fields is not array-like; "
-                f"read one field first, as batch['field']"
+                f"{type(self).__name__} with {count(len(self._columns), 'field')} is not "
+                f"array-like; read one field first, such as batch['field']"
             )
         return next(iter(self._columns.values()))
 
@@ -183,38 +283,41 @@ class NumericRecordBatch(RecordBatch):
         )
 
     @classmethod
+    @refuses_label_first("spec", "vec")
     def from_vector(
         cls,
-        name: str,
         spec: NumericRecordSpec,
         vec: Array,
         *,
-        level_names: str | Iterable[str],
-        axes_per_level: Iterable[int] | None = None,
+        level_names: NamesLike,
+        axes_per_level: AxisCountsLike | None = None,
+        label: str | None = None,
     ) -> Self:
         """Rebuild a batch from its elements' flat vectors, inverting :meth:`to_vector`.
 
         Parameters
         ----------
-        name : str
-            The reconstructed batch's name (user-given).
         spec : NumericRecordSpec
             The flat layout: field names, event shapes, and canonical order.
             Every leaf must be a NumericArraySpec.
         vec : Array
             Shape ``(*batch_shape, vector_size)`` — the trailing axis is the flat
             dimension, and every leading axis is a batch axis.
-        level_names : str or iterable of str
+        level_names : str or sequence of str
             One name per level of the reconstructed batch, outermost first; a
             single string names a single level. Required for the reason
             :meth:`RecordBatch.stack` states, and plural because *vec* may carry
             several batch axes: naming them is how a multi-level batch round-trips.
-        axes_per_level : iterable of int, optional
+        axes_per_level : int or sequence of int, optional
             How many axes each level holds, as for the constructor. Omitted, a
-            single name takes **all** of *vec*'s batch axes as one level and
-            several names take one axis each. The first is why a draw of several
-            axes reconstructs without naming each: a ``sample_shape`` is one
-            multiplicity however many axes it spans.
+            single name takes **all** of *vec*'s batch axes as one level and several
+            names take one axis each. The first is why a draw of several axes
+            reconstructs without naming each: a ``sample_shape`` is one multiplicity
+            however many axes it spans.
+        label : str or None
+            Keyword-only. The reconstructed batch's label; ``None``, the default,
+            derives ``record(field,...)`` from the spec's top-level fields, as the
+            constructor does.
 
         Returns
         -------
@@ -224,8 +327,11 @@ class NumericRecordBatch(RecordBatch):
         Raises
         ------
         TypeError
-            If the spec contains a non-array leaf, or *vec* has no batch
-            axis — reconstruct a single value with ``NumericRecord.from_vector``.
+            If the spec contains a non-array leaf; if *vec* has no batch
+            axis — reconstruct a single value with ``NumericRecord.from_vector``;
+            if *label* is omitted and the spec has no fields to derive it from;
+            or if *spec* is a string, which is a label passed first in the
+            earlier form.
         ValueError
             If the trailing axis is not ``spec.vector_size``, or if the level
             names do not account for *vec*'s leading axes.
@@ -237,10 +343,14 @@ class NumericRecordBatch(RecordBatch):
         >>> import jax.numpy as jnp
         >>> from probpipe import RecordSpec
         >>> spec = RecordSpec(x=(2,))
-        >>> batch = NumericRecordBatch("post", {"x": jnp.zeros((4, 5, 2))},
-        ...                            ("chain", "draw"), element_spec=spec)
+        >>> batch = NumericRecordBatch(
+        ...     {"x": jnp.zeros((4, 5, 2))},
+        ...     ("chain", "draw"),
+        ...     element=spec,
+        ...     label="post",
+        ... )
         >>> rebuilt = NumericRecordBatch.from_vector(
-        ...     "post", spec, batch.to_vector(), level_names=("chain", "draw"))
+        ...     spec, batch.to_vector(), level_names=("chain", "draw"), label="post")
         >>> rebuilt.batch_shape
         (4, 5)
         """
@@ -262,8 +372,8 @@ class NumericRecordBatch(RecordBatch):
         for key, declared in spec._walk_leaves():
             if not isinstance(declared, NumericArraySpec):
                 raise TypeError(
-                    f"{cls.__name__}.from_vector: field {key!r} has a {type(declared).__name__}; "
-                    "reconstruction requires NumericArraySpec leaves"
+                    f"{cls.__name__}.from_vector: field {key!r} must have a NumericArraySpec, "
+                    f"got {type(declared).__name__}"
                 )
             event_shape = declared.shape
             size = int(np.prod(event_shape, dtype=int))
@@ -275,15 +385,15 @@ class NumericRecordBatch(RecordBatch):
                 block = block.astype(declared.dtype)
             columns[key] = block
             offset += size
-        names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
+        names = _as_names(level_names, what=f"{cls.__name__}.from_vector level_names")
         if axes_per_level is None and len(names) == 1:
             axes_per_level = (len(batch_shape),)
         return cls(
-            name,
             columns,
             names,
-            element_spec=spec,
+            element=spec,
             axes_per_level=axes_per_level,
+            label=label,
         )
 
 

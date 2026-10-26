@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="639" height="198" viewBox="0 0 639 198" role="img">
+  <title>Refused: the right operand returns a law, which a record cannot hold unnamed</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#424a53"/>
+    </marker>
+    <marker id="arrow-fault" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#cf222e"/>
+    </marker>
+  </defs>
+  <rect x="0.5" y="0.5" width="638" height="197" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <g transform="translate(37.9,46.0)">
+    <rect x="53.9" y="38.0" width="112.0" height="58.0" rx="8" fill="#eefbf1" stroke="#1a7f37" stroke-width="1.6"/>
+    <rect x="63.9" y="45.0" width="61.0" height="17.0" rx="8.5" fill="#1a7f37" stroke="#1a7f37" stroke-width="1"/>
+    <text x="94.5" y="57.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">function</text>
+    <text x="133.0" y="58.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">a</text>
+    <text x="42.9" y="73.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="end">y</text>
+    <text x="153.9" y="83.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="end">params</text>
+    <circle cx="53.9" cy="79.0" r="4.5" fill="#1a7f37" stroke="#1a7f37" stroke-width="1.6"/>
+    <circle cx="165.9" cy="79.0" r="4.5" fill="#1a7f37" stroke="#1a7f37" stroke-width="1.6"/>
+    <rect x="315.9" y="38.0" width="173.1" height="80.0" rx="8" fill="#eefbf1" stroke="#cf222e" stroke-width="2.6"/>
+    <rect x="325.9" y="45.0" width="61.0" height="17.0" rx="8.5" fill="#1a7f37" stroke="#1a7f37" stroke-width="1"/>
+    <text x="356.4" y="57.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">function</text>
+    <text x="395.0" y="58.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">b</text>
+    <text x="477.0" y="83.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="normal" fill="#1f2328" text-anchor="end">data</text>
+    <text x="379.6" y="83.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle" font-style="italic">returns a law</text>
+    <text x="379.6" y="105.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#59636e" text-anchor="middle" font-style="italic">no outputs</text>
+    <circle cx="489.0" cy="79.0" r="4.5" fill="#1a7f37" stroke="#1a7f37" stroke-width="1.6"/>
+    <path d="M 49.4,79.0 L 6.5,79.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <circle cx="0.0" cy="79.0" r="4.5" fill="#6e7781" stroke="#6e7781" stroke-width="1.6"/>
+    <text x="-10.0" y="83.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="end">y</text>
+    <path d="M 518.5,16.0 L 195.9,16.0 L 195.9,79.0 L 172.4,79.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <circle cx="525.0" cy="16.0" r="4.5" fill="#6e7781" stroke="#6e7781" stroke-width="1.6"/>
+    <text x="535.0" y="20.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="start">params</text>
+    <path d="M 518.5,79.0 L 495.5,79.0" fill="none" stroke="#424a53" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#arrow)"/>
+    <circle cx="525.0" cy="79.0" r="4.5" fill="#6e7781" stroke="#6e7781" stroke-width="1.6"/>
+    <text x="535.0" y="83.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13" font-weight="bold" fill="#1f2328" text-anchor="start">data</text>
+    <rect x="0.0" y="0.0" width="525.0" height="134.0" rx="14" fill="none" stroke="#cf222e" stroke-width="2.2" stroke-dasharray="6 4"/>
+    <rect x="4.0" y="-27.0" width="61.0" height="17.0" rx="8.5" fill="#1a7f37" stroke="#1a7f37" stroke-width="1"/>
+    <text x="34.5" y="-14.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="bold" fill="#ffffff" text-anchor="middle">function</text>
+    <text x="73.0" y="-14.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="13.5" font-weight="bold" fill="#1f2328" text-anchor="start">a &amp; b</text>
+    <circle cx="132.2" cy="-18.0" r="10" fill="#cf222e" stroke="#cf222e" stroke-width="1"/>
+    <path d="M 127.7,-13.5 L 136.7,-22.5" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M 127.7,-22.5 L 136.7,-13.5" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+    <text x="148.2" y="-14.0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="bold" fill="#cf222e" text-anchor="start">refused</text>
+  </g>
+</svg>
