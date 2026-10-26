@@ -53,10 +53,10 @@ damage = jnp.asarray(data["damage"], dtype=jnp.int32)
 X = jnp.stack([jnp.ones_like(temperature), temperature], axis=1)
 
 # The prior: a normal distribution of the coefficients beta = (intercept, slope).
-prior = Normal("beta", jnp.zeros(2), jnp.array([10.0, 1.0]))
+prior = Normal("beta", jnp.zeros(2), jnp.array([10.0, 1.0]), label="prior")
 
 # The likelihood: the distribution of the 23 damage indicators given beta, a logistic regression.
-likelihood = glm_likelihood("damage", BernoulliFamily(), X=X)
+likelihood = glm_likelihood("damage", BernoulliFamily(), X=X, label="likelihood")
 
 # The model is the joint distribution of beta and the damage indicators.
 model = likelihood & prior
@@ -69,21 +69,23 @@ with workflow_run(seed=0):
 print("posterior mean of beta:", mean(posterior["beta"]).raw)
 
 # Every result records how it was computed.
-for name, result in [("mean of the prior", mean(prior)), ("posterior", posterior)]:
-    prov_meta = result.provenance.metadata
-    method = f", method={prov_meta['method']}" if "method" in prov_meta else ""
-    print(f"{name} provenance: route={prov_meta['route']}{method}, exact={prov_meta['exact']}")
+print("provenance of the prior's mean:")
+print(mean(prior).provenance)
+print("provenance of the posterior:")
+print(posterior.provenance)
 ```
 
 ```text
-posterior mean of beta: [11.602147   -0.18273503]
-mean of the prior provenance: route=closed_form, exact=True
-posterior provenance: route=inference_methods, method=blackjax_nuts, exact=False
+posterior mean of beta: [11.66378    -0.18358812]
+provenance of the prior's mean:
+1. mean(prior, given)  route closed_form, exact
+provenance of the posterior:
+1. condition_on(likelihood·prior, given)  route inference_methods, method blackjax_nuts, approximate
 ```
 
 The prior and the likelihood are both ProbPipe objects: a distribution of the coefficients, and a conditional distribution of the data given the coefficients (constructed with `glm_likelihood`).
-Merging them with `&` constructs the joint model, and `condition_on` computes the posterior.
-The output also tracks how ProbPipe computed each result.
+Merging them with `&` constructs the joint model, labeled `likelihood·prior`, and `condition_on` computes the posterior.
+Printing a result's provenance lists each step that produced it, with how ProbPipe computed the step.
 The prior's mean has a formula, so `mean` computed it exactly.
 The posterior of a logistic regression has none, so `condition_on` generated approximate draws from the posterior using BlackJAX's No-U-Turn Sampler.
 
@@ -93,26 +95,29 @@ We can easily compare many different posterior inference algorithms:
 from probpipe.diagnostics import add_mcmc_diagnostics
 
 # Use the same code to get results from any available method.
-print(f"{'method':<15}{'slope mean':>12}{'largest R-hat':>16}")
+# Each method is a different algorithm, so the fits run one at a time.
+comparison = {}
 for method in ["blackjax_nuts", "tfp_nuts", "blackjax_rwmh"]:
     with workflow_run(seed=0):
         method_posterior = condition_on.using(method=method)(model, {"damage": damage})
     # Adds R-hat and effective sample size diagnostics to the posterior object.
     add_mcmc_diagnostics(method_posterior)
-    mean_slope = float(mean(method_posterior["beta"]).raw[1])
-    largest_rhat = max(method_posterior.diagnostics.mcmc.rhat.values())
-    print(f"{method:<15}{mean_slope:>12.3f}{largest_rhat:>16.3f}")
+    comparison[method] = {
+        "slope mean": float(mean(method_posterior["beta"]).raw[1]),
+        "largest R-hat": max(method_posterior.diagnostics.mcmc.rhat.values()),
+    }
+print(pd.DataFrame(comparison).T.round(3))
 ```
 
 ```text
-method           slope mean   largest R-hat
-blackjax_nuts        -0.183           1.009
-tfp_nuts             -0.186           1.003
-blackjax_rwmh        -0.083           1.973
+               slope mean  largest R-hat
+blackjax_nuts      -0.184          1.005
+tfp_nuts           -0.182          1.008
+blackjax_rwmh      -0.181          1.130
 ```
 
 BlackJAX and TensorFlow Probability's implementations of the No-U-Turn Sampler give similar inferences about the slope.
-Random-walk Metropolis reports a different slope. But it shouldn't be trusted since the largest R-hat is nearly 2, indicating the chains didn't mix.
+Random-walk Metropolis gives a similar slope, but its largest R-hat of 1.13 is well above the usual threshold of 1.01, so its chains have not mixed and its draws need more iterations before they can be trusted.
 
 Next, we illustrate how to forecast using the posterior.
 The probability of damage at 31°F is a function of the coefficients, which we write in plain JAX:
@@ -136,19 +141,21 @@ with workflow_run(seed=2):
 print("P(damage at 31°F), posterior mean:", round(float(mean(damage_prob)), 3))
 print("P(damage at 31°F), 90% interval:", quantile(damage_prob, jnp.array([0.05, 0.95])).raw)
 
-# The forecast records how it was computed.
-prov_meta = damage_prob.provenance.metadata
-print(f"forecast provenance: route={prov_meta['route']}, exact={prov_meta['exact']}")
+# The forecast records each step from the posterior to it.
+print("provenance of the forecast:")
+print(damage_prob.provenance)
 ```
 
 ```text
-P(damage at 31°F), posterior mean: 0.964
-P(damage at 31°F), 90% interval: [0.8174724  0.99998176]
-forecast provenance: route=sampling_lift, exact=False
+P(damage at 31°F), posterior mean: 0.974
+P(damage at 31°F), 90% interval: [0.86161655 0.999984  ]
+provenance of the forecast:
+1. likelihood·prior = condition_on(likelihood·prior, given)  route inference_methods, method blackjax_nuts, approximate
+2. broadcast(challenger_damage_probability, 1['beta'])  route sampling_lift, approximate
 ```
 
 We wrote `challenger_damage_probability` for one pair of coefficients, and ProbPipe automatically lifted it to operate on the posterior distribution: it evaluated the function at draws from the posterior distribution, and returned the distribution of the results.
-Its provenance shows it was generated using this sampling approach and that it is not exact.
+Its provenance lists both steps: the fit, which gives approximate draws, and the function evaluated at those draws (`sampling_lift`), so the forecast is approximate too.
 <!-- --8<-- [end:quick-example] -->
 
 ## Installation
