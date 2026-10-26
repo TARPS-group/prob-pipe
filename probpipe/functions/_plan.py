@@ -235,9 +235,7 @@ def is_swept(value: Any, expected: Any) -> bool:
 def is_broadcast(value: Any, expected: Any) -> bool:
     """Whether the call samples *value* at a parameter whose lifting annotation is *expected*.
 
-    A distribution is broadcast at a value parameter. A batched distribution
-    is swept or passed whole, and parameters that consume laws or kernels,
-    or accept ``Any``, receive the object whole.
+    An unbatched law broadcasts only when its parameter expects a value.
     """
     return isinstance(value, Distribution) and not _is_batched(value) and _expects_value(expected)
 

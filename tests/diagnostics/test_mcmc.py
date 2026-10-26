@@ -184,18 +184,29 @@ class TestMcmcHelpers:
                 raise TypeError("not numeric")
 
         rhat_messages = _rhat_warnings(
-            {"missing": NotComputed("single chain"), "bad": _BadFloat(), "alpha": 1.2},
+            {
+                "missing": NotComputed("single chain"),
+                "bad": _BadFloat(),
+                "alpha": np.array([1.0, 1.2, 1.3]),
+            },
             threshold=1.01,
         )
         assert any("alpha" in msg for msg in rhat_messages)
+        assert "2 coordinates, worst 1.3000" in rhat_messages[0]
 
         ess_messages = _ess_warnings(
-            {"missing": NotComputed("no bulk"), "bad": _BadFloat(), "alpha": 100.0},
-            {"missing": NotComputed("no tail"), "bad": _BadFloat(), "beta": 120.0},
+            {"missing": NotComputed("no bulk"), "bad": _BadFloat(), "alpha": np.array([100, 500])},
+            {
+                "missing": NotComputed("no tail"),
+                "bad": _BadFloat(),
+                "beta": np.array([[120, 500], [110, 600]]),
+            },
             threshold=400,
         )
         assert any("bulk" in msg and "alpha" in msg for msg in ess_messages)
         assert any("tail" in msg and "beta" in msg for msg in ess_messages)
+        assert "1 coordinate, worst 100" in ess_messages[0]
+        assert "2 coordinates, worst 110" in ess_messages[1]
 
     def test_emit_payload_warnings_handles_missing_and_none_warning_fields(self):
         class _NoWarnings:
